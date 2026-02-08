@@ -1,6 +1,13 @@
 # NoSQL Engine Types: Detailed Overview and Competitive Landscape
 
-**Status:** Draft (Beta)
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+**Status:** Authoritative (V3)
 
 ## 1. Purpose
 
@@ -123,7 +130,7 @@ large-scale, distributed storage.
 - Less flexible than document or relational for ad-hoc queries.
 
 ### ScratchBird positioning
-- **Near-term fit:** LSM tree + planned column-family catalog and TTL.
+- **Near-term fit:** LSM tree + required column-family catalog and TTL.
 - **Differentiator:** Unified catalog + security with SQL-accessible metadata.
 
 ## 6. Graph Databases (Property Graph)
@@ -339,3 +346,5 @@ key-value, graph, or search).
   at lexical matching and scoring.
 - **Columnar vs Row/Document**: Columnar excels in analytics; row/document
   excels in transactional workloads.
+
+**Terminology note:** ScratchBird uses Firebird MGA. Any MGA references in this file are legacy shorthand and must be interpreted as MGA per the authoritative references above.

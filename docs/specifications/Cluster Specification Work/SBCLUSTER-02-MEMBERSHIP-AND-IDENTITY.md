@@ -447,7 +447,7 @@ Temporarily disables a node (maintenance, troubleshooting):
 
 ```sql
 DISABLE NODE <node_uuid>
-REASON 'Planned maintenance';
+REASON 'Required maintenance';
 ```
 
 **Process**:

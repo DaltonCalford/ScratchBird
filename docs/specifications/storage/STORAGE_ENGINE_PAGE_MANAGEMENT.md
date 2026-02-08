@@ -1,12 +1,22 @@
 # ScratchBird Storage Engine - Page Management and Storage Layer
+
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 ## Part 2 of Storage Engine Specification
 
 ## Overview
 
 This document specifies ScratchBird's page management system, including page layouts, free space management, compression, encryption, and integration with the multi-page-size architecture (8K-128K).
 
-**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional post-gold (replication/PITR).
-Any WAL references in this document describe an optional post-gold stream for
+**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional optional extension (replication/PITR).
+Any WAL references in this document describe an optional optional extension stream for
 replication/PITR only.
 
 ## 1. Page Structure and Layout
@@ -30,10 +40,8 @@ typedef struct sb_page_header {
     uint16_t        pd_type;               // Page type
     uint16_t        pd_version;            // Page layout version
     
-    // LSN and transaction info
-    LSN             pd_lsn;                // Last LSN that modified page
-    TransactionId   pd_xmin;               // Oldest XID on page
-    TransactionId   pd_xmax;               // Newest XID on page
+    // LSN info (optional write-after log only)
+    LSN             pd_lsn;                // Last optional WAL LSN that modified page
     
     // Space management
     uint16_t        pd_lower;              // Start of free space
@@ -120,49 +128,26 @@ typedef struct item_id {
 typedef struct heap_page_special {
     uint16_t        hps_page_size;         // Actual page size
     uint16_t        hps_free_space;        // Free space on page
-    TransactionId   hps_oldest_xid;        // Oldest XID on page
     uint16_t        hps_ntuples;           // Number of tuples
     uint16_t        hps_flags;             // Special flags
 } HeapPageSpecial;
 
-// Heap tuple header (for MGA/MVCC)
-typedef struct heap_tuple_header {
-    // Transaction visibility
-    TransactionId   t_xmin;                // Insert XID
-    TransactionId   t_xmax;                // Delete/update XID
-    CommandId       t_cmin;                // Insert CID
-    CommandId       t_cmax;                // Delete/update CID
-    
-    // Tuple identification
-    ItemPointer     t_ctid;                // Current tuple ID
-    UUID            t_uuid;                // Tuple UUID (optional)
-    
-    // Tuple metadata
-    uint16_t        t_infomask;            // Flags
-    uint16_t        t_infomask2;           // More flags
-    uint8_t         t_hoff;                // Header offset to user data
-    
-    // Null bitmap (variable length)
-    bits8           t_bits[FLEXIBLE_ARRAY_MEMBER];
-} HeapTupleHeader;
+// Record header (Firebird MGA-style)
+// On-disk record header is authoritative in ON_DISK_FORMAT.md.
+typedef struct sb_record_header {
+    uint64_t        rhd_transaction;   // Creating transaction ID
+    UUID            rhd_back_version;  // UUID of prior version (null if none)
+    uint32_t        rhd_flags;         // Record flags
+    uint32_t        rhd_format;        // Record format version
+    uint32_t        rhd_length;        // Payload length
+    uint8_t         rhd_data[];        // Record payload (null bitmap + data)
+} SBRecordHeader;
 
-// Tuple infomask flags
-#define HEAP_HASNULL            0x0001     // Has null attributes
-#define HEAP_HASVARWIDTH        0x0002     // Has variable-width attributes
-#define HEAP_HASEXTERNAL        0x0004     // Has external stored attributes
-#define HEAP_HASOID             0x0008     // Has OID
-#define HEAP_XMAX_KEYSHR_LOCK   0x0010     // Key-share lock
-#define HEAP_COMBOCID           0x0020     // Combo CID
-#define HEAP_XMAX_EXCL_LOCK     0x0040     // Exclusive lock
-#define HEAP_XMAX_SHR_LOCK      0x0080     // Share lock
-#define HEAP_XMIN_COMMITTED     0x0100     // xmin committed
-#define HEAP_XMIN_INVALID       0x0200     // xmin invalid
-#define HEAP_XMAX_COMMITTED     0x0400     // xmax committed
-#define HEAP_XMAX_INVALID       0x0800     // xmax invalid
-#define HEAP_XMAX_IS_MULTI      0x1000     // xmax is multixact
-#define HEAP_UPDATED            0x2000     // Tuple was updated
-#define HEAP_MOVED_OFF          0x4000     // Moved to another page (sweep/GC)
-#define HEAP_MOVED_IN           0x8000     // Moved from another page (sweep/GC)
+// Record flags (see FIREBIRD_CONSTANTS_REFERENCE.md)
+#define RHD_DELETED             0x0001     // This record version represents a delete
+#define RHD_CHAIN               0x0002     // Back-version pointer present
+#define RHD_FRAGMENT            0x0004     // Partial record (blob/large field)
+#define RHD_INCOMPLETE          0x0008     // Incomplete write (torn/partial)
 ```
 
 ### 1.3 Page Operations
@@ -405,7 +390,7 @@ bool vm_page_is_all_visible(
 ```c
 // FSM reconstruction for crash recovery (Firebird-style)
 // Rebuilds FSM from actual page state on database open
-// Supports full MGA transaction recovery without write-after log (WAL, optional post-gold)
+// Supports full MGA transaction recovery without write-after log (WAL, optional optional extension)
 
 // FSM reconstruction context
 typedef struct fsm_reconstruction_context {
@@ -492,8 +477,8 @@ Status fsm_reconstruct_from_pages(
             // the page contains data and should not be reused until GC
             //
             // MGA Transaction Recovery Model:
-            // - Aborted transaction: xmin in TIP = ABORTED
-            // - Tuple on page: xmin = aborted XID → invisible to all
+            // - Aborted transaction: rhd_transaction in TIP = ABORTED
+            // - Record version on page: rhd_transaction = aborted ID → invisible to all
             // - Page remains allocated (prevents double allocation)
             // - Garbage collector will reclaim page later
             // - Matches Firebird's proven MGA recovery approach
@@ -550,7 +535,7 @@ Status database_open_with_fsm_reconstruction(
 
     // 4. Reconstruct FSM from actual pages (MGA-style recovery)
     // This ensures FSM is always consistent with actual page state,
-    // supporting full transaction recovery without write-after log (WAL, optional post-gold)
+    // supporting full transaction recovery without write-after log (WAL, optional optional extension)
     FSMReconstructionContext recon_ctx;
     recon_ctx.total_pages = db->page_mgr->total_pages;
     recon_ctx.scan_start_time = get_current_time_ms();
@@ -576,9 +561,9 @@ Status database_open_with_fsm_reconstruction(
 
 #### 2.3.1 FSM Reconstruction Design Rationale
 
-**Why FSM Reconstruction (Not Write-after log (WAL, optional post-gold))?**
+**Why FSM Reconstruction (Not Write-after log (WAL, optional optional extension))?**
 
-ScratchBird uses **Firebird-style MGA (Multi-Generational Architecture)**, which provides crash recovery without requiring a write-after log (WAL, optional post-gold) stream for this purpose:
+ScratchBird uses **Firebird-style MGA (Multi-Generational Architecture)**, which provides crash recovery without requiring a write-after log (WAL, optional optional extension) stream for this purpose:
 
 1. **FSM is a Hint Structure**
    - FSM tracks page allocation state
@@ -590,9 +575,9 @@ ScratchBird uses **Firebird-style MGA (Multi-Generational Architecture)**, which
    - Transaction state tracked in TIP (Transaction Inventory Pages)
    - Aborted transactions visible in TIP on recovery
    - Pages allocated by aborted transactions remain allocated
-   - Tuples marked with aborted xmin → invisible to all
+   - Record versions with aborted rhd_transaction → invisible to all
    - Garbage collector reclaims pages later
-   - **No write-after log (WAL, optional post-gold) needed for crash recovery**
+   - **No write-after log (WAL, optional optional extension) needed for crash recovery**
 
 3. **Conservative Error Handling**
    - Read errors → mark page allocated (not free)
@@ -624,13 +609,13 @@ ScratchBird uses **Firebird-style MGA (Multi-Generational Architecture)**, which
    - Supports Full MGA transaction recovery
    ```
 
-**Note on Write-after log (WAL, optional post-gold) Purpose:**
-- **Write-after log (WAL, optional post-gold) is NOT needed for crash recovery** in MGA (Firebird proves this)
-- Write-after log (WAL, optional post-gold) is valuable for:
+**Note on Write-after log (WAL, optional optional extension) Purpose:**
+- **Write-after log (WAL, optional optional extension) is NOT needed for crash recovery** in MGA (Firebird proves this)
+- Write-after log (WAL, optional optional extension) is valuable for:
   - **Point-in-time recovery** (restore to specific timestamp)
   - **Replication** (stream changes to replicas)
   - **Forensic analysis** (audit trail of all changes)
-- ScratchBird may add write-after log (WAL, optional post-gold) in Beta for replication support
+- ScratchBird may add write-after log (WAL, optional optional extension) in Beta for replication support
 
 #### 2.3.2 Transaction Recovery Scenarios
 
@@ -641,14 +626,14 @@ Timeline:
 T1: Transaction XID=100 calls allocatePage() → gets page 50
 T2: FSM marks page 50 allocated IN MEMORY (not flushed)
 T3: Page 50 initialized with header (magic, page_id, page_size)
-T4: Transaction writes tuple to page 50 with xmin=100
+T4: Transaction writes record version to page 50 with rhd_transaction=100
 T5: Page 50 synced to disk (durable)
 T6: CRASH - FSM not flushed, transaction not committed
 T7: Database reopens
 T8: Transaction XID=100 found in TIP as ACTIVE → marked aborted
 T9: FSM reconstruction scans page 50
 T10: Page 50 has valid header → marked ALLOCATED ✅
-T11: Tuple on page 50 has xmin=100 (aborted) → invisible
+T11: Record on page 50 has rhd_transaction=100 (aborted) → invisible
 T12: Page 50 NOT double-allocated ✅
 T13: Garbage collector will eventually reclaim page 50
 
@@ -1088,6 +1073,10 @@ typedef struct toast_tuple {
     bytea           chunk_data;            // Chunk data
 } ToastTuple;
 
+// PostgreSQL-compatible defaults
+// TOAST_THRESHOLD = 2048 bytes
+// TOAST_CHUNK_SIZE = page_size - (tuple_header + chunk metadata)
+
 // TOAST value
 bool toast_value(
     Datum value,
@@ -1290,3 +1279,5 @@ This page management system provides:
 8. **Checksums** for data integrity
 
 The system integrates with the buffer pool management described in Part 1 and provides the foundation for the MGA transaction system.
+
+**Terminology note:** ScratchBird uses Firebird MGA. Any MGA references in this file are legacy shorthand and must be interpreted as MGA per the authoritative references above.

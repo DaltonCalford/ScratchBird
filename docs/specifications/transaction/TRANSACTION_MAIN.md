@@ -1,12 +1,21 @@
 # ScratchBird Transaction and Lock Management - Main Specification
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 ## Master Document for Transaction and Lock Management Implementation
 
 ---
 
 **MGA Reference:** See `MGA_RULES.md` for Multi-Generational Architecture semantics (visibility, TIP usage, recovery).
-**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional post-gold (replication/PITR).
-Any WAL references in this document describe an optional post-gold stream for
+**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional optional extension (replication/PITR).
+Any WAL references in this document describe an optional optional extension stream for
 replication/PITR only.
 
 ## IMPLEMENTATION STATUS: COMPLETED
@@ -28,7 +37,7 @@ See `include/scratchbird/core/transaction_manager.h` for current basic implement
 
 ## Overview
 
-ScratchBird's transaction and lock management system (PLANNED) will provide ACID guarantees through a Multi-Generational Architecture (MGA/MVCC) foundation, comprehensive locking mechanisms, and distributed transaction support. This document serves as the main specification, integrating all transaction management components.
+ScratchBird's transaction and lock management system (PLANNED) will provide ACID guarantees through a Multi-Generational Architecture (MGA/MGA) foundation, comprehensive locking mechanisms, and distributed transaction support. This document serves as the main specification, integrating all transaction management components.
 
 ## Architecture Overview
 
@@ -305,43 +314,45 @@ Status sb_rollback_transaction(
 
 ```c
 // Read Committed implementation
-bool tuple_visible_read_committed(
-    HeapTupleHeader tuple,
+bool record_visible_read_committed(
+    const SBRecordHeader* rhd,
     SBTransaction* txn)
 {
     // Take new snapshot for each statement
     TransactionSnapshot* snap = get_statement_snapshot(txn);
 
-    return tuple_satisfies_snapshot(tuple, snap);
+    return sb_record_visible(rhd, snap, txn->txn_tm->tm_mga_manager);
 }
 
 // Repeatable Read implementation (Snapshot Isolation)
-bool tuple_visible_repeatable_read(
-    HeapTupleHeader tuple,
+bool record_visible_repeatable_read(
+    const SBRecordHeader* rhd,
     SBTransaction* txn)
 {
     // Use transaction snapshot
     TransactionSnapshot* snap = txn->txn_snapshot;
 
-    return tuple_satisfies_snapshot(tuple, snap);
+    return sb_record_visible(rhd, snap, txn->txn_tm->tm_mga_manager);
 }
 
 // Serializable implementation
-bool tuple_visible_serializable(
-    HeapTupleHeader tuple,
+bool record_visible_serializable(
+    const SBRecordHeader* rhd,
+    const UUID* relation_uuid,
+    const ItemPointer* tid,
     SBTransaction* txn,
     SBLockManager* lm)
 {
     // Same visibility as repeatable read
-    if (!tuple_visible_repeatable_read(tuple, txn)) {
+    if (!record_visible_repeatable_read(rhd, txn)) {
         return false;
     }
 
     // But also track reads with predicate locks
     PredicateLockTag tag;
-    tag.plt_relation_uuid = tuple->t_tableoid;
+    tag.plt_relation_uuid = *relation_uuid;
     tag.plt_type = PREDICATE_TUPLE;
-    tag.plt_data.tuple.tid = tuple->t_ctid;
+    tag.plt_data.tuple.tid = *tid;
 
     acquire_predicate_lock(lm, &tag, txn->txn_id);
 
@@ -441,7 +452,7 @@ void commit_transaction_group(
     // Phase 2: Update TIP for all
     mga_batch_commit(tm->tm_mga_manager, group);
 
-    // Phase 3: Flush optional post-gold write-after log (WAL) once for all
+    // Phase 3: Flush optional optional extension write-after log (WAL) once for all
     flush_wal_for_group(group);
 
     // Phase 4: Release locks for all
@@ -471,7 +482,7 @@ Status execute_read_only_transaction(
 {
     // No locks needed with MGA
     // No TIP updates needed
-    // No optional post-gold write-after log (WAL) needed
+    // No optional optional extension write-after log (WAL) needed
 
     if (rot->rot_distributed) {
         // Use global snapshot for distributed reads
@@ -698,10 +709,10 @@ Status storage_insert_tuple(
         return STATUS_NO_TRANSACTION;
     }
 
-    // Set transaction info in tuple
-    tuple->t_data->t_xmin = txn->txn_id;
-    tuple->t_data->t_cmin = txn->txn_command_id;
-    tuple->t_data->t_xmax = InvalidTransactionId;
+    // Set transaction info in record header (MGA)
+    SBRecordHeader* rhd = tuple->t_data;
+    rhd->rhd_transaction = txn->txn_id;
+    rhd->rhd_flags &= ~RHD_DELETED;
 
     // Acquire necessary locks
     LockTag tag;
@@ -748,3 +759,5 @@ The system combines the best aspects of:
 - **Modern** distributed protocols and consensus algorithms
 
 This design ensures ACID compliance while maintaining high performance and scalability for both single-node and distributed deployments.
+
+**Terminology note:** ScratchBird uses Firebird MGA. Any MGA references in this file are legacy shorthand and must be interpreted as MGA per the authoritative references above.

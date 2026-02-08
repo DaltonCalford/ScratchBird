@@ -1,31 +1,22 @@
 # Heap-TOAST Integration
 
-## IMPLEMENTATION STATUS: 🟢 FULLY IMPLEMENTED - MGA COMPLIANT (Updated 2025-11-03)
 
-**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional post-gold (replication/PITR).
-Any WAL references in this document describe an optional post-gold stream for
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
+
+## IMPLEMENTATION STATUS: ⚠️ SPECIFICATION (Authoritative for Alpha)
+
+**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional optional extension (replication/PITR).
+Any WAL references in this document describe an optional optional extension stream for
 replication/PITR only.
 
-**All TOAST functionality is now complete and MGA-compliant:**
-- ✅ **MGA Compliance**: TupleHeader-based TOAST chunks with xmin/xmax (Alpha)
-- ✅ **TIP-Based Visibility**: Uses TIP for transaction state, not snapshots (Alpha)
-- ✅ **Index Integration**: IndexKeyExtractor detoasts before indexing (Alpha)
-- ✅ **Garbage Collection**: 3-stage GC (orphan detection, cleanup, TIP-based) (Alpha)
-- ✅ **Comprehensive Testing**: 8 test files, 43+ test cases (Alpha)
-- ✅ Value ID recovery on database reopen (fixes data corruption risk)
-- ✅ Chunk cleanup on partial write failures (fixes storage leaks)
-- ✅ B-tree index scan for efficient deletion (O(log n) instead of O(n))
-- ✅ All TOAST strategies working (PLAIN, EXTENDED, EXTERNAL)
-- ✅ LZ4 compression support
-- ✅ Automatic chunking and reassembly
-- ✅ Integration with heap storage
-
-**MGA Compliance Achievements (November 2025)**:
-- Chunk format: TupleHeader + value_id (4) + chunk_seq (4) + chunk_size (4)
-- TIP-based visibility: `ToastVisibility::isChunkVisible()` uses TIP, not snapshots
-- Crash recovery: TIP state recovery, NO write-after log (WAL, optional post-gold) replay
-- Garbage collection: Sweep/GC processes TOAST tables with 3-phase GC
-- **MGA Scorecard**: 6/6 (100%) - FULL MGA COMPLIANCE
+This document defines the **required behavior**. Implementation status must be validated against this spec; legacy claims of completeness are non-authoritative.
 
 **Key Implementation Files**:
 - `include/scratchbird/core/toast.h` - TOAST chunk format, ToastVisibility class
@@ -36,7 +27,7 @@ replication/PITR only.
 
 ## Overview
 
-The Heap-TOAST integration provides automatic handling of large attributes during tuple operations. When tuples contain data that exceeds the TOAST threshold (2KB) or would not fit comfortably in a page, the HeapPage class automatically TOASTs the data during insertion and detoasts it during retrieval.
+The Heap-TOAST integration provides automatic handling of large attributes during tuple operations. When tuples contain data that exceeds the TOAST threshold (PostgreSQL-compatible) or would not fit comfortably in a page, the HeapPage class automatically TOASTs the **attribute values** during insertion and detoasts them during retrieval.
 
 ## Architecture
 
@@ -60,14 +51,14 @@ HeapPage(uint8_t* page_data, uint32_t page_size,
 
 When `insert_tuple()` is called with TOAST support enabled:
 
-1. **Size Check**: The method checks if the tuple size exceeds the TOAST threshold
-2. **TOAST Creation**: If needed, it creates a TOAST pointer instead of storing the full data
-3. **Space Optimization**: The toasted tuple (header + TOAST pointer) takes only ~34 bytes
-4. **Transparent Storage**: The TOAST pointer is stored in the page like any other tuple
+1. **Per-Attribute Check**: Each varlen attribute is checked against the TOAST threshold
+2. **TOAST Creation**: Attributes exceeding the threshold are replaced by a TOAST pointer
+3. **Tuple Fallback**: If the row still exceeds page limits, tuple-level TOAST may be used as a fallback
+4. **Transparent Storage**: TOAST pointers are stored in the tuple payload like any other value
 
 ```cpp
 Status insert_tuple(const uint8_t* tuple_data, uint32_t tuple_size,
-                   uint64_t xmin, uint16_t* item_id_out,
+                   uint64_t transaction_id, uint16_t* item_id_out,
                    ErrorContext* ctx = nullptr);
 ```
 
@@ -85,7 +76,7 @@ Status get_tuple(uint16_t item_id, const uint8_t** data_out,
 
 // Get detoasted tuple (full data)
 Status get_tuple_detoasted(uint16_t item_id, std::vector<uint8_t>* buffer,
-                          uint64_t xmin, ErrorContext* ctx = nullptr);
+                          uint64_t transaction_id, ErrorContext* ctx = nullptr);
 ```
 
 ### Automatic Cleanup During Delete
@@ -114,15 +105,15 @@ heap_page.initialize(page_id);
 ### Inserting Large Data
 
 ```cpp
-// Create large data (> 2KB)
+// Create large data (> 2048 bytes)
 std::vector<uint8_t> large_data(5000);
 // ... fill with data ...
 
 // Insert - will automatically TOAST if needed
 uint16_t item_id;
 Status s = heap_page.insert_tuple(large_data.data(), 
-                                 large_data.size() + sizeof(TupleHeader),
-                                 xmin, &item_id);
+                                 large_data.size() + sizeof(SBRecordHeader),
+                                 transaction_id, &item_id);
 ```
 
 ### Retrieving Toasted Data
@@ -132,11 +123,11 @@ Status s = heap_page.insert_tuple(large_data.data(),
 const uint8_t* raw_data;
 uint32_t raw_size;
 heap_page.get_tuple(item_id, &raw_data, &raw_size);
-// raw_size will be sizeof(TupleHeader) + sizeof(ToastPointer) if toasted
+// raw_size will be sizeof(SBRecordHeader) + sizeof(ToastPointer) if toasted
 
 // Option 2: Get detoasted data
 std::vector<uint8_t> detoasted_buffer;
-heap_page.get_tuple_detoasted(item_id, &detoasted_buffer, xmin);
+heap_page.get_tuple_detoasted(item_id, &detoasted_buffer, transaction_id);
 // detoasted_buffer contains the full original data
 ```
 
@@ -162,34 +153,28 @@ heap_page.get_tuple_detoasted(item_id, &detoasted_buffer, xmin);
 
 ## Implementation Details
 
-### TOAST Threshold
-- Values > 2000 bytes are candidates for TOASTing
-- Values > page_size/4 must be TOASTed
-- Small values are never toasted (overhead not worth it)
+### TOAST Threshold (PostgreSQL-Compatible)
+- Values > 2048 bytes are candidates for TOASTing
+- Per-attribute TOAST is applied first
+- Tuple-level TOAST is a fallback only if the row still exceeds page limits
 
 ### TOAST Pointer Storage
 When a value is toasted, the heap tuple stores:
-- TupleHeader (16 bytes)
-- ToastPointer (18 bytes)
+- SBRecordHeader (record header)
+- ToastPointer (42 bytes)
   - va_header: 0x01 (TOAST marker)
   - va_tag: Strategy (EXTENDED/EXTERNAL)
   - va_rawsize: Original size
   - va_extsize: Stored size (may be compressed)
-  - va_valueid: Unique ID for TOAST chunks
-  - va_toastrelid: TOAST table ID
+  - va_valueid: TOAST value UUID (16 bytes)
+  - va_toastrelid: TOAST table UUID (16 bytes)
 
 ### Backwards Compatibility
 HeapPages created without TOAST support continue to work normally. Only pages created with the TOAST-enabled constructor will perform automatic TOASTing.
 
 ## Testing
 
-Comprehensive tests are provided in `test_heap_toast_integration.cpp`:
-- Basic TOAST insert and retrieve
-- Small tuples (no TOAST)
-- TOAST deletion and cleanup
-- Multiple toasted tuples
-- Compressed TOAST data
-- HeapPage without TOAST manager
+Testing requirements are defined in the TOAST/LOB storage specification and must cover per-attribute TOAST, tuple-level fallback, MGA visibility, and GC behavior.
 
 ## Future Enhancements
 

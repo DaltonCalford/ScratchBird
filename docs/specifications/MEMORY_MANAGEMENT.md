@@ -1,13 +1,23 @@
 # ScratchBird Memory Management Specification
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
+
 **Version:** 2.0
 **Last Updated:** 2026-01-07
 **Status:** ✅ Complete
 
-**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional post-gold (replication/PITR).
-Any WAL references in this document describe an optional post-gold stream for
+**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional optional extension (replication/PITR).
+Any WAL references in this document describe an optional optional extension stream for
 replication/PITR only.
-**Table Footnote:** In comparison tables below, ScratchBird WAL references are optional post-gold (replication/PITR).
+**Table Footnote:** In comparison tables below, ScratchBird WAL references are optional optional extension (replication/PITR).
 
 ---
 
@@ -176,9 +186,9 @@ ScratchBird Memory Architecture:
 
 ### 2.3. MGA-Specific Memory Requirements
 
-**ScratchBird uses Firebird MGA, not PostgreSQL write-after log (WAL, optional post-gold):**
+**ScratchBird uses Firebird MGA, not PostgreSQL write-after log (WAL, optional optional extension):**
 
-- **No write-after log (WAL, optional post-gold) Buffers** - MGA doesn't require write-after log (WAL, optional post-gold) for recovery
+- **No write-after log (WAL, optional optional extension) Buffers** - MGA doesn't require write-after log (WAL, optional optional extension) for recovery
 - **Multi-Version Storage** - Pages contain multiple tuple versions
 - **Transaction Marker Caching** - OIT, OAT, OST, NEXT in memory
 - **Sweep Metadata** - Garbage collection state tracking
@@ -203,7 +213,7 @@ struct TransactionState {
 | Aspect | ScratchBird (MGA) | PostgreSQL (write-after log (WAL)) |
 |--------|-------------------|------------------|
 | **Write-after log (WAL) Buffers** | Not needed | 16 MB default |
-| **Version Storage** | In-page (xmin/xmax) | TOAST + HOT |
+| **Version Storage** | In-page record versions (rhd_transaction/back-version) | TOAST + HOT |
 | **Commit Log** | Commit bitmap | CLOG files |
 | **Recovery** | No write-after log (WAL) replay | Write-after log (WAL) replay |
 | **Memory Overhead** | Lower (no write-after log (WAL)) | Higher (write-after log (WAL) + buffers) |

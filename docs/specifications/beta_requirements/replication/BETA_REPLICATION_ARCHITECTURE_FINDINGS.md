@@ -1,5 +1,17 @@
 # Beta Replication Architecture - Implementation Findings & Recommendations
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
+**Legacy term note:** This document may use xmin/xmax labels for creator/deleter transaction IDs. ScratchBird does not use PostgreSQL tuple headers; see the authoritative MGA specs above for the actual Firebird-style record header fields (e.g., `rhd_transaction`, `rhd_back_version`) and visibility/GC rules.
+
+
 **Date:** 2026-01-08
 **Phase:** Alpha Polish → Beta Preparation
 **Status:** Architecture Analysis Complete
@@ -369,7 +381,7 @@ uint16_t assign_shard_colocated(UUID table_id, const TypedValue& partition_key_v
 ### 4.1 Directory Layout
 
 ```
-/docs/specifications/beta_requirements/replication/
+/docs/specifications/parser/v3/beta_requirements/replication/
 ├── 00_BETA_REPLICATION_INDEX.md (navigation, overview)
 ├── 01_LEADERLESS_QUORUM_REPLICATION.md (Mode 3 addition)
 ├── 02_HLC_UUIDV7_INTEGRATION.md (conflict resolution)
@@ -555,10 +567,10 @@ Beta replication should **extend this foundation**, not reinvent it.
    - Add note: "See `transaction_manager.h` for actual implementation"
 
 2. ✅ **Create Beta replication index:**
-   - `/docs/specifications/beta_requirements/replication/00_BETA_REPLICATION_INDEX.md`
+   - `/docs/specifications/parser/v3/beta_requirements/replication/00_BETA_REPLICATION_INDEX.md`
    - Overview, navigation, scope, priorities
 
-3. ⏭️ **Draft P0 specifications:**
+3. ⏭️ **Authoritative P0 specifications:**
    - `01_LEADERLESS_QUORUM_REPLICATION.md` (extends SBCLUSTER-07)
    - `02_HLC_UUIDV7_INTEGRATION.md` (conflict resolution)
 
@@ -574,9 +586,11 @@ Before creating detailed specifications, please confirm:
 ---
 
 **Status:** ✅ ANALYSIS COMPLETE
-**Next:** Draft Beta replication specifications based on decisions above
+**Next:** Authoritative replication specifications based on decisions above
 **Blocking:** Need scope/priority/timeline confirmation from project leadership
 
 ---
 
 **End of Findings Document**
+
+**Terminology note:** ScratchBird uses Firebird MGA. Any MGA references in this file are legacy shorthand and must be interpreted as MGA per the authoritative references above.

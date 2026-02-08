@@ -1,6 +1,6 @@
 # C# / .NET Driver Specification
 **Priority:** P0 (Critical - Beta Required)
-**Status:** Draft
+**Status:** Authoritative (V3)
 **Target Market:** ~28% of developers worldwide, Microsoft ecosystem, enterprise Windows
 **Use Cases:** Enterprise applications, Windows services, ASP.NET web apps, Azure cloud, desktop applications
 
@@ -14,7 +14,7 @@
 - TLS 1.3 required.
 - Emulated protocol drivers (PostgreSQL/MySQL/Firebird/TDS) are out of scope.
 
-**Scope Note:** SQL Server migration references are informational; MSSQL/TDS emulation is post-gold.
+**Scope Note:** SQL Server migration references are informational; MSSQL/TDS emulation is optional extension.
 
 
 ## Wrapper Types
@@ -101,7 +101,7 @@ using var rows = prep.ExecuteReader();
 - [x] [MIGRATION_GUIDE.md](MIGRATION_GUIDE.md) - Migration from other providers
   - From Npgsql (PostgreSQL .NET provider)
   - From MySql.Data / MySqlConnector
-  - From System.Data.SqlClient (SQL Server, post-gold reference)
+  - From System.Data.SqlClient (SQL Server, optional extension reference)
   - From FirebirdSql.Data.FirebirdClient
   - Connection string migration
   - Code changes required
@@ -710,5 +710,5 @@ Benchmark against Npgsql (PostgreSQL .NET provider):
 
 **Document Version:** 1.0 (Template)
 **Last Updated:** 2026-01-03
-**Status:** Draft
+**Status:** Authoritative (V3)
 **Assigned To:** TBD

@@ -1,5 +1,14 @@
 # IVF (Inverted File Index) for Vector Search Specification for ScratchBird
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 **Version:** 1.0
 **Date:** November 20, 2025
 **Status:** Implementation Ready (Requires Vector Type Support)
@@ -51,6 +60,57 @@ IVF (Inverted File) indexes enable **fast approximate nearest neighbor (ANN) sea
 - **Best for:** ML embeddings, image search, recommendation systems
 - **Page-size aware:** Adapts to database page size (8K/16K/32K/64K/128K)
 - **Approximate:** Trades accuracy for speed (configurable recall)
+
+---
+
+## Authoritative Algorithm (Normative, 2026-02-07)
+
+This section is the implementation source of truth. If any other section in
+this document conflicts with the steps below, this section wins.
+
+### Training Phase
+
+1. Sample training vectors.  
+2. Run **k‑means** to learn `nlist` coarse centroids.  
+3. (Optional) Train **product quantization (PQ)** codebooks on residual vectors.  
+
+### Build Phase
+
+1. For each vector `v`:
+   - Find nearest centroid `c`.  
+   - Store `(doc_id, v)` in inverted list `list[c]`.  
+   - If PQ enabled, store PQ code of residual `v - c` instead of full vector.  
+2. Persist inverted lists and centroid table.  
+
+### Query Phase
+
+1. Given query `q`, compute distances to all centroids.  
+2. Select `nprobe` nearest centroids.  
+3. For each selected list:
+   - Compute approximate distance between `q` and vectors in the list.  
+   - Use PQ codes if enabled; optionally re‑rank top‑K with exact vectors.  
+4. Return top‑K nearest neighbors.
+
+### Updates / Deletes
+
+1. Inserts go to a **delta list** (or small in‑memory list) for the nearest centroid.  
+2. Deletes mark tombstones in lists; compact periodically.  
+
+### MGA / Versioning
+
+- Each vector entry carries version metadata.  
+- Query merges base + delta lists and filters by MGA visibility.
+
+### Complexity Targets
+
+- Build: `O(N log nlist)` for coarse assignment.  
+- Query: `O(nlist + nprobe * list_scan)`; configurable via `nprobe`.  
+
+### References (for algorithmic definitions)
+
+- Johnson et al., “Billion‑scale similarity search with GPUs,” arXiv/FAISS.  
+
+---
 
 ### Classic Use Case
 
@@ -145,25 +205,20 @@ Following industry best practices, ScratchBird uses **Faiss (Facebook AI Similar
 
 #### IVF Architecture
 
-```cpp
-struct IVFIndex {
-    uint32_t nlist;                      // Number of clusters (e.g., 4096)
-    uint32_t dimension;                  // Vector dimension
-    uint32_t pq_m;                       // PQ subquantizers (e.g., 16)
-    uint32_t pq_nbits;                   // Bits per code (typically 8)
 
-    std::vector<float> centroids;        // nlist × d cluster centers
-    std::vector<std::vector<float>> pq_codebooks;  // m × 256 × (d/m) codebooks
-    std::vector<InvertedList> inverted_lists;      // nlist inverted lists
+**Logical Fields:**
 
-    bool is_trained;                     // Training status
-};
+- `nlist` (uint32_t): Number of clusters (e.g., 4096)
+- `dimension` (uint32_t): Vector dimension
+- `pq_m` (uint32_t): PQ subquantizers (e.g., 16)
+- `pq_nbits` (uint32_t): Bits per code (typically 8)
+- `centroids` (std::vector<float>): nlist × d cluster centers
+- `pq_codebooks` (std::vector<std::vector<float>>): m × 256 × (d/m) codebooks
+- `inverted_lists` (std::vector<InvertedList>): nlist inverted lists
+- `is_trained` (bool): Training status
+- `vector_ids` (std::vector<uint64_t>): Original row IDs
+- `pq_codes` (std::vector<uint8_t>): PQ-compressed vectors (m bytes each)
 
-struct InvertedList {
-    std::vector<uint64_t> vector_ids;    // Original row IDs
-    std::vector<uint8_t> pq_codes;       // PQ-compressed vectors (m bytes each)
-};
-```
 
 #### Query Flow
 
@@ -271,21 +326,14 @@ CREATE TABLE embeddings (
 
 ### Internal Representation
 
-```cpp
-struct VectorType {
-    uint16_t dimension;          // Number of dimensions
-    float* values;               // Array of float32 values
 
-    // Total size: 2 + (dimension × 4) bytes
-    // Example: VECTOR(128) = 2 + 512 = 514 bytes
-};
+**Logical Fields:**
 
-// Storage in heap tuple
-struct VectorValue {
-    uint16_t dimension;
-    float values[];              // Flexible array member
-} __attribute__((packed));
-```
+- `dimension` (uint16_t): Number of dimensions
+- `values` (float*): Array of float32 values
+- `dimension` (uint16_t)
+- `values[]` (float): Flexible array member
+
 
 ### Distance Metrics
 
@@ -358,180 +406,88 @@ IVF Index
 
 ### 1. IVF Index Meta Page
 
-```cpp
-#pragma pack(push, 1)
 
-struct SBIVFIndexMetaPage {
-    PageHeader ivf_header;          // Standard page header (64 bytes)
+**Logical Fields:**
 
-    // Index metadata (64 bytes)
-    uint8_t ivf_index_uuid[16];     // Index UUID (16 bytes)
-    uint32_t ivf_table_id;          // Parent table ID (4 bytes)
-    uint16_t ivf_column_id;         // Indexed column (2 bytes)
-    uint16_t ivf_dimension;         // Vector dimension (2 bytes)
-    uint32_t ivf_nlist;             // Number of clusters (4 bytes)
-    uint32_t ivf_nprobe;            // Default nprobe (4 bytes)
-    uint8_t ivf_pq_m;               // PQ subquantizers (1 byte)
-    uint8_t ivf_pq_nbits;           // Bits per code (1 byte, typically 8)
-    uint8_t ivf_metric;             // Distance metric (1 byte, 0=L2, 1=Cosine)
-    uint8_t ivf_is_trained;         // Training status (1 byte, 0=not trained, 1=trained)
-    uint64_t ivf_total_vectors;     // Total vectors indexed (8 bytes)
-    uint64_t ivf_training_time_ms;  // Training time (8 bytes)
-    uint32_t ivf_reserved1[3];      // Reserved (12 bytes)
+- `ivf_header` (PageHeader): Standard page header (64 bytes)
+- `ivf_index_uuid[16]` (uint8_t): Index UUID (16 bytes)
+- `ivf_table_id` (uint32_t): Parent table ID (4 bytes)
+- `ivf_column_id` (uint16_t): Indexed column (2 bytes)
+- `ivf_dimension` (uint16_t): Vector dimension (2 bytes)
+- `ivf_nlist` (uint32_t): Number of clusters (4 bytes)
+- `ivf_nprobe` (uint32_t): Default nprobe (4 bytes)
+- `ivf_pq_m` (uint8_t): PQ subquantizers (1 byte)
+- `ivf_pq_nbits` (uint8_t): Bits per code (1 byte, typically 8)
+- `ivf_metric` (uint8_t): Distance metric (1 byte, 0=L2, 1=Cosine)
+- `ivf_is_trained` (uint8_t): Training status (1 byte, 0=not trained, 1=trained)
+- `ivf_total_vectors` (uint64_t): Total vectors indexed (8 bytes)
+- `ivf_training_time_ms` (uint64_t): Training time (8 bytes)
+- `ivf_reserved1[3]` (uint32_t): Reserved (12 bytes)
+- `ivf_centroids_first_page` (uint32_t): First centroids page (4 bytes)
+- `ivf_centroids_num_pages` (uint32_t): Centroids page count (4 bytes)
+- `ivf_codebook_first_page` (uint32_t): First codebook page (4 bytes)
+- `ivf_codebook_num_pages` (uint32_t): Codebook page count (4 bytes)
+- `ivf_invlists_first_page` (uint32_t): First inverted list page (4 bytes)
+- `ivf_invlists_num_pages` (uint32_t): Inverted list page count (4 bytes)
+- `ivf_reserved2` (uint64_t): Reserved (8 bytes)
+- `ivf_total_queries` (uint64_t): Total queries (8 bytes)
+- `ivf_avg_query_time_us` (uint64_t): Average query time (8 bytes)
+- `ivf_total_list_scans` (uint64_t): Total lists scanned (8 bytes)
+- `ivf_reserved3` (uint64_t): Reserved (8 bytes)
+- `ivf_padding[]` (uint8_t): Flexible array member
 
-    // Page pointers (32 bytes)
-    uint32_t ivf_centroids_first_page;   // First centroids page (4 bytes)
-    uint32_t ivf_centroids_num_pages;    // Centroids page count (4 bytes)
-    uint32_t ivf_codebook_first_page;    // First codebook page (4 bytes)
-    uint32_t ivf_codebook_num_pages;     // Codebook page count (4 bytes)
-    uint32_t ivf_invlists_first_page;    // First inverted list page (4 bytes)
-    uint32_t ivf_invlists_num_pages;     // Inverted list page count (4 bytes)
-    uint64_t ivf_reserved2;              // Reserved (8 bytes)
-
-    // Statistics (32 bytes)
-    uint64_t ivf_total_queries;          // Total queries (8 bytes)
-    uint64_t ivf_avg_query_time_us;      // Average query time (8 bytes)
-    uint64_t ivf_total_list_scans;       // Total lists scanned (8 bytes)
-    uint64_t ivf_reserved3;              // Reserved (8 bytes)
-
-    // Padding to fill page
-    uint8_t ivf_padding[];               // Flexible array member
-} __attribute__((packed));
-
-// Fixed header size: 64 + 64 + 32 + 32 = 192 bytes
-
-// Distance metric types
-constexpr uint8_t IVF_METRIC_L2 = 0;
-constexpr uint8_t IVF_METRIC_COSINE = 1;
-constexpr uint8_t IVF_METRIC_INNER_PRODUCT = 2;
-
-#pragma pack(pop)
-```
 
 ### 2. Centroids Page
 
 Centroids are the cluster centers from k-means clustering.
 
-```cpp
-#pragma pack(push, 1)
 
-struct SBIVFCentroidsPage {
-    PageHeader cent_header;         // Standard page header (64 bytes)
-    uint32_t cent_next_page;        // Next centroids page (0 if last) (4 bytes)
-    uint32_t cent_start_index;      // First centroid index on this page (4 bytes)
-    uint16_t cent_dimension;        // Vector dimension (2 bytes)
-    uint16_t cent_num_centroids;    // Number of centroids on page (2 bytes)
-    uint32_t cent_reserved;         // Reserved (4 bytes)
+**Logical Fields:**
 
-    // Centroids data: Each centroid is dimension × sizeof(float) bytes
-    // Flexible array member - size varies by page size
-    uint8_t cent_data[];            // Variable-length centroid data
-} __attribute__((packed));
+- `cent_header` (PageHeader): Standard page header (64 bytes)
+- `cent_next_page` (uint32_t): Next centroids page (0 if last) (4 bytes)
+- `cent_start_index` (uint32_t): First centroid index on this page (4 bytes)
+- `cent_dimension` (uint16_t): Vector dimension (2 bytes)
+- `cent_num_centroids` (uint16_t): Number of centroids on page (2 bytes)
+- `cent_reserved` (uint32_t): Reserved (4 bytes)
+- `cent_data[]` (uint8_t): Variable-length centroid data
 
-// Fixed header size: 64 + 4 + 4 + 2 + 2 + 4 = 80 bytes
-
-// Calculate max centroids per page
-inline uint32_t maxCentroidsPerPage(uint32_t page_size, uint16_t dimension) {
-    constexpr uint32_t CENTROIDS_PAGE_HEADER_SIZE = 80;
-    uint32_t available_bytes = page_size - CENTROIDS_PAGE_HEADER_SIZE;
-    uint32_t bytes_per_centroid = dimension * sizeof(float);  // dimension × 4
-    return available_bytes / bytes_per_centroid;
-}
-
-// Examples for VECTOR(128):
-// 8KB pages: (8192 - 80) / 512 = 15 centroids per page
-// 16KB pages: (16384 - 80) / 512 = 31 centroids per page
-// 32KB pages: (32768 - 80) / 512 = 63 centroids per page
-
-#pragma pack(pop)
-```
 
 ### 3. PQ Codebook Page
 
 Product Quantization codebooks for vector compression.
 
-```cpp
-#pragma pack(push, 1)
 
-struct SBIVFCodebookPage {
-    PageHeader cb_header;           // Standard page header (64 bytes)
-    uint32_t cb_next_page;          // Next codebook page (0 if last) (4 bytes)
-    uint8_t cb_pq_m;                // Number of subquantizers (1 byte)
-    uint8_t cb_pq_nbits;            // Bits per code (1 byte, typically 8)
-    uint16_t cb_dimension;          // Vector dimension (2 bytes)
-    uint16_t cb_subvec_dim;         // Subvector dimension (d/m) (2 bytes)
-    uint16_t cb_start_subquantizer; // First subquantizer on page (2 bytes)
-    uint16_t cb_num_subquantizers;  // Subquantizers on page (2 bytes)
-    uint32_t cb_reserved;           // Reserved (4 bytes)
+**Logical Fields:**
 
-    // Codebook data: Each subquantizer has 256 centroids (for 8-bit)
-    // Each centroid is subvec_dim × sizeof(float) bytes
-    // Total per subquantizer: 256 × subvec_dim × 4 bytes
-    uint8_t cb_data[];              // Flexible array member
-} __attribute__((packed));
+- `cb_header` (PageHeader): Standard page header (64 bytes)
+- `cb_next_page` (uint32_t): Next codebook page (0 if last) (4 bytes)
+- `cb_pq_m` (uint8_t): Number of subquantizers (1 byte)
+- `cb_pq_nbits` (uint8_t): Bits per code (1 byte, typically 8)
+- `cb_dimension` (uint16_t): Vector dimension (2 bytes)
+- `cb_subvec_dim` (uint16_t): Subvector dimension (d/m) (2 bytes)
+- `cb_start_subquantizer` (uint16_t): First subquantizer on page (2 bytes)
+- `cb_num_subquantizers` (uint16_t): Subquantizers on page (2 bytes)
+- `cb_reserved` (uint32_t): Reserved (4 bytes)
+- `cb_data[]` (uint8_t): Flexible array member
 
-// Fixed header size: 64 + 4 + 1 + 1 + 2 + 2 + 2 + 2 + 4 = 82 bytes
-
-// Calculate max subquantizers per page
-inline uint32_t maxSubquantizersPerPage(uint32_t page_size, uint16_t subvec_dim) {
-    constexpr uint32_t CODEBOOK_PAGE_HEADER_SIZE = 82;
-    constexpr uint32_t NUM_CENTROIDS_PER_SUBQ = 256;  // For 8-bit PQ
-    uint32_t available_bytes = page_size - CODEBOOK_PAGE_HEADER_SIZE;
-    uint32_t bytes_per_subq = NUM_CENTROIDS_PER_SUBQ * subvec_dim * sizeof(float);
-    return available_bytes / bytes_per_subq;
-}
-
-// Example for VECTOR(128) with PQ_M=16:
-// subvec_dim = 128 / 16 = 8
-// bytes_per_subq = 256 × 8 × 4 = 8192 bytes
-// 8KB pages: (8192 - 82) / 8192 = 0 subquantizers → Need ~1 page per subquantizer
-// 16KB pages: (16384 - 82) / 8192 = 1 subquantizer per page
-// 32KB pages: (32768 - 82) / 8192 = 3 subquantizers per page
-
-#pragma pack(pop)
-```
 
 ### 4. Inverted List Page
 
 Each cluster has an inverted list of vectors assigned to it.
 
-```cpp
-#pragma pack(push, 1)
 
-struct SBIVFInvertedListPage {
-    PageHeader inv_header;          // Standard page header (64 bytes)
-    uint32_t inv_next_page;         // Next list page (0 if last) (4 bytes)
-    uint32_t inv_list_id;           // Cluster/list ID (4 bytes)
-    uint8_t inv_pq_m;               // PQ subquantizers (1 byte)
-    uint8_t inv_reserved1[3];       // Alignment (3 bytes)
-    uint32_t inv_num_vectors;       // Vectors on this page (4 bytes)
-    uint32_t inv_reserved2;         // Reserved (4 bytes)
+**Logical Fields:**
 
-    // Inverted list entries: Each entry is (vector_id + pq_code)
-    // vector_id: uint64_t (8 bytes)
-    // pq_code: pq_m bytes (e.g., 16 bytes for pq_m=16)
-    // Total per entry: 8 + pq_m bytes
-    uint8_t inv_data[];             // Flexible array member
-} __attribute__((packed));
+- `inv_header` (PageHeader): Standard page header (64 bytes)
+- `inv_next_page` (uint32_t): Next list page (0 if last) (4 bytes)
+- `inv_list_id` (uint32_t): Cluster/list ID (4 bytes)
+- `inv_pq_m` (uint8_t): PQ subquantizers (1 byte)
+- `inv_reserved1[3]` (uint8_t): Alignment (3 bytes)
+- `inv_num_vectors` (uint32_t): Vectors on this page (4 bytes)
+- `inv_reserved2` (uint32_t): Reserved (4 bytes)
+- `inv_data[]` (uint8_t): Flexible array member
 
-// Fixed header size: 64 + 4 + 4 + 1 + 3 + 4 + 4 = 84 bytes
-
-// Calculate max vectors per list page
-inline uint32_t maxVectorsPerListPage(uint32_t page_size, uint8_t pq_m) {
-    constexpr uint32_t INV_LIST_PAGE_HEADER_SIZE = 84;
-    uint32_t available_bytes = page_size - INV_LIST_PAGE_HEADER_SIZE;
-    uint32_t bytes_per_vector = sizeof(uint64_t) + pq_m;  // 8 + pq_m
-    return available_bytes / bytes_per_vector;
-}
-
-// Examples for PQ_M=16:
-// bytes_per_vector = 8 + 16 = 24 bytes
-// 8KB pages: (8192 - 84) / 24 = 337 vectors per page
-// 16KB pages: (16384 - 84) / 24 = 679 vectors per page
-// 32KB pages: (32768 - 84) / 24 = 1361 vectors per page
-
-#pragma pack(pop)
-```
 
 ---
 
@@ -884,16 +840,16 @@ float computePQDistance(const uint8_t* pq_code,
 
 Each of the `nlist` clusters has an inverted list containing all vectors assigned to that cluster.
 
-```cpp
-struct InvertedList {
-    uint32_t list_id;                    // Cluster ID
-    uint64_t num_vectors;                // Total vectors in list
-    std::vector<uint64_t> vector_ids;    // Original row IDs
-    std::vector<uint8_t> pq_codes;       // PQ codes (num_vectors × pq_m bytes)
-    uint32_t first_page;                 // First page for this list
-    uint32_t num_pages;                  // Pages used by this list
-};
-```
+
+**Logical Fields:**
+
+- `list_id` (uint32_t): Cluster ID
+- `num_vectors` (uint64_t): Total vectors in list
+- `vector_ids` (std::vector<uint64_t>): Original row IDs
+- `pq_codes` (std::vector<uint8_t>): PQ codes (num_vectors × pq_m bytes)
+- `first_page` (uint32_t): First page for this list
+- `num_pages` (uint32_t): Pages used by this list
+
 
 ### Insertion into Inverted Lists
 
@@ -1186,17 +1142,14 @@ IVF indexes must respect **Firebird MGA (Multi-Generation Architecture)** for tr
 
 **Approach:** Store transaction metadata alongside vector entries in inverted lists.
 
-```cpp
-struct InvertedListEntry {
-    uint64_t vector_id;          // Row ID (8 bytes)
-    uint8_t pq_code[PQ_M];       // PQ-encoded vector (pq_m bytes)
-    uint32_t insert_txn;         // Transaction that inserted this entry (4 bytes)
-    uint32_t delete_txn;         // Transaction that deleted (0 if active) (4 bytes)
-} __attribute__((packed));
 
-// Total size: 8 + pq_m + 4 + 4 = 16 + pq_m bytes
-// Example for pq_m=16: 32 bytes per entry
-```
+**Logical Fields:**
+
+- `vector_id` (uint64_t): Row ID (8 bytes)
+- `pq_code[PQ_M]` (uint8_t): PQ-encoded vector (pq_m bytes)
+- `insert_txn` (uint32_t): Transaction that inserted this entry (4 bytes)
+- `delete_txn` (uint32_t): Transaction that deleted (0 if active) (4 bytes)
+
 
 ### Visibility Check
 
@@ -1307,12 +1260,12 @@ With MGA metadata, entry size increases:
 
 ---
 
-## Tablespace + TID/GPID Requirements
+## Tablespace + Record UUID Requirements
 
-- **Row identity:** Store row references as `TID` (full `GPID + slot`) rather than legacy 32-bit page IDs.
+- **Row identity:** Store row references as `record_uuid` with optional `SBRecordPtr` cache hints.
 - **Tablespace routing:** IVF metadata pages and inverted lists must allocate/pin via `root_gpid` and `tablespace_id`.
-- **Heap fetch:** Result resolution must pin heap pages with `pinPageGlobal` using the `GPID` embedded in `TID`.
-- **Migration:** `updateTIDsAfterMigration` must rewrite row references across all inverted lists (including PQ code paths).
+- **Heap fetch:** Result resolution must resolve `record_uuid` to a record header (pointer may be stale).
+- **Migration:** `updateRecordLocatorsAfterMigration` must refresh cached `SBRecordPtr` values across all inverted lists (including PQ code paths).
 
 ---
 
@@ -1320,91 +1273,31 @@ With MGA metadata, entry size increases:
 
 ### IVFIndex Class
 
-```cpp
-class IVFIndex {
-public:
-    // Constructor
-    IVFIndex(uint32_t nlist,
-            uint32_t dimension,
-            uint8_t pq_m,
-            DistanceMetric metric,
-            uint32_t page_size);
 
-    // Training
-    Status train(Table* table, uint16_t column_id, ErrorContext* ctx);
-    bool isTrained() const { return is_trained_; }
+**Logical Fields:**
 
-    // Index operations
-    Status insert(uint64_t vector_id, const float* vector, uint32_t txn_id, ErrorContext* ctx);
-    Status remove(uint64_t vector_id, uint32_t txn_id, ErrorContext* ctx);
-    Status update(uint64_t vector_id, const float* old_vector, const float* new_vector,
-                 uint32_t txn_id, ErrorContext* ctx);
+- `nlist_` (uint32_t): Number of clusters
+- `dimension_` (uint32_t): Vector dimension
+- `pq_m_` (uint8_t): PQ subquantizers
+- `pq_nbits_` (uint8_t): Bits per code (typically 8)
+- `metric_` (DistanceMetric): Distance metric
+- `page_size_` (uint32_t): Database page size
+- `is_trained_` (bool): Training status
+- `training_time_ms_` (uint64_t): Training time
+- `centroids_` (std::vector<float>): nlist × dimension cluster centers
+- `codebooks_` (std::vector<std::vector<float>>): pq_m × 256 × (dimension/pq_m)
+- `inverted_lists_` (std::vector<InvertedList>): nlist inverted lists
+- `faiss_index_` (faiss::IndexIVFPQ*): Underlying Faiss index
+- `vector_id` (uint64_t): Row ID
+- `distance` (float): Distance to query
+- `total_vectors` (uint64_t)
+- `num_lists` (uint32_t)
+- `total_pages` (uint64_t)
+- `avg_list_size` (float)
+- `max_list_size` (float)
+- `total_queries` (uint64_t)
+- `avg_query_time_us` (uint64_t)
 
-    // Search
-    std::vector<SearchResult> search(const float* query_vector,
-                                    uint32_t k,
-                                    uint32_t nprobe,
-                                    uint32_t query_txn,
-                                    TransactionManager* txn_mgr,
-                                    ErrorContext* ctx);
-
-    // Maintenance
-    Status vacuum(TransactionManager* txn_mgr, ErrorContext* ctx);
-    Status rebalance(ErrorContext* ctx);  // Optional: redistribute vectors if lists unbalanced
-
-    // Statistics
-    IndexStatistics getStatistics() const;
-
-    // Persistence
-    Status persist(ErrorContext* ctx);
-    Status load(uint32_t meta_page_id, ErrorContext* ctx);
-
-private:
-    // Index metadata
-    uint32_t nlist_;                     // Number of clusters
-    uint32_t dimension_;                 // Vector dimension
-    uint8_t pq_m_;                       // PQ subquantizers
-    uint8_t pq_nbits_;                   // Bits per code (typically 8)
-    DistanceMetric metric_;              // Distance metric
-    uint32_t page_size_;                 // Database page size
-    bool is_trained_;                    // Training status
-    uint64_t training_time_ms_;          // Training time
-
-    // Index data
-    std::vector<float> centroids_;       // nlist × dimension cluster centers
-    std::vector<std::vector<float>> codebooks_;  // pq_m × 256 × (dimension/pq_m)
-    std::vector<InvertedList> inverted_lists_;   // nlist inverted lists
-
-    // Faiss integration
-    faiss::IndexIVFPQ* faiss_index_;     // Underlying Faiss index
-
-    // Helper methods
-    uint32_t findNearestCentroid(const float* vector, uint32_t dimension);
-    std::vector<uint32_t> findNearestCentroids(const float* query, uint32_t nprobe);
-    std::vector<uint8_t> encodePQ(const float* vector);
-    Status trainKMeans(const std::vector<float*>& train_vectors,
-                      std::vector<float>& centroids_out,
-                      ErrorContext* ctx);
-    Status trainProductQuantization(const std::vector<float*>& train_vectors,
-                                   std::vector<std::vector<float>>& codebooks_out,
-                                   ErrorContext* ctx);
-};
-
-struct SearchResult {
-    uint64_t vector_id;      // Row ID
-    float distance;          // Distance to query
-};
-
-struct IndexStatistics {
-    uint64_t total_vectors;
-    uint32_t num_lists;
-    uint64_t total_pages;
-    float avg_list_size;
-    float max_list_size;
-    uint64_t total_queries;
-    uint64_t avg_query_time_us;
-};
-```
 
 ---
 
@@ -1693,24 +1586,15 @@ OPTIONS (nprobe = 50);  -- Override default nprobe for this query
 
 ### Bytecode Instructions
 
-```cpp
-// Vector similarity search bytecode
-enum class VectorOpcode {
-    VECTOR_L2_DISTANCE,       // Compute L2 distance between two vectors
-    VECTOR_COSINE_DISTANCE,   // Compute cosine distance
-    VECTOR_INNER_PRODUCT,     // Compute inner product
-    IVF_INDEX_SEARCH,         // Execute IVF index search
-    VECTOR_NORMALIZE,         // Normalize vector (for cosine similarity)
-};
 
-struct IVFSearchInstruction {
-    uint16_t index_id;           // IVF index ID
-    uint16_t query_vector_reg;   // Register holding query vector
-    uint16_t k_reg;              // Register holding k value
-    uint16_t nprobe_reg;         // Register holding nprobe value
-    uint16_t result_reg;         // Register to store result row IDs
-};
-```
+**Logical Fields:**
+
+- `index_id` (uint16_t): IVF index ID
+- `query_vector_reg` (uint16_t): Register holding query vector
+- `k_reg` (uint16_t): Register holding k value
+- `nprobe_reg` (uint16_t): Register holding nprobe value
+- `result_reg` (uint16_t): Register to store result row IDs
+
 
 ### Bytecode Execution
 
@@ -1744,9 +1628,9 @@ Status VirtualMachine::executeIVFSearch(const IVFSearchInstruction& instr,
 ### Phase 1: VECTOR Data Type (4-6 weeks)
 
 **Week 1-2: Core Type Implementation**
-- [ ] Define `VectorValue` struct and storage format
+- [ ] Define `VectorValue` logical fields and storage format
 - [ ] Implement VECTOR(d) SQL type parser
-- [ ] Add heap tuple support for variable-length vectors
+- [ ] Add record-version support for variable-length vectors
 - [ ] Implement serialization/deserialization
 
 **Week 3-4: Distance Operators**
@@ -2250,3 +2134,9 @@ This specification provides a **complete, implementation-ready design** for IVF 
 ---
 
 **End of IVF Index Specification v1.0**
+
+## See Also
+
+- `INDEX_IMPLEMENTATION_REFERENCE.md` — authoritative algorithm map (includes per-index specs).
+- `INDEX_IMPLEMENTATION_SPEC.md` — global MGA/UUID requirements.
+- `INDEX_GC_PROTOCOL.md` — index GC contract.

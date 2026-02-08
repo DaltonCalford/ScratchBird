@@ -1,10 +1,19 @@
 # HyperLogLog Index Specification for ScratchBird
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 **Version:** 1.0
 **Date:** January 22, 2026
 **Status:** Implementation Ready
 **Author:** ScratchBird Architecture Team
-**Target:** ScratchBird Beta (Optional Index Type)
+**Target:** ScratchBird Beta (Core Index Type)
 **Features:** Page-size agnostic, MGA compliant, approximate distinct counts
 
 ---
@@ -43,6 +52,66 @@ HyperLogLog (HLL) provides fast, low-memory approximate distinct counts. It is u
 
 ---
 
+## Authoritative Algorithm (Normative, 2026-02-07)
+
+This section is the implementation source of truth. If any other section in
+this document conflicts with the steps below, this section wins.
+
+### Parameters
+
+- Precision `p` in `[4..16]` (typical).  
+- Number of registers `m = 2^p`.  
+- Expected relative error `≈ 1.04 / sqrt(m)`.  
+
+### Update
+
+1. Normalize key, hash to 64-bit value `x`.  
+2. Bucket index `j` = first `p` bits of `x`.  
+3. Remaining bits `w` = lower `64 - p` bits.  
+4. Rank `r` = position of first 1-bit in `w` + 1 (i.e., `rho(w)`).  
+5. `register[j] = max(register[j], r)`.  
+
+### Estimate
+
+1. Compute harmonic mean:
+   - `Z = 1 / sum(2^{-register[j]})`.  
+2. Bias-corrected estimate:
+   - `E = alpha_m * m^2 * Z`  
+   - `alpha_m` constants:
+     - `m=16` → 0.673
+     - `m=32` → 0.697
+     - `m=64` → 0.709
+     - `m>=128` → `0.7213 / (1 + 1.079/m)`
+3. Small-range correction (linear counting):
+   - If `E <= (5/2) * m` and `V` zero-registers exist:
+     - `E = m * ln(m / V)`
+4. Large-range correction:
+   - If `E > (1/30) * 2^32`, use:
+     - `E = -2^32 * ln(1 - E/2^32)`
+
+### Merge
+
+To combine HLLs (e.g., for partitions), take per-register maximum:
+
+```
+for each j: R[j] = max(R1[j], R2[j])
+```
+
+### MGA / Versioning
+
+- HLL is **auxiliary** and may be stale after rollbacks.  
+- Use for planner hints and approximate queries only.  
+
+### Complexity Targets
+
+- Update/query: `O(1)` time, `O(m)` space.
+
+### References (for algorithmic definitions)
+
+- Flajolet et al., “HyperLogLog: the analysis of a near-optimal cardinality estimation algorithm,” DMTCS 2007.  
+
+---
+
 ## Architecture Decision
 
 ### Design Choice
@@ -72,48 +141,34 @@ Implement HLL as an **auxiliary index** attached to a column. Each HLL index sto
 
 ### Meta Page
 
-```cpp
-#pragma pack(push, 1)
 
-struct SBHLLIndexMetaPage {
-    PageHeader hll_header;
+**Logical Fields:**
 
-    uint8_t hll_index_uuid[16];
-    uint8_t hll_table_uuid[16];
+- `hll_header` (PageHeader)
+- `hll_index_uuid[16]` (uint8_t)
+- `hll_table_uuid[16]` (uint8_t)
+- `hll_column_id` (uint16_t)
+- `hll_precision` (uint8_t): p
+- `hll_sparse` (uint8_t): 0/1
+- `hll_register_count` (uint32_t): m
+- `hll_register_bits` (uint32_t): 6 or 8
+- `hll_total_inserts` (uint64_t)
+- `hll_total_merges` (uint64_t)
+- `hll_register_first_page` (uint32_t)
+- `hll_register_page_count` (uint32_t)
+- `hll_padding[]` (uint8_t)
 
-    uint16_t hll_column_id;
-    uint8_t hll_precision;        // p
-    uint8_t hll_sparse;           // 0/1
-
-    uint32_t hll_register_count;  // m
-    uint32_t hll_register_bits;   // 6 or 8
-
-    uint64_t hll_total_inserts;
-    uint64_t hll_total_merges;
-
-    uint32_t hll_register_first_page;
-    uint32_t hll_register_page_count;
-
-    uint8_t hll_padding[];
-} __attribute__((packed));
-
-#pragma pack(pop)
-```
 
 ### Register Page
 
-```cpp
-#pragma pack(push, 1)
 
-struct SBHLLRegisterPage {
-    PageHeader hr_header;
-    uint32_t hr_next_page;
-    uint32_t hr_count;
-    uint8_t hr_registers[];    // packed 6-bit or 8-bit values
-} __attribute__((packed));
+**Logical Fields:**
 
-#pragma pack(pop)
-```
+- `hr_header` (PageHeader)
+- `hr_next_page` (uint32_t)
+- `hr_count` (uint32_t)
+- `hr_registers[]` (uint8_t): packed 6-bit or 8-bit values
+
 
 ---
 
@@ -127,9 +182,10 @@ struct SBHLLRegisterPage {
 
 ## MGA Compliance
 
-- Per-transaction HLL delta buffers merged on commit
-- Rollback discards local buffer
-- Snapshot visibility applies to values not yet merged
+- HLL is **auxiliary** and must never be used for correctness decisions.
+- Per-transaction HLL delta buffers are merged on commit.
+- Rollback discards local buffer.
+- Rebuild scans **visible record versions** (MGA/TIP rules) only.
 
 ---
 
@@ -226,3 +282,9 @@ WITH (precision = 14, sparse = true);
 - HLL++ bias correction tables
 - Per-partition HLL for rollups
 - Automatic fallback to exact counts if needed
+
+## See Also
+
+- `INDEX_IMPLEMENTATION_REFERENCE.md` — authoritative algorithm map (includes per-index specs).
+- `INDEX_IMPLEMENTATION_SPEC.md` — global MGA/UUID requirements.
+- `INDEX_GC_PROTOCOL.md` — index GC contract.

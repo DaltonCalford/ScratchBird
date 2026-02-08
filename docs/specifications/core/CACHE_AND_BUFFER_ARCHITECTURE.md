@@ -1,5 +1,14 @@
 # Cache and Buffer Architecture Specification
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 **Status:** Alpha specification (current state documented; target state defined)
 **Last Updated:** 2026-02-02
 **Scope:** Buffer pool, storage caches, statement/plan caches, query result caches, and cache observability
@@ -249,7 +258,7 @@ Result cache:
 
 ### 8.2 Required SQL Views
 
-Expose cache stats in monitoring views (see `docs/specifications/operations/`):
+Expose cache stats in monitoring views (see `docs/specifications/parser/v3/operations/`):
 - `sys.cache_stats` (per cache type)
 - `sys.buffer_pool_stats` (hits/misses/dirty/flushes)
 - `sys.statement_cache` (top cached statements)
@@ -292,8 +301,8 @@ A cache subsystem is considered complete when:
 
 ## 11) Related Specifications
 
-- Buffer Pool Design: `docs/specifications/storage/STORAGE_ENGINE_BUFFER_POOL.md`
+- Buffer Pool Design: `docs/specifications/parser/v3/storage/STORAGE_ENGINE_BUFFER_POOL.md`
 - Memory Management: `docs/specifications/MEMORY_MANAGEMENT.md`
-- Network Layer Caches: `docs/specifications/network/NETWORK_LAYER_SPEC.md`
-- Query Optimizer: `docs/specifications/query/QUERY_OPTIMIZER_SPEC.md`
-- Monitoring Views: `docs/specifications/operations/MONITORING_SQL_VIEWS.md`
+- Network Layer Caches: `docs/specifications/parser/v3/network/NETWORK_LAYER_SPEC.md`
+- Query Optimizer: `docs/specifications/parser/v3/query/QUERY_OPTIMIZER_SPEC.md`
+- Monitoring Views: `docs/specifications/parser/v3/operations/MONITORING_SQL_VIEWS.md`

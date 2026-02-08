@@ -610,7 +610,7 @@ CertValidationResult validate_certificate(
 
 ## 8. Operational Procedures
 
-### 8.1 Standard CA Rotation (Planned)
+### 8.1 Standard CA Rotation (Required)
 
 **Timeline**: 7-14 days total
 

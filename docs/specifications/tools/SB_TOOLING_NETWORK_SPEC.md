@@ -1,7 +1,7 @@
 # Network Tooling Specification (sb_backup/sb_verify/sb_security/sb_charset_loader)
 
 Version: 1.0
-Status: Draft (Alpha IP layer)
+Status: Authoritative (V3)
 Last Updated: January 2026
 
 ## Purpose
@@ -84,5 +84,5 @@ Some tools may optionally spawn a local helper process.
 ## Related Specs
 
 - docs/specifications/BACKUP_AND_RESTORE.md
-- docs/specifications/network/ENGINE_PARSER_IPC_CONTRACT.md
+- docs/specifications/parser/v3/network/ENGINE_PARSER_IPC_CONTRACT.md
 - docs/specifications/Security Design Specification/02_IDENTITY_AUTHENTICATION.md

@@ -1,13 +1,22 @@
 # ScratchBird Performance Benchmarks Specification
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 **Version:** 2.0
 **Last Updated:** 2026-01-07
 **Status:** ✅ Complete
 
-**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional post-gold (replication/PITR).
-Any WAL references in this document describe an optional post-gold stream for
+**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional optional extension (replication/PITR).
+Any WAL references in this document describe an optional optional extension stream for
 replication/PITR only.
-**Table Footnote:** In comparison tables below, ScratchBird WAL references are optional post-gold (replication/PITR).
+**Table Footnote:** In comparison tables below, ScratchBird WAL references are optional optional extension (replication/PITR).
 
 ---
 
@@ -193,7 +202,7 @@ Build:   Release, PGO (Profile-Guided Optimization)
 
 ### 3.4. Index Benchmark Suite
 
-**Purpose:** Test performance of all 11 index types.
+**Purpose:** Test performance of all 28 core index types.
 
 | Index Type | Workload | Metric |
 |------------|----------|--------|
@@ -208,6 +217,23 @@ Build:   Release, PGO (Profile-Guided Optimization)
 | **Bitmap** | Low-cardinality columns | scans/sec |
 | **Columnstore** | Analytical queries | GB/sec |
 | **LSM Tree** | Write-heavy workload | inserts/sec |
+| **FULLTEXT** | Term/phrase queries | queries/sec |
+| **IVF** | ANN vector search | queries/sec |
+| **ZoneMap** | Data skipping | rows/sec skipped |
+| **Z-Order** | Multi-dimensional range | ops/sec |
+| **Geohash** | Geo cell queries | ops/sec |
+| **S2** | Geo cell queries | ops/sec |
+| **Quadtree** | Spatial intersection | ops/sec |
+| **Octree** | 3D spatial intersection | ops/sec |
+| **FST** | Prefix lookup | lookups/sec |
+| **Suffix Array** | Substring search | queries/sec |
+| **Suffix Tree** | Substring search | queries/sec |
+| **Count-Min Sketch** | Frequency estimation | queries/sec |
+| **HyperLogLog** | Distinct estimation | queries/sec |
+| **ART** | In-memory key lookup | ops/sec |
+| **Learned Index** | Model-based lookup | ops/sec |
+| **LSM TTL** | Time-series retention | inserts/sec |
+| **JSON Path** | JSON path predicates | queries/sec |
 
 ### 3.5. Security Overhead Benchmark
 
@@ -578,7 +604,7 @@ shared_memory_size = 256MB          # Cluster mode
 max_connections = 100
 
 # Write-after log (WAL, optional; not used for recovery in MGA)
-wal_level = minimal                 # MGA doesn't need write-after log (WAL, optional post-gold) for recovery
+wal_level = minimal                 # MGA doesn't need write-after log (WAL, optional optional extension) for recovery
 
 # Checkpointing
 checkpoint_interval_sec = 300       # 5 minutes
@@ -1327,3 +1353,5 @@ if __name__ == '__main__':
 **Last Review:** 2026-01-07
 **Next Review:** 2026-04-07 (Quarterly)
 **Owner:** ScratchBird Core Team
+
+**Terminology note:** ScratchBird uses Firebird MGA. Any MGA references in this file are legacy shorthand and must be interpreted as MGA per the authoritative references above.

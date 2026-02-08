@@ -1,6 +1,15 @@
 # ScratchBird Replication and Shadow Database Specifications
 
-**Scope Note:** ScratchBird uses MGA and does not use WAL for recovery. References to WAL here describe an optional write-after log stream for replication/PITR (post-gold).
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
+**Scope Note:** ScratchBird uses MGA and does not use WAL for recovery. References to WAL here describe an optional write-after log stream for replication/PITR (optional extension).
 
 ## Shadow Database (Physical/Block-Level Replication)
 

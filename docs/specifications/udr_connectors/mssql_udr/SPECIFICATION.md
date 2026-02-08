@@ -1,6 +1,5 @@
 # MSSQL UDR Specification
-
-Status: Draft (Beta). This specification defines the MSSQL UDR that connects
+Status: Authoritative (V3)
 to SQL Server using the native TDS wire protocol (no external client library).
 
 ## Scope

@@ -1,8 +1,17 @@
 # ScratchBird Component Model and Responsibilities
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 **Document Version:** 0.1  
 **Date:** 2026-01-06  
-**Status:** Draft (Alpha finalization)
+**Status:** Authoritative (V3)
 
 ## Purpose
 
@@ -54,9 +63,9 @@ Reuse artifacts: [Component Model Diagrams](../../diagrams/component_model_diagr
 - Manages catalog/metadata and dialect virtualization surfaces for emulation.
 - Provides remote database connectors and local file connectors (UDR-backed).
 - Monitors stale connections/transactions; runs GC, job scheduler tasks, and maintenance jobs (index rebuilds, sweeps).
-- Durability model follows Firebird-style MGA; no write-after log (WAL, optional post-gold) in the engine core.
-  - Optional post-gold write-after log (WAL) may exist for replication/PITR.
-  - Beta temporal database is expected to supersede write-after log (WAL, optional post-gold) needs for recovery.
+- Durability model follows Firebird-style MGA; no write-after log (WAL, optional optional extension) in the engine core.
+  - Optional optional extension write-after log (WAL) may exist for replication/PITR.
+  - Beta temporal database is expected to supersede write-after log (WAL, optional optional extension) needs for recovery.
 
 ### Parser (Dialect Adapter)
 
@@ -94,7 +103,7 @@ This section mirrors the reusable matrix in
 | Catalog virtualization | Primary | Support | None | Engine defines surfaces; parser emulates dialect views. |
 | Shared SBLR cache | Primary | None | None | Global cache across sessions with security gating. |
 | Per-session compile cache | None | Primary | None | SQL -> SBLR artifacts scoped to connection. |
-| Storage, transactions, GC, maintenance | Primary | None | None | Firebird-style MGA; no write-after log (WAL, optional post-gold) in core. |
+| Storage, transactions, GC, maintenance | Primary | None | None | Firebird-style MGA; no write-after log (WAL, optional optional extension) in core. |
 | Scheduler (task planning) | Primary | None | None | Engine schedules GC and maintenance work. |
 | Job system (execution workers) | Primary | None | None | Engine owns background job execution. |
 | UDR connectors (local/remote) | Primary | None | None | Engine executes UDR connectors and enforces security. |
@@ -149,7 +158,7 @@ Network Listener --(socket handoff)--> Parser (per connection)
 - Define the SBLR cache keying and invalidation rules, including security gating.
 - Specify metadata virtualization interfaces for emulated dialects (catalog views, system tables, error codes).
 - Complete transaction/concurrency spec (stale txn detection, savepoints, GC scheduling).
-- Define durability/replication/PITR approach given no write-after log (WAL, optional post-gold) in core and future temporal DB.
+- Define durability/replication/PITR approach given no write-after log (WAL, optional optional extension) in core and future temporal DB.
 - Formalize listener <-> parser handoff protocol and pool management for cluster mode.
 - Decide whether to split "protocol adapter" from "SQL parser" for shared transport logic.
 - Observability: unified logging/metrics across engine, parser, and listener.

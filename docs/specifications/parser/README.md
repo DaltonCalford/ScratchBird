@@ -1,12 +1,21 @@
 # Parser Specifications
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 **[← Back to Specifications Index](../README.md)**
 
 This directory contains SQL parsing and grammar specifications for ScratchBird's multi-dialect parser architecture.
 
 ## Overview
 
-ScratchBird implements a unique multi-dialect SQL parser that supports native ScratchBird SQL, PostgreSQL, MySQL, and Firebird dialects (MSSQL post-gold). This directory contains the complete grammar specifications, parser implementation details, and emulation layer designs.
+ScratchBird implements a unique multi-dialect SQL parser that supports native ScratchBird SQL, PostgreSQL, MySQL, and Firebird dialects (MSSQL optional extension). This directory contains the complete grammar specifications, parser implementation details, and emulation layer designs.
 
 ## Specifications in this Directory
 
@@ -44,6 +53,28 @@ ScratchBird implements a unique multi-dialect SQL parser that supports native Sc
 
 - **[SCRATCHBIRD_SQL_CORE_LANGUAGE.md](SCRATCHBIRD_SQL_CORE_LANGUAGE.md)** - Core SQL surface and canonical references
 
+### V3 Parser Consolidation (Implementation-First)
+
+- **[v3/README.md](v3/README.md)** - V3 parser consolidation index
+- **[v3/SELECT_AND_QUERY.md](v3/SELECT_AND_QUERY.md)** - SELECT, CTE, set ops, ordering/limits
+- **[v3/JOINS.md](v3/JOINS.md)** - Join and table reference parsing
+- **[v3/WINDOWING.md](v3/WINDOWING.md)** - Window functions and frames
+- **[v3/INSERT.md](v3/INSERT.md)** - INSERT parsing rules
+- **[v3/UPDATE.md](v3/UPDATE.md)** - UPDATE parsing rules
+- **[v3/DELETE.md](v3/DELETE.md)** - DELETE parsing rules
+- **[v3/MERGE.md](v3/MERGE.md)** - MERGE parsing rules
+- **[v3/DDL_CREATE.md](v3/DDL_CREATE.md)** - CREATE parsing rules
+- **[v3/DDL_ALTER.md](v3/DDL_ALTER.md)** - ALTER parsing rules
+- **[v3/DDL_DROP_TRUNCATE.md](v3/DDL_DROP_TRUNCATE.md)** - DROP/TRUNCATE parsing rules
+- **[v3/TRANSACTION_CONTROL.md](v3/TRANSACTION_CONTROL.md)** - Transaction control parsing rules
+- **[v3/ACCESS_CONTROL.md](v3/ACCESS_CONTROL.md)** - GRANT/REVOKE parsing rules
+- **[v3/UTILITY_COPY.md](v3/UTILITY_COPY.md)** - COPY parsing rules
+- **[v3/SESSION_AND_UTILITY.md](v3/SESSION_AND_UTILITY.md)** - SET/SHOW/RESET/EXPLAIN/ANALYZE/CONNECT/COMMENT/etc
+- **[v3/PSQL_STATEMENTS.md](v3/PSQL_STATEMENTS.md)** - PSQL procedural statements and cursor handling
+- **[v3/SBLR_V3_OPCODE_SPEC.md](v3/SBLR_V3_OPCODE_SPEC.md)** - V3 SBLR opcode encoding and registry
+- **[v3/SBLR_V3_OLD_TO_NEW_MAPPING.md](v3/SBLR_V3_OLD_TO_NEW_MAPPING.md)** - Master old→new opcode mapping
+- **[v3/SBLR_V3_OPCODE_PAYLOADS.md](v3/SBLR_V3_OPCODE_PAYLOADS.md)** - Per-opcode payload schemas
+
 ## Key Concepts
 
 ### Multi-Dialect Architecture
@@ -52,7 +83,7 @@ ScratchBird uses a listener + parser pool architecture that routes incoming SQL
 through dialect-specific parsers:
 
 1. **Native Parser (V2)** - ScratchBird's native SQL dialect
-2. **Emulated Parsers** - PostgreSQL, MySQL, Firebird parsers that generate SBLR bytecode directly (MSSQL post-gold)
+2. **Emulated Parsers** - PostgreSQL, MySQL, Firebird parsers that generate SBLR bytecode directly (MSSQL optional extension)
 3. **Parser Isolation** - Emulated parsers are completely separate from V2 parser (no cross-contamination)
 
 ### Important Rules

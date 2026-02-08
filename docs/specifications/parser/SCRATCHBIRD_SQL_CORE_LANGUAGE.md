@@ -1,6 +1,5 @@
 # ScratchBird SQL Core Language (Alpha)
-
-**Status:** Draft (Alpha)
+**Status:** Authoritative (V3)
 
 ## 1. Purpose
 
@@ -12,15 +11,15 @@ language references.
 
 The following documents are the authoritative SQL core language sources:
 
-- `ScratchBird/docs/specifications/parser/SCRATCHBIRD_SQL_COMPLETE_BNF.md`
-- `ScratchBird/docs/specifications/parser/ScratchBird Master Grammar Specification v2.0.md`
-- `ScratchBird/docs/specifications/parser/ScratchBird SQL Language Specification - Master Document.md`
-- `ScratchBird/docs/specifications/parser/05_PSQL_PROCEDURAL_LANGUAGE.md`
+- `ScratchBird/docs/specifications/parser/v3/parser/SCRATCHBIRD_SQL_COMPLETE_BNF.md`
+- `ScratchBird/docs/specifications/parser/v3/parser/ScratchBird Master Grammar Specification v2.0.md`
+- `ScratchBird/docs/specifications/parser/v3/parser/ScratchBird SQL Language Specification - Master Document.md`
+- `ScratchBird/docs/specifications/parser/v3/parser/05_PSQL_PROCEDURAL_LANGUAGE.md`
 
 ## 3. Alpha Scope Notes
 
 - Core SQL and PSQL are Alpha scope.
 - Emulated dialect parsers map into SBLR and are documented separately.
 - NoSQL extensions are defined in the Beta document:
-  `ScratchBird/docs/specifications/parser/SCRATCHBIRD_UNIFIED_NOSQL_EXTENSIONS.md`.
+  `ScratchBird/docs/specifications/parser/v3/parser/SCRATCHBIRD_UNIFIED_NOSQL_EXTENSIONS.md`.
 

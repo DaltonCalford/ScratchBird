@@ -1,5 +1,20 @@
 # Firebird Transaction Model Technical Specification
 
+**Notice:** Deprecated: This document contains legacy wording (e.g., xmin/xmax, MGA) and is not authoritative. Use the Firebird-based ScratchBird specs listed below as the single source of truth.
+
+
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
+**Legacy term note:** This document may use xmin/xmax labels for creator/deleter transaction IDs. ScratchBird does not use PostgreSQL tuple headers; see the authoritative MGA specs above for the actual Firebird-style record header fields (e.g., `rhd_transaction`, `rhd_back_version`) and visibility/GC rules.
+
+
 **Date:** October 7, 2025
 **Status:** Technical Specification for ScratchBird Implementation
 **Version:** 1.0
@@ -9,7 +24,7 @@
 
 ## Executive Summary
 
-This specification documents Firebird's transaction implementation model for adoption in ScratchBird. Firebird's Multi-Generational Architecture (MGA) provides robust MVCC with proven mechanisms for managing long-running transactions, garbage collection, and transaction isolation.
+This specification documents Firebird's transaction implementation model for adoption in ScratchBird. Firebird's Multi-Generational Architecture (MGA) provides robust MGA with proven mechanisms for managing long-running transactions, garbage collection, and transaction isolation.
 
 **Key Adoption:** ScratchBird will implement Firebird's approach to:
 - Transaction markers (OIT, OAT, OST, Next)
@@ -1568,3 +1583,5 @@ FROM sb_gc_stats;
 **Status:** Technical Specification for Implementation
 **Target:** ScratchBird Alpha 1.2+
 **Estimated Implementation Effort:** 10 weeks (6-7 weeks with 2 developers)
+
+**Terminology note:** ScratchBird uses Firebird MGA. Any MGA references in this file are legacy shorthand and must be interpreted as MGA per the authoritative references above.

@@ -1,48 +1,62 @@
-# Firebird GC/Sweep Glossary (ScratchBird)
+# Firebird GC/Sweep Glossary (Authoritative for ScratchBird)
+
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 
 ## Purpose
-Quick reference for Firebird MGA garbage collection terms used across ScratchBird specs.
+Concise, Firebird-accurate definitions for GC and sweep terminology.
 
 ## Terms
 
-**Sweep**
-- A database-wide pass that forces garbage collection.
-- Triggered when `(OST - OIT) > sweep_interval`.
-- Removes obsolete back versions only; primary record slots remain stable.
-- SQL: `SWEEP` (native command). `VACUUM` is a PostgreSQL alias.
+**MGA (Multi-Generational Architecture)**
+Firebird-style MVCC that stores multiple versions of a record on-page and resolves
+visibility via TIP and snapshots. No WAL replay is required for visibility recovery.
+
+**TIP (Transaction Inventory Pages)**
+Pages that store 2-bit states for transactions (active, committed, dead, limbo).
+TIP is the authoritative source of transaction state.
+
+**OIT (Oldest Interesting Transaction)**
+Oldest transaction whose state still matters for visibility. Versions older than OIT
+may be garbage if no snapshot requires them.
+
+**OAT (Oldest Active Transaction)**
+Oldest currently active transaction.
+
+**OST (Oldest Snapshot Transaction)**
+Oldest snapshot still in use. Derived from active transactions’ snapshots and used
+for garbage collection thresholds.
 
 **Cooperative GC**
-- Opportunistic garbage collection during normal record access.
-- Low overhead; runs in the caller's context.
+Garbage collection performed opportunistically during normal record access. Readers
+and writers prune back-versions they encounter when safe.
 
 **Background GC Thread**
-- Dedicated worker that processes candidate pages when policy allows.
-- Uses a read-only, read-committed, no-lock transaction in Firebird.
+Dedicated GC thread that processes candidate pages collected in per-relation GC
+bitmaps. Attachments notify it when garbageable pages are encountered.
 
-**GC Policy**
-- `cooperative`, `background`, or `combined`.
-- Controls whether GC runs during reads, in a background thread, or both.
-
-**Candidate Page Tracking**
-- Firebird uses per-relation GC bitmaps (page sequence numbers).
-- ScratchBird currently tracks dirty pages globally and prioritizes them.
-
-**OIT / OAT / OST**
-- **OIT**: Oldest Interesting Transaction (visibility cutoff for GC).
-- **OAT**: Oldest Active Transaction (oldest still-running txn).
-- **OST**: Oldest Snapshot Transaction (oldest snapshot still in use).
+**Sweep**
+Database-wide scan that advances OIT and reclaims leftover garbage. Triggered
+automatically when the transaction gap exceeds sweep interval per Firebird’s logic:
+`(oldest_active_snapshot - OIT) > sweep_interval` and no limbo is involved.
 
 **Sweep Interval**
-- Transaction-count threshold between automatic sweeps.
-- Set via `ALTER DATABASE SET SWEEP INTERVAL`.
+Transaction-count threshold configured by `ALTER DATABASE SET SWEEP INTERVAL`.
 
-**VACUUM (PostgreSQL Alias)**
-- PostgreSQL compatibility term in ScratchBird.
-- Maps to sweep/GC semantics; no PostgreSQL VACUUM phases or VACUUM FULL rewrite.
-
-**SWEEP STATUS (planned)**
-- Read-only statement returning sweep statistics and transaction markers.
-- Does not perform a sweep; intended for status and scheduling decisions.
+**GC Horizon (Firebird)**
+The oldest active snapshot, computed via transaction locks (`LCK_tra`) and used to
+decide which versions are safe to remove. This is not xmin-style.
 
 ## References
-- Canonical GC model: `ScratchBird/docs/specifications/transaction/TRANSACTION_MGA_CORE.md`
+- Firebird transaction/sweep: `firebird/src/jrd/tra.cpp`
+- Firebird GC: `firebird/src/jrd/vio.cpp`
+- Read consistency and snapshots: `firebird/doc/README.read_consistency.md`
+
+**Terminology note:** ScratchBird uses Firebird MGA. Any MGA references in this file are legacy shorthand and must be interpreted as MGA per the authoritative references above.

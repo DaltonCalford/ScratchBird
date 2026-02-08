@@ -6,6 +6,7 @@
  */
 
 #include "scratchbird/udr/postgresql_udr.h"
+#include "scratchbird/udr/scram_auth.h"
 
 #include <cstring>
 #include <mutex>
@@ -328,17 +329,88 @@ core::Status PostgreSQLConnection::handleAuthMD5(const std::string& password,
 core::Status PostgreSQLConnection::handleAuthSASL(const std::string& password,
                                                  const std::vector<uint8_t>& data,
                                                  core::ErrorContext* ctx) {
-    // SCRAM-SHA-256 authentication
-    // This is a simplified implementation
-    // Full implementation would require SASL library
-    
-    if (ctx) {
-        ctx->set(core::Status::NOT_SUPPORTED,
-                "SCRAM-SHA-256 authentication not yet implemented",
-                __FILE__, __LINE__, __func__);
+    // SCRAM-SHA-256 authentication using SCRAMClient
+    try {
+        // Parse server mechanisms from data
+        std::string mechanisms(reinterpret_cast<const char*>(data.data()), data.size());
+        
+        // Check if SCRAM-SHA-256 is supported
+        if (mechanisms.find("SCRAM-SHA-256") == std::string::npos) {
+            if (ctx) {
+                ctx->set(core::Status::NOT_SUPPORTED,
+                        "Server does not support SCRAM-SHA-256",
+                        __FILE__, __LINE__, __func__);
+            }
+            return core::Status::NOT_SUPPORTED;
+        }
+        
+        // Get username from parameters
+        auto user_it = parameters_.find("user");
+        std::string username = (user_it != parameters_.end()) ? user_it->second : "";
+        
+        // Create SCRAM client
+        SCRAMClient scram(SCRAMMechanism::SCRAM_SHA_256);
+        
+        // 1) Generate and send client-first-message
+        std::string client_first = scram.generateClientFirstMessage(username);
+        std::vector<uint8_t> first_payload(client_first.begin(), client_first.end());
+        auto status = writeMessage(pg::MSG_PASSWORD_MESSAGE, first_payload, ctx);
+        if (status != core::Status::OK) return status;
+        
+        // 2) Receive and process server-first-message
+        char msg_type;
+        std::vector<uint8_t> server_response;
+        status = readMessage(msg_type, server_response, ctx);
+        if (status != core::Status::OK) return status;
+        
+        std::string server_first(reinterpret_cast<const char*>(server_response.data()),
+                                 server_response.size());
+        
+        // 3) Generate client-final-message
+        std::string client_final;
+        if (!scram.processServerFirstMessage(server_first, password, client_final)) {
+            if (ctx) {
+                ctx->set(core::Status::INVALID_PASSWORD,
+                        ("SCRAM authentication failed: " + scram.getError()).c_str(),
+                        __FILE__, __LINE__, __func__);
+            }
+            return core::Status::INVALID_PASSWORD;
+        }
+        
+        std::vector<uint8_t> final_payload(client_final.begin(), client_final.end());
+        status = writeMessage(pg::MSG_PASSWORD_MESSAGE, final_payload, ctx);
+        if (status != core::Status::OK) return status;
+        
+        // 4) Receive and verify server-final-message
+        server_response.clear();
+        status = readMessage(msg_type, server_response, ctx);
+        if (status != core::Status::OK) return status;
+        
+        std::string server_final(reinterpret_cast<const char*>(server_response.data()),
+                                 server_response.size());
+        
+        if (!scram.verifyServerFinalMessage(server_final)) {
+            if (ctx) {
+                ctx->set(core::Status::INVALID_PASSWORD,
+                        ("SCRAM server verification failed: " + scram.getError()).c_str(),
+                        __FILE__, __LINE__, __func__);
+            }
+            return core::Status::INVALID_PASSWORD;
+        }
+        
+        return core::Status::OK;
+        
+    } catch (const std::exception& e) {
+        if (ctx) {
+            ctx->set(core::Status::INVALID_PASSWORD,
+                    (std::string("SCRAM-SHA-256 error: ") + e.what()).c_str(),
+                    __FILE__, __LINE__, __func__);
+        }
+        return core::Status::INVALID_PASSWORD;
     }
-    return core::Status::NOT_SUPPORTED;
 }
+
+// MD5 authentication helper methods (kept for MD5 password support)
 
 std::string PostgreSQLConnection::md5Hash(const std::string& input) {
     unsigned char digest[MD5_DIGEST_LENGTH];

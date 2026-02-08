@@ -65,7 +65,7 @@ effective privilege), using the standard permission checker by `object_id`.
 - `INDEX` (indexes)
 
 The exact mapping should follow catalog rules in
-`docs/specifications/catalog/SYSTEM_CATALOG_STRUCTURE.md`.
+`docs/specifications/parser/v3/catalog/SYSTEM_CATALOG_STRUCTURE.md`.
 
 ## 6. Maintenance Rules
 The registry is updated in the same catalog transaction as the DDL change:
@@ -106,10 +106,10 @@ WHERE namespace_group = 'RELATION'
 ```
 
 ## 9. Dependencies
-- `docs/specifications/catalog/SYSTEM_CATALOG_STRUCTURE.md`
-- `docs/specifications/catalog/SCHEMA_PATH_RESOLUTION.md`
+- `docs/specifications/parser/v3/catalog/SYSTEM_CATALOG_STRUCTURE.md`
+- `docs/specifications/parser/v3/catalog/SCHEMA_PATH_RESOLUTION.md`
 - `docs/specifications/Security Design Specification/03_AUTHORIZATION_MODEL.md`
-- `docs/specifications/core/ENGINE_CORE_UNIFIED_SPEC.md`
+- `docs/specifications/parser/v3/core/ENGINE_CORE_UNIFIED_SPEC.md`
 
 ## 10. Out of Scope
 - Replacing per-object catalog tables as the source of truth.

@@ -1,7 +1,7 @@
 # sb_verify CLI Specification
 
 Version: 1.0  
-Status: Draft (Alpha networking)  
+Status: Authoritative (V3)
 Last Updated: January 2026
 
 ## Purpose
@@ -67,6 +67,6 @@ sb_verify <database> [options]
 
 ## Related Specs
 
-- `docs/specifications/tools/SB_TOOLING_NETWORK_SPEC.md`
-- `docs/specifications/operations/MONITORING_SQL_VIEWS.md`
-- `docs/specifications/transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md`
+- `docs/specifications/parser/v3/tools/SB_TOOLING_NETWORK_SPEC.md`
+- `docs/specifications/parser/v3/operations/MONITORING_SQL_VIEWS.md`
+- `docs/specifications/parser/v3/transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md`

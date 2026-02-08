@@ -207,7 +207,7 @@ Key metrics to monitor:
 
 ### Future Enhancements
 
-Planned improvements for Beta/Production:
+Required improvements for Beta/Production:
 1. FSM chaining for unlimited pages
 2. 64-bit page IDs (optional)
 3. Compressed pages

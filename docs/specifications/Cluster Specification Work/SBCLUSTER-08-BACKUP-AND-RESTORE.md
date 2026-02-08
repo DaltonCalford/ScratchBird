@@ -1,5 +1,14 @@
 # SBCLUSTER-08: Backup and Restore
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 ## 1. Introduction
 
 ### 1.1 Purpose
@@ -1038,7 +1047,8 @@ RESTORE CLUSTER
 | 1.0     | 2026-01-02 | D. Calford   | Initial comprehensive specification        |
 
 ---
-
-**Document Status**: DRAFT (Beta Specification Phase)
+**Document Status**: Authoritative (V3)
 **Next Review**: Before Beta Implementation Phase
 **Approval Required**: Chief Architect, Storage Engineering Lead, Security Lead
+
+**Terminology note:** ScratchBird uses Firebird MGA. Any MGA references in this file are legacy shorthand and must be interpreted as MGA per the authoritative references above.

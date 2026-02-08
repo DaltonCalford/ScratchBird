@@ -62,7 +62,7 @@ This document describes the external authentication infrastructure for ScratchBi
 #### LDAPAuthProvider
 - **Status**: Stub implementation
 - **Purpose**: LDAP/LDAPS authentication
-- **Planned Features**:
+- **Required Features**:
   - LDAP bind authentication
   - User/group synchronization
   - TLS/SSL support
@@ -71,7 +71,7 @@ This document describes the external authentication infrastructure for ScratchBi
 #### ActiveDirectoryAuthProvider
 - **Status**: Stub implementation
 - **Purpose**: Active Directory authentication
-- **Planned Features**:
+- **Required Features**:
   - AD domain authentication
   - Kerberos support
   - Group membership from AD
@@ -283,7 +283,7 @@ if (result == AuthResult::SUCCESS) {
 }
 ```
 
-### Beta - LDAP Authentication (Planned)
+### Beta - LDAP Authentication (Required)
 
 ```cpp
 // Create LDAP auth provider (Beta)
@@ -345,7 +345,7 @@ if (result == AuthResult::SUCCESS) {
 1. **TLS/SSL**:
    - Required for production use
    - Certificate verification mandatory
-   - Mutual TLS support planned
+   - Mutual TLS support required
 
 2. **Credential Storage**:
    - Service account credentials encrypted
@@ -380,7 +380,7 @@ if (result == AuthResult::SUCCESS) {
 - [ ] Configuration management
 - [ ] Audit logging for auth events
 
-### 🔮 Post-Beta
+### 🔮 optional extension
 - [ ] OAuth2Provider
 - [ ] SAMLProvider
 - [ ] Kerberos integration

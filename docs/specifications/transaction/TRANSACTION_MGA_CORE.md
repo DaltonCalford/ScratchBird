@@ -1,1038 +1,587 @@
-# ScratchBird Transaction Management - MGA Core
+# ScratchBird Transaction Management - MGA Core (Firebird Model)
+
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 ## Part 1 of Transaction and Lock Management Specification
 
-## Overview
-
-ScratchBird's transaction system is built on Multi-Generational Architecture (MGA/MVCC) inherited from Firebird, enhanced with 64-bit transaction IDs, PostgreSQL-style predicate locking for true serializability, and built-in support for distributed transactions. This specification details the core MGA implementation.
-
-**MGA Reference:** See `MGA_RULES.md` for Multi-Generational Architecture semantics (visibility, TIP usage, recovery).
-**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional post-gold (replication/PITR).
-Any WAL references in this document describe an optional post-gold stream for
-replication/PITR only.
-
-## 1. Transaction ID Management
-
-### 1.1 Transaction ID Structure
-
-```c
-// 64-bit transaction IDs - no wraparound issues
-typedef uint64_t TransactionId;
-
-// Special transaction IDs
-#define InvalidTransactionId        ((TransactionId) 0)
-#define BootstrapTransactionId      ((TransactionId) 1)
-#define FrozenTransactionId         ((TransactionId) 2)
-#define FirstNormalTransactionId    ((TransactionId) 3)
-#define MaxTransactionId            ((TransactionId) 0xFFFFFFFFFFFFFFFF)
-
-// Transaction ID generation block
-typedef struct transaction_id_generator {
-    // Current state
-    TransactionId   tig_next_xid;          // Next XID to assign
-    TransactionId   tig_oldest_xid;        // Oldest XID still running
-    TransactionId   tig_oldest_active;     // Oldest active XID (OAT)
-    TransactionId   tig_oldest_snapshot;   // Oldest snapshot XID (OST)
-    
-    // UUID support for distributed
-    UUID            tig_node_uuid;         // Node UUID for distributed XIDs
-    uint16_t        tig_node_id;           // Node ID component
-    
-    // Synchronization
-    pthread_mutex_t tig_mutex;             // Mutex for XID generation
-    
-    // Statistics
-    uint64_t        tig_xids_generated;    // Total XIDs generated
-    uint64_t        tig_xids_committed;    // XIDs committed
-    uint64_t        tig_xids_aborted;      // XIDs aborted
-} TransactionIdGenerator;
-
-// Generate new transaction ID
-TransactionId allocate_transaction_id(
-    TransactionIdGenerator* gen)
-{
-    pthread_mutex_lock(&gen->tig_mutex);
-    
-    TransactionId xid = gen->tig_next_xid++;
-    
-    // With 64-bit IDs, wraparound would take centuries
-    // But still check for safety
-    if (xid >= MaxTransactionId - 1000000) {
-        pthread_mutex_unlock(&gen->tig_mutex);
-        elog(PANIC, "Transaction ID space nearly exhausted");
-    }
-    
-    gen->tig_xids_generated++;
-    
-    pthread_mutex_unlock(&gen->tig_mutex);
-    
-    // Extend TIP if needed
-    if (xid % XIDS_PER_TIP_PAGE == 0) {
-        extend_tip_pages(xid);
-    }
-    
-    return xid;
-}
-
-// Transaction ID with distributed support
-typedef struct distributed_xid {
-    TransactionId   dxid_local;            // Local transaction ID
-    UUID            dxid_global;           // Global transaction UUID
-    uint16_t        dxid_node_id;          // Originating node
-    uint32_t        dxid_sequence;         // Sequence within node
-} DistributedXid;
-```
-
-### 1.2 Transaction Inventory Pages (TIP)
-
-```c
-// TIP page size depends on database page size
-#define XIDS_PER_TIP_PAGE(page_size) \
-    ((page_size - sizeof(TIPPageHeader)) * 4)
-
-// Transaction states in TIP (2 bits per transaction)
-typedef enum transaction_state {
-    TXN_STATE_ACTIVE = 0,       // Transaction active
-    TXN_STATE_COMMITTED = 1,    // Transaction committed
-    TXN_STATE_ABORTED = 2,      // Transaction aborted
-    TXN_STATE_LIMBO = 3         // Two-phase commit limbo
-} TransactionState;
-
-// TIP page header
-typedef struct tip_page_header {
-    SBPageHeader    tph_header;            // Standard page header
-    TransactionId   tph_oldest_xid;        // Oldest XID on this page
-    TransactionId   tph_newest_xid;        // Newest XID on this page
-    uint32_t        tph_n_transactions;    // Number of transactions
-    
-    // Statistics
-    uint32_t        tph_n_committed;       // Committed count
-    uint32_t        tph_n_aborted;         // Aborted count
-    uint32_t        tph_n_limbo;           // Limbo count
-} TIPPageHeader;
-
-// TIP page structure
-typedef struct tip_page {
-    TIPPageHeader   tip_header;            // Page header
-    uint8_t         tip_bits[FLEXIBLE_ARRAY_MEMBER]; // Transaction bits
-} TIPPage;
-
-// Get transaction state from TIP
-TransactionState get_transaction_state(
-    TransactionId xid)
-{
-    // Calculate TIP page number
-    uint32_t page_size = get_current_page_size();
-    uint32_t xids_per_page = XIDS_PER_TIP_PAGE(page_size);
-    BlockNumber tip_page_num = xid / xids_per_page;
-    uint32_t offset_in_page = xid % xids_per_page;
-    
-    // Read TIP page
-    TIPPage* tip_page = read_tip_page(tip_page_num);
-    
-    // Extract 2-bit state
-    uint32_t byte_offset = offset_in_page / 4;
-    uint32_t bit_offset = (offset_in_page % 4) * 2;
-    uint8_t byte = tip_page->tip_bits[byte_offset];
-    
-    TransactionState state = (byte >> bit_offset) & 0x03;
-    
-    release_tip_page(tip_page);
-    
-    return state;
-}
-
-// Set transaction state in TIP
-void set_transaction_state(
-    TransactionId xid,
-    TransactionState new_state)
-{
-    // Calculate TIP page location
-    uint32_t page_size = get_current_page_size();
-    uint32_t xids_per_page = XIDS_PER_TIP_PAGE(page_size);
-    BlockNumber tip_page_num = xid / xids_per_page;
-    uint32_t offset_in_page = xid % xids_per_page;
-    
-    // Get TIP page for update
-    TIPPage* tip_page = get_tip_page_for_update(tip_page_num);
-    
-    // Update 2-bit state
-    uint32_t byte_offset = offset_in_page / 4;
-    uint32_t bit_offset = (offset_in_page % 4) * 2;
-    uint8_t* byte_ptr = &tip_page->tip_bits[byte_offset];
-    
-    // Clear old state and set new
-    *byte_ptr = (*byte_ptr & ~(0x03 << bit_offset)) | 
-                (new_state << bit_offset);
-    
-    // Update statistics
-    update_tip_statistics(tip_page, xid, new_state);
-    
-    // Mark page dirty
-    mark_tip_page_dirty(tip_page);
-    
-    release_tip_page(tip_page);
-}
-```
-
-## 2. Transaction Structure and Management
-
-### 2.1 Transaction Descriptor
-
-```c
-// Main transaction structure
-typedef struct sb_transaction {
-    // Identity
-    TransactionId   txn_id;                // Transaction ID
-    UUID            txn_uuid;              // Transaction UUID (for distributed)
-    
-    // State
-    TransactionState txn_state;            // Current state
-    IsolationLevel  txn_isolation;         // Isolation level
-    bool            txn_read_only;         // Read-only transaction
-    bool            txn_deferrable;        // Deferrable (for serializable)
-    
-    // Snapshot data (for MVCC)
-    TransactionId   txn_snapshot_xmin;     // Lowest XID to consider
-    TransactionId   txn_snapshot_xmax;     // Highest XID + 1 to consider
-    TransactionId*  txn_snapshot_xip;      // Array of active XIDs
-    uint32_t        txn_snapshot_xcnt;     // Count of active XIDs
-    CommandId       txn_command_id;        // Current command ID
-    
-    // Timestamps
-    TimestampTz     txn_start_time;        // Start timestamp
-    TimestampTz     txn_commit_time;       // Commit timestamp (if committed)
-    
-    // Lock management
-    LockList*       txn_locks;             // Held locks
-    PredicateLockList* txn_predicate_locks; // Predicate locks (serializable)
-    
-    // Modified data tracking
-    DirtyPageList*  txn_dirty_pages;       // Modified pages
-    TupleList*      txn_inserted_tuples;   // Inserted tuples
-    TupleList*      txn_deleted_tuples;    // Deleted tuples
-    
-    // Savepoints
-    SavepointStack* txn_savepoints;        // Savepoint stack
-    uint32_t        txn_savepoint_level;   // Current savepoint level
-    
-    // Two-phase commit
-    bool            txn_prepared;          // In prepared state
-    char            txn_gid[200];          // Global transaction ID
-    
-    // Distributed transaction
-    bool            txn_distributed;       // Is distributed
-    NodeList*       txn_participants;      // Participant nodes
-    
-    // Statistics
-    uint64_t        txn_tuples_inserted;   // Tuples inserted
-    uint64_t        txn_tuples_updated;    // Tuples updated
-    uint64_t        txn_tuples_deleted;    // Tuples deleted
-    uint64_t        txn_pages_read;        // Pages read
-    uint64_t        txn_pages_written;     // Pages written
-} SBTransaction;
-
-// Isolation levels
-typedef enum isolation_level {
-    ISOLATION_READ_COMMITTED,       // Default
-    ISOLATION_REPEATABLE_READ,      // Snapshot isolation
-    ISOLATION_SERIALIZABLE,         // True serializability
-    ISOLATION_READ_UNCOMMITTED      // For compatibility only
-} IsolationLevel;
-```
-
-### 2.2 Transaction Operations
-
-```c
-// Begin transaction
-SBTransaction* begin_transaction(
-    IsolationLevel isolation,
-    bool read_only,
-    bool deferrable)
-{
-    // Allocate transaction structure
-    SBTransaction* txn = allocate(sizeof(SBTransaction));
-    
-    // Generate transaction ID
-    txn->txn_id = allocate_transaction_id(get_xid_generator());
-    txn->txn_uuid = generate_uuid_v7();
-    
-    // Set properties
-    txn->txn_isolation = isolation;
-    txn->txn_read_only = read_only;
-    txn->txn_deferrable = deferrable;
-    txn->txn_state = TXN_STATE_ACTIVE;
-    
-    // Take snapshot
-    take_transaction_snapshot(txn);
-    
-    // Initialize lists
-    txn->txn_locks = create_lock_list();
-    txn->txn_dirty_pages = create_dirty_page_list();
-    
-    // Register in TIP
-    set_transaction_state(txn->txn_id, TXN_STATE_ACTIVE);
-    
-    // Add to active transaction list
-    add_to_active_transactions(txn);
-    
-    // Set start time
-    txn->txn_start_time = GetCurrentTimestamp();
-    
-    return txn;
-}
-
-// Commit transaction
-Status commit_transaction(SBTransaction* txn) {
-    // Check if can commit
-    if (txn->txn_state != TXN_STATE_ACTIVE &&
-        txn->txn_state != TXN_STATE_PREPARED) {
-        return STATUS_INVALID_TRANSACTION_STATE;
-    }
-    
-    // For serializable, check for conflicts
-    if (txn->txn_isolation == ISOLATION_SERIALIZABLE) {
-        if (!check_serializable_conflicts(txn)) {
-            return STATUS_SERIALIZATION_FAILURE;
-        }
-    }
-    
-    // Phase 1: Pre-commit (for 2PC)
-    if (txn->txn_distributed) {
-        if (!prepare_distributed_commit(txn)) {
-            return STATUS_PREPARE_FAILED;
-        }
-    }
-    
-    // Phase 2: Update TIP
-    set_transaction_state(txn->txn_id, TXN_STATE_COMMITTED);
-    
-    // Phase 3: Release locks
-    release_all_locks(txn);
-    
-    // Phase 4: Flush dirty pages if needed
-    if (!txn->txn_read_only) {
-        flush_transaction_pages(txn);
-    }
-    
-    // Phase 5: Update statistics
-    update_transaction_statistics(txn);
-    
-    // Phase 6: Remove from active list
-    remove_from_active_transactions(txn);
-    
-    // Set commit time
-    txn->txn_commit_time = GetCurrentTimestamp();
-    txn->txn_state = TXN_STATE_COMMITTED;
-    
-    // Cleanup
-    cleanup_transaction(txn);
-    
-    return STATUS_OK;
-}
-
-// Rollback transaction
-Status rollback_transaction(SBTransaction* txn) {
-    // Update TIP
-    set_transaction_state(txn->txn_id, TXN_STATE_ABORTED);
-    
-    // Release all locks
-    release_all_locks(txn);
-    
-    // No undo needed with MGA - old versions still exist
-    // Just mark our changes as aborted
-    
-    // Remove from active list
-    remove_from_active_transactions(txn);
-    
-    txn->txn_state = TXN_STATE_ABORTED;
-    
-    // Cleanup
-    cleanup_transaction(txn);
-    
-    return STATUS_OK;
-}
-```
-
-## 3. Snapshot Management (MVCC)
-
-### 3.1 Snapshot Structure
-
-```c
-// Transaction snapshot for MVCC visibility
-typedef struct transaction_snapshot {
-    // Snapshot bounds
-    TransactionId   snap_xmin;             // Lowest XID to consider
-    TransactionId   snap_xmax;             // Highest XID + 1 to consider
-    
-    // Active transactions at snapshot time
-    TransactionId*  snap_xip;              // Array of active XIDs
-    uint32_t        snap_xcnt;             // Count of active XIDs
-    
-    // Snapshot metadata
-    TimestampTz     snap_timestamp;        // When snapshot taken
-    LSN             snap_lsn;              // LSN at snapshot
-    
-    // For serializable isolation
-    bool            snap_serializable;     // Is serializable snapshot
-    PredicateLockTarget* snap_predicate_locks; // Predicate lock targets
-    
-    // Reference counting
-    uint32_t        snap_refcount;         // Reference count
-} TransactionSnapshot;
-
-// Take transaction snapshot
-void take_transaction_snapshot(SBTransaction* txn) {
-    TransactionSnapshot* snap = allocate(sizeof(TransactionSnapshot));
-    
-    // Get current transaction state
-    TransactionIdGenerator* gen = get_xid_generator();
-    
-    pthread_mutex_lock(&gen->tig_mutex);
-    
-    snap->snap_xmax = gen->tig_next_xid;
-    snap->snap_xmin = gen->tig_oldest_xid;
-    
-    // Collect active transactions
-    ActiveTransactionList* active = get_active_transactions();
-    snap->snap_xcnt = active->count;
-    snap->snap_xip = allocate(sizeof(TransactionId) * snap->snap_xcnt);
-    
-    uint32_t idx = 0;
-    for (SBTransaction* active_txn : active->transactions) {
-        if (active_txn->txn_id < snap->snap_xmax &&
-            active_txn->txn_id >= snap->snap_xmin) {
-            snap->snap_xip[idx++] = active_txn->txn_id;
-        }
-    }
-    snap->snap_xcnt = idx;
-    
-    pthread_mutex_unlock(&gen->tig_mutex);
-    
-    // Sort active XIDs for binary search
-    qsort(snap->snap_xip, snap->snap_xcnt, 
-          sizeof(TransactionId), compare_xids);
-    
-    // Set metadata
-    snap->snap_timestamp = GetCurrentTimestamp();
-    snap->snap_lsn = GetCurrentLSN();
-    snap->snap_serializable = (txn->txn_isolation == ISOLATION_SERIALIZABLE);
-    
-    // Assign to transaction
-    txn->txn_snapshot_xmin = snap->snap_xmin;
-    txn->txn_snapshot_xmax = snap->snap_xmax;
-    txn->txn_snapshot_xip = snap->snap_xip;
-    txn->txn_snapshot_xcnt = snap->snap_xcnt;
-}
-
-// Check if XID is visible in snapshot
-bool xid_visible_in_snapshot(
-    TransactionId xid,
-    TransactionSnapshot* snap)
-{
-    // XIDs before snapshot are visible if committed
-    if (xid < snap->snap_xmin) {
-        return get_transaction_state(xid) == TXN_STATE_COMMITTED;
-    }
-    
-    // XIDs after snapshot are not visible
-    if (xid >= snap->snap_xmax) {
-        return false;
-    }
-    
-    // Check if XID was active at snapshot time
-    if (binary_search(snap->snap_xip, snap->snap_xcnt, xid)) {
-        return false;  // Was active, not visible
-    }
-    
-    // Not active at snapshot - check if committed
-    return get_transaction_state(xid) == TXN_STATE_COMMITTED;
-}
-```
-
-### 3.2 Tuple Visibility
-
-```c
-// Check tuple visibility for MVCC
-bool tuple_satisfies_mvcc(
-    HeapTupleHeader tuple,
-    TransactionSnapshot* snap,
-    Buffer buffer)
-{
-    TransactionId xmin = tuple->t_xmin;
-    TransactionId xmax = tuple->t_xmax;
-    
-    // Check insert visibility
-    if (xmin == InvalidTransactionId) {
-        return false;  // Invalid tuple
-    }
-    
-    // Our own transaction's changes are always visible
-    if (TransactionIdIsCurrentTransactionId(xmin)) {
-        if (tuple->t_infomask & HEAP_XMIN_ABORTED) {
-            return false;  // We aborted this insert
-        }
-        
-        // Check if deleted by us
-        if (TransactionIdIsValid(xmax)) {
-            if (TransactionIdIsCurrentTransactionId(xmax)) {
-                return false;  // We deleted it
-            }
-        }
-        
-        return true;  // Our insert, not deleted by us
-    }
-    
-    // Check if insert is visible
-    if (!xid_visible_in_snapshot(xmin, snap)) {
-        return false;  // Insert not visible
-    }
-    
-    // Insert is visible - check if deleted
-    if (!TransactionIdIsValid(xmax)) {
-        return true;  // Not deleted
-    }
-    
-    // Check delete visibility
-    if (TransactionIdIsCurrentTransactionId(xmax)) {
-        return false;  // Deleted by us
-    }
-    
-    if (xid_visible_in_snapshot(xmax, snap)) {
-        return false;  // Delete is visible
-    }
-    
-    return true;  // Delete not visible, tuple is visible
-}
-
-// Visibility check with hint bits optimization
-bool heap_tuple_satisfies_snapshot(
-    HeapTuple tuple,
-    TransactionSnapshot* snap,
-    Buffer buffer)
-{
-    HeapTupleHeader header = tuple->t_data;
-    
-    // Fast path: check hint bits
-    if (header->t_infomask & HEAP_XMIN_COMMITTED) {
-        // Insert definitely committed
-        if (header->t_infomask & HEAP_XMAX_INVALID) {
-            return true;  // Not deleted
-        }
-        
-        if (header->t_infomask & HEAP_XMAX_COMMITTED) {
-            // Delete also committed - check against snapshot
-            if (header->t_xmax < snap->snap_xmin) {
-                return false;  // Deleted before snapshot
-            }
-        }
-    } else if (header->t_infomask & HEAP_XMIN_ABORTED) {
-        return false;  // Insert aborted
-    }
-    
-    // Slow path: full visibility check
-    return tuple_satisfies_mvcc(header, snap, buffer);
-}
-```
-
-## 4. Version Chain Management
-
-### 4.1 Version Chain Structure
-
-```c
-// Version chain for update chains
-typedef struct version_chain {
-    ItemPointer     vc_tid;                // Tuple ID
-    TransactionId   vc_xmin;               // Creating XID
-    TransactionId   vc_xmax;               // Deleting XID
-    CommandId       vc_cmin;               // Creating command
-    CommandId       vc_cmax;               // Deleting command
-    ItemPointer     vc_next;               // Next in chain
-    ItemPointer     vc_prev;               // Previous in chain
-} VersionChain;
-
-// Create new version for update
-ItemPointer create_new_version(
-    Relation rel,
-    ItemPointer old_tid,
-    HeapTuple new_tuple,
-    TransactionId xid,
-    CommandId cid)
-{
-    // Get old tuple
-    HeapTuple old_tuple = heap_fetch(rel, old_tid);
-    HeapTupleHeader old_header = old_tuple->t_data;
-    
-    // Mark old version as deleted by us
-    old_header->t_xmax = xid;
-    old_header->t_cmax = cid;
-    old_header->t_infomask |= HEAP_XMAX_VALID;
-    
-    // Set new version's predecessor
-    HeapTupleHeader new_header = new_tuple->t_data;
-    new_header->t_xmin = xid;
-    new_header->t_cmin = cid;
-    new_header->t_xmax = InvalidTransactionId;
-    new_header->t_ctid = *old_tid;  // Points to old version
-    
-    // Insert new version
-    ItemPointer new_tid = heap_insert(rel, new_tuple);
-    
-    // Update old version's forward pointer
-    old_header->t_ctid = *new_tid;
-    
-    // Mark buffer dirty
-    mark_buffer_dirty(old_tuple->t_buffer);
-    
-    return new_tid;
-}
-
-// Follow version chain to find visible version
-HeapTuple follow_version_chain(
-    Relation rel,
-    ItemPointer tid,
-    TransactionSnapshot* snap)
-{
-    ItemPointer current_tid = tid;
-    
-    while (ItemPointerIsValid(current_tid)) {
-        HeapTuple tuple = heap_fetch(rel, current_tid);
-        
-        if (tuple == NULL) {
-            return NULL;  // Chain broken
-        }
-        
-        // Check if this version is visible
-        if (heap_tuple_satisfies_snapshot(tuple, snap, tuple->t_buffer)) {
-            return tuple;  // Found visible version
-        }
-        
-        HeapTupleHeader header = tuple->t_data;
-        
-        // Move to next version in chain
-        if (ItemPointerEquals(&header->t_ctid, current_tid)) {
-            // End of chain
-            break;
-        }
-        
-        current_tid = &header->t_ctid;
-        
-        // Release previous version
-        heap_release_fetch(tuple);
-    }
-    
-    return NULL;  // No visible version found
-}
-```
-
-## 5. Garbage Collection and Sweep (Firebird MGA)
-
-### 5.1 Design Model (Firebird)
-
-Firebird MGA does **not** use PostgreSQL-style VACUUM phases. Garbage collection removes
-obsolete **back versions** once they are older than OIT and committed; primary records stay
-stable. GC is split into:
-
-- **Cooperative GC** on record access
-- **Background GC thread** (policy-controlled)
-- **Sweep** (database-wide pass)
-
-Firebird reference points:
-- Sweep pass: `Firebird-6.0.0.1124-1ccdf1c-source/src/jrd/vio.cpp:4735-4842`
-- GC thread: `Firebird-6.0.0.1124-1ccdf1c-source/src/jrd/vio.cpp:5640-5865`
-- GC page notification: `Firebird-6.0.0.1124-1ccdf1c-source/src/jrd/vio.cpp:6430-6489`
-- Sweep trigger: `Firebird-6.0.0.1124-1ccdf1c-source/src/jrd/tra.cpp:3796-3802`
-- GC policy: `Firebird-6.0.0.1124-1ccdf1c-source/src/jrd/jrd.cpp:7679-7690`
-
-Glossary: `ScratchBird/docs/specifications/transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md`
-
-### 5.2 MGA Visibility Markers
-
-- **OIT** (Oldest Interesting Transaction) bounds the oldest version that might still be visible.
-- **OAT** (Oldest Active Transaction) identifies the oldest still-running transaction.
-- **OST** (Oldest Snapshot Transaction) tracks the oldest snapshot still in use.
-
-A record version is garbage if:
-- it was deleted/updated by a committed transaction, and
-- its `xmax` is **older than OIT**, and
-- no active snapshot can see it.
-
-### 5.3 Cooperative GC (Record Access)
-
-```c
-bool can_gc(RecordVersion* back, TxnMarkers* m)
-{
-    if (back->xmax == INVALID_XID) return false;
-    if (!back->xmax_committed) return false;
-    if (back->xmax >= m->oit) return false;
-    return true;
-}
-
-void gc_on_access(Record* primary, TxnMarkers* m)
-{
-    RecordVersion* back = primary->back_version;
-    while (back && can_gc(back, m)) {
-        unlink_back_version(primary, back);
-        remove_index_entries(back);
-        remove_blob_versions(back);
-        free_back_version(back);
-        back = primary->back_version;
-    }
-}
-```
-
-### 5.4 Candidate Page Tracking (Firebird Model)
-
-Firebird tracks GC candidates with a **per-relation GC bitmap** keyed by data page sequence.
-When a record access discovers GC candidates, it calls `notify_garbage_collector`, which:
-- marks the relation bitmap for the page,
-- sets `gc_pending`,
-- optionally wakes the GC thread if the oldest snapshot advanced.
-
-Reference: `Firebird-6.0.0.1124-1ccdf1c-source/src/jrd/vio.cpp:6430-6489`.
-
-### 5.5 Background GC Thread (Firebird Pattern)
-
-The GC thread runs only when policy includes background GC. It:
-- attaches as a dedicated "Garbage Collector" attachment,
-- uses a **read-only, read committed, no-lock** transaction,
-- scans relation GC bitmaps for candidate pages,
-- iterates candidate pages with `VIO_next_record` to drive per-record GC,
-- refreshes `tra_oldest` / `tra_oldest_active` to keep GC decisions current,
-- flushes pages opportunistically after GC.
-
-Reference: `Firebird-6.0.0.1124-1ccdf1c-source/src/jrd/vio.cpp:5640-5865`.
-
-### 5.6 Sweep (Database-wide Pass)
-
-Sweep is a forced GC pass, triggered when `(OST - OIT) > sweep_interval`. It:
-- acquires a single **sweep lock**,
-- iterates all non-temporary relations,
-- scans all records with sweeper flags to force GC,
-- does **not** remove primary records (only back versions).
-
-References:
-- Trigger: `Firebird-6.0.0.1124-1ccdf1c-source/src/jrd/tra.cpp:3796-3802`
-- Locking: `Firebird-6.0.0.1124-1ccdf1c-source/src/jrd/Database.cpp:245-350`
-- Sweep scan: `Firebird-6.0.0.1124-1ccdf1c-source/src/jrd/vio.cpp:4791-4837`
-
-### 5.7 ScratchBird Canonical Behavior (Aligned to Firebird)
-
-- GC removes **back versions only**, never primary record slots.
-- GC eligibility is based on OIT and committed `xmax`.
-- Index and blob/TOAST entries for removed back versions must be cleaned.
-- Cooperative GC may run on record/page access and DML paths.
-- Background GC is policy-controlled (cooperative/background/combined).
-- Sweep is the database-wide pass to force GC; it should not introduce
-  PostgreSQL VACUUM phases (FSM/VM, relation stats, or page truncation).
-
-### 5.8 Deviations from Firebird 6.0 (Explicit)
-
-- **Candidate tracking**: Firebird uses relation GC bitmaps and a wake semaphore
-  (`vio.cpp:6430-6489`). ScratchBird uses a global dirty-page map keyed by page_id
-  and marks pages on DML (`ScratchBird/src/core/storage_engine.cpp:1000-1004`).
-- **Background GC attachment**: Firebird GC runs as a dedicated attachment with a
-  precommitted read-only transaction (`vio.cpp:5640-5777`). ScratchBird's GC loop
-  operates without an explicit transaction context and reads OIT directly
-  (`ScratchBird/src/core/garbage_collector.cpp:269-399`).
-- **Sweep**: Firebird starts a sweeper thread based on sweep interval and enforces
-  a single sweep via the sweep lock (`tra.cpp:3796-3802`, `Database.cpp:245-350`).
-  ScratchBird's `SweepManager` advances OIT and notifies GC but does not reclaim
-  space yet (`ScratchBird/src/core/sweep_manager.cpp:215-228`).
-- **VACUUM phases**: Firebird does not implement PostgreSQL-style VACUUM phases.
-  ScratchBird currently has a `Vacuum` utility that performs heap scans and
-  pruning plus a `freezeTable` helper (`ScratchBird/src/core/vacuum.cpp:40-107`,
-  `ScratchBird/src/core/vacuum.cpp:597-703`). These are non-Firebird extensions
-  and must obey MGA rules (no primary record removal).
-- **Policy/config**: Firebird uses GC policy from config and sweep interval stored
-  in the database header (`jrd.cpp:7679-7690`, `ods.h:575`). ScratchBird uses
-  `garbage_collection.*` config keys for policy/interval/rate.
-
-## 6. Savepoints and Nested Transactions
-
-### 6.1 Savepoint Management
-
-```c
-// Savepoint structure
-typedef struct savepoint {
-    char            sp_name[NAMEDATALEN];  // Savepoint name
-    uint32_t        sp_level;              // Nesting level
-    TransactionId   sp_xid;                // Transaction ID
-    CommandId       sp_cid;                // Command ID at savepoint
-    
-    // State to restore
-    TransactionSnapshot* sp_snapshot;      // Snapshot at savepoint
-    LockList*       sp_locks;              // Locks at savepoint
-    TupleList*      sp_inserted;           // Tuples inserted after
-    TupleList*      sp_deleted;            // Tuples deleted after
-    
-    // Chain
-    struct savepoint* sp_parent;           // Parent savepoint
-} Savepoint;
-
-// Create savepoint
-Savepoint* create_savepoint(
-    SBTransaction* txn,
-    const char* name)
-{
-    Savepoint* sp = allocate(sizeof(Savepoint));
-    
-    strncpy(sp->sp_name, name, NAMEDATALEN);
-    sp->sp_level = txn->txn_savepoint_level + 1;
-    sp->sp_xid = txn->txn_id;
-    sp->sp_cid = txn->txn_command_id;
-    
-    // Save current state
-    sp->sp_snapshot = copy_snapshot(txn->txn_snapshot);
-    sp->sp_locks = copy_lock_list(txn->txn_locks);
-    sp->sp_inserted = create_tuple_list();
-    sp->sp_deleted = create_tuple_list();
-    
-    // Link to parent
-    sp->sp_parent = txn->txn_savepoints;
-    txn->txn_savepoints = sp;
-    txn->txn_savepoint_level++;
-    
-    return sp;
-}
-
-// Rollback to savepoint
-Status rollback_to_savepoint(
-    SBTransaction* txn,
-    const char* name)
-{
-    Savepoint* sp = txn->txn_savepoints;
-    
-    // Find named savepoint
-    while (sp != NULL && strcmp(sp->sp_name, name) != 0) {
-        sp = sp->sp_parent;
-    }
-    
-    if (sp == NULL) {
-        return STATUS_SAVEPOINT_NOT_FOUND;
-    }
-    
-    // Rollback changes made after savepoint
-    Savepoint* current = txn->txn_savepoints;
-    
-    while (current != sp) {
-        // Mark inserted tuples as aborted
-        for (ItemPointer tid : current->sp_inserted) {
-            HeapTuple tuple = heap_fetch_for_update(tid);
-            tuple->t_data->t_infomask |= HEAP_XMIN_ABORTED;
-            heap_release_fetch(tuple);
-        }
-        
-        // Clear delete marks
-        for (ItemPointer tid : current->sp_deleted) {
-            HeapTuple tuple = heap_fetch_for_update(tid);
-            tuple->t_data->t_xmax = InvalidTransactionId;
-            tuple->t_data->t_infomask &= ~HEAP_XMAX_VALID;
-            heap_release_fetch(tuple);
-        }
-        
-        // Release locks acquired after savepoint
-        release_locks_after_savepoint(txn, current);
-        
-        Savepoint* next = current->sp_parent;
-        free_savepoint(current);
-        current = next;
-    }
-    
-    // Restore state
-    txn->txn_savepoints = sp;
-    txn->txn_savepoint_level = sp->sp_level;
-    txn->txn_command_id = sp->sp_cid;
-    
-    return STATUS_OK;
-}
-
-// Release savepoint
-Status release_savepoint(
-    SBTransaction* txn,
-    const char* name)
-{
-    Savepoint* sp = txn->txn_savepoints;
-    Savepoint* prev = NULL;
-    
-    // Find named savepoint
-    while (sp != NULL && strcmp(sp->sp_name, name) != 0) {
-        prev = sp;
-        sp = sp->sp_parent;
-    }
-    
-    if (sp == NULL) {
-        return STATUS_SAVEPOINT_NOT_FOUND;
-    }
-    
-    // Remove from chain
-    if (prev != NULL) {
-        prev->sp_parent = sp->sp_parent;
-    } else {
-        txn->txn_savepoints = sp->sp_parent;
-    }
-    
-    // Merge changes into parent
-    if (prev != NULL) {
-        merge_tuple_lists(prev->sp_inserted, sp->sp_inserted);
-        merge_tuple_lists(prev->sp_deleted, sp->sp_deleted);
-    }
-    
-    free_savepoint(sp);
-    txn->txn_savepoint_level--;
-    
-    return STATUS_OK;
-}
-```
-
-## 7. Two-Phase Commit (2PC)
-
-### 7.1 Prepared Transaction Management
-
-```c
-// Prepared transaction state
-typedef struct prepared_transaction {
-    // Identity
-    TransactionId   pt_xid;                // Transaction ID
-    char            pt_gid[200];           // Global transaction ID
-    
-    // State
-    TimestampTz     pt_prepared_at;        // When prepared
-    UUID            pt_database_uuid;      // Database UUID
-    
-    // Participants (for coordinator)
-    NodeList*       pt_participants;       // Participant nodes
-    uint32_t        pt_n_participants;     // Number of participants
-    uint32_t        pt_n_prepared;         // Number prepared
-    uint32_t        pt_n_committed;        // Number committed
-    
-    // Data to commit
-    TupleList*      pt_inserted;           // Inserted tuples
-    TupleList*      pt_deleted;            // Deleted tuples
-    TupleList*      pt_updated;            // Updated tuples
-    LockList*       pt_locks;              // Held locks
-    
-    // Recovery information
-    uint32_t        pt_checkpoint_num;     // Checkpoint number
-    LSN             pt_prepare_lsn;        // Prepare LSN
-} PreparedTransaction;
-
-// Prepare transaction for two-phase commit
-Status prepare_transaction(
-    SBTransaction* txn,
-    const char* gid)
-{
-    // Check state
-    if (txn->txn_state != TXN_STATE_ACTIVE) {
-        return STATUS_INVALID_TRANSACTION_STATE;
-    }
-    
-    // Create prepared transaction record
-    PreparedTransaction* pt = allocate(sizeof(PreparedTransaction));
-    pt->pt_xid = txn->txn_id;
-    strncpy(pt->pt_gid, gid, sizeof(pt->pt_gid));
-    pt->pt_prepared_at = GetCurrentTimestamp();
-    
-    // Save modified data
-    pt->pt_inserted = copy_tuple_list(txn->txn_inserted_tuples);
-    pt->pt_deleted = copy_tuple_list(txn->txn_deleted_tuples);
-    pt->pt_locks = copy_lock_list(txn->txn_locks);
-    
-    // Write prepare record to write-after log (WAL, optional post-gold)
-    pt->pt_prepare_lsn = write_prepare_record(pt);
-    
-    // Flush write-after log (WAL, optional post-gold) to ensure durability
-    flush_wal(pt->pt_prepare_lsn);
-    
-    // Update TIP to limbo state
-    set_transaction_state(txn->txn_id, TXN_STATE_LIMBO);
-    
-    // Store in prepared transaction list
-    add_prepared_transaction(pt);
-    
-    // Update transaction state
-    txn->txn_state = TXN_STATE_LIMBO;
-    txn->txn_prepared = true;
-    
-    return STATUS_OK;
-}
-
-// Commit prepared transaction
-Status commit_prepared(const char* gid) {
-    // Find prepared transaction
-    PreparedTransaction* pt = find_prepared_transaction(gid);
-    
-    if (pt == NULL) {
-        return STATUS_PREPARED_TRANSACTION_NOT_FOUND;
-    }
-    
-    // Update TIP to committed
-    set_transaction_state(pt->pt_xid, TXN_STATE_COMMITTED);
-    
-    // Write commit record
-    write_commit_prepared_record(pt);
-    
-    // Release locks
-    release_lock_list(pt->pt_locks);
-    
-    // Remove from prepared list
-    remove_prepared_transaction(pt);
-    
-    // Free resources
-    free_prepared_transaction(pt);
-    
-    return STATUS_OK;
-}
-
-// Rollback prepared transaction
-Status rollback_prepared(const char* gid) {
-    // Find prepared transaction
-    PreparedTransaction* pt = find_prepared_transaction(gid);
-    
-    if (pt == NULL) {
-        return STATUS_PREPARED_TRANSACTION_NOT_FOUND;
-    }
-    
-    // Update TIP to aborted
-    set_transaction_state(pt->pt_xid, TXN_STATE_ABORTED);
-    
-    // Write abort record
-    write_abort_prepared_record(pt);
-    
-    // Mark inserted tuples as aborted
-    for (ItemPointer tid : pt->pt_inserted) {
-        mark_tuple_aborted(tid, pt->pt_xid);
-    }
-    
-    // Clear delete marks
-    for (ItemPointer tid : pt->pt_deleted) {
-        clear_tuple_delete(tid, pt->pt_xid);
-    }
-    
-    // Release locks
-    release_lock_list(pt->pt_locks);
-    
-    // Remove from prepared list
-    remove_prepared_transaction(pt);
-    
-    // Free resources
-    free_prepared_transaction(pt);
-    
-    return STATUS_OK;
-}
-```
-
-## Implementation Notes
-
-This MGA core implementation provides:
-
-1. **64-bit transaction IDs** eliminating wraparound issues
-2. **Efficient TIP (Transaction Inventory Pages)** for transaction state
-3. **Full MVCC** with snapshot isolation
-4. **Version chain management** for updates
-5. **Garbage collection** without blocking readers
-6. **Savepoints** and nested transaction support
-7. **Two-phase commit** for distributed transactions
-
-The system is designed to work without write-after log (WAL, optional post-gold) for basic ACID
-properties (minus durability), with an optional post-gold write-after log (WAL)
-added only for replication/PITR (not crash recovery).
+## Purpose
+This specification defines the ScratchBird transaction, snapshot, and garbage collection model.
+It is intentionally derived from FirebirdSQL’s implementation. ScratchBird follows Firebird’s MGA
+(Multi-Generational Architecture) semantics, not PostgreSQL MVCC. Any design or implementation
+must conform to this model.
+
+## Authority and Sources
+Authoritative reference implementation is FirebirdSQL.
+Primary implementation pointers:
+- Firebird transactions: `firebird/src/jrd/tra.cpp`
+- Record versioning and GC: `firebird/src/jrd/vio.cpp`
+- TIP cache and read consistency notes: `firebird/doc/README.read_consistency.md`
+- Lock manager data used by transactions: `firebird/src/jrd/lck.cpp`
+
+ScratchBird differences are limited to identifiers (UUID usage) and 64-bit transaction IDs.
+All behavior and sequencing below must match Firebird semantics.
+
+---
+
+## 1. Transaction Identity and States
+
+### 1.1 Transaction IDs
+- Firebird uses monotonically increasing transaction IDs tracked in TIP pages.
+- ScratchBird uses 64-bit IDs to avoid wraparound. Behavior is otherwise the same.
+
+Special IDs:
+- `0` invalid
+- `1` system/bootstrap
+- `2` frozen/reserved
+- First normal transaction starts at `3`
+
+### 1.2 Transaction States (TIP)
+Firebird stores 2-bit states per transaction in TIP (transaction inventory pages).
+States:
+- `active`
+- `committed`
+- `dead` (aborted/rolled back)
+- `limbo` (two-phase commit prepared)
+
+TIP rules:
+- TIP is the source of truth for transaction visibility.
+- TIP pages are extended as transaction IDs grow.
+- In read-only databases, TIP updates are minimized; state is tracked in cache.
+
+---
+
+## 2. Database Transaction Markers
+
+The database header maintains three critical markers:
+- **OIT** (Oldest Interesting Transaction)
+- **OAT** (Oldest Active Transaction)
+- **OST** (Oldest Snapshot Transaction)
+
+Definitions, per Firebird:
+- **OIT** is the oldest transaction whose state is still relevant for visibility.
+- **OAT** is the oldest currently active transaction.
+- **OST** is the oldest snapshot in use. It is derived from active transactions’ snapshots and
+  is used to regulate garbage collection.
+
+Marker maintenance occurs during transaction start and during sweep. See
+`firebird/src/jrd/tra.cpp` (transaction startup and sweep sections).
+
+---
+
+## 3. Isolation Levels and Snapshots
+
+### 3.1 Snapshot (Concurrency) Transactions
+- A snapshot transaction sees the database as of its start.
+- Firebird historically used a private TIP copy; modern Firebird uses commit-order snapshot logic
+  backed by TIP cache and commit numbers (CN) as described in
+  `firebird/doc/README.read_consistency.md`.
+
+### 3.2 Read Committed Transactions
+Firebird supports three read committed modes:
+- **READ COMMITTED READ CONSISTENCY**
+- **READ COMMITTED RECORD VERSION**
+- **READ COMMITTED NO RECORD VERSION**
+
+Read committed *read consistency* uses a statement-level snapshot (CN-based) to avoid
+inconsistent reads within a statement. This is the modern Firebird default and should be the
+ScratchBird default.
+
+Behavioral implications:
+- For READ CONSISTENCY, conflicts trigger a statement restart algorithm
+  (see `README.read_consistency.md`).
+- For RECORD VERSION, readers traverse back-versions and do not wait.
+- For NO RECORD VERSION, readers may wait on active writers.
+
+### 3.3 Precommitted Read-Only
+- Firebird treats read-only read-committed transactions as precommitted.
+- This reduces GC inhibition but has nuanced interaction with OST.
+
+---
+
+## 4. Record Versioning and Visibility
+
+### 4.1 Version Chain
+- Updates create a new primary version and a back-version chain.
+- The index entry typically points to the newest primary version.
+- Back-versions are linked in a chain by record headers.
+
+### 4.2 Visibility Rule
+A record version is visible to a transaction if the creating transaction:
+- is committed, and
+- committed before the transaction’s snapshot (CN or TIP-based snapshot view).
+
+If the creating transaction is active, dead, or in limbo, the version is not visible.
+
+Implementation source: `firebird/src/jrd/vio.cpp` and
+`firebird/doc/README.read_consistency.md`.
+
+---
+
+## 5. Garbage Collection Model
+
+Firebird garbage collection is multi-layered:
+1. **Cooperative GC** during normal reads and updates
+2. **Background GC** via a dedicated garbage collector thread
+3. **Sweep** (database-wide pass)
+
+### 5.1 GC Rule (Core)
+If the **oldest active snapshot** can see a record version, then all older versions of that
+record are garbage and can be removed. This is the Firebird MGA rule derived in
+`README.read_consistency.md`.
+
+### 5.2 Cooperative GC
+- Readers and writers opportunistically prune version chains they encounter.
+- This reduces pressure on background GC and sweep.
+- Implemented in `firebird/src/jrd/vio.cpp` via `VIO_garbage_collect` and
+  version chain processing.
+
+### 5.3 Background GC Thread
+- A dedicated GC thread processes candidate pages (per-relation GC bitmaps).
+- Attachments notify GC when they encounter garbageable pages.
+- GC uses special attachment flags and window flags to mark pages for GC.
+- Implemented in `firebird/src/jrd/vio.cpp` (GC thread, notify mechanisms).
+
+### 5.4 Sweep
+Sweep is a database-wide scan that:
+- advances OIT when possible
+- cleans remaining obsolete versions that cooperative/background GC did not reclaim
+
+Sweep trigger (Firebird semantics):
+- automatic sweep runs when `(oldest_active_snapshot - OIT) > sweep_interval`
+  and the oldest candidate is not limbo
+- see `firebird/src/jrd/tra.cpp` for exact logic
+
+Sweep behavior:
+- uses a read-committed transaction internally
+- saves transaction’s oldest snapshot to compute safe OIT advance
+- scans TIP to determine new OIT and update header
+- can run in background thread
+
+---
+
+## 6. Transaction Start and OIT/OAT/OST Maintenance
+
+At transaction start, Firebird performs:
+- snapshot setup (TIP/CN based)
+- calculation of attachment-local oldest active/snapshot
+- write of transaction lock data (LCK_tra) for GC regulation
+- recomputation of OIT/OAT/OST candidates
+
+Important rule:
+- Transaction lock data stores the oldest active snapshot for GC queries. This is queried
+  via `LCK_query_data` in `tra.cpp` to compute `tra_oldest_active`.
+
+This interaction between transaction locks and GC is a key MGA mechanism and must be preserved.
+
+---
+
+## 7. Recovery Behavior (MGA)
+
+Firebird MGA recovery is built-in:
+- Each update writes the new version and links to the prior version.
+- If a transaction crashes without commit, the previous visible version remains intact.
+- No WAL replay is required for visibility recovery.
+- GC later removes dead versions.
+
+This is the core rationale for “fast recovery” in MGA systems.
+
+---
+
+## 8. Implementation Requirements for ScratchBird
+
+The following must be true in ScratchBird:
+- TIP-based transaction state is authoritative.
+- OIT/OAT/OST semantics match Firebird.
+- Snapshot and read-committed behavior match Firebird modes.
+- GC rule is based on oldest active snapshot, not xmin-style horizon.
+- Sweep trigger and OIT advancement follow Firebird logic.
+- Cooperative GC and background GC are both supported.
+- Transaction lock data (`LCK_tra`) is used to regulate GC horizon.
+
+---
+
+## 9. Implementation Pointers (FirebirdSQL)
+
+- Transaction lifecycle: `firebird/src/jrd/tra.cpp`
+- TIP operations: `firebird/src/jrd/tra.cpp`
+- Record visibility + GC: `firebird/src/jrd/vio.cpp`
+- Read consistency: `firebird/doc/README.read_consistency.md`
+- Locking integration for GC: `firebird/src/jrd/lck.cpp`
+
+---
+
+## 10. Firebird-Accurate Transaction Lifecycle (Detailed)
+
+This section paraphrases Firebird’s transaction lifecycle and ties it to the
+required ScratchBird behavior. See `firebird/src/jrd/tra.cpp` for the exact
+sequence.
+
+### 10.1 Start Transaction (TRA_start / transaction_start)
+
+Core steps in Firebird:
+1. Validate database state (shutdown flags, attachment permissions).
+2. Allocate transaction context and pool; initialize flags and timeouts.
+3. Acquire the **transaction lock** (`LCK_tra`) and set its data to the
+   **oldest active snapshot** for this transaction (read committed uses its
+   own transaction number to avoid GC inhibition).
+4. Read/update header page markers if necessary: `hdr_oldest_transaction` (OIT),
+   `hdr_oldest_active` (OAT), `hdr_oldest_snapshot` (OST).
+5. Capture snapshot state (TIP or commit-order snapshot) based on isolation.
+6. Compute **attachment-local** oldest active/snapshot for GTT and local GC.
+7. Compute global oldest active snapshot via `LCK_query_data(LCK_tra, MIN)`.
+8. Update database-level OIT/OAT/OST cached values (in-memory) and TIP cache.
+9. If sweep interval threshold is exceeded, start a sweeper thread.
+10. Create a transaction savepoint (unless system/no-auto-undo).
+
+ScratchBird must preserve the above ordering constraints, especially the
+transaction lock data update before GC horizon computation.
+
+### 10.2 Commit Transaction (TRA_commit)
+
+Firebird commit behavior:
+- Commit updates TIP state to committed.
+- Releases transaction locks, savepoints, and attachment state.
+- Read-only read-committed may be precommitted (minimal TIP writes).
+
+ScratchBird must ensure commit updates are durable and visible to TIP readers
+before any GC can reclaim versions.
+
+### 10.3 Rollback Transaction (TRA_rollback)
+
+Firebird rollback behavior:
+- Marks TIP state as dead (aborted).
+- Backversions created by the aborted transaction are left in place and later
+  reclaimed by GC/sweep.
+
+ScratchBird must avoid immediate physical cleanup during rollback beyond
+transaction-local undo, leaving GC to reclaim physical versions.
+
+### 10.4 Limbo (Two-Phase Commit)
+
+Firebird uses TIP limbo state for prepared transactions. GC and sweep must
+preserve limbo versions until they resolve. Sweep must detect oldest limbo
+transaction and avoid advancing OIT past limbo.
+
+---
+
+## 11. Firebird-Accurate Sweep Sequence (Detailed)
+
+Firebird sweep (`TRA_sweep`) flow (paraphrased from `tra.cpp`):
+1. Mark sweep in progress and acquire sweep lock.
+2. Start a sweep transaction (read-committed, special tpb).
+3. Save sweep transaction’s `tra_oldest_active` before it changes.
+4. Disable async GC notification for the sweep attachment.
+5. Run `VIO_sweep` to ensure dead versions are removed.
+6. Scan TIP cache to find the oldest limbo transaction in range.
+7. Flush page buffers **before** advancing OIT.
+8. Update header page `hdr_oldest_transaction` to the minimum of
+   `transaction_oldest_active` and oldest limbo (if present).
+9. Commit the sweep transaction and clear sweep flags.
+
+ScratchBird must preserve the ordering (especially flush-before-OIT-advance),
+and must not advance OIT beyond the oldest limbo transaction.
+
+---
+
+## 12. Firebird-Accurate GC Integration (Detailed)
+
+Key Firebird GC integration points:
+- Transaction locks (`LCK_tra`) carry the oldest active snapshot as lock data.
+- GC horizon is the minimum `LCK_tra` data (not xmin style).
+- Read-committed transactions may set lock data to their own transaction ID to
+  avoid unnecessarily blocking GC.
+- Attachment-local oldest snapshot is tracked to manage temporary table GC.
+
+ScratchBird must implement this exact coupling between lock manager and GC.
+
+---
+
+## 13. Read Consistency (Commit-Order Snapshot) Details
+
+Firebird’s modern read consistency model uses commit order (Commit Number, CN)
+to define snapshots without copying TIP. Core concepts from
+`firebird/doc/README.read_consistency.md`:
+1. A per-database commit counter (CN) increments on commit.
+2. Each committed transaction is assigned its CN.
+3. A snapshot is defined by the current CN value (snapshot CN).
+4. A version is visible if its creator is committed and its CN <= snapshot CN.
+5. Active/limbo/dead transactions are never visible.
+
+For READ COMMITTED READ CONSISTENCY:
+- Each top-level statement uses a statement-level snapshot CN.
+- Nested statements reuse the same snapshot.
+- Update conflicts trigger a statement restart algorithm:
+  1. Switch temporarily to NO RECORD VERSION mode.
+  2. Acquire write locks on conflicting rows and remaining target rows.
+  3. Undo statement effects while keeping write locks.
+  4. Create a new statement-level snapshot and restart.
+  5. Abort after a bounded number of restarts (Firebird uses 10).
+
+ScratchBird must implement the above behavior and avoid “moving snapshot”
+reads within a single statement in read consistency mode.
+
+---
+
+## 14. Transaction Start Algorithm (Expanded Step-by-Step)
+
+Full Firebird order (paraphrased and made explicit):
+1. Precheck shutdown flags and attachment permissions.
+2. Allocate transaction context and pool.
+3. Acquire temporary relation locks if required.
+4. Assign transaction ID from TIP.
+5. Enqueue `LCK_tra` and set lock data to oldest active snapshot (or own ID for
+   read-committed non-read-consistency transactions).
+6. Snapshot setup (TIP/CN depending on isolation).
+7. Compute attachment-local oldest active and oldest snapshot.
+8. Compute global oldest active snapshot via lock data min.
+9. Update in-memory OIT/OAT/OST and TIP cache.
+10. Trigger sweep if sweep interval exceeded.
+11. Start transaction savepoint (unless system/no-auto-undo).
+12. Emit trace hooks.
+
+---
+
+## 15. Visibility and State Algorithms (Explicit)
+
+### 15.1 Transaction State Lookup (TIP)
+Algorithm to fetch a transaction state from TIP:
+1. Compute TIP page number = `xid / trans_per_tip`.
+2. Compute offset = `xid % trans_per_tip`.
+3. Locate byte and 2-bit slot.
+4. Return 2-bit state (active/committed/dead/limbo).
+
+### 15.2 Visibility Decision
+Given record version created by transaction `T` and snapshot `S`:
+1. If `T` is active/dead/limbo -> not visible.
+2. If `T` committed and `commit_number(T) <= snapshot_number(S)` -> visible.
+3. Else not visible.
+
+---
+
+## 16. TIP Cache (Commit-Order Snapshot) Algorithms
+
+These details are derived from `firebird/src/jrd/tpc.cpp`, `tpc_proto.h`, and
+`README.read_consistency.md`. ScratchBird must implement equivalent behavior.
+
+### 16.1 TIP Cache Global Header and Block Allocation
+
+Firebird stores commit numbers and transaction status in a shared memory cache:
+1. A global shared header holds `latest_commit_number`, `latest_transaction_id`,
+   `latest_attachment_id`, and `oldest_transaction`.
+2. The cache is divided into fixed-size blocks (TipCacheBlockSize), each block
+   covering a contiguous range of transaction IDs.
+3. Block size is configured via `TipCacheBlockSize` (default per Firebird).
+4. On initialization, header initializes block size and maps existing inventory
+   pages. On first use, it loads inventory pages into the cache.
+
+ScratchBird must keep block sizing configurable and map/unmap blocks based on
+OIT movement (see §16.4).
+
+### 16.2 Commit Number (CN) Assignment and State
+
+Firebird associates a commit number (CN) to each committed transaction:
+1. `CN_ACTIVE = 0`, `CN_PREHISTORIC = 1`, `CN_DEAD = MAX-2`, `CN_LIMBO = MAX-1`.
+2. On commit, `TipCache::setState` assigns a new CN by incrementing
+   `latest_commit_number` in the global header.
+3. On rollback, the state becomes `CN_DEAD` (no new CN).
+4. On limbo (prepared), state becomes `CN_LIMBO`.
+
+ScratchBird must preserve these CN state values and transitions.
+
+### 16.3 Snapshot State Lookup
+
+`snapshotState(number)` returns a CN for a given transaction:
+1. If transaction is older than OIT, return `CN_PREHISTORIC`.
+2. If cache has committed CN value, return it.
+3. If cache says active/limbo, fall back to TIP/TPC and possibly update.
+4. If transaction is found dead, return `CN_DEAD` and update TIP cache.
+
+ScratchBird must preserve the distinction between “active/limbo” vs “committed”
+in snapshot evaluation.
+
+### 16.4 TIP Cache Block Release
+
+When OIT advances, old cache blocks can be released:
+1. Compute `lastInterestingBlock = oldest_new / transactions_per_block`.
+2. If OIT crosses a block boundary, scan backwards to find existing blocks.
+3. Unmap shared memory blocks safely and delete backing files.
+4. Use a per-block lock (`LCK_tpc_block`) to serialize cleanup.
+
+ScratchBird must implement safe multi-process block cleanup with locking.
+
+---
+
+## 17. Snapshot Slot Allocation and Active Snapshots
+
+### 17.1 Snapshot Slot Allocation
+
+Snapshot slots are managed in a shared snapshot list:
+1. Find a free slot by scanning from `min_free_slot` to `slots_used`.
+2. If no free slot exists, extend (remap) the shared snapshot list.
+3. Store snapshot CN and then set `attachment_id` to claim the slot.
+4. Update `min_free_slot` watermark.
+
+This ordering (snapshot first, attachment_id last) prevents readers from seeing
+partially initialized slots.
+
+### 17.2 Snapshot Slot Deallocation
+
+Deallocation rules:
+1. Clear snapshot and attachment_id.
+2. Reduce `slots_used` only if freeing the highest-indexed slot.
+3. Update `min_free_slot` to the freed slot if lower than current value.
+
+This keeps allocation efficient without scanning from slot 0 every time.
+
+### 17.3 Active Snapshot Tracking
+
+Firebird maintains a per-attachment ActiveSnapshots list:
+1. The “slow path” initializes by scanning all slots and building a bitmap of
+   active snapshot CN values.
+2. The “fast path” updates based on `snapshot_release_count` and `slots_used`.
+3. Stalled lists are avoided by always updating `m_lastCommit` even when no
+   snapshots were added/removed.
+
+ScratchBird must ensure active snapshots are refreshed often enough to avoid
+GC blocking due to stale oldest snapshot values.
+
+---
+
+## 18. TIP Cache Block Locks and AST Cleanup
+
+Firebird protects TPC blocks with per-block existence locks:
+1. Each TIP cache block is associated with a lock (`LCK_tpc_block`).
+2. When a block becomes obsolete (OIT moved past), cleanup takes EX lock on the
+   block before unlinking the backing shared memory file.
+3. A blocking AST for the block lock (`tpc_block_blocking_ast`) can release
+   mapped memory for old blocks when another process requests exclusive access.
+
+ScratchBird must implement per-block locking and AST-based release to prevent
+use-after-free across processes.
+
+---
+
+## 19. Transaction Wait Algorithm (Stable State Wait)
+
+Firebird waits for another transaction to become stable (non-active):
+1. Wait on the target transaction lock and TIP state transitions.
+2. If the transaction remains active, the waiter may sleep or rescan depending
+   on wait mode and timeout.
+3. For read consistency mode, statement restart logic is preferred to waiting.
+
+ScratchBird must preserve the principle: waiting is only for no-record-version
+semantics, while record-version and read-consistency avoid waiting when possible.
+
+---
+
+## Appendix A. TIP Cache Block Size, File Naming, and Remap Policy
+
+This appendix captures Firebird’s precise policies from `firebird/src/jrd/tpc.cpp`.
+
+### A.1 Block Size Policy
+1. TIP cache block size is controlled by `TipCacheBlockSize` (configurable).
+2. The global TPC header stores `tpc_block_size` as the authoritative block size.
+3. `initTransactionsPerBlock()` derives the transaction count per block based on
+   the configured block size.
+
+ScratchBird must keep block size configurable and stored in the global cache header.
+
+Firebird default:
+- `TipCacheBlockSize = 4194304` bytes (4 MiB) in `firebird/src/common/config/config.h`.
+
+### A.2 File Naming Policy
+1. Each block is stored as a shared memory file named from the database unique ID
+   plus a block index (`TPC_BLOCK_FILE` format).
+2. If `fullPath` is requested, the name is passed through the lock directory
+   prefix logic (Firebird uses `iscPrefixLock`).
+
+ScratchBird must use stable, unique naming per database and block index.
+
+Firebird literal format string:
+- `TPC_BLOCK_FILE = "fb_tpc_%s_%" UQUADFORMAT` in `firebird/src/common/file_params.h`.
+
+### A.3 Shared Memory Remap Policy (Snapshots)
+1. Snapshot list is a shared memory block containing `SnapshotData` array.
+2. Allocation scans for free slots; if full, it remaps the block to a larger size.
+3. Remap doubles the mapped size when expanding (`sh_mem_length_mapped * 2`).
+4. After remap, `slots_allocated` is recalculated based on new mapped size.
+5. Remap is done under a shared memory mutex; if `sync` is requested, it locks
+   the mutex before remapping to avoid races.
+
+ScratchBird must implement equivalent remap semantics for snapshot storage.
+
+### A.4 Shared Memory Remap Policy (TPC Blocks)
+1. TIP cache blocks are allocated on demand per block index.
+2. Allocation is guarded by a double-checked locking pattern:
+   - shared lookup first; if missing, upgrade to exclusive and re-check.
+3. Old blocks are released only when OIT crosses their range.
+4. Cleanup uses a per-block lock (`LCK_tpc_block`) and deletes the backing file
+   only after acquiring EX lock, to serialize cross-process cleanup.
+
+ScratchBird must replicate the double-checked allocation pattern and per-block
+cleanup locking to avoid races or premature file deletion.
+
+**Terminology note:** ScratchBird uses Firebird MGA. Any MGA references in this file are legacy shorthand and must be interpreted as MGA per the authoritative references above.
+
+## ScratchBird Extensions Impact (Transactions, GC, Locking)
+
+This section overlays ScratchBird’s extensions onto the Firebird MGA baseline. These changes
+are mandatory and must be reflected in implementation.
+
+### 1. UUID-Based Object and Tuple Identifiers
+
+ScratchBird uses UUIDs as first-class identifiers for objects and tuple versions:
+- **Record identity**: record headers store creator transaction and a UUID-based back-version
+  pointer. There is no PostgreSQL-style `xmin/xmax` tuple header.
+- **Index entries**: index keys reference UUID-based record identifiers; index entries remain
+  stable across versions unless indexed columns change. This preserves Firebird’s “index change
+  only on indexed-column change” rule.
+- **Visibility checks**: visibility is driven by TIP/CN and record header fields (e.g.,
+  `rhd_transaction`, `rhd_back_version`). UUIDs replace page/slot addresses as logical record IDs.
+- **GC traversal**: garbage collection walks UUID-linked version chains. The GC horizon still
+  comes from `LCK_tra` min data; UUIDs do not change the horizon calculation, only the pointer
+  format.
+- **Locks**: lock keys use UUIDs for object identity (relations, indexes, and record-level GC
+  lock scopes). The lock manager still uses Firebird compatibility semantics.
+
+### 2. Large and Variable Block Sizes
+
+ScratchBird supports extended page sizes (8K–128K). Impacts:
+- **TIP layout**: transactions-per-TIP page and TIP cache block sizing must be computed based
+  on actual page size; larger pages reduce TIP page count but increase update granularity.
+- **GC scan stride**: sweep and background GC must use page-size-aware iteration and candidate
+  page identification.
+- **Version chain density**: larger pages can hold longer version chains; cooperative GC and
+  sweep should include back-version depth caps or throttling to avoid long per-page stalls.
+- **Locking granularity**: page locks or buffer locks remain at physical page granularity; larger
+  pages increase the contention domain and should be reflected in lock acquisition strategy.
+
+### 3. File Spaces and Tablespaces
+
+ScratchBird’s tablespaces and file spaces affect transaction visibility and GC:
+- **Record identity** remains UUID-based and independent of file space.
+- **Version chains** may span file spaces if configured; GC must traverse chains across spaces.
+- **Sweep and GC** must iterate all file spaces and maintain consistent OIT/OAT/OST behavior
+  across them.
+- **Locking**: locks should be keyed by object UUIDs, not by file-space-specific page IDs, to
+  avoid cross-space ambiguity. Physical page locks still exist but are subordinate to logical
+  object identity.
+
+### 4. Distributed Shard Repositories (Required)
+
+ScratchBird’s shard repositories extend MGA across a cluster:
+- **Transaction identity**: transaction IDs remain globally unique (64-bit + node UUID or
+  shard prefix). UUID-based object IDs are globally unique across shards.
+- **OIT/OAT/OST tracking**: each shard maintains local OIT/OAT/OST; global coordination must
+  compute a safe cluster-wide GC horizon (e.g., min of shard OIT/OST or a negotiated watermark).
+- **GC and sweep**: GC is performed per-shard with optional cross-shard coordination for
+  shared objects. Sweep must not advance OIT past any unresolved limbo transactions in the shard.
+- **Locking**: lock ownership remains per-shard for physical resources; logical locks on shared
+  objects require a shard-aware lock namespace or a control-plane arbitration layer.

@@ -51,18 +51,18 @@ core::Status UnixSocketIPCChannel::connect(const std::string& endpoint,
                                           core::ErrorContext* ctx) {
     if (connected_) {
         if (ctx) {
-            ctx->set(core::Status::ALREADY_EXISTS, "Already connected",
+            ctx->set(core::Status::CONNECTION_FAILURE, "Already connected",
                     __FILE__, __LINE__, __func__);
         }
-        return core::Status::ALREADY_EXISTS;
+        return core::Status::CONNECTION_FAILURE;
     }
     
     // Create socket
     fd_ = socket(AF_UNIX, SOCK_STREAM, 0);
     if (fd_ < 0) {
         if (ctx) {
-            ctx->set(core::Status::IO_ERROR, "Failed to create socket: " + 
-                    std::string(strerror(errno)),
+            std::string error_msg = "Failed to create socket: " + std::string(strerror(errno));
+            ctx->set(core::Status::IO_ERROR, error_msg.c_str(),
                     __FILE__, __LINE__, __func__);
         }
         return core::Status::IO_ERROR;
@@ -86,13 +86,13 @@ core::Status UnixSocketIPCChannel::connect(const std::string& endpoint,
     int result = ::connect(fd_, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr));
     if (result < 0) {
         if (ctx) {
-            ctx->set(core::Status::CONNECTION_REFUSED, 
-                    "Failed to connect: " + std::string(strerror(errno)),
+            std::string error_msg = "Failed to connect: " + std::string(strerror(errno));
+            ctx->set(core::Status::CONNECTION_FAILURE, error_msg.c_str(),
                     __FILE__, __LINE__, __func__);
         }
         close(fd_);
         fd_ = -1;
-        return core::Status::CONNECTION_REFUSED;
+        return core::Status::CONNECTION_FAILURE;
     }
     
     endpoint_ = endpoint;
@@ -110,10 +110,10 @@ core::Status UnixSocketIPCChannel::connect(const std::string& endpoint,
 core::Status UnixSocketIPCChannel::accept(int listen_fd, core::ErrorContext* ctx) {
     if (connected_) {
         if (ctx) {
-            ctx->set(core::Status::ALREADY_EXISTS, "Already connected",
+            ctx->set(core::Status::CONNECTION_FAILURE, "Already connected",
                     __FILE__, __LINE__, __func__);
         }
-        return core::Status::ALREADY_EXISTS;
+        return core::Status::CONNECTION_FAILURE;
     }
     
     struct sockaddr_un addr;
@@ -122,8 +122,8 @@ core::Status UnixSocketIPCChannel::accept(int listen_fd, core::ErrorContext* ctx
     fd_ = ::accept(listen_fd, reinterpret_cast<struct sockaddr*>(&addr), &addr_len);
     if (fd_ < 0) {
         if (ctx) {
-            ctx->set(core::Status::IO_ERROR, "Failed to accept: " + 
-                    std::string(strerror(errno)),
+            std::string error_msg = "Failed to accept: " + std::string(strerror(errno));
+            ctx->set(core::Status::IO_ERROR, error_msg.c_str(),
                     __FILE__, __LINE__, __func__);
         }
         return core::Status::IO_ERROR;
@@ -135,7 +135,7 @@ core::Status UnixSocketIPCChannel::accept(int listen_fd, core::ErrorContext* ctx
     static std::atomic<uint32_t> next_session_id_{1};
     session_id_ = next_session_id_++;
     
-    send(fd_, &session_id_, sizeof(session_id_), 0);
+    ::send(fd_, &session_id_, sizeof(session_id_), 0);
     
     return core::Status::OK;
 }
@@ -162,10 +162,10 @@ core::Status UnixSocketIPCChannel::send(const IPCMessage& msg,
                                        core::ErrorContext* ctx) {
     if (!connected_) {
         if (ctx) {
-            ctx->set(core::Status::NOT_CONNECTED, "Not connected",
+            ctx->set(core::Status::CONNECTION_DOES_NOT_EXIST, "Not connected",
                     __FILE__, __LINE__, __func__);
         }
-        return core::Status::NOT_CONNECTED;
+        return core::Status::CONNECTION_DOES_NOT_EXIST;
     }
     
     // Serialize message
@@ -174,9 +174,9 @@ core::Status UnixSocketIPCChannel::send(const IPCMessage& msg,
     // Header: type (4) + request_id (4) + payload_len (4)
     buffer.resize(12);
     
-    uint32_t type = static_cast<uint32_t>(msg.type);
+    uint32_t type = static_cast<uint32_t>(msg.getType());
     std::memcpy(buffer.data(), &type, 4);
-    std::memcpy(buffer.data() + 4, &msg.request_id, 4);
+    std::memcpy(buffer.data() + 4, &msg.header.request_id, 4);
     
     uint32_t payload_len = msg.payload.size();
     std::memcpy(buffer.data() + 8, &payload_len, 4);
@@ -205,8 +205,8 @@ core::Status UnixSocketIPCChannel::send(const IPCMessage& msg,
         if (sent < 0) {
             if (errno == EINTR) continue;
             if (ctx) {
-                ctx->set(core::Status::IO_ERROR, "Failed to send message: " + 
-                        std::string(strerror(errno)),
+                std::string error_msg = "Failed to send message: " + std::string(strerror(errno));
+                ctx->set(core::Status::IO_ERROR, error_msg.c_str(),
                         __FILE__, __LINE__, __func__);
             }
             connected_ = false;
@@ -222,10 +222,10 @@ core::Status UnixSocketIPCChannel::receive(IPCMessage& msg,
                                           core::ErrorContext* ctx) {
     if (!connected_) {
         if (ctx) {
-            ctx->set(core::Status::NOT_CONNECTED, "Not connected",
+            ctx->set(core::Status::CONNECTION_DOES_NOT_EXIST, "Not connected",
                     __FILE__, __LINE__, __func__);
         }
-        return core::Status::NOT_CONNECTED;
+        return core::Status::CONNECTION_DOES_NOT_EXIST;
     }
     
     // Read length
@@ -279,9 +279,9 @@ core::Status UnixSocketIPCChannel::receive(IPCMessage& msg,
     // Parse message
     uint32_t type;
     std::memcpy(&type, buffer.data(), 4);
-    msg.type = static_cast<IPCMessageType>(type);
+    msg.setType(static_cast<IPCMessageType>(type));
     
-    std::memcpy(&msg.request_id, buffer.data() + 4, 4);
+    std::memcpy(&msg.header.request_id, buffer.data() + 4, 4);
     
     uint32_t payload_len;
     std::memcpy(&payload_len, buffer.data() + 8, 4);
@@ -296,10 +296,10 @@ core::Status UnixSocketIPCChannel::tryReceive(IPCMessage& msg,
                                              core::ErrorContext* ctx) {
     if (!connected_) {
         if (ctx) {
-            ctx->set(core::Status::NOT_CONNECTED, "Not connected",
+            ctx->set(core::Status::CONNECTION_DOES_NOT_EXIST, "Not connected",
                     __FILE__, __LINE__, __func__);
         }
-        return core::Status::NOT_CONNECTED;
+        return core::Status::CONNECTION_DOES_NOT_EXIST;
     }
     
     // Use poll for timeout
@@ -318,7 +318,7 @@ core::Status UnixSocketIPCChannel::tryReceive(IPCMessage& msg,
     }
     
     if (result == 0) {
-        return core::Status::DEADLINE_EXCEEDED;
+        return core::Status::LOCK_TIMEOUT;
     }
     
     if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
@@ -339,7 +339,7 @@ uint32_t UnixSocketIPCChannel::getSessionId() const {
 
 core::Status UnixSocketIPCChannel::setNonBlocking(bool non_blocking) {
     if (fd_ < 0) {
-        return core::Status::NOT_CONNECTED;
+        return core::Status::CONNECTION_DOES_NOT_EXIST;
     }
     
     int flags = fcntl(fd_, F_GETFL, 0);
@@ -362,7 +362,7 @@ core::Status UnixSocketIPCChannel::setNonBlocking(bool non_blocking) {
 
 core::Status UnixSocketIPCChannel::setSendTimeout(uint32_t timeout_ms) {
     if (fd_ < 0) {
-        return core::Status::NOT_CONNECTED;
+        return core::Status::CONNECTION_DOES_NOT_EXIST;
     }
     
     struct timeval tv;
@@ -378,7 +378,7 @@ core::Status UnixSocketIPCChannel::setSendTimeout(uint32_t timeout_ms) {
 
 core::Status UnixSocketIPCChannel::setReceiveTimeout(uint32_t timeout_ms) {
     if (fd_ < 0) {
-        return core::Status::NOT_CONNECTED;
+        return core::Status::CONNECTION_DOES_NOT_EXIST;
     }
     
     struct timeval tv;

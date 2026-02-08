@@ -1,5 +1,14 @@
 # SBCLUSTER-09: Scheduler
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 ## 1. Introduction
 
 **Canonical spec:** This document is the Beta/cluster reference. The canonical scheduler
@@ -905,7 +914,6 @@ CREATE JOB process_customer_reports
 | 1.0     | 2026-01-02 | D. Calford   | Initial comprehensive specification        |
 
 ---
-
-**Document Status**: DRAFT (Beta Specification Phase)
+**Document Status**: Authoritative (V3)
 **Next Review**: Before Beta Implementation Phase
 **Approval Required**: Chief Architect, Distributed Systems Lead, Application Services Lead

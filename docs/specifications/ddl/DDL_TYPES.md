@@ -99,14 +99,14 @@ signatures.
 - `ADD VALUE` appends by default; `BEFORE/AFTER` controls ordering.
 - `DROP VALUE` is not supported (requires DROP TYPE).
 - Maps 1:1 to ENUM domain behavior in
-  `docs/specifications/types/DDL_DOMAINS_COMPREHENSIVE.md`.
+  `docs/specifications/parser/v3/types/DDL_DOMAINS_COMPREHENSIVE.md`.
 
 ### 4.2 RECORD (Composite)
 - Defines a structured type with named fields.
 - Field defaults and NOT NULL apply when the value is constructed or assigned.
 - `AS ( ... )` is accepted to mirror PostgreSQL composite syntax.
 - Maps 1:1 to RECORD domain behavior in
-  `docs/specifications/types/DDL_DOMAINS_COMPREHENSIVE.md`.
+  `docs/specifications/parser/v3/types/DDL_DOMAINS_COMPREHENSIVE.md`.
 
 ### 4.3 RANGE
 - Represents a bounded interval of a subtype (e.g., INT, TIMESTAMP).
@@ -135,7 +135,7 @@ ScratchBird stores types in the **domains catalog** with a `domain_type`
 identifying the type kind. This allows the Postgres parser to map all type
 definitions to the same internal store.
 
-**DomainRecord mappings** (see `docs/specifications/catalog/SYSTEM_CATALOG_STRUCTURE.md`):
+**DomainRecord mappings** (see `docs/specifications/parser/v3/catalog/SYSTEM_CATALOG_STRUCTURE.md`):
 - `domain_type = TYPE_ENUM`   -> enum labels stored in `enum_values_oid`
 - `domain_type = TYPE_RECORD` -> record fields stored in `fields_oid`
 - `domain_type = TYPE_RANGE`  -> range descriptor stored in `fields_oid`

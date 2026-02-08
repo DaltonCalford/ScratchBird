@@ -1,5 +1,14 @@
 # V2 Parser Index Type Completeness Specification
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 **Document Version:** 1.1
 **Date:** January 22, 2026
 **Status:** Complete (FULLTEXT/IVF/ZONEMAP supported in V2 parser)
@@ -9,7 +18,7 @@
 
 ## Executive Summary
 
-The V2 parser now accepts **14 core index types**: BTREE, HASH, GIN, GIST, SPGIST, BRIN, RTREE, HNSW, BITMAP, COLUMNSTORE, LSM, FULLTEXT, IVF, ZONEMAP. Optional/advanced index types (ZORDER, JSON_PATH, etc.) are intentionally absent from V2.
+The V2 parser now accepts **14 index types** (subset of the 28 core index types): BTREE, HASH, GIN, GIST, SPGIST, BRIN, RTREE, HNSW, BITMAP, COLUMNSTORE, LSM, FULLTEXT, IVF, ZONEMAP. The remaining core index types are not yet supported by V2.
 
 ---
 
@@ -165,7 +174,7 @@ enum class IndexType : uint8_t
 };
 ```
 
-**Supported:** 12 core index types
+**Supported:** 12 index types (subset of 28 core)
 **Note:** FULLTEXT is defined here but not exposed in V2 AST/parser.
 
 ---
@@ -193,14 +202,14 @@ enum class IndexType : uint8_t
 };
 ```
 
-**Supported:** 12 core index types
+**Supported:** 12 index types (subset of 28 core)
 **Note:** FULLTEXT exists in catalog but is not reachable from V2 SQL today.
 
 ---
 
 ### Layer 7: Storage Engine
 
-**Core implementations present for all 12 core index types.**
+**Core implementations present for all 12 supported index types.**
 
 - FULLTEXT uses `InvertedIndex` (DML + search implemented; GC stub in `removeDeadEntries`).
 - DML integration for all core types is wired in `src/core/storage_engine.cpp`.
@@ -268,6 +277,6 @@ enum class IndexType : uint8_t
 
 ## Optional (Beta Scope)
 
-The following advanced index types are intentionally out of scope for V2 parser today:
+The following core index types are not yet supported by the V2 parser:
 IVF, ZONEMAP, ZORDER, GEOHASH, S2, QUADTREE, OCTREE, FST, SUFFIX_ARRAY, SUFFIX_TREE,
 COUNT_MIN_SKETCH, HYPERLOGLOG, ART, LEARNED, LSM_TTL, JSON_PATH.

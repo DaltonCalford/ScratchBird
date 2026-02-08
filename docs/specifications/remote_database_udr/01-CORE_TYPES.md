@@ -4,7 +4,7 @@
 > `ScratchBird/docs/specifications/Alpha Phase 2/11-Remote-Database-UDR-Specification.md`
 > and `ScratchBird/docs/specifications/Alpha Phase 2/11h-Live-Migration-Emulated-Listener.md`.
 
-**Scope Note:** MSSQL/TDS adapter support is post-gold; MSSQL references are forward-looking.
+**Scope Note:** MSSQL/TDS adapter support is optional extension; MSSQL references are forward-looking.
 
 ## 1. Enumerations
 
@@ -16,7 +16,7 @@ Identifies the type of remote database being connected to.
 enum class RemoteDatabaseType : uint8_t {
     POSTGRESQL = 1,    // PostgreSQL 9.6+
     MYSQL      = 2,    // MySQL 5.7+, MariaDB 10+
-    MSSQL      = 3,    // Microsoft SQL Server 2016+ (post-gold)
+    MSSQL      = 3,    // Microsoft SQL Server 2016+ (optional extension)
     FIREBIRD   = 4,    // Firebird 2.5+
     SCRATCHBIRD = 5,   // ScratchBird (federated)
     ORACLE     = 6,    // Oracle 12c+ (future)
@@ -376,7 +376,7 @@ const std::unordered_map<uint8_t, ScratchBirdType> mysql_type_map = {
 };
 ```
 
-### 3.3 SQL Server to ScratchBird (post-gold)
+### 3.3 SQL Server to ScratchBird (optional extension)
 
 ```cpp
 const std::unordered_map<uint8_t, ScratchBirdType> tds_type_map = {

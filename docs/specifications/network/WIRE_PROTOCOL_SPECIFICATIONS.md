@@ -1,5 +1,14 @@
 # ScratchBird Wire Protocol Requirements
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 ## Overview
 
 For ScratchBird to act as a drop-in replacement for multiple database engines, per‑connection parser processes implement native wire protocols. The Y‑Valve selects the appropriate parser and transfers the client socket; thereafter the parser handles the full wire protocol lifecycle and communicates with the engine via the internal API. This document outlines protocol specifics for each parser.
@@ -106,7 +115,7 @@ For ScratchBird to act as a drop-in replacement for multiple database engines, p
 
 ### 4. TDS Protocol (MSSQL)
 
-**Scope Note:** MSSQL/TDS support is post-gold; this section is forward-looking.
+**Scope Note:** MSSQL/TDS support is optional extension; this section is forward-looking.
 
 #### Essential Components
 - **Login Process**
@@ -171,7 +180,7 @@ For ScratchBird to act as a drop-in replacement for multiple database engines, p
    - XDR encoding
    - Blob/Array support
 
-2. **TDS/MSSQL** - Enterprise support (post-gold)
+2. **TDS/MSSQL** - Enterprise support (optional extension)
    - Login7 protocol
    - RPC calls
    - Bulk operations
@@ -241,7 +250,7 @@ python: fdb, firebird-driver
 java: Jaybird JDBC driver
 ```
 
-#### MSSQL (post-gold)
+#### MSSQL (optional extension)
 ```bash
 # Using sqlcmd
 sqlcmd -S localhost -U user -P pass
@@ -265,7 +274,7 @@ Protocol Detector (listener control plane):
 - PostgreSQL: StartupMessage with version 196608
 - MySQL: Handshake packet
 - Firebird: op_connect
-- TDS (post-gold): Pre-login packet
+- TDS (optional extension): Pre-login packet
 
 Protocol Handler (parser process):
 - Maintains protocol state machine
@@ -279,13 +288,13 @@ Protocol Handler (parser process):
 - PostgreSQL: No inherent limit
 - MySQL: 16MB default (max_allowed_packet)
 - Firebird: 32KB segments
-- TDS (post-gold): 4KB default (negotiable to 32KB)
+- TDS (optional extension): 4KB default (negotiable to 32KB)
 
 ### Character Encoding
 - PostgreSQL: Client encoding parameter
 - MySQL: Character set negotiation
 - Firebird: Connection character set
-- TDS (post-gold): Collation in login packet
+- TDS (optional extension): Collation in login packet
 
 ### Transaction Handling
 - Map protocol-specific transaction commands to MGA
@@ -299,13 +308,13 @@ Protocol Handler (parser process):
 - [ ] PostgreSQL Frontend/Backend Protocol
 - [ ] MySQL Client/Server Protocol  
 - [ ] Firebird Remote Protocol
-- [ ] MS-TDS Specification (post-gold)
+- [ ] MS-TDS Specification (optional extension)
 
 ### Reference Implementations
 - [ ] PostgreSQL: src/backend/libpq
 - [ ] MySQL: sql/protocol.cc
 - [ ] Firebird: src/remote/protocol.cpp
-- [ ] FreeTDS: src/tds/ (post-gold)
+- [ ] FreeTDS: src/tds/ (optional extension)
 
 ### Testing Tools
 - [ ] Wireshark with protocol dissectors

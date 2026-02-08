@@ -1,5 +1,14 @@
 # DML (Data Manipulation Language) Specifications
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 **[← Back to Specifications Index](../README.md)**
 
 This directory contains Data Manipulation Language (DML) specifications for querying and modifying data in ScratchBird databases.
@@ -137,7 +146,7 @@ FROM orders,
      ) AS jt;
 ```
 
-## MGA & MVCC Integration
+## MGA Integration
 
 All DML operations respect Multi-Generational Architecture:
 
@@ -167,13 +176,13 @@ ScratchBird supports DML from multiple dialects:
 - **PostgreSQL** - Full PostgreSQL DML syntax
 - **MySQL** - MySQL-specific syntax (LIMIT, INSERT IGNORE, etc.)
 - **Firebird** - Firebird DML syntax (ROWS, FIRST/SKIP, etc.)
-- **MSSQL** - SQL Server syntax (TOP, OUTPUT, etc.) (post-gold)
+- **MSSQL** - SQL Server syntax (TOP, OUTPUT, etc.) (optional extension)
 
 ## Related Specifications
 
 - [Parser](../parser/) - DML statement parsing
 - [Query Optimization](../query/) - Query plan generation
-- [Transaction System](../transaction/) - MVCC and isolation levels
+- [Transaction System](../transaction/) - MGA and isolation levels
 - [SBLR Bytecode](../sblr/) - Execution bytecode
 - [Indexes](../indexes/) - Index usage in queries
 - [DDL Operations](../ddl/) - Schema definitions
@@ -195,3 +204,5 @@ Before working on DML implementation:
 ---
 
 **Last Updated:** January 2026
+
+**Terminology note:** ScratchBird uses Firebird MGA. Any MGA references in this file are legacy shorthand and must be interpreted as MGA per the authoritative references above.

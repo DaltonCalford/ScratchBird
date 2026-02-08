@@ -1,11 +1,20 @@
 # Database Engine Architecture Overview
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 **Document Version:** 1.0  
 **Date:** 2025-01-25  
-**Status:** Draft Specification
+**Status:** Authoritative (V3)
 
-**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional post-gold (replication/PITR).
-Any WAL references in this document describe an optional post-gold stream for
+**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional optional extension (replication/PITR).
+Any WAL references in this document describe an optional optional extension stream for
 replication/PITR only.
 
 ---
@@ -116,7 +125,7 @@ Reuse artifacts: [Component Model Diagrams](../../diagrams/component_model_diagr
 | Catalog virtualization | Primary | Support | None | Engine defines surfaces; parser emulates dialect views. |
 | Shared SBLR cache | Primary | None | None | Global cache across sessions with security gating. |
 | Per-session compile cache | None | Primary | None | SQL -> SBLR artifacts scoped to connection. |
-| Storage, transactions, GC, maintenance | Primary | None | None | Firebird-style MGA; no write-after log (WAL, optional post-gold) in core. |
+| Storage, transactions, GC, maintenance | Primary | None | None | Firebird-style MGA; no write-after log (WAL, optional optional extension) in core. |
 | Scheduler (task planning) | Primary | None | None | Engine schedules GC and maintenance work. |
 | Job system (execution workers) | Primary | None | None | Engine owns background job execution. |
 | UDR connectors (local/remote) | Primary | None | None | Engine executes UDR connectors and enforces security. |
@@ -185,7 +194,7 @@ Transaction Engine Storage:
 │
 ├─ Persistent Storage (SSD)
 │  ├─ LSM tree for row versions
-│  ├─ Write-after log (WAL, optional post-gold) (durability)
+│  ├─ Write-after log (WAL, optional optional extension) (durability)
 │  └─ Periodic snapshots
 │
 └─ Replication Queue
@@ -709,7 +718,8 @@ This overview provides the foundation. Detailed specifications follow in:
 7. **Operational Monitoring Specification** - Metrics, alerting, dashboards
 
 ---
-
-**Document Status**: Draft for Review  
+**Document Status**: Authoritative (V3)
 **Next Review Date**: TBD  
 **Approval Required**: Architecture Team
+
+**Terminology note:** ScratchBird uses Firebird MGA. Any MGA references in this file are legacy shorthand and must be interpreted as MGA per the authoritative references above.

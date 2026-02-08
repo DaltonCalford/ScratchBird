@@ -1,5 +1,17 @@
 # ScratchBird Vectorized SELECT Executor Spec (Alpha, repo-mapped)
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
+**Legacy term note:** This document may use xmin/xmax labels for creator/deleter transaction IDs. ScratchBird does not use PostgreSQL tuple headers; see the authoritative MGA specs above for the actual Firebird-style record header fields (e.g., `rhd_transaction`, `rhd_back_version`) and visibility/GC rules.
+
+
 ## 1) Goals, non-goals, invariants
 
 ### 1.1 Goals

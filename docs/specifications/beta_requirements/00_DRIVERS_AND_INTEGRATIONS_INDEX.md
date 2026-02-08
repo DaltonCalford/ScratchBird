@@ -14,7 +14,7 @@ This directory contains specification directories for all drivers, integrations,
 **Priority Levels:**
 - **P0 (Critical)**: Must have for Beta release - covers majority of developers
 - **P1 (High)**: Should have for Beta - significant user base
-- **P2 (Medium)**: Nice to have for Beta or post-Beta
+- **P2 (Medium)**: Nice to have for Beta or optional extension
 - **P3 (Low)**: Future consideration
 
 ---
@@ -379,7 +379,7 @@ cases.
 7. **Applications**: WordPress compatibility verification
 8. **Containers**: Official Docker images
 
-### Phase 2: Post-Beta Expansion (P1 - High Priority)
+### Phase 2: optional extension Expansion (P1 - High Priority)
 
 **Should Have:**
 1. Additional ORMs (Django, Dapper, TypeORM, Laravel)

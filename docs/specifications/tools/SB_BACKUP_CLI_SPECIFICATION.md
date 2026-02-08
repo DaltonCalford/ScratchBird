@@ -1,7 +1,7 @@
 # sb_backup CLI Specification
 
 Version: 1.0  
-Status: Draft (Alpha networking)  
+Status: Authoritative (V3)
 Last Updated: January 2026
 
 ## Purpose
@@ -89,5 +89,5 @@ sb_backup <command> [options] [args]
 ## Related Specs
 
 - `docs/specifications/BACKUP_AND_RESTORE.md`
-- `docs/specifications/tools/SB_TOOLING_NETWORK_SPEC.md`
-- `docs/specifications/network/NETWORK_LISTENER_AND_PARSER_POOL_SPEC.md`
+- `docs/specifications/parser/v3/tools/SB_TOOLING_NETWORK_SPEC.md`
+- `docs/specifications/parser/v3/network/NETWORK_LISTENER_AND_PARSER_POOL_SPEC.md`

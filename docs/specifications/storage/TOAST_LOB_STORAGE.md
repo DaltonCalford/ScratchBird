@@ -1,14 +1,24 @@
 # TOAST/LOB Storage Implementation
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
+
 ## Overview
 
 TOAST (The Oversized-Attribute Storage Technique) is a mechanism for storing large values that exceed the normal tuple size limits. It allows ScratchBird to handle large binary objects (LOBs), text, and other oversized data by storing them out-of-line in a separate TOAST table.
 
 **MGA Reference:** See `MGA_RULES.md` for Multi-Generational Architecture semantics (visibility, TIP usage, recovery).
-**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional post-gold (replication/PITR).
-Any WAL references in this document describe an optional post-gold stream for
+**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional optional extension (replication/PITR).
+Any WAL references in this document describe an optional optional extension stream for
 replication/PITR only.
-**Table Footnote:** In comparison tables below, ScratchBird WAL references are optional post-gold (replication/PITR).
+**Table Footnote:** In comparison tables below, ScratchBird WAL references are optional optional extension (replication/PITR).
 
 ## Architecture
 
@@ -25,26 +35,28 @@ replication/PITR only.
 - **Efficiency**: Only TOAST values above threshold
 - **Flexibility**: Multiple storage strategies
 - **Chunking**: Large values split into manageable pieces
+- **Per-Attribute First**: TOAST is applied to individual attributes before any tuple-level fallback
 
 ## Storage Strategies
 
 | Strategy | Description | When Used |
 |----------|-------------|-----------|
-| PLAIN | Store inline (no TOAST) | Small values < 2KB |
+| PLAIN | Store inline (no TOAST) | Small values below threshold |
 | EXTENDED | Out-of-line, uncompressed | Medium values or incompressible |
-| COMPRESSED | Inline, compressed | Not implemented (optional post-alpha) |
+| MAIN | Prefer inline compression, allow out-of-line | PG-style \"main\" strategy |
 | EXTERNAL | Out-of-line, compressed | Large compressible values |
 
 ## Implementation Details
 
-### TOAST Threshold
+### TOAST Threshold (PostgreSQL-Compatible)
 
+ScratchBird uses PostgreSQL TOAST thresholds and targets as the default.
 ```cpp
-constexpr uint32_t TOAST_TUPLE_THRESHOLD = 2000;  // 2KB
-constexpr uint32_t TOAST_MAX_CHUNK_SIZE = 1996;   // Legacy 8KB default; dynamic sizing uses ToastSettings
+constexpr uint32_t TOAST_TUPLE_THRESHOLD = 2048;  // bytes
+constexpr uint32_t TOAST_TUPLE_TARGET = 2048;     // bytes
 ```
 
-Values larger than `TOAST_TUPLE_THRESHOLD` or 1/4 of the page size are candidates for TOASTing.
+Values larger than `TOAST_TUPLE_THRESHOLD` are candidates for TOASTing. Per-attribute TOAST is applied first; tuple-level TOAST is a fallback only if the row still exceeds page limits.
 
 ### TOAST Pointer Structure
 
@@ -54,23 +66,23 @@ struct ToastPointer {
     uint8_t  va_tag;         // Strategy type
     uint32_t va_rawsize;     // Original size
     uint32_t va_extsize;     // Stored size
-    uint32_t va_valueid;     // Unique ID
-    uint32_t va_toastrelid;  // TOAST table ID
+    UUID     va_valueid;     // Unique TOAST value UUID (16 bytes)
+    UUID     va_toastrelid;  // TOAST table UUID (16 bytes)
 };
 ```
 
 ### TOAST Table Schema
 
-Each regular table can have an associated TOAST table named `pg_toast_<table_id>` with chunks stored as tuples.
+Each regular table can have an associated TOAST table named `sb_toast_<table_uuid>` with chunks stored as tuples.
 
-**TOAST Chunk Format** (MGA-Compliant, TupleHeader + metadata):
+**TOAST Chunk Format** (MGA-Compliant, SBRecordHeader + metadata):
 
 ```cpp
 struct ToastChunk {
-    TupleHeader header;      // MGA/TIP visibility metadata
+    SBRecordHeader header;   // MGA/TIP visibility metadata
 
     // TOAST Metadata (12 bytes)
-    uint32_t value_id;       // TOAST value ID
+    UUID     value_id;       // TOAST value UUID
     uint32_t chunk_seq;      // Chunk sequence number (0-based)
     uint32_t chunk_size;     // Size of chunk_data in bytes
 
@@ -79,12 +91,12 @@ struct ToastChunk {
 };
 ```
 
-**Total Header Size**: sizeof(TupleHeader) + 12 bytes (TupleHeader + chunk metadata)
+**Total Header Size**: sizeof(SBRecordHeader) + 12 bytes (record header + chunk metadata)
 
 **Key MGA Compliance Features**:
-- **header.xmin**: Transaction that created this chunk (for visibility)
-- **header.xmax**: Transaction that deleted this chunk (0 = active, non-zero = deleted)
-- **TIP-based visibility**: Chunk visibility determined by TIP state, NOT snapshots
+- **header.rhd_transaction**: Transaction that created this chunk version
+- **RHD_DELETED flag**: Indicates a deleted version
+- **TIP-based visibility**: Chunk visibility determined by TIP/CN state, NOT snapshots
 - **Independent lifecycle**: Each chunk is independently versioned
 
 ### Chunking Process
@@ -106,7 +118,7 @@ ToastPointer pointer;
 Status status = toast_mgr.toast_value(
     data, size,              // Value to TOAST
     ToastStrategy::EXTENDED, // Strategy
-    xmin,                    // Transaction ID
+    transaction_id,          // Creating transaction ID
     &pointer                 // Output pointer
 );
 ```
@@ -118,7 +130,7 @@ std::vector<uint8_t> data;
 Status status = toast_mgr.detoast_value(
     &pointer,    // TOAST pointer
     &data,       // Output buffer
-    xmin         // Transaction ID
+    transaction_id // Current transaction ID
 );
 ```
 
@@ -127,59 +139,63 @@ Status status = toast_mgr.detoast_value(
 ```cpp
 Status status = toast_mgr.delete_toast_value(
     value_id,    // TOAST value ID
-    xmax         // Deleting transaction
+    transaction_id // Deleting transaction (creates deleted version)
 );
 ```
 
-**Note**: Deletion sets xmax on all chunks for the value. Physical deletion happens during sweep/GC.
+**Note**: Deletion creates a new deleted version for each chunk (RHD_DELETED flag).
+Physical deletion happens during sweep/GC.
 
 ## TIP-Based Visibility (MGA Compliance)
 
 **CRITICAL**: TOAST chunks use **TIP (Transaction Inventory Pages)** for visibility, NOT snapshot-based visibility like PostgreSQL.
 
-### Visibility Rules
+### Visibility Rules (MGA/Firebird-style)
 
 A TOAST chunk is **visible** to a transaction if:
 
-1. **xmin is committed** (via TIP lookup)
-   - TIP shows xmin transaction as `TX_COMMITTED`
-   - Chunk was successfully created
+1. **Creator transaction is visible** (TIP/CN snapshot visibility)
+2. **Chunk version is not marked deleted** (`RHD_DELETED` flag)
 
-2. **xmax is NOT committed** (via TIP lookup)
-   - If `xmax == 0`: Chunk not deleted
-   - If `xmax != 0` and TIP shows `TX_ACTIVE` or `TX_ABORTED`: Deletion not finalized
+Chunks form a version chain; visibility is determined by walking the chain from
+newest to oldest until a visible version is found.
 
-**Visibility Check** (from `ToastVisibility::isChunkVisible`):
+**Visibility Check**:
 
 ```cpp
-bool isChunkVisible(uint64_t chunk_xmin, uint64_t chunk_xmax,
-                   uint64_t current_xmin, TransactionManager* tm)
+bool isChunkVisible(const SBRecordHeader* hdr, const Snapshot* snapshot)
 {
-    // Check xmin: Must be committed
-    if (!tm->isTransactionVisible(chunk_xmin, current_xmin)) {
-        return false;  // Creating transaction not visible
+    if (!TxManager::is_visible(hdr->rhd_transaction, snapshot)) {
+        return false;
     }
+    if (hdr->rhd_flags & RHD_DELETED) {
+        return false;
+    }
+    return true;
+}
 
-    // Check xmax: If set, must NOT be committed
-    if (chunk_xmax != 0) {
-        if (tm->isTransactionVisible(chunk_xmax, current_xmin)) {
-            return false;  // Deleting transaction committed
+const SBRecordHeader* selectVisibleChunk(const SBRecordHeader* head,
+                                         const Snapshot* snapshot)
+{
+    const SBRecordHeader* cur = head;
+    while (cur) {
+        if (isChunkVisible(cur, snapshot)) {
+            return cur;
         }
+        cur = (cur->rhd_flags & RHD_CHAIN) ? load_version(cur->rhd_back_version) : nullptr;
     }
-
-    return true;  // Chunk is visible
+    return nullptr;
 }
 ```
-
 ### Key Differences from PostgreSQL MVCC
 
-| Aspect | PostgreSQL (MVCC/write-after log (WAL)) | ScratchBird (MGA/TIP) |
-|--------|----------------------|----------------------|
-| Visibility Source | Snapshot + write-after log (WAL) | TIP state only |
-| Crash Recovery | write-after log (WAL) replay | TIP state check |
+| Aspect | PostgreSQL (MVCC) | ScratchBird (MGA/TIP) |
+|--------|-------------------|------------------------|
+| Visibility Source | Snapshot + tuple creator/deleted-version | TIP/CN + record header |
+| Crash Recovery | write-after log (WAL) replay | TIP/CN state check |
 | Transaction State | In-memory + write-after log (WAL) | TIP (2-bit state) |
-| Chunk Lifecycle | Snapshot-based | TIP-based |
-| Garbage Collection | Snapshot horizon | TIP state + orphan detection |
+| Chunk Lifecycle | record versions (rhd_transaction/RHD_DELETED) | MGA version chains |
+| Garbage Collection | Snapshot horizon | TIP/CN + GC horizon (LCK_tra min) |
 
 ### Transaction States (TIP)
 
@@ -194,20 +210,19 @@ Each transaction has one of 4 states in TIP:
 - Chunks created by `TX_ACTIVE` → Invisible to other transactions
 - Chunks created by `TX_COMMITTED` → Visible to later transactions
 - Chunks created by `TX_ABORTED` → Invisible to all (orphans)
-- Chunks deleted by `TX_COMMITTED` → Invisible to all
-- Chunks deleted by `TX_ABORTED` → Still visible (delete rolled back)
+- Deleted chunks are represented by a new version marked `RHD_DELETED`
 
 ### Crash Recovery
 
-**Without write-after log (WAL, optional post-gold)** (MGA approach):
+**Without write-after log (WAL, optional optional extension)** (MGA approach):
 
 1. Database crashes during TOAST operation
 2. On restart, check TIP for transaction state
 3. If transaction is `TX_ACTIVE` → Mark as `TX_ABORTED` in TIP
-4. TOAST chunks with aborted xmin become invisible
-5. Garbage collection (sweep) physically removes orphaned chunks
+4. TOAST versions created by aborted transactions become invisible
+5. Garbage collection (sweep) physically removes orphaned versions
 
-**NO write-after log (WAL, optional post-gold) replay needed** - all state recovered from TIP.
+**NO write-after log (WAL, optional optional extension) replay needed** - all state recovered from TIP.
 
 ## Garbage Collection (MGA-Compliant)
 
@@ -256,9 +271,9 @@ Status status = gc->cleanOrphanedToastChunks(
 
 ### TIP-Based GC (Alpha)
 
-**Problem**: TOAST chunks where xmax transaction has committed (deletion finalized).
+**Problem**: TOAST chunks where deleted version creator transaction has committed (deletion finalized).
 
-**Solution**: Use TIP to check xmax state, physically delete chunks with committed xmax.
+**Solution**: Use TIP/CN to check deleted-version creator state and physically delete obsolete versions.
 
 ```cpp
 uint64_t chunks_deleted = 0;
@@ -272,10 +287,10 @@ Status status = gc->cleanToastChunksByTIP(
 
 **Algorithm**:
 1. Scan TOAST table
-2. For each chunk with `xmax != 0`:
-   - Check TIP state of xmax transaction
-   - If xmax is `TX_COMMITTED`: Physically delete chunk
-   - If xmax is `TX_ABORTED`: TODO - Clear xmax (chunk still alive)
+2. For each chunk version marked `RHD_DELETED`:
+   - Check TIP/CN state of deleted-version creator transaction
+   - If creator is `TX_COMMITTED`: Physically delete version
+   - If creator is `TX_ABORTED`: Ignore; earlier visible version remains
 
 ### Vacuum Integration
 
@@ -359,9 +374,9 @@ When `ToastStrategy::EXTERNAL` is used:
 1. **ActiveTransaction_ChunkInvisible** - Chunks from active txns invisible to others
 2. **CommittedTransaction_ChunkVisible** - Chunks from committed txns visible
 3. **AbortedTransaction_ChunkInvisible** - Chunks from aborted txns invisible
-4. **DeletedByCommittedTxn_ChunkInvisible** - Committed xmax makes chunks invisible
-5. **DeletedByAbortedTxn_ChunkVisible** - Aborted xmax keeps chunks visible
-6. **DeletedByActiveTxn_ChunkVisibleToOthers** - Active xmax keeps chunks visible to others
+4. **DeletedByCommittedTxn_ChunkInvisible** - Committed deleted-version makes older versions invisible
+5. **DeletedByAbortedTxn_ChunkVisible** - Aborted deleted-version leaves older visible version
+6. **DeletedByActiveTxn_ChunkVisibleToOthers** - Active deleted-version keeps older visible version
 7. **TIPStateTransitions_TransactionLifecycle** - Validates TX_ACTIVE → TX_COMMITTED
 8. **SnapshotIsolation_SameTransactionSeesOwnChanges** - Transaction sees own uncommitted chunks
 
@@ -375,7 +390,7 @@ When `ToastStrategy::EXTERNAL` is used:
 **Key Tests** (test_toast_crash_recovery_mga.cpp):
 1. **CrashBeforeCommit_ChunksInvisible** - Validates TIP marks crashed transactions aborted
 2. **CrashAfterCommit_ChunksVisible** - Validates committed data persists via TIP
-3. **CrashDuringDelete_XmaxHandling** - Validates TIP-based xmax visibility
+3. **CrashDuringDelete_DeletedVersionHandling** - Validates TIP-based deleted-version visibility
 4. **MultipleCrashes_IdempotentRecovery** - Validates recovery is idempotent
 5. **CrashWithSweep_FullCleanup** - Validates sweep uses TIP for GC
 6. **TIPStatePersistence** - Validates TIP persists across restarts
@@ -403,7 +418,7 @@ When `ToastStrategy::EXTERNAL` is used:
 - ✅ Strategy selection logic
 - ✅ Error handling
 - ✅ **MGA compliance (TIP-based visibility)**
-- ✅ **Crash recovery (TIP state, no write-after log (WAL, optional post-gold))**
+- ✅ **Crash recovery (TIP state, no write-after log (WAL, optional optional extension))**
 - ✅ **Concurrent operations (snapshot isolation)**
 - ✅ **Garbage collection (3-phase GC)**
 
@@ -438,7 +453,7 @@ When `ToastStrategy::EXTERNAL` is used:
 
 ### With Catalog Manager
 - TOAST tables created in same schema
-- Named systematically: `pg_toast_<UUID>`
+- Named systematically: `sb_toast_<UUID>`
 - Tracked in system catalog
 
 ### With Buffer Pool
@@ -495,18 +510,11 @@ for (const auto& key : keys) {
 
 ## Status
 
-⚠️ **PARTIALLY IMPLEMENTED** - The TOAST/LOB storage framework is implemented but requires integration with the main tuple storage system. The following components are complete:
-
-✅ Core TOAST structures and interfaces
-✅ Chunking and reassembly logic
-✅ Compression integration
-✅ TOAST table creation
-✅ Basic operations (toast/detoast/delete)
-
-The following work remains:
-- Integration with HeapPage for automatic TOASTing
+**Design Target (Alpha)**: per-attribute TOAST with tuple-level fallback, PostgreSQL-compatible thresholds, MGA-compliant chunk visibility, and UUID-based TOAST table identity. Implementation status must be validated against this specification; legacy claims of \"fully implemented\" or \"partial\" are non-authoritative.
 - Modification of insert_tuple to handle TOAST pointers
 - Update of get_tuple to automatically detoast
 - Transaction visibility for TOAST values
 
 Once these integrations are complete, TOAST will be fully functional for Stage 1.1.
+
+**Terminology note:** ScratchBird uses Firebird MGA. Any MGA references in this file are legacy shorthand and must be interpreted as MGA per the authoritative references above.

@@ -1,6 +1,5 @@
 # ScratchBird Unified NoSQL Extensions (SBQL-N)
-
-**Status:** Draft (Beta)
+**Status:** Authoritative (V3)
 
 ## 1. Purpose
 
@@ -23,7 +22,7 @@ extension surface.
 
 **Alpha (existing SQL core):**
 - Standard `SELECT/INSERT/UPDATE/DELETE` and PSQL as defined in
-  `ScratchBird/docs/specifications/parser/SCRATCHBIRD_SQL_CORE_LANGUAGE.md`.
+  `ScratchBird/docs/specifications/parser/v3/parser/SCRATCHBIRD_SQL_CORE_LANGUAGE.md`.
 
 **Beta (NoSQL extensions in this doc):**
 - `CREATE COLLECTION`, `CREATE BUCKET`, `CREATE COLUMN FAMILY`
@@ -48,7 +47,7 @@ The unified language operates on these object types (all schema-scoped):
 - **Measurement** (time-series)
 - **VectorCollection** (vector similarity)
 
-See `ScratchBird/docs/specifications/beta_requirements/nosql/NOSQL_SCHEMA_SPECIFICATION.md`
+See `ScratchBird/docs/specifications/parser/v3/beta_requirements/nosql/NOSQL_SCHEMA_SPECIFICATION.md`
 for catalog layout.
 
 ## 4. Data Semantics

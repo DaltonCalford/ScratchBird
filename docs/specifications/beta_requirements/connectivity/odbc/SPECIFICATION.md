@@ -1,6 +1,5 @@
 # ODBC Driver Specification
-
-**Status:** Draft (Beta)
+**Status:** Authoritative (V3)
 **Last Updated:** 2026-01-20
 
 ---
@@ -21,7 +20,7 @@ compatibility on Windows and Linux.
 - ScratchBird native wire protocol (SBWP)
 
 **Out of scope:**
-- MSSQL/TDS emulation (post-gold)
+- MSSQL/TDS emulation (optional extension)
 - Embedded engine driver
 
 ---
@@ -119,6 +118,6 @@ Driver={ScratchBird};Server=localhost;Port=3092;Database=mydb;User=app;Password=
 
 ## 11) Related Documents
 
-- `docs/specifications/beta_requirements/connectivity/odbc/README.md`
-- `docs/specifications/wire_protocols/scratchbird_native_wire_protocol.md`
-- `docs/specifications/types/DATA_TYPE_PERSISTENCE_AND_CASTS.md`
+- `docs/specifications/parser/v3/beta_requirements/connectivity/odbc/README.md`
+- `docs/specifications/parser/v3/wire_protocols/scratchbird_native_wire_protocol.md`
+- `docs/specifications/parser/v3/types/DATA_TYPE_PERSISTENCE_AND_CASTS.md`

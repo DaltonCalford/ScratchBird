@@ -1,5 +1,14 @@
 # Remote Database UDR - Comprehensive Implementation Specification
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 > Reference-only: Canonical UDR and live-migration behavior now lives in
 > `ScratchBird/docs/specifications/Alpha Phase 2/11-Remote-Database-UDR-Specification.md`
 > and `ScratchBird/docs/specifications/Alpha Phase 2/11h-Live-Migration-Emulated-Listener.md`.
@@ -14,7 +23,7 @@ The Remote Database UDR (User Defined Routine) plugin transforms ScratchBird int
 - **Hybrid Queries**: JOIN local and remote tables transparently
 - **Schema Discovery**: Automatically introspect remote database structure
 
-**Scope Note:** MSSQL/TDS adapter support is post-gold; references to MSSQL are forward-looking.
+**Scope Note:** MSSQL/TDS adapter support is optional extension; references to MSSQL are forward-looking.
 
 **Implementation Time**: 8-12 weeks | **LOC**: ~15,000
 
@@ -30,7 +39,7 @@ This specification is split into multiple files for maintainability:
 | [02-CONNECTION_POOL.md](02-CONNECTION_POOL.md) | Remote connection pooling implementation | ~500 lines |
 | [03-POSTGRESQL_ADAPTER.md](03-POSTGRESQL_ADAPTER.md) | PostgreSQL wire protocol client adapter | ~600 lines |
 | [04-MYSQL_ADAPTER.md](04-MYSQL_ADAPTER.md) | MySQL wire protocol client adapter | ~600 lines |
-| [05-MSSQL_FIREBIRD_ADAPTERS.md](05-MSSQL_FIREBIRD_ADAPTERS.md) | MSSQL (TDS, post-gold) and Firebird adapters | ~700 lines |
+| [05-MSSQL_FIREBIRD_ADAPTERS.md](05-MSSQL_FIREBIRD_ADAPTERS.md) | MSSQL (TDS, optional extension) and Firebird adapters | ~700 lines |
 | [06-QUERY_EXECUTION.md](06-QUERY_EXECUTION.md) | Query execution layer and pushdown | ~500 lines |
 | [07-SCHEMA_INTROSPECTION.md](07-SCHEMA_INTROSPECTION.md) | Remote schema discovery | ~400 lines |
 | [08-SQL_SYNTAX.md](08-SQL_SYNTAX.md) | SQL syntax, DDL, and examples | ~500 lines |
@@ -82,7 +91,7 @@ This specification is split into multiple files for maintainability:
 │  │  ┌─────────────┐  ┌─────────────┐  ┌────────────┐     │    │
 │  │  │ PostgreSQL  │  │   MySQL     │  │   MSSQL    │     │    │
 │  │  │  Adapter    │  │   Adapter   │  │  Adapter   │     │    │
-│  │  │  (native)   │  │  (native)   │  │ TDS (post-gold) │ │    │
+│  │  │  (native)   │  │  (native)   │  │ TDS (optional extension) │ │    │
 │  │  └─────────────┘  └─────────────┘  └────────────┘     │    │
 │  │                                                         │    │
 │  │  ┌─────────────┐  ┌─────────────┐                      │    │
@@ -98,7 +107,7 @@ This specification is split into multiple files for maintainability:
 │  Remote/Legacy Databases                                        │
 │                                                                 │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐         │
-│  │ PostgreSQL   │  │ MySQL 5.7/8  │  │ MS SQL (post-gold) │    │
+│  │ PostgreSQL   │  │ MySQL 5.7/8  │  │ MS SQL (optional extension) │    │
 │  │ 9.6 - 17.x   │  │ MariaDB 10+  │  │ 2016-2022    │         │
 │  └──────────────┘  └──────────────┘  └──────────────┘         │
 │                                                                 │
@@ -197,13 +206,15 @@ LIMIT 10000;
 
 | Component | Status | Priority |
 |-----------|--------|----------|
-| Core Types & Interfaces | Planned | P0 |
-| Connection Pool | Planned | P0 |
-| PostgreSQL Adapter | Planned | P0 |
-| MySQL Adapter | Planned | P1 |
-| MSSQL Adapter | Planned | P2 |
-| Firebird Adapter | Planned | P1 |
-| ScratchBird Adapter | Planned | P1 |
-| Query Pushdown | Planned | P1 |
-| Schema Introspection | Planned | P0 |
-| Migration Tools | Planned | P2 |
+| Core Types & Interfaces | Required | P0 |
+| Connection Pool | Required | P0 |
+| PostgreSQL Adapter | Required | P0 |
+| MySQL Adapter | Required | P1 |
+| MSSQL Adapter | Required | P2 |
+| Firebird Adapter | Required | P1 |
+| ScratchBird Adapter | Required | P1 |
+| Query Pushdown | Required | P1 |
+| Schema Introspection | Required | P0 |
+| Migration Tools | Required | P2 |
+
+**Terminology note:** ScratchBird uses Firebird MGA. Any MGA references in this file are legacy shorthand and must be interpreted as MGA per the authoritative references above.

@@ -25,6 +25,7 @@
  */
 
 #include "scratchbird/ipc/parser_agent.h"
+#include "scratchbird/core/types.h"
 #include <unordered_map>
 
 namespace scratchbird {
@@ -33,7 +34,7 @@ namespace ipc {
 /**
  * Client state for PostgreSQL protocol
  */
-struct ClientState {
+struct PGClientState {
     enum State {
         STARTUP,
         AUTHENTICATING,
@@ -58,6 +59,9 @@ struct ClientState {
     uint32_t process_id = 0;
     uint32_t secret_key = 0;
     
+    // Client tracking for IPC
+    uint32_t client_id = 0;
+    
     // Request tracking
     uint32_t request_id = 0;
     
@@ -79,6 +83,11 @@ struct ClientState {
         bool is_open = false;
     };
     std::unordered_map<std::string, PortalInfo> portals;
+    
+    // COPY state
+    bool in_copy_mode = false;
+    bool copy_is_in = false;  // true=COPY FROM, false=COPY TO
+    uint32_t copy_chunk_id = 0;
 };
 
 /**
@@ -121,22 +130,22 @@ public:
     /**
      * Handle startup phase (version negotiation, SSL, parameters)
      */
-    core::Status handleStartupPhase(ClientState& state, core::ErrorContext* ctx);
+    core::Status handleStartupPhase(PGClientState& state, core::ErrorContext* ctx);
     
     /**
      * Perform authentication based on configured method
      */
-    core::Status authenticate(ClientState& state, core::ErrorContext* ctx);
+    core::Status authenticate(PGClientState& state, core::ErrorContext* ctx);
     
     /**
      * Handle SASL/SCRAM-SHA-256 authentication
      */
-    core::Status handleSASLAuth(ClientState& state, core::ErrorContext* ctx);
+    core::Status handleSASLAuth(PGClientState& state, core::ErrorContext* ctx);
     
     /**
      * Handle cancel request
      */
-    core::Status handleCancelRequest(ClientState& state, 
+    core::Status handleCancelRequest(PGClientState& state, 
                                     const std::vector<uint8_t>& msg,
                                     core::ErrorContext* ctx);
     
@@ -147,46 +156,46 @@ public:
     /**
      * Read and dispatch a single message
      */
-    core::Status handleMessage(ClientState& state, core::ErrorContext* ctx);
+    core::Status handleMessage(PGClientState& state, core::ErrorContext* ctx);
     
     // Simple query (Q)
-    core::Status handleQueryMessage(ClientState& state,
+    core::Status handleQueryMessage(PGClientState& state,
                                    const std::vector<uint8_t>& msg,
                                    core::ErrorContext* ctx);
     
     // Extended query protocol
-    core::Status handleParseMessage(ClientState& state,
+    core::Status handleParseMessage(PGClientState& state,
                                    const std::vector<uint8_t>& msg,
                                    core::ErrorContext* ctx);
     
-    core::Status handleBindMessage(ClientState& state,
+    core::Status handleBindMessage(PGClientState& state,
                                   const std::vector<uint8_t>& msg,
                                   core::ErrorContext* ctx);
     
-    core::Status handleExecuteMessage(ClientState& state,
+    core::Status handleExecuteMessage(PGClientState& state,
                                      const std::vector<uint8_t>& msg,
                                      core::ErrorContext* ctx);
     
-    core::Status handleCloseMessage(ClientState& state,
+    core::Status handleCloseMessage(PGClientState& state,
                                    const std::vector<uint8_t>& msg,
                                    core::ErrorContext* ctx);
     
-    core::Status handleDescribeMessage(ClientState& state,
+    core::Status handleDescribeMessage(PGClientState& state,
                                       const std::vector<uint8_t>& msg,
                                       core::ErrorContext* ctx);
     
-    core::Status handleSyncMessage(ClientState& state,
+    core::Status handleSyncMessage(PGClientState& state,
                                   core::ErrorContext* ctx);
     
     // COPY protocol
-    core::Status handleCopyDataMessage(ClientState& state,
+    core::Status handleCopyDataMessage(PGClientState& state,
                                       const std::vector<uint8_t>& msg,
                                       core::ErrorContext* ctx);
     
-    core::Status handleCopyDoneMessage(ClientState& state,
+    core::Status handleCopyDoneMessage(PGClientState& state,
                                       core::ErrorContext* ctx);
     
-    core::Status handleCopyFailMessage(ClientState& state,
+    core::Status handleCopyFailMessage(PGClientState& state,
                                       const std::vector<uint8_t>& msg,
                                       core::ErrorContext* ctx);
     
@@ -195,63 +204,68 @@ public:
     // ========================================================================
     
     // Authentication messages
-    void sendAuthenticationOk(ClientState& state);
-    void sendAuthenticationCleartext(ClientState& state);
-    void sendAuthenticationMD5(ClientState& state, const std::string& salt);
-    void sendAuthenticationSASL(ClientState& state);
-    void sendAuthenticationSASLContinue(ClientState& state, const std::string& data);
-    void sendAuthenticationSASLFinal(ClientState& state, const std::string& data);
+    void sendAuthenticationOk(PGClientState& state);
+    void sendAuthenticationCleartext(PGClientState& state);
+    void sendAuthenticationMD5(PGClientState& state, const std::string& salt);
+    void sendAuthenticationSASL(PGClientState& state);
+    void sendAuthenticationSASLContinue(PGClientState& state, const std::string& data);
+    void sendAuthenticationSASLFinal(PGClientState& state, const std::string& data);
     
     // Session messages
-    void sendBackendKeyData(ClientState& state);
-    void sendReadyForQuery(ClientState& state);
-    void sendParameterStatus(ClientState& state, 
+    void sendBackendKeyData(PGClientState& state);
+    void sendReadyForQuery(PGClientState& state);
+    void sendParameterStatus(PGClientState& state, 
                             const std::string& name,
                             const std::string& value);
     
     // Result messages
-    void sendRowDescription(ClientState& state,
+    void sendRowDescription(PGClientState& state,
                            const std::vector<IPCFieldDesc>& fields);
-    void sendDataRow(ClientState& state,
+    void sendDataRow(PGClientState& state,
                     const std::vector<std::optional<std::string>>& values);
-    void sendCommandComplete(ClientState& state, const std::string& tag);
-    void sendEmptyQueryResponse(ClientState& state);
-    void sendPortalSuspended(ClientState& state);
-    void sendNoData(ClientState& state);
+    void sendCommandComplete(PGClientState& state, const std::string& tag);
+    void sendEmptyQueryResponse(PGClientState& state);
+    void sendPortalSuspended(PGClientState& state);
+    void sendNoData(PGClientState& state);
     
     // Extended query protocol responses
-    void sendParseComplete(ClientState& state);
-    void sendBindComplete(ClientState& state);
-    void sendCloseComplete(ClientState& state);
-    void sendParameterDescription(ClientState& state,
+    void sendParseComplete(PGClientState& state);
+    void sendBindComplete(PGClientState& state);
+    void sendCloseComplete(PGClientState& state);
+    void sendParameterDescription(PGClientState& state,
                                   const std::vector<uint32_t>& type_oids);
     
     // Error and notice
-    core::Status sendErrorResponse(ClientState& state,
+    core::Status sendErrorResponse(PGClientState& state,
                                   const std::string& sqlstate,
                                   const std::string& message);
-    void sendErrorResponse(ClientState& state,
+    void sendErrorResponse(PGClientState& state,
                           const std::string& severity,
                           const std::string& sqlstate,
                           const std::string& message,
                           const std::string& detail = "",
                           const std::string& hint = "");
-    void sendNoticeResponse(ClientState& state,
+    void sendNoticeResponse(PGClientState& state,
                            const std::string& severity,
                            const std::string& message);
     
+    // IPC message translation
+    core::Status translateAndSendResponse(PGClientState& state,
+                                         const IPCMessage& ipc_response,
+                                         core::ErrorContext* ctx);
+    
     // COPY protocol
-    void sendCopyInResponse(ClientState& state,
+    void sendCopyInResponse(PGClientState& state,
                            uint8_t format,
                            const std::vector<uint16_t>& column_formats);
-    void sendCopyOutResponse(ClientState& state,
+    void sendCopyOutResponse(PGClientState& state,
                             uint8_t format,
                             const std::vector<uint16_t>& column_formats);
-    void sendCopyData(ClientState& state, const std::vector<uint8_t>& data);
-    void sendCopyDone(ClientState& state);
+    void sendCopyData(PGClientState& state, const std::vector<uint8_t>& data);
+    void sendCopyDone(PGClientState& state);
     
     // Notification
-    void sendNotification(ClientState& state,
+    void sendNotification(PGClientState& state,
                          const std::string& channel,
                          const std::string& payload,
                          uint32_t pid);

@@ -1,6 +1,5 @@
 # MySQL Emulation Protocol Behavior Specification
-
-Status: Draft (Target). This document defines the server-side wire protocol
+Status: Authoritative (V3)
 behavior for the MySQL emulation listener. It is intended to be compatible
 with MySQL 5.7/8.0 and MariaDB 10.3+ for the covered features.
 

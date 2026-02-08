@@ -4,7 +4,7 @@
 > `ScratchBird/docs/specifications/Alpha Phase 2/11-Remote-Database-UDR-Specification.md`
 > and `ScratchBird/docs/specifications/Alpha Phase 2/11h-Live-Migration-Emulated-Listener.md`.
 
-**Scope Note:** MSSQL/TDS adapter support is post-gold; MSSQL references are forward-looking.
+**Scope Note:** MSSQL/TDS adapter support is optional extension; MSSQL references are forward-looking.
 
 ## 1. Foreign Server Management
 
@@ -68,7 +68,7 @@ CREATE SERVER prod_mysql
         connect_timeout '10000'
     );
 
--- SQL Server (post-gold)
+-- SQL Server (optional extension)
 CREATE SERVER analytics_mssql
     FOREIGN DATA WRAPPER mssql_fdw
     OPTIONS (

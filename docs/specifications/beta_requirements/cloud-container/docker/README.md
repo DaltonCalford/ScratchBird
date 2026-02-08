@@ -1,7 +1,16 @@
 # Docker Container Specification
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../../../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../../../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../../../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../../../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../../../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 **Priority:** P0 (Critical - Beta Required)
-**Status:** Draft
+**Status:** Authoritative (V3)
 **Target Market:** DevOps, cloud-native deployments, development environments, CI/CD pipelines
 **Use Cases:** Local development, testing, production deployments, microservices, cloud platforms
 
@@ -315,7 +324,7 @@ SCRATCHBIRD_EFFECTIVE_CACHE_SIZE=4GB  # Planner cache size hint
 SCRATCHBIRD_WORK_MEM=4MB              # Working memory per query
 SCRATCHBIRD_MAINTENANCE_WORK_MEM=64MB # Maintenance operations memory
 
-# Write-after log (WAL) and checkpointing (optional, post-gold)
+# Write-after log (WAL) and checkpointing (optional, optional extension)
 # Note: MGA does not use write-after log (WAL) for recovery; these settings are reserved for future replication/PITR.
 SCRATCHBIRD_WAL_LEVEL=replica         # write-after log (WAL) level (minimal, replica, logical)
 SCRATCHBIRD_MAX_WAL_SIZE=1GB          # Maximum write-after log (WAL) size
@@ -669,7 +678,7 @@ Container overhead compared to bare-metal:
 
 ---
 
-**Document Version:** 1.0 (Draft)
+**Document Version:** 1.0 (Authoritative)
 **Last Updated:** 2026-01-03
-**Status:** Draft
+**Status:** Authoritative (V3)
 **Assigned To:** TBD

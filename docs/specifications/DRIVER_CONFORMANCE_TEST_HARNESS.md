@@ -1,6 +1,5 @@
 # Driver Conformance Test Harness (Shared)
-
-Status: Draft
+Status: Authoritative (V3)
 Last Updated: 2026-01-09
 
 ## Purpose

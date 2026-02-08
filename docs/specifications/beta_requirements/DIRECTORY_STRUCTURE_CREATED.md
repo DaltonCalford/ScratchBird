@@ -15,7 +15,7 @@ Created comprehensive directory structure with **66 subdirectories** organized i
 ## Directory Structure
 
 ```
-docs/specifications/beta_requirements/
+docs/specifications/parser/v3/beta_requirements/
 ├── 00_DRIVERS_AND_INTEGRATIONS_INDEX.md   # Master index (COMPLETE)
 ├── DIRECTORY_STRUCTURE_CREATED.md         # This file
 │

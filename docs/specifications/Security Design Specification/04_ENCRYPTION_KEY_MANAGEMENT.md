@@ -2,12 +2,12 @@
 
 **Document ID**: SBSEC-04  
 **Version**: 1.0  
-**Status**: Draft for Review  
+**Status**: Authoritative (V3)
 **Date**: January 2026  
 **Scope**: All deployment modes, Security Levels 2-6  
 
-**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional post-gold (replication/PITR).
-Any WAL encryption in this document applies only to an optional post-gold WAL
+**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional optional extension (replication/PITR).
+Any WAL encryption in this document applies only to an optional optional extension WAL
 stream for replication/PITR.
 
 ---
@@ -23,7 +23,7 @@ This document defines the encryption architecture and key management framework f
 This specification covers:
 - Key hierarchy and derivation
 - Transparent Data Encryption (TDE)
-- Write-after log (WAL, optional post-gold) and transaction log encryption
+- Write-after log (WAL, optional optional extension) and transaction log encryption
 - Backup encryption
 - Wire protocol encryption
 - Key lifecycle management
@@ -44,7 +44,7 @@ This specification covers:
 | Feature | L0 | L1 | L2 | L3 | L4 | L5 | L6 |
 |---------|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
 | Encryption at rest | | | ● | ● | ● | ● | ● |
-| Write-after log (WAL, optional post-gold) encryption | | | ● | ● | ● | ● | ● |
+| Write-after log (WAL, optional optional extension) encryption | | | ● | ● | ● | ● | ● |
 | Backup encryption | | | ● | ● | ● | ● | ● |
 | Wire encryption (TLS) | | | ○ | ○ | ● | ● | ● |
 | HSM support | | | ○ | ○ | ○ | ● | ● |
@@ -131,7 +131,7 @@ ScratchBird implements a hierarchical key management system where each key prote
 | DBK | Database | CMK | TSK, LEK, BKK | Until rotation |
 | TSK | Tablespace | DBK | Data Encryption Keys | Until rotation |
 | DEK | Page/Extent | TSK | Actual data pages | Until rotation |
-| LEK | Transaction Log | DBK | Write-after log (WAL, optional post-gold) entries | Until rotation |
+| LEK | Transaction Log | DBK | Write-after log (WAL, optional optional extension) entries | Until rotation |
 | BKK | Backup | CMK + passphrase | Backup data | Per backup |
 
 ### 2.3 Key Storage
@@ -562,7 +562,7 @@ TDE encrypts data transparently at the page level. Applications do not need modi
 ### 6.4 IV/Nonce Generation (Normative)
 
 ScratchBird uses **AES-256-GCM** for authenticated encryption. **Nonce/IV reuse with the same key is catastrophic** and
-MUST be prevented by construction. This section defines **normative** IV generation rules for page encryption, write-after log (WAL, optional post-gold)/log
+MUST be prevented by construction. This section defines **normative** IV generation rules for page encryption, write-after log (WAL, optional optional extension)/log
 encryption, and IPC encryption.
 
 > A full worked-example and test vectors are provided in **SBSEC-04.03 Nonce/IV Specification**.
@@ -584,14 +584,14 @@ Where:
 
 Crash/restart requirements:
 - `page_enc_epoch` MUST be durable and MUST NOT roll back across crashes.
-- Replaying write-after log (WAL, optional post-gold) MUST NOT reuse an `(IV, key_version)` pair for any page.
+- Replaying write-after log (WAL, optional optional extension) MUST NOT reuse an `(IV, key_version)` pair for any page.
 
-#### 6.4.2 Write-after log (WAL, optional post-gold) / Log IV
+#### 6.4.2 Write-after log (WAL, optional optional extension) / Log IV
 
-Write-after log (WAL, optional post-gold)/log records MUST use an IV derived from a value that never repeats for the same key:
+Write-after log (WAL, optional optional extension)/log records MUST use an IV derived from a value that never repeats for the same key:
 - `IV = wal_incarnation_32 || lsn_64`
 
-Where `wal_incarnation_32` increments whenever the write-after log (WAL, optional post-gold) stream is logically reset/rebased or when the encryption key_version changes.
+Where `wal_incarnation_32` increments whenever the write-after log (WAL, optional optional extension) stream is logically reset/rebased or when the encryption key_version changes.
 
 #### 6.4.3 IPC IV
 
@@ -614,7 +614,7 @@ AES-256-GCM is the default due to hardware acceleration (AES-NI) availability.
 
 ---
 
-## 7. Write-after log (WAL, optional post-gold) and Log Encryption
+## 7. Write-after log (WAL, optional optional extension) and Log Encryption
 
 ### 7.1 Log Encryption Key (LEK)
 
@@ -622,7 +622,7 @@ The LEK encrypts write-after log (WAL) entries (optional):
 
 ```python
 def encrypt_wal_record(record, lek):
-    """Encrypt a write-after log (WAL, optional post-gold) record."""
+    """Encrypt a write-after log (WAL, optional optional extension) record."""
     
     # Generate unique IV from LSN
     iv = derive_wal_iv(record.lsn, lek.version)
@@ -646,11 +646,11 @@ def encrypt_wal_record(record, lek):
     )
 ```
 
-### 7.2 Write-after log (WAL, optional post-gold) Record Format
+### 7.2 Write-after log (WAL, optional optional extension) Record Format
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│              ENCRYPTED Write-after log (WAL, optional post-gold) RECORD              │
+│              ENCRYPTED Write-after log (WAL, optional optional extension) RECORD              │
 ├─────────────────────────────────────────────────────────────────┤
 │                                                                  │
 │  Header (unencrypted, authenticated):                           │
@@ -672,14 +672,14 @@ def encrypt_wal_record(record, lek):
 └─────────────────────────────────────────────────────────────────┘
 ```
 
-### 7.3 Write-after log (WAL, optional post-gold) Key Rotation
+### 7.3 Write-after log (WAL, optional optional extension) Key Rotation
 
-LEK rotation must be coordinated with write-after log (WAL, optional post-gold) archival:
+LEK rotation must be coordinated with write-after log (WAL, optional optional extension) archival:
 
 1. Generate new LEK version
-2. Mark rotation point in write-after log (WAL, optional post-gold)
+2. Mark rotation point in write-after log (WAL, optional optional extension)
 3. New records use new LEK
-4. Old LEK retained until all old write-after log (WAL, optional post-gold) archived
+4. Old LEK retained until all old write-after log (WAL, optional optional extension) archived
 5. Old LEK destroyed after retention period
 
 ---

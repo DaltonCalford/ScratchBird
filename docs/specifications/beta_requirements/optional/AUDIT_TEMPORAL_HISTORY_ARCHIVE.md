@@ -1,13 +1,22 @@
 # Audit + Temporal History Archive (Optional Beta)
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 **Document ID**: SBSEC-BETA-ARCHIVE-01  
-**Status**: Draft (Optional Beta)  
+**Status**: Authoritative (V3)
 **Scope**: Engine (temporal tables + audit logging + GC integration)  
 **Related**:  
-- `docs/specifications/ddl/DDL_TEMPORAL_TABLES.md`  
+- `docs/specifications/parser/v3/ddl/DDL_TEMPORAL_TABLES.md`  
 - `docs/specifications/Security Design Specification/08_AUDIT_COMPLIANCE.md`  
 - `docs/specifications/triggers/TRIGGER_CONTEXT_VARIABLES.md`  
-- `docs/specifications/transaction/TRANSACTION_MAIN.md`  
+- `docs/specifications/parser/v3/transaction/TRANSACTION_MAIN.md`  
 
 ---
 
@@ -216,4 +225,3 @@ Alternatively, user-defined triggers can populate audit metadata using:
 - [ ] GC can archive history rows older than cutoff.
 - [ ] Archive tables preserve audit chain integrity.
 - [ ] Queryable reports show user actions across live + archive.
-

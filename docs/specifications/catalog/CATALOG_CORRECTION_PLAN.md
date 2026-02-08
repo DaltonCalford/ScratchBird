@@ -1314,7 +1314,7 @@ Reference: `docs/specifications/SCHEMA_PATH_RESOLUTION.md`
 1. Implement Phase 1 (Critical) immediately
 2. Implement Phase 2-3 (Security + Hierarchy)
 3. Use "Fresh Database Only" migration
-4. Defer emulation to post-ALPHA
+4. Defer emulation to optional extension
 
 **This gets the foundation correct while minimizing migration complexity.**
 

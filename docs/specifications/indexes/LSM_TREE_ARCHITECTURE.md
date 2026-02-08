@@ -1,12 +1,22 @@
 # LSM-Tree Index Architecture
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
+
 **Date**: November 20, 2025
 **Status**: Production (Simple Implementation - 70%), Full Implementation Available (95%)
 **MGA Compliance**: 100% ✅
 
 ---
 
-**Scope Note:** "WAL" references in this spec refer to a per-index write-after log (WAL, optional post-gold) and do not imply a global recovery log.
+**Scope Note:** "WAL" references in this spec refer to a per-index write-after log (WAL, optional optional extension) and do not imply a global recovery log.
 
 ## Executive Summary
 
@@ -26,6 +36,47 @@ ScratchBird provides **two LSM-Tree implementations**:
 
 ---
 
+## Authoritative Architecture (Normative, 2026-02-07)
+
+This section is the implementation source of truth. If any other section in
+this document conflicts with the steps below, this section wins.
+
+### Full LSM Pipeline
+
+1. **Write**: insert into memtable (and optional per-index WAL).  
+2. **Flush**: when memtable threshold is hit, freeze → immutable memtable.  
+3. **SSTable**: flush immutable memtable to sorted on-disk run.  
+4. **Manifest**: atomically publish new SSTable list to metadata.  
+5. **Compaction**: merge overlapping runs by policy (leveled or tiered).  
+6. **GC**: drop tombstones and obsolete versions when MGA rules allow.
+
+### Simple vs Full Implementation (Normative)
+
+- **LSMTree**: memtable + MGA visibility + manual compaction only.  
+- **LSMTreeIndex**: memtable + SSTables + compaction + Bloom filters + WAL hooks.  
+- The *full* implementation is the long-term target for production correctness
+  and performance. The simple implementation is for development/testing only.
+
+### Read Path (Ordering)
+
+1. Active memtable  
+2. Immutable memtables (newest → oldest)  
+3. Level-0 SSTables (newest → oldest)  
+4. Lower levels (`L1..Ln`, level order)
+
+### Concurrency (MGA)
+
+- Writes publish new versions without blocking readers.  
+- Readers select visible versions by MGA epoch.  
+- Old versions are reclaimed by index GC post-epoch.
+
+### References (for algorithmic definitions)
+
+- O’Neil et al., “The Log-Structured Merge-Tree (LSM-tree),” Acta Informatica, 1996.  
+- RocksDB Compaction Overview (leveled vs. universal/tiered).  
+
+---
+
 ## 1. LSMTree (Simple Implementation)
 
 ### Location
@@ -38,32 +89,32 @@ ScratchBird provides **two LSM-Tree implementations**:
 LSMTree (In-Memory Only)
 ├── Memtable (std::map)
 │   ├── Key → std::vector<InternalEntry>
-│   ├── InternalEntry: {tid, xmin, xmax, is_tombstone}
+│   ├── InternalEntry: {record_uuid, record_txn, record_flags, is_tombstone}
 │   └── TIP-based visibility checks
 ├── Range Scan Iterator
 │   ├── lower_bound / upper_bound on map
 │   └── Filters by TIP visibility
 └── Compaction
     ├── Removes tombstones older than OAT
-    ├── Removes deleted entries (xmax < oldest_xid)
+    ├── Removes deleted entries (record_txn < OIT)
     └── Recalculates size estimate
 ```
 
 ### Key Features
 
 ✅ **MGA Compliance**:
-- xmin/xmax tracking on all entries
-- TIP-based visibility via `isVersionVisible()`
-- No snapshot structures (pure Firebird MGA)
-- Stable TID references
+- Record-version metadata on all entries (`record_uuid`, `record_txn`, `record_flags`)
+- TIP-based visibility via `sb_find_visible_version()`
+- No snapshot arrays (pure Firebird MGA)
+- Stable UUID identity (record_uuid)
 
 ✅ **Core Operations**:
-- `put(key, tid, xmin)` - Insert entry
-- `get(key, current_xid, results)` - Search with TIP visibility
-- `remove(key, tid, xmax)` - Logical deletion (tombstone)
+- `put(key, meta)` - Insert entry for record version
+- `get(key, snapshot, results)` - Search with MGA visibility
+- `remove(key, record_uuid)` - Logical delete via tombstone
 - `rangeScan(start, end, current_xid)` - Iterator-based range scan
 - `compact()` - Manual compaction (removes old tombstones)
-- `removeDeadEntries(dead_tids)` - GC integration
+- `removeDeadEntries(dead_record_uuids)` - GC integration
 
 ✅ **Thread Safety**:
 - `std::mutex memtable_mutex_` protects all operations
@@ -94,7 +145,7 @@ LSMTree (In-Memory Only)
    - No size-based eviction
 
 5. **Recovery**:
-   - No write-after log (WAL, optional post-gold)
+   - No write-after log (WAL, optional optional extension)
    - No crash recovery
    - No durability guarantees
 
@@ -122,11 +173,11 @@ Status status = LSMTree::create(db, index_uuid, &meta_page, ctx);
 auto lsm = LSMTree::open(db, index_uuid, meta_page, ctx);
 
 // Insert
-status = lsm->put(key, tid, xmin, ctx);
+status = lsm->put(key, meta, ctx);
 
-// Search (TIP-based visibility)
-std::vector<TID> results;
-status = lsm->get(key, current_xid, &results, ctx);
+// Search (MGA visibility)
+std::vector<UUID> results;
+status = lsm->get(key, snapshot, &results, ctx);
 
 // Range scan
 auto iter = lsm->rangeScan(&start_key, &end_key, current_xid, true, true, ctx);
@@ -193,7 +244,7 @@ LSMTreeIndex (Full Production)
 - Parallel compaction (future)
 
 ✅ **Durability**:
-- Write-after log (WAL, optional post-gold) support (future)
+- Write-after log (WAL, optional optional extension) support (future)
 - Crash recovery (future)
 - Atomic SSTable replacement
 
@@ -275,7 +326,7 @@ const size_t LEVEL2_MAX_SIZE = 400 * 1024 * 1024;  // 400MB
 |----------|------------------|---------------------|
 | **Dataset Size** | < 100K entries | Unlimited |
 | **Write Throughput** | < 1K writes/sec | > 10K writes/sec |
-| **Durability** | ❌ Not durable | ✅ Durable (with write-after log (WAL, optional post-gold)) |
+| **Durability** | ❌ Not durable | ✅ Durable (with write-after log (WAL, optional optional extension)) |
 | **Memory Usage** | High (all in RAM) | Low (mostly on disk) |
 | **Read Performance** | Excellent (in-memory) | Good (with Bloom filters) |
 | **Setup Complexity** | Simple (no files) | Complex (directories, SSTables) |
@@ -385,14 +436,14 @@ CREATE INDEX new_lsm_index ON table(column) USING LSM;
    - No automatic compaction
 
 2. **LSMTreeIndex (Full)**:
-   - No write-after log (WAL, optional post-gold) (crash recovery incomplete)
-   - No compression (Snappy planned)
+   - No write-after log (WAL, optional optional extension) (crash recovery incomplete)
+   - No compression (Snappy required)
    - Single-threaded compaction
 
 ### Future Enhancements
 
 **Priority 1** (Critical):
-- Write-after log (WAL, optional post-gold) for LSMTreeIndex
+- Write-after log (WAL, optional optional extension) for LSMTreeIndex
 - Crash recovery mechanism
 - Memory limits for LSMTree
 
@@ -493,3 +544,9 @@ REINDEX INDEX lsm_index;
 **Last Updated**: November 20, 2025
 **Version**: 1.0
 **Status**: Production
+
+## See Also
+
+- `INDEX_IMPLEMENTATION_REFERENCE.md` — authoritative algorithm map (includes per-index specs).
+- `INDEX_IMPLEMENTATION_SPEC.md` — global MGA/UUID requirements.
+- `INDEX_GC_PROTOCOL.md` — index GC contract.

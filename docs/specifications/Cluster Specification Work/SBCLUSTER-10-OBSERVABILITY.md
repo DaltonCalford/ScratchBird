@@ -1,5 +1,14 @@
 # SBCLUSTER-10: Observability and Audit
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 ## 1. Introduction
 
 ### 1.1 Purpose
@@ -1457,8 +1466,7 @@ output {
 | 1.0     | 2026-01-02 | D. Calford   | Initial comprehensive specification based on OpenTelemetry 2025 best practices, cryptographic audit chains, and Raft cluster monitoring |
 
 ---
-
-**Document Status**: DRAFT (Beta Specification Phase)
+**Document Status**: Authoritative (V3)
 **Next Review**: Before Beta Implementation Phase
 **Approval Required**: Chief Architect, Security Lead, Operations Lead
 
@@ -1518,3 +1526,5 @@ All ScratchBird metrics follow these conventions:
 | **Span** | Single operation in a distributed trace |
 | **Trace** | End-to-end request path across multiple services |
 | **W3C Trace Context** | Standard for propagating trace context across services |
+
+**Terminology note:** ScratchBird uses Firebird MGA. Any MGA references in this file are legacy shorthand and must be interpreted as MGA per the authoritative references above.

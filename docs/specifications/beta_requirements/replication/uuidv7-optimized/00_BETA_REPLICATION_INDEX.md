@@ -1,4 +1,13 @@
 # ScratchBird Beta Cluster Replication Specification Suite
+
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../../../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../../../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../../../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../../../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../../../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
 ## Complete Multi-Node Replication Architecture
 
 **Status:** BETA SPECIFICATION (COMPREHENSIVE SCOPE)
@@ -72,14 +81,14 @@ This specification suite defines ScratchBird's **complete Beta cluster replicati
 | Document | Title | Focus | Lines | Status |
 |----------|-------|-------|-------|--------|
 | **00** | Index (this doc) | Navigation, overview, scope | ~300 | ✅ Complete |
-| **01** | UUIDv8 HLC Architecture | Custom ID format with causal ordering | ~1,800 | 🟡 Draft |
-| **02** | Leaderless Quorum Replication | Multi-master write model | ~2,000 | 🟡 Draft |
-| **03** | Time-Partitioned Merkle Forest | Efficient anti-entropy | ~1,800 | 🟡 Draft |
-| **04** | Schema-Driven Colocation | Multi-table atomicity | ~1,400 | 🟡 Draft |
-| **05** | MGA Integration | TIP-based distributed visibility | ~1,500 | 🟡 Draft |
-| **06** | Implementation Phases | Beta roadmap, 20-24 weeks | ~1,200 | 🟡 Draft |
-| **07** | Testing Strategy | Chaos tests, performance benchmarks | ~1,000 | 🟡 Draft |
-| **08** | Migration & Operations | Upgrade path, runbooks | ~1,000 | 🟡 Draft |
+| **01** | UUIDv8 HLC Architecture | Custom ID format with causal ordering | ~1,800 | Authoritative |
+| **02** | Leaderless Quorum Replication | Multi-master write model | ~2,000 | Authoritative |
+| **03** | Time-Partitioned Merkle Forest | Efficient anti-entropy | ~1,800 | Authoritative |
+| **04** | Schema-Driven Colocation | Multi-table atomicity | ~1,400 | Authoritative |
+| **05** | MGA Integration | TIP-based distributed visibility | ~1,500 | Authoritative |
+| **06** | Implementation Phases | Beta roadmap, 20-24 weeks | ~1,200 | Authoritative |
+| **07** | Testing Strategy | Chaos tests, performance benchmarks | ~1,000 | Authoritative |
+| **08** | Migration & Operations | Upgrade path, runbooks | ~1,000 | Authoritative |
 | **Total** | | | **~12,000** | |
 
 ---
@@ -292,7 +301,7 @@ Transaction touches only Shard 7 → Local TIP commit
 
 ### MGA_RULES.md (Firebird Transaction Model)
 
-**Critical:** ScratchBird uses MGA, NOT PostgreSQL MVCC
+**Critical:** ScratchBird uses MGA, NOT PostgreSQL MGA
 
 **MGA Principles:**
 - TIP-based visibility (`isVersionVisible()` checks TIP state)
@@ -585,7 +594,7 @@ UuidV8Bytes generateUuidV8WithHLC();  // RFC 9562 v8 (custom format)
 - **Firebird MGA:** Firebird 5.0 documentation (transaction model)
 
 ### Research Foundation
-- **`/docs/specifications/reference/UUIDv7 Replication System Design.md`** - Consensus research
+- **`/docs/specifications/parser/v3/reference/UUIDv7 Replication System Design.md`** - Consensus research
 - **Web verification:**
   - [UUIDv7 Database Performance - Bindbee](https://www.bindbee.dev/blog/why-bindbee-chose-uuidv7)
   - [PostgreSQL 18 UUIDv7 Support - Neon](https://neon.com/postgresql/postgresql-18/uuidv7-support)
@@ -640,3 +649,5 @@ UuidV8Bytes generateUuidV8WithHLC();  // RFC 9562 v8 (custom format)
 ---
 
 **End of Index Document**
+
+**Terminology note:** ScratchBird uses Firebird MGA. Any MGA references in this file are legacy shorthand and must be interpreted as MGA per the authoritative references above.

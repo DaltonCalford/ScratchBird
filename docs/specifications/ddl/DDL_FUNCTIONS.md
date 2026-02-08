@@ -6,7 +6,7 @@ A function is a reusable subprogram that performs a specific calculation or oper
 
 Cursor handle returns are supported for PSQL invocation contexts only. For
 details on cursor handle semantics and limits, see:
-`ScratchBird/docs/specifications/parser/PSQL_CURSOR_HANDLES.md`
+`ScratchBird/docs/specifications/parser/v3/parser/PSQL_CURSOR_HANDLES.md`
 
 ## **CREATE FUNCTION**
 

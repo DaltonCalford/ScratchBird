@@ -34,7 +34,7 @@ ScratchBird will support multiple character sets and collations for internationa
 ## Resource Baseline (Alpha Requirement)
 ScratchBird resources must include a complete baseline of character sets and collations
 required for Firebird, PostgreSQL, and MySQL compatibility.
-Canonical lists are defined in `docs/specifications/types/I18N_CANONICAL_LISTS.md`.
+Canonical lists are defined in `docs/specifications/parser/v3/types/I18N_CANONICAL_LISTS.md`.
 
 ### Charset coverage requirements
 - `resources/charsets/charsets.json` must include all Firebird Appendix H character

@@ -65,6 +65,17 @@ Analysis, audits, and development documentation:
 
 Test reports and testing documentation:
 
+#### Test Server
+
+For driver development, GUI testing, and security validation:
+
+- **[Test Server Specification](specifications/testing/test_server/README.md)** - Complete test server documentation
+- **[Test Server Operations](specifications/testing/test_server/OPERATIONS.md)** - Operational procedures
+- **[Security Testing Procedures](specifications/testing/test_server/SECURITY_TESTING.md)** - Security compliance testing
+- **[Quick Start](../../TEST_SERVER.md)** - Quick reference
+
+#### Test Reports
+
 - **[Test Development 2025-11-06](testing/TEST_DEVELOPMENT_2025-11-06.md)** - Test development session
 - **[Test Status 2025-11-06 Evening](testing/TEST_STATUS_2025-11-06_EVENING.md)** - Evening test status
 - **[Test Status 2025-11-06 Final](testing/TEST_STATUS_2025-11-06_FINAL.md)** - Final test results

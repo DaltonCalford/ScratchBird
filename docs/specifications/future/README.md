@@ -2,7 +2,7 @@
 
 **[← Back to Specifications Index](../README.md)**
 
-This directory contains specifications for future features planned but not yet scheduled for Alpha or Beta releases.
+This directory contains specifications for future features required but not yet scheduled for Alpha or Beta releases.
 
 ## Overview
 

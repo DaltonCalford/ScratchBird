@@ -99,7 +99,7 @@ as `SELECT * FROM name`.
   security subsystem.
 - Optional security-gated behavior: relative paths (leading dot) may be
   resolved against each search-path entry as a base. Defaults and security
-  gating are defined in `docs/specifications/catalog/SCHEMA_PATH_SECURITY_DEFAULTS.md`.
+  gating are defined in `docs/specifications/parser/v3/catalog/SCHEMA_PATH_SECURITY_DEFAULTS.md`.
 
 ## Examples
 Assume:

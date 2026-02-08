@@ -1,7 +1,7 @@
 # sb_isql CLI Specification (Native + Emulated)
 
 Version: 1.1  
-Status: Draft (Alpha networking)  
+Status: Authoritative (V3)
 Last Updated: January 2026
 
 ## Purpose
@@ -124,6 +124,6 @@ See the user documentation or `sb_isql -h` for the full command list.
 
 ## Related Specs
 
-- `docs/specifications/network/NETWORK_LISTENER_AND_PARSER_POOL_SPEC.md`
-- `docs/specifications/wire_protocols/*.md`
-- `docs/specifications/tools/SB_TOOLING_NETWORK_SPEC.md`
+- `docs/specifications/parser/v3/network/NETWORK_LISTENER_AND_PARSER_POOL_SPEC.md`
+- `docs/specifications/parser/v3/wire_protocols/*.md`
+- `docs/specifications/parser/v3/tools/SB_TOOLING_NETWORK_SPEC.md`

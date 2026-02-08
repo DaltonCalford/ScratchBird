@@ -7,7 +7,7 @@ ScratchBird provides comprehensive trigger context variables that allow triggers
 Triggers may call procedures or functions that accept cursor handle parameters.
 Cursor handles are allowed within the trigger body but cannot be passed into
 the trigger itself. See:
-`ScratchBird/docs/specifications/parser/PSQL_CURSOR_HANDLES.md`
+`ScratchBird/docs/specifications/parser/v3/parser/PSQL_CURSOR_HANDLES.md`
 
 ## Core Trigger Variables
 

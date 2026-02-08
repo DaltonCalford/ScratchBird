@@ -55,7 +55,7 @@ ScratchBird requires the following libraries for Windows:
 - For controlled versions when vcpkg is not available.
 - Requires a cross-build of OpenSSL and zlib for Windows.
 
-### 4.2 Static/Bundled Builds (Planned)
+### 4.2 Static/Bundled Builds (Required)
 
 - Static builds are allowed for security-hardening.
 - When using vcpkg, choose a static triplet and set:
@@ -65,7 +65,7 @@ ScratchBird requires the following libraries for Windows:
   and `-DOPENSSL_USE_STATIC_LIBS=TRUE`.
 - Optional libraries may remain dynamic if static builds are unavailable.
 
-### 4.3 Signed Runtime Bundle (Planned)
+### 4.3 Signed Runtime Bundle (Required)
 
 Windows builds may ship as a sealed bundle with signed libraries.
 
@@ -131,7 +131,7 @@ Required runtime DLLs (bundle alongside binaries or ship in installer):
 
 ## 8. Packaging
 
-Windows packaging formats (planned):
+Windows packaging formats (required):
 - ZIP bundle (portable)
 - MSI installer (full system install)
 

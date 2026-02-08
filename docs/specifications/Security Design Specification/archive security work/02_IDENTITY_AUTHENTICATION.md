@@ -2,7 +2,7 @@
 
 **Document ID**: SBSEC-02  
 **Version**: 1.0  
-**Status**: Draft for Review  
+**Status**: Authoritative (V3)
 **Date**: January 2026  
 **Scope**: All deployment modes, Security Levels 1-6  
 

@@ -1,5 +1,14 @@
 # System Catalog Specifications
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 **[← Back to Specifications Index](../README.md)**
 
 This directory contains system catalog specifications for ScratchBird's metadata management and schema resolution.
@@ -86,7 +95,7 @@ The catalog supports multiple SQL dialects:
 - **PostgreSQL** - `pg_catalog` system views
 - **MySQL** - `information_schema` and `mysql` schema
 - **Firebird** - `RDB$` system tables
-- **MSSQL** - `sys` catalog views (post-gold)
+- **MSSQL** - `sys` catalog views (optional extension)
 
 All dialect-specific views map to the core `sys` catalog tables.
 

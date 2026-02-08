@@ -40,6 +40,7 @@
 #include "scratchbird/network/socket_types.h"
 #include "scratchbird/server/config_parser.h"
 #include "scratchbird/server/ipc_server.h"
+#include "scratchbird/security/tls_config.h"
 #include "scratchbird/version.h"
 
 #ifdef _WIN32
@@ -80,6 +81,7 @@ struct ListenerConfig {
     uint32_t health_check_interval_ms = 5000;
     bool show_help = false;
     bool show_version = false;
+    bool tls_enabled = false;  // Parsed from TLS config
 };
 
 void handleSignal(int signal) {
@@ -973,6 +975,26 @@ bool parseArgsForConfig(int argc, char* argv[], ListenerConfig& config) {
     return true;
 }
 
+/**
+ * Load TLS settings from config and determine if TLS is enabled.
+ * This function uses the already parsed config to check if TLS is enabled.
+ */
+void loadTLSConfigFromParser(const scratchbird::server::ConfigParser& parser,
+                              ListenerConfig& config) {
+    const auto* ssl_section = parser.section("ssl");
+    if (!ssl_section) {
+        config.tls_enabled = false;
+        return;  // No SSL section, TLS not enabled
+    }
+
+    // Check if TLS is explicitly enabled
+    config.tls_enabled = ssl_section->getBool("enabled", false);
+    
+    if (config.tls_enabled) {
+        std::cerr << "[listener] TLS enabled for " << config.protocol << " protocol\n";
+    }
+}
+
 bool applyConfigFile(ListenerConfig& config) {
     if (config.config_path.empty()) {
         return true;
@@ -1028,6 +1050,9 @@ bool applyConfigFile(ListenerConfig& config) {
     if (!config.config_path.empty() && parser.hasSection("ssl")) {
         config.tls_config = config.config_path;
     }
+
+    // Load TLS settings from the already parsed config
+    loadTLSConfigFromParser(parser, config);
 
     return true;
 }
@@ -1339,7 +1364,7 @@ int runListener(const ListenerConfig& config) {
             continue;
         }
 
-        bool handed_off = pool.handoff(worker, client->getFd(), client_addr, false);
+        bool handed_off = pool.handoff(worker, client->getFd(), client_addr, config.tls_enabled);
         client->close();
         open_connections->dec(1.0, label);
 

@@ -1,6 +1,5 @@
 # Local Files UDR Specification
-
-Status: Draft (Target). This specification defines the Local Files UDR used to
+Status: Authoritative (V3)
 access CSV and JSON data from local disk only.
 
 ## Scope

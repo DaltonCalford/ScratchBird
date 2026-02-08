@@ -542,7 +542,7 @@ Requires separate code path:
 
 ---
 
-### Phase 2: Important Features (Post-Alpha) - 3-4 days
+### Phase 2: Important Features (optional extension) - 3-4 days
 
 5. **UNSIGNED constraints** - 1-2 days
    - Emit CHECK constraints for UNSIGNED
@@ -690,7 +690,7 @@ SHOW CREATE TABLE t;
   - [ ] Test view creation and queries
 - [ ] Update executor bytecode format per audit document 20
 
-### Phase 2: Post-Alpha (HIGH)
+### Phase 2: optional extension (HIGH)
 - [ ] Implement UNSIGNED as CHECK constraint
 - [ ] Implement INSERT IGNORE as ON CONFLICT DO NOTHING
 - [ ] Audit table options bytecode emission
@@ -699,7 +699,7 @@ SHOW CREATE TABLE t;
 ### Phase 3: Beta Target (MEDIUM)
 - [ ] Implement temporary tables (full stack)
 - [ ] Implement ZEROFILL formatting
-- [ ] Implement advanced index types
+- [ ] Implement remaining core index types
 - [ ] Implement stored procedure parsing
 
 ---

@@ -1,6 +1,5 @@
 # Collation Tailoring Loader (Minimal Stub Spec)
-
-**Status:** Draft  
+**Status:** Authoritative (V3)
 **Target:** Alpha (loader contract), Beta (runtime integration)
 
 ## Purpose

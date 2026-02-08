@@ -36,7 +36,7 @@ CREATE \[ { GLOBAL | LOCAL } TEMPORARY | TEMP \] TABLE \[ IF NOT EXISTS \] \<tab
 
 ### **Storage Parameters (Optional)**
 
-Storage parameters configure table defaults and per-column overrides for varlen encoding, TOAST, and numeric storage. See `ScratchBird/docs/specifications/beta_requirements/optional/STORAGE_ENCODING_OPTIMIZATIONS.md`.
+Storage parameters configure table defaults and per-column overrides for varlen encoding, TOAST, and numeric storage. See `ScratchBird/docs/specifications/parser/v3/beta_requirements/optional/STORAGE_ENCODING_OPTIMIZATIONS.md`.
 
 **Table storage parameters:**
 * storage\_format: 1 or 2 (v2 enables varlen header v2 and per-column TOAST)

@@ -1,7 +1,16 @@
 # ScratchBird SQL Monitoring Views
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 Version: 1.0  
-Status: Draft (Alpha)  
+Status: Authoritative (V3)
 Last Updated: January 2026
 
 ## Purpose
@@ -375,8 +384,8 @@ ORDER BY metric;
 
 ## Related Specs
 
-- docs/specifications/operations/PROMETHEUS_METRICS_REFERENCE.md
-- docs/specifications/operations/MONITORING_DIALECT_MAPPINGS.md
-- docs/specifications/transaction/TRANSACTION_MAIN.md
-- docs/specifications/transaction/TRANSACTION_LOCK_MANAGER.md
-- docs/specifications/parser/EMULATED_DATABASE_PARSER_SPECIFICATION.md
+- docs/specifications/parser/v3/operations/PROMETHEUS_METRICS_REFERENCE.md
+- docs/specifications/parser/v3/operations/MONITORING_DIALECT_MAPPINGS.md
+- docs/specifications/parser/v3/transaction/TRANSACTION_MAIN.md
+- docs/specifications/parser/v3/transaction/TRANSACTION_LOCK_MANAGER.md
+- docs/specifications/parser/v3/parser/EMULATED_DATABASE_PARSER_SPECIFICATION.md

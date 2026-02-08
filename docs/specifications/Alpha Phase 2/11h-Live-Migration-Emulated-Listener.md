@@ -1,6 +1,5 @@
 # Live Migration with Emulated Listener
-
-Status: Draft (Beta). This document defines the end-to-end behavior for live
+Status: Authoritative (V3)
 migration when legacy applications connect to ScratchBird via an emulated
 wire protocol listener (Firebird/MySQL/PostgreSQL), while ScratchBird uses a
 UDR connector to the legacy database.
@@ -168,7 +167,7 @@ Mismatch handling:
 - If mismatch rate exceeds a threshold, auto-block cutover.
 
 Audit output should be persisted for review, e.g. `sys.migration_audit_log`
-(planned), or a user-defined table if system views are not yet available.
+(required), or a user-defined table if system views are not yet available.
 
 ## 7. Administrative Controls
 
@@ -315,7 +314,7 @@ Expose via sys.migration_status and sys.migration_audit_log (or equivalent).
 
 **Primary references:**
 - `ScratchBird/docs/specifications/Alpha Phase 2/11-Remote-Database-UDR-Specification.md`
-- `ScratchBird/docs/specifications/udr_connectors/UDR_CONNECTOR_BASELINE.md`
+- `ScratchBird/docs/specifications/parser/v3/udr_connectors/UDR_CONNECTOR_BASELINE.md`
 
 
 ## Appendix A: Snapshot + CDC Bootstrap Sequences

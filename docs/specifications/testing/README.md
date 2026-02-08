@@ -10,6 +10,15 @@ Comprehensive testing specifications covering Alpha and Beta test plans, compati
 
 ## Specifications in this Directory
 
+### Test Infrastructure
+
+- **[Test Server](test_server/)** - Complete test server documentation
+  - **[README.md](test_server/README.md)** - Test server specification and configuration
+  - **[OPERATIONS.md](test_server/OPERATIONS.md)** - Operational procedures and management
+  - **[SECURITY_TESTING.md](test_server/SECURITY_TESTING.md)** - Security compliance testing
+  
+### Test Plans
+
 - **[ALPHA3_TEST_PLAN.md](ALPHA3_TEST_PLAN.md)** (727 lines) - Alpha 3 test plan and procedures
 
 ## Test Categories
@@ -45,6 +54,35 @@ Comprehensive testing specifications covering Alpha and Beta test plans, compati
 - **Scalability** - Multi-core and cluster scalability (Beta)
 
 ## Test Infrastructure
+
+### Test Server
+
+The **ScratchBird Test Server** provides a dedicated instance for comprehensive testing:
+
+- **Bootstrap Authentication** - Initial setup and connectivity testing
+- **SCRAM-SHA-256** - Production-like security compliance testing
+- **Multi-Protocol** - Native, PostgreSQL, Firebird protocols
+- **HBA Rules** - Host-based authentication testing
+- **Rate Limiting** - Brute force protection validation
+
+**Quick Links:**
+- [Test Server Documentation](test_server/README.md)
+- [Operational Procedures](test_server/OPERATIONS.md)
+- [Security Testing](test_server/SECURITY_TESTING.md)
+
+**Quick Start:**
+```bash
+# Setup
+./scripts/test-server-user.sh setup
+
+# Start
+./scripts/test-server-user.sh start
+
+# Connect
+scratchbird://anyuser:anypass@127.0.0.1:3092/testdb
+```
+
+### Automated Testing
 
 - **Automated CI/CD** - GitHub Actions integration
 - **Coverage Tracking** - Code coverage measurement

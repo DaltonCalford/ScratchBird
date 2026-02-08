@@ -1,12 +1,21 @@
 # PostgreSQL Parser Implementation Gaps and Remediation Specification
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 **Version:** 1.0
 **Date:** 2026-01-07
 **Status:** ACTIVE - Alpha Requirement
 **Priority:** CRITICAL - Must complete before Alpha release
 
-**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional post-gold (replication/PITR).
-Any WAL references in this document describe an optional post-gold stream for
+**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional optional extension (replication/PITR).
+Any WAL references in this document describe an optional optional extension stream for
 replication/PITR only.
 
 ---
@@ -183,16 +192,16 @@ bool is_unlogged = matchKeyword(TokenType::KW_UNLOGGED);
 ```
 
 **PostgreSQL UNLOGGED semantics:**
-- Table is not written to the optional write-after log (WAL, optional post-gold)
-- Faster writes (no write-after log (WAL, optional post-gold) overhead)
+- Table is not written to the optional write-after log (WAL, optional optional extension)
+- Faster writes (no write-after log (WAL, optional optional extension) overhead)
 - Truncated on crash recovery
 - Not replicated to standby servers
 
 **ScratchBird MGA note:**
-- MGA does not use write-after log (WAL, optional post-gold) for recovery, so UNLOGGED tables are effectively the same as regular tables today.
-- If an optional write-after log (WAL, optional post-gold) is introduced later (replication/PITR), UNLOGGED can bypass that stream.
+- MGA does not use write-after log (WAL, optional optional extension) for recovery, so UNLOGGED tables are effectively the same as regular tables today.
+- If an optional write-after log (WAL, optional optional extension) is introduced later (replication/PITR), UNLOGGED can bypass that stream.
 
-**Result:** `CREATE UNLOGGED TABLE test (id INT)` creates a normal table. Under MGA, this is acceptable; any difference only appears if a write-after log (WAL, optional post-gold) is added later.
+**Result:** `CREATE UNLOGGED TABLE test (id INT)` creates a normal table. Under MGA, this is acceptable; any difference only appears if a write-after log (WAL, optional optional extension) is added later.
 
 #### Remediation
 
@@ -201,11 +210,11 @@ bool is_unlogged = matchKeyword(TokenType::KW_UNLOGGED);
 1. Pass `is_unlogged` flag to `parseCreateTable()`
 2. Emit flag in bytecode
 3. Store in catalog metadata
-4. Skip write-after log (WAL, optional post-gold) if introduced
-5. Truncate on crash recovery only if a write-after log (WAL, optional post-gold) durability path is introduced
+4. Skip write-after log (WAL, optional optional extension) if introduced
+5. Truncate on crash recovery only if a write-after log (WAL, optional optional extension) durability path is introduced
 
 **Effort:** 2-3 days
-**Priority:** **POST-ALPHA** (optimization feature)
+**Priority:** **optional extension** (optimization feature)
 
 **Option B: Document as Unsupported**
 ```cpp
@@ -263,7 +272,7 @@ CREATE INDEX idx_full_name ON users ((first_name || ' ' || last_name));
 4. Evaluate expression on INSERT/UPDATE
 
 **Effort:** 3-4 days
-**Priority:** **POST-ALPHA**
+**Priority:** **optional extension**
 
 **Option B: Keep Current Behavior**
 
@@ -306,7 +315,7 @@ CREATE INDEX idx_user ON users (email) INCLUDE (name, created_at);
 4. Enable index-only scans
 
 **Effort:** 2-3 days
-**Priority:** **POST-ALPHA**
+**Priority:** **optional extension**
 
 **Option B: Keep Current Behavior**
 
@@ -349,7 +358,7 @@ Complex feature requiring:
 4. Handle INSERT/UPDATE/DELETE polymorphism
 
 **Effort:** 5-7 days
-**Priority:** **POST-BETA**
+**Priority:** **optional extension**
 
 **Option B: Reject with Error**
 ```cpp
@@ -504,7 +513,7 @@ case PgDataType::Kind::MACADDR8:
 ```
 
 **Effort:** Option A (if opcodes exist): 1 day; Option B: 2 days
-**Priority:** **POST-ALPHA**
+**Priority:** **optional extension**
 
 **Recommendation:** Investigate if SBLR has network type opcodes. If not, use Option B.
 
@@ -572,7 +581,7 @@ emitByte(deferrable_flags);  // ✅ Emitted to bytecode
 
 ---
 
-### Phase 2: Post-Alpha Features - 5-7 days
+### Phase 2: optional extension Features - 5-7 days
 
 6. **DEFERRABLE Constraint Verification** - 1 day
    - Test SET CONSTRAINTS DEFERRED
@@ -601,8 +610,8 @@ emitByte(deferrable_flags);  // ✅ Emitted to bytecode
     - See FIREBIRD_V2_FEATURE_PARITY_SPECIFICATION.md
 
 11. **UNLOGGED TABLES** - 2-3 days
-    - Implement write-after log (WAL, optional post-gold) bypass (optional)
-    - Implement crash recovery truncation if write-after log (WAL, optional post-gold) durability is introduced
+    - Implement write-after log (WAL, optional optional extension) bypass (optional)
+    - Implement crash recovery truncation if write-after log (WAL, optional optional extension) durability is introduced
 
 12. **Expression Indexes** - 3-4 days
     - Parse expressions
@@ -649,7 +658,7 @@ SELECT DISTINCT name FROM users;
 -- Expected: All succeed
 ```
 
-### Phase 2 Tests (Post-Alpha)
+### Phase 2 Tests (optional extension)
 
 ```sql
 -- Test 6: DEFERRABLE constraints
@@ -687,8 +696,8 @@ CREATE TABLE managers (dept TEXT) INHERITS (employees);
 | **DDL** |
 | CREATE TEMP TABLE | ✅ | ❌ | ❌ | **IGNORED** | **CRITICAL** |
 | CREATE UNLOGGED TABLE | ✅ | ❌ | ❌ | **IGNORED** | **MEDIUM** |
-| Expression indexes | ❌ | ❌ | ❌ | **REJECTED** | **POST-ALPHA** |
-| INCLUDE clause | ❌ | ❌ | ❌ | **REJECTED** | **POST-ALPHA** |
+| Expression indexes | ❌ | ❌ | ❌ | **REJECTED** | **optional extension** |
+| INCLUDE clause | ❌ | ❌ | ❌ | **REJECTED** | **optional extension** |
 | INHERITS clause | ⚠️ | ❌ | ❌ | **PARTIAL** | **LOW** |
 | **Types** |
 | SERIAL/BIGSERIAL | ✅ | ✅ | ✅ | **WORKS** | **COMPLETE** |
@@ -762,7 +771,7 @@ and `docs/planning/SBLR_TYPE_OPCODE_REMEDIATION_PLAN.md`.
   - [ ] Fix DELETE bytecode format (remove USING if unsupported)
   - [ ] Test all DML statements execute correctly
 
-### Phase 2: Post-Alpha
+### Phase 2: optional extension
 - [ ] Verify DEFERRABLE constraints work with executor
 - [ ] Investigate network type support (INET, CIDR, MACADDR)
 - [ ] Add INHERITS rejection with error
@@ -816,7 +825,7 @@ sync with `include/scratchbird/sblr/opcodes.h` and
 
 **Emission rule:**
 - Emit `EXT_CREATE_DOMAIN` (0x5C) using the payload format defined in
-  `docs/specifications/sblr/SBLR_DOMAIN_PAYLOADS.md` and
+  `docs/specifications/parser/v3/SBLR_V3_OPCODE_PAYLOADS.md` and
   `src/sblr/bytecode_generator_v2.cpp`:
   - `domain_kind = BASIC`
   - `base_type = ResolvedType` (precision/scale/length included)

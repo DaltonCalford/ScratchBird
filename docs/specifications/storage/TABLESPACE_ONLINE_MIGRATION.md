@@ -1,6 +1,15 @@
 # Tablespace Online Migration (MGA)
 
-**Status:** Beta specification (post-alpha)
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
+**Status:** Beta specification (optional extension)
 **Last Updated:** 2026-01-20
 **Scope:** Online table and index migration between tablespaces within a single database node
 
@@ -230,9 +239,9 @@ Metrics:
 
 ## 13) Related Specifications
 
-- Tablespace core spec: `docs/specifications/storage/TABLESPACE_SPECIFICATION.md`
+- Tablespace core spec: `docs/specifications/parser/v3/storage/TABLESPACE_SPECIFICATION.md`
 - MGA rules: `MGA_RULES.md`
-- Storage engine: `docs/specifications/storage/STORAGE_ENGINE_MAIN.md`
+- Storage engine: `docs/specifications/parser/v3/storage/STORAGE_ENGINE_MAIN.md`
 - Cluster sharding (cross-node): `docs/specifications/Cluster%20Specification%20Work/SBCLUSTER-11-SHARD-MIGRATION-AND-REBALANCING.md`
 - Optional Beta: Tablespace shrink/compaction (MGA-safe):
-  `docs/specifications/beta_requirements/optional/TABLESPACE_SHRINK_COMPACTION.md`
+  `docs/specifications/parser/v3/beta_requirements/optional/TABLESPACE_SHRINK_COMPACTION.md`

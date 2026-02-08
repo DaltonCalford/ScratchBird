@@ -1,7 +1,16 @@
 # 01: Core Architecture - Split-Plane Hybrid Consensus
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../../../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../../../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../../../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../../../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../../../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 **Document:** BETA-REPLICATION-01
-**Status:** DRAFT
+**Status:** Authoritative (V3)
 **Version:** 1.0
 **Date:** 2026-01-08
 
@@ -38,7 +47,7 @@ This approach resolves the CAP theorem trade-off by applying different consisten
 - `SBCLUSTER-07-REPLICATION.md` - Base per-shard write-after log (WAL) streaming
 - `SBCLUSTER-05-SHARDING.md` - Shard assignment model
 - `MGA_RULES.md` - Firebird transaction visibility rules
-- Research: `/docs/specifications/reference/UUIDv7 Replication System Design.md`
+- Research: `/docs/specifications/parser/v3/reference/UUIDv7 Replication System Design.md`
 
 ---
 
@@ -494,7 +503,7 @@ void fence_self(const UUID& shard_id, uint64_t new_generation) {
 
 ### 7.1 Transaction Visibility (TIP-Based)
 
-ScratchBird uses Firebird MGA (from MGA_RULES.md), NOT PostgreSQL MVCC:
+ScratchBird uses Firebird MGA (from MGA_RULES.md), NOT PostgreSQL MGA:
 
 **Key Principle:** Visibility determined by Transaction Inventory Pages (TIP), not snapshots.
 
@@ -655,3 +664,5 @@ This foundation enables the Beta replication features (time-partitioned Merkle f
 **Document Status:** DRAFT (Beta Specification Phase)
 **Last Updated:** 2026-01-08
 **Approval Required:** Chief Architect, Distributed Systems Lead
+
+**Terminology note:** ScratchBird uses Firebird MGA. Any MGA references in this file are legacy shorthand and must be interpreted as MGA per the authoritative references above.

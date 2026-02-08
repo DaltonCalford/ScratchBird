@@ -2,13 +2,13 @@
 
 **Document ID**: SBSEC-09  
 **Version**: 1.0  
-**Status**: Draft for Review  
+**Status**: Authoritative (V3)
 **Date**: January 2026  
 **Scope**: All deployment modes  
 
-**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional post-gold (replication/PITR).
+**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional optional extension (replication/PITR).
 Any WAL encryption requirements in this document apply only to an optional
-post-gold WAL stream for replication/PITR.
+optional extension WAL stream for replication/PITR.
 
 ---
 
@@ -68,7 +68,7 @@ All SBSEC documents (01-08) reference this specification for security level requ
 │  • Everything in Level 1 plus:                                  │
 │  • Encryption at rest required                                  │
 │  • TDE for all databases                                        │
-│  • Write-after log (WAL, optional post-gold) encryption                             │
+│  • Write-after log (WAL, optional optional extension) encryption                             │
 │  • Backup encryption                                            │
 │                                                                  │
 │  Level 3: POLICY-CONTROLLED                                      │
@@ -188,7 +188,7 @@ All SBSEC documents (01-08) reference this specification for security level requ
 |---------|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
 | Encryption at rest | | | ● | ● | ● | ● | ● |
 | TDE (Transparent Data Encryption) | | | ● | ● | ● | ● | ● |
-| Write-after log (WAL, optional post-gold) encryption | | | ● | ● | ● | ● | ● |
+| Write-after log (WAL, optional optional extension) encryption | | | ● | ● | ● | ● | ● |
 | Backup encryption | | | ● | ● | ● | ● | ● |
 | Wire encryption (TLS) | | | ○ | ○ | ○ | ● | ● |
 | TLS 1.3 required | | | | | | ● | ● |
@@ -722,7 +722,7 @@ The following invariants MUST hold for each security level:
 - All Level 1 invariants plus:
 - All data at rest is encrypted
 - All backups are encrypted
-- Write-after log (WAL, optional post-gold) is encrypted
+- Write-after log (WAL, optional optional extension) is encrypted
 
 ### Level 3 Invariants
 - All Level 2 invariants plus:

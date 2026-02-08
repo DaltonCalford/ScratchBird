@@ -1,6 +1,5 @@
 # PostgreSQL UDR Specification
-
-Status: Draft (Target). This specification defines the PostgreSQL UDR that
+Status: Authoritative (V3)
 connects to PostgreSQL using the native wire protocol without vendor drivers.
 
 ## Scope
@@ -79,7 +78,7 @@ Use pg_catalog and information_schema for schema analysis:
 SELECT n.oid, n.nspname
 FROM pg_namespace n
 WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
-  AND n.nspname NOT LIKE 'pg_toast%';
+  AND n.nspname NOT LIKE 'sb_toast%';
 
 -- Tables / views / materialized views
 SELECT c.oid, n.nspname, c.relname, c.relkind

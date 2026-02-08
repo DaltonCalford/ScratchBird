@@ -1,6 +1,5 @@
 # Local Scripts UDR Specification
-
-Status: Draft (Target). This specification defines the Local Scripts UDR used
+Status: Authoritative (V3)
 for local-only script execution to produce tabular data.
 
 ## Scope

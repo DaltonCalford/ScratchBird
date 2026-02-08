@@ -1,7 +1,24 @@
 # ScratchBird Index Architecture
+
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 **Version:** 1.0
 **Date:** November 20, 2025
 **Status:** Production Documentation
+
+---
+
+## Contradictions vs Normative Index Specs (2026-02-07)
+
+- This document previously stated inconsistent index counts. The authoritative count is 28, and all index types are core.
+- Authoritative algorithm sections now live in per-index specs (e.g., `BTREE_SPEC.md`, `HASH_SPEC.md`, `HNSW_SPEC.md`, etc.). If any detail conflicts, those per-index specs override this architecture doc.
 
 ---
 
@@ -19,14 +36,14 @@
 
 ## Overview
 
-ScratchBird implements **12 core index types** plus **15 optional/advanced index types** (27 total) designed for diverse workloads ranging from OLTP to OLAP. All indexes follow **Firebird Multi-Generational Architecture (MGA)** principles with TIP-based visibility and stable TIDs.
+ScratchBird implements **28 core index types** designed for diverse workloads ranging from OLTP to OLAP. All indexes follow **Firebird Multi-Generational Architecture (MGA)** principles with TIP-based visibility and stable record UUIDs.
 
 ### Design Principles
 
-1. **MGA Compliance:** All indexes use `xmin`/`xmax` transaction tracking with TIP-based visibility checks
-2. **Stable TIDs:** Index entries point to stable tuple identifiers that never change unless indexed columns are modified
-3. **Logical Deletion:** Deletions mark entries with `xmax` rather than physical removal
-4. **No Snapshots:** All visibility uses `isVersionVisible(xmin, xmax, current_xid)` - **never** PostgreSQL-style snapshots
+1. **MGA Compliance:** Index entries reference record versions (creator `rhd_transaction`, back-version chains)
+2. **Stable Record Identity:** Record UUIDs are canonical; page/slot addresses are cache hints only
+3. **Logical Deletion:** Deletes create `RHD_DELETED` record versions; old index entries persist until sweep
+4. **TIP Visibility:** Visibility uses TIP state checks and MGA rules; no PostgreSQL-style snapshots
 
 ### Architecture Components
 
@@ -51,19 +68,18 @@ ScratchBird implements **12 core index types** plus **15 optional/advanced index
 └─────────────────────────────────────────────────────┘
                         ↓
 ┌─────────────────────────────────────────────────────┐
-│ Index Implementations (27 types: 12 core + 15 opt) │
-│  - Core: B-Tree, Hash, GIN, Fulltext, HNSW, GiST   │
-│  - Core: SP-GiST, BRIN, Bitmap, LSM, R-Tree        │
-│  - Core: Columnstore                              │
-│  - Opt: IVF, ZoneMap, Z-Order, Geohash, S2         │
-│  - Opt: Quadtree, Octree, FST, Suffix, CMS, HLL    │
-│  - Opt: ART, Learned, LSM-TTL                      │
+│ Index Implementations (28 core index types)        │
+│  - B-Tree, Hash, GIN, Fulltext, HNSW, GiST         │
+│  - SP-GiST, BRIN, Bitmap, LSM, R-Tree              │
+│  - Columnstore, IVF, ZoneMap, Z-Order, Geohash, S2 │
+│  - Quadtree, Octree, FST, Suffix, CMS, HLL         │
+│  - ART, Learned, LSM-TTL, JSON_PATH                │
 └─────────────────────────────────────────────────────┘
                         ↓
 ┌─────────────────────────────────────────────────────┐
 │ Storage Layer (Buffer Pool + Page Manager)         │
 │  - Page-level storage                               │
-│  - Optional write-after log integration (post-gold) │
+│  - Optional write-after log integration (optional extension) │
 │  - TIP-based visibility                             │
 └─────────────────────────────────────────────────────┘
 ```
@@ -74,21 +90,16 @@ ScratchBird implements **12 core index types** plus **15 optional/advanced index
 
 ### Canonical Index Type Names (Parser/Catalog)
 
-**Core (Alpha scope):**
+**All Core Index Types:**
 - BTREE, HASH, FULLTEXT, GIN, GIST, SPGIST, BRIN
 - BITMAP, RTREE, HNSW, COLUMNSTORE, LSM
-
-**Optional/Advanced (Beta scope):**
-- IVF, ZONEMAP
-- ZORDER, GEOHASH, S2
-- QUADTREE, OCTREE
-- FST, SUFFIX_ARRAY, SUFFIX_TREE
-- COUNT_MIN_SKETCH, HYPERLOGLOG
-- ART, LEARNED, LSM_TTL, JSON_PATH
+- IVF, ZONEMAP, ZORDER, GEOHASH, S2
+- QUADTREE, OCTREE, FST, SUFFIX_ARRAY, SUFFIX_TREE
+- COUNT_MIN_SKETCH, HYPERLOGLOG, ART, LEARNED, LSM_TTL, JSON_PATH
 
 **DDL Note:** SQL uses lowercase keywords in `USING` clauses (e.g., `USING zorder`). Bloom filters are an index option (`WITH (bloom_filter = true)`), not a standalone index type.
 
-**Total Index Types:** 28 (12 core + 16 optional)
+**Total Index Types:** 28 (all core)
 
 ### 1. B-Tree Index
 
@@ -109,9 +120,9 @@ ScratchBird implements **12 core index types** plus **15 optional/advanced index
 **File:** `src/core/btree.cpp` (2,836 lines)
 
 **Key Features:**
-- ✅ Full MGA compliance with xmin/xmax tracking
+- ✅ Full MGA compliance with record-version metadata
 - ✅ TIP-based visibility checks in search
-- ✅ Logical deletion (sets xmax, marks DELETED flag)
+- ✅ Logical deletion (creates `RHD_DELETED` record versions)
 - ✅ Active DML integration (maintained during INSERT/UPDATE/DELETE)
 - ✅ Key compression (prefix and suffix)
 - ✅ Support for NULL values and infinity keys
@@ -119,14 +130,14 @@ ScratchBird implements **12 core index types** plus **15 optional/advanced index
 **API Example:**
 ```cpp
 // Search for key
-std::vector<TID> results;
-Status status = btree->search(key, current_xid, &results, &ctx);
+std::vector<UUID> results;
+Status status = btree->search(key, snapshot, tm, &results, &ctx);
 
 // Insert key-value pair
-status = btree->insert(key, value, tid, current_xid, &ctx);
+status = btree->insert(key, value, record_uuid, &ctx);
 
 // Logical delete
-status = btree->remove(key, tid, current_xid, &ctx);
+status = btree->remove(key, record_uuid, &ctx);
 ```
 
 **Performance:**
@@ -156,9 +167,9 @@ status = btree->remove(key, tid, current_xid, &ctx);
 **File:** `src/core/hash_index.cpp`
 
 **Key Features:**
-- ✅ Full MGA compliance with xmin/xmax tracking
+- ✅ Full MGA compliance with record-version metadata
 - ✅ TIP-based visibility during bucket scan
-- ✅ Logical deletion (sets he_xmax)
+- ✅ Logical deletion (creates `RHD_DELETED` record versions)
 - ✅ Active DML integration
 - ✅ Dynamic resizing (global depth: 4-20)
 - ✅ Overflow chain management
@@ -166,14 +177,14 @@ status = btree->remove(key, tid, current_xid, &ctx);
 **API Example:**
 ```cpp
 // Search for exact key
-std::vector<TID> results;
-Status status = hash_index->search(key, current_xid, &results, &ctx);
+std::vector<UUID> results;
+Status status = hash_index->search(key, snapshot, tm, &results, &ctx);
 
 // Insert key
-status = hash_index->insert(key, tid, current_xid, &ctx);
+status = hash_index->insert(key, record_uuid, &ctx);
 
 // Remove key
-status = hash_index->remove(key, tid, current_xid, &ctx);
+status = hash_index->remove(key, record_uuid, &ctx);
 ```
 
 **Performance:**
@@ -201,8 +212,8 @@ status = hash_index->remove(key, tid, current_xid, &ctx);
 
 **Data Structure:**
 - Entry tree (B-tree) mapping keys → posting lists
-- Posting lists: Compressed TID arrays for small sets
-- Posting trees: B-trees for large TID sets (>64 entries)
+- Posting lists: Compressed record UUID arrays for small sets
+- Posting trees: B-trees for large posting sets (>64 entries)
 - Pending list: Fast-path buffer for recent inserts
 
 **File:** `src/core/gin_index.cpp`
@@ -211,7 +222,7 @@ status = hash_index->remove(key, tid, current_xid, &ctx);
 - ✅ Key extraction framework (default, array, custom extractors)
 - ✅ Posting tree and posting list support
 - ✅ Pending list for fast inserts
-- ⚠️ **MGA VIOLATION:** Physical removal instead of xmax marking (Line 241)
+- ⚠️ **MGA VIOLATION:** Physical removal instead of versioned delete (Line 241)
 - ❌ No DML integration (returns NOT_IMPLEMENTED)
 
 **API Example:**
@@ -220,11 +231,11 @@ status = hash_index->remove(key, tid, current_xid, &ctx);
 GINIndex::registerExtractor("custom_type", my_extractor);
 
 // Search for keys
-std::vector<TID> results;
-status = gin_index->search(keys, current_xid, &results, &ctx);
+std::vector<UUID> results;
+status = gin_index->search(keys, snapshot, tm, &results, &ctx);
 
 // Insert with key extraction
-status = gin_index->insert(value, tid, current_xid, &ctx);
+status = gin_index->insert(value, record_uuid, &ctx);
 ```
 
 **Performance:**
@@ -233,7 +244,7 @@ status = gin_index->insert(value, tid, current_xid, &ctx);
 - Space: 1.5-3x data size (depends on key cardinality)
 
 **Known Issues:**
-- ⚠️ Posting list entries use physical removal (should use xmax)
+- ⚠️ Posting list entries use physical removal (should use MGA versioned delete)
 - Requires remediation for full MGA compliance (see TASK-CRITICAL-1)
 
 ---
@@ -259,9 +270,9 @@ status = gin_index->insert(value, tid, current_xid, &ctx);
 **File:** `src/core/hnsw_index.cpp`
 
 **Key Features:**
-- ✅ Full MGA compliance with xmin/xmax on nodes
+- ✅ Full MGA compliance with record-version metadata on nodes
 - ✅ TIP-based visibility during graph traversal
-- ✅ Logical deletion (marks node_xmax)
+- ✅ Logical deletion (creates deleted record versions)
 - ❌ No DML integration (returns NOT_IMPLEMENTED)
 - ✅ Configurable M (max connections per node, default: 16)
 - ✅ Configurable ef_construction (build quality, default: 200)
@@ -270,14 +281,14 @@ status = gin_index->insert(value, tid, current_xid, &ctx);
 **API Example:**
 ```cpp
 // K-NN search
-std::vector<std::pair<TID, float>> results;
-status = hnsw_index->search(query_vector, k, ef_search, current_xid, &results, &ctx);
+std::vector<std::pair<UUID, float>> results;
+status = hnsw_index->search(query_vector, k, ef_search, snapshot, tm, &results, &ctx);
 
 // Insert vector
-status = hnsw_index->insert(vector, tid, current_xid, &ctx);
+status = hnsw_index->insert(vector, record_uuid, &ctx);
 
 // Logical delete
-status = hnsw_index->remove(tid, current_xid, &ctx);
+status = hnsw_index->remove(record_uuid, &ctx);
 ```
 
 **Performance:**
@@ -312,7 +323,7 @@ status = hnsw_index->remove(tid, current_xid, &ctx);
 **File:** `src/core/gist_index.cpp`
 
 **Key Features:**
-- ✅ Full MGA compliance with xmin/xmax
+- ✅ Full MGA compliance with record-version metadata
 - ✅ TIP-based visibility checks
 - ✅ Logical deletion
 - ❌ No DML integration
@@ -322,11 +333,11 @@ status = hnsw_index->remove(tid, current_xid, &ctx);
 **API Example:**
 ```cpp
 // Search with predicate
-std::vector<TID> results;
-status = gist_index->search(predicate, current_xid, &results, &ctx);
+std::vector<UUID> results;
+status = gist_index->search(predicate, snapshot, tm, &results, &ctx);
 
 // Insert with predicate
-status = gist_index->insert(predicate, value, tid, current_xid, &ctx);
+status = gist_index->insert(predicate, value, record_uuid, &ctx);
 ```
 
 **Performance:**
@@ -365,11 +376,11 @@ status = gist_index->insert(predicate, value, tid, current_xid, &ctx);
 **API Example:**
 ```cpp
 // Search in spatial region
-std::vector<TID> results;
-status = spgist_index->search(region, current_xid, &results, &ctx);
+std::vector<UUID> results;
+status = spgist_index->search(region, snapshot, tm, &results, &ctx);
 
 // Insert spatial value
-status = spgist_index->insert(point, tid, current_xid, &ctx);
+status = spgist_index->insert(point, record_uuid, &ctx);
 ```
 
 **Performance:**
@@ -408,10 +419,10 @@ status = spgist_index->insert(point, tid, current_xid, &ctx);
 ```cpp
 // Range query (returns candidate blocks)
 std::vector<uint32_t> candidate_blocks;
-status = brin_index->search(min_val, max_val, current_xid, &candidate_blocks, &ctx);
+status = brin_index->search(min_val, max_val, snapshot, tm, &candidate_blocks, &ctx);
 
 // Update block range summary
-status = brin_index->updateRange(block_num, min_val, max_val, current_xid, &ctx);
+status = brin_index->updateRange(block_num, min_val, max_val, &ctx);
 ```
 
 **Performance:**
@@ -446,14 +457,14 @@ status = brin_index->updateRange(block_num, min_val, max_val, current_xid, &ctx)
 
 **Key Features:**
 - ⚠️ **INCOMPLETE:** Insert/remove operations are stubbed
-- ⚠️ **MGA INCOMPLETE:** No xmin/xmax on bitmap entries
+- ⚠️ **MGA INCOMPLETE:** No record-version metadata on bitmap entries
 - ❌ No DML integration
 - ✅ Bitmap AND/OR operations implemented
 - ✅ Heap scan integration
 
 **API Example:**
 ```cpp
-// Search returns bitmap (not TIDs directly)
+// Search returns bitmap (not record UUIDs directly)
 Bitmap* result;
 status = bitmap_index->search(value, &result, &ctx);
 
@@ -486,12 +497,12 @@ Bitmap* combined = Bitmap::AND(bitmap1, bitmap2);
 - Memtable (in-memory Red-Black tree)
 - Immutable SSTables (Sorted String Tables) on disk
 - Multiple levels with size-tiered compaction
-- Write-after log (WAL, optional post-gold) for durability
+- Write-after log (WAL, optional optional extension) for durability
 
 **File:** `src/core/lsm_tree_index.cpp`
 
 **Key Features:**
-- ✅ Full MGA compliance with xmin/xmax in entries
+- ✅ Full MGA compliance with record-version metadata in entries
 - ✅ TIP-based visibility
 - ✅ Logical deletion (tombstones)
 - ❌ No DML integration
@@ -510,7 +521,7 @@ status = lsm_index->get(key, current_xid, &value, &found, &ctx);
 
 // Range scan
 std::vector<std::pair<Key, Value>> entries;
-status = lsm_index->scan(start_key, end_key, current_xid, &entries, &ctx);
+status = lsm_index->scan(start_key, end_key, snapshot, tm, &entries, &ctx);
 ```
 
 **Performance:**
@@ -539,7 +550,7 @@ status = lsm_index->scan(start_key, end_key, current_xid, &entries, &ctx);
 **Data Structure:**
 - Tree of Minimum Bounding Rectangles (MBRs)
 - Internal nodes: MBR unions of children
-- Leaf nodes: Actual rectangles with TIDs
+- Leaf nodes: Actual rectangles with record UUIDs
 - Quadratic split algorithm
 
 **Files:**
@@ -555,11 +566,11 @@ status = lsm_index->scan(start_key, end_key, current_xid, &entries, &ctx);
 **API Example:**
 ```cpp
 // Search for overlapping rectangles
-std::vector<TID> results;
-status = rtree_index->search(query_rect, current_xid, &results, &ctx);
+std::vector<UUID> results;
+status = rtree_index->search(query_rect, snapshot, tm, &results, &ctx);
 
 // Insert rectangle
-status = rtree_index->insert(rect, tid, current_xid, &ctx);
+status = rtree_index->insert(rect, record_uuid, &ctx);
 ```
 
 **Performance:**
@@ -634,7 +645,7 @@ status = columnstore->scanColumn(column_id, start_row, end_row, &data, &ctx);
 - Segment-based immutable postings
 - Compression for doc IDs and positions
 
-**Spec:** `docs/specifications/indexes/InvertedIndex.md`
+**Spec:** `docs/specifications/parser/v3/indexes/InvertedIndex.md`
 
 **Key Features:**
 - ✅ Core inverted index structures and scoring
@@ -643,138 +654,84 @@ status = columnstore->scanColumn(column_id, start_row, end_row, &data, &ctx);
 
 ---
 
-### Optional Advanced Index Types (Beta)
+### Advanced Core Index Types
 
-These index types are defined and ready for implementation, but are optional/beta scope:
+These index types are defined and ready for implementation and are part of the core index scope:
 
-- **IVF** (vector similarity) - `docs/specifications/indexes/IVFIndex.md`
-- **ZONEMAP** (min/max pruning) - `docs/specifications/indexes/ZoneMapsIndex.md`
-- **ZORDER** (Morton) - `docs/specifications/indexes/ZOrderIndex.md`
-- **GEOHASH**, **S2** - `docs/specifications/indexes/GeohashS2Index.md`
-- **QUADTREE**, **OCTREE** - `docs/specifications/indexes/QuadtreeOctreeIndex.md`
-- **FST** - `docs/specifications/indexes/FSTIndex.md`
-- **SUFFIX_ARRAY**, **SUFFIX_TREE** - `docs/specifications/indexes/SuffixIndex.md`
-- **COUNT_MIN_SKETCH** - `docs/specifications/indexes/CountMinSketchIndex.md`
-- **HYPERLOGLOG** - `docs/specifications/indexes/HyperLogLogIndex.md`
-- **ART** - `docs/specifications/indexes/AdaptiveRadixTreeIndex.md`
-- **LEARNED** - `docs/specifications/indexes/LearnedIndex.md`
-- **LSM_TTL** - `docs/specifications/indexes/LSMTimeSeriesIndex.md`
-- **JSON_PATH** - `docs/specifications/indexes/JSONPathIndex.md`
+- **IVF** (vector similarity) - `docs/specifications/parser/v3/indexes/IVFIndex.md`
+- **ZONEMAP** (min/max pruning) - `docs/specifications/parser/v3/indexes/ZoneMapsIndex.md`
+- **ZORDER** (Morton) - `docs/specifications/parser/v3/indexes/ZOrderIndex.md`
+- **GEOHASH**, **S2** - `docs/specifications/parser/v3/indexes/GeohashS2Index.md`
+- **QUADTREE**, **OCTREE** - `docs/specifications/parser/v3/indexes/QuadtreeOctreeIndex.md`
+- **FST** - `docs/specifications/parser/v3/indexes/FSTIndex.md`
+- **SUFFIX_ARRAY**, **SUFFIX_TREE** - `docs/specifications/parser/v3/indexes/SuffixIndex.md`
+- **COUNT_MIN_SKETCH** - `docs/specifications/parser/v3/indexes/CountMinSketchIndex.md`
+- **HYPERLOGLOG** - `docs/specifications/parser/v3/indexes/HyperLogLogIndex.md`
+- **ART** - `docs/specifications/parser/v3/indexes/AdaptiveRadixTreeIndex.md`
+- **LEARNED** - `docs/specifications/parser/v3/indexes/LearnedIndex.md`
+- **LSM_TTL** - `docs/specifications/parser/v3/indexes/LSMTimeSeriesIndex.md`
+- **JSON_PATH** - `docs/specifications/parser/v3/indexes/JSONPathIndex.md`
 
 ---
 
 ## MGA Compliance Patterns
 
-All ScratchBird indexes follow Firebird MGA principles. Here are the required patterns:
+All ScratchBird indexes follow Firebird MGA semantics with UUID-based identity. These rules are mandatory.
 
-### 1. xmin/xmax Transaction Tracking
+### 1. Required Index Entry Metadata
 
-Every index entry must track creating and deleting transactions:
 
-```cpp
-// Example: Hash index entry
-struct HashEntry {
-    uint64_t he_key_hash;
-    GPID he_gpid;
-    uint16_t he_slot;
-    uint64_t he_xmin;  // ← Transaction that created entry
-    uint64_t he_xmax;  // ← Transaction that deleted (0 if active)
-};
-```
+**Logical Fields:**
+
+- `record_uuid` (UUID): Stable record UUID (logical identity)
+- `record_ptr` (SBRecordPtr): Physical locator (page, slot), cache hint
+- `record_txn` (uint64_t): rhd_transaction (creator of this version)
+- `record_flags` (uint32_t): RHD_DELETED, RHD_CHAIN, etc.
+- `back_version_uuid` (UUID): Optional: rhd_back_version for validation
+
 
 **Rules:**
-- Set `xmin = current_xid` on insertion
-- Set `xmax = 0` on insertion (not deleted)
-- Set `xmax = current_xid` on deletion (logical delete)
-- **Never** physically remove entries during delete operations
+- `record_uuid` is authoritative. `record_ptr` may be stale and must be validated.
+- `record_txn` and `record_flags` mirror the on-page `SBRecordHeader`.
+- Index entries are **per record version**. Old entries remain until sweep.
 
-### 2. TIP-Based Visibility Checks
+### 2. TIP-Based Visibility (Record-Centric)
 
-All search operations must use TIP-based visibility:
+Indexes do not implement PostgreSQL snapshot visibility. They must validate visibility against the record header and TIP:
 
 ```cpp
-// ✅ CORRECT - TIP-based visibility
-bool isEntryVisible(uint64_t entry_xmin, uint64_t entry_xmax, uint64_t current_xid) {
-    // Own transaction's changes always visible
-    if (entry_xmin == current_xid) {
-        return entry_xmax == 0;  // Not deleted by self
+bool index_entry_visible(const SBIndexEntryMeta& meta,
+                         const SBTransactionSnapshot* snap,
+                         SBTransactionManager* tm)
+{
+    const SBRecordHeader* rhd = resolve_record_header(meta.record_uuid, meta.record_ptr);
+    if (rhd == NULL) return false;
+
+    if (!record_uuid_matches(rhd, meta.record_uuid)) {
+        rhd = resolve_record_header_by_uuid(meta.record_uuid);
+        if (rhd == NULL) return false;
     }
 
-    // Check TIP for xmin state
-    TxState xmin_state = getTransactionState(entry_xmin);
-    if (xmin_state != TX_COMMITTED || entry_xmin >= current_xid) {
-        return false;
-    }
-
-    // Check if deleted
-    if (entry_xmax == 0) {
-        return true;  // Not deleted
-    }
-
-    // Check TIP for xmax state
-    TxState xmax_state = getTransactionState(entry_xmax);
-    return xmax_state != TX_COMMITTED || entry_xmax >= current_xid;
+    const SBRecordHeader* visible = sb_find_visible_version(rhd, snap, tm);
+    return visible != NULL && (visible->rhd_flags & RHD_DELETED) == 0;
 }
 ```
 
-**❌ FORBIDDEN - PostgreSQL snapshot-based visibility:**
-```cpp
-// NEVER USE THIS PATTERN
-bool isSnapshotVisible(TransactionId xid, const Snapshot* snapshot) {
-    // ... snapshot array checks ...
-}
-```
+**Index-only scans** must still validate the record header (or a validated version cache).
 
-### 3. Logical Deletion
+### 3. Insert / Update / Delete Semantics
 
-Delete operations must set `xmax` rather than physically removing entries:
+- **Insert:** create record version; insert index entries for that version.
+- **Update (non-key):** no index change.
+- **Update (key change):** insert new entries for new version; old entries remain.
+- **Delete:** create `RHD_DELETED` version; old index entries remain until sweep.
 
-```cpp
-// ✅ CORRECT - Logical deletion (B-Tree example)
-Status BTree::remove(const Key& key, const TID& tid, TransactionId xid, ErrorContext* ctx) {
-    // Find entry in B-Tree
-    BTreeNode* node = findNode(key);
+### 4. Garbage Collection (Index Sweep)
 
-    // Mark as deleted (logical)
-    node->flags |= BTreeNodeFlags::DELETED;
-    node->xmax = xid;  // ← Set deletion transaction
-
-    // DO NOT physically remove from tree
-    return Status::OK;
-}
-```
-
-**❌ FORBIDDEN - Physical deletion:**
-```cpp
-// NEVER USE THIS PATTERN
-Status remove(const Key& key, const TID& tid, TransactionId xid, ErrorContext* ctx) {
-    eraseFromTree(key);  // ❌ Physical removal violates MGA
-    return Status::OK;
-}
-```
-
-### 4. Stable TIDs
-
-Index entries must reference stable tuple identifiers:
-
-```cpp
-// Index entry points to heap tuple via TID
-struct IndexEntry {
-    Key key;
-    TID tuple_location;  // ← Stable (page, slot) reference
-    uint64_t xmin;
-    uint64_t xmax;
-};
-
-// On UPDATE:
-// - If indexed column NOT changed → index entry unchanged (stable TID)
-// - If indexed column changed → remove old entry, insert new entry (same TID)
-```
-
-**Benefits:**
-- Index entries don't change on UPDATE (unless indexed column modified)
-- Eliminates index bloat from non-indexed column updates
-- Massive space savings for high-update workloads
+Index GC removes entries **only** when the referenced record version is dead:
+- `record_txn` is COMMITTED and `record_txn < OIT`, and
+- record version is deleted or superseded, and
+- no active transaction can see it.
 
 ---
 
@@ -799,24 +756,24 @@ Status StorageEngine::insertTuple(...) {
 
     // Columnstore special-case (row buffering)
     if (index_type == IndexType::COLUMNSTORE) {
-        columnstore->insert(column_id, tid.gpid, value, value_len, is_null, ctx);
+        columnstore->insert(column_id, record_uuid, value, value_len, is_null, ctx);
         continue;
     }
 
     // Key-based indexes (BTREE/HASH/GIN/GIST/SPGIST/BRIN/RTREE/HNSW/BITMAP/LSM/FULLTEXT)
-    insertIntoIndex(index_type, index_ptr, key, tid, xid, ctx);
+    insertIntoIndex(index_type, index_ptr, key, record_uuid, ctx);
 }
 
 // UPDATE hook
 Status StorageEngine::updateTuple(...) {
     // Only update indexes when indexed columns change
-    removeFromIndex(index_type, index_ptr, old_key, tid, xid, ctx);
-    insertIntoIndex(index_type, index_ptr, new_key, tid, xid, ctx);
+    removeFromIndex(index_type, index_ptr, old_key, record_uuid, ctx);
+    insertIntoIndex(index_type, index_ptr, new_key, record_uuid, ctx);
 }
 
 // DELETE hook
 Status StorageEngine::deleteTuple(...) {
-    removeFromIndex(index_type, index_ptr, key, tid, xid, ctx);
+    removeFromIndex(index_type, index_ptr, key, record_uuid, ctx);
 }
 ```
 
@@ -1032,3 +989,9 @@ See `docs/audit/INDEX_SYSTEM_REMEDIATION_PLAN.md` for detailed roadmap.
 **Last Updated:** January 22, 2026
 **Status:** Production Documentation
 **Next Review:** February 15, 2026 (post-remediation)
+
+## See Also
+
+- `INDEX_IMPLEMENTATION_REFERENCE.md` — authoritative algorithm map (includes per-index specs).
+- `INDEX_IMPLEMENTATION_SPEC.md` — global MGA/UUID requirements.
+- `INDEX_GC_PROTOCOL.md` — index GC contract.

@@ -1,16 +1,25 @@
 # Transaction System Specifications
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 **[← Back to Specifications Index](../README.md)**
 
 This directory contains transaction management specifications for ScratchBird's Multi-Generational Architecture (MGA) based transaction system.
 
 ## Overview
 
-ScratchBird implements a sophisticated transaction system based on Firebird's Multi-Generational Architecture (MGA), providing true MVCC (Multi-Version Concurrency Control) without undo logs. This directory contains specifications for transaction management, locking, distributed transactions, and session control.
+ScratchBird implements a sophisticated transaction system based on Firebird's Multi-Generational Architecture (MGA), providing true MGA (Multi-Version Concurrency Control) without undo logs. This directory contains specifications for transaction management, locking, distributed transactions, and session control.
 
 **MGA Reference:** See `MGA_RULES.md` for Multi-Generational Architecture semantics (visibility, TIP usage, recovery).
-**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional post-gold (replication/PITR).
-Any WAL references in this directory describe an optional post-gold stream for
+**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional optional extension (replication/PITR).
+Any WAL references in this directory describe an optional optional extension stream for
 replication/PITR only.
 
 ## Specifications in this Directory
@@ -18,8 +27,9 @@ replication/PITR only.
 ### Core Transaction Management
 
 - **[TRANSACTION_MAIN.md](TRANSACTION_MAIN.md)** (741 lines) - Main transaction specification and architecture
-- **[TRANSACTION_MGA_CORE.md](TRANSACTION_MGA_CORE.md)** (1,059 lines) - MGA core implementation and algorithms
-- **[TRANSACTION_LOCK_MANAGER.md](TRANSACTION_LOCK_MANAGER.md)** (1,120 lines) - Lock manager and concurrency control
+- **[TRANSACTION_MGA_CORE.md](TRANSACTION_MGA_CORE.md)** - MGA core implementation and algorithms (Firebird model)
+- **[TRANSACTION_LOCK_MANAGER.md](TRANSACTION_LOCK_MANAGER.md)** - Lock manager and concurrency control (Firebird model)
+- **[FIREBIRD_CONSTANTS_REFERENCE.md](FIREBIRD_CONSTANTS_REFERENCE.md)** - Canonical constants for transactions, GC, and lock manager
 
 ### Distributed Transactions
 
@@ -60,11 +70,11 @@ Hierarchical locking system:
 
 ## MGA vs MVCC
 
-**CRITICAL:** ScratchBird implements pure Firebird MGA, NOT PostgreSQL MVCC:
+**CRITICAL:** ScratchBird implements pure Firebird MGA, NOT PostgreSQL MGA:
 
 - ✅ **MGA:** Multiple versions in-place, no undo, garbage collection
-- ❌ **MVCC (PostgreSQL):** Separate write-after log (WAL, optional post-gold)/undo logs, VACUUM
-  (ScratchBird WAL is optional post-gold only)
+- ❌ **MVCC (PostgreSQL):** Separate write-after log (WAL, optional optional extension)/undo logs, VACUUM
+  (ScratchBird WAL is optional optional extension only)
 
 See [../../../MGA_RULES.md](../../../MGA_RULES.md) for absolute rules.
 
@@ -80,6 +90,7 @@ See [../../../MGA_RULES.md](../../../MGA_RULES.md) for absolute rules.
 
 For Firebird transaction model details, see:
 - [../reference/firebird/FirebirdReferenceDocument.md](../reference/firebird/FirebirdReferenceDocument.md) - Complete Firebird reference
+ - [FIREBIRD_CONSTANTS_REFERENCE.md](FIREBIRD_CONSTANTS_REFERENCE.md) - Firebird constants used by ScratchBird subsystems
 
 ## Critical Reading
 
@@ -91,6 +102,7 @@ Before working on transaction implementation:
    - [TRANSACTION_MAIN.md](TRANSACTION_MAIN.md) - Core transaction architecture
    - [TRANSACTION_MGA_CORE.md](TRANSACTION_MGA_CORE.md) - MGA implementation
    - [TRANSACTION_LOCK_MANAGER.md](TRANSACTION_LOCK_MANAGER.md) - Locking mechanisms
+   - [FIREBIRD_CONSTANTS_REFERENCE.md](FIREBIRD_CONSTANTS_REFERENCE.md) - Literal constants and defaults
 
 ## Navigation
 
@@ -100,3 +112,5 @@ Before working on transaction implementation:
 ---
 
 **Last Updated:** January 2026
+
+**Terminology note:** ScratchBird uses Firebird MGA. Any MGA references in this file are legacy shorthand and must be interpreted as MGA per the authoritative references above.

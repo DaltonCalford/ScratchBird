@@ -1,0 +1,254 @@
+# V3 No-Grey-Areas Audit
+
+**Date:** 2026-02-08
+
+## Scope
+
+- Included: all V3 specs except archives, planning/status/audit/guides/findings.
+- Excluded: `Alpha_Phase_1_Archive`, `archive`, `planning`, `status`, `audit`, `audits`, `guides`, `findings`, `development`.
+
+## Explicit Status Markers
+
+- ⚠️ 174 files declare non-authoritative status markers:
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/parser/POSTGRESQL_PARSER_IMPLEMENTATION.md` — `## IMPLEMENTATION STATUS: 🔴 NOT IMPLEMENTED - DESIGN SPECIFICATION ONLY`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/admin/SB_ADMIN_CLI_SPECIFICATION.md` — `### 6.2 Sweep Status (planned)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/storage/TABLESPACE_SPECIFICATION.md` — `**Document Status**: DRAFT`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/Cluster Specification Work/SBCLUSTER-00-GUIDING-PRINCIPLES.md` — `**Document Status**: DRAFT (Beta Specification Phase)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/Cluster Specification Work/SBCLUSTER-04-SECURITY-BUNDLE.md` — `**Document Status**: DRAFT (Beta Specification Phase)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/Cluster Specification Work/SBCLUSTER-05-SHARDING.md` — `**Document Status**: DRAFT (Beta Specification Phase)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/Cluster Specification Work/SBCLUSTER-06-DISTRIBUTED-QUERY.md` — `**Document Status**: DRAFT (Beta Specification Phase)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/Cluster Specification Work/SBCLUSTER-07-REPLICATION.md` — `**Document Status**: DRAFT (Beta Specification Phase)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/Cluster Specification Work/SBCLUSTER-08-BACKUP-AND-RESTORE.md` — `**Document Status**: DRAFT (Beta Specification Phase)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/Cluster Specification Work/SBCLUSTER-09-SCHEDULER.md` — `**Document Status**: DRAFT (Beta Specification Phase)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/Cluster Specification Work/SBCLUSTER-10-OBSERVABILITY.md` — `**Document Status**: DRAFT (Beta Specification Phase)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/replication/uuidv7-optimized/00_REPLICATION_INDEX.md` — `**Document Status:** DRAFT (Beta Specification Phase)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/replication/uuidv7-optimized/01_UUIDV8_HLC_ARCHITECTURE.md` — `**Document Status:** DRAFT (Beta Specification Phase)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/replication/uuidv7-optimized/02_LEADERLESS_QUORUM_REPLICATION.md` — `**Document Status:** DRAFT (Beta Specification Phase)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/replication/uuidv7-optimized/03_SCHEMA_DRIVEN_COLOCATION.md` — `**Document Status:** DRAFT (Beta Specification Phase)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/replication/uuidv7-optimized/04_TIME_PARTITIONED_MERKLE_FOREST.md` — `**Document Status:** DRAFT (Beta Specification Phase)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/replication/uuidv7-optimized/05_MGA_INTEGRATION.md` — `**Document Status:** DRAFT (Beta Specification Phase)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/replication/uuidv7-optimized/06_IMPLEMENTATION_PHASES.md` — `**Document Status:** DRAFT (Beta Specification Phase)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/replication/uuidv7-optimized/07_TESTING_STRATEGY.md` — `**Document Status:** DRAFT (Beta Specification Phase)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/replication/uuidv7-optimized/08_MIGRATION_OPERATIONS.md` — `**Document Status:** DRAFT (Beta Specification Phase)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/BETA_SQL2023_IMPLEMENTATION_SPECIFICATION.md` — `**Document Status:** DRAFT v1.0`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/Cluster Specification Work/SBCLUSTER-SUMMARY.md` — `**Status**: DRAFT (Beta Specification Phase)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/optional/AUDIT_TEMPORAL_HISTORY_ARCHIVE.md` — `**Status**: Draft (Optional Beta)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/replication/uuidv7-optimized/01_CORE_ARCHITECTURE.md` — `**Status:** DRAFT`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/FIREBIRD_V2_FEATURE_PARITY_SPECIFICATION.md` — `**Status:** DRAFT - Implementation Required`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/V2_PARSER_FIREBIRD_ALIGNMENT_SPECIFICATION.md` — `**Status:** DRAFT - Requires Implementation`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/sblr/FIREBIRD_TRANSACTION_MODEL_SPEC.md` — `**Status:** Deprecated, not recommended`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/SCRATCHBIRD_ARCHITECTURE_OVERVIEW.md` — `**Status:** Draft`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/TEMPORARY_TABLES_SPECIFICATION.md` — `**Status:** Draft`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/cloud-container/docker/README.md` — `**Status:** Draft`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/connectivity/odbc/README.md` — `**Status:** Draft`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/drivers/dotnet-csharp/README.md` — `**Status:** Draft`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/drivers/golang/README.md` — `**Status:** Draft`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/drivers/java-jdbc/README.md` — `**Status:** Draft`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/drivers/nodejs-typescript/README.md` — `**Status:** Draft`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/drivers/pascal-delphi/README.md` — `**Status:** Draft`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/drivers/php/README.md` — `**Status:** Draft`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/drivers/python/README.md` — `**Status:** Draft`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/server/SCRATCHBIRD_ARCHITECTURE_OVERVIEW.md` — `**Status:** Draft`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/server/TEMPORARY_TABLES_SPECIFICATION.md` — `**Status:** Draft`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/types/COLLATION_TAILORING_LOADER_SPEC.md` — `**Status:** Draft`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/catalog/COMPONENT_MODEL_AND_RESPONSIBILITIES.md` — `**Status:** Draft (Alpha finalization)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/DATABASE_REGISTRY_SPECIFICATION.md` — `**Status:** Draft (Alpha scope)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/DATABASE_REGISTRY_SPECIFICATION_CORRECTED.md` — `**Status:** Draft (Alpha scope)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/INSTALLATION_AND_INITIALIZATION_SPECIFICATION.md` — `**Status:** Draft (Alpha scope)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/SCRATCHBIRD_CONNECTION_RECOVERY_MODEL.md` — `**Status:** Draft (Alpha scope)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/SCRATCHBIRD_EMBEDDED_MODE_SPECIFICATION.md` — `**Status:** Draft (Alpha scope)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/SCRATCHBIRD_SECURITY_AND_ACCESS_MODEL.md` — `**Status:** Draft (Alpha scope)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/SCRATCHBIRD_SERVER_ARCHITECTURE_CONSOLIDATED.md` — `**Status:** Draft (Alpha scope)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/SERVER_ARCHITECTURE_AND_CONNECTION_LIFECYCLE.md` — `**Status:** Draft (Alpha scope)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/SERVER_LIFECYCLE_AND_STARTUP_SPECIFICATION.md` — `**Status:** Draft (Alpha scope)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/server/DATABASE_REGISTRY_SPECIFICATION.md` — `**Status:** Draft (Alpha scope)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/server/DATABASE_REGISTRY_SPECIFICATION_CORRECTED.md` — `**Status:** Draft (Alpha scope)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/server/INSTALLATION_AND_INITIALIZATION_SPECIFICATION.md` — `**Status:** Draft (Alpha scope)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/server/SCRATCHBIRD_CONNECTION_RECOVERY_MODEL.md` — `**Status:** Draft (Alpha scope)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/server/SCRATCHBIRD_EMBEDDED_MODE_SPECIFICATION.md` — `**Status:** Draft (Alpha scope)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/server/SCRATCHBIRD_SECURITY_AND_ACCESS_MODEL.md` — `**Status:** Draft (Alpha scope)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/server/SCRATCHBIRD_SERVER_ARCHITECTURE_CONSOLIDATED.md` — `**Status:** Draft (Alpha scope)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/server/SERVER_ARCHITECTURE_AND_CONNECTION_LIFECYCLE.md` — `**Status:** Draft (Alpha scope)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/server/SERVER_LIFECYCLE_AND_STARTUP_SPECIFICATION.md` — `**Status:** Draft (Alpha scope)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/catalog/SCHEMA_PATH_SECURITY_DEFAULTS.md` — `**Status:** Draft (Alpha)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/dml/DML_COPY.md` — `**Status:** Draft (Alpha)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/operations/OID_MAPPING_STRATEGY.md` — `**Status:** Draft (Alpha)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/parser/SCRATCHBIRD_SQL_CORE_LANGUAGE.md` — `**Status:** Draft (Alpha)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/nosql/NOSQL_STORAGE_STRUCTURES_REPORT.md` — `**Status:** Draft (Beta planning)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/cloud-container/docker/SPECIFICATION.md` — `**Status:** Draft (Beta)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/connectivity/odbc/SPECIFICATION.md` — `**Status:** Draft (Beta)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/nosql/NOSQL_CATALOG_MODEL_SPEC.md` — `**Status:** Draft (Beta)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/nosql/NOSQL_CONSOLIDATION_AND_GAP_MATRIX.md` — `**Status:** Draft (Beta)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/nosql/NOSQL_ENGINE_TYPE_OVERVIEW.md` — `**Status:** Draft (Beta)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/nosql/NOSQL_SCHEMA_SPECIFICATION.md` — `**Status:** Draft (Beta)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/nosql/languages/arangodb_aql/SPECIFICATION.md` — `**Status:** Draft (Beta)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/nosql/languages/cassandra_cql/SPECIFICATION.md` — `**Status:** Draft (Beta)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/nosql/languages/couchbase_n1ql/SPECIFICATION.md` — `**Status:** Draft (Beta)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/nosql/languages/couchdb_mango/SPECIFICATION.md` — `**Status:** Draft (Beta)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/nosql/languages/cypher/SPECIFICATION.md` — `**Status:** Draft (Beta)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/nosql/languages/elasticsearch_dsl/SPECIFICATION.md` — `**Status:** Draft (Beta)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/nosql/languages/flux/SPECIFICATION.md` — `**Status:** Draft (Beta)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/nosql/languages/gremlin/SPECIFICATION.md` — `**Status:** Draft (Beta)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/nosql/languages/hbase_shell/SPECIFICATION.md` — `**Status:** Draft (Beta)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/nosql/languages/influxql/SPECIFICATION.md` — `**Status:** Draft (Beta)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/nosql/languages/lucene_query_syntax/SPECIFICATION.md` — `**Status:** Draft (Beta)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/nosql/languages/milvus_query/SPECIFICATION.md` — `**Status:** Draft (Beta)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/nosql/languages/mongodb_mql/SPECIFICATION.md` — `**Status:** Draft (Beta)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/nosql/languages/promql/SPECIFICATION.md` — `**Status:** Draft (Beta)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/nosql/languages/redis_resp/SPECIFICATION.md` — `**Status:** Draft (Beta)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/nosql/languages/sparql/SPECIFICATION.md` — `**Status:** Draft (Beta)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/nosql/languages/weaviate_graphql/SPECIFICATION.md` — `**Status:** Draft (Beta)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/indexes/JSONPathIndex.md` — `**Status:** Draft (Beta)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/parser/SCRATCHBIRD_UNIFIED_NOSQL_EXTENSIONS.md` — `**Status:** Draft (Beta)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/IMPLEMENTATION_STATUS_DASHBOARD.md` — `**Status:** Placeholder`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/issues/ALPHA_1_2_REQUIREMENTS.md` — `**Status:** Placeholder`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/project/reviews/README.md` — `**Status:** Placeholder`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/testing/test_server/DRIVER_TESTING.md` — `**Status:** Placeholder`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/testing/test_server/GUI_INTEGRATION.md` — `**Status:** Placeholder`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/BACKUP_AND_RESTORE.md` — `**Status:** Planned for Beta phase.`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/server/BACKUP_AND_RESTORE.md` — `**Status:** Planned for Beta phase.`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/types/DDL_DOMAINS_COMPREHENSIVE.md` — `**Status:** SPECIFICATION DRAFT FOR PLAN 04`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/MYSQL_PARSER_IMPLEMENTATION_GAPS.md` — `**Status:** ❌ **CRITICAL - Not Implemented**`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/Cluster Specification Work/SBCLUSTER-NORMATIVE-LANGUAGE.md` — `- [ ] Line X: "[Quote clause]" - Status: Implemented / Not Implemented`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/replication/BETA_REPLICATION_ARCHITECTURE_FINDINGS.md` — `- ❌ **TRANSACTION_MAIN.md** status claim ("MOSTLY NOT IMPLEMENTED") - OUT OF DATE`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/parser/SCRATCHBIRD_SQL_COMPLETE_BNF.md` — `Note: SWEEP STATUS is a planned read-only monitoring statement. It returns sweep`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/reference/firebird/firebird_docs_split/12_Context_Variables.md` — `SQLCODE is now deprecated in favour of the SQL-2003-compliant SQLSTATE status`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/DRIVER_CONFORMANCE_TEST_HARNESS.md` — `Status: Draft`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/DRIVER_STREAMING_AND_PAGING.md` — `Status: Draft`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/server/DRIVER_STREAMING_AND_PAGING.md` — `Status: Draft`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/admin/SB_SERVER_NETWORK_CLI_SPECIFICATION.md` — `Status: Draft (Alpha IP layer)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/network/CONTROL_PLANE_PROTOCOL_SPEC.md` — `Status: Draft (Alpha IP layer)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/network/DIALECT_AUTH_MAPPING_SPEC.md` — `Status: Draft (Alpha IP layer)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/network/ENGINE_PARSER_IPC_CONTRACT.md` — `Status: Draft (Alpha IP layer)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/network/PARSER_AGENT_SPEC.md` — `Status: Draft (Alpha IP layer)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/operations/LISTENER_POOL_METRICS.md` — `Status: Draft (Alpha IP layer)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/tools/SB_TOOLING_NETWORK_SPEC.md` — `Status: Draft (Alpha IP layer)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/tools/SB_BACKUP_CLI_SPECIFICATION.md` — `Status: Draft (Alpha networking)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/tools/SB_ISQL_CLI_SPECIFICATION.md` — `Status: Draft (Alpha networking)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/tools/SB_SECURITY_CLI_SPECIFICATION.md` — `Status: Draft (Alpha networking)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/tools/SB_VERIFY_CLI_SPECIFICATION.md` — `Status: Draft (Alpha networking)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/network/NETWORK_LISTENER_AND_PARSER_POOL_SPEC.md` — `Status: Draft (Alpha scope)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/operations/MONITORING_DIALECT_MAPPINGS.md` — `Status: Draft (Alpha)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/operations/MONITORING_SQL_VIEWS.md` — `Status: Draft (Alpha)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/testing/DIALECT_CONFORMANCE_ASSERTIONS.md` — `Status: Draft (Alpha)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/tools/SB_BUILD_AND_TEST_CLI_SPEC.md` — `Status: Draft (Alpha)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/sblr/SBLR_EXECUTION_PERFORMANCE_ALPHA.md` — `Status: Draft (Alpha). Scope: reduce interpreter overhead for hot PSQL functions and triggers`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/types/DATA_TYPE_PERSISTENCE_AND_CASTS.md` — `Status: Draft (Alpha). This document defines the canonical on-disk encoding for all DataType values, the accepted parsing rules (including Firebird 5.x datetime formats), CAST/TRY_CAST behavior, and the required catalog metadata for user-defined types/domains. It is the source of truth for parser/SBLR/executor changes.`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/V3_SERVER_SPEC_INDEX.md` — `Status: Draft (Authoritative V3 spec index)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/V3_ZERO_AMBIGUITY_BUILD_CHECKLIST.md` — `Status: Draft (Authoritative checklist)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/PSQL_RUNTIME_V3.md` — `Status: Draft (Authoritative for V3 PSQL runtime behavior)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/AST_TYPE_AND_LITERAL_SPEC.md` — `Status: Draft (Authoritative for V3 SBLR emission)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/EXECUTOR_V3_SBLR.md` — `Status: Draft (Authoritative for V3 SBLR execution)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/EXECUTOR_V3_SQL_ENGINE.md` — `Status: Draft (Authoritative for V3 SQL execution)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/SBLR_V3_VALIDATION_RULES.md` — `Status: Draft (Authoritative for V3 bytecode verification)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/SBLR_V3_BYTECODE_CANONICALIZATION.md` — `Status: Draft (Authoritative for V3 canonical bytecode)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/SBLR_V3_BYTECODE_CONTAINER.md` — `Status: Draft (Authoritative for V3 container layout)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/EXECUTOR_LOCK_GC_CONSTRAINT_MATRIX.md` — `Status: Draft (Authoritative for V3 execution semantics)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/SBLR_V3_OPCODE_SEMANTICS.md` — `Status: Draft (Authoritative for V3 execution semantics)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/SBLR_V3_CONSTANT_POOL_AND_SYMBOLS.md` — `Status: Draft (Authoritative for V3 pooling and symbol resolution)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/catalog/UUID_LIFECYCLE_RULES.md` — `Status: Draft (Authoritative for catalog ID generation)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/optional/STORAGE_ENCODING_OPTIMIZATIONS.md` — `Status: Draft (Beta Optional)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/sblr/SBLR_EXECUTION_PERFORMANCE_BETA.md` — `Status: Draft (Beta). Scope: native execution and batch evaluation for hot PSQL functions,`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/udr_connectors/scratchbird_udr/SPECIFICATION.md` — `Status: Draft (Beta). This specification defines a ScratchBird-to-ScratchBird`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/udr_connectors/jdbc_udr/SPECIFICATION.md` — `Status: Draft (Beta). This specification defines the JDBC UDR that uses an`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/udr_connectors/mssql_udr/SPECIFICATION.md` — `Status: Draft (Beta). This specification defines the MSSQL UDR that connects`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/udr_connectors/odbc_udr/SPECIFICATION.md` — `Status: Draft (Beta). This specification defines the ODBC UDR that uses an`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/udr/UDR_PSQL_EXTENSION_LIBRARY.md` — `Status: Draft (Research + Design). This document analyzes current PSQL`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/wire_protocols/FIREBIRD_EMULATION_BEHAVIOR.md` — `Status: Draft (Target). This document defines the server-side wire protocol`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/wire_protocols/MYSQL_EMULATION_BEHAVIOR.md` — `Status: Draft (Target). This document defines the server-side wire protocol`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/wire_protocols/POSTGRESQL_EMULATION_BEHAVIOR.md` — `Status: Draft (Target). This document defines the server-side wire protocol`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/udr_connectors/UDR_CONNECTOR_BASELINE.md` — `Status: Draft (Target). This document defines the shared requirements for all`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/drivers/DRIVER_BASELINE_SPEC.md` — `Status: Draft (Target). This document defines the shared requirements for all official ScratchBird V2 drivers.`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/drivers/dotnet-csharp/SPECIFICATION.md` — `Status: Draft (Target). This specification defines the C# / .NET Driver Specification for ScratchBird V2 using the native wire protocol only.`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/drivers/cpp/SPECIFICATION.md` — `Status: Draft (Target). This specification defines the C++ Driver Specification for ScratchBird V2 using the native wire protocol only.`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/udr_connectors/firebird_udr/SPECIFICATION.md` — `Status: Draft (Target). This specification defines the Firebird UDR that`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/drivers/golang/SPECIFICATION.md` — `Status: Draft (Target). This specification defines the Go (Golang) Driver Specification for ScratchBird V2 using the native wire protocol only.`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/drivers/java-jdbc/SPECIFICATION.md` — `Status: Draft (Target). This specification defines the Java JDBC Driver Specification for ScratchBird V2 using the native wire protocol only.`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/udr_connectors/local_files_udr/SPECIFICATION.md` — `Status: Draft (Target). This specification defines the Local Files UDR used to`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/udr_connectors/local_scripts_udr/SPECIFICATION.md` — `Status: Draft (Target). This specification defines the Local Scripts UDR used`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/udr_connectors/mysql_udr/SPECIFICATION.md` — `Status: Draft (Target). This specification defines the MySQL/MariaDB UDR that`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/drivers/nodejs-typescript/SPECIFICATION.md` — `Status: Draft (Target). This specification defines the Node.js / TypeScript Driver Specification for ScratchBird V2 using the native wire protocol only.`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/drivers/php/SPECIFICATION.md` — `Status: Draft (Target). This specification defines the PHP Driver Specification for ScratchBird V2 using the native wire protocol only.`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/drivers/pascal-delphi/SPECIFICATION.md` — `Status: Draft (Target). This specification defines the Pascal/Delphi/FreePascal Driver Specification for ScratchBird V2 using the native wire protocol only.`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/udr_connectors/postgresql_udr/SPECIFICATION.md` — `Status: Draft (Target). This specification defines the PostgreSQL UDR that`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/drivers/python/SPECIFICATION.md` — `Status: Draft (Target). This specification defines the Python Driver Specification for ScratchBird V2 using the native wire protocol only.`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/drivers/r/SPECIFICATION.md` — `Status: Draft (Target). This specification defines the R Driver Specification for ScratchBird V2 using the native wire protocol only.`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/drivers/ruby/SPECIFICATION.md` — `Status: Draft (Target). This specification defines the Ruby Driver Specification for ScratchBird V2 using the native wire protocol only.`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/drivers/rust/SPECIFICATION.md` — `Status: Draft (Target). This specification defines the Rust Driver Specification for ScratchBird V2 using the native wire protocol only.`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/ddl/EXTRACT_AND_ALTER_ELEMENT.md` — `Status: Draft (Target). This specification defines the component model used by EXTRACT and ALTER_ELEMENT so every data type has a clear list of extractable elements and alterable elements.`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/sblr/FIREBIRD_BLR_FIXTURES.md` — `Status: Draft (compatibility fixtures)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/sblr/FIREBIRD_BLR_TO_SBLR_MAPPING.md` — `Status: Draft (compatibility guidance)`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/core/INTERNAL_FUNCTIONS.md` — `Status: Draft for Alpha alignment. Scope: V2 parser/SBLR emission, executor behavior, and type contracts`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/parser/05_PSQL_PROCEDURAL_LANGUAGE.md` — `Status: Planned (PSQL statement-level CASE; distinct from CASE expression).`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/parser/PSQL_CURSOR_HANDLES.md` — `Status: Planned.`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/reference/firebird/FirebirdReferenceDocument.md` — ``SQLCODE` is now deprecated in favour of the SQL-2003-compliant [`SQLSTATE`](https://firebirdsql.org/file/documentation/html/en/refdocs/fblangref50/firebird-50-language-reference.html#fblangref50-contextvars-sqlstate) status code. Support for `SQLCODE` and `WHEN SQLCODE` will be discontinued in a future version of Firebird.`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/types/03_TYPES_AND_DOMAINS.md` — `status order\_status DEFAULT 'DRAFT'`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/core/NAMESPACE_FUNCTION_MAP.md` — `| `Wire Protocol Integration Specification` | **Document Version:** 1.0 **Date:** 2025-01-25 **Status:** Draft Specification | `ScratchBird/docs/specifications/parser/v3/archive/alpha_phase_2/05-Wire-Protocol-Integration-Specification.md:1` |`
+
+## Content Markers (TODO/TBD/PLACEHOLDER/etc.)
+
+- ⚠️ 60 files contain TODO/TBD/PLACEHOLDER markers:
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/SBLR_V3_OLD_TO_NEW_MAPPING.md` — `PLACEHOLDER`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/SBLR_V3_OPCODE_PAYLOADS.md` — `PLACEHOLDER`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/SBLR_V3_OPCODE_SEMANTICS.md` — `PLACEHOLDER`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/SBLR_V3_OPCODE_SPEC.md` — `PLACEHOLDER`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/sblr/SBLR_OPCODE_REGISTRY.md` — `PLACEHOLDER`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/PROJECT_CONTEXT.md` — `TBD`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/SCRATCHBIRD_SERVER_ARCHITECTURE_CONSOLIDATED.md` — `TBD`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/cloud-container/docker/README.md` — `TBD`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/connectivity/odbc/README.md` — `TBD`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/drivers/dotnet-csharp/README.md` — `TBD`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/drivers/golang/README.md` — `TBD`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/drivers/java-jdbc/README.md` — `TBD`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/drivers/nodejs-typescript/README.md` — `TBD`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/drivers/pascal-delphi/README.md` — `TBD`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/drivers/php/README.md` — `TBD`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/drivers/python/README.md` — `TBD`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/FIREBIRD_V2_FEATURE_PARITY_SPECIFICATION.md` — `TODO`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/IMPLEMENTATION_STANDARDS.md` — `TODO`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/MYSQL_PARSER_IMPLEMENTATION_GAPS.md` — `TODO`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/V3_ZERO_AMBIGUITY_BUILD_CHECKLIST.md` — `TODO`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/core/CACHE_AND_BUFFER_ARCHITECTURE.md` — `TODO`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/core/NAMESPACE_FUNCTION_MAP.md` — `TODO`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/deployment/SYSTEMD_SERVICE_SPECIFICATION.md` — `TODO`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/design/ISOLATION_LEVELS_DESIGN.md` — `TODO`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/design/SWEEP_MECHANISM_DESIGN.md` — `TODO`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/design/TRANSACTION_MANAGEMENT_DESIGN.md` — `TODO`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/sblr/FIREBIRD_TRANSACTION_MODEL_SPEC.md` — `TODO`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/Cluster Specification Work/SBCLUSTER-IMPLEMENTATION-BOUNDARY.md` — `future work`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/catalog/CATALOG_CORRECTION_PLAN.md` — `future work`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/design/GARBAGE_COLLECTION_DESIGN.md` — `future work`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/storage/STORAGE_ENGINE_MAIN.md` — `future work`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/DDL_CREATE.md` — `not implemented`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/PARSER_REMAPPING_AND_IMPLEMENTATION_STRATEGY.md` — `not implemented`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/connectivity/odbc/SPECIFICATION.md` — `not implemented`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/nosql/NOSQL_CONSOLIDATION_AND_GAP_MATRIX.md` — `not implemented`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/catalog/SYSTEM_CATALOG_STRUCTURE.md` — `not implemented`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/core/design_limits.md` — `not implemented`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/operations/MONITORING_DIALECT_MAPPINGS.md` — `not implemented`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/reference/firebird/FirebirdReferenceDocument.md` — `not implemented`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/reference/firebird/firebird_docs_split/App_B_Exception_Codes.md` — `not implemented`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/Cluster Specification Work/SBCLUSTER-06-DISTRIBUTED-QUERY.md` — `planned`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/Cluster Specification Work/SBCLUSTER-12-AUTOSCALING_AND_ELASTIC_LIFECYCLE.md` — `planned`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/Security Design Specification/EXTERNAL_AUTHENTICATION_DESIGN.md` — `planned`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/admin/SB_ADMIN_CLI_SPECIFICATION.md` — `planned`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/nosql/NOSQL_CATALOG_MODEL_SPEC.md` — `planned`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/nosql/NOSQL_ENGINE_TYPE_OVERVIEW.md` — `planned`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/nosql/NOSQL_STORAGE_STRUCTURES_REPORT.md` — `planned`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/beta_requirements/replication/uuidv7-optimized/08_MIGRATION_OPERATIONS.md` — `planned`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/core/IMPLEMENTATION_RECOMMENDATIONS.md` — `planned`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/deployment/INSTALLATION_AND_BUILD_SPECIFICATION.md` — `planned`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/deployment/WINDOWS_CROSS_COMPILE_SPECIFICATION.md` — `planned`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/indexes/JSONPathIndex.md` — `planned`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/indexes/LSM_TREE_ARCHITECTURE.md` — `planned`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/parser/SCRATCHBIRD_SQL_COMPLETE_BNF.md` — `planned`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/query/QUERY_OPTIMIZER_SPEC.md` — `planned`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/reference/firebird/firebird_docs_split/03_Data_Types_and_Subtypes.md` — `planned`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/remote_database_udr/05-MSSQL_FIREBIRD_ADAPTERS.md` — `planned`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/storage/STORAGE_ENGINE_BUFFER_POOL.md` — `planned`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/types/03_TYPES_AND_DOMAINS.md` — `planned`
+- `/home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/types/README.md` — `planned`
+
+## Required Action to Reach No-Grey-Areas
+- Resolve or remove all non-authoritative status markers in authoritative specs.
+- Replace TODO/TBD/PLACEHOLDER items with deterministic, testable rules.

@@ -1,8 +1,20 @@
 # Distributed MVCC Specification
 
+**Notice:** Terminology correction: ScratchBird uses distributed MGA (Firebird model), not PostgreSQL MGA. Interpret MGA references in this document as MGA and defer to the authoritative specs below.
+
+
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 **Document Version:** 1.0  
 **Date:** 2025-01-25  
-**Status:** Draft Specification
+**Status:** Authoritative (V3)
 
 ---
 
@@ -59,7 +71,7 @@ struct RowVersion {
 ### UUID v7 Format
 
 ```
-UUID v7 (RFC 4122 Draft):
+UUID v7 (RFC 4122 update draft):
 
  0                   1                   2                   3
  0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
@@ -530,7 +542,7 @@ int storage_insert_version(RowVersion* version) {
     timestamp_index_insert(&gc_index, ts, version->row_uuid);
     
     // 4. Persist version (data pages; optional write-after log stream)
-    write_after_log_append(version);  // no-op until post-gold
+    write_after_log_append(version);  // no-op until optional extension
     
     return STORAGE_OK;
 }
@@ -1177,7 +1189,8 @@ mvcc:
 - [ ] Performance benchmarks
 
 ---
-
-**Document Status**: Draft for Review  
+**Document Status**: Authoritative (V3)
 **Next Review Date**: TBD  
 **Approval Required**: Database Team
+
+**Terminology note:** ScratchBird uses Firebird MGA. Any MGA references in this file are legacy shorthand and must be interpreted as MGA per the authoritative references above.

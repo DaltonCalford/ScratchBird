@@ -1,4 +1,14 @@
 # ScratchBird Storage Engine - Main Specification
+
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 ## Master Document for Storage Engine Implementation
 
 ## Overview
@@ -557,7 +567,7 @@ Status perform_checkpoint(
     // Step 4: Update control file
     update_control_file_checkpoint(checkpoint_lsn);
     
-    // Step 5: Clean up optional write-after log (post-gold)
+    // Step 5: Clean up optional write-after log (optional extension)
     if (params->remove_old_wal) {
         remove_old_wal_files(checkpoint_lsn);
     }
@@ -713,47 +723,45 @@ void register_dirty_page(
     engine->se_stats.dirty_pages++;
 }
 
-// Check tuple visibility
+// Check record visibility (Firebird MGA)
 bool tuple_satisfies_snapshot(
-    HeapTupleHeader tuple,
-    Snapshot snapshot)
+    const SBRecordHeader* rhd,
+    const SBTransactionSnapshot* snapshot,
+    SBTransactionManager* tm)
 {
-    TransactionId xmin = tuple->t_xmin;
-    TransactionId xmax = tuple->t_xmax;
-    
-    // Check insert visibility
-    if (!TransactionIdIsValid(xmin)) {
-        return false;
+    const SBRecordHeader* visible =
+        sb_find_visible_version(rhd, snapshot, tm);
+    return visible != NULL && (visible->rhd_flags & RHD_DELETED) == 0;
+}
+
+// Walk back-versions until a version is visible to this snapshot.
+const SBRecordHeader* sb_find_visible_version(
+    const SBRecordHeader* rhd,
+    const SBTransactionSnapshot* snapshot,
+    SBTransactionManager* tm)
+{
+    const SBRecordHeader* cur = rhd;
+    while (cur != NULL) {
+        TransactionId txid = cur->rhd_transaction;
+        TxState state = tm->getState(txid);
+
+        if (txid == snapshot->att_xid) {
+            return cur;
+        }
+
+        if (state == TX_COMMITTED &&
+            tm->isVisibleToSnapshot(txid, snapshot)) {
+            return cur;
+        }
+
+        // Not visible (active/aborted/limbo) - try back-version if any.
+        if ((cur->rhd_flags & RHD_CHAIN) == 0) {
+            break;
+        }
+        cur = sb_resolve_back_version(cur);
     }
-    
-    if (TransactionIdIsCurrentTransactionId(xmin)) {
-        // Our own insert
-        return true;
-    }
-    
-    if (!TransactionIdIsInSnapshot(xmin, snapshot)) {
-        // Insert not visible
-        return false;
-    }
-    
-    // Check delete visibility
-    if (!TransactionIdIsValid(xmax)) {
-        // Not deleted
-        return true;
-    }
-    
-    if (TransactionIdIsCurrentTransactionId(xmax)) {
-        // Our own delete - not visible
-        return false;
-    }
-    
-    if (TransactionIdIsInSnapshot(xmax, snapshot)) {
-        // Delete not visible - tuple still visible
-        return true;
-    }
-    
-    // Deleted and visible
-    return false;
+
+    return NULL;
 }
 ```
 
@@ -793,9 +801,9 @@ Alpha scope:
 1. Heap storage and basic page management
 2. Integration with MGA transactions and buffer pool coordination
 
-Post-alpha scope:
+optional extension scope:
 
-1. Optional write-after log (post-gold, secondary to MGA)
+1. Optional write-after log (optional extension, secondary to MGA)
 2. Advanced features (compression, encryption, multi-page-size)
 
 ## Conclusion

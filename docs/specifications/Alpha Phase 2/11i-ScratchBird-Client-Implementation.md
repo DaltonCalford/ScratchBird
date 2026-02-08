@@ -26,5 +26,5 @@ ScratchBird wire protocol client adapter for Remote Database UDR.
 - Use sys.* catalogs (sys.tables, sys.columns, sys.indexes, sys.foreign_keys)
 
 ## 7. References
-- docs/specifications/wire_protocols/scratchbird_native_wire_protocol.md
+- docs/specifications/parser/v3/wire_protocols/scratchbird_native_wire_protocol.md
 

@@ -6,7 +6,7 @@ A trigger is a special type of stored procedure that automatically executes when
 
 Triggers may declare and use cursor handles inside the trigger body, but they
 cannot accept cursor parameters or return cursor handles. See:
-`ScratchBird/docs/specifications/parser/PSQL_CURSOR_HANDLES.md`
+`ScratchBird/docs/specifications/parser/v3/parser/PSQL_CURSOR_HANDLES.md`
 
 ## **CREATE TRIGGER**
 

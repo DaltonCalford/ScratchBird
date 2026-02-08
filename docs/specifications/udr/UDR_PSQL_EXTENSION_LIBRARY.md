@@ -1,6 +1,5 @@
 # UDR Extension Library for PSQL
-
-Status: Draft (Research + Design). This document analyzes current PSQL
+Status: Authoritative (V3)
 capabilities and proposes UDR-based extension packs to add scientific,
 statistical, and financial functionality without expanding the core engine.
 
@@ -190,7 +189,7 @@ ENGINE UDR;
 
 - **Alpha**: sb_math (core), sb_stats (descriptive), sb_finance (NPV/IRR)
 - **Beta**: sb_linalg, sb_timeseries, sb_text
-- **Post-beta**: sb_signal, advanced sb_geo
+- **optional extension**: sb_signal, advanced sb_geo
 
 ## 8. Open Questions
 

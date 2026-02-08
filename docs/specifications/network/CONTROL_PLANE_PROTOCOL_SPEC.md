@@ -1,7 +1,7 @@
 # Listener <-> Parser Control Plane Protocol Specification
 
 Version: 1.0
-Status: Draft (Alpha IP layer)
+Status: Authoritative (V3)
 Last Updated: January 2026
 
 ## Purpose
@@ -19,7 +19,7 @@ In scope:
 - Versioning and compatibility rules
 
 Out of scope:
-- Client wire protocols (see docs/specifications/wire_protocols/)
+- Client wire protocols (see docs/specifications/parser/v3/wire_protocols/)
 - Parser <-> engine SBLR execution contract
 - Cluster listener coordination (Beta)
 
@@ -169,6 +169,6 @@ Payload (binary):
 
 ## Related Specs
 
-- docs/specifications/network/NETWORK_LISTENER_AND_PARSER_POOL_SPEC.md
-- docs/specifications/network/ENGINE_PARSER_IPC_CONTRACT.md
+- docs/specifications/parser/v3/network/NETWORK_LISTENER_AND_PARSER_POOL_SPEC.md
+- docs/specifications/parser/v3/network/ENGINE_PARSER_IPC_CONTRACT.md
 - docs/specifications/Security Design Specification/05_IPC_SECURITY.md

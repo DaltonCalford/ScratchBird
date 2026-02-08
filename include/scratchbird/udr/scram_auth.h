@@ -16,6 +16,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <cstdint>
 
 namespace scratchbird {
 namespace udr {
@@ -92,6 +93,7 @@ private:
     std::string client_first_bare_;
     std::string server_first_message_;
     std::string client_final_;
+    std::string client_nonce_;
     std::string nonce_;
     
     // Cryptographic data

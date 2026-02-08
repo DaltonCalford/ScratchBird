@@ -1,6 +1,5 @@
 # Cypher / openCypher Specification
-
-**Status:** Draft (Beta)
+**Status:** Authoritative (V3)
 
 ## 1. Purpose
 

@@ -72,6 +72,9 @@ struct ClientConnection {
     // Statement/portal tracking
     std::unordered_map<std::string, uint32_t> prepared_statements;
     std::unordered_map<std::string, std::string> portals;
+    
+    // IPC channel for this client
+    std::unique_ptr<IPCChannel> ipc_channel;
 };
 
 // ============================================================================
@@ -137,7 +140,8 @@ protected:
     virtual core::Status sendToEngine(uint32_t client_id, const IPCMessage& msg,
                                      core::ErrorContext* ctx);
     virtual core::Status receiveFromEngine(uint32_t client_id, IPCMessage& msg,
-                                          core::ErrorContext* ctx);
+                                          core::ErrorContext* ctx,
+                                          uint32_t timeout_ms = 30000);
     
     // Utility
     std::unique_ptr<IPCChannel> acquireIPCChannel();
@@ -189,6 +193,16 @@ protected:
                           const char* sqlstate,
                           const std::string& message);
     core::Status sendNotice(ClientConnection& client, const std::string& message);
+    
+    // Extended query responses
+    core::Status sendParseComplete(ClientConnection& client);
+    core::Status sendBindComplete(ClientConnection& client);
+    core::Status sendCloseComplete(ClientConnection& client);
+    
+    // Response forwarding
+    core::Status forwardResponseToClient(ClientConnection& client,
+                                        const IPCMessage& response,
+                                        core::ErrorContext* ctx);
 };
 
 // ============================================================================

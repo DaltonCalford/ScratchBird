@@ -1,7 +1,7 @@
 # sb_security CLI Specification
 
 Version: 1.0  
-Status: Draft (Alpha networking)  
+Status: Authoritative (V3)
 Last Updated: January 2026
 
 ## Purpose
@@ -81,4 +81,4 @@ Audit:
 
 - `docs/specifications/Security Design Specification/03_AUTHORIZATION_MODEL.md`
 - `docs/specifications/Security Design Specification/08_AUDIT_COMPLIANCE.md`
-- `docs/specifications/tools/SB_TOOLING_NETWORK_SPEC.md`
+- `docs/specifications/parser/v3/tools/SB_TOOLING_NETWORK_SPEC.md`

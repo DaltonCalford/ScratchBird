@@ -1,6 +1,5 @@
 # InfluxQL Specification
-
-**Status:** Draft (Beta)
+**Status:** Authoritative (V3)
 
 ## 1. Purpose
 

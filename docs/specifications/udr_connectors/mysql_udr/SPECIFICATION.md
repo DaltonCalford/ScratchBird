@@ -1,6 +1,5 @@
 # MySQL/MariaDB UDR Specification
-
-Status: Draft (Target). This specification defines the MySQL/MariaDB UDR that
+Status: Authoritative (V3)
 connects using the native MySQL wire protocol without vendor drivers.
 
 ## Scope

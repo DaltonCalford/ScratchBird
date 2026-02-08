@@ -1,6 +1,5 @@
 # Beta Optional: Storage Encoding Optimizations (Varlen, Numeric, TOAST)
-
-Status: Draft (Beta Optional)
+Status: Authoritative (V3)
 Owner: Storage/Engine
 
 ## Motivation
@@ -20,12 +19,12 @@ ScratchBird v1 uses a fixed 4-byte length prefix for all variable-length values 
 - No requirement to implement page-level compression here (handled by compression framework).
 
 ## References
-- `ScratchBird/docs/specifications/storage/ON_DISK_FORMAT.md`
-- `ScratchBird/docs/specifications/storage/TOAST_LOB_STORAGE.md`
-- `ScratchBird/docs/specifications/storage/HEAP_TOAST_INTEGRATION.md`
-- `ScratchBird/docs/specifications/types/DATA_TYPE_PERSISTENCE_AND_CASTS.md`
+- `ScratchBird/docs/specifications/parser/v3/storage/ON_DISK_FORMAT.md`
+- `ScratchBird/docs/specifications/parser/v3/storage/TOAST_LOB_STORAGE.md`
+- `ScratchBird/docs/specifications/parser/v3/storage/HEAP_TOAST_INTEGRATION.md`
+- `ScratchBird/docs/specifications/parser/v3/types/DATA_TYPE_PERSISTENCE_AND_CASTS.md`
 - `ScratchBird/docs/specifications/compression/COMPRESSION_FRAMEWORK.md`
-- `ScratchBird/docs/specifications/reference/firebird/FirebirdReferenceDocument.md`
+- `ScratchBird/docs/specifications/parser/v3/reference/firebird/FirebirdReferenceDocument.md`
 - https://www.postgresql.org/docs/current/storage-toast.html
 - https://www.postgresql.org/docs/current/datatype-numeric.html
 - https://raw.githubusercontent.com/postgres/postgres/master/src/backend/utils/adt/numeric.c

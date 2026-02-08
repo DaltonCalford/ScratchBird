@@ -1,5 +1,14 @@
 # RPM Package Requirements
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 **Package Format:** .rpm (Red Hat Package Manager)
 **Target Platforms:** Fedora, RHEL, Rocky Linux, AlmaLinux, openSUSE
 **Document Version:** 1.0
@@ -779,3 +788,5 @@ scratchbird-doc-0.1.0-1.fc38.noarch.rpm
 **Last Updated:** 2026-01-03
 **Maintainer:** Build Infrastructure Team
 **Status:** Beta Preparation
+
+**Terminology note:** ScratchBird uses Firebird MGA. Any MGA references in this file are legacy shorthand and must be interpreted as MGA per the authoritative references above.

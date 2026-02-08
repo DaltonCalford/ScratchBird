@@ -1,15 +1,25 @@
 # LSM-Tree with TTL (Time-Series) Index Specification
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
+
 **Version:** 1.0
 **Date:** January 22, 2026
 **Status:** Implementation Ready
 **Author:** ScratchBird Architecture Team
-**Target:** ScratchBird Beta (Optional Index Type)
+**Target:** ScratchBird Beta (Core Index Type)
 **Features:** Page-size agnostic, MGA compliant, time-based retention
 
 ---
 
-**Scope Note:** "WAL" references in this spec refer to a per-index write-after log (WAL, optional post-gold) and do not imply a global recovery log.
+**Scope Note:** "WAL" references in this spec refer to a per-index write-after log (WAL, optional optional extension) and do not imply a global recovery log.
 
 ---
 
@@ -47,6 +57,61 @@ This specification extends the base LSM-tree to support TTL-based expiration and
 
 ---
 
+## Authoritative Algorithm (Normative, 2026-02-07)
+
+This section is the implementation source of truth. If any other section in
+this document conflicts with the steps below, this section wins.
+
+### Key Ordering
+
+1. Normalize index key as `(timestamp, primary_key)` (timestamp first).  
+2. Encode timestamps as big-endian 64-bit to preserve chronological order.  
+
+### Write Path
+
+1. Insert into memtable (and optional WAL).  
+2. Memtable flush creates SSTables with **min_ts** and **max_ts** recorded in metadata.  
+
+### TTL Enforcement (Compaction-Time)
+
+1. Compute `expire_before = now() - ttl_seconds`.  
+2. During compaction:
+   - If `max_ts < expire_before`, drop the entire SSTable.  
+   - If `min_ts < expire_before <= max_ts`, filter entries with `ts < expire_before`.  
+3. Tombstones for expired entries are **not** required if the whole segment is dropped.  
+
+### Query Path (Time Range)
+
+1. Determine query time window `[t_start, t_end]`.  
+2. Skip SSTables whose `[min_ts, max_ts]` does not overlap the window.  
+3. Merge iterators from memtable + overlapping SSTables.  
+4. Apply MGA visibility and TTL filtering for in-window results.
+
+### Late Arrivals / Clock Skew
+
+1. Accept out-of-order inserts (timestamps older than `expire_before`).  
+2. If insert timestamp already expired, either:
+   - Reject at write time, or  
+   - Accept into memtable and allow compaction to drop immediately.  
+   (Choose one policy and enforce consistently.)
+
+### MGA / Versioning
+
+- Versions are still tracked per MGA.  
+- TTL drops must not delete visible versions that are required for active epochs.  
+
+### Complexity Targets
+
+- Writes: same as base LSM.  
+- Range scans: skip with min/max pruning; `O(output + merge overhead)`.  
+
+### References (for algorithmic definitions)
+
+- O’Neil et al., “The Log-Structured Merge-Tree (LSM-tree),” Acta Informatica, 1996.  
+- RocksDB Compaction Overview.  
+
+---
+
 ## Architecture Decision
 
 ### Design Choice
@@ -77,49 +142,35 @@ Index key is `(timestamp, primary_key)` or `(timestamp, dimension_hash)`.
 
 ### Meta Page
 
-```cpp
-#pragma pack(push, 1)
 
-struct SBLSMTtlMetaPage {
-    PageHeader lt_header;
+**Logical Fields:**
 
-    uint8_t lt_index_uuid[16];
-    uint8_t lt_table_uuid[16];
+- `lt_header` (PageHeader)
+- `lt_index_uuid[16]` (uint8_t)
+- `lt_table_uuid[16]` (uint8_t)
+- `lt_ts_column_id` (uint16_t): timestamp column
+- `lt_pk_column_id` (uint16_t): optional key
+- `lt_ttl_seconds` (uint64_t): retention window
+- `lt_segment_seconds` (uint32_t): target SSTable time span
+- `lt_level0_max_tables` (uint32_t)
+- `lt_compaction_mode` (uint32_t): leveled or tiered
+- `lt_total_keys` (uint64_t)
+- `lt_total_segments` (uint64_t)
+- `lt_padding[]` (uint8_t)
 
-    uint16_t lt_ts_column_id;      // timestamp column
-    uint16_t lt_pk_column_id;      // optional key
-
-    uint64_t lt_ttl_seconds;       // retention window
-    uint32_t lt_segment_seconds;   // target SSTable time span
-
-    uint32_t lt_level0_max_tables;
-    uint32_t lt_compaction_mode;   // leveled or tiered
-
-    uint64_t lt_total_keys;
-    uint64_t lt_total_segments;
-
-    uint8_t lt_padding[];
-} __attribute__((packed));
-
-#pragma pack(pop)
-```
 
 ### SSTable Footer (per segment)
 
-```cpp
-#pragma pack(push, 1)
 
-struct SBLSMSegmentFooter {
-    uint64 seg_min_ts;
-    uint64 seg_max_ts;
-    uint64 seg_expire_ts;  // min_ts + ttl
-    uint64 seg_row_count;
-    uint32 seg_level;
-    uint32 seg_reserved;
-} __attribute__((packed));
+**Logical Fields:**
 
-#pragma pack(pop)
-```
+- `seg_min_ts` (uint64)
+- `seg_max_ts` (uint64)
+- `seg_expire_ts` (uint64): min_ts + ttl
+- `seg_row_count` (uint64)
+- `seg_level` (uint32)
+- `seg_reserved` (uint32)
+
 
 ---
 
@@ -142,7 +193,7 @@ struct SBLSMSegmentFooter {
 ## Core API
 
 ```cpp
-Status lsm_ttl_insert(UUID index_uuid, const Key* key, const Value* value, TID tid);
+Status lsm_ttl_insert(UUID index_uuid, const Key* key, const Value* value, UUID record_uuid);
 Status lsm_ttl_compact(UUID index_uuid);
 Status lsm_ttl_drop_expired(UUID index_uuid, uint64 now_ts);
 ```
@@ -161,17 +212,17 @@ Status lsm_ttl_drop_expired(UUID index_uuid, uint64 now_ts);
 
 LSM-TTL GC is performed during compaction:
 
-TID references use `TID { gpid, slot }`. Legacy packed TID encodings are
+Record locators use `record_uuid` with optional `SBRecordPtr` cache hints. Legacy packed TIDs are
 not permitted in v2 on-disk formats.
 
-- Dead TIDs supplied by heap sweep are filtered during merge.
-- Tombstones with `xmax < OIT` are dropped when no shadowed versions remain.
+- Dead record UUIDs supplied by heap sweep are filtered during merge.
+- Tombstones for dead record versions are dropped when no shadowed versions remain.
 - Fully expired SSTables (by `seg_expire_ts`) are dropped when OIT allows.
 - Partially expired segments are rewritten with only live rows.
 
 GC scheduling:
 
-- Regular compaction handles both TTL and dead TID removal.
+- Regular compaction handles both TTL and dead entry removal.
 - GC compaction can be forced when delete volume exceeds a threshold.
 
 Metrics:
@@ -238,3 +289,9 @@ WITH (ttl = '30 days', segment = '1 day', compaction = 'leveled');
 - Downsampling policies for old data
 - Tiered storage (cold vs hot)
 - Per-tenant TTL policies
+
+## See Also
+
+- `INDEX_IMPLEMENTATION_REFERENCE.md` — authoritative algorithm map (includes per-index specs).
+- `INDEX_IMPLEMENTATION_SPEC.md` — global MGA/UUID requirements.
+- `INDEX_GC_PROTOCOL.md` — index GC contract.

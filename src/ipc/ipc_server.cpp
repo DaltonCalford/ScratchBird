@@ -6,6 +6,8 @@
  */
 
 #include "scratchbird/ipc/ipc_server.h"
+#include "scratchbird/ipc/unix_socket_channel.h"
+#include "scratchbird/ipc/copy_flow_control.h"
 
 #include <cstring>
 #include <chrono>
@@ -69,6 +71,14 @@ core::Status IPCSession::stop(core::ErrorContext* ctx) {
     return core::Status::OK;
 }
 
+void IPCSession::shutdown() {
+    std::lock_guard<std::mutex> lock(io_mutex_);
+    if (channel_) {
+        channel_->disconnect();
+    }
+    state_ = SessionState::CLOSED;
+}
+
 core::Status IPCSession::handleMessage(const IPCMessage& msg, core::ErrorContext* ctx) {
     updateActivity();
     stats_.messages_received++;
@@ -110,6 +120,8 @@ core::Status IPCSession::handleMessage(const IPCMessage& msg, core::ErrorContext
             return handlePing(msg, ctx);
         case IPCMessageType::TERMINATE:
             return handleTerminate(msg, ctx);
+        case IPCMessageType::STREAM_CONTROL:
+            return handleStreamControl(msg, ctx);
         default:
             if (ctx) {
                 ctx->set(core::Status::NOT_SUPPORTED, "Unknown message type",
@@ -120,6 +132,8 @@ core::Status IPCSession::handleMessage(const IPCMessage& msg, core::ErrorContext
 }
 
 core::Status IPCSession::sendMessage(const IPCMessage& msg, core::ErrorContext* ctx) {
+    std::lock_guard<std::mutex> lock(io_mutex_);
+    
     if (!channel_ || !channel_->isConnected()) {
         if (ctx) {
             ctx->set(core::Status::CONNECTION_FAILURE, "Channel not connected",
@@ -218,13 +232,20 @@ core::Status IPCSession::handleSimpleQuery(const IPCMessage& msg, core::ErrorCon
     
     state_ = SessionState::EXECUTING;
     
+    // Extract SQL from payload (after the header)
+    std::string sql;
+    if (payload && payload->query_length > 0) {
+        const char* sql_data = reinterpret_cast<const char*>(msg.payload.data() + sizeof(IPCSimpleQueryPayload));
+        sql.assign(sql_data, payload->query_length);
+    }
+    
     QueryContext qctx;
-    qctx.sql = payload->sql;
+    qctx.sql = sql;
     qctx.request_id = msg.header.request_id;
     qctx.start_time = std::chrono::steady_clock::now();
     setQueryContext(qctx);
     
-    auto status = handler_->onSimpleQuery(id_, payload->sql, ctx);
+    auto status = handler_->onSimpleQuery(id_, sql, ctx);
     
     clearQueryContext();
     state_ = SessionState::ACTIVE;
@@ -394,8 +415,77 @@ core::Status IPCSession::handleCopyData(const IPCMessage& msg, core::ErrorContex
         return core::Status::INVALID_ARGUMENT;
     }
     
+    // Flow control: Get or create flow controller for this session
+    auto controller = CopyFlowControlManager::instance().getController(id_);
+    if (!controller) {
+        // Create with default settings: 10 credits, 1MB window
+        controller = CopyFlowControlManager::instance().createController(
+            id_, 10, 1024 * 1024);
+    }
+    
+    // Check if we can accept more data (have credits)
+    if (!controller->canSend(payload->length)) {
+        // Send flow control pause
+        IPCMessage control_msg;
+        control_msg.setType(IPCMessageType::STREAM_CONTROL);
+        control_msg.header.request_id = msg.header.request_id;
+        
+        IPCStreamControlPayload control_payload;
+        control_payload.credits = 0;
+        control_payload.buffer_avail = controller->getStats().buffer_available;
+        
+        control_msg.payload.resize(sizeof(control_payload));
+        std::memcpy(control_msg.payload.data(), &control_payload, sizeof(control_payload));
+        
+        sendMessage(control_msg, ctx);
+        
+        // Wait for credits
+        if (!controller->waitForCreditsWithTimeout(1, payload->length, 30000)) {
+            if (ctx) {
+                ctx->set(core::Status::LOCK_TIMEOUT,
+                        "COPY flow control timeout waiting for credits",
+                        __FILE__, __LINE__, __func__);
+            }
+            return core::Status::LOCK_TIMEOUT;
+        }
+    }
+    
+    // Acquire credits (decrements credit count)
+    if (!controller->acquireCredits(payload->length)) {
+        if (ctx) {
+            ctx->set(core::Status::LOCK_TIMEOUT,
+                    "Failed to acquire credits for COPY data",
+                    __FILE__, __LINE__, __func__);
+        }
+        return core::Status::LOCK_TIMEOUT;
+    }
+    
+    // Record receipt
+    controller->recordReceived(payload->length);
+    
+    // Process the COPY data
     const uint8_t* data = msg.payload.data() + data_offset;
-    return handler_->onCopyData(id_, data, payload->length, ctx);
+    auto status = handler_->onCopyData(id_, data, payload->length, ctx);
+    
+    if (status != core::Status::OK) {
+        return status;
+    }
+    
+    // Send updated flow control
+    auto stats = controller->getStats();
+    
+    IPCMessage control_msg;
+    control_msg.setType(IPCMessageType::STREAM_CONTROL);
+    control_msg.header.request_id = msg.header.request_id;
+    
+    IPCStreamControlPayload control_payload;
+    control_payload.credits = stats.credits_available;
+    control_payload.buffer_avail = stats.buffer_available;
+    
+    control_msg.payload.resize(sizeof(control_payload));
+    std::memcpy(control_msg.payload.data(), &control_payload, sizeof(control_payload));
+    
+    return sendMessage(control_msg, ctx);
 }
 
 core::Status IPCSession::handleCopyDone(const IPCMessage& msg, core::ErrorContext* ctx) {
@@ -434,6 +524,31 @@ core::Status IPCSession::handlePing(const IPCMessage& msg, core::ErrorContext* c
 core::Status IPCSession::handleTerminate(const IPCMessage& msg, core::ErrorContext* ctx) {
     (void)msg;
     return stop(ctx);
+}
+
+core::Status IPCSession::handleStreamControl(const IPCMessage& msg, core::ErrorContext* ctx) {
+    if (msg.payload.size() < sizeof(IPCStreamControlPayload)) {
+        if (ctx) {
+            ctx->set(core::Status::INVALID_ARGUMENT,
+                    "Invalid STREAM_CONTROL payload",
+                    __FILE__, __LINE__, __func__);
+        }
+        return core::Status::INVALID_ARGUMENT;
+    }
+    
+    const auto* payload = reinterpret_cast<const IPCStreamControlPayload*>(
+        msg.payload.data()
+    );
+    
+    {
+        std::lock_guard<std::mutex> lock(flow_control_.mutex);
+        flow_control_.credits = payload->credits;
+        flow_control_.buffer_avail = payload->buffer_avail;
+        flow_control_.last_update = std::chrono::steady_clock::now();
+    }
+    flow_control_.cv.notify_all();
+    
+    return core::Status::OK;
 }
 
 // ============================================================================
@@ -624,12 +739,25 @@ void IPCServer::acceptLoop() {
             continue;
         }
         
-        // Create session (channel implementation needed)
-        // For now, just close the connection
-        ::close(client_fd);
+        // Create channel and accept connection
+        auto channel = std::make_unique<UnixSocketIPCChannel>();
+        core::ErrorContext ctx;
+        if (channel->accept(client_fd, &ctx) != core::Status::OK) {
+            ::close(client_fd);
+            continue;
+        }
         
-        std::lock_guard<std::mutex> lock(stats_mutex_);
-        stats_.total_sessions++;
+        // Create session
+        uint32_t session_id = createSession(std::move(channel));
+        
+        // Start reader thread for this session
+        std::thread([this, session_id]() { sessionReadLoop(session_id); }).detach();
+        
+        {
+            std::lock_guard<std::mutex> lock(stats_mutex_);
+            stats_.active_sessions++;
+            stats_.total_sessions++;
+        }
 #else
         // Not implemented on other platforms
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -677,7 +805,7 @@ void IPCServer::cleanupIdleSessions() {
 uint32_t IPCServer::createSession(std::unique_ptr<IPCChannel> channel) {
     uint32_t id = next_session_id_++;
     
-    auto session = std::make_unique<IPCSession>(id, std::move(channel), handler_.get());
+    auto session = std::make_shared<IPCSession>(id, std::move(channel), handler_.get());
     
     {
         std::unique_lock<std::shared_mutex> lock(sessions_mutex_);
@@ -688,12 +816,74 @@ uint32_t IPCServer::createSession(std::unique_ptr<IPCChannel> channel) {
 }
 
 void IPCServer::destroySession(uint32_t session_id) {
-    std::unique_lock<std::shared_mutex> lock(sessions_mutex_);
+    std::shared_ptr<IPCSession> session;
+    {
+        std::shared_lock<std::shared_mutex> lock(sessions_mutex_);
+        auto it = sessions_.find(session_id);
+        if (it != sessions_.end()) {
+            session = it->second;
+        }
+    }
+    
+    if (session) {
+        session->setState(SessionState::CLOSING);
+        session->shutdown();
+        
+        std::unique_lock<std::shared_mutex> lock(sessions_mutex_);
+        sessions_.erase(session_id);
+        
+        std::lock_guard<std::mutex> stats_lock(stats_mutex_);
+        stats_.active_sessions--;
+    }
+}
+
+std::shared_ptr<IPCSession> IPCServer::getSession(uint32_t session_id) {
+    std::shared_lock<std::shared_mutex> lock(sessions_mutex_);
     auto it = sessions_.find(session_id);
     if (it != sessions_.end()) {
-        it->second->stop(nullptr);
-        sessions_.erase(it);
+        return it->second;
     }
+    return nullptr;
+}
+
+void IPCServer::enqueueMessage(uint32_t session_id, IPCMessage&& msg) {
+    {
+        std::lock_guard<std::mutex> lock(queue_mutex_);
+        message_queue_.push({session_id, std::move(msg)});
+    }
+    queue_cv_.notify_one();
+}
+
+void IPCServer::sessionReadLoop(uint32_t session_id) {
+    std::shared_ptr<IPCSession> session;
+    {
+        std::shared_lock<std::shared_mutex> lock(sessions_mutex_);
+        auto it = sessions_.find(session_id);
+        if (it != sessions_.end()) {
+            session = it->second;
+        }
+    }
+
+    if (!session || !session->isActive()) return;
+
+    core::ErrorContext ctx;
+    while (running_ && session->isActive()) {
+        IPCMessage msg;
+        
+        // Lock during receive (channel is not thread-safe)
+        {
+            std::lock_guard<std::mutex> io_lock(session->getIOMutex());
+            auto status = session->getChannel()->receive(msg, &ctx);
+            if (status != core::Status::OK) {
+                break; // disconnect or error
+            }
+        }
+        
+        enqueueMessage(session_id, std::move(msg));
+    }
+
+    // Cleanup on disconnect
+    destroySession(session_id);
 }
 
 // ============================================================================

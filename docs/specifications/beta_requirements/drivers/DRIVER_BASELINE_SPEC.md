@@ -1,6 +1,5 @@
 # ScratchBird V2 Driver Baseline Specification
-
-Status: Draft (Target). This document defines the shared requirements for all official ScratchBird V2 drivers.
+Status: Authoritative (V3)
 
 ## Scope
 - **Supported protocol**: ScratchBird Native Wire Protocol (SBWP) v1.1 only.

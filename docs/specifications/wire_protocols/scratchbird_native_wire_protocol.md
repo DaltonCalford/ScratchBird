@@ -1,5 +1,14 @@
 # ScratchBird Native Wire Protocol Specification
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 **Version:** 1.1  
 **Date:** February 6, 2026  
 **Status:** ✅ **Alpha Complete - Fully Implemented**  
@@ -55,7 +64,7 @@ The ScratchBird Native Wire Protocol (SBWP) is a binary protocol optimized for S
 
 ### Why a Native Protocol?
 
-While ScratchBird supports PostgreSQL, MySQL, and Firebird protocols for compatibility (TDS is post-gold), the native protocol provides:
+While ScratchBird supports PostgreSQL, MySQL, and Firebird protocols for compatibility (TDS is optional extension), the native protocol provides:
 
 1. **Full MGA Semantics** - Other protocols lack visibility epoch, record version concepts
 2. **All 86 Types** - No lossy type mapping to foreign type systems
@@ -1334,7 +1343,7 @@ Coordinator                   Participant A                 Participant B
     │── COMMIT ────────────────────────────────────────────────►│
     │◄─ COMMITTED ──────────────────────────────────────────────│
     │                              │                              │
-    │  [Optional write-after log (post-gold)]                      │
+    │  [Optional write-after log (optional extension)]                      │
 ```
 
 ### 10.6 Attachment Protocol (Native ScratchBird Only)

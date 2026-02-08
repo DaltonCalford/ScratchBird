@@ -1,5 +1,14 @@
 # Ingestion Layer Specification
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 ## Overview
 
 The Ingestion Layer serves as the consolidation tier between ephemeral Transaction Engines and persistent OLAP storage. It receives change streams from multiple TX engines, deduplicates and merges versions, resolves conflicts, validates data, and pushes consolidated data to the OLAP tier.
@@ -1005,3 +1014,5 @@ ingestion:
     max_batch_age_seconds: 300
     compression: zstd
     parallelism: 4
+
+**Terminology note:** ScratchBird uses Firebird MGA. Any MGA references in this file are legacy shorthand and must be interpreted as MGA per the authoritative references above.

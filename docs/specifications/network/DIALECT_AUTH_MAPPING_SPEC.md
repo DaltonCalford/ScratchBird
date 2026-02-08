@@ -1,7 +1,7 @@
 # Dialect Authentication Mapping Specification
 
 Version: 1.0
-Status: Draft (Alpha IP layer)
+Status: Authoritative (V3)
 Last Updated: January 2026
 
 ## Purpose
@@ -110,4 +110,4 @@ Parser must pass these identifiers in every SBLR execution request.
 - docs/specifications/Security Design Specification/AUTH_CORE_FRAMEWORK.md
 - docs/specifications/Security Design Specification/AUTH_PASSWORD_METHODS.md
 - docs/specifications/Security Design Specification/AUTH_CERTIFICATE_TLS.md
-- docs/specifications/wire_protocols/*.md
+- docs/specifications/parser/v3/wire_protocols/*.md

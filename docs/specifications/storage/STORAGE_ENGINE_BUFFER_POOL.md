@@ -1,4 +1,14 @@
 # ScratchBird Storage Engine - Buffer Pool Management
+
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 ## Part 1 of Storage Engine Specification
 
 ---
@@ -21,7 +31,7 @@
 - Multiple buffer pools by workload or tablespace
 - Adaptive hash index in the buffer pool
 
-**Canonical cache architecture:** `docs/specifications/core/CACHE_AND_BUFFER_ARCHITECTURE.md`
+**Canonical cache architecture:** `docs/specifications/parser/v3/core/CACHE_AND_BUFFER_ARCHITECTURE.md`
 
 This specification describes the **Alpha target** buffer-pool design for a single node.
 
@@ -31,7 +41,7 @@ See `include/scratchbird/core/buffer_pool.h` and `src/core/buffer_pool.cpp` for 
 
 ## Overview
 
-ScratchBird's buffer pool management combines an implemented clock-sweep core with planned PostgreSQL-style ring buffers, MySQL InnoDB midpoint insertion/adaptive hash concepts, Firebird-style page management efficiency, and SQL Server-style read-ahead. The Alpha target includes scan-resistance and read-ahead while keeping the design compatible with future multi-pool layouts.
+ScratchBird's buffer pool management combines an implemented clock-sweep core with required PostgreSQL-style ring buffers, MySQL InnoDB midpoint insertion/adaptive hash concepts, Firebird-style page management efficiency, and SQL Server-style read-ahead. The Alpha target includes scan-resistance and read-ahead while keeping the design compatible with future multi-pool layouts.
 
 ## 1. Buffer Pool Architecture
 
@@ -1018,9 +1028,9 @@ typedef struct buffer_storage_interface {
 // Interface with transaction system
 typedef struct buffer_transaction_interface {
     // Check visibility
-    bool (*tuple_visible)(TransactionId xmin,
-                         TransactionId xmax,
-                         Snapshot* snapshot);
+    bool (*record_visible)(const SBRecordHeader* rhd,
+                          const SBTransactionSnapshot* snapshot,
+                          SBTransactionManager* tm);
     
     // Get transaction status
     TransactionStatus (*get_xact_status)(TransactionId xid);
@@ -1045,3 +1055,5 @@ This buffer pool implementation provides:
 7. **Comprehensive statistics** for monitoring and tuning
 
 The system is designed to handle multiple page sizes (8K-128K) and integrate seamlessly with the MGA transaction system described in the main specification.
+
+**Terminology note:** ScratchBird uses Firebird MGA. Any MGA references in this file are legacy shorthand and must be interpreted as MGA per the authoritative references above.

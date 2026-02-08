@@ -81,7 +81,7 @@ CASE @status\_code
 END CASE;
 
 #### **CASE statement syntax (PSQL control flow)**
-Status: Planned (PSQL statement-level CASE; distinct from CASE expression).
+Status: Required (PSQL statement-level CASE; distinct from CASE expression).
 
 **Simple CASE**
 ```
@@ -196,7 +196,7 @@ PSQL supports passing live cursor handles into and out of procedures and
 functions without copying result data. This enables shared cursor state
 between routines (same snapshot and position).
 
-See: `ScratchBird/docs/specifications/parser/PSQL_CURSOR_HANDLES.md`
+See: `ScratchBird/docs/specifications/parser/v3/parser/PSQL_CURSOR_HANDLES.md`
 
 ## **5\. Structured Exception Handling**
 

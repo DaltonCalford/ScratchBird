@@ -1,5 +1,14 @@
 # Type System Specifications
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 **[← Back to Specifications Index](../README.md)**
 
 This directory contains data type system specifications for ScratchBird's comprehensive type system, including built-in types, domains, arrays, and specialized types.
@@ -10,9 +19,9 @@ ScratchBird implements a rich type system supporting standard SQL types, Postgre
 
 ## SBLR Encoding Coverage (Alpha)
 SBLR type markers and literal opcodes must exist for all DataTypes to be fully
-executable in the bytecode VM. Coverage gaps and planned opcode additions are
+executable in the bytecode VM. Coverage gaps and required opcode additions are
 tracked in:
-- `docs/specifications/sblr/SBLR_OPCODE_REGISTRY.md`
+- `docs/specifications/parser/v3/SBLR_V3_OPCODE_SPEC.md`
 - `docs/findings/SBLR_TYPE_OPCODE_GAPS.md`
 
 ## Specifications in this Directory
@@ -20,7 +29,10 @@ tracked in:
 ### Core Type System
 
 - **[03_TYPES_AND_DOMAINS.md](03_TYPES_AND_DOMAINS.md)** (285 lines) - Type system overview and domain specifications
-- **[DATA_TYPE_PERSISTENCE_AND_CASTS.md](DATA_TYPE_PERSISTENCE_AND_CASTS.md)** (129 lines) - Type storage format and casting rules
+- **[DATA_TYPE_PERSISTENCE_AND_CASTS.md](DATA_TYPE_PERSISTENCE_AND_CASTS.md)** - Canonical storage, parsing, and casting rules
+
+### SBLR Type Map
+- **[SBLR_TYPE_MAP.md](SBLR_TYPE_MAP.md)** - Canonical mapping of DataType to SBLR V3 type opcodes
 
 ### User-Defined Domains
 

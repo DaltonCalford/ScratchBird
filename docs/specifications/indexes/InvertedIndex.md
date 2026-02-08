@@ -1,5 +1,15 @@
 # Inverted Index (Full-Text Search) Specification for ScratchBird
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
+
 **Version:** 1.0
 **Date:** November 20, 2025
 **Status:** Implementation Ready
@@ -51,6 +61,63 @@ Inverted indexes enable **full-text search** on text columns by mapping terms (w
 - **Query acceleration:** 100-10,000x speedup vs LIKE queries
 - **Best for:** Search engines, document retrieval, log analysis
 - **Page-size aware:** Adapts to database page size (8K/16K/32K/64K/128K)
+
+---
+
+## Authoritative Algorithm (Normative, 2026-02-07)
+
+This section is the implementation source of truth. If any other section in
+this document conflicts with the steps below, this section wins.
+
+### Index Construction (Single-Pass / Blocked)
+
+1. **Tokenize** each document (row):
+   - Case fold, normalize Unicode, remove punctuation.  
+   - Optional stopword removal and stemming/lemmatization.  
+2. For each term occurrence, emit `(term, doc_id, position)` triples.  
+3. Sort triples by `(term, doc_id, position)` in blocks.  
+4. For each term, build a **posting list**:
+   - `(doc_id, term_frequency, positions[])`  
+5. Compress postings:
+   - Delta‑encode doc_ids and positions.  
+   - Variable‑byte or bit‑packed integers.  
+6. Write segments to disk; merge segments into a single term dictionary + postings store.
+
+### Term Dictionary
+
+1. Store lexicographically sorted terms.  
+2. Map each term → postings offset + length.  
+3. Use FST or B‑tree for dictionary lookup (optional).
+
+### Query Processing
+
+1. Parse query into boolean/phrase/proximity operators.  
+2. Fetch postings for each term.  
+3. Evaluate boolean operators with document‑at‑a‑time or term‑at‑a‑time merging.  
+4. For phrase queries, intersect positional postings with offset constraints.  
+5. Apply scoring (BM25 or TF‑IDF) over candidate docs.
+
+### Updates / Deletes
+
+1. Inserts append to a **delta segment** (like LSM).  
+2. Deletes emit tombstones for doc_id; filtered during merges.  
+3. Periodic merge compacts delta segments into base segments.
+
+### MGA / Versioning
+
+- Postings store version metadata for each doc_id.  
+- Queries return only versions visible to MGA epoch.
+
+### Complexity Targets
+
+- Indexing: `O(N log N)` dominated by sort/merge.  
+- Query: `O(sum(postings))` with skipping and compression.
+
+### References (for algorithmic definitions)
+
+- Manning, Raghavan, Schütze, *Introduction to Information Retrieval*, 2008 (inverted index construction and query processing).  
+
+---
 
 ### Classic Use Case
 
@@ -109,25 +176,19 @@ Following Lucene's proven architecture, ScratchBird uses **immutable segments** 
 
 #### Segment Structure
 
-```cpp
-struct InvertedIndexSegment {
-    uint32_t segment_id;          // Unique segment ID
-    uint64_t num_documents;       // Documents in this segment
-    uint64_t num_terms;           // Unique terms
-    uint32_t meta_page;           // Metadata page ID
-    uint32_t dict_first_page;     // First dictionary page
-    uint32_t posting_first_page;  // First posting list page
-    uint64_t created_at;          // Unix timestamp
-    uint8_t flags;                // Status flags (active, merged, etc.)
 
-    // Document deletions (tombstone bitmap)
-    std::vector<bool> deleted_docs;  // In-memory
-};
+**Logical Fields:**
 
-constexpr uint8_t SEG_FLAG_ACTIVE = 0x01;
-constexpr uint8_t SEG_FLAG_MERGED = 0x02;
-constexpr uint8_t SEG_FLAG_COMPACTING = 0x04;
-```
+- `segment_id` (uint32_t): Unique segment ID
+- `num_documents` (uint64_t): Documents in this segment
+- `num_terms` (uint64_t): Unique terms
+- `meta_page` (uint32_t): Metadata page ID
+- `dict_first_page` (uint32_t): First dictionary page
+- `posting_first_page` (uint32_t): First posting list page
+- `created_at` (uint64_t): Unix timestamp
+- `flags` (uint8_t): Status flags (active, merged, etc.)
+- `deleted_docs` (std::vector<bool>): In-memory
+
 
 #### Multi-Segment Query Processing
 
@@ -173,15 +234,11 @@ sudo make install
 ```
 
 **API Usage:**
-```cpp
-#include <libstemmer.h>
 
-struct sb_stemmer* stemmer = sb_stemmer_new("english", nullptr);
-const char* stemmed = (const char*)sb_stemmer_stem(stemmer,
-                                                    (const sb_symbol*)word,
-                                                    strlen(word));
-sb_stemmer_delete(stemmer);
-```
+**Logical Fields:**
+
+- (see authoritative spec for on-disk layout)
+
 
 **Examples:**
 ```
@@ -222,216 +279,113 @@ Inverted Index
 
 ### 1. Inverted Index Meta Page
 
-```cpp
-#pragma pack(push, 1)
 
-struct SBInvertedIndexMetaPage {
-    PageHeader ii_header;           // Standard page header (64 bytes)
+**Logical Fields:**
 
-    // Index metadata (64 bytes)
-    uint8_t ii_index_uuid[16];      // Index UUID (16 bytes)
-    uint32_t ii_table_id;           // Parent table ID (4 bytes)
-    uint16_t ii_column_id;          // Indexed column (2 bytes)
-    uint16_t ii_language;           // Language code (2 bytes, 0=English)
-    uint32_t ii_num_segments;       // Total segments (4 bytes)
-    uint32_t ii_active_segment;     // Current active segment (4 bytes)
-    uint64_t ii_total_documents;    // Total documents indexed (8 bytes)
-    uint64_t ii_total_terms;        // Total unique terms (8 bytes)
-    uint64_t ii_total_tokens;       // Total tokens indexed (8 bytes)
-    uint32_t ii_avg_doc_length;     // Average document length (4 bytes)
+- `ii_header` (PageHeader): Standard page header (64 bytes)
+- `ii_index_uuid[16]` (uint8_t): Index UUID (16 bytes)
+- `ii_table_id` (uint32_t): Parent table ID (4 bytes)
+- `ii_column_id` (uint16_t): Indexed column (2 bytes)
+- `ii_language` (uint16_t): Language code (2 bytes, 0=English)
+- `ii_num_segments` (uint32_t): Total segments (4 bytes)
+- `ii_active_segment` (uint32_t): Current active segment (4 bytes)
+- `ii_total_documents` (uint64_t): Total documents indexed (8 bytes)
+- `ii_total_terms` (uint64_t): Total unique terms (8 bytes)
+- `ii_total_tokens` (uint64_t): Total tokens indexed (8 bytes)
+- `ii_avg_doc_length` (uint32_t): Average document length (4 bytes)
+- `ii_features` (uint8_t): Feature flags (1 byte)
+- `ii_compression_type` (uint8_t): 0=None, 1=VByte, 2=PForDelta (1 byte)
+- `ii_reserved1[30]` (uint8_t): Reserved (30 bytes)
+- `ii_segment_pages[256]` (uint32_t): Meta page for each segment (1024 bytes)
+- `ii_total_queries` (uint64_t): Total queries (8 bytes)
+- `ii_avg_query_time_us` (uint64_t): Average query time (8 bytes)
+- `ii_last_merge_time` (uint64_t): Last merge timestamp (8 bytes)
+- `ii_reserved2` (uint64_t): Reserved (8 bytes)
+- `ii_padding[]` (uint8_t): Flexible - size varies by page_size
 
-    // Configuration (32 bytes)
-    uint8_t ii_features;            // Feature flags (1 byte)
-    uint8_t ii_compression_type;    // 0=None, 1=VByte, 2=PForDelta (1 byte)
-    uint8_t ii_reserved1[30];       // Reserved (30 bytes)
-
-    // Segment directory (up to 256 segments)
-    uint32_t ii_segment_pages[256]; // Meta page for each segment (1024 bytes)
-
-    // Statistics (32 bytes)
-    uint64_t ii_total_queries;      // Total queries (8 bytes)
-    uint64_t ii_avg_query_time_us;  // Average query time (8 bytes)
-    uint64_t ii_last_merge_time;    // Last merge timestamp (8 bytes)
-    uint64_t ii_reserved2;          // Reserved (8 bytes)
-
-    // Padding to fill page (flexible array member)
-    uint8_t ii_padding[];           // Flexible - size varies by page_size
-} __attribute__((packed));
-
-// No static_assert - size varies by page size (8KB to 128KB)
-// Fixed header size: 64 + 64 + 32 + 1024 + 32 = 1216 bytes
-
-// Feature flags
-constexpr uint8_t II_FEATURE_POSITIONS = 0x01;     // Store word positions
-constexpr uint8_t II_FEATURE_OFFSETS = 0x02;       // Store character offsets
-constexpr uint8_t II_FEATURE_PAYLOADS = 0x04;      // Store term payloads
-constexpr uint8_t II_FEATURE_STEMMING = 0x08;      // Enable stemming
-constexpr uint8_t II_FEATURE_STOP_WORDS = 0x10;    // Filter stop words
-
-#pragma pack(pop)
-```
 
 ### 2. Segment Meta Page
 
-```cpp
-#pragma pack(push, 1)
 
-struct SBInvertedIndexSegmentMeta {
-    PageHeader seg_header;          // Standard page header (64 bytes)
+**Logical Fields:**
 
-    // Segment info (80 bytes)
-    uint32_t seg_id;                // Segment ID (4 bytes)
-    uint64_t seg_num_documents;     // Documents in segment (8 bytes)
-    uint64_t seg_num_terms;         // Unique terms (8 bytes)
-    uint64_t seg_num_tokens;        // Total tokens (8 bytes)
-    uint32_t seg_avg_doc_length;    // Average document length (4 bytes)
-    uint64_t seg_created_at;        // Creation timestamp (8 bytes)
-    uint64_t seg_merged_at;         // Merge timestamp (8 bytes, 0 if not merged)
-    uint8_t seg_flags;              // Status flags (1 byte)
-    uint8_t seg_reserved1[23];      // Reserved (23 bytes)
+- `seg_header` (PageHeader): Standard page header (64 bytes)
+- `seg_id` (uint32_t): Segment ID (4 bytes)
+- `seg_num_documents` (uint64_t): Documents in segment (8 bytes)
+- `seg_num_terms` (uint64_t): Unique terms (8 bytes)
+- `seg_num_tokens` (uint64_t): Total tokens (8 bytes)
+- `seg_avg_doc_length` (uint32_t): Average document length (4 bytes)
+- `seg_created_at` (uint64_t): Creation timestamp (8 bytes)
+- `seg_merged_at` (uint64_t): Merge timestamp (8 bytes, 0 if not merged)
+- `seg_flags` (uint8_t): Status flags (1 byte)
+- `seg_reserved1[23]` (uint8_t): Reserved (23 bytes)
+- `seg_dict_first_page` (uint32_t): First dictionary page (4 bytes)
+- `seg_dict_num_pages` (uint32_t): Dictionary page count (4 bytes)
+- `seg_posting_first_page` (uint32_t): First posting list page (4 bytes)
+- `seg_posting_num_pages` (uint32_t): Posting list page count (4 bytes)
+- `seg_docstats_page` (uint32_t): Document statistics page (4 bytes)
+- `seg_delete_bitmap_page` (uint32_t): Deletion bitmap page (4 bytes, 0 if none)
+- `seg_total_posting_bytes` (uint64_t): Total posting list bytes (8 bytes)
+- `seg_reserved2` (uint64_t): Reserved (8 bytes)
+- `seg_padding[]` (uint8_t): Flexible array member
 
-    // Page pointers (48 bytes)
-    uint32_t seg_dict_first_page;   // First dictionary page (4 bytes)
-    uint32_t seg_dict_num_pages;    // Dictionary page count (4 bytes)
-    uint32_t seg_posting_first_page;// First posting list page (4 bytes)
-    uint32_t seg_posting_num_pages; // Posting list page count (4 bytes)
-    uint32_t seg_docstats_page;     // Document statistics page (4 bytes)
-    uint32_t seg_delete_bitmap_page;// Deletion bitmap page (4 bytes, 0 if none)
-    uint64_t seg_total_posting_bytes;// Total posting list bytes (8 bytes)
-    uint64_t seg_reserved2;         // Reserved (8 bytes)
-
-    // Padding to fill page
-    uint8_t seg_padding[];          // Flexible array member
-} __attribute__((packed));
-
-// Fixed header size: 64 + 80 + 48 = 192 bytes
-
-#pragma pack(pop)
-```
 
 ### 3. Term Dictionary Entry
 
-```cpp
-#pragma pack(push, 1)
 
-// Individual term entry (fixed size: 128 bytes)
-struct TermDictionaryEntry {
-    char term[64];                  // Term text (null-terminated, 64 bytes)
-    uint32_t term_hash;             // Hash for quick comparison (4 bytes)
-    uint32_t doc_frequency;         // Documents containing term (4 bytes)
-    uint64_t total_frequency;       // Total occurrences (8 bytes)
-    uint64_t posting_offset;        // Byte offset in posting list pages (8 bytes)
-    uint32_t posting_length;        // Bytes in posting list (4 bytes)
-    uint32_t reserved;              // Reserved (4 bytes)
-    uint64_t reserved2[4];          // Reserved (32 bytes)
-} __attribute__((packed));
+**Logical Fields:**
 
-static_assert(sizeof(TermDictionaryEntry) == 128, "Must be 128 bytes");
+- `term[64]` (char): Term text (null-terminated, 64 bytes)
+- `term_hash` (uint32_t): Hash for quick comparison (4 bytes)
+- `doc_frequency` (uint32_t): Documents containing term (4 bytes)
+- `total_frequency` (uint64_t): Total occurrences (8 bytes)
+- `posting_offset` (uint64_t): Byte offset in posting list pages (8 bytes)
+- `posting_length` (uint32_t): Bytes in posting list (4 bytes)
+- `reserved` (uint32_t): Reserved (4 bytes)
+- `reserved2[4]` (uint64_t): Reserved (32 bytes)
 
-#pragma pack(pop)
-```
 
 ### 4. Term Dictionary Page
 
-```cpp
-#pragma pack(push, 1)
 
-struct SBTermDictionaryPage {
-    PageHeader dict_header;         // Standard page header (64 bytes)
-    uint32_t dict_next_page;        // Next dictionary page (0 if last) (4 bytes)
-    uint16_t dict_num_entries;      // Number of entries on page (2 bytes)
-    uint16_t dict_reserved;         // Reserved (2 bytes)
-    uint64_t dict_first_term_hash;  // First term hash (for binary search) (8 bytes)
+**Logical Fields:**
 
-    // Entries: Each entry = 128 bytes (TermDictionaryEntry)
-    // Flexible array member - size varies by page size
-    uint8_t dict_entries[];         // Variable-length entries
-} __attribute__((packed));
+- `dict_header` (PageHeader): Standard page header (64 bytes)
+- `dict_next_page` (uint32_t): Next dictionary page (0 if last) (4 bytes)
+- `dict_num_entries` (uint16_t): Number of entries on page (2 bytes)
+- `dict_reserved` (uint16_t): Reserved (2 bytes)
+- `dict_first_term_hash` (uint64_t): First term hash (for binary search) (8 bytes)
+- `dict_entries[]` (uint8_t): Variable-length entries
 
-// No static_assert - size varies by page size
-// Fixed header size: 64 + 4 + 2 + 2 + 8 = 80 bytes
-
-// Calculate max terms per page (page-size aware)
-inline uint32_t maxTermsPerPage(uint32_t page_size) {
-    constexpr uint32_t DICT_PAGE_HEADER_SIZE = 80;
-    constexpr uint32_t TERM_ENTRY_SIZE = 128;
-    uint32_t available_bytes = page_size - DICT_PAGE_HEADER_SIZE;
-    return available_bytes / TERM_ENTRY_SIZE;
-}
-
-// Examples:
-// 8KB pages: (8192 - 80) / 128 = 63 terms per page
-// 16KB pages: (16384 - 80) / 128 = 127 terms per page
-// 32KB pages: (32768 - 80) / 128 = 255 terms per page
-// 64KB pages: (65536 - 80) / 128 = 511 terms per page
-// 128KB pages: (131072 - 80) / 128 = 1023 terms per page
-
-#pragma pack(pop)
-```
 
 ### 5. Posting List Page
 
-```cpp
-#pragma pack(push, 1)
 
-struct SBPostingListPage {
-    PageHeader post_header;         // Standard page header (64 bytes)
-    uint32_t post_next_page;        // Next posting page (0 if last) (4 bytes)
-    uint32_t post_data_length;      // Bytes of compressed data (4 bytes)
-    uint8_t post_compression_type;  // Compression type (1 byte)
-    uint8_t post_reserved[7];       // Reserved (7 bytes)
+**Logical Fields:**
 
-    // Compressed posting data
-    uint8_t post_data[];            // Flexible array member
-} __attribute__((packed));
+- `post_header` (PageHeader): Standard page header (64 bytes)
+- `post_next_page` (uint32_t): Next posting page (0 if last) (4 bytes)
+- `post_data_length` (uint32_t): Bytes of compressed data (4 bytes)
+- `post_compression_type` (uint8_t): Compression type (1 byte)
+- `post_reserved[7]` (uint8_t): Reserved (7 bytes)
+- `post_data[]` (uint8_t): Flexible array member
 
-// Fixed header size: 64 + 4 + 4 + 1 + 7 = 80 bytes
-
-#pragma pack(pop)
-```
 
 ### 6. Document Statistics Page
 
-```cpp
-#pragma pack(push, 1)
 
-// Per-document statistics (16 bytes each)
-struct DocumentStats {
-    uint32_t doc_id;                // Document ID (local to segment) (4 bytes)
-    uint32_t doc_length;            // Number of tokens (4 bytes)
-    uint32_t num_unique_terms;      // Distinct terms (4 bytes)
-    uint32_t reserved;              // Reserved (4 bytes)
-} __attribute__((packed));
+**Logical Fields:**
 
-static_assert(sizeof(DocumentStats) == 16, "Must be 16 bytes");
+- `doc_id` (uint32_t): Document ID (local to segment) (4 bytes)
+- `doc_length` (uint32_t): Number of tokens (4 bytes)
+- `num_unique_terms` (uint32_t): Distinct terms (4 bytes)
+- `reserved` (uint32_t): Reserved (4 bytes)
+- `docstats_header` (PageHeader): Standard page header (64 bytes)
+- `docstats_next_page` (uint32_t): Next stats page (0 if last) (4 bytes)
+- `docstats_num_entries` (uint32_t): Number of entries (4 bytes)
+- `docstats_reserved` (uint64_t): Reserved (8 bytes)
+- `docstats_data[]` (uint8_t): Flexible array member
 
-struct SBDocumentStatsPage {
-    PageHeader docstats_header;     // Standard page header (64 bytes)
-    uint32_t docstats_next_page;    // Next stats page (0 if last) (4 bytes)
-    uint32_t docstats_num_entries;  // Number of entries (4 bytes)
-    uint64_t docstats_reserved;     // Reserved (8 bytes)
-
-    // Document statistics
-    uint8_t docstats_data[];        // Flexible array member
-} __attribute__((packed));
-
-// Fixed header size: 64 + 4 + 4 + 8 = 80 bytes
-
-// Max documents per page
-inline uint32_t maxDocStatsPerPage(uint32_t page_size) {
-    constexpr uint32_t STATS_PAGE_HEADER_SIZE = 80;
-    constexpr uint32_t DOC_STATS_SIZE = 16;
-    uint32_t available_bytes = page_size - STATS_PAGE_HEADER_SIZE;
-    return available_bytes / DOC_STATS_SIZE;
-}
-
-// Examples:
-// 8KB pages: (8192 - 80) / 16 = 507 documents per page
-// 16KB pages: (16384 - 80) / 16 = 1019 documents per page
-// 32KB pages: (32768 - 80) / 16 = 2043 documents per page
-
-#pragma pack(pop)
-```
 
 ---
 
@@ -597,13 +551,13 @@ Posting lists store the document IDs where each term appears.
 
 ### Structure
 
-```cpp
-struct PostingList {
-    std::vector<uint32_t> doc_ids;       // Sorted document IDs (delta-encoded)
-    std::vector<uint32_t> frequencies;   // Term frequency in each doc
-    std::vector<std::vector<uint32_t>> positions;  // (Optional) Word positions
-};
-```
+
+**Logical Fields:**
+
+- `doc_ids` (std::vector<uint32_t>): Sorted document IDs (delta-encoded)
+- `frequencies` (std::vector<uint32_t>): Term frequency in each doc
+- `positions` (std::vector<std::vector<uint32_t>>): (Optional) Word positions
+
 
 ### Example
 
@@ -651,93 +605,20 @@ Token Filters:
 
 ### Tokenizer Implementation
 
-```cpp
-class StandardTokenizer {
-public:
-    std::vector<std::string> tokenize(const std::string& text) {
-        std::vector<std::string> tokens;
 
-        // Simple ASCII tokenization (Phase 1)
-        std::string token;
-        for (char c : text) {
-            if (isalnum(c) || c == '\'') {
-                token += c;
-            } else if (!token.empty()) {
-                tokens.push_back(token);
-                token.clear();
-            }
-        }
+**Logical Fields:**
 
-        if (!token.empty()) {
-            tokens.push_back(token);
-        }
+- `tokens` (std::vector<std::string>)
+- `token` (std::string)
+- `tokens` (return)
+- `result` (std::vector<std::string>)
+- `result` (return)
+- `result` (std::vector<std::string>)
+- `result` (return)
+- `stop_words_` (std::set<std::string>)
+- `result` (std::vector<std::string>)
+- `result` (return)
 
-        return tokens;
-    }
-};
-
-class TokenFilter {
-public:
-    virtual std::vector<std::string> filter(const std::vector<std::string>& tokens) = 0;
-};
-
-class LowercaseFilter : public TokenFilter {
-public:
-    std::vector<std::string> filter(const std::vector<std::string>& tokens) override {
-        std::vector<std::string> result;
-        for (const auto& token : tokens) {
-            std::string lower = token;
-            std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-            result.push_back(lower);
-        }
-        return result;
-    }
-};
-
-class StopWordFilter : public TokenFilter {
-public:
-    StopWordFilter(const std::set<std::string>& stop_words) : stop_words_(stop_words) {}
-
-    std::vector<std::string> filter(const std::vector<std::string>& tokens) override {
-        std::vector<std::string> result;
-        for (const auto& token : tokens) {
-            if (stop_words_.find(token) == stop_words_.end()) {
-                result.push_back(token);
-            }
-        }
-        return result;
-    }
-
-private:
-    std::set<std::string> stop_words_;
-};
-
-class SnowballStemFilter : public TokenFilter {
-public:
-    SnowballStemFilter(const std::string& language = "english") {
-        stemmer_ = sb_stemmer_new(language.c_str(), nullptr);
-    }
-
-    ~SnowballStemFilter() {
-        if (stemmer_) sb_stemmer_delete(stemmer_);
-    }
-
-    std::vector<std::string> filter(const std::vector<std::string>& tokens) override {
-        std::vector<std::string> result;
-        for (const auto& token : tokens) {
-            const sb_symbol* stemmed = sb_stemmer_stem(stemmer_,
-                                                       (const sb_symbol*)token.c_str(),
-                                                       token.length());
-            int len = sb_stemmer_length(stemmer_);
-            result.push_back(std::string((const char*)stemmed, len));
-        }
-        return result;
-    }
-
-private:
-    struct sb_stemmer* stemmer_;
-};
-```
 
 ### Analyzer
 
@@ -917,34 +798,29 @@ Inverted indexes map terms to document IDs, but in an MGA system:
 
 ```cpp
 // Query processing with MGA compliance
-std::vector<TID> InvertedIndex::search(const std::string& query,
-                                       TransactionId current_xid,
+std::vector<UUID> InvertedIndex::search(const std::string& query,
+                                       const SBTransactionSnapshot* snapshot,
+                                       SBTransactionManager* tm,
                                        ErrorContext* ctx) {
     // 1. Parse query, extract terms
     auto terms = parseQuery(query);
 
     // 2. For each term, get posting list (may include uncommitted docs)
-    std::vector<uint32_t> candidate_docs;
+    std::vector<UUID> candidate_docs;
     for (const auto& term : terms) {
         auto posting = lookupTerm(term, ctx);
-        candidate_docs = intersect(candidate_docs, posting.doc_ids);
+        candidate_docs = intersect(candidate_docs, posting.record_uuids);
     }
 
     // 3. Filter candidates by visibility (TIP checks)
-    std::vector<TID> visible_docs;
-    for (uint32_t doc_id : candidate_docs) {
-        TID tid = docIdToTID(doc_id);
+    std::vector<UUID> visible_docs;
+    for (const auto& record_uuid : candidate_docs) {
+        const SBRecordHeader* rhd = resolve_record_header_by_uuid(record_uuid);
+        if (!rhd) continue;
 
-        // Get tuple from heap
-        auto tuple = getTupleFromTID(tid, ctx);
-        if (!tuple) continue;
-
-        // Check visibility using TIP
-        bool visible = false;
-        isVersionVisible(tuple->xmin, tuple->xmax, current_xid, &visible, ctx);
-
-        if (visible) {
-            visible_docs.push_back(tid);
+        const SBRecordHeader* visible = sb_find_visible_version(rhd, snapshot, tm);
+        if (visible && (visible->rhd_flags & RHD_DELETED) == 0) {
+            visible_docs.push_back(record_uuid);
         }
     }
 
@@ -957,21 +833,15 @@ std::vector<TID> InvertedIndex::search(const std::string& query,
 During sweep/GC, remove references to deleted documents:
 
 ```cpp
-Status InvertedIndex::removeDeadEntries(const std::vector<TID>& dead_tids,
+Status InvertedIndex::removeDeadEntries(const std::vector<UUID>& dead_record_uuids,
                                         ErrorContext* ctx) {
-    // Convert TIDs to doc IDs
-    std::set<uint32_t> dead_docs;
-    for (const auto& tid : dead_tids) {
-        dead_docs.insert(tidToDocId(tid));
-    }
-
     // Mark segments for rebuilding if they contain dead docs
     for (auto& segment : segments_) {
         bool needs_rebuild = false;
 
-        for (uint32_t doc_id : dead_docs) {
-            if (segment.contains(doc_id)) {
-                segment.deleted_docs[doc_id] = true;
+        for (const auto& record_uuid : dead_record_uuids) {
+            if (segment.contains(record_uuid)) {
+                segment.deleted_records[record_uuid] = true;
                 needs_rebuild = true;
             }
         }
@@ -996,13 +866,13 @@ Status InvertedIndex::removeDeadEntries(const std::vector<TID>& dead_tids,
 
 ---
 
-## Tablespace + TID/GPID Requirements
+## Tablespace + Record UUID Requirements
 
-- **TID format:** Posting lists must store `TID` values with full `GPID + slot` (no legacy 32-bit page IDs).
-- **Document ID mapping:** Any doc-id indirection must round-trip through `TID` without dropping `tablespace_id`.
+- **Row identity:** Posting lists store `record_uuid` with optional `SBRecordPtr` cache hints (no legacy page IDs).
+- **Document ID mapping:** Any doc-id indirection must round-trip through `record_uuid` without dropping `tablespace_id`.
 - **Tablespace routing:** On-disk pages for the inverted index must allocate/pin via `root_gpid` and `tablespace_id`.
-- **Visibility checks:** Heap tuple fetches must use `pinPageGlobal` on the `GPID` embedded in `TID`.
-- **Migration:** `updateTIDsAfterMigration` must rewrite posting lists for migrated `GPID`s, including compressed segments.
+- **Visibility checks:** Record fetch uses `record_uuid` resolution; cached `SBRecordPtr` may be stale.
+- **Migration:** `updateRecordLocatorsAfterMigration` must refresh cached pointers for migrated GPIDs, including compressed segments.
 
 ---
 
@@ -1010,140 +880,32 @@ Status InvertedIndex::removeDeadEntries(const std::vector<TID>& dead_tids,
 
 **File:** `include/scratchbird/core/inverted_index.h`
 
-```cpp
-#pragma once
 
-#include "scratchbird/core/ondisk.h"
-#include "scratchbird/core/status.h"
-#include "scratchbird/core/error_context.h"
-#include "scratchbird/core/uuidv7.h"
-#include "scratchbird/core/index_gc_interface.h"
-#include "scratchbird/core/value.h"
-#include <cstdint>
-#include <vector>
-#include <memory>
-#include <string>
+**Logical Fields:**
 
-namespace scratchbird {
-namespace core {
+- `Database` (class)
+- `Table` (class)
+- `Analyzer` (class)
+- `record_uuid` (UUID)
+- `score` (float)
+- `store_positions` (bool): Store word positions (for phrase queries)
+- `store_offsets` (bool): Store character offsets
+- `enable_stemming` (bool): Use Snowball stemmer
+- `filter_stop_words` (bool): Remove stop words
+- `language` (std::string): Language for stemmer (default: "english")
+- `min_term_length` (uint32_t): Minimum term length (default: 2)
+- `max_term_length` (uint32_t): Maximum term length (default: 40)
+- `compression_type` (uint8_t): 0=None, 1=VByte (default: 1)
+- `merge_factor` (uint32_t): Segments to merge at once (default: 10)
+- `max_segment_size` (uint64_t): Max segment size in bytes (default: 5GB)
+- `db_` (Database*)
+- `index_uuid_` (UuidV7Bytes)
+- `meta_page_` (uint32_t)
+- `column_id_` (uint16_t)
+- `config_` (InvertedIndexConfig)
+- `analyzer_` (std::unique_ptr<Analyzer>)
+- `segments_` (std::vector<InvertedIndexSegment>)
 
-// Forward declarations
-class Database;
-class Table;
-class Analyzer;
-
-// Search result
-struct SearchResult {
-    TID tid;
-    float score;
-};
-
-// Inverted index configuration
-struct InvertedIndexConfig {
-    bool store_positions;       // Store word positions (for phrase queries)
-    bool store_offsets;         // Store character offsets
-    bool enable_stemming;       // Use Snowball stemmer
-    bool filter_stop_words;     // Remove stop words
-    std::string language;       // Language for stemmer (default: "english")
-    uint32_t min_term_length;   // Minimum term length (default: 2)
-    uint32_t max_term_length;   // Maximum term length (default: 40)
-    uint8_t compression_type;   // 0=None, 1=VByte (default: 1)
-    uint32_t merge_factor;      // Segments to merge at once (default: 10)
-    uint64_t max_segment_size;  // Max segment size in bytes (default: 5GB)
-};
-
-static constexpr InvertedIndexConfig DEFAULT_II_CONFIG = {
-    .store_positions = false,
-    .store_offsets = false,
-    .enable_stemming = true,
-    .filter_stop_words = true,
-    .language = "english",
-    .min_term_length = 2,
-    .max_term_length = 40,
-    .compression_type = 1,  // VByte
-    .merge_factor = 10,
-    .max_segment_size = 5ULL * 1024 * 1024 * 1024  // 5GB
-};
-
-class InvertedIndex : public IndexGCInterface {
-public:
-    // Constructor
-    InvertedIndex(Database* db, const UuidV7Bytes& index_uuid, uint32_t meta_page);
-
-    // Destructor
-    ~InvertedIndex();
-
-    // Create new inverted index
-    static Status create(Database* db,
-                        Table* table,
-                        uint16_t column_id,
-                        const InvertedIndexConfig& config,
-                        uint32_t* meta_page_out,
-                        ErrorContext* ctx = nullptr);
-
-    // Open existing inverted index
-    static std::unique_ptr<InvertedIndex> open(Database* db,
-                                               const UuidV7Bytes& index_uuid,
-                                               uint32_t meta_page,
-                                               ErrorContext* ctx = nullptr);
-
-    // Index a document
-    Status indexDocument(uint32_t doc_id, const std::string& text, ErrorContext* ctx = nullptr);
-
-    // Search for documents
-    std::vector<SearchResult> search(const std::string& query,
-                                    TransactionId current_xid,
-                                    uint32_t limit = 10,
-                                    ErrorContext* ctx = nullptr);
-
-    // Delete document from index
-    Status deleteDocument(uint32_t doc_id, ErrorContext* ctx = nullptr);
-
-    // Merge segments
-    Status mergeSegments(ErrorContext* ctx = nullptr);
-
-    // IndexGCInterface implementation
-    Status removeDeadEntries(const std::vector<TID>& dead_tids,
-                            uint64_t* entries_removed_out = nullptr,
-                            uint64_t* pages_modified_out = nullptr,
-                            ErrorContext* ctx = nullptr) override;
-
-    const char* indexTypeName() const override { return "InvertedIndex"; }
-
-    // Getters
-    const UuidV7Bytes& getIndexUuid() const { return index_uuid_; }
-    uint32_t getMetaPage() const { return meta_page_; }
-    uint16_t getColumnId() const { return column_id_; }
-
-    // Page-size aware helpers
-    uint32_t getPageSize() const;
-    uint32_t getMaxTermsPerPage() const;
-    uint32_t getMaxDocsPerPage() const;
-
-private:
-    // Member variables
-    Database* db_;
-    UuidV7Bytes index_uuid_;
-    uint32_t meta_page_;
-    uint16_t column_id_;
-    InvertedIndexConfig config_;
-    std::unique_ptr<Analyzer> analyzer_;
-
-    // Segments
-    std::vector<InvertedIndexSegment> segments_;
-
-    // Helper methods
-    Status lookupTerm(const std::string& term, PostingList* posting_out, ErrorContext* ctx);
-    Status addTermToSegment(uint32_t segment_id, const std::string& term,
-                           uint32_t doc_id, uint32_t position, ErrorContext* ctx);
-    std::vector<SearchResult> scoreAndRank(const std::vector<TID>& docs,
-                                          const std::vector<std::string>& query_terms,
-                                          ErrorContext* ctx);
-};
-
-} // namespace core
-} // namespace scratchbird
-```
 
 ---
 
@@ -1158,12 +920,12 @@ When a new row is inserted with text data, index it in the active segment.
 ```cpp
 Status StorageEngine::insertTuple(Table* table,
                                  const std::vector<Value>& values,
-                                 TID* tid_out,
+                                 UUID* record_uuid_out,
                                  ErrorContext* ctx) {
     // ... existing heap insert logic ...
     //
 
- Allocate page, insert tuple, etc.
+ Allocate page, insert record version, etc.
 
     // NEW: Update inverted indexes
     for (auto& idx_info : table->indexes) {
@@ -1175,11 +937,8 @@ Status StorageEngine::insertTuple(Table* table,
             const auto& text_value = values[col_id];
 
             if (!text_value.isNull()) {
-                // Convert TID to doc ID (local to active segment)
-                uint32_t doc_id = tidToDocId(*tid_out);
-
-                // Index the document
-                auto status = inv_idx->indexDocument(doc_id,
+                // Index the document by record UUID
+                auto status = inv_idx->indexDocument(*record_uuid_out,
                                                     text_value.asString(),
                                                     ctx);
                 if (status != Status::OK) {
@@ -1200,7 +959,7 @@ When text is updated, mark old document as deleted and index new version.
 
 ```cpp
 Status StorageEngine::updateTuple(Table* table,
-                                 const TID& tid,
+                                 const UUID& record_uuid,
                                  const std::vector<Value>& new_values,
                                  ErrorContext* ctx) {
     // ... existing update logic ...
@@ -1215,13 +974,11 @@ Status StorageEngine::updateTuple(Table* table,
             // Check if indexed column changed
             if (old_values[col_id] != new_values[col_id]) {
                 // Mark old document as deleted
-                uint32_t old_doc_id = tidToDocId(tid);
-                inv_idx->deleteDocument(old_doc_id, ctx);
+                inv_idx->deleteDocument(record_uuid, ctx);
 
                 // Index new version
                 if (!new_values[col_id].isNull()) {
-                    uint32_t new_doc_id = tidToDocId(new_tid);
-                    inv_idx->indexDocument(new_doc_id,
+                    inv_idx->indexDocument(new_record_uuid,
                                           new_values[col_id].asString(),
                                           ctx);
                 }
@@ -1238,16 +995,15 @@ Status StorageEngine::updateTuple(Table* table,
 Mark document as deleted in the inverted index.
 
 ```cpp
-Status StorageEngine::deleteTuple(Table* table, const TID& tid, ErrorContext* ctx) {
-    // ... existing delete logic (sets xmax) ...
+Status StorageEngine::deleteTuple(Table* table, const UUID& record_uuid, ErrorContext* ctx) {
+    // ... existing delete logic (creates RHD_DELETED version) ...
 
     // NEW: Mark document deleted in inverted indexes
     for (auto& idx_info : table->indexes) {
         if (idx_info.type == IndexType::INVERTED_INDEX) {
             auto* inv_idx = static_cast<InvertedIndex*>(idx_info.index.get());
 
-            uint32_t doc_id = tidToDocId(tid);
-            inv_idx->deleteDocument(doc_id, ctx);
+            inv_idx->deleteDocument(record_uuid, ctx);
         }
     }
 
@@ -1261,45 +1017,16 @@ Status StorageEngine::deleteTuple(Table* table, const TID& tid, ErrorContext* ct
 
 ### Boolean Query Parser
 
-```cpp
-enum class QueryOperator {
-    AND,
-    OR,
-    NOT,
-    PHRASE
-};
 
-struct QueryNode {
-    QueryOperator op;
-    std::string term;                    // For leaf nodes
-    std::vector<QueryNode*> children;    // For operator nodes
-};
+**Logical Fields:**
 
-class QueryParser {
-public:
-    QueryNode* parse(const std::string& query) {
-        // Simple parser for: "term1 AND term2 OR term3"
-        // Phase 2: Full boolean syntax with parentheses
+- `op` (QueryOperator)
+- `term` (std::string): For leaf nodes
+- `children` (std::vector<QueryNode*>): For operator nodes
+- `tokens` (std::vector<std::string>)
+- `tokens` (return)
+- `nullptr` (return)
 
-        auto tokens = tokenize(query);
-        return parseExpression(tokens);
-    }
-
-private:
-    std::vector<std::string> tokenize(const std::string& query) {
-        // Split on whitespace, preserve AND/OR/NOT
-        std::vector<std::string> tokens;
-        // ...implementation...
-        return tokens;
-    }
-
-    QueryNode* parseExpression(const std::vector<std::string>& tokens) {
-        // Recursive descent parser
-        // ...implementation...
-        return nullptr;
-    }
-};
-```
 
 ### Term Intersection (AND)
 
@@ -1378,8 +1105,8 @@ std::vector<SearchResult> InvertedIndex::search(const std::string& query,
 
             if (status == Status::OK) {
                 // Add segment offset to doc IDs
-                for (uint32_t doc_id : posting.doc_ids) {
-                    combined_posting.push_back(segment.doc_id_offset + doc_id);
+                for (const auto& record_uuid : posting.record_uuids) {
+                    combined_posting.push_back(record_uuid);
                 }
             }
         }
@@ -1388,24 +1115,20 @@ std::vector<SearchResult> InvertedIndex::search(const std::string& query,
     }
 
     // 3. Intersect posting lists (AND query)
-    std::vector<uint32_t> candidate_docs = term_postings[0];
+    std::vector<UUID> candidate_docs = term_postings[0];
     for (size_t i = 1; i < term_postings.size(); i++) {
         candidate_docs = intersect(candidate_docs, term_postings[i]);
     }
 
     // 4. Filter by visibility (MGA compliance)
-    std::vector<TID> visible_docs;
-    for (uint32_t doc_id : candidate_docs) {
-        TID tid = docIdToTID(doc_id);
+    std::vector<UUID> visible_docs;
+    for (const auto& record_uuid : candidate_docs) {
+        const SBRecordHeader* rhd = resolve_record_header_by_uuid(record_uuid);
+        if (!rhd) continue;
 
-        auto tuple = getTupleFromTID(tid, ctx);
-        if (!tuple) continue;
-
-        bool visible = false;
-        isVersionVisible(tuple->xmin, tuple->xmax, current_xid, &visible, ctx);
-
-        if (visible) {
-            visible_docs.push_back(tid);
+        const SBRecordHeader* visible = sb_find_visible_version(rhd, snapshot, tm);
+        if (visible && (visible->rhd_flags & RHD_DELETED) == 0) {
+            visible_docs.push_back(record_uuid);
         }
     }
 
@@ -1516,7 +1239,7 @@ private:
 
 ```cpp
 std::vector<SearchResult> InvertedIndex::scoreAndRank(
-    const std::vector<TID>& docs,
+    const std::vector<UUID>& docs,
     const std::vector<std::string>& query_terms,
     ErrorContext* ctx) {
 
@@ -1525,18 +1248,16 @@ std::vector<SearchResult> InvertedIndex::scoreAndRank(
     // Initialize BM25 scorer
     BM25Scorer scorer(total_documents_, avg_doc_length_);
 
-    for (const auto& tid : docs) {
-        uint32_t doc_id = tidToDocId(tid);
-
+    for (const auto& record_uuid : docs) {
         // Get document statistics
         DocumentStats doc_stats;
-        auto status = getDocumentStats(doc_id, &doc_stats, ctx);
+        auto status = getDocumentStats(record_uuid, &doc_stats, ctx);
         if (status != Status::OK) continue;
 
         // Get term frequencies for this document
         std::map<std::string, uint32_t> term_freqs;
         for (const auto& term : query_terms) {
-            uint32_t tf = getTermFrequency(doc_id, term, ctx);
+            uint32_t tf = getTermFrequency(record_uuid, term, ctx);
             term_freqs[term] = tf;
         }
 
@@ -1551,9 +1272,9 @@ std::vector<SearchResult> InvertedIndex::scoreAndRank(
         }
 
         // Calculate BM25 score
-        float score = scorer.score(query_terms, doc_id, doc_stats, term_freqs, doc_freqs);
+        float score = scorer.score(query_terms, record_uuid, doc_stats, term_freqs, doc_freqs);
 
-        results.push_back({tid, score});
+        results.push_back({record_uuid, score});
     }
 
     return results;
@@ -1776,19 +1497,21 @@ Status QueryPlanner::planFullTextSearch(Table* table,
 
 ```cpp
 Status Executor::executeInvertedIndexScan(const SearchPlan& plan,
-                                         std::vector<TID>* results_out,
+                                         std::vector<UUID>* results_out,
                                          ErrorContext* ctx) {
-    auto current_xid = db_->getTransactionManager()->getCurrentTransactionId();
+    auto snapshot = db_->getTransactionManager()->getCurrentSnapshot();
+    auto* tm = db_->getTransactionManager();
 
     // Execute full-text search
     auto search_results = plan.inverted_index->search(plan.query,
-                                                     current_xid,
+                                                     snapshot,
+                                                     tm,
                                                      plan.limit,
                                                      ctx);
 
-    // Extract TIDs (already filtered by visibility)
+    // Extract record UUIDs (already filtered by visibility)
     for (const auto& result : search_results) {
-        results_out->push_back(result.tid);
+        results_out->push_back(result.record_uuid);
     }
 
     return Status::OK;
@@ -1824,24 +1547,17 @@ SELECT * FROM documents WHERE content @@ 'database search';
 
 **File:** `include/scratchbird/parser/ast_v2.h`
 
-```cpp
-struct InvertedIndexOptions {
-    bool store_positions;     // Store word positions
-    bool enable_stemming;     // Use Snowball stemmer
-    bool filter_stop_words;   // Remove stop words
-    std::string language;     // Language for stemmer
-};
 
-struct CreateIndexStmt : public Statement {
-    // ... existing fields ...
-    InvertedIndexOptions inverted_options;  // NEW: For INVERTED indexes
-};
+**Logical Fields:**
 
-struct FullTextSearchExpr : public Expression {
-    uint16_t column_id;
-    std::string query;
-};
-```
+- `store_positions` (bool): Store word positions
+- `enable_stemming` (bool): Use Snowball stemmer
+- `filter_stop_words` (bool): Remove stop words
+- `language` (std::string): Language for stemmer
+- `inverted_options` (InvertedIndexOptions): NEW: For INVERTED indexes
+- `column_id` (uint16_t)
+- `query` (std::string)
+
 
 ### Bytecode Opcodes
 
@@ -2343,3 +2059,9 @@ This specification provides a complete, implementation-ready design for Inverted
 **Author:** ScratchBird Architecture Team
 **Date:** November 20, 2025
 **Version:** 1.0
+
+## See Also
+
+- `INDEX_IMPLEMENTATION_REFERENCE.md` — authoritative algorithm map (includes per-index specs).
+- `INDEX_IMPLEMENTATION_SPEC.md` — global MGA/UUID requirements.
+- `INDEX_GC_PROTOCOL.md` — index GC contract.

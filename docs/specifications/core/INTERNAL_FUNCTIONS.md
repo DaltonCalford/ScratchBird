@@ -1,6 +1,5 @@
 # Internal Functions Specification (Alpha)
-
-Status: Draft for Alpha alignment. Scope: V2 parser/SBLR emission, executor behavior, and type contracts
+Status: Authoritative (V3)
 for internal functions that already exist in the executor.
 
 ## Goals
@@ -51,7 +50,7 @@ Default date time:
 - ST_GEOMETRYTYPE -> EXT_ST_GEOMETRYTYPE -> TEXT
 - ST_ISVALID -> EXT_ST_ISVALID -> BOOLEAN
 
-## Planned Alpha Additions (Python Parity, Firebird-Style)
+## Required Alpha Additions (Python Parity, Firebird-Style)
 These functions/operators are required for Python-to-PSQL migration and follow Firebird/V2
 style (function or predicate keywords rather than Python syntax).
 

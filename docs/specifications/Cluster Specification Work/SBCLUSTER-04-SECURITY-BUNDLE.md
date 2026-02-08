@@ -382,7 +382,7 @@ bool verify_component_hashes(const SecurityBundle& bundle) {
 
 **Administrative Command**:
 ```sql
--- Step 1: Draft a new security bundle (does not activate it)
+-- Step 1: Create a new security bundle (does not activate it)
 CREATE SECURITY BUNDLE VERSION 43
   DESCRIPTION 'Add PII masking for customer table'
   FROM CURRENT;  -- Copy current bundle as starting point
@@ -1006,7 +1006,6 @@ bundle_version | description                        | applied_at
 | 1.0     | 2026-01-02 | D. Calford   | Initial comprehensive specification        |
 
 ---
-
-**Document Status**: DRAFT (Beta Specification Phase)
+**Document Status**: Authoritative (V3)
 **Next Review**: Before Beta Implementation Phase
 **Approval Required**: Chief Architect, Security Lead, Cluster Engineering Lead

@@ -131,6 +131,29 @@ ctest --test-dir build --output-on-failure
 # Native: 3092 | PostgreSQL: 5432 | MySQL: 3306 | Firebird: 3050
 ```
 
+### Test Server (for Development)
+
+For driver development, GUI testing, and security validation:
+
+```bash
+# Setup test server
+./scripts/test-server-user.sh setup
+
+# Start test server
+./scripts/test-server-user.sh start
+
+# Connect (bootstrap mode - any user/pass)
+scratchbird://anyuser:anypass@127.0.0.1:3092/testdb
+
+# View status
+./scripts/test-server-user.sh status
+```
+
+**Documentation:**
+- [Test Server Specification](docs/specifications/testing/test_server/README.md)
+- [Operations Guide](docs/specifications/testing/test_server/OPERATIONS.md)
+- [Security Testing](docs/specifications/testing/test_server/SECURITY_TESTING.md)
+
 ---
 
 ## Architecture

@@ -2569,7 +2569,7 @@ The database `employee.fdb`, found in the `../examples/empbuild` directory of an
       END
     END
 
-If the features described are enough for your tasks, you might consider using arrays in your projects. Currently, no improvements are planned to enhance support for arrays in Firebird.
+If the features described are enough for your tasks, you might consider using arrays in your projects. Currently, no improvements are required to enhance support for arrays in Firebird.
 
 ### [](https://firebirdsql.org/file/documentation/html/en/refdocs/fblangref50/firebird-50-language-reference.html#fblangref50-datatypes-special)3.9. Special Data Types
 

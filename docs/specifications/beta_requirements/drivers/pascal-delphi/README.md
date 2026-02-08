@@ -1,6 +1,15 @@
 # Pascal/Delphi/FreePascal Driver Specification
+
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../../../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../../../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../../../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../../../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../../../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
 **Priority:** P0 (Critical - Beta Required - Firebird Migration Strategy)
-**Status:** Draft
+**Status:** Authoritative (V3)
 **Target Market:** Firebird developer base, Delphi/Lazarus developers, legacy enterprise applications
 **Use Cases:** Firebird migration, Delphi desktop applications, Lazarus cross-platform apps, enterprise LOB apps
 
@@ -692,6 +701,6 @@ fpc -Fu/path/to/scratchbird-pascal/src yourapp.pas
 
 **Document Version:** 1.0 (Template)
 **Last Updated:** 2026-01-03
-**Status:** Draft
+**Status:** Authoritative (V3)
 **Assigned To:** TBD
 **Strategic Priority:** CRITICAL for Firebird user migration

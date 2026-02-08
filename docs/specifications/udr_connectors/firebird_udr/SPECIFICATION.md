@@ -1,6 +1,5 @@
 # Firebird UDR Specification
-
-Status: Draft (Target). This specification defines the Firebird UDR that
+Status: Authoritative (V3)
 connects using the native Firebird wire protocol without vendor drivers.
 
 ## Scope

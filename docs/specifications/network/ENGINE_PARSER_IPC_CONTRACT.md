@@ -1,7 +1,7 @@
 # Parser <-> Engine IPC Runtime Contract
 
 Version: 1.0
-Status: Draft (Alpha IP layer)
+Status: Authoritative (V3)
 Last Updated: January 2026
 
 ## Purpose
@@ -120,15 +120,14 @@ Parser MUST:
 
 ## Related Specs
 
-- docs/specifications/network/CONTROL_PLANE_PROTOCOL_SPEC.md
-- docs/specifications/sblr/SBLR_OPCODE_REGISTRY.md
+- docs/specifications/parser/v3/network/CONTROL_PLANE_PROTOCOL_SPEC.md
+- docs/specifications/parser/v3/SBLR_V3_OPCODE_SPEC.md
 - docs/specifications/Security Design Specification/05.A_IPC_WIRE_FORMAT_AND_EXAMPLES.md
 
 ---
 
 # Version 1.1 Additions (Alpha)
-
-**Status:** Draft (Target)  
+**Status:** Authoritative (V3)
 **Goal:** Add prepared statements, COPY/streaming, notifications, cancel
 support, and explicit attachment/txn mapping with a fully specified payload
 format and SBWP-aligned names.
@@ -427,12 +426,19 @@ u32 message_len
 u8  message[message_len]
 ```
 
-STREAM_CONTROL payload:
+STREAM_CONTROL payload (credits model):
 ```
-u64 stream_id
-u32 window_bytes
-u32 window_rows
+i32 credits          // Positive=grant, negative=revoke
+u32 buffer_avail     // Available buffer space in bytes
 ```
+
+**Note:** The credits model uses a simpler approach than window-based flow control.
+- `credits`: Number of chunks the sender may send. Positive values grant permission,
+  negative values revoke previously granted credits.
+- `buffer_avail`: Bytes of buffer space available on the receiving side.
+
+For COPY operations, the receiver sends STREAM_CONTROL to throttle the sender when
+buffer space is low, and to resume when space is available.
 
 Rules:
 1. COPY messages require FEATURE_COPY.
@@ -557,7 +563,7 @@ Rules:
 # Appendix A: IPC v1.1 ↔ SBWP v1.1 Cross-Reference
 
 This appendix maps IPC v1.1 message types to the canonical SBWP v1.1 message
-types defined in `docs/specifications/wire_protocols/scratchbird_native_wire_protocol.md`
+types defined in `docs/specifications/parser/v3/wire_protocols/scratchbird_native_wire_protocol.md`
 and provides field-by-field alignment rules. The goal is zero ambiguity.
 
 ## A.1 Message Type Mapping
@@ -910,25 +916,24 @@ Mapping rule:
 - IPC status_code != 0 should emit SBWP ERROR before STREAM_END.
 - total_rows/total_bytes set to 0 if unknown.
 
-IPC STREAM_CONTROL:
+IPC STREAM_CONTROL (Credit-Based Flow Control):
 ```
-u64 stream_id
-u32 window_bytes
-u32 window_rows
+u32 credits          // Positive=grant credits, 0=pause, negative=revoke
+u32 buffer_avail     // Available buffer space in bytes
 ```
 
 SBWP STREAM_CONTROL:
 ```
-u8  control_type
+u8  control_type     // 0=STREAM_DATA, 1=STREAM_ACK, 2=STREAM_PAUSE, 3=STREAM_RESUME
 u8  reserved[3]
-u32 window_size
-u32 timeout_ms
+u32 window_size      // Available credits or buffer space
+u32 timeout_ms       // Timeout for flow control operations
 ```
 
 Mapping rule:
-- IPC window_rows maps to SBWP window_size (rows).
-- If IPC window_bytes is set, apply to engine backpressure window in bytes.
-- control_type is STREAM_ACK unless engine is pausing/resuming.
+- IPC `credits` maps to SBWP `window_size` for credit-based flow control.
+- IPC `buffer_avail` indicates available buffer space for backpressure.
+- SBWP `control_type` is STREAM_ACK for normal flow, STREAM_PAUSE when credits=0.
 
 ### A.2.13 NOTIFICATION ↔ SBWP NOTIFICATION
 
@@ -1596,8 +1601,8 @@ Header fields used in all examples:
 
 The complete IPC v1.1 message tables with offsets and sizes are provided as
 machine-readable artifacts:
-- `ScratchBird/docs/specifications/network/ipc_message_table.json`
-- `ScratchBird/docs/specifications/network/ipc_message_table.yaml`
+- `ScratchBird/docs/specifications/parser/v3/network/ipc_message_table.json`
+- `ScratchBird/docs/specifications/parser/v3/network/ipc_message_table.yaml`
 
 Usage note:
 Use these tables as the authoritative source for offset/size validation in

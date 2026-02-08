@@ -25,10 +25,10 @@ scoped capability set.
 
 ## References
 
-- ScratchBird/docs/specifications/udr/10-UDR-System-Specification.md
-- ScratchBird/docs/specifications/ddl/09_DDL_FOREIGN_DATA.md
+- ScratchBird/docs/specifications/parser/v3/udr/10-UDR-System-Specification.md
+- ScratchBird/docs/specifications/parser/v3/ddl/09_DDL_FOREIGN_DATA.md
 - ScratchBird/docs/specifications/Alpha Phase 2/11-Remote-Database-UDR-Specification.md
-- ScratchBird/docs/specifications/wire_protocols/postgresql_wire_protocol.md
-- ScratchBird/docs/specifications/wire_protocols/mysql_wire_protocol.md
-- ScratchBird/docs/specifications/wire_protocols/firebird_wire_protocol.md
-- ScratchBird/docs/specifications/wire_protocols/scratchbird_native_wire_protocol.md
+- ScratchBird/docs/specifications/parser/v3/wire_protocols/postgresql_wire_protocol.md
+- ScratchBird/docs/specifications/parser/v3/wire_protocols/mysql_wire_protocol.md
+- ScratchBird/docs/specifications/parser/v3/wire_protocols/firebird_wire_protocol.md
+- ScratchBird/docs/specifications/parser/v3/wire_protocols/scratchbird_native_wire_protocol.md

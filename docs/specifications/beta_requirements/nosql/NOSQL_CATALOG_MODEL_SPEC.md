@@ -1,6 +1,5 @@
 # NoSQL Catalog Model Specification (Beta)
-
-**Status:** Draft (Beta)
+**Status:** Authoritative (V3)
 
 ## Purpose
 
@@ -150,7 +149,7 @@ Stores property metadata for vertices/edges.
 - `options_oid` OID (nullable, TOAST JSON)
 - `created_time` TIMESTAMP
 
-## Catalog Root Wiring (Planned)
+## Catalog Root Wiring (Required)
 
 Add catalog root page pointers for the new tables:
 
@@ -166,7 +165,7 @@ These are Beta additions and must not affect Alpha bootstrapping.
 
 ## DDL Stubs (Syntax Placeholders)
 
-The following statements are planned for Beta (syntax to be finalized):
+The following statements are required for Beta (syntax to be finalized):
 
 - `CREATE COLLECTION <name> [WITH (...)]`
 - `ALTER COLLECTION <name> SET (...)`
@@ -199,7 +198,7 @@ The permission model is identical to SQL objects and uses UUID references.
 
 ## Observability and Monitoring
 
-Each object type should be visible via `sys.*` monitoring views (planned):
+Each object type should be visible via `sys.*` monitoring views (required):
 
 - `sys.nosql_collections`
 - `sys.nosql_buckets`

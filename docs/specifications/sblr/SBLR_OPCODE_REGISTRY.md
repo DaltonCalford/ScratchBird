@@ -187,7 +187,7 @@ Notes:
 - Decimal and money literals use compact string payloads to preserve precision
   before casting to the target type.
 
-## Planned Alpha Additions (Reserved, Pending Header Update)
+## Required Alpha Additions (Reserved, Pending Header Update)
 These values are reserved for the Alpha parity additions below. They are not yet in
 `include/scratchbird/sblr/opcodes.h` and MUST be added there before implementation.
 

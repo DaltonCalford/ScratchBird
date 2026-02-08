@@ -1,6 +1,5 @@
 # Docker Container Specification
-
-**Status:** Draft (Beta)
+**Status:** Authoritative (V3)
 **Last Updated:** 2026-01-20
 
 ---
@@ -122,6 +121,6 @@ services:
 
 ## 11) Related Documents
 
-- `docs/specifications/beta_requirements/cloud-container/docker/README.md`
+- `docs/specifications/parser/v3/beta_requirements/cloud-container/docker/README.md`
 - `docs/specifications/deployment/SYSTEMD_SERVICE_SPECIFICATION.md`
-- `docs/specifications/network/NETWORK_LISTENER_AND_PARSER_POOL_SPEC.md`
+- `docs/specifications/parser/v3/network/NETWORK_LISTENER_AND_PARSER_POOL_SPEC.md`

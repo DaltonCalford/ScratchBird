@@ -8,7 +8,7 @@ session-local reference to a live cursor state (result set, position, and
 snapshot). Passing the handle allows multiple routines to operate on the
 same cursor instance.
 
-Status: Planned.
+Status: Required.
 
 ## **2. Definitions**
 
@@ -103,7 +103,7 @@ All cursor handle parameters are reference semantics:
 - Any cursor handle created in a trigger must be closed before the trigger
   completes, or it will be closed implicitly at trigger end.
 
-## **6. SBLR Mapping (Planned)**
+## **6. SBLR Mapping (Required)**
 
 - Introduce a value type tag `CURSOR_HANDLE` in TypedValue payloads.
 - Handle payload holds a session-local cursor id (64-bit integer).

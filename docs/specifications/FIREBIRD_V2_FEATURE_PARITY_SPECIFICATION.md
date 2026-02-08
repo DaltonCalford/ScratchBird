@@ -1,12 +1,21 @@
 # Firebird-V2 Feature Parity Specification
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 **Version:** 1.0
 **Date:** 2026-01-07
-**Status:** DRAFT - Implementation Required
+**Status:** Authoritative (V3)
 **Related:** `/docs/specifications/FIREBIRD_TRANSACTION_MODEL_SPEC.md`, `/docs/audit/parsers/COMPARISON_MATRIX.md`
 
-**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional post-gold (replication/PITR).
-Any WAL references in this document describe an optional post-gold stream for
+**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional optional extension (replication/PITR).
+Any WAL references in this document describe an optional optional extension stream for
 replication/PITR only.
 
 ---
@@ -761,11 +770,11 @@ CREATE UNLOGGED TABLE test (id INT);  -- Creates normal logged table
 
 **Purpose:** Optimize performance by skipping optional write-after log writes
 
-**MGA Note:** ScratchBird does not use WAL for recovery, so UNLOGGED tables are effectively identical to regular tables today. If a write-after log (WAL, optional post-gold) is introduced later (replication/PITR), UNLOGGED tables can bypass that stream.
+**MGA Note:** ScratchBird does not use WAL for recovery, so UNLOGGED tables are effectively identical to regular tables today. If a write-after log (WAL, optional optional extension) is introduced later (replication/PITR), UNLOGGED tables can bypass that stream.
 
 **Characteristics (PostgreSQL semantics):**
 - NOT written to write-after log (WAL, optional)
-- Faster INSERT/UPDATE/DELETE (no optional post-gold write-after log overhead)
+- Faster INSERT/UPDATE/DELETE (no optional optional extension write-after log overhead)
 - NOT crash-safe (truncated on crash recovery)
 - Use case: Temporary data, staging tables, caches
 
@@ -773,8 +782,8 @@ CREATE UNLOGGED TABLE test (id INT);  -- Creates normal logged table
 
 1. **Bytecode Extension:** Add `unlogged` flag to CREATE_TABLE opcode
 2. **Catalog Storage:** Store `is_unlogged` flag in table metadata
-3. **Storage Engine:** Skip optional post-gold write-after log (if introduced)
-4. **Durability/PITR:** Truncate unlogged tables only if an optional post-gold write-after log durability path exists
+3. **Storage Engine:** Skip optional optional extension write-after log (if introduced)
+4. **Durability/PITR:** Truncate unlogged tables only if an optional optional extension write-after log durability path exists
 
 **Priority:** 🟡 **MEDIUM** - Performance feature, not critical for correctness
 
@@ -1496,11 +1505,11 @@ ALTER_COLUMN_POSITION:
 - [ ] Implement executor support for PSQL opcodes
 
 ### Medium Priority (Other Parsed-But-Not-Implemented Features)
-- [ ] **UNLOGGED TABLES** - Implement optional post-gold write-after log bypass for performance
+- [ ] **UNLOGGED TABLES** - Implement optional optional extension write-after log bypass for performance
   - [ ] Emit unlogged flag in bytecode
   - [ ] Store in catalog metadata
-  - [ ] Skip optional post-gold write-after log writes in storage engine
-  - [ ] Truncate unlogged tables for durability/PITR if optional post-gold write-after log is introduced
+  - [ ] Skip optional optional extension write-after log writes in storage engine
+  - [ ] Truncate unlogged tables for durability/PITR if optional optional extension write-after log is introduced
 - [ ] **WITH CHECK OPTION** (views) - Enforce view constraints on INSERT/UPDATE
   - [ ] Emit WITH CHECK OPTION flags to bytecode
   - [ ] Store in view metadata

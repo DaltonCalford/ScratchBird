@@ -1,6 +1,5 @@
 # Firebird BLR Fixtures (for SBLR Mapping Validation)
-
-Status: Draft (compatibility fixtures)
+Status: Authoritative (V3)
 
 Purpose: provide small, deterministic BLR blobs that a BLR-to-SBLR translator
 can consume to validate opcode mapping. Each fixture includes:

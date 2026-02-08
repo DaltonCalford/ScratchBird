@@ -7,6 +7,11 @@
 
 #include "scratchbird/ipc/parser_agent.h"
 
+// Parser agent implementations for factory
+#include "scratchbird/ipc/postgresql_parser_agent.h"
+#include "scratchbird/ipc/mysql_parser_agent.h"
+#include "scratchbird/ipc/firebird_parser_agent.h"
+
 #include <cstring>
 #include <chrono>
 
@@ -282,20 +287,57 @@ void ParserAgent::disconnectClient(uint32_t client_id) {
 
 core::Status ParserAgent::sendToEngine(uint32_t client_id, const IPCMessage& msg,
                                       core::ErrorContext* ctx) {
-    (void)client_id;
-    (void)msg;
-    (void)ctx;
-    // Implementation would send via IPC channel
-    return core::Status::NOT_IMPLEMENTED;
+    // Get client connection
+    std::shared_lock<std::shared_mutex> lock(connections_mutex_);
+    auto it = connections_.find(client_id);
+    if (it == connections_.end()) {
+        if (ctx) {
+            ctx->set(core::Status::NOT_FOUND, "Client not found",
+                    __FILE__, __LINE__, __func__);
+        }
+        return core::Status::NOT_FOUND;
+    }
+    
+    ClientConnection* client = it->second.get();
+    if (!client->ipc_channel) {
+        if (ctx) {
+            ctx->set(core::Status::NOT_FOUND, "No IPC channel for client",
+                    __FILE__, __LINE__, __func__);
+        }
+        return core::Status::NOT_FOUND;
+    }
+    
+    // Use IPCChannel API directly
+    return client->ipc_channel->send(msg, ctx);
 }
 
 core::Status ParserAgent::receiveFromEngine(uint32_t client_id, IPCMessage& msg,
-                                           core::ErrorContext* ctx) {
-    (void)client_id;
-    (void)msg;
-    (void)ctx;
-    // Implementation would receive via IPC channel
-    return core::Status::NOT_IMPLEMENTED;
+                                           core::ErrorContext* ctx,
+                                           uint32_t timeout_ms) {
+    (void)timeout_ms; // TODO: Add timeout support to IPCChannel::receive
+    
+    // Get client connection
+    std::shared_lock<std::shared_mutex> lock(connections_mutex_);
+    auto it = connections_.find(client_id);
+    if (it == connections_.end()) {
+        if (ctx) {
+            ctx->set(core::Status::NOT_FOUND, "Client not found",
+                    __FILE__, __LINE__, __func__);
+        }
+        return core::Status::NOT_FOUND;
+    }
+    
+    ClientConnection* client = it->second.get();
+    if (!client->ipc_channel) {
+        if (ctx) {
+            ctx->set(core::Status::NOT_FOUND, "No IPC channel for client",
+                    __FILE__, __LINE__, __func__);
+        }
+        return core::Status::NOT_FOUND;
+    }
+    
+    // Use IPCChannel API directly
+    return client->ipc_channel->receive(msg, ctx);
 }
 
 std::unique_ptr<IPCChannel> ParserAgent::acquireIPCChannel() {
@@ -566,54 +608,199 @@ core::Status NativeSBParserAgent::sendReady(ClientConnection& client, uint32_t f
 core::Status NativeSBParserAgent::handleQuery(ClientConnection& client, 
                                              const std::string& sql,
                                              core::ErrorContext* ctx) {
-    (void)client;
-    (void)sql;
-    (void)ctx;
-    // Forward to engine via IPC
-    return sendCommandComplete(client, "SELECT 0");
+    // Create IPC SIMPLE_QUERY message
+    IPCMessage msg;
+    msg.setType(IPCMessageType::SIMPLE_QUERY);
+    msg.header.request_id = client.session_id;
+    
+    IPCSimpleQueryPayload payload;
+    payload.query_length = static_cast<uint32_t>(sql.length());
+    
+    msg.payload.resize(sizeof(payload) + sql.length());
+    std::memcpy(msg.payload.data(), &payload, sizeof(payload));
+    std::memcpy(msg.payload.data() + sizeof(payload), sql.data(), sql.length());
+    
+    // Send to engine
+    auto status = sendToEngine(client.client_id, msg, ctx);
+    if (status != core::Status::OK) {
+        return status;
+    }
+    
+    // Receive response
+    IPCMessage response;
+    status = receiveFromEngine(client.client_id, response, ctx, 30000);
+    if (status != core::Status::OK) {
+        return status;
+    }
+    
+    // Forward response to client
+    return forwardResponseToClient(client, response, ctx);
 }
 
 core::Status NativeSBParserAgent::handleParse(ClientConnection& client,
                                              const std::string& stmt_name,
                                              const std::string& sql,
                                              core::ErrorContext* ctx) {
-    (void)client;
-    (void)stmt_name;
-    (void)sql;
-    (void)ctx;
-    return core::Status::NOT_IMPLEMENTED;
+    // Create IPC PARSE message
+    IPCMessage msg;
+    msg.setType(IPCMessageType::PARSE);
+    msg.header.request_id = client.session_id;
+    
+    IPCParsePayload payload;
+    std::strncpy(payload.stmt_name, stmt_name.c_str(), sizeof(payload.stmt_name) - 1);
+    payload.stmt_name[sizeof(payload.stmt_name) - 1] = '\0';
+    std::strncpy(payload.sql, sql.c_str(), sizeof(payload.sql) - 1);
+    payload.sql[sizeof(payload.sql) - 1] = '\0';
+    // param_types array is already zero-initialized
+    
+    msg.payload.resize(sizeof(payload));
+    std::memcpy(msg.payload.data(), &payload, sizeof(payload));
+    
+    // Send to engine
+    auto status = sendToEngine(client.client_id, msg, ctx);
+    if (status != core::Status::OK) {
+        return status;
+    }
+    
+    // Wait for PARSE_COMPLETE
+    IPCMessage response;
+    status = receiveFromEngine(client.client_id, response, ctx, 30000);
+    if (status != core::Status::OK) {
+        return status;
+    }
+    
+    if (response.getType() == IPCMessageType::PARSE_COMPLETE) {
+        return sendParseComplete(client);
+    } else if (response.getType() == IPCMessageType::ERROR_RESPONSE) {
+        return forwardResponseToClient(client, response, ctx);
+    }
+    
+    return core::Status::OK;
 }
 
 core::Status NativeSBParserAgent::handleBind(ClientConnection& client,
                                             const std::string& portal_name,
                                             const std::string& stmt_name,
                                             core::ErrorContext* ctx) {
-    (void)client;
-    (void)portal_name;
-    (void)stmt_name;
-    (void)ctx;
-    return core::Status::NOT_IMPLEMENTED;
+    // Create IPC BIND message
+    IPCMessage msg;
+    msg.setType(IPCMessageType::BIND);
+    msg.header.request_id = client.session_id;
+    
+    IPCBindPayload payload;
+    std::strncpy(payload.portal_name, portal_name.c_str(), sizeof(payload.portal_name) - 1);
+    payload.portal_name[sizeof(payload.portal_name) - 1] = '\0';
+    std::strncpy(payload.stmt_name, stmt_name.c_str(), sizeof(payload.stmt_name) - 1);
+    payload.stmt_name[sizeof(payload.stmt_name) - 1] = '\0';
+    payload.num_params = 0;
+    
+    msg.payload.resize(sizeof(payload));
+    std::memcpy(msg.payload.data(), &payload, sizeof(payload));
+    
+    // Send to engine
+    auto status = sendToEngine(client.client_id, msg, ctx);
+    if (status != core::Status::OK) {
+        return status;
+    }
+    
+    // Wait for BIND_COMPLETE
+    IPCMessage response;
+    status = receiveFromEngine(client.client_id, response, ctx, 30000);
+    if (status != core::Status::OK) {
+        return status;
+    }
+    
+    if (response.getType() == IPCMessageType::BIND_COMPLETE) {
+        return sendBindComplete(client);
+    } else if (response.getType() == IPCMessageType::ERROR_RESPONSE) {
+        return forwardResponseToClient(client, response, ctx);
+    }
+    
+    return core::Status::OK;
 }
 
 core::Status NativeSBParserAgent::handleExecute(ClientConnection& client,
                                                const std::string& portal_name,
                                                uint32_t max_rows,
                                                core::ErrorContext* ctx) {
-    (void)client;
-    (void)portal_name;
-    (void)max_rows;
-    (void)ctx;
-    return core::Status::NOT_IMPLEMENTED;
+    // Create IPC EXECUTE message
+    IPCMessage msg;
+    msg.setType(IPCMessageType::EXECUTE);
+    msg.header.request_id = client.session_id;
+    
+    IPCExecutePayload payload;
+    std::strncpy(payload.portal_name, portal_name.c_str(), sizeof(payload.portal_name) - 1);
+    payload.portal_name[sizeof(payload.portal_name) - 1] = '\0';
+    payload.max_rows = max_rows;
+    
+    msg.payload.resize(sizeof(payload));
+    std::memcpy(msg.payload.data(), &payload, sizeof(payload));
+    
+    // Send to engine
+    auto status = sendToEngine(client.client_id, msg, ctx);
+    if (status != core::Status::OK) {
+        return status;
+    }
+    
+    // Receive and forward responses until COMMAND_COMPLETE or ERROR
+    bool done = false;
+    while (!done) {
+        IPCMessage response;
+        status = receiveFromEngine(client.client_id, response, ctx, 30000);
+        if (status != core::Status::OK) {
+            return status;
+        }
+        
+        status = forwardResponseToClient(client, response, ctx);
+        if (status != core::Status::OK) {
+            return status;
+        }
+        
+        if (response.getType() == IPCMessageType::COMMAND_COMPLETE ||
+            response.getType() == IPCMessageType::ERROR_RESPONSE) {
+            done = true;
+        }
+    }
+    
+    return core::Status::OK;
 }
 
 core::Status NativeSBParserAgent::handleClose(ClientConnection& client, char type,
                                              const std::string& name,
                                              core::ErrorContext* ctx) {
-    (void)client;
-    (void)type;
-    (void)name;
-    (void)ctx;
-    return core::Status::NOT_IMPLEMENTED;
+    // Create IPC CLOSE message
+    IPCMessage msg;
+    msg.setType(IPCMessageType::CLOSE);
+    msg.header.request_id = client.session_id;
+    
+    IPCClosePayload payload;
+    payload.type = type;
+    std::strncpy(payload.name, name.c_str(), sizeof(payload.name) - 1);
+    payload.name[sizeof(payload.name) - 1] = '\0';
+    
+    msg.payload.resize(sizeof(payload));
+    std::memcpy(msg.payload.data(), &payload, sizeof(payload));
+    
+    // Send to engine
+    auto status = sendToEngine(client.client_id, msg, ctx);
+    if (status != core::Status::OK) {
+        return status;
+    }
+    
+    // Wait for CLOSE_COMPLETE
+    IPCMessage response;
+    status = receiveFromEngine(client.client_id, response, ctx, 30000);
+    if (status != core::Status::OK) {
+        return status;
+    }
+    
+    if (response.getType() == IPCMessageType::CLOSE_COMPLETE) {
+        return sendCloseComplete(client);
+    } else if (response.getType() == IPCMessageType::ERROR_RESPONSE) {
+        return forwardResponseToClient(client, response, ctx);
+    }
+    
+    return core::Status::OK;
 }
 
 core::Status NativeSBParserAgent::handleSync(ClientConnection& client, core::ErrorContext* ctx) {
@@ -679,30 +866,132 @@ core::Status NativeSBParserAgent::sendError(ClientConnection& client,
 
 core::Status NativeSBParserAgent::sendRowDescription(ClientConnection& client,
                                                     const std::vector<IPCFieldDesc>& fields) {
-    (void)client;
-    (void)fields;
-    return core::Status::NOT_IMPLEMENTED;
+    // SBWP ROW_DESCRIPTION: type(1) + length(4) + num_fields(2) + fields[]
+    std::vector<uint8_t> response;
+    response.push_back(0x20); // ROW_DESCRIPTION
+    
+    // Calculate total length
+    uint32_t len = 2; // num_fields
+    for (const auto& field : fields) {
+        len += 2 + std::strlen(field.name) + 1 + 4; // namelen + name + null + type_oid
+    }
+    
+    response.push_back((len >> 24) & 0xFF);
+    response.push_back((len >> 16) & 0xFF);
+    response.push_back((len >> 8) & 0xFF);
+    response.push_back(len & 0xFF);
+    
+    // Number of fields
+    uint16_t num_fields = static_cast<uint16_t>(fields.size());
+    response.push_back((num_fields >> 8) & 0xFF);
+    response.push_back(num_fields & 0xFF);
+    
+    // Fields
+    for (const auto& field : fields) {
+        // Name length (2 bytes) + name + null
+        uint16_t name_len = static_cast<uint16_t>(std::strlen(field.name));
+        response.push_back((name_len >> 8) & 0xFF);
+        response.push_back(name_len & 0xFF);
+        response.insert(response.end(), field.name, field.name + name_len);
+        response.push_back(0);
+        
+        // Type OID (4 bytes)
+        response.push_back((field.type_oid >> 24) & 0xFF);
+        response.push_back((field.type_oid >> 16) & 0xFF);
+        response.push_back((field.type_oid >> 8) & 0xFF);
+        response.push_back(field.type_oid & 0xFF);
+    }
+    
+    ssize_t n = send(client.socket_fd, response.data(), response.size(), 0);
+    if (n < 0) {
+        return core::Status::IO_ERROR;
+    }
+    return core::Status::OK;
 }
 
 core::Status NativeSBParserAgent::sendDataRow(ClientConnection& client,
                                              const std::vector<std::optional<std::string>>& values) {
-    (void)client;
-    (void)values;
-    return core::Status::NOT_IMPLEMENTED;
+    // SBWP DATA_ROW: type(1) + length(4) + num_fields(2) + field_lengths[] + data[]
+    std::vector<uint8_t> response;
+    response.push_back(0x21); // DATA_ROW
+    
+    // Calculate total length
+    uint32_t len = 2; // num_fields
+    for (const auto& val : values) {
+        len += 4; // field length (int32)
+        if (val) {
+            len += val->length();
+        }
+    }
+    
+    response.push_back((len >> 24) & 0xFF);
+    response.push_back((len >> 16) & 0xFF);
+    response.push_back((len >> 8) & 0xFF);
+    response.push_back(len & 0xFF);
+    
+    // Number of fields
+    uint16_t num_fields = static_cast<uint16_t>(values.size());
+    response.push_back((num_fields >> 8) & 0xFF);
+    response.push_back(num_fields & 0xFF);
+    
+    // Field data
+    for (const auto& val : values) {
+        if (val) {
+            // Length (4 bytes, signed)
+            int32_t field_len = static_cast<int32_t>(val->length());
+            response.push_back((field_len >> 24) & 0xFF);
+            response.push_back((field_len >> 16) & 0xFF);
+            response.push_back((field_len >> 8) & 0xFF);
+            response.push_back(field_len & 0xFF);
+            // Data
+            response.insert(response.end(), val->begin(), val->end());
+        } else {
+            // NULL: length = -1
+            response.push_back(0xFF); response.push_back(0xFF);
+            response.push_back(0xFF); response.push_back(0xFF);
+        }
+    }
+    
+    ssize_t n = send(client.socket_fd, response.data(), response.size(), 0);
+    if (n < 0) {
+        return core::Status::IO_ERROR;
+    }
+    return core::Status::OK;
 }
 
 core::Status NativeSBParserAgent::sendNotice(ClientConnection& client, 
                                             const std::string& message) {
-    (void)client;
-    (void)message;
-    return core::Status::NOT_IMPLEMENTED;
+    // SBWP NOTICE: type(1) + length(4) + message + null
+    std::vector<uint8_t> response;
+    response.push_back(0x06); // NOTICE
+    
+    uint32_t len = message.length() + 1;
+    response.push_back((len >> 24) & 0xFF);
+    response.push_back((len >> 16) & 0xFF);
+    response.push_back((len >> 8) & 0xFF);
+    response.push_back(len & 0xFF);
+    
+    response.insert(response.end(), message.begin(), message.end());
+    response.push_back(0);
+    
+    ssize_t n = send(client.socket_fd, response.data(), response.size(), 0);
+    if (n < 0) {
+        return core::Status::IO_ERROR;
+    }
+    return core::Status::OK;
 }
 
 core::Status NativeSBParserAgent::handleSSLRequest(ClientConnection& client, 
                                                   core::ErrorContext* ctx) {
-    (void)client;
     (void)ctx;
-    return core::Status::NOT_IMPLEMENTED;
+    // SBWP SSL negotiation: Send 'N' for "SSL not supported" (or 'S' for supported)
+    // For now, we don't support SSL in the native parser
+    char response = 'N';
+    ssize_t n = send(client.socket_fd, &response, 1, 0);
+    if (n < 0) {
+        return core::Status::IO_ERROR;
+    }
+    return core::Status::OK;
 }
 
 core::Status NativeSBParserAgent::handleAuth(ClientConnection& client, 
@@ -713,7 +1002,9 @@ core::Status NativeSBParserAgent::handleAuth(ClientConnection& client,
     (void)method;
     (void)data;
     (void)ctx;
-    return core::Status::NOT_IMPLEMENTED;
+    // Authentication is handled at the connection level
+    // For now, just return OK (authentication already done during startup)
+    return core::Status::OK;
 }
 
 // ============================================================================
@@ -723,6 +1014,134 @@ core::Status NativeSBParserAgent::handleAuth(ClientConnection& client,
 EmulatedParserAgent::EmulatedParserAgent(const ParserAgentConfig& config,
                                          const std::string& target_protocol)
     : ParserAgent(config), target_protocol_(target_protocol) {
+}
+
+core::Status NativeSBParserAgent::sendParseComplete(ClientConnection& client) {
+    std::vector<uint8_t> response;
+    response.push_back(0x31); // PARSE_COMPLETE
+    response.push_back(0); response.push_back(0); response.push_back(0); response.push_back(4);
+    
+    ssize_t n = send(client.socket_fd, response.data(), response.size(), 0);
+    if (n < 0) {
+        return core::Status::IO_ERROR;
+    }
+    return core::Status::OK;
+}
+
+core::Status NativeSBParserAgent::sendBindComplete(ClientConnection& client) {
+    std::vector<uint8_t> response;
+    response.push_back(0x32); // BIND_COMPLETE
+    response.push_back(0); response.push_back(0); response.push_back(0); response.push_back(4);
+    
+    ssize_t n = send(client.socket_fd, response.data(), response.size(), 0);
+    if (n < 0) {
+        return core::Status::IO_ERROR;
+    }
+    return core::Status::OK;
+}
+
+core::Status NativeSBParserAgent::sendCloseComplete(ClientConnection& client) {
+    std::vector<uint8_t> response;
+    response.push_back(0x33); // CLOSE_COMPLETE
+    response.push_back(0); response.push_back(0); response.push_back(0); response.push_back(4);
+    
+    ssize_t n = send(client.socket_fd, response.data(), response.size(), 0);
+    if (n < 0) {
+        return core::Status::IO_ERROR;
+    }
+    return core::Status::OK;
+}
+
+core::Status NativeSBParserAgent::forwardResponseToClient(ClientConnection& client,
+                                                         const IPCMessage& response,
+                                                         core::ErrorContext* ctx) {
+    (void)ctx;
+    
+    switch (response.getType()) {
+        case IPCMessageType::ROW_DESCRIPTION: {
+            // Parse fields from response
+            std::vector<IPCFieldDesc> fields;
+            auto* payload = response.getPayload<IPCRowDescriptionPayload>();
+            if (payload) {
+                size_t offset = sizeof(IPCRowDescriptionPayload);
+                const uint8_t* data = response.payload.data();
+                size_t payload_size = response.payload.size();
+                
+                for (uint16_t i = 0; i < payload->num_fields && offset + sizeof(IPCFieldDesc) <= payload_size; i++) {
+                    IPCFieldDesc field;
+                    std::memcpy(&field, data + offset, sizeof(IPCFieldDesc));
+                    fields.push_back(field);
+                    offset += sizeof(IPCFieldDesc);
+                }
+            }
+            return sendRowDescription(client, fields);
+        }
+        
+        case IPCMessageType::DATA_ROW: {
+            // Parse values from response
+            std::vector<std::optional<std::string>> values;
+            auto* payload = response.getPayload<IPCDataRowPayload>();
+            if (payload) {
+                size_t offset = sizeof(IPCDataRowPayload);
+                const uint8_t* data = response.payload.data();
+                size_t payload_size = response.payload.size();
+                
+                for (uint16_t i = 0; i < payload->num_fields && offset + sizeof(int32_t) <= payload_size; i++) {
+                    int32_t len;
+                    std::memcpy(&len, data + offset, sizeof(int32_t));
+                    offset += sizeof(int32_t);
+                    
+                    if (len < 0) {
+                        values.push_back(std::nullopt);
+                    } else if (offset + len <= payload_size) {
+                        values.push_back(std::string(reinterpret_cast<const char*>(data + offset), len));
+                        offset += len;
+                    } else {
+                        values.push_back(std::nullopt);
+                        break;
+                    }
+                }
+            }
+            return sendDataRow(client, values);
+        }
+        
+        case IPCMessageType::COMMAND_COMPLETE: {
+            auto* payload = response.getPayload<IPCCommandCompletePayload>();
+            if (payload) {
+                return sendCommandComplete(client, payload->tag);
+            }
+            return sendCommandComplete(client, "OK");
+        }
+        
+        case IPCMessageType::ERROR_RESPONSE: {
+            auto* payload = response.getPayload<IPCErrorPayload>();
+            if (payload) {
+                return sendError(client, payload->sqlstate, payload->message);
+            }
+            return sendError(client, "XX000", "Unknown error");
+        }
+        
+        case IPCMessageType::READY_FOR_QUERY: {
+            return sendReady(client, 0);
+        }
+        
+        case IPCMessageType::PARSE_COMPLETE: {
+            return sendParseComplete(client);
+        }
+        
+        case IPCMessageType::BIND_COMPLETE: {
+            return sendBindComplete(client);
+        }
+        
+        case IPCMessageType::CLOSE_COMPLETE: {
+            return sendCloseComplete(client);
+        }
+        
+        default: {
+            // Unknown message type - ignore
+            return core::Status::OK;
+        }
+    }
 }
 
 EmulatedParserAgent::~EmulatedParserAgent() {

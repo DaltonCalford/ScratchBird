@@ -1,6 +1,13 @@
 # NoSQL Storage Structures Gap Report (Beta)
 
-**Status:** Draft (Beta planning)
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+**Status:** Authoritative (V3)
 
 ## Purpose
 
@@ -17,27 +24,27 @@ The following specifications already cover core structures that are useful for
 NoSQL models:
 
 - JSON/JSONB types (Alpha stores JSONB as text)
-  - `ScratchBird/docs/specifications/types/README.md`
-  - `ScratchBird/docs/specifications/types/03_TYPES_AND_DOMAINS.md`
-  - `ScratchBird/docs/specifications/types/DATA_TYPE_PERSISTENCE_AND_CASTS.md`
+  - `ScratchBird/docs/specifications/parser/v3/types/README.md`
+  - `ScratchBird/docs/specifications/parser/v3/types/03_TYPES_AND_DOMAINS.md`
+  - `ScratchBird/docs/specifications/parser/v3/types/DATA_TYPE_PERSISTENCE_AND_CASTS.md`
 - JSON_TABLE and XMLTABLE for document shredding
-  - `ScratchBird/docs/specifications/dml/DML_XML_JSON_TABLES.md`
+  - `ScratchBird/docs/specifications/parser/v3/dml/DML_XML_JSON_TABLES.md`
 - Vector data type and ANN indexes (HNSW, IVF)
-  - `ScratchBird/docs/specifications/indexes/INDEX_ARCHITECTURE.md`
-  - `ScratchBird/docs/specifications/indexes/IVFIndex.md`
+  - `ScratchBird/docs/specifications/parser/v3/indexes/INDEX_ARCHITECTURE.md`
+  - `ScratchBird/docs/specifications/parser/v3/indexes/IVFIndex.md`
 - Columnar storage and analytics indexes
-  - `ScratchBird/docs/specifications/indexes/COLUMNSTORE_SPEC.md`
-  - `ScratchBird/docs/specifications/indexes/ZoneMapsIndex.md`
+  - `ScratchBird/docs/specifications/parser/v3/indexes/COLUMNSTORE_SPEC.md`
+  - `ScratchBird/docs/specifications/parser/v3/indexes/ZoneMapsIndex.md`
 - LSM tree and LSM TTL for write-heavy and time-series workloads
-  - `ScratchBird/docs/specifications/indexes/LSM_TREE_SPEC.md`
-  - `ScratchBird/docs/specifications/indexes/LSMTimeSeriesIndex.md`
+  - `ScratchBird/docs/specifications/parser/v3/indexes/LSM_TREE_SPEC.md`
+  - `ScratchBird/docs/specifications/parser/v3/indexes/LSMTimeSeriesIndex.md`
 - Full-text indexes and text search primitives
-  - `ScratchBird/docs/specifications/indexes/InvertedIndex.md`
-  - `ScratchBird/docs/specifications/indexes/FSTIndex.md`
-  - `ScratchBird/docs/specifications/indexes/SuffixIndex.md`
+  - `ScratchBird/docs/specifications/parser/v3/indexes/InvertedIndex.md`
+  - `ScratchBird/docs/specifications/parser/v3/indexes/FSTIndex.md`
+  - `ScratchBird/docs/specifications/parser/v3/indexes/SuffixIndex.md`
 - Spatial types and indexes (R-Tree, Z-Order, Geohash/S2, Quadtree/Octree)
-  - `ScratchBird/docs/specifications/types/MULTI_GEOMETRY_TYPES_SPEC.md`
-  - `ScratchBird/docs/specifications/indexes/README.md`
+  - `ScratchBird/docs/specifications/parser/v3/types/MULTI_GEOMETRY_TYPES_SPEC.md`
+  - `ScratchBird/docs/specifications/parser/v3/indexes/README.md`
 
 ## Summary Matrix (Storage Structures)
 
@@ -194,7 +201,7 @@ NoSQL models:
 
 ## Cross-Cutting Gaps to Plan for Beta
 
-These show up across multiple NoSQL models and should be planned as shared
+These show up across multiple NoSQL models and should be required as shared
 building blocks:
 
 - **Metadata catalogs** for NoSQL collections/graphs/buckets
@@ -212,4 +219,3 @@ building blocks:
 4. Retention policy and TTL system spec (shared)
 5. Vector collection metadata and filtered-ANN execution spec
 6. Columnar table storage class + vectorized execution hooks
-

@@ -80,6 +80,11 @@ protected:
         {
             db_->close();
         }
+        db_.reset();
+        
+        // Small delay to ensure background threads complete
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        
         std::remove(test_db_path_.c_str());
     }
 
@@ -446,8 +451,11 @@ TEST_F(BrinMVCCTest, RemoveValueFromRange)
     ASSERT_EQ(status, Status::OK);
 
     // Verify it's visible (BRIN returns candidate blocks)
+    // Use a range scan - BRIN indexes store min/max per block range, not individual values
+    std::vector<uint8_t> min_val = encodeUint64(0);
+    std::vector<uint8_t> max_val = encodeUint64(9999);
     std::vector<uint32_t> blocks_before;
-    status = brin->scan(&val, &val, xid, &blocks_before, &ctx);
+    status = brin->scan(&min_val, &max_val, xid, &blocks_before, &ctx);
     ASSERT_EQ(status, Status::OK);
     EXPECT_GE(blocks_before.size(), 1);
 

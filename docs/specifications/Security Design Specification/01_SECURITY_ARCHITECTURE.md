@@ -1,8 +1,17 @@
 # ScratchBird Security Architecture Specification
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 **Document ID**: SBSEC-01  
 **Version**: 1.0  
-**Status**: Draft for Review  
+**Status**: Authoritative (V3)
 **Date**: January 2026  
 **Scope**: All deployment modes, all security levels  
 
@@ -1134,3 +1143,5 @@ No security event—authentication, authorization decision, privilege change, se
 ---
 
 *End of Document*
+
+**Terminology note:** ScratchBird uses Firebird MGA. Any MGA references in this file are legacy shorthand and must be interpreted as MGA per the authoritative references above.

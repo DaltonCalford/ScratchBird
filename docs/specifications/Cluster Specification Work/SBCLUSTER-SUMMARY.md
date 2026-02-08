@@ -1,5 +1,14 @@
 # ScratchBird Cluster Architecture & Security Specification Suite
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 **Executive Summary and Navigator**
 
 ---
@@ -9,8 +18,7 @@
 This document suite specifies the complete architecture for ScratchBird distributed clusters, covering configuration management, identity, security, data distribution, query execution, replication, backup, scheduling, and observability.
 
 **Target Audience**: Architects, implementers, security reviewers, operations teams
-
-**Status**: DRAFT (Beta Specification Phase)
+**Status**: Authoritative (V3)
 
 **Version**: 1.0 (2026-01-02)
 
@@ -701,7 +709,7 @@ Tampering breaks chain verification.
 9. **SBCLUSTER-09**: Distributed scheduler
 10. **SBCLUSTER-10**: Observability and audit
 
-### Phase 4: Production Hardening (Post-Beta)
+### Phase 4: Production Hardening (optional extension)
 - Performance optimization (query planning, caching)
 - Advanced features (dynamic resharding, multi-region)
 - Chaos engineering (failure injection, recovery testing)
@@ -759,7 +767,7 @@ Tampering breaks chain verification.
 
 ## Open Questions and Future Work
 
-### Considered but Deferred (Post-Beta)
+### Considered but Deferred (optional extension)
 1. **Multi-region clusters**: Cross-datacenter replication, geo-distributed queries
 2. **Dynamic resharding**: Online shard splitting/merging without downtime
 3. **Advanced replication**: Synchronous replication option, quorum reads
@@ -835,8 +843,7 @@ Tampering breaks chain verification.
 **Feedback**: Submit issues to project repository or email architecture team
 
 ---
-
-**Document Status**: DRAFT (Beta Specification Phase)
+**Document Status**: Authoritative (V3)
 
 **Last Updated**: 2026-01-02
 
@@ -867,3 +874,5 @@ Tampering breaks chain verification.
 ---
 
 **End of Summary Document**
+
+**Terminology note:** ScratchBird uses Firebird MGA. Any MGA references in this file are legacy shorthand and must be interpreted as MGA per the authoritative references above.

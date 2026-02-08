@@ -1,8 +1,17 @@
 # Index System Specifications
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 **[← Back to Specifications Index](../README.md)**
 
-This directory contains index implementation specifications for ScratchBird's comprehensive index system, supporting 28 index types (12 core + 16 optional).
+This directory contains index implementation specifications for ScratchBird's comprehensive index system, supporting 28 core index types.
 
 ## Overview
 
@@ -16,6 +25,16 @@ ScratchBird implements a sophisticated multi-index architecture supporting tradi
 - **[INDEX_IMPLEMENTATION_GUIDE.md](INDEX_IMPLEMENTATION_GUIDE.md)** (1,135 lines) - Implementation guide for index developers
 - **[INDEX_IMPLEMENTATION_SPEC.md](INDEX_IMPLEMENTATION_SPEC.md)** (915 lines) - Detailed implementation specifications
 - **[INDEX_GC_PROTOCOL.md](INDEX_GC_PROTOCOL.md)** (622 lines) - Index garbage collection protocol
+- **[INDEX_IMPLEMENTATION_REFERENCE.md](INDEX_IMPLEMENTATION_REFERENCE.md)** - Authoritative algorithm links by index type
+- **[BTREE_SPEC.md](BTREE_SPEC.md)** - Authoritative B-Tree algorithm and on-disk layout
+- **[HASH_SPEC.md](HASH_SPEC.md)** - Authoritative Hash index algorithm and layout
+- **[GIN_SPEC.md](GIN_SPEC.md)** - Authoritative GIN algorithm and posting structures
+- **[GIST_SPEC.md](GIST_SPEC.md)** - Authoritative GiST algorithm and split policies
+- **[SPGIST_SPEC.md](SPGIST_SPEC.md)** - Authoritative SP-GiST algorithm and partitioning
+- **[BRIN_SPEC.md](BRIN_SPEC.md)** - Authoritative BRIN algorithm and summaries
+- **[BITMAP_SPEC.md](BITMAP_SPEC.md)** - Authoritative Bitmap algorithm and compression
+- **[RTREE_SPEC.md](RTREE_SPEC.md)** - Authoritative R-Tree algorithm and split/merge
+- **[HNSW_SPEC.md](HNSW_SPEC.md)** - Authoritative HNSW algorithm and graph layout
 
 ### Advanced Index Types
 
@@ -72,23 +91,23 @@ ScratchBird implements a sophisticated multi-index architecture supporting tradi
 | **Zone Maps** | Min/max pruning (analytics) | ✅ Specified |
 | **LSM Tree** | Write-optimized storage | ✅ Specified |
 | **Columnstore** | OLAP workloads | ✅ Specified |
-| **JSON Path** | JSON/JSONB path predicates | ✅ Specified (Optional) |
-| **Z-Order (Morton)** | Multi-dimensional range pruning | ✅ Specified (Optional) |
-| **Geohash / S2** | Geo cell indexing | ✅ Specified (Optional) |
-| **Quadtree / Octree** | Spatial partitioning | ✅ Specified (Optional) |
-| **FST** | Prefix search, autocomplete | ✅ Specified (Optional) |
-| **Suffix Array / Tree** | Substring search | ✅ Specified (Optional) |
-| **Count-Min Sketch** | Frequency estimation | ✅ Specified (Optional) |
-| **HyperLogLog** | Approx distinct counts | ✅ Specified (Optional) |
-| **ART** | In-memory key lookup | ✅ Specified (Optional) |
-| **Learned Index** | Model-based lookup | ✅ Specified (Optional) |
-| **LSM TTL** | Time-series retention | ✅ Specified (Optional) |
+| **JSON Path** | JSON/JSONB path predicates | ✅ Specified |
+| **Z-Order (Morton)** | Multi-dimensional range pruning | ✅ Specified |
+| **Geohash / S2** | Geo cell indexing | ✅ Specified |
+| **Quadtree / Octree** | Spatial partitioning | ✅ Specified |
+| **FST** | Prefix search, autocomplete | ✅ Specified |
+| **Suffix Array / Tree** | Substring search | ✅ Specified |
+| **Count-Min Sketch** | Frequency estimation | ✅ Specified |
+| **HyperLogLog** | Approx distinct counts | ✅ Specified |
+| **ART** | In-memory key lookup | ✅ Specified |
+| **Learned Index** | Model-based lookup | ✅ Specified |
+| **LSM TTL** | Time-series retention | ✅ Specified |
 
 ## Canonical Index Type Names (Parser/Catalog)
 
 **Core (Alpha scope):** BTREE, HASH, FULLTEXT, GIN, GIST, SPGIST, BRIN, BITMAP, RTREE, HNSW, COLUMNSTORE, LSM
 
-**Optional/Advanced (Beta scope):** IVF, ZONEMAP, ZORDER, GEOHASH, S2, QUADTREE, OCTREE, FST, SUFFIX_ARRAY, SUFFIX_TREE, COUNT_MIN_SKETCH, HYPERLOGLOG, ART, LEARNED, LSM_TTL, JSON_PATH
+**Core (All Index Types):** BTREE, HASH, FULLTEXT, GIN, GIST, SPGIST, BRIN, BITMAP, RTREE, HNSW, COLUMNSTORE, LSM, IVF, ZONEMAP, ZORDER, GEOHASH, S2, QUADTREE, OCTREE, FST, SUFFIX_ARRAY, SUFFIX_TREE, COUNT_MIN_SKETCH, HYPERLOGLOG, ART, LEARNED, LSM_TTL, JSON_PATH
 
 ## Key Concepts
 

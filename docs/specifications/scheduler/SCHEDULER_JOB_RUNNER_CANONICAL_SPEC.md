@@ -35,7 +35,7 @@ design into one coherent specification so that implementation is secure, consist
 and forward-compatible with cluster deployment.
 
 Event notifications (Firebird-style POST_EVENT) are a separate feature and are
-defined in `ScratchBird/docs/specifications/ddl/DDL_EVENTS.md`.
+defined in `ScratchBird/docs/specifications/parser/v3/ddl/DDL_EVENTS.md`.
 
 This spec is the primary reference for implementation. Other scheduler documents
 remain supporting references.
@@ -439,7 +439,7 @@ Suggested metrics:
 
 ### 13.1 Event notifications
 Event notifications are not scheduler jobs. Firebird-style event posting and listener
-registration are specified in `ScratchBird/docs/specifications/ddl/DDL_EVENTS.md`.
+registration are specified in `ScratchBird/docs/specifications/parser/v3/ddl/DDL_EVENTS.md`.
 
 ### 13.2 Previous Scheduler Docs
 - `ALPHA_SCHEDULER_SPECIFICATION.md` and `SBCLUSTER-09-SCHEDULER.md`

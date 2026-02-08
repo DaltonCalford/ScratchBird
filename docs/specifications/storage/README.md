@@ -1,5 +1,14 @@
 # Storage Engine Specifications
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 **[← Back to Specifications Index](../README.md)**
 
 This directory contains storage layer specifications for ScratchBird's storage engine, including buffer management, page structures, and large object storage.
@@ -31,12 +40,13 @@ ScratchBird implements a sophisticated storage engine based on Firebird's Multi-
 - **[TABLESPACE_SPECIFICATION.md](TABLESPACE_SPECIFICATION.md)** (1,352 lines) - Tablespace management and configuration
 - **[TABLESPACE_ONLINE_MIGRATION.md](TABLESPACE_ONLINE_MIGRATION.md)** - Online tablespace migration (Beta)
 - **[MGA_IMPLEMENTATION.md](MGA_IMPLEMENTATION.md)** (1,024 lines) - Multi-Generational Architecture implementation details
+  - Firebird-accurate MGA/GC flow, cooperative GC, background GC, sweep ordering
 
 ## Key Concepts
 
 ### Multi-Generational Architecture (MGA)
 
-ScratchBird uses MGA for MVCC (Multi-Version Concurrency Control):
+ScratchBird uses MGA for MGA (Multi-Version Concurrency Control):
 
 - Multiple record versions stored in-place
 - No undo logs required
@@ -85,3 +95,5 @@ Before working on storage implementation:
 ---
 
 **Last Updated:** January 2026
+
+**Terminology note:** ScratchBird uses Firebird MGA. Any MGA references in this file are legacy shorthand and must be interpreted as MGA per the authoritative references above.

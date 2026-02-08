@@ -1,6 +1,5 @@
 # SBLR Execution Performance Specification (Alpha)
-
-Status: Draft (Alpha). Scope: reduce interpreter overhead for hot PSQL functions and triggers
+Status: Authoritative (V3)
 without introducing native code generation.
 
 This specification is derived from `SBLR_EXECUTION_PERFORMANCE_RESEARCH.md`.

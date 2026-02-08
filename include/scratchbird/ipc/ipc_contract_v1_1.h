@@ -92,6 +92,9 @@ enum class IPCMessageType : uint16_t {
     BIND_COMPLETE = 0x36,     // Server -> Client: Bind done
     CLOSE_COMPLETE = 0x37,    // Server -> Client: Close done
     
+    // Command Completion (0x38-0x3F)
+    READY_FOR_QUERY = 0x38,   // Server -> Client: Ready for next query
+    
     // COPY Operations (0x40-0x4F)
     COPY_IN_REQUEST = 0x40,   // Server -> Client: Expect COPY data
     COPY_OUT_RESPONSE = 0x41, // Server -> Client: COPY data incoming
@@ -209,7 +212,8 @@ struct IPCFeaturePayload {
 // SIMPLE_QUERY payload
 struct IPCSimpleQueryPayload {
     uint32_t flags;           // Query flags
-    char sql[IPC_MAX_SQL_LENGTH]; // SQL text (null-terminated)
+    uint32_t query_length;    // Length of SQL text
+    // SQL text follows
 };
 
 // PARSE payload
@@ -251,6 +255,12 @@ struct IPCDataRowPayload {
     // Field data follows (length-prefixed)
 };
 
+// ROW_DESCRIPTION payload
+struct IPCRowDescriptionPayload {
+    uint16_t num_fields;      // Number of fields
+    // Field descriptions follow (IPCFieldDesc array)
+};
+
 // COMMAND_COMPLETE payload
 struct IPCCommandCompletePayload {
     char tag[64];             // Command tag (e.g., "SELECT 42")
@@ -263,6 +273,26 @@ struct IPCCopyDataPayload {
     uint32_t chunk_id;        // Chunk sequence number
     uint32_t length;          // Data length
     // Data follows
+};
+
+// COPY_IN_REQUEST payload (server -> client: expect COPY data)
+struct IPCCopyInRequestPayload {
+    uint8_t format;           // 0=text, 1=binary
+    uint16_t num_columns;     // Number of columns
+    // Column formats follow (uint16_t per column)
+};
+
+// COPY_OUT_RESPONSE payload (server -> client: COPY data incoming)
+struct IPCCopyOutResponsePayload {
+    uint8_t format;           // 0=text, 1=binary
+    uint16_t num_columns;     // Number of columns
+    // Column formats follow (uint16_t per column)
+};
+
+// COPY_FAIL payload (client -> server: COPY error)
+struct IPCCopyFailPayload {
+    uint32_t error_len;       // Error message length
+    // Error message follows
 };
 
 // STREAM_CONTROL payload (flow control)

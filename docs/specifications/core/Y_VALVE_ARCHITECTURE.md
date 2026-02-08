@@ -62,7 +62,7 @@ Terminology mapping:
 - **Y-Valve router** => **Listener routing + parser selection**
 
 Authoritative spec for this model:
-- `ScratchBird/docs/specifications/network/NETWORK_LISTENER_AND_PARSER_POOL_SPEC.md`
+- `ScratchBird/docs/specifications/parser/v3/network/NETWORK_LISTENER_AND_PARSER_POOL_SPEC.md`
 
 ## Legacy Y-Valve Design (Reference)
 

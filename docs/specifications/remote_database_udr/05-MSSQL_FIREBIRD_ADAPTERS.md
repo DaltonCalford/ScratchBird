@@ -1,12 +1,21 @@
 # Remote Database UDR - MSSQL and Firebird Adapters
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 > Reference-only: Canonical UDR and live-migration behavior now lives in
 > `ScratchBird/docs/specifications/Alpha Phase 2/11-Remote-Database-UDR-Specification.md`
 > and `ScratchBird/docs/specifications/Alpha Phase 2/11h-Live-Migration-Emulated-Listener.md`.
 
 ## Part 1: MSSQL Adapter (TDS Protocol)
 
-**Scope Note:** MSSQL/TDS adapter work is deferred until after the project goes gold. This section documents planned behavior only.
+**Scope Note:** MSSQL/TDS adapter work is deferred until after the project goes gold. This section documents required behavior only.
 
 ### 1.1 Overview
 

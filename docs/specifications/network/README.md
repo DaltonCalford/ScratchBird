@@ -8,7 +8,7 @@ This directory contains network layer and wire protocol specifications for Scrat
 
 ScratchBird implements a listener + parser pool architecture for multi-protocol
 support, enabling clients to connect using PostgreSQL, MySQL, Firebird, or
-ScratchBird native protocols (MSSQL/TDS post-gold).
+ScratchBird native protocols (MSSQL/TDS optional extension).
 
 ## Specifications in this Directory
 
@@ -36,7 +36,7 @@ The listener/pool control plane is ScratchBird's protocol multiplexer:
 - **PostgreSQL Wire Protocol** - Full libpq compatibility
 - **MySQL Wire Protocol** - MySQL client/server protocol
 - **Firebird Wire Protocol** - Firebird remote protocol
-- **TDS (MSSQL) Protocol** - SQL Server TDS protocol (post-gold)
+- **TDS (MSSQL) Protocol** - SQL Server TDS protocol (optional extension)
 - **ScratchBird Native** - Optimized native protocol
 
 See [Wire Protocols](../wire_protocols/) for detailed protocol specifications.

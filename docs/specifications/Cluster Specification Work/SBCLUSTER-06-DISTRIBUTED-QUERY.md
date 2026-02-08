@@ -1,5 +1,14 @@
 # SBCLUSTER-06: Distributed Query Execution
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 ## 1. Introduction
 
 ### 1.1 Purpose
@@ -20,7 +29,7 @@ This document specifies the distributed query execution architecture for Scratch
 - **SBCLUSTER-04**: Security Bundle (enforcement gates)
 - **SBCLUSTER-05**: Sharding (shard routing, shard-local MVCC)
 - **SBCLUSTER-02**: Membership and Identity (node roles, COORDINATOR)
-- **PARALLEL_EXECUTION_ARCHITECTURE.md**: Parallel execution model (Beta) - see `docs/specifications/query/`
+- **PARALLEL_EXECUTION_ARCHITECTURE.md**: Parallel execution model (Beta) - see `docs/specifications/parser/v3/query/`
 
 ### 1.4 Terminology
 - **Coordinator**: Node that receives a query and orchestrates distributed execution
@@ -323,7 +332,7 @@ Status check_security_bundle_consistency(
     // Verify coordinator's bundle matches query's required bundle
     if (coordinator_bundle_hash != query.security_bundle_hash) {
         return Status::SECURITY_BUNDLE_MISMATCH(
-            "Coordinator's security bundle has changed since query was planned"
+            "Coordinator's security bundle has changed since query was required"
         );
     }
 
@@ -1081,7 +1090,8 @@ With N shards executing in parallel:
 | 1.0     | 2026-01-02 | D. Calford   | Initial comprehensive specification        |
 
 ---
-
-**Document Status**: DRAFT (Beta Specification Phase)
+**Document Status**: Authoritative (V3)
 **Next Review**: Before Beta Implementation Phase
 **Approval Required**: Chief Architect, Query Engine Lead, Distributed Systems Lead
+
+**Terminology note:** ScratchBird uses Firebird MGA. Any MGA references in this file are legacy shorthand and must be interpreted as MGA per the authoritative references above.

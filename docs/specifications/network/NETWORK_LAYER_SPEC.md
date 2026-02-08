@@ -9,7 +9,7 @@ connection context preservation. Multi-protocol support is implemented by the
 listener + parser pool control plane; historical "Y-Valve" references in this
 document map to that listener/pool layer.
 
-**Scope Note:** TDS/MSSQL protocol support is post-gold; any TDS references are forward-looking.
+**Scope Note:** TDS/MSSQL protocol support is optional extension; any TDS references are forward-looking.
 
 ## 1. Enhanced Connection Pooling
 
@@ -272,7 +272,7 @@ bool validate_connection(PooledConnection* conn) {
         case PROTOCOL_FIREBIRD:
             valid = validate_firebird_connection(conn);
             break;
-        case PROTOCOL_TDS:  // post-gold
+        case PROTOCOL_TDS:  // optional extension
             valid = validate_tds_connection(conn);
             break;
         case PROTOCOL_NATIVE:

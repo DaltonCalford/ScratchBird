@@ -2,7 +2,7 @@
 
 **Document ID**: SBSEC-07  
 **Version**: 1.0  
-**Status**: Draft for Review  
+**Status**: Authoritative (V3)
 **Date**: January 2026  
 **Scope**: Cluster deployment mode, Security Level 6 only  
 

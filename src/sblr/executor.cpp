@@ -26,6 +26,7 @@
 #include "scratchbird/parser/mysql/mysql_parser.h"
 #include "scratchbird/sblr/bytecode_generator_v2.h"
 #include "scratchbird/sblr/resolved_ast_v2.h"
+#include "scratchbird/sblr/semantic_analyzer_v2.h"
 #ifndef SCRATCHBIRD_WITH_COMPILER
 #define SCRATCHBIRD_WITH_COMPILER 1
 #endif

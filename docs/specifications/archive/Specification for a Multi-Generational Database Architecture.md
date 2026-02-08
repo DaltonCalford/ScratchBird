@@ -2,6 +2,18 @@
 
 # **ScratchBird DB: A Low-Level Technical Specification for a Multi-Generational Database Architecture**
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
+**Legacy term note:** This document may use xmin/xmax labels for creator/deleter transaction IDs. ScratchBird does not use PostgreSQL tuple headers; see the authoritative MGA specs above for the actual Firebird-style record header fields (e.g., `rhd_transaction`, `rhd_back_version`) and visibility/GC rules.
+
+
 ## **Section 1: Transaction Management Subsystem**
 
 ### **Overview and Core Principles**
@@ -863,3 +875,5 @@ This entire process is made safe for concurrent readers because the visibility r
 33. Firebird (database server) \- Wikipedia, accessed September 15, 2025, [https://en.wikipedia.org/wiki/Firebird\_(database\_server)](https://en.wikipedia.org/wiki/Firebird_\(database_server\))  
 34. Insert your talk title \- Firebird, accessed September 15, 2025, [https://firebirdsql.org/file/community/conference-2016/firebird-and-disk-i-o.pdf](https://firebirdsql.org/file/community/conference-2016/firebird-and-disk-i-o.pdf)  
 35. Inside Firebird transactions \- IBPhoenix, accessed September 15, 2025, [https://www.ibphoenix.com/files/conf2019/03Transactions-internals.pdf](https://www.ibphoenix.com/files/conf2019/03Transactions-internals.pdf)
+
+**Terminology note:** ScratchBird uses Firebird MGA. Any MGA references in this file are legacy shorthand and must be interpreted as MGA per the authoritative references above.

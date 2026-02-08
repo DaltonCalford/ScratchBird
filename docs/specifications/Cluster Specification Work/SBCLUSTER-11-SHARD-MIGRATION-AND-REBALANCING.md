@@ -1,5 +1,14 @@
 # SBCLUSTER-11: Shard Migration and Rebalancing
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 **Status:** Beta specification
 **Last Updated:** 2026-01-20
 **Scope:** Cross-node movement of shards, shard splits/merges, and rebalancing
@@ -168,11 +177,11 @@ Metrics:
 
 ---
 
-## 11.1 Catalog Placeholders (Planned)
+## 11.1 Catalog Placeholders (Required)
 
 These catalog tables back the monitoring views and migration orchestration.
 
-**Planned system tables:**
+**Required system tables:**
 - `pg_shard_migrations` (authoritative state)
 - `pg_shard_map_versions` (immutable map versions)
 
@@ -240,4 +249,6 @@ All steps are designed to be idempotent.
 - `SBCLUSTER-05-SHARDING.md`
 - `SBCLUSTER-06-DISTRIBUTED-QUERY.md`
 - `SBCLUSTER-07-REPLICATION.md`
-- `docs/specifications/storage/TABLESPACE_ONLINE_MIGRATION.md`
+- `docs/specifications/parser/v3/storage/TABLESPACE_ONLINE_MIGRATION.md`
+
+**Terminology note:** ScratchBird uses Firebird MGA. Any MGA references in this file are legacy shorthand and must be interpreted as MGA per the authoritative references above.

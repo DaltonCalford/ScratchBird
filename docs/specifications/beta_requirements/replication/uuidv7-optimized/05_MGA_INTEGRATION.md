@@ -1,5 +1,17 @@
 # MGA Integration for Distributed Replication
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../../../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../../../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../../../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../../../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../../../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
+**Legacy term note:** This document may use xmin/xmax labels for creator/deleter transaction IDs. ScratchBird does not use PostgreSQL tuple headers; see the authoritative MGA specs above for the actual Firebird-style record header fields (e.g., `rhd_transaction`, `rhd_back_version`) and visibility/GC rules.
+
+
 **Document:** 05_MGA_INTEGRATION.md
 **Status:** BETA SPECIFICATION
 **Version:** 1.0
@@ -28,7 +40,7 @@
 
 This specification defines how ScratchBird's **Firebird MGA (Multi-Generational Architecture)** transaction model integrates with Beta's distributed replication features (leaderless quorum, UUIDv8-HLC, time-partitioned Merkle forests, schema colocation). The design preserves MGA principles (TIP-based visibility, in-place updates, no snapshots) while extending them to multi-node environments.
 
-**Critical Constraint**: **NO PostgreSQL MVCC assumptions**. ScratchBird uses Firebird MGA exclusively.
+**Critical Constraint**: **NO PostgreSQL MGA assumptions**. ScratchBird uses Firebird MGA exclusively.
 
 ### Design Principles
 
@@ -106,7 +118,7 @@ Garbage Collection:
   When no transaction has xid < 100, back version ('Alice', 100) can be swept
 ```
 
-### PostgreSQL MVCC (NOT ScratchBird)
+### PostgreSQL MGA (NOT ScratchBird)
 
 **Snapshots**:
 - Reader takes snapshot: `(xmin, xmax, active_xids[])`
@@ -120,7 +132,7 @@ Garbage Collection:
 - Append-only: Old versions kept in heap, new versions appended
 - Vacuum reclaims space
 
-**Why ScratchBird Doesn't Use MVCC**:
+**Why ScratchBird Doesn't Use MGA**:
 1. Snapshots add memory overhead (active_xids[] array)
 2. Append-only storage wastes space (no in-place updates)
 3. TIP-based visibility is simpler (2 bits per transaction, durable)
@@ -1032,3 +1044,5 @@ TEST(MGAIntegrationTest, DistributedGC) {
 ---
 
 **End of Document 05**
+
+**Terminology note:** ScratchBird uses Firebird MGA. Any MGA references in this file are legacy shorthand and must be interpreted as MGA per the authoritative references above.

@@ -1,5 +1,14 @@
 # ScratchBird Core Implementation Specifications Summary
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 ## Overview
 
 This document provides a comprehensive index of all core implementation specifications for ScratchBird, following the hybrid approach recommended in `IMPLEMENTATION_RECOMMENDATIONS.md`. These specifications provide detailed technical blueprints for implementing the five critical database subsystems.
@@ -70,9 +79,9 @@ This document provides a comprehensive index of all core implementation specific
 ### 4. Storage Engine
 **File**: `STORAGE_ENGINE_SPEC.md`
 **Status**: 🚧 To be created
-**Phase**: 4 (Heap Storage), 6 (MGA Transactions), 16 (write-after log, post-gold)
+**Phase**: 4 (Heap Storage), 6 (MGA Transactions), 16 (write-after log, optional extension)
 
-**Planned Features**:
+**Required Features**:
 - Enhanced buffer pool with ring buffers (PostgreSQL-style)
 - Adaptive hash index (MySQL InnoDB-style)
 - Multi-pool architecture for different workloads
@@ -93,7 +102,7 @@ This document provides a comprehensive index of all core implementation specific
 **Status**: 🚧 To be created
 **Phase**: 6 (MGA Transactions), 7 (MGA MVCC)
 
-**Planned Features**:
+**Required Features**:
 - MGA-based MVCC (Firebird heritage)
 - 64-bit transaction IDs (no wraparound)
 - Comprehensive lock types including predicate locks
@@ -205,3 +214,5 @@ For each implemented component:
 These specifications provide a comprehensive blueprint for implementing ScratchBird's core database engine components. By following a hybrid approach that combines the best features from FirebirdSQL, PostgreSQL, MySQL/MariaDB, and SQL Server, while adding innovative features like UUID optimization and adaptive indexing, ScratchBird will offer a unique and powerful database platform.
 
 The modular design allows for incremental implementation while maintaining compatibility and performance at each stage. The specifications are detailed enough for implementation while remaining flexible enough to accommodate optimizations discovered during development.
+
+**Terminology note:** ScratchBird uses Firebird MGA. Any MGA references in this file are legacy shorthand and must be interpreted as MGA per the authoritative references above.

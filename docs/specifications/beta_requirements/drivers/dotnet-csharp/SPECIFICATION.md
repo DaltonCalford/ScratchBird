@@ -1,6 +1,5 @@
 # C# / .NET Driver Specification
-
-Status: Draft (Target). This specification defines the C# / .NET Driver Specification for ScratchBird V2 using the native wire protocol only.
+Status: Authoritative (V3)
 
 ## Scope
 - Protocol: ScratchBird Native Wire Protocol (SBWP) v1.1 only.

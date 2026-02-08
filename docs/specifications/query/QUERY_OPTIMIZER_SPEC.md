@@ -1,4 +1,13 @@
 # ScratchBird Query Optimizer Specification
+
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
 ## Comprehensive Technical Specification for Query Optimization
 
 ## Overview
@@ -902,7 +911,7 @@ typedef struct cached_plan {
     BLR*            compiled_blr;      // Compiled BLR
     
     // Statistics snapshot
-    StatSnapshot*   stats_snapshot;    // Statistics when planned
+    StatSnapshot*   stats_snapshot;    // Statistics when required
     
     // Usage statistics
     uint64_t        use_count;         // Times used

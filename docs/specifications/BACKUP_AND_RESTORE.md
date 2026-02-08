@@ -1,13 +1,23 @@
 # ScratchBird Backup and Restore Specification
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
+
 **Version:** 2.0
 **Last Updated:** 2026-01-07
 **Status:** ✅ Complete
 
-**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional post-gold (replication/PITR).
-Any WAL references in this document describe an optional post-gold stream for
+**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional optional extension (replication/PITR).
+Any WAL references in this document describe an optional optional extension stream for
 replication/PITR only.
-**Table Footnote:** In comparison tables below, ScratchBird WAL references are optional post-gold (replication/PITR).
+**Table Footnote:** In comparison tables below, ScratchBird WAL references are optional optional extension (replication/PITR).
 
 ---
 
@@ -83,7 +93,7 @@ This specification covers:
 ScratchBird's backup system is built on these principles:
 
 1. **MGA-Native** - Leverages Multi-Generational Architecture for consistent snapshots
-2. **Non-Blocking** - Uses MVCC snapshot isolation to avoid blocking writers
+2. **Non-Blocking** - Uses MGA snapshot isolation to avoid blocking writers
 3. **Incremental** - Supports incremental backups to minimize storage and time
 4. **Verifiable** - Built-in checksums and validation at every level
 5. **Secure by Default** - Encryption and authentication integrated from the start
@@ -91,14 +101,14 @@ ScratchBird's backup system is built on these principles:
 
 ### 2.2. Integration with MGA
 
-ScratchBird uses Firebird-style Multi-Generational Architecture (MGA), NOT PostgreSQL-style write-after log (WAL, optional post-gold):
+ScratchBird uses Firebird-style Multi-Generational Architecture (MGA), NOT PostgreSQL-style write-after log (WAL, optional optional extension):
 
-- **No write-after log (WAL, optional post-gold) for Recovery** - Backup/restore does not rely on write-after log (WAL, optional post-gold) replay
+- **No write-after log (WAL, optional optional extension) for Recovery** - Backup/restore does not rely on write-after log (WAL, optional optional extension) replay
 - **Transaction Markers** - Uses OIT, OAT, OST, NEXT for visibility
-- **Record Versioning** - Multiple versions (xmin/xmax) are backed up
+- **Record Versioning** - Multiple versions (Firebird-style back-version chains) are backed up
 - **Snapshot Isolation** - Backup sees a consistent snapshot based on transaction markers
 
-**Critical:** Backup consistency is achieved through MGA snapshot isolation, NOT through write-after log (WAL, optional post-gold) checkpoints.
+**Critical:** Backup consistency is achieved through MGA snapshot isolation, NOT through write-after log (WAL, optional optional extension) checkpoints.
 
 ### 2.3. Backup Storage Architecture
 
@@ -149,8 +159,8 @@ Backup Storage Hierarchy:
 **Transaction Visibility:**
 ```
 Full Backup sees:
-  - All committed transactions with xmax < backup_snapshot_tx
-  - No uncommitted transactions
+  - All record versions visible to the backup snapshot (TIP/CN-based visibility)
+  - No uncommitted versions
   - Respects MGA visibility rules (OIT, OAT, OST)
 ```
 
@@ -268,7 +278,7 @@ page.lsn > base_full_backup_lsn
 - Cloud storage integration
 - Continuous data protection
 
-**Status:** Planned for Beta phase.
+**Status:** Required for Beta phase.
 
 ---
 
@@ -538,7 +548,7 @@ For fast random access during restore:
 
 ### 5.2. Snapshot Acquisition
 
-**Critical:** ScratchBird uses MGA snapshot isolation, NOT write-after log (WAL, optional post-gold) checkpoints.
+**Critical:** ScratchBird uses MGA snapshot isolation, NOT write-after log (WAL, optional optional extension) checkpoints.
 
 ```cpp
 // Pseudo-code for snapshot acquisition
@@ -564,32 +574,41 @@ BackupSnapshot acquire_backup_snapshot() {
 }
 ```
 
-**Visibility Rule:**
+**Visibility Rule (MGA/Firebird-style):**
 
-A page version is visible to the backup snapshot if:
+A record version is visible to the backup snapshot if its creating transaction
+is committed and committed **before** the snapshot, and the visible version is
+not marked deleted.
 
 ```cpp
-bool is_visible_to_backup(PageHeader* page, BackupSnapshot* snapshot) {
-    // Record must be committed before backup snapshot
-    if (page->xmin >= snapshot->backup_tx_id) {
-        return false;  // Created after backup started
+bool is_version_visible_to_backup(const SBRecordHeader* hdr,
+                                  const BackupSnapshot* snapshot)
+{
+    // Use TIP/CN snapshot visibility
+    if (!TxManager::is_visible(hdr->rhd_transaction, snapshot)) {
+        return false;
     }
 
-    // Record must not be deleted before backup snapshot
-    if (page->xmax != 0 && page->xmax < snapshot->backup_tx_id) {
-        return false;  // Deleted before backup started
+    // Deleted versions are not visible
+    if (hdr->rhd_flags & RHD_DELETED) {
+        return false;
     }
 
-    // Check transaction commit status
-    if (!TxManager::is_committed(page->xmin)) {
-        return false;  // Created by uncommitted transaction
-    }
+    return true;
+}
 
-    if (page->xmax != 0 && TxManager::is_committed(page->xmax)) {
-        return false;  // Deleted by committed transaction
+// Select the visible version by walking the back-version chain
+const SBRecordHeader* find_visible_version(const SBRecordHeader* head,
+                                           const BackupSnapshot* snapshot)
+{
+    const SBRecordHeader* cur = head;
+    while (cur) {
+        if (is_version_visible_to_backup(cur, snapshot)) {
+            return cur;
+        }
+        cur = (cur->rhd_flags & RHD_CHAIN) ? load_version(cur->rhd_back_version) : nullptr;
     }
-
-    return true;  // Visible to backup snapshot
+    return nullptr;
 }
 ```
 
@@ -977,7 +996,7 @@ void restore_parallel(BackupFile* file, size_t num_threads) {
 2. **Transaction Log Archive** - Continuous log of transactions
 3. **Recovery Target** - Transaction ID or timestamp
 
-**Note:** Transaction log archive is distinct from write-after log (WAL, optional post-gold), which ScratchBird does not use for recovery.
+**Note:** Transaction log archive is distinct from write-after log (WAL, optional optional extension), which ScratchBird does not use for recovery.
 
 ### 7.3. Transaction Log Archive
 
@@ -1124,40 +1143,34 @@ SELECT * FROM employees FOR SYSTEM_TIME BETWEEN
 
 ### 8.2. Transaction Visibility During Backup
 
-**Visibility Rules:**
+**Visibility Rules (MGA/Firebird-style):**
 
 ```cpp
 // MGA visibility check for backup
-bool is_visible_to_backup(TupleHeader* tuple, BackupSnapshot* snapshot) {
-    // Check xmin (creation transaction)
-    if (tuple->xmin >= snapshot->backup_tx_id) {
-        return false;  // Created after backup started
+bool is_visible_to_backup(const SBRecordHeader* hdr, const BackupSnapshot* snapshot) {
+    if (!TxManager::is_visible(hdr->rhd_transaction, snapshot)) {
+        return false;  // Creating transaction not visible at snapshot
     }
 
-    if (!is_tx_committed(tuple->xmin, snapshot)) {
-        return false;  // Created by uncommitted transaction
+    if (hdr->rhd_flags & RHD_DELETED) {
+        return false;  // Deleted version
     }
 
-    // Check xmax (deletion transaction)
-    if (tuple->xmax == 0) {
-        return true;  // Not deleted, visible
-    }
-
-    if (tuple->xmax >= snapshot->backup_tx_id) {
-        return true;  // Deleted after backup, still visible
-    }
-
-    if (is_tx_committed(tuple->xmax, snapshot)) {
-        return false;  // Deleted by committed transaction before backup
-    }
-
-    return true;  // Visible
+    return true;
 }
 
-bool is_tx_committed(uint64_t tx_id, BackupSnapshot* snapshot) {
-    // Check if transaction is in committed state
-    TxState state = tx_manager->get_tx_state(tx_id);
-    return state == TX_COMMITTED;
+// Backup chooses the visible version by following the back-version chain
+const SBRecordHeader* select_backup_version(const SBRecordHeader* head,
+                                            const BackupSnapshot* snapshot)
+{
+    const SBRecordHeader* cur = head;
+    while (cur) {
+        if (is_visible_to_backup(cur, snapshot)) {
+            return cur;
+        }
+        cur = (cur->rhd_flags & RHD_CHAIN) ? load_version(cur->rhd_back_version) : nullptr;
+    }
+    return nullptr;
 }
 ```
 
@@ -1179,14 +1192,14 @@ bool is_tx_committed(uint64_t tx_id, BackupSnapshot* snapshot) {
 
 3. **Filter Dead Tuples During Backup** (performance trade-off)
    ```cpp
-   bool should_backup_tuple(TupleHeader* tuple, BackupSnapshot* snapshot) {
-       if (!is_visible_to_backup(tuple, snapshot)) {
+   bool should_backup_version(const SBRecordHeader* hdr, BackupSnapshot* snapshot) {
+       if (!is_visible_to_backup(hdr, snapshot)) {
            return false;
        }
 
-       // Optionally skip dead tuples
-       if (is_dead_tuple(tuple, snapshot)) {
-           return false;  // Skip dead tuple
+       // Optionally skip dead versions
+       if (hdr->rhd_flags & RHD_DELETED) {
+           return false;  // Skip deleted version
        }
 
        return true;
@@ -2750,10 +2763,10 @@ ScratchBird Backup Dashboard
 
 ```cpp
 TEST(BackupTest, SnapshotVisibility) {
-    // Setup: create pages with different xmin/xmax
-    Page* page1 = create_page(/*xmin=*/100, /*xmax=*/0);
-    Page* page2 = create_page(/*xmin=*/200, /*xmax=*/0);
-    Page* page3 = create_page(/*xmin=*/100, /*xmax=*/150);
+    // Setup: create pages with different record versions
+    Page* page1 = create_page(/*rhd_transaction=*/100, /*deleted=*/false);
+    Page* page2 = create_page(/*rhd_transaction=*/200, /*deleted=*/false);
+    Page* page3 = create_page(/*rhd_transaction=*/100, /*deleted=*/true);
 
     BackupSnapshot snapshot;
     snapshot.backup_tx_id = 180;
@@ -2859,8 +2872,8 @@ BENCHMARK(BackupPerformance) {
 | **PITR** | Point-In-Time Recovery |
 | **MVCC** | Multi-Version Concurrency Control |
 | **Sweep** | Garbage collection process in MGA |
-| **xmin** | Transaction ID that created a tuple |
-| **xmax** | Transaction ID that deleted a tuple |
+| **rhd_transaction** | Transaction ID that created the record version |
+| **RHD_DELETED flag** | Marks a deleted version |
 | **BEK** | Backup Encryption Key |
 | **RF** | Replication Factor |
 
@@ -2881,3 +2894,5 @@ BENCHMARK(BackupPerformance) {
 **Last Review:** 2026-01-07
 **Next Review:** 2026-04-07 (Quarterly)
 **Owner:** ScratchBird Core Team
+
+**Terminology note:** ScratchBird uses Firebird MGA. Any MGA references in this file are legacy shorthand and must be interpreted as MGA per the authoritative references above.

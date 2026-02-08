@@ -1,6 +1,5 @@
 # ODBC UDR Specification
-
-Status: Draft (Beta). This specification defines the ODBC UDR that uses an
+Status: Authoritative (V3)
 embedded ODBC driver manager and bundled drivers (no system ODBC install).
 
 ## Scope

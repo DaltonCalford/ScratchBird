@@ -2,7 +2,7 @@
 
 **Document Version:** 1.0  
 **Date:** 2025-01-25  
-**Status:** Draft Specification
+**Status:** Authoritative (V3)
 
 ---
 
@@ -422,7 +422,7 @@ mysql.db
 
 ---
 
-### MSSQL TDS Protocol (post-gold)
+### MSSQL TDS Protocol (optional extension)
 
 **Scope Note:** TDS/MSSQL support is deferred until after the project goes gold. This section is retained for future compatibility work.
 
@@ -817,7 +817,7 @@ SessionState* session_create(const char* username, const char* database) {
 - **LOCAL INFILE**: Client-side file upload
 - **Character Sets**: utf8, utf8mb4, latin1, etc.
 
-### MSSQL (post-gold)
+### MSSQL (optional extension)
 
 - **MARS** (Multiple Active Result Sets): Complex to support
 - **Bulk Copy**: High-speed bulk insert
@@ -858,7 +858,7 @@ protocols:
     character_set: utf8mb4
     
   mssql:
-    enabled: false  # post-gold
+    enabled: false  # optional extension
     port: 1433
     max_connections: 500
     parser_plugin: /usr/lib/db/parsers/tsql_parser.so
@@ -953,7 +953,7 @@ def test_mysql_basic():
 - [ ] Error packet format
 - [ ] Character set handling
 
-### MSSQL (post-gold)
+### MSSQL (optional extension)
 - [ ] PRELOGIN/LOGIN7
 - [ ] SQL Batch handling
 - [ ] RPC handling
@@ -970,7 +970,6 @@ def test_mysql_basic():
 - [ ] Event notifications
 
 ---
-
-**Document Status**: Draft for Review  
+**Document Status**: Authoritative (V3)
 **Next Review Date**: TBD  
 **Approval Required**: Protocol Team

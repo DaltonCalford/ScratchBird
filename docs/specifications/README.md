@@ -1,11 +1,20 @@
 # ScratchBird Technical Specifications
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 **Master Index and Navigation Guide**
 
 This directory contains comprehensive technical specifications for the ScratchBird database management system. ScratchBird implements a Firebird-style Multi-Generational Architecture (MGA) with multi-dialect SQL support and advanced distributed cluster capabilities.
 
-**Total Specifications:** 350+ documents across 95+ subdirectories  
-**Last Updated:** February 6, 2026  
+**Total Specifications:** 354+ documents across 95+ subdirectories  
+**Last Updated:** February 7, 2026  
 **Status:** ✅ **Alpha Complete**
 
 ---
@@ -55,6 +64,27 @@ All Alpha specifications have been **implemented and tested**:
 
 ---
 
+## ⚠️ AI Assistant Caution Notice
+
+**For AI Assistants Working on This Project:**
+
+This project has a **separated parser architecture** and **Firebird-style MGA** that differ significantly from PostgreSQL/MySQL. AI assistants frequently make incorrect assumptions:
+
+| ❌ Wrong Assumption | ✅ Correct Design |
+|---------------------|-------------------|
+| Parser inside server process | Parser is **separate process** forked by listener |
+| Parser connects to engine on startup | Parser connects **only when handling client** |
+| Emulated protocols use different code paths | **All protocols** use same IPC flow to engine |
+| Readers need locks | Readers **NEVER need locks** in MGA (snapshot isolation) |
+| Lock manager is separate process | Lock manager is **background thread** in server |
+| Database registry uses SQLite | Registry uses **JSONB file** (not SQLite) |
+
+**Before making changes, read:**
+1. [ARCHITECTURE_CLARIFICATIONS.md](ARCHITECTURE_CLARIFICATIONS.md) - Critical design decisions
+2. [MGA_RULES.md](../../MGA_RULES.md) - MGA architecture rules
+
+---
+
 ## Scope Clarifications (Current Version)
 
 - **Write-after log (WAL)/LSN**: MGA provides recovery without write-after log (WAL); the optional write-after log (WAL) is not implemented in the current version. Any write-after log (WAL) references describe a future, optional write-after log for replication/PITR (not recovery).
@@ -97,7 +127,7 @@ All Alpha specifications have been **implemented and tested**:
 | [**dml/**](dml/) | Data Manipulation Language | 8 DML operation specs | ✅ Organized |
 | [**transaction/**](transaction/) | MGA transactions | Transaction, locking, MGA core, distributed | ✅ Organized |
 | [**storage/**](storage/) | Storage layer | Buffer pool, page management, TOAST, heap, tablespace | ✅ Organized |
-| [**indexes/**](indexes/) | Index implementations | 11 index types including HNSW, LSM, columnstore | ✅ Organized |
+| [**indexes/**](indexes/) | Index implementations | 28 core index types including HNSW, LSM, columnstore | ✅ Organized |
 | [**types/**](types/) | Data types | Types, domains, arrays, geometry, timezones | ✅ Organized |
 | [**query/**](query/) | Query optimization | Optimizer, planner | ✅ Organized |
 | [**sblr/**](sblr/) | Bytecode runtime | SBLR opcodes, BLR mapping, execution, performance (Alpha/Beta) | ✅ Organized |
@@ -130,7 +160,7 @@ All Alpha specifications have been **implemented and tested**:
 | Directory | Description | Files | Status |
 |-----------|-------------|-------|--------|
 | [**network/**](network/) | Network layer & wire protocols | Network layer, listener & parser pool (legacy Y-Valve term) | ✅ Organized |
-| [**wire_protocols/**](wire_protocols/) | Protocol specifications | TDS (post-gold) and other protocols | ✅ Active |
+| [**wire_protocols/**](wire_protocols/) | Protocol specifications | TDS (optional extension) and other protocols | ✅ Active |
 | [**api/**](api/) | Client APIs | Client library API, connection pooling | ✅ Organized |
 
 Key network specs:
@@ -150,15 +180,15 @@ Key network specs:
 | └─ [orms/](beta_requirements/orms-frameworks/) | ORM frameworks | 12 ORM integrations | ✅ Specified |
 | └─ [tools/](beta_requirements/tools/) | Database tools | DBeaver, pgAdmin, etc. | ✅ Specified |
 | └─ [cloud/](beta_requirements/cloud-container/) | Cloud deployment | Docker, K8s, Helm | ✅ Specified |
-| └─ [optional/](beta_requirements/optional/) | Optional beta engine features | Storage encoding optimizations | ✅ Draft |
-| └─ [nosql/](beta_requirements/nosql/) | NoSQL storage structures | Model gap report | ✅ Draft |
-| └─ [indexes/](beta_requirements/indexes/) | Beta index pointers | Canonical index specs | ✅ Draft |
+| └─ [optional/](beta_requirements/optional/) | Optional beta engine features | Storage encoding optimizations | ✅ Optional |
+| └─ [nosql/](beta_requirements/nosql/) | NoSQL storage structures | Model gap report | ✅ Authoritative (V3) |
+| └─ [indexes/](beta_requirements/indexes/) | Beta index pointers | Canonical index specs | ✅ Authoritative (V3) |
 
 ### Additional Subsystems
 
 | Directory | Description | Files | Status |
 |-----------|-------------|-------|--------|
-| [**alpha_requirements/optional/**](alpha_requirements/optional/) | Optional Alpha engine features | Optional alpha specs | ✅ Draft |
+| [**alpha_requirements/optional/**](alpha_requirements/optional/) | Optional Alpha engine features | Optional specs | ✅ Optional |
 | [**replication/**](beta_requirements/replication/) | Replication protocols | Replication, shadow protocols, optional write-after log | ✅ Organized |
 | [**compression/**](compression/) | Compression framework | Compression specifications | ✅ Organized |
 | [**udr/**](udr/) | User-Defined Resources | UDR system specification | ✅ Organized |
@@ -167,7 +197,7 @@ Key network specs:
 | [**operations/**](operations/) | Operations & monitoring | Prometheus metrics + listener/pool metrics | ✅ Organized |
 | [**admin/**](admin/) | Administration tools | CLI administration + sb_server network CLI | ✅ Organized |
 | [**deployment/**](deployment/) | Deployment | systemd service specification | ✅ Organized |
-| [**testing/**](testing/) | Test plans | Alpha 3 test plan | ✅ Organized |
+| [**testing/**](testing/) | Test plans and Test Server | Alpha 3 test plan, **[Test Server](testing/test_server/)** with security testing | ✅ Organized |
 
 ### User-Defined Resources
 
@@ -267,12 +297,13 @@ Data Manipulation Language specifications:
 Multi-Generational Architecture (MGA) and transaction management:
 
 **Core Specifications:**
-- [TRANSACTION_MAIN.md](transaction/TRANSACTION_MAIN.md) (741 lines) - Main transaction spec
-- [TRANSACTION_MGA_CORE.md](transaction/TRANSACTION_MGA_CORE.md) (1,059 lines) - MGA implementation
-- [TRANSACTION_LOCK_MANAGER.md](transaction/TRANSACTION_LOCK_MANAGER.md) (1,120 lines) - Lock management
-- [TRANSACTION_DISTRIBUTED.md](transaction/TRANSACTION_DISTRIBUTED.md) (1,136 lines) - Distributed transactions
-- [MGA_IMPLEMENTATION.md](storage/MGA_IMPLEMENTATION.md) (1,024 lines) - MGA details
-- [07_TRANSACTION_AND_SESSION_CONTROL.md](transaction/07_TRANSACTION_AND_SESSION_CONTROL.md) (181 lines) - Session control
+- [TRANSACTION_MAIN.md](transaction/TRANSACTION_MAIN.md) - Main transaction spec
+- [TRANSACTION_MGA_CORE.md](transaction/TRANSACTION_MGA_CORE.md) - MGA implementation (Firebird model)
+- [TRANSACTION_LOCK_MANAGER.md](transaction/TRANSACTION_LOCK_MANAGER.md) - Lock management (Firebird model)
+- [TRANSACTION_DISTRIBUTED.md](transaction/TRANSACTION_DISTRIBUTED.md) - Distributed transactions
+- [MGA_IMPLEMENTATION.md](storage/MGA_IMPLEMENTATION.md) - MGA details (storage layer)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](transaction/FIREBIRD_CONSTANTS_REFERENCE.md) - Canonical constants and defaults
+- [07_TRANSACTION_AND_SESSION_CONTROL.md](transaction/07_TRANSACTION_AND_SESSION_CONTROL.md) - Session control
 
 **Reference:**
 - [FIREBIRD_TRANSACTION_MODEL_SPEC.md](sblr/FIREBIRD_TRANSACTION_MODEL_SPEC.md) (1,570 lines) - Firebird reference
@@ -307,7 +338,7 @@ Storage layer and buffer management:
 
 ### Index System
 
-11 index types and index infrastructure:
+28 core index types and index infrastructure:
 
 **Core Infrastructure:**
 - [INDEX_ARCHITECTURE.md](indexes/INDEX_ARCHITECTURE.md) (983 lines) - Index architecture
@@ -371,7 +402,7 @@ Authentication frameworks and methods:
 Durability and replication:
 
 - [BACKUP_AND_RESTORE.md](BACKUP_AND_RESTORE.md) (72 lines) - ⚠️ Needs major expansion
-- [WAL_IMPLEMENTATION.md](beta_requirements/replication/WAL_IMPLEMENTATION.md) (79 lines) - Optional write-after log (post-gold)
+- [WAL_IMPLEMENTATION.md](beta_requirements/replication/WAL_IMPLEMENTATION.md) (79 lines) - Optional write-after log (optional extension)
 - [REPLICATION_AND_SHADOW_PROTOCOLS.md](beta_requirements/replication/REPLICATION_AND_SHADOW_PROTOCOLS.md) (589 lines) - Replication
 
 ### Special Features
@@ -407,9 +438,21 @@ Deployment and operations:
 
 - [SYSTEMD_SERVICE_SPECIFICATION.md](deployment/SYSTEMD_SERVICE_SPECIFICATION.md) (2,127 lines) - systemd integration
 - [INSTALLATION_AND_BUILD_SPECIFICATION.md](deployment/INSTALLATION_AND_BUILD_SPECIFICATION.md) - install/build methods
+- [INSTALLATION_AND_INITIALIZATION_SPECIFICATION.md](INSTALLATION_AND_INITIALIZATION_SPECIFICATION.md) - **NEW** - Complete installation flow with TLS/certificates
 - [WINDOWS_CROSS_COMPILE_SPECIFICATION.md](deployment/WINDOWS_CROSS_COMPILE_SPECIFICATION.md) - Windows cross-compile
 - [INSTALLER_FEATURES_AND_CONFIG_GENERATOR.md](deployment/INSTALLER_FEATURES_AND_CONFIG_GENERATOR.md) - installer features + config wizard
 - [ALPHA3_TEST_PLAN.md](testing/ALPHA3_TEST_PLAN.md) (727 lines) - Test planning
+
+### Server Architecture
+
+End-to-end server architecture and connection lifecycle:
+
+- [SCRATCHBIRD_ARCHITECTURE_OVERVIEW.md](SCRATCHBIRD_ARCHITECTURE_OVERVIEW.md) - **NEW** - Visual architecture diagrams and system overview
+- [SERVER_ARCHITECTURE_AND_CONNECTION_LIFECYCLE.md](SERVER_ARCHITECTURE_AND_CONNECTION_LIFECYCLE.md) - **NEW** - Complete server flow from installation to session
+- [SERVER_LIFECYCLE_AND_STARTUP_SPECIFICATION.md](SERVER_LIFECYCLE_AND_STARTUP_SPECIFICATION.md) - **NEW** - Server startup/shutdown phases and parser lifecycle
+- [DATABASE_REGISTRY_SPECIFICATION_CORRECTED.md](DATABASE_REGISTRY_SPECIFICATION_CORRECTED.md) - **NEW** - Database registry (JSONB format - **correction from SQLite**)
+- ~~[DATABASE_REGISTRY_SPECIFICATION.md](DATABASE_REGISTRY_SPECIFICATION.md)~~ - **DEPRECATED** - Incorrect SQLite version
+- [ARCHITECTURE_CLARIFICATIONS.md](ARCHITECTURE_CLARIFICATIONS.md) - **NEW** - Critical design clarifications (parser separation, lock manager)
 
 ### Architecture
 
@@ -443,12 +486,20 @@ Core architecture documents:
    - [../../IMPLEMENTATION_STANDARDS.md](../../IMPLEMENTATION_STANDARDS.md) - Implementation requirements
    - [EMULATED_DATABASE_PARSER_SPECIFICATION.md](parser/EMULATED_DATABASE_PARSER_SPECIFICATION.md) - Parser architecture
 
-2. **Core Engine** (Read in Order)
+2. **Server Architecture** (Read First for Big Picture)
+   - [ARCHITECTURE_CLARIFICATIONS.md](ARCHITECTURE_CLARIFICATIONS.md) - **NEW** - **START HERE** - Critical design clarifications
+   - [SCRATCHBIRD_ARCHITECTURE_OVERVIEW.md](SCRATCHBIRD_ARCHITECTURE_OVERVIEW.md) - **NEW** - Visual architecture diagrams
+   - [SERVER_ARCHITECTURE_AND_CONNECTION_LIFECYCLE.md](SERVER_ARCHITECTURE_AND_CONNECTION_LIFECYCLE.md) - **NEW** - Complete server flow
+   - [SERVER_LIFECYCLE_AND_STARTUP_SPECIFICATION.md](SERVER_LIFECYCLE_AND_STARTUP_SPECIFICATION.md) - **NEW** - Startup/shutdown phases
+   - [DATABASE_REGISTRY_SPECIFICATION_CORRECTED.md](DATABASE_REGISTRY_SPECIFICATION_CORRECTED.md) - **NEW** - Database registry (JSONB format)
+   - [INSTALLATION_AND_INITIALIZATION_SPECIFICATION.md](INSTALLATION_AND_INITIALIZATION_SPECIFICATION.md) - **NEW** - Installation & TLS setup
+
+3. **Core Engine** (Read in Order)
    - [TRANSACTION_MAIN.md](transaction/TRANSACTION_MAIN.md) → [TRANSACTION_MGA_CORE.md](transaction/TRANSACTION_MGA_CORE.md)
    - [STORAGE_ENGINE_MAIN.md](storage/STORAGE_ENGINE_MAIN.md) → [STORAGE_ENGINE_BUFFER_POOL.md](storage/STORAGE_ENGINE_BUFFER_POOL.md)
    - [INDEX_ARCHITECTURE.md](indexes/INDEX_ARCHITECTURE.md) → [INDEX_IMPLEMENTATION_GUIDE.md](indexes/INDEX_IMPLEMENTATION_GUIDE.md)
 
-3. **SQL Layer** (Read in Order)
+4. **SQL Layer** (Read in Order)
    - [SCRATCHBIRD_SQL_COMPLETE_BNF.md](parser/SCRATCHBIRD_SQL_COMPLETE_BNF.md)
    - [02_DDL_STATEMENTS_OVERVIEW.md](ddl/02_DDL_STATEMENTS_OVERVIEW.md)
    - [04_DML_STATEMENTS_OVERVIEW.md](dml/04_DML_STATEMENTS_OVERVIEW.md)
@@ -529,5 +580,5 @@ See [SPECIFICATIONS_REORGANIZATION_ANALYSIS.md](../SPECIFICATIONS_REORGANIZATION
 ---
 
 **Maintained by:** ScratchBird Development Team
-**Last Updated:** January 2026
-**Total Specifications:** 350+ documents
+**Last Updated:** February 7, 2026
+**Total Specifications:** 354+ documents

@@ -40,7 +40,7 @@
 **Drivers:** `cpp`, `dart`, `r`, `swift`  
 **Integrations:** `scratchbird-superset-driver`
 
-### Post-Gold (P3) Track
+### optional extension (P3) Track
 
 **Drivers:** `elixir`  
 **Integrations:** none yet
@@ -238,7 +238,7 @@ The following P0 items are critical for Beta release:
 ### Before Beta Release
 - All P0 items must be **Complete** ✅
 - All P1 items should be at least **Partial** 🚧
-- P2 items are post-Beta
+- P2 items are optional extension
 
 ---
 

@@ -26,7 +26,7 @@ This spec ties into:
 
 ## 3. Goals
 - Scale **horizontally** by adding/removing nodes without downtime.
-- Support **vertical scaling** via planned node upgrades.
+- Support **vertical scaling** via required node upgrades.
 - Preserve quorum, security bundle integrity, and shard replication factor.
 - Avoid disruptive oscillation with cooldown and stability guards.
 

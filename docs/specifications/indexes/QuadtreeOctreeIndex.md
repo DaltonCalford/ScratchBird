@@ -1,10 +1,19 @@
 # Quadtree / Octree Index Specification for ScratchBird
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 **Version:** 1.0
 **Date:** January 22, 2026
 **Status:** Implementation Ready
 **Author:** ScratchBird Architecture Team
-**Target:** ScratchBird Beta (Optional Index Type)
+**Target:** ScratchBird Beta (Core Index Type)
 **Features:** Page-size agnostic, MGA compliant, hierarchical spatial tree
 
 ---
@@ -43,6 +52,55 @@ Quadtree and Octree indexes partition space into hierarchical cells. Quadtrees a
 
 ---
 
+## Authoritative Algorithm (Normative, 2026-02-07)
+
+This section is the implementation source of truth. If any other section in
+this document conflicts with the steps below, this section wins.
+
+### Node Layout
+
+- Each node stores a bounding box `(min, max)` and either:
+  - child pointers (internal), or  
+  - a list of `(bbox, tid)` entries (leaf).  
+
+### Insert
+
+1. Compute the geometry bounding box.  
+2. Descend from root:
+   - If current node is leaf and capacity not exceeded, insert entry.  
+   - If capacity exceeded and depth < max, split into 4 (quadtree) or 8 (octree).  
+3. On split:
+   - Partition entries into child nodes based on bbox overlap.  
+   - If an entry overlaps multiple children, store at current node or duplicate (choose policy and enforce).  
+
+### Query (Range/Intersection)
+
+1. Given query bbox `Q`, start at root.  
+2. If node bbox does not intersect `Q`, prune.  
+3. If leaf, test all entries for intersection.  
+4. If internal, recurse into children that intersect `Q`.
+
+### Delete
+
+1. Locate entry by bbox and tid.  
+2. Remove from leaf.  
+3. If total entries across children fall below merge threshold, collapse children into parent.
+
+### MGA / Versioning
+
+- Entries are versioned like any other index.  
+- Visibility filtered on read; GC removes obsolete versions.
+
+### Complexity Targets
+
+- Insert/query: `O(log N)` average, worst‑case `O(N)` for pathological distributions.  
+
+### References (for algorithmic definitions)
+
+- Quadtree and Octree algorithm definitions (standard spatial indexing).  
+
+---
+
 ## Architecture Decision
 
 ### Design Choice
@@ -66,7 +124,7 @@ A leaf splits when it exceeds capacity or max depth is reached.
 ### Node Types
 
 - **Internal node:** has 4 (quadtree) or 8 (octree) children
-- **Leaf node:** stores entries with bounding boxes and TIDs
+- **Leaf node:** stores entries with bounding boxes and record UUIDs
 
 ### Split Policy
 
@@ -79,90 +137,57 @@ A leaf splits when it exceeds capacity or max depth is reached.
 
 ### Meta Page
 
-```cpp
-#pragma pack(push, 1)
 
-enum SBTreeDim : uint8_t {
-    TREE_DIM_2D = 2,
-    TREE_DIM_3D = 3
-};
+**Logical Fields:**
 
-struct SBQuadTreeMetaPage {
-    PageHeader qt_header;
+- `qt_header` (PageHeader)
+- `qt_index_uuid[16]` (uint8_t)
+- `qt_table_uuid[16]` (uint8_t)
+- `qt_dimensions` (uint8_t): 2 or 3
+- `qt_max_depth` (uint8_t): 1..32
+- `qt_node_capacity` (uint16_t): leaf capacity
+- `qt_min_bounds[3]` (double): min XYZ
+- `qt_max_bounds[3]` (double): max XYZ
+- `qt_root_page` (uint32_t): root node page
+- `qt_reserved1` (uint32_t)
+- `qt_total_nodes` (uint64_t)
+- `qt_total_entries` (uint64_t)
+- `qt_total_splits` (uint64_t)
+- `qt_reserved2` (uint64_t)
+- `qt_padding[]` (uint8_t)
 
-    uint8_t qt_index_uuid[16];
-    uint8_t qt_table_uuid[16];
-
-    uint8_t qt_dimensions;        // 2 or 3
-    uint8_t qt_max_depth;         // 1..32
-    uint16_t qt_node_capacity;    // leaf capacity
-
-    double qt_min_bounds[3];      // min XYZ
-    double qt_max_bounds[3];      // max XYZ
-
-    uint32_t qt_root_page;        // root node page
-    uint32_t qt_reserved1;
-
-    uint64_t qt_total_nodes;
-    uint64_t qt_total_entries;
-    uint64_t qt_total_splits;
-    uint64_t qt_reserved2;
-
-    uint8_t qt_padding[];
-} __attribute__((packed));
-
-#pragma pack(pop)
-```
 
 ### Node Page (Internal)
 
-```cpp
-#pragma pack(push, 1)
 
-struct SBQuadNodeInternal {
-    PageHeader qn_header;
+**Logical Fields:**
 
-    uint8_t qn_level;             // depth
-    uint8_t qn_is_leaf;           // 0
-    uint16_t qn_child_count;      // 4 or 8
+- `qn_header` (PageHeader)
+- `qn_level` (uint8_t): depth
+- `qn_is_leaf` (uint8_t): 0
+- `qn_child_count` (uint16_t): 4 or 8
+- `qn_min_bounds[3]` (double)
+- `qn_max_bounds[3]` (double)
+- `qn_children[8]` (uint32_t): child page IDs (unused set to 0)
+- `qn_padding[]` (uint8_t)
 
-    double qn_min_bounds[3];
-    double qn_max_bounds[3];
-
-    uint32_t qn_children[8];      // child page IDs (unused set to 0)
-
-    uint8_t qn_padding[];
-} __attribute__((packed));
-
-#pragma pack(pop)
-```
 
 ### Node Page (Leaf)
 
-```cpp
-#pragma pack(push, 1)
 
-struct SBQuadLeafEntry {
-    double min_bounds[3];
-    double max_bounds[3];
-    TID tid;
-};
+**Logical Fields:**
 
-struct SBQuadNodeLeaf {
-    PageHeader ql_header;
+- `min_bounds[3]` (double)
+- `max_bounds[3]` (double)
+- `record_uuid` (UUID)
+- `ql_header` (PageHeader)
+- `ql_level` (uint8_t)
+- `ql_is_leaf` (uint8_t): 1
+- `ql_entry_count` (uint16_t)
+- `ql_min_bounds[3]` (double)
+- `ql_max_bounds[3]` (double)
+- `ql_entries[]` (SBQuadLeafEntry)
 
-    uint8_t ql_level;
-    uint8_t ql_is_leaf;           // 1
-    uint16_t ql_entry_count;
-
-    double ql_min_bounds[3];
-    double ql_max_bounds[3];
-
-    SBQuadLeafEntry ql_entries[];
-} __attribute__((packed));
-
-#pragma pack(pop)
-```
 
 ---
 
@@ -176,7 +201,7 @@ struct SBQuadNodeLeaf {
 
 ## MGA Compliance
 
-- Entries store TID and use standard visibility rules
+- Entries store record UUIDs and use MGA visibility rules
 - Deletes create tombstones or removal entries per MGA rules
 - Split operations are transactional; new nodes use transaction stamps
 
@@ -185,8 +210,8 @@ struct SBQuadNodeLeaf {
 ## Core API
 
 ```cpp
-Status qt_insert(UUID index_uuid, const BoundingBox* box, TID tid);
-Status qt_delete(UUID index_uuid, const BoundingBox* box, TID tid);
+Status qt_insert(UUID index_uuid, const BoundingBox* box, UUID record_uuid);
+Status qt_delete(UUID index_uuid, const BoundingBox* box, UUID record_uuid);
 IndexScan qt_intersect_scan(UUID index_uuid, const BoundingBox* query);
 ```
 
@@ -204,11 +229,11 @@ IndexScan qt_intersect_scan(UUID index_uuid, const BoundingBox* query);
 
 Quadtree/Octree indexes implement `IndexGCInterface`:
 
-TID references use `TID { gpid, slot }`. Legacy packed TID encodings are
+Record locators use `record_uuid` with optional `SBRecordPtr` cache hints. Legacy packed TIDs are
 not permitted in v2 on-disk formats.
 
 - `removeDeadEntries()` scans leaf node entry lists and removes any entry
-  whose TID is dead.
+  whose `record_uuid` is dead.
 - After removal, leaf nodes that drop below the merge threshold are merged
   with siblings when possible.
 - Internal node bounding boxes are recalculated as children shrink.
@@ -216,7 +241,7 @@ not permitted in v2 on-disk formats.
 Concurrency:
 
 - GC holds write locks on modified nodes; readers use shared locks.
-- No movement of live TIDs; only removal and optional node merge.
+- No movement of live entries; only removal and optional node merge.
 
 See `INDEX_GC_PROTOCOL.md` for the shared GC contract.
 
@@ -284,3 +309,9 @@ WITH (max_depth = 10, node_capacity = 64);
 - R-tree hybrid for dense datasets
 - Bulk-load mode for large imports
 - Adaptive split policy based on density
+
+## See Also
+
+- `INDEX_IMPLEMENTATION_REFERENCE.md` — authoritative algorithm map (includes per-index specs).
+- `INDEX_IMPLEMENTATION_SPEC.md` — global MGA/UUID requirements.
+- `INDEX_GC_PROTOCOL.md` — index GC contract.

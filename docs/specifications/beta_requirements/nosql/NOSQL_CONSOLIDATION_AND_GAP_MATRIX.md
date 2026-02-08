@@ -1,6 +1,13 @@
 # NoSQL Consolidation and ScratchBird Gap Matrix
 
-**Status:** Draft (Beta)
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+**Status:** Authoritative (V3)
 
 ## 1. Purpose
 
@@ -50,7 +57,7 @@ built.
 | MongoDB MQL | JSON filter, update ops, aggregation pipeline | JSON/JSONB + parser layer | Aggregation pipeline operators, array semantics, missing vs null | P0 |
 | CouchDB Mango | Selector, index hints, pagination | JSON/JSONB + JSON path index (Beta) | Mango selector semantics, index planner | P1 |
 | Couchbase N1QL | SQL++ with UNNEST, USE KEYS, META() | SQL parser + JSON_TABLE | Missing vs null semantics, META fields, UNNEST/NEST support | P1 |
-| ArangoDB AQL | Pipeline, graph traversal | SQL + graph storage (planned) | Graph catalogs, traversal engine | P2 |
+| ArangoDB AQL | Pipeline, graph traversal | SQL + graph storage (required) | Graph catalogs, traversal engine | P2 |
 | Redis RESP | RESP framing, command set | Network listener + KV storage | RESP protocol adapter, KV buckets, TTL | P0 |
 | Cassandra CQL | Partition key, TTL, clustering | LSM + catalog schema | Column-family metadata, per-cell TTL, compaction policies | P1 |
 | HBase Shell | Admin + scan filters | Storage + admin DDL | Filter language, HBase-style scans | P2 |

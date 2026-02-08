@@ -1,6 +1,5 @@
 # OID Mapping Strategy (PostgreSQL Emulation)
-
-**Status:** Draft (Alpha)
+**Status:** Authoritative (V3)
 **Last Updated:** 2026-01-20
 **Scope:** PostgreSQL OID mapping for emulated system views and catalogs
 
@@ -107,6 +106,6 @@ See `MONITORING_DIALECT_MAPPINGS.md` for per-column mapping.
 
 ## 9) Related Specifications
 
-- `docs/specifications/operations/MONITORING_DIALECT_MAPPINGS.md`
-- `docs/specifications/catalog/SYSTEM_CATALOG_STRUCTURE.md`
-- `docs/specifications/parser/POSTGRESQL_PARSER_SPECIFICATION.md`
+- `docs/specifications/parser/v3/operations/MONITORING_DIALECT_MAPPINGS.md`
+- `docs/specifications/parser/v3/catalog/SYSTEM_CATALOG_STRUCTURE.md`
+- `docs/specifications/parser/v3/parser/POSTGRESQL_PARSER_SPECIFICATION.md`

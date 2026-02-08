@@ -1,6 +1,5 @@
 # EXTRACT and ALTER_ELEMENT (Component Access and Update)
-
-Status: Draft (Target). This specification defines the component model used by EXTRACT and ALTER_ELEMENT so every data type has a clear list of extractable elements and alterable elements.
+Status: Authoritative (V3)
 
 ## Goals
 - Provide a single, consistent component vocabulary across all data types.

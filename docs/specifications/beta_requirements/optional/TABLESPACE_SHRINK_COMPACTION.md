@@ -1,5 +1,14 @@
 # Optional Beta Specification: Tablespace Shrink and Compaction
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 Status: Optional Beta  
 Last Updated: January 2026
 
@@ -78,7 +87,7 @@ Use existing migration views and metrics:
 - `sys.tablespace_migrations` (per-table state)
 - `sys.tablespace_migration_progress` (if defined)
 - Prometheus tablespace migration metrics in
-  `docs/specifications/operations/PROMETHEUS_METRICS_REFERENCE.md`
+  `docs/specifications/parser/v3/operations/PROMETHEUS_METRICS_REFERENCE.md`
 
 **Optional aggregate:** provide a tablespace-level summary by aggregating
 per-table rows for a given tablespace ID.
@@ -95,7 +104,7 @@ Requires admin or tablespace owner privileges.
 
 ## 10. Related Specifications
 
-- `docs/specifications/storage/TABLESPACE_ONLINE_MIGRATION.md`
-- `docs/specifications/storage/TABLESPACE_SPECIFICATION.md`
-- `docs/specifications/operations/MONITORING_SQL_VIEWS.md`
-- `docs/specifications/operations/PROMETHEUS_METRICS_REFERENCE.md`
+- `docs/specifications/parser/v3/storage/TABLESPACE_ONLINE_MIGRATION.md`
+- `docs/specifications/parser/v3/storage/TABLESPACE_SPECIFICATION.md`
+- `docs/specifications/parser/v3/operations/MONITORING_SQL_VIEWS.md`
+- `docs/specifications/parser/v3/operations/PROMETHEUS_METRICS_REFERENCE.md`

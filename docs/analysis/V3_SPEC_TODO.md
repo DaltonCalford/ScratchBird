@@ -1,0 +1,160 @@
+# V3 Spec Comparison TODO
+
+Date: 2026-02-08
+
+Each item will be marked as Done after a spec-by-spec comparison against implementation.
+
+- [x] `/docs/specifications/parser/v3/server/SCRATCHBIRD_ARCHITECTURE_OVERVIEW.md`
+- [x] `/docs/specifications/parser/v3/server/SCRATCHBIRD_SERVER_ARCHITECTURE_CONSOLIDATED.md`
+- [x] `/docs/specifications/parser/v3/server/SERVER_ARCHITECTURE_AND_CONNECTION_LIFECYCLE.md`
+- [x] `/docs/specifications/parser/v3/server/SERVER_LIFECYCLE_AND_STARTUP_SPECIFICATION.md`
+- [x] `/docs/specifications/parser/v3/server/ARCHITECTURE_CLARIFICATIONS.md`
+- [x] `/docs/specifications/parser/v3/server/MEMORY_MANAGEMENT.md`
+- [x] `/docs/specifications/parser/v3/server/SCRATCHBIRD_CONNECTION_RECOVERY_MODEL.md`
+- [x] `/docs/specifications/parser/v3/server/SCRATCHBIRD_EMBEDDED_MODE_SPECIFICATION.md`
+- [x] `/docs/specifications/parser/v3/README.md`
+- [x] `/docs/specifications/parser/v3/IMPLEMENTATION_SAFETY_SUMMARY.md`
+- [x] `/docs/specifications/parser/v3/AST_TYPE_AND_LITERAL_SPEC.md`
+- [x] `/docs/specifications/parser/v3/SBLR_V3_OPCODE_SPEC.md`
+- [x] `/docs/specifications/parser/v3/SBLR_V3_OPCODE_PAYLOADS.md`
+- [x] `/docs/specifications/parser/v3/SBLR_V3_OPCODE_SEMANTICS.md`
+- [x] `/docs/specifications/parser/v3/SBLR_V3_BYTECODE_CONTAINER.md`
+- [x] `/docs/specifications/parser/v3/SBLR_V3_CONSTANT_POOL_AND_SYMBOLS.md`
+- [x] `/docs/specifications/parser/v3/SBLR_V3_VALIDATION_RULES.md`
+- [x] `/docs/specifications/parser/v3/SBLR_V3_BYTECODE_CANONICALIZATION.md`
+- [x] `/docs/specifications/parser/v3/EXECUTOR_V3_SBLR.md`
+- [x] `/docs/specifications/parser/v3/EXECUTOR_V3_SQL_ENGINE.md`
+- [x] `/docs/specifications/parser/v3/EXECUTOR_LOCK_GC_CONSTRAINT_MATRIX.md`
+- [x] `/docs/specifications/parser/v3/PSQL_RUNTIME_V3.md`
+- [x] `/docs/specifications/parser/v3/V3_SINGLE_PATH_IMPLEMENTATION_GUIDE.md`
+- [x] `/docs/specifications/parser/v3/catalog/SYSTEM_CATALOG_DDL_SBDB.md`
+- [x] `/docs/specifications/parser/v3/catalog/SYSTEM_CATALOG_STRUCTURE.md`
+- [x] `/docs/specifications/parser/v3/catalog/SYSTEM_CATALOG_DOMAIN_MAP.md`
+- [x] `/docs/specifications/parser/v3/catalog/SCHEMA_PATH_RESOLUTION.md`
+- [x] `/docs/specifications/parser/v3/catalog/SCHEMA_PATH_SECURITY_DEFAULTS.md`
+- [x] `/docs/specifications/parser/v3/catalog/UUID_LIFECYCLE_RULES.md`
+- [x] `/docs/specifications/parser/v3/types/README.md`
+- [x] `/docs/specifications/parser/v3/types/03_TYPES_AND_DOMAINS.md`
+- [x] `/docs/specifications/parser/v3/types/DATA_TYPE_PERSISTENCE_AND_CASTS.md`
+- [x] `/docs/specifications/parser/v3/types/BINARY_LAYOUT_ANNEX.md`
+- [x] `/docs/specifications/parser/v3/types/SBLR_TYPE_MAP.md`
+- [x] `/docs/specifications/parser/v3/storage/ON_DISK_FORMAT.md`
+- [x] `/docs/specifications/parser/v3/storage/STORAGE_ENGINE_PAGE_MANAGEMENT.md`
+- [x] `/docs/specifications/parser/v3/storage/STORAGE_ENGINE_BUFFER_POOL.md`
+- [x] `/docs/specifications/parser/v3/storage/TOAST_LOB_STORAGE.md`
+- [x] `/docs/specifications/parser/v3/storage/HEAP_TOAST_INTEGRATION.md`
+- [x] `/docs/specifications/parser/v3/transaction/TRANSACTION_MAIN.md`
+- [x] `/docs/specifications/parser/v3/transaction/TRANSACTION_LOCK_MANAGER.md`
+- [x] `/docs/specifications/parser/v3/transaction/TRANSACTION_MGA_CORE.md`
+- [x] `/docs/specifications/parser/v3/indexes/INDEX_ARCHITECTURE.md`
+- [x] `/docs/specifications/parser/v3/indexes/INDEX_IMPLEMENTATION_SPEC.md`
+- [x] `/docs/specifications/parser/v3/indexes/INDEX_GC_PROTOCOL.md`
+- [x] `/docs/specifications/parser/v3/indexes/AdvancedIndexes.md`
+- [x] `/docs/specifications/parser/v3/server/SCRATCHBIRD_SECURITY_AND_ACCESS_MODEL.md`
+- [x] `/docs/specifications/parser/v3/security/README.md`
+- [x] `/docs/specifications/parser/v3/network/README.md`
+- [x] `/docs/specifications/parser/v3/wire_protocols/README.md`
+- [x] `/docs/specifications/parser/v3/api/README.md`
+- [x] `/docs/specifications/parser/v3/scheduler/README.md`
+- [x] `/docs/specifications/parser/v3/scheduler/SCHEDULER_JOB_RUNNER_CANONICAL_SPEC.md`
+- [x] `/docs/specifications/parser/v3/operations/README.md`
+- [x] `/docs/specifications/parser/v3/operations/MONITORING_SQL_VIEWS.md`
+- [x] `/docs/specifications/parser/v3/operations/PROMETHEUS_METRICS_REFERENCE.md`
+- [x] `/docs/specifications/parser/v3/operations/MONITORING_DIALECT_MAPPINGS.md`
+- [x] `/docs/specifications/parser/v3/operations/LISTENER_POOL_METRICS.md`
+- [x] `/docs/specifications/parser/v3/operations/OID_MAPPING_STRATEGY.md`
+- [x] `/docs/specifications/parser/v3/sblr/SBLR_V3_BYTECODE_EXAMPLES.md`
+- [x] `/docs/specifications/parser/v3/sblr/SBLR_V3_TEST_VECTORS.md`
+- [x] `/docs/specifications/parser/v3/sblr/SBLR_V3_TEST_VECTORS_FULL.md`
+- [x] `/docs/specifications/parser/v3/PARSER_TO_SBLR_EMISSION_RULES.md`
+- [x] `/docs/specifications/parser/v3/PARSER_AMBIGUITY_RESOLUTION.md`
+- [x] `/docs/specifications/parser/v3/query/QUERY_OPTIMIZER_SPEC.md`
+- [x] `/docs/specifications/parser/v3/query/PARALLEL_EXECUTION_ARCHITECTURE.md`
+- [x] `/docs/specifications/parser/v3/PERFORMANCE_BENCHMARKS.md`
+- [x] `/docs/specifications/parser/v3/types/VALUE_SPEC_STORAGE_ENCODINGS.md`
+- [x] `/docs/specifications/parser/v3/findings/NO_GREY_AREAS_GATE.md`
+- [x] `/docs/specifications/parser/v3/findings/DIALECT_GAP_EXAMPLES.md`
+- [x] `/docs/specifications/parser/v3/server/BACKUP_AND_RESTORE.md`
+- [x] `/docs/specifications/parser/v3/deployment/README.md`
+- [x] `/docs/specifications/parser/v3/server/INSTALLATION_AND_INITIALIZATION_SPECIFICATION.md`
+- [x] `/docs/specifications/parser/v3/tools/README.md`
+- [x] `/docs/specifications/parser/v3/tools/SB_BUILD_AND_TEST_CLI_SPEC.md`
+- [x] `/docs/specifications/parser/v3/testing/README.md`
+- [x] `/docs/specifications/parser/v3/testing/DIALECT_CONFORMANCE_ASSERTIONS.md`
+- [x] `/docs/specifications/parser/v3/server/DATABASE_REGISTRY_SPECIFICATION_CORRECTED.md`
+- [x] `/docs/specifications/parser/v3/ACCESS_CONTROL.md`
+- [x] `/docs/specifications/parser/v3/AUTHORITATIVE_SPEC_INVENTORY.md`
+- [x] `/docs/specifications/parser/v3/BETA_SQL2023_IMPLEMENTATION_SPECIFICATION.md`
+- [x] `/docs/specifications/parser/v3/DDL_ALTER.md`
+- [x] `/docs/specifications/parser/v3/DDL_CREATE.md`
+- [x] `/docs/specifications/parser/v3/DDL_DROP_TRUNCATE.md`
+- [x] `/docs/specifications/parser/v3/DELETE.md`
+- [x] `/docs/specifications/parser/v3/INSERT.md`
+- [x] `/docs/specifications/parser/v3/JOINS.md`
+- [x] `/docs/specifications/parser/v3/MERGE.md`
+- [x] `/docs/specifications/parser/v3/PSQL_STATEMENTS.md`
+- [x] `/docs/specifications/parser/v3/SBLR_V3_OLD_TO_NEW_MAPPING.md`
+- [x] `/docs/specifications/parser/v3/SELECT_AND_QUERY.md`
+- [x] `/docs/specifications/parser/v3/SESSION_AND_UTILITY.md`
+- [x] `/docs/specifications/parser/v3/TRANSACTION_CONTROL.md`
+- [x] `/docs/specifications/parser/v3/UPDATE.md`
+- [x] `/docs/specifications/parser/v3/UTILITY_COPY.md`
+- [ ] `/docs/specifications/parser/v3/V3_SERVER_SPEC_INDEX.md`
+- [ ] `/docs/specifications/parser/v3/V3_ZERO_AMBIGUITY_BUILD_CHECKLIST.md`
+- [x] `/docs/specifications/parser/v3/WINDOWING.md`
+- [ ] `/docs/specifications/parser/v3/indexes/AdaptiveRadixTreeIndex.md`
+- [ ] `/docs/specifications/parser/v3/indexes/BITMAP_SPEC.md`
+- [ ] `/docs/specifications/parser/v3/indexes/BRIN_SPEC.md`
+- [ ] `/docs/specifications/parser/v3/indexes/BTREE_SPEC.md`
+- [ ] `/docs/specifications/parser/v3/indexes/BloomFilterIndex.md`
+- [ ] `/docs/specifications/parser/v3/indexes/COLUMNSTORE_SPEC.md`
+- [ ] `/docs/specifications/parser/v3/indexes/CountMinSketchIndex.md`
+- [ ] `/docs/specifications/parser/v3/indexes/FSTIndex.md`
+- [ ] `/docs/specifications/parser/v3/indexes/GIN_SPEC.md`
+- [ ] `/docs/specifications/parser/v3/indexes/GIST_SPEC.md`
+- [ ] `/docs/specifications/parser/v3/indexes/GeohashS2Index.md`
+- [ ] `/docs/specifications/parser/v3/indexes/HASH_SPEC.md`
+- [ ] `/docs/specifications/parser/v3/indexes/HNSW_SPEC.md`
+- [ ] `/docs/specifications/parser/v3/indexes/HyperLogLogIndex.md`
+- [ ] `/docs/specifications/parser/v3/indexes/INDEX_COMPLETION_CHECKLIST.md`
+- [ ] `/docs/specifications/parser/v3/indexes/INDEX_IMPLEMENTATION_GUIDE.md`
+- [ ] `/docs/specifications/parser/v3/indexes/INDEX_IMPLEMENTATION_REFERENCE.md`
+- [ ] `/docs/specifications/parser/v3/indexes/IVFIndex.md`
+- [ ] `/docs/specifications/parser/v3/indexes/InvertedIndex.md`
+- [ ] `/docs/specifications/parser/v3/indexes/JSONPathIndex.md`
+- [ ] `/docs/specifications/parser/v3/indexes/LOW_LEVEL_SPECIFICATION_GIN_INDEX.md`
+- [ ] `/docs/specifications/parser/v3/indexes/LSMTimeSeriesIndex.md`
+- [ ] `/docs/specifications/parser/v3/indexes/LSM_TREE_ARCHITECTURE.md`
+- [ ] `/docs/specifications/parser/v3/indexes/LSM_TREE_SPEC.md`
+- [ ] `/docs/specifications/parser/v3/indexes/LearnedIndex.md`
+- [ ] `/docs/specifications/parser/v3/indexes/QuadtreeOctreeIndex.md`
+- [ ] `/docs/specifications/parser/v3/indexes/README.md`
+- [ ] `/docs/specifications/parser/v3/indexes/RTREE_SPEC.md`
+- [ ] `/docs/specifications/parser/v3/indexes/SPGIST_SPEC.md`
+- [ ] `/docs/specifications/parser/v3/indexes/SuffixIndex.md`
+- [ ] `/docs/specifications/parser/v3/indexes/ZOrderIndex.md`
+- [ ] `/docs/specifications/parser/v3/indexes/ZoneMapsIndex.md`
+- [x] `/docs/specifications/parser/v3/network/CONTROL_PLANE_PROTOCOL_SPEC.md`
+- [x] `/docs/specifications/parser/v3/network/DIALECT_AUTH_MAPPING_SPEC.md`
+- [x] `/docs/specifications/parser/v3/network/ENGINE_PARSER_IPC_CONTRACT.md`
+- [x] `/docs/specifications/parser/v3/network/NETWORK_LAYER_SPEC.md`
+- [x] `/docs/specifications/parser/v3/network/NETWORK_LISTENER_AND_PARSER_POOL_SPEC.md`
+- [x] `/docs/specifications/parser/v3/network/PARSER_AGENT_SPEC.md`
+- [x] `/docs/specifications/parser/v3/network/WIRE_PROTOCOL_SPECIFICATIONS.md`
+- [ ] `/docs/specifications/parser/v3/network/Y_VALVE_DESIGN_PRINCIPLES.md`
+- [x] `/docs/specifications/parser/v3/parser/01_SQL_DIALECT_OVERVIEW.md`
+- [x] `/docs/specifications/parser/v3/parser/05_PSQL_PROCEDURAL_LANGUAGE.md`
+- [x] `/docs/specifications/parser/v3/parser/EMULATED_DATABASE_PARSER_SPECIFICATION.md`
+- [x] `/docs/specifications/parser/v3/parser/MYSQL_PARSER_SPECIFICATION.md`
+- [x] `/docs/specifications/parser/v3/parser/POSTGRESQL_PARSER_SPECIFICATION.md`
+- [x] `/docs/specifications/parser/v3/parser/SCRATCHBIRD_SQL_COMPLETE_BNF.md`
+- [x] `/docs/specifications/parser/v3/parser/SCRATCHBIRD_SQL_CORE_LANGUAGE.md`
+- [x] `/docs/specifications/parser/v3/parser/SCRATCHBIRD_UNIFIED_NOSQL_EXTENSIONS.md`
+- [x] `/docs/specifications/parser/v3/parser/ScratchBird Master Grammar Specification v2.0.md`
+- [x] `/docs/specifications/parser/v3/parser/ScratchBird SQL Language Specification - Master Document.md`
+- [ ] `/docs/specifications/parser/v3/storage/PAGE_TYPES_AND_LAYOUTS.md`
+- [ ] `/docs/specifications/parser/v3/transaction/07_TRANSACTION_AND_SESSION_CONTROL.md`
+- [ ] `/docs/specifications/parser/v3/transaction/FIREBIRD_CONSTANTS_REFERENCE.md`
+- [ ] `/docs/specifications/parser/v3/transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md`
+- [ ] `/docs/specifications/parser/v3/transaction/README.md`
+- [ ] `/docs/specifications/parser/v3/transaction/TRANSACTION_DISTRIBUTED.md`

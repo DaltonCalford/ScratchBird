@@ -1,6 +1,5 @@
 # Firebird Emulation Protocol Behavior Specification
-
-Status: Draft (Target). This document defines the server-side wire protocol
+Status: Authoritative (V3)
 behavior for the Firebird emulation listener. It is intended to be compatible
 with Firebird 5.0 for the covered features.
 

@@ -1,5 +1,14 @@
 # ScratchBird Parallel Execution Architecture (Beta)
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 **Status:** Beta specification (design complete; implementation pending)
 **Last Updated:** 2026-01-20
 **Scope:** Parallel query execution within a node and across cluster nodes
@@ -286,9 +295,8 @@ Optional per-statement hints (future):
 
 ## 16) Related Specifications
 
-- Query Optimizer: `docs/specifications/query/QUERY_OPTIMIZER_SPEC.md`
-- SBLR: `docs/specifications/sblr/README.md`
+- Query Optimizer: `docs/specifications/parser/v3/query/QUERY_OPTIMIZER_SPEC.md`
+- SBLR: `docs/specifications/parser/v3/SBLR_V3_OPCODE_SPEC.md`
 - Cluster Distributed Query: `docs/specifications/Cluster Specification Work/SBCLUSTER-06-DISTRIBUTED-QUERY.md`
-- Transactions: `docs/specifications/transaction/README.md`
-- Storage: `docs/specifications/storage/README.md`
-
+- Transactions: `docs/specifications/parser/v3/transaction/README.md`
+- Storage: `docs/specifications/parser/v3/storage/README.md`

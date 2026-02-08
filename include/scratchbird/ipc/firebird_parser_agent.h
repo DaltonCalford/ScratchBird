@@ -22,6 +22,7 @@
  */
 
 #include "scratchbird/ipc/parser_agent.h"
+#include "scratchbird/core/types.h"
 #include <atomic>
 
 namespace scratchbird {
@@ -30,7 +31,7 @@ namespace ipc {
 /**
  * Client state for Firebird protocol
  */
-struct ClientState {
+struct FBClientState {
     enum State {
         CONNECTING,
         CONNECTED,
@@ -100,17 +101,17 @@ public:
     /**
      * Handle op_connect/op_attach
      */
-    core::Status handleConnect(ClientState& state, core::ErrorContext* ctx);
+    core::Status handleConnect(FBClientState& state, core::ErrorContext* ctx);
     
     /**
      * Send op_accept response
      */
-    core::Status sendAccept(ClientState& state, core::ErrorContext* ctx);
+    core::Status sendAccept(FBClientState& state, core::ErrorContext* ctx);
     
     /**
      * Send op_reject
      */
-    void sendReject(ClientState& state, uint32_t error_code, 
+    void sendReject(FBClientState& state, uint32_t error_code, 
                    const std::string& message);
     
     // ========================================================================
@@ -120,34 +121,34 @@ public:
     /**
      * Read and dispatch an operation
      */
-    core::Status handleOperation(ClientState& state, core::ErrorContext* ctx);
+    core::Status handleOperation(FBClientState& state, core::ErrorContext* ctx);
     
     // Database operations
-    core::Status handleAttach(ClientState& state,
+    core::Status handleAttach(FBClientState& state,
                              const std::vector<uint8_t>& packet,
                              core::ErrorContext* ctx);
     
-    core::Status handleCreate(ClientState& state,
+    core::Status handleCreate(FBClientState& state,
                              const std::vector<uint8_t>& packet,
                              core::ErrorContext* ctx);
     
     core::Status handleDetach(core::ErrorContext* ctx);
     
     // Statement operations
-    core::Status handleCompile(ClientState& state,
+    core::Status handleCompile(FBClientState& state,
                               const std::vector<uint8_t>& packet,
                               core::ErrorContext* ctx);
     
-    core::Status handleStart(ClientState& state,
+    core::Status handleStart(FBClientState& state,
                             const std::vector<uint8_t>& packet,
                             bool want_response,
                             core::ErrorContext* ctx);
     
-    core::Status handleReceive(ClientState& state,
+    core::Status handleReceive(FBClientState& state,
                               const std::vector<uint8_t>& packet,
                               core::ErrorContext* ctx);
     
-    core::Status handleSend(ClientState& state,
+    core::Status handleSend(FBClientState& state,
                            const std::vector<uint8_t>& packet,
                            core::ErrorContext* ctx);
     
@@ -156,49 +157,49 @@ public:
     core::Status handleRelease(core::ErrorContext* ctx);
     
     // Transaction operations
-    core::Status handleTransaction(ClientState& state,
+    core::Status handleTransaction(FBClientState& state,
                                   const std::vector<uint8_t>& packet,
                                   core::ErrorContext* ctx);
     
-    core::Status handleCommit(ClientState& state,
+    core::Status handleCommit(FBClientState& state,
                              bool retaining,
                              core::ErrorContext* ctx);
     
-    core::Status handleRollback(ClientState& state,
+    core::Status handleRollback(FBClientState& state,
                                bool retaining,
                                core::ErrorContext* ctx);
     
     core::Status handlePrepare(core::ErrorContext* ctx);
     
     // Information operations
-    core::Status handleInfo(ClientState& state,
+    core::Status handleInfo(FBClientState& state,
                            const std::vector<uint8_t>& packet,
                            uint32_t op,
                            core::ErrorContext* ctx);
     
     // BLOB operations
-    core::Status handleBlobOpen(ClientState& state,
+    core::Status handleBlobOpen(FBClientState& state,
                                const std::vector<uint8_t>& packet,
                                bool create,
                                core::ErrorContext* ctx);
     
-    core::Status handleBlobGetSegment(ClientState& state,
+    core::Status handleBlobGetSegment(FBClientState& state,
                                      const std::vector<uint8_t>& packet,
                                      core::ErrorContext* ctx);
     
-    core::Status handleBlobPutSegment(ClientState& state,
+    core::Status handleBlobPutSegment(FBClientState& state,
                                      const std::vector<uint8_t>& packet,
                                      core::ErrorContext* ctx);
     
     core::Status handleBlobClose(core::ErrorContext* ctx, bool cancel);
     
     // Wire encryption
-    core::Status handleCrypt(ClientState& state,
+    core::Status handleCrypt(FBClientState& state,
                             const std::vector<uint8_t>& packet,
                             core::ErrorContext* ctx);
     
     // Authentication
-    core::Status handleAuthenticate(ClientState& state,
+    core::Status handleAuthenticate(FBClientState& state,
                                    const std::vector<uint8_t>& packet,
                                    core::ErrorContext* ctx);
     
@@ -209,7 +210,7 @@ public:
     /**
      * Send op_response
      */
-    void sendResponse(ClientState& state,
+    void sendResponse(FBClientState& state,
                      uint32_t handle,
                      uint32_t status_code,
                      const uint8_t* data,
@@ -219,7 +220,7 @@ public:
     /**
      * Send error response (status vector)
      */
-    core::Status sendErrorResponse(ClientState& state,
+    core::Status sendErrorResponse(FBClientState& state,
                                   const std::string& message);
     
     // ========================================================================
@@ -229,14 +230,14 @@ public:
     /**
      * Read an XDR packet (4-byte length prefix)
      */
-    core::Status readPacket(ClientState& state,
+    core::Status readPacket(FBClientState& state,
                            std::vector<uint8_t>& packet,
                            core::ErrorContext* ctx);
     
     /**
      * Send an XDR packet
      */
-    core::Status sendPacket(ClientState& state,
+    core::Status sendPacket(FBClientState& state,
                            const std::vector<uint8_t>& packet,
                            core::ErrorContext* ctx);
     

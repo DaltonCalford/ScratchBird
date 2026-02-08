@@ -4,8 +4,8 @@
 
 This guide covers deployment strategies for the distributed database system across different environments: cloud (AWS, GCP, Azure), self-hosted, and hybrid deployments. It includes infrastructure requirements, configuration examples, and operational procedures.
 
-**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional post-gold (replication/PITR).
-Any WAL references in this document describe an optional post-gold stream for
+**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional optional extension (replication/PITR).
+Any WAL references in this document describe an optional optional extension stream for
 replication/PITR only.
 
 ## Deployment Models
@@ -842,7 +842,7 @@ tx_engine:
   storage:
     data_dir: /var/lib/db/tx-engine
     retention_hours: 24
-    wal_dir: /var/lib/db/tx-engine/wal  # optional post-gold WAL only
+    wal_dir: /var/lib/db/tx-engine/wal  # optional optional extension WAL only
     checkpoint_interval_seconds: 300
   
   # Cache

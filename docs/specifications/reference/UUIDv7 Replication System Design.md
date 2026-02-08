@@ -1,5 +1,14 @@
 # **Title: The Unified Temporal Architecture: A Consensus-Based Design for UUIDv7-Native Distributed Replication**
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 ## **1\. Executive Summary: The "No Technical Debt" Paradigm**
 
 The database industry stands at a pivotal juncture in 2026\. For decades, the architectural consensus for distributed systems was shaped by constraints that no longer apply or have been superseded by superior algorithmic approaches. The design of a new, open-source distributed database offers a rare "greenfield" opportunity—a chance to eschew the accumulated technical debt of legacy systems like Cassandra (which struggled with tombstone management and repair storms) or early MongoDB (which grappled with global write locks).

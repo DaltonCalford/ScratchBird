@@ -1,4 +1,4 @@
-# Draft Security Architecture Specification
+# Security Architecture Specification (Archived)
 
 ## 1. Purpose and Scope
 This document defines a draft security architecture and policy framework for the database engine and its associated components. It is intended as a living specification that can be refined as security levels are implemented. The scope explicitly covers **server and cluster modes**; embedded mode is treated as a trusted-host scenario with limited security guarantees.
@@ -210,7 +210,7 @@ All objects participate in dependency tracking and authorization.
   - Effective roles
 - Logs are append-only and tamper-evident.
 
-## 16. Security Levels (Draft)
+## 16. Security Levels (Authoritative)
 
 - Level 0: Open / Development
 - Level 1: Authenticated Access Control
@@ -386,7 +386,7 @@ This appendix maps security requirements to recommended testing strategies.
 
 ---
 
-## Appendix D: Operational Security Runbooks (Draft)
+## Appendix D: Operational Security Runbooks (Authoritative)
 
 ### D.1 Cluster Authority Loss
 - Default behavior: fail closed in Level 6, configurable in lower levels
@@ -411,7 +411,7 @@ This appendix maps security requirements to recommended testing strategies.
 
 ---
 
-## Appendix E: Compliance and Control Mapping (Draft)
+## Appendix E: Compliance and Control Mapping (Authoritative)
 
 This appendix provides a conceptual mapping to common security control frameworks.
 
@@ -435,7 +435,7 @@ This mapping is illustrative and non-exhaustive.
 
 ---
 
-## Appendix F: Privilege Taxonomy and Capability Bundles (Draft)
+## Appendix F: Privilege Taxonomy and Capability Bundles (Authoritative)
 
 ### Appendix F.1 Capability Bundles
 
@@ -548,7 +548,7 @@ Restricted (R) grants are only valid if all conditions below are met; otherwise 
 
 ---
 
-## Appendix H: Break-Glass Lifecycle Specification (Draft)
+## Appendix H: Break-Glass Lifecycle Specification (Authoritative)
 
 Break-glass is an emergency authorization mechanism used to temporarily enable otherwise disallowed or highly restricted operations. It is intended for incident response and recovery, and must be designed to be difficult to misuse and easy to audit.
 
@@ -630,7 +630,7 @@ Audit records must include token UUID to enable complete reconstruction.
 
 ---
 
-## Appendix I: Formal Security Context Hash Definition (Draft)
+## Appendix I: Formal Security Context Hash Definition (Authoritative)
 
 This appendix defines the **Security Context Hash (SCH)** and related hashes used to key caches and approvals in a way that is correct and auditable.
 
@@ -864,7 +864,7 @@ Implementations can use this example as an interoperability test vector.
 
 ---
 
-## Appendix J: Quorum Rule Matrix (Draft)
+## Appendix J: Quorum Rule Matrix (Authoritative)
 
 This appendix defines recommended quorum and approval requirements for **Level 6** deployments. Lower levels may adopt these rules optionally.
 

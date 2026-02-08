@@ -22,13 +22,17 @@
 
 #include "scratchbird/ipc/ipc_server.h"
 #include "scratchbird/core/database.h"
+#include "scratchbird/sblr/opcodes.h"
 #include <shared_mutex>
+#include <vector>
+#include <string>
+#include <optional>
 
 namespace scratchbird {
 namespace ipc {
 
 // Forward declaration
-struct SessionState;
+struct EngineSessionState;
 struct PreparedStatement;
 struct Portal;
 
@@ -233,11 +237,60 @@ public:
 
 private:
     core::Database* database_;
-    std::unordered_map<uint32_t, std::unique_ptr<SessionState>> sessions_;
+    std::unordered_map<uint32_t, std::unique_ptr<EngineSessionState>> sessions_;
     mutable std::shared_mutex sessions_mutex_;
     
     // Helper methods
-    SessionState* getSession(uint32_t session_id);
+    EngineSessionState* getSession(uint32_t session_id);
+    
+    // COPY streaming helpers
+    core::Status processCopyDataStream(EngineSessionState* session,
+                                       const uint8_t* data, size_t len,
+                                       core::ErrorContext* ctx);
+    std::vector<std::optional<std::string>> parseCopyLine(const std::string& line);
+    std::string buildInsertStatement(const std::string& table_name,
+                                     const std::vector<std::string>& columns,
+                                     const std::vector<std::optional<std::string>>& values);
+    
+    // COPY bytecode generation (Option C - direct bytecode from CSV)
+    std::vector<uint8_t> generateCopyInsertBytecode(
+        const std::string& table_name,
+        const std::vector<std::string>& columns,
+        const std::vector<std::vector<std::optional<std::string>>>& rows);
+    
+    void emitBytecodeLiteral(std::vector<uint8_t>& bytecode, 
+                             const std::optional<std::string>& value);
+};
+
+/**
+ * COPY Bytecode Generator
+ * 
+ * Generates SBLR bytecode directly from CSV data without SQL parsing.
+ * This is the most efficient approach for bulk COPY operations.
+ */
+class CopyBytecodeGenerator {
+public:
+    /**
+     * Generate bytecode for a batch of INSERT operations
+     * 
+     * @param table_name Target table name
+     * @param columns Column names
+     * @param rows Vector of rows, each row is a vector of optional values
+     * @return SBLR bytecode ready for execution
+     */
+    static std::vector<uint8_t> generateInsertBytecode(
+        const std::string& table_name,
+        const std::vector<std::string>& columns,
+        const std::vector<std::vector<std::optional<std::string>>>& rows);
+
+private:
+    static void writeOpcode(std::vector<uint8_t>& bytecode, sblr::Opcode op);
+    static void writeUVarint(std::vector<uint8_t>& bytecode, uint64_t value);
+    static void writeString(std::vector<uint8_t>& bytecode, const std::string& str);
+    static void writeLiteral(std::vector<uint8_t>& bytecode, 
+                             const std::optional<std::string>& value);
+    static void writeInt32(std::vector<uint8_t>& bytecode, int32_t value);
+    static void writeInt64(std::vector<uint8_t>& bytecode, int64_t value);
 };
 
 } // namespace ipc

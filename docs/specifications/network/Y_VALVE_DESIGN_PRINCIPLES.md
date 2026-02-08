@@ -132,7 +132,7 @@ protocol_support:
     deferred:
       - Older protocol versions
       
-  tds:  # post-gold, reserved
+  tds:  # optional extension, reserved
     target_version: "7.4"  # SQL Server 2012+
     features:
       - Basic TDS
@@ -149,7 +149,7 @@ After Release Candidate, add:
    - PostgreSQL 12, 13, 14 differences
    - MySQL 5.7 compatibility mode
    - Firebird 3.0 support
-   - TDS 7.0-7.3 support (post-gold)
+   - TDS 7.0-7.3 support (optional extension)
 
 2. **Replication Protocols** (Future)
    - PostgreSQL logical replication

@@ -1,10 +1,19 @@
 # Count-Min Sketch Index Specification for ScratchBird
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 **Version:** 1.0
 **Date:** January 22, 2026
 **Status:** Implementation Ready
 **Author:** ScratchBird Architecture Team
-**Target:** ScratchBird Beta (Optional Index Type)
+**Target:** ScratchBird Beta (Core Index Type)
 **Features:** Page-size agnostic, MGA compliant, approximate frequency
 
 ---
@@ -43,6 +52,67 @@ Count-Min Sketch (CMS) provides approximate frequency counts with sublinear memo
 
 ---
 
+## Authoritative Algorithm (Normative, 2026-02-07)
+
+This section is the implementation source of truth. If any other section in
+this document conflicts with the steps below, this section wins.
+
+### Parameters
+
+- `w` (width): number of counters per row.  
+- `d` (depth): number of hash rows.  
+- For error bound `ε` and failure probability `δ`:
+  - `w = ceil(e / ε)`  
+  - `d = ceil(ln(1/δ))`  
+- Guarantees: estimated count `ĉ(x) <= c(x) + ε * N` with probability `1 - δ`.
+
+### Hashing
+
+Use `d` pairwise-independent hash functions (or 2-universal + double hashing).
+
+### Insert (Increment)
+
+1. Normalize key to bytes.  
+2. For each row `i` in `0..d-1`:
+   - `idx = hash_i(key) mod w`
+   - `counters[i][idx] += 1`
+
+### Query (Estimate)
+
+1. Normalize key.  
+2. For each row `i`:
+   - `idx = hash_i(key) mod w`
+   - Read `counters[i][idx]`
+3. Return `min` of the `d` counters.
+
+### Conservative Update (Optional)
+
+To reduce over-estimation:
+
+1. Compute `min_est = min_i counters[i][idx_i]`.  
+2. For each row `i`, set `counters[i][idx_i] = max(counters[i][idx_i], min_est + 1)`.
+
+### Decrement / Deletion
+
+CMS is not safe for general deletions (can undercount). If deletions are required,
+use a **counting sketch with periodic rebuild** or pair CMS with a sliding window
+mechanism.
+
+### MGA / Versioning
+
+- CMS is **auxiliary** and may be stale after rollbacks.  
+- Treat results as hints; never rely on CMS for correctness of query results.  
+
+### Complexity Targets
+
+- Insert/query: `O(d)` time, `O(w * d)` space.
+
+### References (for algorithmic definitions)
+
+- Cormode & Muthukrishnan, “An Improved Data Stream Summary: The Count-Min Sketch and its Applications,” J. Algorithms 2005.  
+
+---
+
 ## Architecture Decision
 
 ### Design Choice
@@ -74,49 +144,35 @@ for each row i:
 
 ### Meta Page
 
-```cpp
-#pragma pack(push, 1)
 
-struct SBCMSIndexMetaPage {
-    PageHeader cms_header;
+**Logical Fields:**
 
-    uint8_t cms_index_uuid[16];
-    uint8_t cms_table_uuid[16];
+- `cms_header` (PageHeader)
+- `cms_index_uuid[16]` (uint8_t)
+- `cms_table_uuid[16]` (uint8_t)
+- `cms_column_id` (uint16_t)
+- `cms_depth` (uint16_t): d
+- `cms_width` (uint32_t): w
+- `cms_counter_bits` (uint32_t): 16 or 32
+- `cms_seed_base` (uint32_t): hash seed
+- `cms_total_inserts` (uint64_t)
+- `cms_total_updates` (uint64_t)
+- `cms_matrix_first_page` (uint32_t)
+- `cms_matrix_page_count` (uint32_t)
+- `cms_padding[]` (uint8_t)
 
-    uint16_t cms_column_id;
-    uint16_t cms_depth;           // d
-    uint32_t cms_width;           // w
-
-    uint32_t cms_counter_bits;    // 16 or 32
-    uint32_t cms_seed_base;       // hash seed
-
-    uint64_t cms_total_inserts;
-    uint64_t cms_total_updates;
-
-    uint32_t cms_matrix_first_page;
-    uint32_t cms_matrix_page_count;
-
-    uint8_t cms_padding[];
-} __attribute__((packed));
-
-#pragma pack(pop)
-```
 
 ### Counter Matrix Page
 
-```cpp
-#pragma pack(push, 1)
 
-struct SBCMSMatrixPage {
-    PageHeader cm_header;
-    uint32_t cm_next_page;
-    uint32_t cm_row_index;        // which depth row
-    uint32_t cm_count;            // counters in this page
-    uint32_t cm_counters[];        // variable length
-} __attribute__((packed));
+**Logical Fields:**
 
-#pragma pack(pop)
-```
+- `cm_header` (PageHeader)
+- `cm_next_page` (uint32_t)
+- `cm_row_index` (uint32_t): which depth row
+- `cm_count` (uint32_t): counters in this page
+- `cm_counters[]` (uint32_t): variable length
+
 
 ---
 
@@ -129,9 +185,10 @@ struct SBCMSMatrixPage {
 
 ## MGA Compliance
 
-- CMS updates are approximate and can be applied on commit
-- Per-transaction deltas are accumulated and merged at commit
-- Rollback discards deltas
+- CMS is **auxiliary** and must never be used for correctness decisions.
+- Updates are applied **on commit** via per-transaction deltas.
+- Rollback discards deltas.
+- Rebuilds must scan only **visible record versions** (MGA/TIP rules).
 
 ---
 
@@ -154,7 +211,7 @@ uint64 cms_estimate(UUID index_uuid, const void* key, size_t key_len);
 
 ## Garbage Collection
 
-Count-Min Sketch does not store per-row TIDs and cannot remove dead entries
+Count-Min Sketch does not store per-row record UUIDs and cannot remove dead entries
 precisely during sweep. GC is implemented as a **rebuild**:
 
 - `removeDeadEntries()` triggers a background rebuild when:
@@ -229,3 +286,9 @@ WITH (width = 100000, depth = 5, counter_bits = 32, conservative = true);
 - Decay or time-windowed counts
 - Count-Min Sketch with conservative update and aging
 - Shared CMS per table for global stats
+
+## See Also
+
+- `INDEX_IMPLEMENTATION_REFERENCE.md` — authoritative algorithm map (includes per-index specs).
+- `INDEX_IMPLEMENTATION_SPEC.md` — global MGA/UUID requirements.
+- `INDEX_GC_PROTOCOL.md` — index GC contract.

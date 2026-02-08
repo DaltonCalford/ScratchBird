@@ -1,6 +1,5 @@
 # JDBC UDR Specification
-
-Status: Draft (Beta). This specification defines the JDBC UDR that uses an
+Status: Authoritative (V3)
 embedded Java runtime and bundled JDBC drivers (no system Java install).
 
 ## Scope

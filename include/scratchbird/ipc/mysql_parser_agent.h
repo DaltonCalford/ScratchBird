@@ -24,6 +24,7 @@
  */
 
 #include "scratchbird/ipc/parser_agent.h"
+#include "scratchbird/core/types.h"
 #include <unordered_map>
 #include <atomic>
 
@@ -33,7 +34,7 @@ namespace ipc {
 /**
  * Client state for MySQL protocol
  */
-struct ClientState {
+struct MySQLClientState {
     enum State {
         HANDSHAKE,
         AUTHENTICATING,
@@ -106,22 +107,22 @@ public:
     /**
      * Send handshake V10 packet
      */
-    core::Status sendHandshakeV10(ClientState& state, core::ErrorContext* ctx);
+    core::Status sendHandshakeV10(MySQLClientState& state, core::ErrorContext* ctx);
     
     /**
      * Read and parse handshake response
      */
-    core::Status readHandshakeResponse(ClientState& state, core::ErrorContext* ctx);
+    core::Status readHandshakeResponse(MySQLClientState& state, core::ErrorContext* ctx);
     
     /**
      * Authenticate client
      */
-    core::Status authenticate(ClientState& state, core::ErrorContext* ctx);
+    core::Status authenticate(MySQLClientState& state, core::ErrorContext* ctx);
     
     // Authentication methods
-    core::Status authenticateNativePassword(ClientState& state);
-    core::Status authenticateCachingSha2Password(ClientState& state);
-    core::Status authenticateSha256Password(ClientState& state);
+    core::Status authenticateNativePassword(MySQLClientState& state);
+    core::Status authenticateCachingSha2Password(MySQLClientState& state);
+    core::Status authenticateSha256Password(MySQLClientState& state);
     
     // ========================================================================
     // Command Handlers
@@ -130,49 +131,49 @@ public:
     /**
      * Read and dispatch a command
      */
-    core::Status handleCommand(ClientState& state, core::ErrorContext* ctx);
+    core::Status handleCommand(MySQLClientState& state, core::ErrorContext* ctx);
     
     // Database commands
-    core::Status handleInitDB(ClientState& state,
+    core::Status handleInitDB(MySQLClientState& state,
                              const std::vector<uint8_t>& packet,
                              core::ErrorContext* ctx);
     
     // Query commands
-    core::Status handleQuery(ClientState& state,
+    core::Status handleQuery(MySQLClientState& state,
                             const std::vector<uint8_t>& packet,
                             core::ErrorContext* ctx);
     
-    core::Status handleFieldList(ClientState& state,
+    core::Status handleFieldList(MySQLClientState& state,
                                 const std::vector<uint8_t>& packet,
                                 core::ErrorContext* ctx);
     
     // Prepared statement commands
-    core::Status handleStmtPrepare(ClientState& state,
+    core::Status handleStmtPrepare(MySQLClientState& state,
                                   const std::vector<uint8_t>& packet,
                                   core::ErrorContext* ctx);
     
-    core::Status handleStmtExecute(ClientState& state,
+    core::Status handleStmtExecute(MySQLClientState& state,
                                   const std::vector<uint8_t>& packet,
                                   core::ErrorContext* ctx);
     
-    core::Status handleStmtClose(ClientState& state,
+    core::Status handleStmtClose(MySQLClientState& state,
                                 const std::vector<uint8_t>& packet,
                                 core::ErrorContext* ctx);
     
-    core::Status handleStmtReset(ClientState& state,
+    core::Status handleStmtReset(MySQLClientState& state,
                                 const std::vector<uint8_t>& packet,
                                 core::ErrorContext* ctx);
     
-    core::Status handleStmtFetch(ClientState& state,
+    core::Status handleStmtFetch(MySQLClientState& state,
                                 const std::vector<uint8_t>& packet,
                                 core::ErrorContext* ctx);
     
     // Session commands
-    core::Status handleSetOption(ClientState& state,
+    core::Status handleSetOption(MySQLClientState& state,
                                 const std::vector<uint8_t>& packet,
                                 core::ErrorContext* ctx);
     
-    core::Status handleResetConnection(ClientState& state,
+    core::Status handleResetConnection(MySQLClientState& state,
                                       core::ErrorContext* ctx);
     
     // ========================================================================
@@ -182,7 +183,7 @@ public:
     /**
      * Send OK packet
      */
-    void sendOKPacket(ClientState& state,
+    void sendOKPacket(MySQLClientState& state,
                      uint64_t affected_rows,
                      uint64_t last_insert_id,
                      uint16_t status_flags,
@@ -192,7 +193,7 @@ public:
     /**
      * Send ERROR packet
      */
-    void sendErrorPacket(ClientState& state,
+    void sendErrorPacket(MySQLClientState& state,
                         uint16_t error_code,
                         const std::string& sqlstate,
                         const std::string& message);
@@ -200,21 +201,21 @@ public:
     /**
      * Send EOF packet (or OK if CLIENT_DEPRECATE_EOF)
      */
-    void sendEOFPacket(ClientState& state,
+    void sendEOFPacket(MySQLClientState& state,
                       uint16_t warnings,
                       uint16_t status_flags);
     
     /**
      * Send result set
      */
-    void sendResultSet(ClientState& state,
+    void sendResultSet(MySQLClientState& state,
                       const std::vector<IPCFieldDesc>& fields,
                       const std::vector<std::vector<std::optional<std::string>>>& rows);
     
     /**
      * Send column definition packet
      */
-    void sendColumnDefinition(ClientState& state,
+    void sendColumnDefinition(MySQLClientState& state,
                              const IPCFieldDesc& field);
     
     // ========================================================================
@@ -224,14 +225,14 @@ public:
     /**
      * Read a MySQL packet (handles 3-byte length + 1-byte seq)
      */
-    core::Status readPacket(ClientState& state,
+    core::Status readPacket(MySQLClientState& state,
                            std::vector<uint8_t>& packet,
                            core::ErrorContext* ctx);
     
     /**
      * Send a MySQL packet
      */
-    core::Status sendPacket(ClientState& state,
+    core::Status sendPacket(MySQLClientState& state,
                            const std::vector<uint8_t>& payload,
                            core::ErrorContext* ctx);
     

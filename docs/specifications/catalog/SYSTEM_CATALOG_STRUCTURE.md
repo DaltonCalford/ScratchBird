@@ -186,7 +186,7 @@ struct CatalogRootPage {
 
 **Size**: 4KB struct; stored in a normal database page (unused bytes remain if page size > 4KB).
 
-**Planned**: add `index_versions_page` when index versioning is moved out of `IndexRecord`.
+**Required**: add `index_versions_page` when index versioning is moved out of `IndexRecord`.
 
 ---
 
@@ -2164,7 +2164,7 @@ here refer to parser/executor behavior that is not yet complete.
    - ⚠️ SP-GiST (partial)
    - ⚠️ BRIN (partial, TID updates incomplete)
    - ❌ Full-text (not implemented)
-   - ⚠️ Index versioning persisted in IndexRecord; index_versions table is planned
+   - ⚠️ Index versioning persisted in IndexRecord; index_versions table is required
 
 3. **Statistics**
    - ⚠️ ANALYZE statement (parsed, limited functionality)
@@ -2207,7 +2207,7 @@ here refer to parser/executor behavior that is not yet complete.
 
 ### Catalog Root Page Updates
 
-Planned additions to `CatalogRootPage` (not yet persisted in code):
+Required additions to `CatalogRootPage` (not yet persisted in code):
 
 ```cpp
 uint32_t index_versions_page;       // Dedicated index version history
@@ -2232,11 +2232,11 @@ Consider adding in-memory views for metadata queries:
 
 ---
 
-## Planned Migration Catalogs (Alpha/Beta)
+## Required Migration Catalogs (Alpha/Beta)
 
 ### Tablespace Migration State (Alpha)
 
-Tracks online tablespace migrations (see `docs/specifications/storage/TABLESPACE_ONLINE_MIGRATION.md`).
+Tracks online tablespace migrations (see `docs/specifications/parser/v3/storage/TABLESPACE_ONLINE_MIGRATION.md`).
 
 ```cpp
 struct TablespaceMigrationRecord {
@@ -2327,7 +2327,7 @@ struct ShardMapVersionRecord {
 | Tables | 686 bytes | ~23 | Medium volume |
 | Columns | 750 bytes | ~21 | High volume |
 | Indexes | 1162 bytes | ~14 | Medium volume |
-| Index Versions | ~80 bytes | ~200 | Low volume (planned) |
+| Index Versions | ~80 bytes | ~200 | Low volume (required) |
 | Constraints | 1,139 bytes | ~14 | Catalog persistence in place |
 | Sequences | 672 bytes | ~24 | Low volume |
 | Views | 644 bytes | ~25 | Low volume |

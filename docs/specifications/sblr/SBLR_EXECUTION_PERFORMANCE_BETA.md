@@ -1,6 +1,5 @@
 # SBLR Execution Performance Specification (Beta)
-
-Status: Draft (Beta). Scope: native execution and batch evaluation for hot PSQL functions,
+Status: Authoritative (V3)
 triggers, and expressions.
 
 This specification is derived from `SBLR_EXECUTION_PERFORMANCE_RESEARCH.md`.

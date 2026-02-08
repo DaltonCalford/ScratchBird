@@ -665,18 +665,17 @@ core::Status ScratchBirdConnection::readRowDescription(std::vector<SBWPField>& f
                                                       core::ErrorContext* ctx) {
     fields.clear();
     
-    // Read message type
-    uint8_t msg_type;
-    std::vector<uint8_t> payload;
+    // Read message
+    SBWPMessage msg;
     
-    auto status = readMessage(msg_type, payload, ctx);
+    auto status = readMessage(msg, ctx);
     if (status != core::Status::OK) {
         return status;
     }
     
-    if (msg_type != sbwp::MSG_ROW_DESCRIPTION) {
-        if (msg_type == sbwp::MSG_ERROR) {
-            return core::Status::UNKNOWN;  // Error handled by caller
+    if (msg.type != sbwp::MessageType::ROW_DESCRIPTION) {
+        if (msg.type == sbwp::MessageType::ERROR) {
+            return core::Status::INTERNAL_ERROR;  // Error handled by caller
         }
         if (ctx) {
             ctx->set(core::Status::INVALID_ARGUMENT, 
@@ -686,7 +685,7 @@ core::Status ScratchBirdConnection::readRowDescription(std::vector<SBWPField>& f
         return core::Status::INVALID_ARGUMENT;
     }
     
-    if (payload.size() < 2) {
+    if (msg.payload.size() < 2) {
         if (ctx) {
             ctx->set(core::Status::INVALID_ARGUMENT, "Invalid RowDescription message",
                     __FILE__, __LINE__, __func__);
@@ -695,36 +694,36 @@ core::Status ScratchBirdConnection::readRowDescription(std::vector<SBWPField>& f
     }
     
     // Parse field count
-    uint16_t field_count = ntohs(*reinterpret_cast<const uint16_t*>(payload.data()));
+    uint16_t field_count = ntohs(*reinterpret_cast<const uint16_t*>(msg.payload.data()));
     size_t offset = 2;
     
     for (uint16_t i = 0; i < field_count; i++) {
         SBWPField field;
         
         // Read field name (null-terminated)
-        const char* name_ptr = reinterpret_cast<const char*>(payload.data() + offset);
+        const char* name_ptr = reinterpret_cast<const char*>(msg.payload.data() + offset);
         field.name = name_ptr;
         offset += field.name.size() + 1;
         
         // Read remaining fixed fields
-        if (offset + 20 > payload.size()) break;
+        if (offset + 20 > msg.payload.size()) break;
         
-        field.table_oid = ntohl(*reinterpret_cast<const uint32_t*>(payload.data() + offset));
+        field.table_oid = ntohl(*reinterpret_cast<const uint32_t*>(msg.payload.data() + offset));
         offset += 4;
         
-        field.column_number = ntohs(*reinterpret_cast<const uint16_t*>(payload.data() + offset));
+        field.column_number = ntohs(*reinterpret_cast<const uint16_t*>(msg.payload.data() + offset));
         offset += 2;
         
-        field.type_oid = ntohl(*reinterpret_cast<const uint32_t*>(payload.data() + offset));
+        field.type_oid = ntohl(*reinterpret_cast<const uint32_t*>(msg.payload.data() + offset));
         offset += 4;
         
-        field.type_size = ntohs(*reinterpret_cast<const uint16_t*>(payload.data() + offset));
+        field.type_size = ntohs(*reinterpret_cast<const uint16_t*>(msg.payload.data() + offset));
         offset += 2;
         
-        field.type_modifier = ntohl(*reinterpret_cast<const uint32_t*>(payload.data() + offset));
+        field.type_modifier = ntohl(*reinterpret_cast<const uint32_t*>(msg.payload.data() + offset));
         offset += 4;
         
-        field.format_code = ntohs(*reinterpret_cast<const uint16_t*>(payload.data() + offset));
+        field.format_code = ntohs(*reinterpret_cast<const uint16_t*>(msg.payload.data() + offset));
         offset += 2;
         
         fields.push_back(field);
@@ -739,21 +738,20 @@ core::Status ScratchBirdConnection::readDataRow(SBWPRow& row,
     row.fields.clear();
     row.fields.resize(fields.size());
     
-    // Read message type
-    uint8_t msg_type;
-    std::vector<uint8_t> payload;
+    // Read message
+    SBWPMessage msg;
     
-    auto status = readMessage(msg_type, payload, ctx);
+    auto status = readMessage(msg, ctx);
     if (status != core::Status::OK) {
         return status;
     }
     
-    if (msg_type == sbwp::MSG_COMMAND_COMPLETE) {
+    if (msg.type == sbwp::MessageType::COMMAND_COMPLETE) {
         // No more rows
         return core::Status::NOT_FOUND;  // Use NOT_FOUND to indicate end of results
     }
     
-    if (msg_type != sbwp::MSG_DATA_ROW) {
+    if (msg.type != sbwp::MessageType::DATA_ROW) {
         if (ctx) {
             ctx->set(core::Status::INVALID_ARGUMENT, 
                     "Expected DataRow, got different message type",
@@ -762,7 +760,7 @@ core::Status ScratchBirdConnection::readDataRow(SBWPRow& row,
         return core::Status::INVALID_ARGUMENT;
     }
     
-    if (payload.size() < 2) {
+    if (msg.payload.size() < 2) {
         if (ctx) {
             ctx->set(core::Status::INVALID_ARGUMENT, "Invalid DataRow message",
                     __FILE__, __LINE__, __func__);
@@ -771,7 +769,7 @@ core::Status ScratchBirdConnection::readDataRow(SBWPRow& row,
     }
     
     // Parse field count
-    uint16_t field_count = ntohs(*reinterpret_cast<const uint16_t*>(payload.data()));
+    uint16_t field_count = ntohs(*reinterpret_cast<const uint16_t*>(msg.payload.data()));
     if (field_count != fields.size()) {
         if (ctx) {
             ctx->set(core::Status::INVALID_ARGUMENT, "Field count mismatch",
@@ -783,18 +781,18 @@ core::Status ScratchBirdConnection::readDataRow(SBWPRow& row,
     size_t offset = 2;
     
     for (uint16_t i = 0; i < field_count; i++) {
-        if (offset + 4 > payload.size()) break;
+        if (offset + 4 > msg.payload.size()) break;
         
-        int32_t field_len = ntohl(*reinterpret_cast<const int32_t*>(payload.data() + offset));
+        int32_t field_len = ntohl(*reinterpret_cast<const int32_t*>(msg.payload.data() + offset));
         offset += 4;
         
         if (field_len < 0) {
             // NULL value
             row.fields[i] = std::nullopt;
         } else {
-            if (offset + field_len > payload.size()) break;
-            row.fields[i] = std::vector<uint8_t>(payload.data() + offset, 
-                                                  payload.data() + offset + field_len);
+            if (offset + field_len > msg.payload.size()) break;
+            row.fields[i] = std::vector<uint8_t>(msg.payload.data() + offset, 
+                                                  msg.payload.data() + offset + field_len);
             offset += field_len;
         }
     }

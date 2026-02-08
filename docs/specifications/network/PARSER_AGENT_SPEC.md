@@ -1,7 +1,7 @@
 # Parser Agent Specification
 
 Version: 1.0
-Status: Draft (Alpha IP layer)
+Status: Authoritative (V3)
 Last Updated: January 2026
 
 ## Purpose
@@ -73,7 +73,7 @@ Optional:
 ## IPC Contract (Parser <-> Engine)
 
 Parser agents MUST follow:
-- docs/specifications/network/ENGINE_PARSER_IPC_CONTRACT.md
+- docs/specifications/parser/v3/network/ENGINE_PARSER_IPC_CONTRACT.md
 
 ## Security
 
@@ -83,7 +83,7 @@ Parser agents MUST follow:
 
 ## Related Specs
 
-- docs/specifications/network/NETWORK_LISTENER_AND_PARSER_POOL_SPEC.md
-- docs/specifications/network/CONTROL_PLANE_PROTOCOL_SPEC.md
-- docs/specifications/network/ENGINE_PARSER_IPC_CONTRACT.md
-- docs/specifications/wire_protocols/*.md
+- docs/specifications/parser/v3/network/NETWORK_LISTENER_AND_PARSER_POOL_SPEC.md
+- docs/specifications/parser/v3/network/CONTROL_PLANE_PROTOCOL_SPEC.md
+- docs/specifications/parser/v3/network/ENGINE_PARSER_IPC_CONTRACT.md
+- docs/specifications/parser/v3/wire_protocols/*.md

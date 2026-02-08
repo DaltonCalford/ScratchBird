@@ -1,9 +1,18 @@
 # ScratchBird On-Disk Format Specification
+
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
 ## AUTHORITATIVE - This defines the exact byte-level format
 
 **MGA Reference:** See `MGA_RULES.md` for Multi-Generational Architecture semantics (visibility, TIP usage, recovery).
-**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional post-gold (replication/PITR).
-Any WAL references in this document describe an optional post-gold stream for
+**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional optional extension (replication/PITR).
+Any WAL references in this document describe an optional optional extension stream for
 replication/PITR only.
 
 ### Version History
@@ -43,7 +52,7 @@ typedef struct PageHeader {
     uint32_t checksum;        // 0x0C: CRC32C of bytes [0x10..page_size)
     
     // Location (16 bytes)
-    uint64_t lsn;            // 0x10: Log Sequence Number (0 if no optional post-gold WAL)
+    uint64_t lsn;            // 0x10: Log Sequence Number (0 if no optional optional extension WAL)
     uint32_t page_id;        // 0x18: Page number in file (0-based)
     uint32_t flags;          // 0x1C: Page-specific flags
     
@@ -128,7 +137,7 @@ typedef struct DatabaseHeader {
     
     // Configuration (32 bytes)
     uint32_t block_size;         // Must match page_header.page_size
-    uint32_t wal_level;          // write-after log (WAL) level (0=none for Alpha; reserved for optional post-gold WAL)
+    uint32_t wal_level;          // write-after log (WAL) level (0=none for Alpha; reserved for optional optional extension WAL)
     uint32_t max_connections;    // Maximum connections
     uint32_t encoding;           // Database encoding (UTF8=1)
     uint32_t locale;             // Locale ID
@@ -293,16 +302,20 @@ typedef struct ItemPointerExtended {
 #define ITEM_FLAG_LOCKED  0x0002  // Locked by transaction
 #define ITEM_FLAG_UPDATED 0x0004  // Has been updated
 
-// Tuple header (every tuple starts with this)
-typedef struct TupleHeader {
-    uint32_t t_xmin;         // Insert transaction ID
-    uint32_t t_xmax;         // Delete/update transaction ID (or 0)
-    uint32_t t_cid;          // Command ID within transaction
-    uint16_t t_infomask;     // Tuple flags
-    uint16_t t_natts;        // Number of attributes
-    uint32_t t_bits[];       // Null bitmap (1 bit per attribute)
-    // ... followed by tuple data ...
-} TupleHeader;
+// ScratchBird record header (Firebird-style MGA)
+// Each record version carries creator transaction and a back-version pointer.
+typedef struct SBRecordHeader {
+    uint64_t        rhd_transaction;   // Creating transaction ID (TIP/CN-based visibility)
+    UUID            rhd_back_version;  // UUID of prior version (null if none)
+    uint32_t        rhd_flags;         // Record flags (deleted, chained, etc.)
+    uint32_t        rhd_format;        // Record format version
+    uint32_t        rhd_length;        // Payload length
+    uint8_t         rhd_data[];        // Record payload
+} SBRecordHeader;
+
+// Record flags (subset)
+#define RHD_DELETED   0x0001  // Record version is deleted
+#define RHD_CHAIN     0x0002  // Has back-version
 ```
 
 ### Page Organization Diagram
@@ -384,7 +397,7 @@ test.db:
 
 ```
 test.db          - Main database file
-test.db.wal      - Write-after log (WAL, optional post-gold) (future)
+test.db.wal      - Write-after log (WAL, optional optional extension) (future)
 test.db.1        - Segment 1 when file > 1GB
 test.db.2        - Segment 2
 test.db.lock     - Lock file (contains PID)
@@ -406,7 +419,7 @@ Every page operation MUST:
    - Update generation number
    - Recalculate checksum
    - Set dirty flag
-   - Update LSN (only when optional write-after log (WAL) is enabled post-gold)
+   - Update LSN (only when optional write-after log (WAL) is enabled optional extension)
 
 3. **Error Handling**:
    ```c
@@ -604,7 +617,7 @@ Chunk Tuple Format:
 1. Values > 2000 bytes are candidates for TOASTing
 2. Values > page_size/4 must be TOASTed
 3. Chunks are limited to 1996 bytes each
-4. TOAST tables are named `pg_toast_<UUID>`
+4. TOAST tables are named `sb_toast_<UUID>`
 5. Compression is optional (EXTERNAL strategy)
 
 ### TOAST Table Schema
@@ -613,3 +626,5 @@ Chunk Tuple Format:
 - chunk_data (BYTEA): Actual chunk data
 
 - UUID: 018b9f3a-7d4e-7f3a-9c5d-1234567890ab (v7)
+
+**Terminology note:** ScratchBird uses Firebird MGA. Any MGA references in this file are legacy shorthand and must be interpreted as MGA per the authoritative references above.

@@ -1,5 +1,14 @@
 # Beta Requirements - Drivers and Integrations
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 **[← Back to Specifications Index](../README.md)**
 
 **Version:** 1.0
@@ -140,7 +149,7 @@ See [applications/README.md](applications/README.md) for complete list.
 |----------|-------------|----------|
 | **P0 (Critical)** | Must have for Beta - covers majority of developers | Beta release |
 | **P1 (High)** | Should have for Beta - significant user base | Beta or shortly after |
-| **P2 (Medium)** | Nice to have for Beta or post-Beta | Post-Beta |
+| **P2 (Medium)** | Nice to have for Beta or optional extension | optional extension |
 | **P3 (Low)** | Future consideration | Future releases |
 
 ## Beta Requirements Summary

@@ -1,6 +1,5 @@
 # Driver Streaming and Paging
-
-Status: Draft
+Status: Authoritative (V3)
 Last Updated: 2026-01-09
 
 ## Purpose

@@ -21,7 +21,7 @@ This document surveys relevant systems and translates their approaches into Scra
 ### Firebird (BLR as stored procedure bytecode)
 - Firebird stores PSQL source and its BLR bytecode in system tables
   (e.g., `RDB$PROCEDURE_BLR`), which implies a compiled representation is stored and reused.
-  `ScratchBird/docs/specifications/reference/firebird/FirebirdReferenceDocument.md:45288`.
+  `ScratchBird/docs/specifications/parser/v3/reference/firebird/FirebirdReferenceDocument.md:45288`.
 - This model supports compile-once, execute-many with invalidation tracking
   (`RDB$VALID_BLR` in Firebird).
 

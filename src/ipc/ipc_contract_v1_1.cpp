@@ -213,54 +213,5 @@ bool validateIPCMessage(const IPCMessage& msg, std::string& error) {
     return true;
 }
 
-// ============================================================================
-// IPCChannelFactory Implementation
-// ============================================================================
-
-IPCChannelType IPCChannelFactory::getDefaultType() {
-#if defined(__linux__) || defined(__APPLE__)
-    return IPCChannelType::UNIX_SOCKET;
-#elif defined(_WIN32)
-    return IPCChannelType::NAMED_PIPE;
-#else
-    return IPCChannelType::TCP_LOOPBACK;
-#endif
-}
-
-bool IPCChannelFactory::isSupported(IPCChannelType type) {
-    switch (type) {
-        case IPCChannelType::UNIX_SOCKET:
-#if defined(__linux__) || defined(__APPLE__)
-            return true;
-#else
-            return false;
-#endif
-        case IPCChannelType::NAMED_PIPE:
-#ifdef _WIN32
-            return true;
-#else
-            return false;
-#endif
-        case IPCChannelType::TCP_LOOPBACK:
-            return true;
-        case IPCChannelType::SHARED_MEMORY:
-            // Not yet implemented
-            return false;
-        default:
-            return false;
-    }
-}
-
-std::unique_ptr<IPCChannel> IPCChannelFactory::createDefault() {
-    return create(getDefaultType());
-}
-
-std::unique_ptr<IPCChannel> IPCChannelFactory::create(IPCChannelType type) {
-    // Channel implementations will be created in separate files
-    // This is a stub that returns nullptr for now
-    (void)type;
-    return nullptr;
-}
-
 } // namespace ipc
 } // namespace scratchbird

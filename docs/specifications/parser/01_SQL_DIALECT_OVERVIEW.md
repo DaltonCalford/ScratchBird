@@ -55,7 +55,7 @@ The engine is built to understand and translate syntax from several popular SQL 
 * **PostgreSQL**: :: type casting, $$ dollar-quoting, RETURNING clauses.  
 * **MySQL**: \` backtick identifiers, LIMIT offset, count, SHOW commands.  
 * **Firebird**: EXECUTE BLOCK, LIST() aggregate function, GEN\_ID() sequences.  
-* **MSSQL**: \[ \] bracket identifiers, TOP N clauses, IDENTITY columns. (post-gold)
+* **MSSQL**: \[ \] bracket identifiers, TOP N clauses, IDENTITY columns. (optional extension)
 
 ## **3\. Statement Categories**
 

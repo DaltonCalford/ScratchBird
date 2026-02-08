@@ -1,5 +1,14 @@
 # Thread Safety Specification
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 **MGA Reference:** See `MGA_RULES.md` for Multi-Generational Architecture semantics (visibility, TIP usage, recovery).
 
 ## Thread Safety Levels
@@ -78,7 +87,7 @@ RULES:
 
 ## Critical Sections (Alpha)
 
-Commit sequence (no write-after log (WAL) in Alpha; optional post-gold only):
+Commit sequence (no write-after log (WAL) in Alpha; optional optional extension only):
 1) Acquire TIP exclusive lock
 2) Update TIP state to Committed
 3) Release TIP lock

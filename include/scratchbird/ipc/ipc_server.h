@@ -203,6 +203,8 @@ public:
 // ============================================================================
 
 class IPCSession {
+    friend class IPCServer;
+    
 public:
     IPCSession(uint32_t id, std::unique_ptr<IPCChannel> channel,
                IPCSessionHandler* handler);
@@ -235,6 +237,14 @@ public:
     
     static uint64_t getCurrentTimeMs();
 
+    // Shutdown
+    void shutdown();
+
+protected:
+    IPCSessionHandler* getHandler() const { return handler_; }
+    IPCChannel* getChannel() const { return channel_.get(); }
+    std::mutex& getIOMutex() { return io_mutex_; }
+
 private:
     uint32_t id_;
     std::unique_ptr<IPCChannel> channel_;
@@ -244,7 +254,17 @@ private:
     QueryContext query_ctx_;
     
     std::mutex mutex_;
+    std::mutex io_mutex_;  // Protects channel I/O (thread safety)
     uint64_t last_activity_ms_ = 0;
+    
+    // Flow control state (for COPY operations)
+    struct FlowControlState {
+        int32_t credits = 0;
+        uint32_t buffer_avail = 0;
+        std::chrono::steady_clock::time_point last_update;
+        std::mutex mutex;
+        std::condition_variable cv;
+    } flow_control_;
     
     // Handlers for each message type
     core::Status handleStartup(const IPCMessage& msg, core::ErrorContext* ctx);
@@ -265,6 +285,7 @@ private:
     core::Status handleCancelRequest(const IPCMessage& msg, core::ErrorContext* ctx);
     core::Status handlePing(const IPCMessage& msg, core::ErrorContext* ctx);
     core::Status handleTerminate(const IPCMessage& msg, core::ErrorContext* ctx);
+    core::Status handleStreamControl(const IPCMessage& msg, core::ErrorContext* ctx);
 };
 
 // ============================================================================
@@ -308,8 +329,8 @@ private:
     std::unique_ptr<IPCSessionHandler> handler_;
     std::atomic<bool> running_{false};
     
-    // Sessions
-    std::unordered_map<uint32_t, std::unique_ptr<IPCSession>> sessions_;
+    // Sessions (shared_ptr for safe access from reader and worker threads)
+    std::unordered_map<uint32_t, std::shared_ptr<IPCSession>> sessions_;
     mutable std::shared_mutex sessions_mutex_;
     std::atomic<uint32_t> next_session_id_{1};
     
@@ -342,6 +363,13 @@ private:
     void cleanupIdleSessions();
     uint32_t createSession(std::unique_ptr<IPCChannel> channel);
     void destroySession(uint32_t session_id);
+    
+    // Session reader loop (populates message_queue_)
+    void sessionReadLoop(uint32_t session_id);
+    void enqueueMessage(uint32_t session_id, IPCMessage&& msg);
+    
+    // Get session by ID (thread-safe)
+    std::shared_ptr<IPCSession> getSession(uint32_t session_id);
 };
 
 // ============================================================================

@@ -1379,7 +1379,7 @@ X'1FF'       -- hexadecimal bit string
 | pg_prepared_xacts | Prepared transactions |
 | pg_stat_activity | Session activity |
 | pg_stat_replication | Replication statistics |
-| pg_stat_wal_receiver | Write-after log (WAL) receiver statistics (optional post-gold) |
+| pg_stat_wal_receiver | Write-after log (WAL) receiver statistics (optional optional extension) |
 | pg_stat_database | Database statistics |
 | pg_stat_all_tables | Table statistics |
 | pg_stat_all_indexes | Index statistics |
@@ -1630,7 +1630,7 @@ src/CMakeLists.txt                  # Add new source files
 - [PostgreSQL System Catalogs](https://www.postgresql.org/docs/current/catalogs.html)
 - [PL/pgSQL](https://www.postgresql.org/docs/current/plpgsql.html)
 - [PostgreSQL Lexical Structure](https://www.postgresql.org/docs/current/sql-syntax-lexical.html)
-- PostgreSQL Emulation Protocol Behavior: `docs/specifications/wire_protocols/POSTGRESQL_EMULATION_BEHAVIOR.md`
+- PostgreSQL Emulation Protocol Behavior: `docs/specifications/parser/v3/wire_protocols/POSTGRESQL_EMULATION_BEHAVIOR.md`
 - SBLR Opcodes: `include/scratchbird/sblr/opcodes.h`
 - Schema Architecture: `docs/specifications/SCHEMA_ARCHITECTURE.md`
 - Emulated Parser Spec: `docs/specifications/EMULATED_DATABASE_PARSER_SPECIFICATION.md`

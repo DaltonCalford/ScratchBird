@@ -1,7 +1,7 @@
 # ScratchBird Network Listener and Parser Pool Specification
 
 Version: 1.0
-Status: Draft (Alpha scope)
+Status: Authoritative (V3)
 Last Updated: January 2026
 
 ## Purpose
@@ -24,7 +24,7 @@ In scope:
 
 Out of scope:
 - Cluster listener coordination (Beta).
-- TDS/MSSQL listener (post-gold).
+- TDS/MSSQL listener (optional extension).
 - Remote database UDR connection pools (see `Alpha Phase 2/11-Remote-Database-UDR-Specification.md`).
 - Legacy Y-Valve router implementation (superseded; see core/Y_VALVE_ARCHITECTURE.md).
 
@@ -115,7 +115,7 @@ Default: Dedicated ports per protocol.
 - PostgreSQL: 5432
 - MySQL: 3306
 - Firebird: 3050
-- TDS/MSSQL: 1433 (post-gold only)
+- TDS/MSSQL: 1433 (optional extension only)
 
 Optional: Shared listener (single port + protocol auto-detect).
 - Disabled by default in Alpha.
@@ -368,14 +368,14 @@ Log events:
 | PostgreSQL | Yes | Yes | Alpha |
 | MySQL | Yes | Yes | Alpha |
 | Firebird | Yes | Yes | Alpha |
-| TDS/MSSQL | No | No | Post-gold |
+| TDS/MSSQL | No | No | optional extension |
 
 ## Related Specifications
 
-- docs/specifications/catalog/COMPONENT_MODEL_AND_RESPONSIBILITIES.md
+- docs/specifications/parser/v3/catalog/COMPONENT_MODEL_AND_RESPONSIBILITIES.md
 - docs/specifications/Alpha Phase 2/01-Architecture-Overview.md
-- docs/specifications/core/Y_VALVE_ARCHITECTURE.md
-- docs/specifications/network/NETWORK_LAYER_SPEC.md
-- docs/specifications/wire_protocols/README.md
+- docs/specifications/parser/v3/core/Y_VALVE_ARCHITECTURE.md
+- docs/specifications/parser/v3/network/NETWORK_LAYER_SPEC.md
+- docs/specifications/parser/v3/wire_protocols/README.md
 - docs/specifications/api/CONNECTION_POOLING_SPECIFICATION.md
 - docs/specifications/Security Design Specification/01_SECURITY_ARCHITECTURE.md

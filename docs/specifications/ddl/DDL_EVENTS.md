@@ -109,7 +109,7 @@ Firebird-compatible clients register for events using:
 - `op_cancel_events` to stop listening
 
 Details are defined in:
-`ScratchBird/docs/specifications/wire_protocols/firebird_wire_protocol.md`
+`ScratchBird/docs/specifications/parser/v3/wire_protocols/firebird_wire_protocol.md`
 
 Behavior:
 - Each event name has a counter.
@@ -176,6 +176,6 @@ Suggested monitoring:
 ## 8. References
 
 - Firebird language reference: POST_EVENT behavior and 127-byte name limit
-  (`ScratchBird/docs/specifications/reference/firebird/FirebirdReferenceDocument.md`)
+  (`ScratchBird/docs/specifications/parser/v3/reference/firebird/FirebirdReferenceDocument.md`)
 - Firebird wire protocol event ops:
-  `ScratchBird/docs/specifications/wire_protocols/firebird_wire_protocol.md`
+  `ScratchBird/docs/specifications/parser/v3/wire_protocols/firebird_wire_protocol.md`

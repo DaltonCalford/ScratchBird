@@ -496,7 +496,7 @@ FROM rdb$index_defs i
 void SchemaIntrospection::initializePostgreSQL(core::Database* db) {
     if (!db) return;
     
-    auto* catalog = db->getCatalogManager();
+    auto* catalog = db->catalog_manager();
     if (!catalog) return;
     
     // Create pg_catalog schema if not exists
@@ -527,7 +527,7 @@ std::vector<SchemaIntrospection::TableInfo> SchemaIntrospection::getTables(
     
     if (!db) return tables;
     
-    auto* catalog = db->getCatalogManager();
+    auto* catalog = db->catalog_manager();
     if (!catalog) return tables;
     
     // Query catalog for tables
@@ -546,7 +546,7 @@ std::vector<SchemaIntrospection::ColumnInfo> SchemaIntrospection::getColumns(
     
     if (!db) return columns;
     
-    auto* catalog = db->getCatalogManager();
+    auto* catalog = db->catalog_manager();
     if (!catalog) return columns;
     
     // Query catalog for columns

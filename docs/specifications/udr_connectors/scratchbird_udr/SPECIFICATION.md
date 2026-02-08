@@ -1,6 +1,5 @@
 # ScratchBird UDR Specification (Untrusted)
-
-Status: Draft (Beta). This specification defines a ScratchBird-to-ScratchBird
+Status: Authoritative (V3)
 UDR connector that uses SBWP v1.1 over TLS. The remote ScratchBird instance is
 treated as untrusted (non-cluster); no federation or cluster PKI is used.
 

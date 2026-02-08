@@ -189,7 +189,7 @@ static std::vector<uint8_t> xorBytes(const std::vector<uint8_t>& a,
 // SCRAM Server Implementation
 // ============================================================================
 
-SCRAMServer::SCRAMServer(Mechanism mechanism)
+SCRAMServer::SCRAMServer(SCRAMMechanism mechanism)
     : mechanism_(mechanism),
       iterations_(4096),
       state_(State::INITIAL) {
@@ -229,7 +229,7 @@ std::string SCRAMServer::generateServerFirstMessage(const std::string& client_fi
     // Compute SaltedPassword
     std::string prepped_password = saslPrep(password);
     
-    if (mechanism_ == Mechanism::SCRAM_SHA_256) {
+    if (mechanism_ == SCRAMMechanism::SCRAM_SHA_256) {
         salted_password_ = pbkdf2HmacSha256(prepped_password, salt_.data(), 
                                            salt_.size(), iterations_);
     } else {
@@ -239,7 +239,7 @@ std::string SCRAMServer::generateServerFirstMessage(const std::string& client_fi
     
     // Compute ClientKey
     std::vector<uint8_t> client_key;
-    if (mechanism_ == Mechanism::SCRAM_SHA_256) {
+    if (mechanism_ == SCRAMMechanism::SCRAM_SHA_256) {
         client_key = hmacSha256(salted_password_.data(), salted_password_.size(),
                                 reinterpret_cast<const uint8_t*>("Client Key"), 10);
     } else {
@@ -248,7 +248,7 @@ std::string SCRAMServer::generateServerFirstMessage(const std::string& client_fi
     }
     
     // Compute StoredKey
-    if (mechanism_ == Mechanism::SCRAM_SHA_256) {
+    if (mechanism_ == SCRAMMechanism::SCRAM_SHA_256) {
         stored_key_.resize(32);
         SHA256(client_key.data(), client_key.size(), stored_key_.data());
     } else {
@@ -257,7 +257,7 @@ std::string SCRAMServer::generateServerFirstMessage(const std::string& client_fi
     }
     
     // Compute ServerKey
-    if (mechanism_ == Mechanism::SCRAM_SHA_256) {
+    if (mechanism_ == SCRAMMechanism::SCRAM_SHA_256) {
         server_key_ = hmacSha256(salted_password_.data(), salted_password_.size(),
                                  reinterpret_cast<const uint8_t*>("Server Key"), 10);
     } else {
@@ -303,7 +303,7 @@ bool SCRAMServer::verifyClientFinalMessage(const std::string& client_final,
     
     // Compute ClientSignature
     std::vector<uint8_t> client_signature;
-    if (mechanism_ == Mechanism::SCRAM_SHA_256) {
+    if (mechanism_ == SCRAMMechanism::SCRAM_SHA_256) {
         client_signature = hmacSha256(stored_key_.data(), stored_key_.size(),
                                       reinterpret_cast<const uint8_t*>(auth_message.data()),
                                       auth_message.size());
@@ -318,7 +318,7 @@ bool SCRAMServer::verifyClientFinalMessage(const std::string& client_final,
     
     // Verify StoredKey
     std::vector<uint8_t> computed_stored;
-    if (mechanism_ == Mechanism::SCRAM_SHA_256) {
+    if (mechanism_ == SCRAMMechanism::SCRAM_SHA_256) {
         computed_stored.resize(32);
         SHA256(client_key.data(), client_key.size(), computed_stored.data());
     } else {
@@ -333,7 +333,7 @@ bool SCRAMServer::verifyClientFinalMessage(const std::string& client_final,
     
     // Compute ServerSignature
     std::vector<uint8_t> server_signature;
-    if (mechanism_ == Mechanism::SCRAM_SHA_256) {
+    if (mechanism_ == SCRAMMechanism::SCRAM_SHA_256) {
         server_signature = hmacSha256(server_key_.data(), server_key_.size(),
                                       reinterpret_cast<const uint8_t*>(auth_message.data()),
                                       auth_message.size());
@@ -380,7 +380,7 @@ void SCRAMServer::clearMemory(void* ptr, size_t len) {
 // SCRAM Client Implementation
 // ============================================================================
 
-SCRAMClient::SCRAMClient(Mechanism mechanism)
+SCRAMClient::SCRAMClient(SCRAMMechanism mechanism)
     : mechanism_(mechanism),
       state_(State::INITIAL) {
     // Generate client nonce
@@ -433,7 +433,7 @@ bool SCRAMClient::processServerFirstMessage(const std::string& server_first,
     // Compute SaltedPassword
     std::string prepped_password = saslPrep(password);
     
-    if (mechanism_ == Mechanism::SCRAM_SHA_256) {
+    if (mechanism_ == SCRAMMechanism::SCRAM_SHA_256) {
         salted_password_ = pbkdf2HmacSha256(prepped_password, salt.data(),
                                            salt.size(), iterations);
     } else {
@@ -443,7 +443,7 @@ bool SCRAMClient::processServerFirstMessage(const std::string& server_first,
     
     // Compute ClientKey
     std::vector<uint8_t> client_key;
-    if (mechanism_ == Mechanism::SCRAM_SHA_256) {
+    if (mechanism_ == SCRAMMechanism::SCRAM_SHA_256) {
         client_key = hmacSha256(salted_password_.data(), salted_password_.size(),
                                 reinterpret_cast<const uint8_t*>("Client Key"), 10);
     } else {
@@ -453,7 +453,7 @@ bool SCRAMClient::processServerFirstMessage(const std::string& server_first,
     
     // Compute StoredKey
     std::vector<uint8_t> stored_key;
-    if (mechanism_ == Mechanism::SCRAM_SHA_256) {
+    if (mechanism_ == SCRAMMechanism::SCRAM_SHA_256) {
         stored_key.resize(32);
         SHA256(client_key.data(), client_key.size(), stored_key.data());
     } else {
@@ -470,7 +470,7 @@ bool SCRAMClient::processServerFirstMessage(const std::string& server_first,
     
     // Compute ClientSignature
     std::vector<uint8_t> client_signature;
-    if (mechanism_ == Mechanism::SCRAM_SHA_256) {
+    if (mechanism_ == SCRAMMechanism::SCRAM_SHA_256) {
         client_signature = hmacSha256(stored_key.data(), stored_key.size(),
                                       reinterpret_cast<const uint8_t*>(auth_message.data()),
                                       auth_message.size());

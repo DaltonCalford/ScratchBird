@@ -1,12 +1,21 @@
 # Parser Feature Remapping and Implementation Strategy
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 **Version:** 1.0
 **Date:** 2026-01-07
 **Status:** ACTIVE - Alpha Planning
 **Purpose:** Decision framework for implementing vs remapping emulated parser features
 
-**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional post-gold (replication/PITR).
-Any WAL references in this document describe an optional post-gold stream for
+**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional optional extension (replication/PITR).
+Any WAL references in this document describe an optional optional extension stream for
 replication/PITR only.
 
 ---
@@ -332,7 +341,7 @@ void Parser::parseColumnDef() {
 ```
 
 **Effort:** 1-2 days
-**Priority:** **MEDIUM** (post-Alpha)
+**Priority:** **MEDIUM** (optional extension)
 
 **Semantic Equivalence:** ✅ Exact
 
@@ -370,7 +379,7 @@ if (ignore_flag) {
 ```
 
 **Effort:** 1 day
-**Priority:** **MEDIUM** (post-Alpha)
+**Priority:** **MEDIUM** (optional extension)
 
 **Semantic Equivalence:** ✅ Exact
 
@@ -413,8 +422,8 @@ These features should be explicitly rejected with clear error messages rather th
 
 **Justification:**
 - Performance optimization feature (not core functionality)
-- MGA has no write-after log (WAL, optional post-gold), so UNLOGGED semantics are effectively identical to regular tables
-- If a write-after log (WAL, optional post-gold) is introduced later (for replication/PITR), UNLOGGED can bypass it
+- MGA has no write-after log (WAL, optional optional extension), so UNLOGGED semantics are effectively identical to regular tables
+- If a write-after log (WAL, optional optional extension) is introduced later (for replication/PITR), UNLOGGED can bypass it
 - Warning prevents user confusion
 
 **Alpha Implementation:**
@@ -438,7 +447,7 @@ if (is_unlogged) {
 **Justification:**
 - Advanced indexing feature
 - Currently rejected with clear error (good)
-- Can be added post-Alpha if needed
+- Can be added optional extension if needed
 - Most applications don't require this
 
 **Current Implementation:**
@@ -450,7 +459,7 @@ if (check(TokenType::LEFT_PAREN)) {
 ```
 
 **Effort:** 0 days (already rejected)
-**Priority:** **POST-BETA** (if requested)
+**Priority:** **optional extension** (if requested)
 
 **Recommendation:** ✅ Keep current rejection. Add in future if user demand exists.
 
@@ -474,7 +483,7 @@ if (matchKeyword(TokenType::KW_INCLUDE)) {
 ```
 
 **Effort:** 0 days (already rejected)
-**Priority:** **POST-BETA** (optimization)
+**Priority:** **optional extension** (optimization)
 
 **Recommendation:** ✅ Keep current rejection.
 
@@ -533,7 +542,7 @@ if (matchKeyword(TokenType::KW_LOW_PRIORITY) ||
 **Documentation:**
 ```
 MySQL INSERT modifiers are MyISAM-specific and have no effect in ScratchBird.
-All inserts use ScratchBird's MVCC concurrency control.
+All inserts use ScratchBird's MGA concurrency control.
 ```
 
 ---
@@ -566,7 +575,7 @@ if (matchKeyword(TokenType::KW_COMMENT)) {
 ```
 
 **Effort:** 1-2 days (audit and document)
-**Priority:** **MEDIUM** (post-Alpha)
+**Priority:** **MEDIUM** (optional extension)
 
 **Documentation:**
 | Option | Status | Notes |
@@ -636,7 +645,7 @@ if (type.zerofill) {
 
 ---
 
-### Post-Alpha Roadmap (5-7 days)
+### optional extension Roadmap (5-7 days)
 
 **Phase 2: Remapping Features**
 
@@ -661,8 +670,8 @@ if (type.zerofill) {
 | TEMPORARY TABLES (full stack) | 3-5 days | **BETA** |
 | UNLOGGED TABLES | 2-3 days | **BETA** |
 | ZEROFILL formatter | 2-3 days | **BETA** |
-| Expression indexes | 3-4 days | **POST-BETA** |
-| INCLUDE clause | 2-3 days | **POST-BETA** |
+| Expression indexes | 3-4 days | **optional extension** |
+| INCLUDE clause | 2-3 days | **optional extension** |
 
 **Total:** 10-15 days
 
@@ -680,8 +689,8 @@ if (type.zerofill) {
 | **REMAP** |
 | ON DUPLICATE KEY → MERGE | Remap | 2-3 days | ❌ **BLOCKER** | **ALPHA** |
 | REPLACE INTO → ON CONFLICT | ✅ Done | 0 days | ✅ **COMPLETE** | **COMPLETE** |
-| UNSIGNED → CHECK | Remap | 1-2 days | **MEDIUM** | **POST-ALPHA** |
-| INSERT IGNORE → ON CONFLICT | Remap | 1 day | **MEDIUM** | **POST-ALPHA** |
+| UNSIGNED → CHECK | Remap | 1-2 days | **MEDIUM** | **optional extension** |
+| INSERT IGNORE → ON CONFLICT | Remap | 1 day | **MEDIUM** | **optional extension** |
 | SERIAL → IDENTITY | ✅ Done | 0 days | ✅ **COMPLETE** | **COMPLETE** |
 | **REJECT** |
 | UNLOGGED (Alpha) | Warn | 1 hour | **MEDIUM** | **ALPHA** |
@@ -689,8 +698,8 @@ if (type.zerofill) {
 | INCLUDE clause | Reject | 0 days | ✅ **COMPLETE** | **N/A** |
 | INHERITS | Reject | 1 hour | **MEDIUM** | **ALPHA** |
 | **DOCUMENT** |
-| INSERT modifiers | Document/warn | 1 hour | **LOW** | **POST-ALPHA** |
-| Table options | Audit/document | 1-2 days | **MEDIUM** | **POST-ALPHA** |
+| INSERT modifiers | Document/warn | 1 hour | **LOW** | **optional extension** |
+| Table options | Audit/document | 1-2 days | **MEDIUM** | **optional extension** |
 | ZEROFILL | Document | 1 hour | **LOW** | **ALPHA** |
 
 ---
@@ -714,3 +723,5 @@ if (type.zerofill) {
 **End of Specification**
 **Status:** ACTIVE - Decision Framework for Alpha Planning
 **Next Steps:** Execute Alpha roadmap (Week 1: PostgreSQL fixes, Week 2: MySQL features)
+
+**Terminology note:** ScratchBird uses Firebird MGA. Any MGA references in this file are legacy shorthand and must be interpreted as MGA per the authoritative references above.

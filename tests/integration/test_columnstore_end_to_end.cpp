@@ -32,6 +32,15 @@
 
 using namespace scratchbird::core;
 
+// Helper: Close and cleanup test database
+void closeTestDatabase(Database* db)
+{
+    if (db) {
+        db->close();
+        closeTestDatabase(db);
+    }
+}
+
 // Helper: Create test database
 Database *createTestDatabase(const char *db_name)
 {
@@ -51,7 +60,7 @@ Database *createTestDatabase(const char *db_name)
     if (status != Status::OK)
     {
         std::cerr << "Failed to open database: " << ctx.message << std::endl;
-        delete db;
+        closeTestDatabase(db);
         return nullptr;
     }
 
@@ -137,7 +146,7 @@ void testCompleteWorkflow()
     // MGA visibility filtering may return fewer rows - accept 50% or more
     assert(total_matches >= 75 && total_matches <= 150);
 
-    delete db;
+    closeTestDatabase(db);
     std::cout << "  PASS\n";
 }
 
@@ -262,7 +271,7 @@ void testMGAIsolation()
     status = txn_mgr->commitTransaction(PROC_ID, xid4, &ctx);
     assert(status == Status::OK);
 
-    delete db;
+    closeTestDatabase(db);
     std::cout << "  PASS\n";
 }
 
@@ -408,7 +417,7 @@ void testAllPredicates()
         assert(matches == 199);
     }
 
-    delete db;
+    closeTestDatabase(db);
     std::cout << "  PASS\n";
 }
 
@@ -456,7 +465,7 @@ void testAllCompressionTypes()
         std::cout << "    ✓ RLE compression ratio: " << stats.compression_ratio << "x\n";
         assert(stats.compression_ratio > 10.0);  // Should be highly compressed
 
-        delete db;
+        closeTestDatabase(db);
     }
 
     // Test no compression
@@ -499,7 +508,7 @@ void testAllCompressionTypes()
         std::cout << "    ✓ NONE compression ratio: " << stats.compression_ratio << "x\n";
         assert(stats.compression_ratio <= 1.1);  // Should be ~1.0 (no compression)
 
-        delete db;
+        closeTestDatabase(db);
     }
 
     std::cout << "  PASS\n";
@@ -587,7 +596,7 @@ void testLargeDataset()
     std::cout << "    ✓ Found " << total_matches << " matches (expected 100)\n";
     assert(total_matches == 100);
 
-    delete db;
+    closeTestDatabase(db);
     std::cout << "  PASS\n";
 }
 
@@ -643,19 +652,12 @@ void testErrorHandling()
         assert(status != Status::OK);  // Should fail
     }
 
-    delete db;
+    closeTestDatabase(db);
     std::cout << "  PASS\n";
 }
 
 /**
  * Main test runner
- *
- * Note: This test is currently disabled due to hang issues with the
- * LongTransactionMonitor thread not stopping properly during database
- * destruction. The simpler test_columnstore_simple_e2e.cpp provides
- * equivalent coverage without the database shutdown issues.
- *
- * TODO: Fix LongTransactionMonitor shutdown ordering in Database destructor
  */
 int main()
 {
@@ -663,23 +665,14 @@ int main()
     std::cout << "Columnstore Phase 7: Comprehensive E2E Tests\n";
     std::cout << "==================================================\n";
 
-    // All tests disabled due to LongTransactionMonitor hang issues
-    // The monitor thread's 60-second check interval causes test timeouts
-    // when the Database destructor tries to join the thread.
-    //
-    // Use test_columnstore_simple_e2e.cpp for columnstore testing instead.
+    testCompleteWorkflow();
+    testMGAIsolation();
+    testAllPredicates();
+    testAllCompressionTypes();
+    testLargeDataset();
+    testErrorHandling();
 
-    std::cout << "  [SKIPPED] Tests disabled due to LongTransactionMonitor hang\n";
-    std::cout << "  Use test_columnstore_simple_e2e.cpp instead\n";
-
-    // testCompleteWorkflow();
-    // testMGAIsolation() - skipped due to hang issue
-    // testAllPredicates();
-    // testAllCompressionTypes();
-    // testLargeDataset();
-    // testErrorHandling();
-
-    std::cout << "\n=== Test Suite Skipped ===\n";
+    std::cout << "\n=== All Tests Passed ===\n";
 
     return 0;
 }

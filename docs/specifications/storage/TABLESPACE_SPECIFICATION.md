@@ -1,6 +1,13 @@
 # Tablespace Specification for ScratchBird
 
-**Document Status**: DRAFT
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+**Document Status**: Authoritative (V3)
 **Version**: 1.0
 **Date**: 2025-10-20
 **Author**: Research and Analysis
@@ -763,15 +770,15 @@ public:
 - Requires additional space (shadow table)
 - Triggers add overhead during migration
 
-**Detailed MGA design:** See `docs/specifications/storage/TABLESPACE_ONLINE_MIGRATION.md`.
+**Detailed MGA design:** See `docs/specifications/parser/v3/storage/TABLESPACE_ONLINE_MIGRATION.md`.
 
-**Implementation Priority**: **Alpha** (offline migration included; online migration post-alpha)
+**Implementation Priority**: **Alpha** (offline migration included; online migration optional extension)
 
-### 6.3 Online Migration Catalog Placeholders (Planned)
+### 6.3 Online Migration Catalog Placeholders (Required)
 
 Add catalog structures to track online migration state and progress.
 
-**Planned system tables:**
+**Required system tables:**
 - `pg_tablespace_migrations` (authoritative state)
 - `pg_tablespace_migration_deltas` (internal delta log metadata)
 
@@ -990,7 +997,7 @@ SELECT COUNT(*) FROM invoices_2024;
 
 ### 9.1 Transaction Manager
 
-**Impact**: Transaction IDs (xmin/xmax) span multiple tablespaces.
+**Impact**: Transaction IDs (rhd_transaction in record headers) span multiple tablespaces.
 
 **Changes**:
 - OIT/OST tracked per-database, not per-tablespace
@@ -1188,21 +1195,21 @@ CREATE INDEX idx_orders_date ON orders(order_date) TABLESPACE ts_index;
 
 ---
 
-### Post-Alpha Extensions
+### optional extension Extensions
 
-#### Stage 5: Online Migration (40-60 hours) (post-alpha)
+#### Stage 5: Online Migration (40-60 hours) (optional extension)
 - Implement shadow table approach
 - Delta log for concurrent writes
 - Catch-up phase with incremental application
 - Brief exclusive lock for final swap
 
-#### Stage 6: Attach/Detach (20-30 hours) (post-alpha)
+#### Stage 6: Attach/Detach (20-30 hours) (optional extension)
 - ALTER TABLESPACE ATTACH/DETACH syntax
 - UUID validation and FORCE option
 - Cross-database attach with warnings
 - Recovery from detached tablespace (startup error handling)
 
-#### Stage 7: Advanced Features (30-50 hours) (post-alpha)
+#### Stage 7: Advanced Features (30-50 hours) (optional extension)
 - Per-tablespace buffer pools
 - Tablespace-level backup/restore
 - Parallel extension (multi-threaded autoextend)
@@ -1363,7 +1370,7 @@ CREATE INDEX idx_orders_date ON orders(order_date) TABLESPACE ts_index;
 **MGA Implications for ScratchBird**:
 - Stable TIDs critical: Tuples never move, so GPID addressing preserves this
 - OIT-based garbage collection must span all tablespaces
-- Back-version chains (xmin/xmax) work identically across tablespaces
+- Back-version chains (rhd_transaction + rhd_back_version) work identically across tablespaces
 
 ---
 
@@ -1379,8 +1386,10 @@ This specification provides a comprehensive design for tablespaces in ScratchBir
 5. Implement Alpha Stage 3 (Autoextend)
 6. Implement Alpha Stage 4 (Offline Migration)
 7. Alpha validation with real workloads
-8. Plan post-alpha stages 5-7 (Online Migration, Attach/Detach, Advanced Features)
+8. Plan optional extension stages 5-7 (Online Migration, Attach/Detach, Advanced Features)
 
 ---
 
 **End of Specification**
+
+**Terminology note:** ScratchBird uses Firebird MGA. Any MGA references in this file are legacy shorthand and must be interpreted as MGA per the authoritative references above.

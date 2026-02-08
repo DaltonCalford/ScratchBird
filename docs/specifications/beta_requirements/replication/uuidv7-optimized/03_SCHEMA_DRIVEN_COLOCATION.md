@@ -1,5 +1,14 @@
 # Schema-Driven Colocation for Multi-Table Atomicity
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../../../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../../../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../../../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../../../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../../../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 **Document:** 03_SCHEMA_DRIVEN_COLOCATION.md
 **Status:** BETA SPECIFICATION
 **Version:** 1.0
@@ -1152,3 +1161,5 @@ CREATE DATABASE my_db WITH colocated = true;
 ---
 
 **End of Document 03**
+
+**Terminology note:** ScratchBird uses Firebird MGA. Any MGA references in this file are legacy shorthand and must be interpreted as MGA per the authoritative references above.

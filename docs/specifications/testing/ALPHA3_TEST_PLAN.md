@@ -1,5 +1,14 @@
 # Alpha 3 Test Plan
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 ## 1. Overview
 
 This document defines the comprehensive test plan for Alpha 3 (Service/Daemon Mode), covering:
@@ -161,9 +170,9 @@ This document defines the comprehensive test plan for Alpha 3 (Service/Daemon Mo
 | MY-QUERY-009 | LOCAL INFILE | Rejected (security) |
 | MY-QUERY-010 | Query timeout | ERR packet (1317) |
 
-### 3.3 TDS Protocol - SQL Server (Port 1433, post-gold)
+### 3.3 TDS Protocol - SQL Server (Port 1433, optional extension)
 
-**Scope Note:** TDS/MSSQL testing is post-gold and is not part of Alpha validation. This section is retained for future coverage.
+**Scope Note:** TDS/MSSQL testing is optional extension and is not part of Alpha validation. This section is retained for future coverage.
 
 #### 3.3.1 Connection Tests
 
@@ -278,7 +287,7 @@ This document defines the comprehensive test plan for Alpha 3 (Service/Daemon Mo
 | SCRAM-SHA-256 | PostgreSQL, Native | P0 |
 | mysql_native_password | MySQL | P0 |
 | caching_sha2_password | MySQL | P0 |
-| NTLM | TDS (post-gold) | P1 |
+| NTLM | TDS (optional extension) | P1 |
 | Kerberos/GSSAPI | All | P1 |
 | LDAP | All | P1 |
 | Certificate (mTLS) | All | P1 |
@@ -370,7 +379,7 @@ This document defines the comprehensive test plan for Alpha 3 (Service/Daemon Mo
 | LOAD-PG-002 | PostgreSQL | COPY bulk load | 100K rows/s |
 | LOAD-MY-001 | MySQL | sysbench OLTP | 10K TPS |
 | LOAD-MY-002 | MySQL | Bulk INSERT | 50K rows/s |
-| LOAD-TDS-001 | TDS (post-gold) | BCP bulk load | 100K rows/s |
+| LOAD-TDS-001 | TDS (optional extension) | BCP bulk load | 100K rows/s |
 | LOAD-FB-001 | Firebird | gbak restore | 1 GB/min |
 | LOAD-SB-001 | Native | SBLR throughput | 50K TPS |
 | LOAD-SB-002 | Native | Federated queries | 1K TPS |
@@ -452,7 +461,7 @@ This document defines the comprehensive test plan for Alpha 3 (Service/Daemon Mo
 |---------|-----------|-------|------|
 | SEC-FUZZ-001 | PostgreSQL protocol fuzz | Custom fuzzer | Crash/RCE |
 | SEC-FUZZ-002 | MySQL protocol fuzz | Custom fuzzer | Crash/RCE |
-| SEC-FUZZ-003 | TDS protocol fuzz (post-gold) | Custom fuzzer | Crash/RCE |
+| SEC-FUZZ-003 | TDS protocol fuzz (optional extension) | Custom fuzzer | Crash/RCE |
 | SEC-FUZZ-004 | Firebird protocol fuzz | Custom fuzzer | Crash/RCE |
 | SEC-FUZZ-005 | Native protocol fuzz | Custom fuzzer | Crash/RCE |
 | SEC-FUZZ-006 | Malformed packets | Custom | Crash |
@@ -569,7 +578,7 @@ This document defines the comprehensive test plan for Alpha 3 (Service/Daemon Mo
 |----------|--------------|--------|-----------|
 | PostgreSQL | Baseline | Baseline | Baseline |
 | MySQL | ±5% | ±5% | ±10% |
-| TDS (post-gold) | ±10% | ±10% | ±15% |
+| TDS (optional extension) | ±10% | ±10% | ±15% |
 | Firebird | ±10% | ±10% | ±20% |
 | Native | +20% | +20% | +30% |
 
@@ -600,7 +609,7 @@ jobs:
     needs: unit-tests
     strategy:
       matrix:
-        protocol: [postgresql, mysql, firebird, native]  # tds post-gold
+        protocol: [postgresql, mysql, firebird, native]  # tds optional extension
     steps:
       - name: Protocol Compliance
         run: ./tests/protocol_compliance.sh ${{ matrix.protocol }}
@@ -633,7 +642,7 @@ Test Report Format:
 ├── protocol/
 │   ├── postgresql.xml     # JUnit format
 │   ├── mysql.xml
-│   ├── tds.xml (post-gold)
+│   ├── tds.xml (optional extension)
 │   ├── firebird.xml
 │   └── native.xml
 ├── auth/
@@ -656,7 +665,7 @@ Test Report Format:
 |------|-------|-------|
 | 1 | PostgreSQL protocol | PG-CONN-*, PG-QUERY-* |
 | 2 | MySQL protocol | MY-CONN-*, MY-QUERY-* |
-| 3 | TDS + Firebird protocols (post-gold) | TDS-*, FB-* |
+| 3 | TDS + Firebird protocols (optional extension) | TDS-*, FB-* |
 | 4 | Native protocol | SB-CONN-*, SB-QUERY-* |
 
 ### 9.2 Phase 2: Authentication (Weeks 5-6)

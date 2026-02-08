@@ -1,12 +1,21 @@
 # DDL (Data Definition Language) Specifications
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 **[← Back to Specifications Index](../README.md)**
 
 This directory contains Data Definition Language (DDL) specifications for creating, altering, and dropping database objects in ScratchBird.
 
 ## Overview
 
-DDL statements define the structure of database objects including databases, schemas, tables, views, indexes, procedures, functions, and more. ScratchBird supports DDL from multiple SQL dialects (PostgreSQL, MySQL, Firebird; MSSQL post-gold) all mapped to a common internal representation.
+DDL statements define the structure of database objects including databases, schemas, tables, views, indexes, procedures, functions, and more. ScratchBird supports DDL from multiple SQL dialects (PostgreSQL, MySQL, Firebird; MSSQL optional extension) all mapped to a common internal representation.
 
 ## Specifications in this Directory
 
@@ -115,7 +124,7 @@ ScratchBird accepts DDL from multiple dialects:
 - **PostgreSQL** - Full PostgreSQL DDL syntax
 - **MySQL** - MySQL DDL syntax (AUTO_INCREMENT, ENGINE, etc.)
 - **Firebird** - Firebird DDL syntax (COMPUTED BY, EXTERNAL, etc.)
-- **MSSQL** - SQL Server DDL syntax (IDENTITY, ON [PRIMARY], etc.) (post-gold)
+- **MSSQL** - SQL Server DDL syntax (IDENTITY, ON [PRIMARY], etc.) (optional extension)
 
 All dialects map to common internal catalog structures.
 

@@ -1,10 +1,19 @@
 # FST (Finite State Transducer) Index Specification for ScratchBird
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 **Version:** 1.0
 **Date:** January 22, 2026
 **Status:** Implementation Ready
 **Author:** ScratchBird Architecture Team
-**Target:** ScratchBird Beta (Optional Index Type)
+**Target:** ScratchBird Beta (Core Index Type)
 **Features:** Page-size agnostic, MGA compliant, segment-based
 
 ---
@@ -43,6 +52,55 @@ FST (Finite State Transducer) indexes provide compact dictionaries with fast pre
 
 ---
 
+## Authoritative Algorithm (Normative, 2026-02-07)
+
+This section is the implementation source of truth. If any other section in
+this document conflicts with the steps below, this section wins.
+
+### Build (Incremental, Sorted Terms)
+
+1. Collect all unique terms in sorted order.  
+2. Insert terms into a minimal FST using incremental construction:
+   - Compare current term with previous term to find common prefix.  
+   - Minimize suffixes of the previous term (merge equivalent states).  
+3. Store arcs in sorted label order to enable binary search during traversal.  
+
+### Lookup (Exact)
+
+1. Start at root state.  
+2. For each byte/char in term:
+   - Follow arc with matching label.  
+   - If missing, return NOT FOUND.  
+3. If final state is accepting, return its output payload.  
+
+### Prefix Search
+
+1. Traverse FST to prefix node.  
+2. DFS/BFS from prefix node, emitting all accepted terms.  
+3. Use output payloads to fetch postings or row lists.  
+
+### Updates / Deletes
+
+1. FST segments are immutable.  
+2. Inserts go to a **delta segment** (small FST).  
+3. Periodically merge segments into a new FST.  
+
+### MGA / Versioning
+
+- FST segments are immutable per epoch; delta segments carry version metadata.  
+
+### Complexity Targets
+
+- Lookup: `O(m)` where `m` is term length.  
+- Build: `O(total_terms)` for incremental minimal FST on sorted input.  
+
+### References (for algorithmic definitions)
+
+- Daciuk et al., “Incremental Construction of Minimal Acyclic Finite-State Automata,” 2000.  
+- Lucene FST implementation notes (sorted terms, minimal FST).  
+
+---
+
 ## Architecture Decision
 
 ### Design Choice
@@ -78,55 +136,36 @@ Arcs are stored in sorted order by label. Nodes can be compacted with shared suf
 
 ### Meta Page
 
-```cpp
-#pragma pack(push, 1)
 
-struct SBFSTIndexMetaPage {
-    PageHeader fst_header;
+**Logical Fields:**
 
-    uint8_t fst_index_uuid[16];
-    uint8_t fst_table_uuid[16];
+- `fst_header` (PageHeader)
+- `fst_index_uuid[16]` (uint8_t)
+- `fst_table_uuid[16]` (uint8_t)
+- `fst_column_id` (uint16_t): Indexed column
+- `fst_segment_count` (uint16_t): Number of FST segments
+- `fst_root_page` (uint32_t): Root of current segment
+- `fst_terms_count` (uint32_t): Total terms
+- `fst_total_lookups` (uint64_t)
+- `fst_total_prefix_scans` (uint64_t)
+- `fst_reserved1` (uint32_t)
+- `fst_reserved2` (uint32_t)
+- `fst_padding[]` (uint8_t)
 
-    uint16_t fst_column_id;        // Indexed column
-    uint16_t fst_segment_count;    // Number of FST segments
-
-    uint32_t fst_root_page;        // Root of current segment
-    uint32_t fst_terms_count;      // Total terms
-
-    uint64_t fst_total_lookups;
-    uint64_t fst_total_prefix_scans;
-
-    uint32_t fst_reserved1;
-    uint32_t fst_reserved2;
-
-    uint8_t fst_padding[];
-} __attribute__((packed));
-
-#pragma pack(pop)
-```
 
 ### FST Node and Arc
 
-```cpp
-#pragma pack(push, 1)
 
-struct SBFSTArc {
-    uint8_t label;                 // UTF-8 byte
-    uint8_t flags;                 // FINAL, LAST, HAS_OUTPUT
-    uint16_t output_len;           // Output length (bytes)
-    uint32_t target_node;          // Node ID or page offset
-    // output bytes follow (varlen)
-};
+**Logical Fields:**
 
-struct SBFSTNode {
-    uint32_t node_id;
-    uint16_t arc_count;
-    uint16_t reserved;
-    // arc list follows
-};
+- `label` (uint8_t): UTF-8 byte
+- `flags` (uint8_t): FINAL, LAST, HAS_OUTPUT
+- `output_len` (uint16_t): Output length (bytes)
+- `target_node` (uint32_t): Node ID or page offset
+- `node_id` (uint32_t)
+- `arc_count` (uint16_t)
+- `reserved` (uint16_t)
 
-#pragma pack(pop)
-```
 
 ### Output Payload
 
@@ -181,14 +220,19 @@ FSTIterator fst_prefix_scan(UUID index_uuid, const char* prefix);
 FST segments are immutable. GC is implemented via **segment merge**:
 
 - `removeDeadEntries()` does not edit existing FST nodes in place.
-- During merge, posting lists are filtered against dead TIDs.
+- During merge, posting lists are filtered against dead `record_uuid`s.
 - Terms whose posting lists become empty are dropped from the merged FST.
 - The merged FST replaces older segments atomically.
 
-For prefix-only FSTs (term -> row list), GC removes dead TIDs from row lists
+For prefix-only FSTs (term -> row list), GC removes dead `record_uuid`s from row lists
 and drops empty term entries during merge.
 
 See `INDEX_GC_PROTOCOL.md` for the GC contract.
+
+## Record Identity Requirements
+
+Posting lists must store `record_uuid` with optional `SBRecordPtr` cache hints.
+Legacy TID encodings are not permitted.
 
 ---
 
@@ -250,3 +294,9 @@ WITH (analyzer = 'standard', min_term_len = 2, max_terms = 1000000);
 - Fuzzy search via Levenshtein automata
 - Weighted outputs for suggestion ranking
 - Shared FST dictionary across indexes
+
+## See Also
+
+- `INDEX_IMPLEMENTATION_REFERENCE.md` — authoritative algorithm map (includes per-index specs).
+- `INDEX_IMPLEMENTATION_SPEC.md` — global MGA/UUID requirements.
+- `INDEX_GC_PROTOCOL.md` — index GC contract.

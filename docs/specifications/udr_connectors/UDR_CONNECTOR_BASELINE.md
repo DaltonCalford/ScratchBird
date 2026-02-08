@@ -1,6 +1,5 @@
 # UDR Connector Baseline Specification
-
-Status: Draft (Target). This document defines the shared requirements for all
+Status: Authoritative (V3)
 connector UDRs shipped in the first Beta (ODBC, JDBC, PostgreSQL, MySQL,
 FirebirdSQL, MSSQL, ScratchBird) plus local file/script connectors.
 

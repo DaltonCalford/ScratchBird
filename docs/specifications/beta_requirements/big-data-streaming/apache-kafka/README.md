@@ -17,5 +17,5 @@ ScratchBird integrates with Kafka in three primary roles:
 3. **Connectors:** optional Kafka Connect source/sink adapters.
 
 ## Status
-Draft (Beta)
+Authoritative (V3)
 

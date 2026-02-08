@@ -1313,7 +1313,7 @@ AND (JOB_GRADE = :GRADE)
   END
 END
 If the features described are enough for your tasks, you might consider using arrays in your
-projects. Currently, no improvements are planned to enhance support for arrays in Firebird.
+projects. Currently, no improvements are required to enhance support for arrays in Firebird.
 3.9. Special Data Types
 “Special” data types …
 3.9.1. SQL_NULL Data Type

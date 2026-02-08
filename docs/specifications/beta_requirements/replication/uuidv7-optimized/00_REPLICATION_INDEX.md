@@ -1,4 +1,13 @@
 # ScratchBird Beta Replication Specification Index
+
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../../../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../../../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../../../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../../../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../../../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
 ## UUIDv7-Optimized Multi-Multi Table Replication
 
 **Status:** BETA SPECIFICATION
@@ -46,14 +55,14 @@ This specification is organized into focused documents:
 | Document | Title | Focus | Lines | Status |
 |----------|-------|-------|-------|--------|
 | **00** | Index (this doc) | Navigation & overview | ~200 | ✅ Complete |
-| **01** | Core Architecture | Split-plane, hybrid consensus | ~1,500 | 🟡 Draft |
-| **02** | UUIDv7 Integration | Identifier structure, time ordering | ~1,200 | 🟡 Draft |
-| **03** | Time-Partitioned Merkle Forest | Anti-entropy verification | ~1,800 | 🟡 Draft |
-| **04** | Hybrid Logical Clocks | Conflict resolution, causality | ~1,500 | 🟡 Draft |
-| **05** | Multi-Table Replication | Schema colocation, local transactions | ~1,400 | 🟡 Draft |
-| **06** | MGA Integration | Firebird TIP visibility, GC coordination | ~1,300 | 🟡 Draft |
-| **07** | Implementation Phases | Beta roadmap, dependencies | ~1,000 | 🟡 Draft |
-| **08** | Testing Strategy | Chaos tests, verification | ~800 | 🟡 Draft |
+| **01** | Core Architecture | Split-plane, hybrid consensus | ~1,500 | Authoritative |
+| **02** | UUIDv7 Integration | Identifier structure, time ordering | ~1,200 | Authoritative |
+| **03** | Time-Partitioned Merkle Forest | Anti-entropy verification | ~1,800 | Authoritative |
+| **04** | Hybrid Logical Clocks | Conflict resolution, causality | ~1,500 | Authoritative |
+| **05** | Multi-Table Replication | Schema colocation, local transactions | ~1,400 | Authoritative |
+| **06** | MGA Integration | Firebird TIP visibility, GC coordination | ~1,300 | Authoritative |
+| **07** | Implementation Phases | Beta roadmap, dependencies | ~1,000 | Authoritative |
+| **08** | Testing Strategy | Chaos tests, verification | ~800 | Authoritative |
 | **Total** | | | **~10,700** | |
 
 ---
@@ -72,7 +81,7 @@ This specification is organized into focused documents:
 **Recommended order:**
 1. Read all documents sequentially (00→08)
 2. Reference `/docs/specifications/Cluster Specification Work/SBCLUSTER-07-REPLICATION.md` for per-shard write-after log (WAL) streaming
-3. Reference `/docs/specifications/beta_requirements/replication/REPLICATION_AND_SHADOW_PROTOCOLS.md` for shadow databases
+3. Reference `/docs/specifications/parser/v3/beta_requirements/replication/REPLICATION_AND_SHADOW_PROTOCOLS.md` for shadow databases
 4. Reference `/MGA_RULES.md` for transaction visibility integration
 
 ### For Security Reviewers
@@ -322,7 +331,7 @@ CREATE TABLE orders (
 ## References
 
 ### Research Foundation
-- `/docs/specifications/reference/UUIDv7 Replication System Design.md` (consensus research)
+- `/docs/specifications/parser/v3/reference/UUIDv7 Replication System Design.md` (consensus research)
 - [RFC 9562: UUIDv7 Specification](https://www.rfc-editor.org/rfc/rfc9562.html)
 - [Hybrid Logical Clocks Paper](https://cse.buffalo.edu/tech-reports/2014-04.pdf) (Kulkarni et al.)
 
@@ -336,7 +345,7 @@ CREATE TABLE orders (
 
 ### Internal Documents
 - `/docs/specifications/Cluster Specification Work/SBCLUSTER-07-REPLICATION.md`
-- `/docs/specifications/beta_requirements/replication/REPLICATION_AND_SHADOW_PROTOCOLS.md`
+- `/docs/specifications/parser/v3/beta_requirements/replication/REPLICATION_AND_SHADOW_PROTOCOLS.md`
 - `/MGA_RULES.md` (Firebird transaction visibility)
 - `/docs/specifications/TRANSACTION_MGA_CORE.md`
 
@@ -375,3 +384,5 @@ CREATE TABLE orders (
 ---
 
 **End of Index Document**
+
+**Terminology note:** ScratchBird uses Firebird MGA. Any MGA references in this file are legacy shorthand and must be interpreted as MGA per the authoritative references above.

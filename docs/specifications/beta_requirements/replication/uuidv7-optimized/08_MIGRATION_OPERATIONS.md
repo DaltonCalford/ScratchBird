@@ -1,5 +1,14 @@
 # Beta Replication Migration and Operations Guide
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../../../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../../../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../../../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../../../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../../../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 **Document:** 08_MIGRATION_OPERATIONS.md
 **Status:** BETA SPECIFICATION
 **Version:** 1.0
@@ -64,7 +73,7 @@ This document provides operational guidance for deploying, monitoring, and maint
 - [ ] Document current cluster topology (node IDs, shard assignments)
 
 **Review Beta Requirements**:
-- [ ] Read `/docs/specifications/beta_requirements/replication/uuidv7-optimized/00_BETA_REPLICATION_INDEX.md`
+- [ ] Read `/docs/specifications/parser/v3/beta_requirements/replication/uuidv7-optimized/00_BETA_REPLICATION_INDEX.md`
 - [ ] Understand new features (leaderless quorum, schema colocation, etc.)
 - [ ] Plan table-level replication modes (which tables need Mode 3?)
 
@@ -451,7 +460,7 @@ Total: 15ms
 
 **Shard Splitting** (increase shard count):
 - Split hot shards into smaller shards
-- Requires data migration (planned downtime or shadow migration)
+- Requires data migration (required downtime or shadow migration)
 
 ### Resource Requirements
 

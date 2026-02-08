@@ -128,9 +128,10 @@ namespace scratchbird::core
         // ====================================================================
         CONNECTION_FAILURE = 6001,
         CONNECTION_DOES_NOT_EXIST = 6002,
-        PROTOCOL_VIOLATION = 6003,
-        INVALID_PASSWORD = 6004,
-        INVALID_AUTHORIZATION = 6005,
+        CONNECTION_CLOSED = 6003,
+        PROTOCOL_VIOLATION = 6004,
+        INVALID_PASSWORD = 6005,
+        INVALID_AUTHORIZATION = 6006,
 
         // ====================================================================
         // Operational Errors (7000-7099)

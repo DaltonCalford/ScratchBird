@@ -556,8 +556,9 @@ message(STATUS "UDR library: scratchbird_udr (Remote Engine UDR Connectors)")
 # Inter-process communication infrastructure for engine-parser communication
 # Components: IPC contract v1.1, message framing, session management, IPC server
 
-file(GLOB SCRATCHBIRD_IPC_SOURCES
+file(GLOB SCRATCHBIRD_IPC_SOURCES CONFIGURE_DEPENDS
     ipc/*.cpp
+    ipc/external_agents/*.cpp
 )
 
 add_library(scratchbird_ipc STATIC

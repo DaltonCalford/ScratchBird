@@ -1,6 +1,5 @@
 # Firebird BLR to ScratchBird SBLR Mapping
-
-Status: Draft (compatibility guidance)
+Status: Authoritative (V3)
 
 This document maps Firebird BLR opcodes to ScratchBird SBLR concepts and opcodes.
 It is intended for emulation paths that must accept BLR (from Firebird clients,

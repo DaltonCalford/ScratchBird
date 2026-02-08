@@ -12,7 +12,7 @@ ScratchBird supports a wide range of standard SQL data types.
 
 | Category | Types | Description |
 | :---- | :---- | :---- |
-| **Integers** | SMALLINT, INTEGER, BIGINT, INT128 | Signed integers of 16, 32, 64, and 128 bits. Unsigned variants (UINT8 to UINT64) are also available. |
+| **Integers** | SMALLINT, INTEGER, BIGINT, INT128 | Signed integers of 16, 32, 64, and 128 bits. Unsigned variants (UINT8 to UINT128) are also available. |
 | **Decimal** | DECIMAL(p,s), NUMERIC(p,s), MONEY, DECFLOAT(16/34) | Exact-precision decimal numbers. MONEY is a fixed-precision currency type. DECFLOAT provides IEEE-754 decimal floating. |
 | **Floating-Point** | REAL, DOUBLE PRECISION | Approximate-precision floating-point numbers (32-bit and 64-bit). |
 | **Character** | CHAR(n), VARCHAR(n), TEXT | Fixed-length, variable-length, and unlimited-length character strings. |
@@ -24,17 +24,33 @@ ScratchBird supports a wide range of standard SQL data types.
 
 ### **2.1. Implementation Notes (Alpha)**
 - **Fixed-length semantics:** CHAR(n) and BINARY(n) are fixed-length types. Values shorter than n are padded (CHAR uses spaces, BINARY uses 0x00). Overlength values raise an error (no silent truncation).
-- **JSONB storage:** In Alpha, JSONB is stored as canonical text (same encoding as JSON). Binary JSON is a future optimization.
-- **Arrays:** SQL arrays are defined as homogeneous and may be multi-dimensional, but the current on-disk encoding is a typed element list (see `DATA_TYPE_PERSISTENCE_AND_CASTS.md`). Dimension/bounds enforcement is a planned enhancement.
+- **JSONB storage:** JSONB is stored in PostgreSQL-compatible binary JSONB format (see `DATA_TYPE_PERSISTENCE_AND_CASTS.md`).
+- **Arrays:** SQL arrays are defined as homogeneous and may be multi-dimensional, but the current on-disk encoding is a typed element list (see `DATA_TYPE_PERSISTENCE_AND_CASTS.md`). Dimension/bounds enforcement is a required enhancement.
 - **Domains:** Domain values are stored using the base type's canonical encoding. Domain constraints, security, and quality rules are enforced by the DomainManager at write/read time.
 
 ### **2.2. SBLR Coverage Notes (Alpha)**
 SBLR type markers and typed literal opcodes must exist for all DataTypes to be
-fully executable. Coverage gaps and planned opcode additions are tracked in:
-- `docs/specifications/sblr/SBLR_OPCODE_REGISTRY.md`
+fully executable. Coverage gaps and required opcode additions are tracked in:
+- `docs/specifications/parser/v3/SBLR_V3_OPCODE_SPEC.md`
 - `docs/findings/SBLR_TYPE_OPCODE_GAPS.md`
 
-## **3\. The DOMAIN Concept**
+## **3\. Type Mechanics (Authoritative)**
+
+Types define how values are stored and manipulated. Domains extend types by attaching constraints and rules. The engine treats all types uniformly (built-in and user-defined); parsers only translate dialect-specific syntax into SBLR.
+
+### **3.1. User-Defined Type Categories**
+
+ScratchBird supports the following user-defined type kinds:
+
+- **Base (Scalar) Types**: Custom low-level storage with input/output functions.
+- **Composite Types**: Structured types with named fields.
+- **Enum Types**: Ordered set of literals, stored as integer ordinals with catalog mapping.
+- **Set Types**: Unordered sets of literals, stored as integer ordinals or bitsets.
+- **Range Types**: Subtype with bounds and inclusivity flags.
+
+Type I/O and cast function bindings are specified in the catalog (see `DATA_TYPE_PERSISTENCE_AND_CASTS.md` catalog requirements).
+
+## **4\. The DOMAIN Concept**
 
 A DOMAIN allows you to create a custom data type based on a primitive type, but with a specific set of rules and behaviors.
 
@@ -209,12 +225,12 @@ CREATE DOMAIN user\_id AS identifier
 
 ## **6\. Polymorphic Type (VARIANT)**
 
-For maximum flexibility in procedural code, ScratchBird provides the VARIANT type, which can hold a value of any other type at runtime.
+VARIANT is a **runtime-only** polymorphic type intended for PSQL/trigger language and expression evaluation. It is **not** a persisted on-disk storage type.
 
 ## **7\. Canonical Storage Encoding (Alpha)**
 
 The canonical on-disk encoding for unencrypted heap tuples **must** match `TypedValue::serializePlainValue` unless explicitly noted. This guarantees that encrypted payloads, uniqueness indexes, and heap storage all round-trip with the same byte layout.
-For implementation details and CAST error semantics, see `docs/specifications/DATA_TYPE_PERSISTENCE_AND_CASTS.md`.
+For implementation details and CAST error semantics, see `docs/specifications/parser/v3/types/DATA_TYPE_PERSISTENCE_AND_CASTS.md`.
 
 ### **7.1. Numeric storage**
 - **INT8/INT16/INT32/INT64/UINT8/UINT16/UINT32/UINT64**: stored as fixed-width integers (little-endian).
@@ -229,16 +245,18 @@ For implementation details and CAST error semantics, see `docs/specifications/DA
 - **MONEY**: stored as a fixed-width `INT64` (scaled 10^-4).
 
 ### **7.2. String and binary storage**
-- **CHAR/VARCHAR/TEXT/JSON/JSONB/XML**: stored as `uint32 length + bytes` (little-endian length) with **no implicit truncation**.
+- **CHAR/VARCHAR/TEXT/JSON/XML**: stored as `uint32 length + bytes` (little-endian length) with **no implicit truncation**.
+- **JSONB**: stored as PostgreSQL-compatible binary JSONB format.
 - **BINARY/VARBINARY/BLOB/BYTEA/VECTOR**: stored as `uint32 length + raw bytes` (little-endian length). No text conversion on write.
 
 ### **7.3. Temporal storage**
-ScratchBird uses Firebird-compatible time formats plus a timezone offset:
-- **DATE**: `int32 MJD` + `int32 offset_seconds` (UTC normalized using `server.time.date_default_time`).
-- **TIME**: `int32 deci-ms` + `int32 offset_seconds`.
-- **TIMESTAMP**: `int32 MJD` + `int32 deci-ms` + `int32 offset_seconds`.
+ScratchBird uses Firebird-compatible parsing rules but stores UTC values with microsecond precision:
+- **DATE**: `int32 MJD` + `int32 offset_seconds` (UTC normalized).
+- **TIME**: `int64 microseconds since midnight UTC` + `int32 offset_seconds`.
+- **TIMESTAMP**: `int64 microseconds since Unix epoch UTC` + `int32 offset_seconds`.
+- **TIME/TIMESTAMP WITH TIME ZONE**: same encoding, with per-value display offset (see canonical spec).
 
-All timestamps are normalized to UTC on write, with `offset_seconds` preserved for display and reconstruction.
+All timestamps are normalized to UTC on write. The per-value offset is preserved only when explicitly specified; otherwise it is set to INT32_MIN (no display preference).
 
 ### **7.4. UUID/INT128**
 - **UUID/INT128**: fixed 16 bytes.
@@ -251,7 +269,7 @@ Every type must support conversion to string (`TEXT/VARCHAR`) and numeric types 
 Required behavior:
 - **String → numeric**: reject non-numeric input with `INVALID_TEXT_REPRESENTATION`.
 - **Numeric → string**: always supported using canonical formatting.
-- **Temporal ↔ string**: `DATE/TIME/TIMESTAMP` parse and format `YYYY-MM-DD`, `HH:MM:SS[.ffff]`, and `YYYY-MM-DD HH:MM:SS[.ffff]` with optional timezone offsets.
+- **Temporal ↔ string**: `DATE/TIME/TIMESTAMP` parse and format using Firebird 5.x rules (see canonical spec), including flexible separators and named time zones.
 - **Binary ↔ string**: uses `CAST(... USING <format>)`.
 
 ### **8.2. CAST ... USING formats**

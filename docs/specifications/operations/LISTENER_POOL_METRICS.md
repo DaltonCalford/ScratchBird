@@ -1,7 +1,7 @@
 # Listener and Parser Pool Metrics
 
 Version: 1.0
-Status: Draft (Alpha IP layer)
+Status: Authoritative (V3)
 Last Updated: January 2026
 
 ## Purpose
@@ -69,5 +69,5 @@ parser churn, and handoff latency.
 
 ## Related Specs
 
-- docs/specifications/operations/PROMETHEUS_METRICS_REFERENCE.md
-- docs/specifications/network/CONTROL_PLANE_PROTOCOL_SPEC.md
+- docs/specifications/parser/v3/operations/PROMETHEUS_METRICS_REFERENCE.md
+- docs/specifications/parser/v3/network/CONTROL_PLANE_PROTOCOL_SPEC.md

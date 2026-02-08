@@ -2,11 +2,11 @@
 
 **Document ID:** SB-SPEC-TEMP-01
 **Version:** 0.1
-**Status:** Draft
+**Status:** Authoritative (V3)
 **Date:** 2026-01-06
 
-**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional post-gold (replication/PITR).
-Any WAL references in this document describe an optional post-gold stream for
+**WAL Scope:** ScratchBird does not use write-after log (WAL) for recovery in Alpha; any WAL support is optional optional extension (replication/PITR).
+Any WAL references in this document describe an optional optional extension stream for
 replication/PITR only.
 
 ## 1. Purpose
@@ -275,6 +275,6 @@ SELECT * FROM my_temp;        -- should fail
 - SBLR: encode temp flags in CREATE_TABLE payload.
 - Catalog: persist metadata, enforce visibility, store temp scopes.
 - Executor: enforce lifecycle and cleanup on commit/rollback/disconnect.
-- Storage: use temp tablespace or in-memory storage, no optional post-gold write-after log (WAL).
+- Storage: use temp tablespace or in-memory storage, no optional optional extension write-after log (WAL).
 - Replication: exclude temp tables by default.
 - Tests: implement and run cases in Section 13.

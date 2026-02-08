@@ -1,9 +1,18 @@
 # SBCLUSTER-05: Sharding
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 ## 1. Introduction
 
 ### 1.1 Purpose
-This document specifies the sharding architecture for ScratchBird clusters. Sharding partitions data across multiple nodes using **consistent hashing**, enabling horizontal scalability while maintaining the shared-nothing, shard-local MVCC model that is fundamental to ScratchBird's design.
+This document specifies the sharding architecture for ScratchBird clusters. Sharding partitions data across multiple nodes using **consistent hashing**, enabling horizontal scalability while maintaining the shared-nothing, shard-local MGA model that is fundamental to ScratchBird's design.
 
 ### 1.2 Scope
 - Consistent hash sharding strategy
@@ -417,7 +426,7 @@ GROUP BY customer_region;
 - Data migration happens offline or via application logic
 - New shard map published via CCE
 
-**Post-Beta: Online Resharding**
+**optional extension: Online Resharding**
 - Live data migration between shards
 - Dual-write during migration
 - Automatic convergence and cutover
@@ -836,7 +845,8 @@ WHERE o.order_date >= '2026-01-01';
 | 1.0     | 2026-01-02 | D. Calford   | Initial comprehensive specification        |
 
 ---
-
-**Document Status**: DRAFT (Beta Specification Phase)
+**Document Status**: Authoritative (V3)
 **Next Review**: Before Beta Implementation Phase
 **Approval Required**: Chief Architect, Distributed Systems Lead, Storage Engineering Lead
+
+**Terminology note:** ScratchBird uses Firebird MGA. Any MGA references in this file are legacy shorthand and must be interpreted as MGA per the authoritative references above.

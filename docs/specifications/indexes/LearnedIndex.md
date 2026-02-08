@@ -1,10 +1,19 @@
 # Learned Index (RMI) Specification for ScratchBird
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 **Version:** 1.0
 **Date:** January 22, 2026
 **Status:** Implementation Ready
 **Author:** ScratchBird Architecture Team
-**Target:** ScratchBird Beta (Optional Index Type)
+**Target:** ScratchBird Beta (Core Index Type)
 **Features:** Page-size agnostic, MGA compliant, model-based search
 
 ---
@@ -43,6 +52,67 @@ Learned indexes use a machine-learned model to predict the position of a key wit
 
 ---
 
+## Authoritative Algorithm (Normative, 2026-02-07)
+
+This section is the implementation source of truth. If any other section in
+this document conflicts with the steps below, this section wins.
+
+### Training Data
+
+1. Extract all index keys and sort by binary-comparable order.
+2. Map each key `k` to its position `pos` in the sorted array.
+3. Train a 2-stage RMI:
+   - Stage 1: `M1` linear models predicting which stage-2 model to use.
+   - Stage 2: `M2` linear models predicting position.
+4. For each stage-2 model, compute **max absolute error** over its training range.
+   - Store `max_error` per model for lookup bounds.
+
+### Lookup
+
+1. Normalize key to numeric feature (e.g., 64-bit integer for fixed-width keys;
+   for variable-length keys use order-preserving encoding or fallback to delta index).
+2. Stage 1: compute model index `i = model1(k)` clamped to `[0, M2-1]`.
+3. Stage 2: compute predicted position `p = model2_i(k)` clamped to `[0, N-1]`.
+4. Compute search window `[p - err_i, p + err_i]` using stored `max_error`.
+5. Binary search within the window for `k`.
+6. If not found, check **delta index** (B-tree or LSM) for recent inserts.
+7. If still not found, return NOT FOUND.
+
+### Insert / Update
+
+1. Insert into **delta index** (exact structure).
+2. If delta size exceeds threshold (e.g., 5-10% of base size), schedule rebuild:
+   - Merge base array + delta, retrain RMI, reset delta.
+
+### Delete
+
+1. Record a tombstone in delta index.
+2. Rebuild compacts tombstones.
+
+### Range Scan
+
+1. Use RMI to predict range bounds for start/end keys.  
+2. Scan base array between predicted bounds, merge with delta index scan.  
+3. Apply tombstones.
+
+### MGA / Versioning
+
+- Base array and model are immutable per epoch.  
+- Delta index is versioned and visible to MGA readers.  
+- Rebuild publishes a new base + model as a new version.
+
+### Complexity Targets
+
+- Lookup: `O(log E)` where `E` is error window size.  
+- Insert/delete: `O(log D)` where `D` is delta index size.  
+- Rebuild: `O(N log N)` dominated by sort + training.
+
+### References (for algorithmic definitions)
+
+- Kraska et al., “The Case for Learned Index Structures,” SIGMOD 2018 / arXiv.  
+
+---
+
 ## Architecture Decision
 
 ### Design Choice
@@ -78,57 +148,38 @@ If the prediction misses the key, search falls back to:
 
 ### Meta Page
 
-```cpp
-#pragma pack(push, 1)
 
-struct SBLearnedIndexMetaPage {
-    PageHeader li_header;
+**Logical Fields:**
 
-    uint8_t li_index_uuid[16];
-    uint8_t li_table_uuid[16];
+- `li_header` (PageHeader)
+- `li_index_uuid[16]` (uint8_t)
+- `li_table_uuid[16]` (uint8_t)
+- `li_column_id` (uint16_t)
+- `li_model_type` (uint16_t): 1 = linear
+- `li_stage1_models` (uint32_t)
+- `li_stage2_models` (uint32_t)
+- `li_root_page` (uint32_t): sorted key array root
+- `li_delta_btree_root` (uint32_t): update buffer
+- `li_total_keys` (uint64_t)
+- `li_total_queries` (uint64_t)
+- `li_model_page_first` (uint32_t)
+- `li_model_page_count` (uint32_t)
+- `li_padding[]` (uint8_t)
 
-    uint16_t li_column_id;
-    uint16_t li_model_type;        // 1 = linear
-
-    uint32_t li_stage1_models;
-    uint32_t li_stage2_models;
-
-    uint32_t li_root_page;          // sorted key array root
-    uint32_t li_delta_btree_root;   // update buffer
-
-    uint64_t li_total_keys;
-    uint64_t li_total_queries;
-
-    uint32_t li_model_page_first;
-    uint32_t li_model_page_count;
-
-    uint8_t li_padding[];
-} __attribute__((packed));
-
-#pragma pack(pop)
-```
 
 ### Model Page
 
-```cpp
-#pragma pack(push, 1)
 
-struct SBLearnedModelPage {
-    PageHeader lm_header;
-    uint32_t lm_next_page;
-    uint32_t lm_model_count;
+**Logical Fields:**
 
-    // Linear model: y = a * x + b
-    struct LinearModel {
-        double a;
-        double b;
-        uint32_t max_error;
-        uint32_t reserved;
-    } lm_models[];
-} __attribute__((packed));
+- `lm_header` (PageHeader)
+- `lm_next_page` (uint32_t)
+- `lm_model_count` (uint32_t)
+- `a` (double)
+- `b` (double)
+- `max_error` (uint32_t)
+- `reserved` (uint32_t)
 
-#pragma pack(pop)
-```
 
 ---
 
@@ -152,7 +203,7 @@ struct SBLearnedModelPage {
 ```cpp
 Status learned_build(UUID index_uuid, LearnedBuilder* builder);
 LearnedResult learned_lookup(UUID index_uuid, const void* key, size_t key_len);
-Status learned_insert_delta(UUID index_uuid, const void* key, size_t key_len, TID tid);
+Status learned_insert_delta(UUID index_uuid, const void* key, size_t key_len, UUID record_uuid);
 ```
 
 ---
@@ -171,17 +222,17 @@ Status learned_insert_delta(UUID index_uuid, const void* key, size_t key_len, TI
 Learned indexes use a **base array + delta index** model. GC is enforced
 by rebuild:
 
-TID references use `TID { gpid, slot }`. Legacy packed TID encodings are
+Record locators use `record_uuid` with optional `SBRecordPtr` cache hints. Legacy packed TIDs are
 not permitted in v2 on-disk formats.
 
-- `removeDeadEntries()` marks dead TIDs in the delta index and schedules
+- `removeDeadEntries()` marks dead record UUIDs in the delta index and schedules
   a rebuild when:
   - dead ratio exceeds `rebuild_threshold`, or
   - OIT advances and delta size is non-trivial.
-- Rebuild merges base + delta, removes dead TIDs, and retrains models.
+- Rebuild merges base + delta, removes dead record UUIDs, and retrains models.
 - New model pages and key arrays are swapped atomically with an epoch bump.
 
-This guarantees no TID movement; dead entries are removed only during the
+This guarantees no record locator movement; dead entries are removed only during the
 swap boundary.
 
 See `INDEX_GC_PROTOCOL.md` for the GC contract.
@@ -242,3 +293,9 @@ WITH (stage1 = 64, stage2 = 2048, max_error = 128, rebuild_threshold = 0.05);
 - Non-linear models (piecewise or spline)
 - GPU-assisted rebuilds
 - Adaptive retraining based on drift
+
+## See Also
+
+- `INDEX_IMPLEMENTATION_REFERENCE.md` — authoritative algorithm map (includes per-index specs).
+- `INDEX_IMPLEMENTATION_SPEC.md` — global MGA/UUID requirements.
+- `INDEX_GC_PROTOCOL.md` — index GC contract.

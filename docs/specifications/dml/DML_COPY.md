@@ -1,6 +1,5 @@
 # DML COPY Statement Specification
-
-**Status:** Draft (Alpha)
+**Status:** Authoritative (V3)
 **Last Updated:** 2026-01-20
 
 ---
@@ -162,6 +161,6 @@ Expose counters in `sys.performance` and Prometheus metrics:
 
 ## 10) Related Specifications
 
-- `docs/specifications/dml/04_DML_STATEMENTS_OVERVIEW.md`
-- `docs/specifications/tools/SB_ISQL_CLI_SPECIFICATION.md`
-- `docs/specifications/wire_protocols/scratchbird_native_wire_protocol.md`
+- `docs/specifications/parser/v3/dml/04_DML_STATEMENTS_OVERVIEW.md`
+- `docs/specifications/parser/v3/tools/SB_ISQL_CLI_SPECIFICATION.md`
+- `docs/specifications/parser/v3/wire_protocols/scratchbird_native_wire_protocol.md`

@@ -1,5 +1,14 @@
 # Prometheus Metrics Reference
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 ## 1. Overview
 
 ScratchBird exposes metrics in Prometheus format on the metrics endpoint (default: `http://localhost:9090/metrics`). All metrics use the `scratchbird_` prefix.
@@ -64,7 +73,7 @@ scratchbird_connections_rejected_total{reason="database_not_found"} 15
 **Labels:**
 | Label | Values | Description |
 |-------|--------|-------------|
-| `protocol` | postgresql, mysql, firebird, native (tds post-gold) | Wire protocol |
+| `protocol` | postgresql, mysql, firebird, native (tds optional extension) | Wire protocol |
 | `reason` | normal, timeout, error, admin_kill, max_connections, auth_failed, ssl_required, database_not_found | Close/reject reason |
 
 ### 2.3 Connection Timing
@@ -348,7 +357,7 @@ scratchbird_index_size_bytes{database="mydb",index="idx_orders_date"} 268435456
 # HELP scratchbird_disk_usage_bytes Total disk usage
 # TYPE scratchbird_disk_usage_bytes gauge
 scratchbird_disk_usage_bytes{type="data"} 64424509440
-scratchbird_disk_usage_bytes{type="wal"} 1073741824  # optional post-gold
+scratchbird_disk_usage_bytes{type="wal"} 1073741824  # optional optional extension
 scratchbird_disk_usage_bytes{type="temp"} 536870912
 ```
 
@@ -358,26 +367,26 @@ scratchbird_disk_usage_bytes{type="temp"} 536870912
 | `database` | (database name) | Database name |
 | `table` | (table name) | Table name |
 | `index` | (index name) | Index name |
-| `type` | data, wal (optional post-gold), temp, backup | Storage type |
+| `type` | data, wal (optional optional extension), temp, backup | Storage type |
 
 ---
 
-## 7. Write-after log (WAL, optional post-gold)/Recovery Metrics
+## 7. Write-after log (WAL, optional optional extension)/Recovery Metrics
 
-**Scope Note:** MGA does not use write-after log (WAL) for recovery. These metrics apply only if an optional write-after log is introduced (post-gold).
+**Scope Note:** MGA does not use write-after log (WAL) for recovery. These metrics apply only if an optional write-after log is introduced (optional extension).
 
 ```prometheus
-# HELP scratchbird_wal_bytes_written_total Write-after log (WAL, optional post-gold) bytes written
+# HELP scratchbird_wal_bytes_written_total Write-after log (WAL, optional optional extension) bytes written
 # TYPE scratchbird_wal_bytes_written_total counter
 scratchbird_wal_bytes_written_total 9876543210
 
-# HELP scratchbird_wal_segments_total Write-after log (WAL, optional post-gold) segments
+# HELP scratchbird_wal_segments_total Write-after log (WAL, optional optional extension) segments
 # TYPE scratchbird_wal_segments_total gauge
 scratchbird_wal_segments_total{state="active"} 3
 scratchbird_wal_segments_total{state="archived"} 1234
 scratchbird_wal_segments_total{state="pending_archive"} 2
 
-# HELP scratchbird_wal_segment_size_bytes Write-after log (WAL, optional post-gold) segment size
+# HELP scratchbird_wal_segment_size_bytes Write-after log (WAL, optional optional extension) segment size
 # TYPE scratchbird_wal_segment_size_bytes gauge
 scratchbird_wal_segment_size_bytes 16777216
 
@@ -932,3 +941,5 @@ Folder: ScratchBird
 | Locks | locks_held, locks_waiting | Stacked bar |
 | Memory | memory_allocated_bytes | Stacked area |
 | Top Tables | table_size_bytes | Bar chart |
+
+**Terminology note:** ScratchBird uses Firebird MGA. Any MGA references in this file are legacy shorthand and must be interpreted as MGA per the authoritative references above.

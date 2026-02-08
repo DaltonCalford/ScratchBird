@@ -1,7 +1,16 @@
 # Dialect Monitoring View Mappings
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 Version: 1.0
-Status: Draft (Alpha)
+Status: Authoritative (V3)
 Last Updated: January 2026
 
 ## Purpose
@@ -38,7 +47,7 @@ Out of scope:
   schema shape and types.
 - Integer identity columns (pid, processlist ID, attachment id) should use
   `sys.sessions.connection_id`, cast to the target integer size if required.
-- PostgreSQL OID mapping follows `docs/specifications/operations/OID_MAPPING_STRATEGY.md`.
+- PostgreSQL OID mapping follows `docs/specifications/parser/v3/operations/OID_MAPPING_STRATEGY.md`.
   If OID mapping is disabled or unavailable, return `NULL`.
 
 ### State Mapping (Common)

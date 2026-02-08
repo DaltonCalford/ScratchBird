@@ -1,10 +1,19 @@
 # Adaptive Radix Tree (ART) Index Specification for ScratchBird
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 **Version:** 1.0
 **Date:** January 22, 2026
 **Status:** Implementation Ready
 **Author:** ScratchBird Architecture Team
-**Target:** ScratchBird Beta (Optional Index Type)
+**Target:** ScratchBird Beta (Core Index Type)
 **Features:** In-memory optimized, cache-aware, MGA compliant
 
 ---
@@ -43,6 +52,107 @@ Adaptive Radix Tree (ART) is a cache-efficient trie-based index that adapts node
 
 ---
 
+## Authoritative Algorithm (Normative, 2026-02-07)
+
+This section is the implementation source of truth. If any other section in
+this document conflicts with the steps below, this section wins.
+
+### Core Data Structures
+
+1. **Node header**  
+   - `type`: one of `NODE4`, `NODE16`, `NODE48`, `NODE256`.  
+   - `prefix_len`: number of compressed bytes (0..MAX_PREFIX).  
+   - `prefix[MAX_PREFIX]`: first `min(prefix_len, MAX_PREFIX)` bytes.  
+   - `child_count`: number of live children (0..type capacity).  
+   - `version_chain`: optional node versioning for concurrent writers (RCU-style).  
+2. **Node4/16**  
+   - `keys[cap]`: sorted array of child key bytes.  
+   - `children[cap]`: child pointers (either node or leaf).  
+3. **Node48**  
+   - `child_index[256]`: 1-byte index into `children[]`, value 0xFF means empty.  
+   - `children[48]`: child pointers.  
+4. **Node256**  
+   - `children[256]`: direct array (NULL if absent).  
+5. **Leaf**  
+   - `key_ptr`: pointer to full, binary-comparable key bytes.  
+   - `key_len`: length.  
+   - `entries[]`: array of `SBIndexEntryMeta` (one per record version).  
+
+### Key Normalization (Binary Comparable)
+
+1. For fixed-width numeric types, encode to big-endian with sign-bit flip for signed types.  
+2. For variable-length strings, use raw bytes + terminator `0x00` to ensure prefix ordering.  
+3. For composite keys, concatenate normalized field encodings with length-prefix where needed.  
+4. Record normalized byte sequence in the leaf; internal nodes only store prefixes and next-byte keys.
+
+### Search (Point Lookup)
+
+1. Normalize key to byte sequence `K`.  
+2. Start at root node `N`.  
+3. While `N` is not NULL:  
+   1. Compare `N.prefix` with `K[pos..]` for `min(prefix_len, MAX_PREFIX)` bytes.  
+   2. If mismatch, return NOT FOUND.  
+   3. Advance `pos` by `prefix_len`.  
+   4. If `pos == len(K)`:
+      - If a leaf is stored at this node, compare full key bytes to disambiguate; return match.  
+      - Else NOT FOUND.  
+   5. Use byte `K[pos]` to select child from `N` (linear/binary search in Node4/16, index map in Node48, direct in Node256).  
+   6. If child is leaf: compare full key bytes; return match if equal.  
+   7. Else set `N = child` and continue.
+
+### Insert (Upsert)
+
+1. Normalize key `K` and locate insertion point using search steps.  
+2. If existing leaf matches, append a new `SBIndexEntryMeta` for the new record version.  
+3. If search hits NULL child:  
+   - Insert a new leaf into current node; if node full, grow (Node4→16→48→256).  
+4. If search hits leaf with different key:  
+   1. Find longest common prefix between existing leaf key and `K` from `pos`.  
+   2. Create a new node `Nnew` with `prefix = common_prefix`, `prefix_len = lcp`.  
+   3. Add existing leaf under `Nnew` using next differing byte.  
+   4. Add new leaf under `Nnew` using next differing byte.  
+   5. Replace parent child pointer with `Nnew`.  
+5. If search hits node but prefix mismatch:  
+   1. Split node: create `Nnew` with `prefix = common_prefix`.  
+   2. Adjust existing node’s prefix by removing common prefix + 1 byte.  
+   3. Insert existing node and new leaf as children of `Nnew`.  
+   4. Replace parent child pointer with `Nnew`.
+
+### Delete
+
+1. Search for leaf; if not found, return.  
+2. Remove leaf from its parent node.  
+3. If parent `child_count` falls below shrink threshold:  
+   - Node256→48→16→4 (rebuild child arrays).  
+4. If parent has only one child left and is not root:  
+   - Merge parent prefix with child prefix (path compression), replace parent with child.  
+5. Track deleted leaf and node versions for MGA GC (tombstones).
+
+### Range / Prefix Scan
+
+1. Normalize prefix key `P`.  
+2. Descend to the node matching `P` (like search, allowing mid-node match).  
+3. Perform DFS in lexicographic order by child key byte.  
+4. Emit leaves in order; compare full key bytes for final ordering stability.
+
+### Concurrency + MGA
+
+1. Writers publish new node versions atomically (RCU-style).  
+2. Readers traverse a consistent prefix path without blocking.  
+3. Leaf entries are filtered by record visibility (`sb_find_visible_version`).  
+4. Old node/leaf versions are reclaimed by index GC when safe.  
+
+### Complexity Targets
+
+- Search/insert/delete: `O(k)` where `k` is key length in bytes.  
+- Range scan: `O(k + output)` plus traversal overhead.
+
+### References (for algorithmic definitions)
+
+- Leis, Kemper, Neumann, “The Adaptive Radix Tree: ARTful indexing for main-memory databases,” ICDE 2013.  
+
+---
+
 ## Architecture Decision
 
 ### Design Choice
@@ -51,7 +161,7 @@ Implement ART as a **memory-first index** with periodic persistence:
 
 - In-memory ART nodes for speed
 - Snapshot pages for persistence
-- Optional write-after log (WAL) for durability (post-gold)
+- Optional write-after log (WAL) for durability (optional extension)
 
 ---
 
@@ -73,79 +183,47 @@ Implement ART as a **memory-first index** with periodic persistence:
 
 ### Meta Page
 
-```cpp
-#pragma pack(push, 1)
 
-struct SBARTIndexMetaPage {
-    PageHeader art_header;
+**Logical Fields:**
 
-    uint8_t art_index_uuid[16];
-    uint8_t art_table_uuid[16];
+- `art_header` (PageHeader)
+- `art_index_uuid[16]` (uint8_t)
+- `art_table_uuid[16]` (uint8_t)
+- `art_column_id` (uint16_t)
+- `art_key_len` (uint16_t): 0 for variable
+- `art_root_page` (uint32_t): snapshot root
+- `art_snapshot_epoch` (uint32_t)
+- `art_total_keys` (uint64_t)
+- `art_total_nodes` (uint64_t)
+- `art_padding[]` (uint8_t)
 
-    uint16_t art_column_id;
-    uint16_t art_key_len;          // 0 for variable
-
-    uint32_t art_root_page;        // snapshot root
-    uint32_t art_snapshot_epoch;
-
-    uint64_t art_total_keys;
-    uint64_t art_total_nodes;
-
-    uint8_t art_padding[];
-} __attribute__((packed));
-
-#pragma pack(pop)
-```
 
 ### Snapshot Node Layout
 
-```cpp
-#pragma pack(push, 1)
 
-enum SBARTNodeType : uint8_t {
-    ART_NODE4 = 4,
-    ART_NODE16 = 16,
-    ART_NODE48 = 48,
-    ART_NODE256 = 256
-};
+**Logical Fields:**
 
-struct SBARTNodeHeader {
-    uint8_t type;          // SBARTNodeType
-    uint8_t prefix_len;    // bytes
-    uint16_t child_count;
-    uint32_t reserved;
-    uint8_t prefix[8];     // inline prefix
-};
+- `type` (uint8_t): SBARTNodeType
+- `prefix_len` (uint8_t): bytes
+- `child_count` (uint16_t)
+- `reserved` (uint32_t)
+- `prefix[8]` (uint8_t): inline prefix
+- `hdr` (SBARTNodeHeader)
+- `keys[4]` (uint8_t)
+- `children[4]` (uint32_t)
+- `hdr` (SBARTNodeHeader)
+- `keys[16]` (uint8_t)
+- `children[16]` (uint32_t)
+- `hdr` (SBARTNodeHeader)
+- `child_index[256]` (uint8_t)
+- `children[48]` (uint32_t)
+- `hdr` (SBARTNodeHeader)
+- `children[256]` (uint32_t)
 
-struct SBARTNode4 {
-    SBARTNodeHeader hdr;
-    uint8_t keys[4];
-    uint32_t children[4];
-};
-
-struct SBARTNode16 {
-    SBARTNodeHeader hdr;
-    uint8_t keys[16];
-    uint32_t children[16];
-};
-
-struct SBARTNode48 {
-    SBARTNodeHeader hdr;
-    uint8_t child_index[256];
-    uint32_t children[48];
-};
-
-struct SBARTNode256 {
-    SBARTNodeHeader hdr;
-    uint32_t children[256];
-};
-
-#pragma pack(pop)
-```
 
 ### Leaf Representation
 
-Leaf stores key suffix and TID. Variable-length keys store a pointer to an overflow area.
+Leaf stores key suffix and `SBIndexEntryMeta` entries. Variable-length keys store a pointer to an overflow area.
 
 ---
 
@@ -159,17 +237,21 @@ Leaf stores key suffix and TID. Variable-length keys store a pointer to an overf
 
 ## MGA Compliance
 
-- ART nodes store TID pointers; visibility checks are applied at lookup
-- Updates create new leaf entries or versioned leaf chains
-- Snapshot rebuild uses consistent transaction snapshot
+- ART leaves store `SBIndexEntryMeta` for **record versions**, not tuple headers.  
+- Visibility is determined by record header + TIP (`sb_find_visible_version`).  
+- Updates to indexed keys create **new entries**; old entries remain until sweep.  
+- Snapshot rebuild uses TIP state and MGA rules, not PostgreSQL snapshots.  
+ - Leaf entries must use `record_uuid` with optional `SBRecordPtr` cache hints.  
 
 ---
 
 ## Core API
 
 ```cpp
-Status art_insert(UUID index_uuid, const void* key, size_t key_len, TID tid);
-Status art_delete(UUID index_uuid, const void* key, size_t key_len, TID tid);
+Status art_insert(UUID index_uuid, const void* key, size_t key_len,
+                  const SBIndexEntryMeta& meta);
+Status art_delete(UUID index_uuid, const void* key, size_t key_len,
+                  const UUID& record_uuid);
 ARTResult art_lookup(UUID index_uuid, const void* key, size_t key_len);
 ARTIterator art_prefix_scan(UUID index_uuid, const void* prefix, size_t prefix_len);
 ```
@@ -178,33 +260,29 @@ ARTIterator art_prefix_scan(UUID index_uuid, const void* prefix, size_t prefix_l
 
 ## DML Integration
 
-- INSERT: insert key and TID
-- UPDATE: delete old key and insert new key if changed
-- DELETE: mark or remove leaf (MGA rules)
+- INSERT: insert key + `SBIndexEntryMeta` for the new record version
+- UPDATE: if key changes, insert new entry; old entry remains until sweep
+- DELETE: create `RHD_DELETED` record version; index entry remains until sweep
 
 ---
 
 ## Garbage Collection
 
-ART implements `IndexGCInterface` and removes dead TIDs by scanning leaf
-entries. Each leaf can store multiple TIDs per key (duplicates or
-multi-version rows).
-
-TID references use `TID { gpid, slot }`. Legacy packed TID encodings are
-not permitted in v2 on-disk formats.
+ART implements `IndexGCInterface` and removes dead record versions by scanning leaf
+entries. Each leaf can store multiple `SBIndexEntryMeta` entries per key.
 
 GC behavior:
 
-- Build a hash set of dead TIDs from the heap sweep.
-- Walk all leaves and remove any TID in the dead set.
-- If a leaf has no remaining TIDs, remove the leaf and prune the parent path.
+- Build a hash set of dead `record_uuid`s from heap sweep batches.
+- Walk all leaves and remove any entry with a dead `record_uuid`.
+- If a leaf has no remaining entries, remove the leaf and prune the parent path.
 - If node fanout drops below the lower threshold, shrink node type
   (Node256 -> Node48 -> Node16 -> Node4).
 
 Concurrency:
 
 - Readers use shared locks; GC uses write locks on modified nodes only.
-- GC never moves live TIDs; it only removes dead references.
+- GC never moves live entries; it only removes dead references.
 
 Persistence:
 
@@ -270,3 +348,9 @@ WITH (prefix_compression = true, snapshot_interval = 300);
 - Hot/cold tiering between ART and B-tree
 - Adaptive memory pressure eviction
 - Optional write-after log for faster recovery
+
+## See Also
+
+- `INDEX_IMPLEMENTATION_REFERENCE.md` — authoritative algorithm map (includes per-index specs).
+- `INDEX_IMPLEMENTATION_SPEC.md` — global MGA/UUID requirements.
+- `INDEX_GC_PROTOCOL.md` — index GC contract.

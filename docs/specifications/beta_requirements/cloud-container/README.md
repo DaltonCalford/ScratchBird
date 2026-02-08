@@ -18,7 +18,7 @@ ScratchBird provides first-class support for modern cloud-native deployments wit
 - Optimized layer caching
 - Security scanning
 - **Market Share:** Standard containerization platform
-- Draft spec: [docker/SPECIFICATION.md](docker/SPECIFICATION.md)
+- Authoritative spec: [docker/SPECIFICATION.md](docker/SPECIFICATION.md)
 
 ### Container Orchestration
 

@@ -1,6 +1,5 @@
 # PostgreSQL Emulation Protocol Behavior Specification
-
-Status: Draft (Target). This document defines the server-side wire protocol
+Status: Authoritative (V3)
 behavior for the PostgreSQL emulation listener. It is intended to be
 byte-compatible with PostgreSQL 9.6-17 for the covered features.
 

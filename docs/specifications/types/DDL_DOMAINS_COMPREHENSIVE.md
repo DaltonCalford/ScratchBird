@@ -1,5 +1,15 @@
 # ScratchBird Domain Specification (Comprehensive)
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
+
 **Version:** 1.0 ALPHA
 **Status:** SPECIFICATION DRAFT FOR PLAN 04
 **Last Updated:** 2025-12-22
@@ -841,7 +851,7 @@ CREATE DOMAIN mysql_tinyint AS SMALLINT
 
 **Check Timing:**
 1. **INSERT/UPDATE** - Domain constraints checked BEFORE table constraints
-2. **Visibility** - Uses MGA visibility (xmin/xmax) for constraint versions
+2. **Visibility** - Uses MGA visibility (rhd_transaction/back-version) for constraint versions
 3. **Inheritance** - All ancestor constraints checked in order (parent first)
 
 **Execution Order:**

@@ -1,7 +1,7 @@
 # Apache Kafka Broadcaster and Client Specification (Beta)
 
 ## Status
-Draft (Beta)
+Authoritative (V3)
 
 ## Purpose
 Define **Kafka broadcaster** (source) and **Kafka client** (sink) behavior for:
@@ -156,7 +156,7 @@ audit.kafka.sasl_mechanism = "SCRAM-SHA-512"
 
 ### Replication Channel Settings (Kafka WAL)
 Kafka settings for WAL streaming are defined in:
-`docs/specifications/beta_requirements/replication/REPLICATION_AND_SHADOW_PROTOCOLS.md`
+`docs/specifications/parser/v3/beta_requirements/replication/REPLICATION_AND_SHADOW_PROTOCOLS.md`
 
 Example parameters:
 ```
@@ -179,7 +179,7 @@ Kafka integration must expose:
 - Ingest apply rate and error counts
 
 These metrics are included in the Prometheus metrics reference:
-`docs/specifications/operations/PROMETHEUS_METRICS_REFERENCE.md`
+`docs/specifications/parser/v3/operations/PROMETHEUS_METRICS_REFERENCE.md`
 
 ## Implementation Checklist (Beta)
 - [ ] Implement Kafka producer (CDC broadcaster)

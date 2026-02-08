@@ -1,4 +1,13 @@
 # ScratchBird SQL Complete BNF/EBNF Grammar
+
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
 ## Version 1.0 - Comprehensive Grammar Specification
 
 ## Overview
@@ -1261,7 +1270,7 @@ supported.
 <sweep_status_command> ::=
     SWEEP STATUS [ VERBOSE ]
 
-Note: SWEEP STATUS is a planned read-only monitoring statement. It returns sweep
+Note: SWEEP STATUS is a required read-only monitoring statement. It returns sweep
 statistics and transaction markers without performing a sweep.
 
 <vacuum_command> ::=

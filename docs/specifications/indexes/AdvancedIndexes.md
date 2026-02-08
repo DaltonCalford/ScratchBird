@@ -1,6 +1,21 @@
 # Production Database Index Implementation Guide
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 **Four advanced index types with complete specifications for database developers building high-performance data systems.** This guide synthesizes production implementations from Lucene, RocksDB, Cassandra, ClickHouse, Parquet, and Faiss, providing code-level details for immediate use.
+
+## Contradictions vs Normative Index Specs (2026-02-07)
+
+- This document claims “complete specifications,” but authoritative algorithm sections now live in the per-index files under `docs/specifications/parser/v3/indexes/`. If any algorithmic detail conflicts, the per-index “Authoritative Algorithm (Normative, 2026-02-07)” sections take precedence.
+
+---
 
 ## Overview and selection criteria
 
@@ -50,24 +65,11 @@ Token Filters:
 ```
 
 **Implementation example:**
-```rust
-pub trait Analyzer {
-    fn token_stream(&self, text: &str) -> TokenStream;
-}
 
-pub struct StandardAnalyzer {
-    stop_words: HashSet<String>,
-}
+**Logical Fields:**
 
-impl Analyzer for StandardAnalyzer {
-    fn token_stream(&self, text: &str) -> TokenStream {
-        TokenStream::new(text)
-            .lowercase()
-            .filter_stop_words(&self.stop_words)
-            .stem(StemmerType::Porter)
-    }
-}
-```
+- (see authoritative spec for on-disk layout)
+
 
 ### Posting list compression
 
@@ -272,22 +274,14 @@ for i in range(k):
 
 ### Bit array implementation
 
-```cpp
-struct BloomFilter {
-    uint8_t* bits;          // Byte array
-    size_t num_bits;        // m
-    uint8_t num_hashes;     // k
-    uint32_t num_keys;      // n inserted
-};
 
-void SetBit(uint8_t* bits, size_t index) {
-    bits[index / 8] |= (1 << (index % 8));
-}
+**Logical Fields:**
 
-bool CheckBit(const uint8_t* bits, size_t index) {
-    return (bits[index / 8] & (1 << (index % 8))) != 0;
-}
-```
+- `bits` (uint8_t*): Byte array
+- `num_bits` (size_t): m
+- `num_hashes` (uint8_t): k
+- `num_keys` (uint32_t): n inserted
+
 
 **Atomic operations for concurrent access:**
 ```cpp
@@ -312,44 +306,25 @@ class ThreadSafeBloomFilter {
 ```
 
 **Cache-efficient blocked filters:**
-```cpp
-// RocksDB: 64-byte blocks (512 bits per cache line)
-struct BlockedBloomFilter {
-    static constexpr size_t kBlockSize = 64;
-    uint8_t* blocks_;
-    
-    void Add(const Slice& key) {
-        uint32_t h = Hash(key);
-        uint32_t block_idx = h % num_blocks_;
-        uint8_t* block = blocks_ + (block_idx * kBlockSize);
-        
-        // All k probes within single cache line
-        for (int i = 0; i < num_hashes_; i++) {
-            uint32_t bit = (h + i * Delta(h)) % 512;
-            SetBit(block, bit);
-        }
-    }
-};
-```
+
+**Logical Fields:**
+
+- `blocks_` (uint8_t*)
+
 
 ### Persistence format
 
-```cpp
-struct BloomFilterHeader {
-    uint32_t magic_number;      // 0xB100F117
-    uint16_t version;           // Format version
-    uint16_t hash_type;         // 1=Murmur3, 2=xxHash
-    uint32_t num_bits;          // m
-    uint16_t num_hashes;        // k
-    uint32_t num_keys_inserted; // n
-    uint32_t checksum;          // CRC32
-};
 
-// File layout
-[Header - 48 bytes]
-[Bitset - (num_bits/8) bytes]
-[Footer checksum - 4 bytes]
-```
+**Logical Fields:**
+
+- `magic_number` (uint32_t): 0xB100F117
+- `version` (uint16_t): Format version
+- `hash_type` (uint16_t): 1=Murmur3, 2=xxHash
+- `num_bits` (uint32_t): m
+- `num_hashes` (uint16_t): k
+- `num_keys_inserted` (uint32_t): n
+- `checksum` (uint32_t): CRC32
+
 
 ### LSM-tree integration
 
@@ -477,17 +452,17 @@ class ScalableBloomFilter {
 
 ### Storage structure
 
-```c
-struct ZoneMapEntry {
-    DataType min_value;
-    DataType max_value;
-    uint64_t null_count;
-    uint64_t row_count;
-    uint64_t zone_id;
-    uint8_t zone_state;         // FRESH, STALE, INVALID
-    uint64_t distinct_count;    // HyperLogLog estimate
-};
-```
+
+**Logical Fields:**
+
+- `min_value` (DataType)
+- `max_value` (DataType)
+- `null_count` (uint64_t)
+- `row_count` (uint64_t)
+- `zone_id` (uint64_t)
+- `zone_state` (uint8_t): FRESH, STALE, INVALID
+- `distinct_count` (uint64_t): HyperLogLog estimate
+
 
 **ClickHouse granules:** 8,192 rows or ~10MB (adaptive)  
 **Parquet:** 128MB row groups, 1MB pages  
@@ -776,17 +751,14 @@ Formula: 4*sqrt(N) to 16*sqrt(N) where N = dataset size
 
 **Data structure:** `cluster_id → list of (vector_id, encoded_vector)`
 
-```cpp
-struct IVFIndex {
-    std::vector<float> centroids;  // nlist × d centroids
-    std::vector<InvertedList> lists;
-};
 
-struct InvertedList {
-    std::vector<uint64_t> vector_ids;
-    std::vector<uint8_t> encoded_vectors;  // PQ codes or full vectors
-};
-```
+**Logical Fields:**
+
+- `centroids` (std::vector<float>): nlist × d centroids
+- `lists` (std::vector<InvertedList>)
+- `vector_ids` (std::vector<uint64_t>)
+- `encoded_vectors` (std::vector<uint8_t>): PQ codes or full vectors
+
 
 **Storage:**
 - **IndexIVFFlat:** Stores full vectors (4×d + 8 bytes per vector)
@@ -922,19 +894,14 @@ D, I = index.search(queries, k=10)
 **Memory:** (m + 8) bytes per vector (16+8 = 24 bytes for m=16)
 
 **Key C++ structure:**
-```cpp
-struct IndexIVF {
-    Index* quantizer;              // Coarse quantizer
-    size_t nlist;                  // Number of lists
-    size_t nprobe;                 // Search parameter
-    InvertedLists* invlists;       // Storage
-    
-    virtual void train(idx_t n, const float* x);
-    virtual void add(idx_t n, const float* x);
-    virtual void search(idx_t n, const float* x, idx_t k,
-                       float* distances, idx_t* labels);
-};
-```
+
+**Logical Fields:**
+
+- `quantizer` (Index*): Coarse quantizer
+- `nlist` (size_t): Number of lists
+- `nprobe` (size_t): Search parameter
+- `invlists` (InvertedLists*): Storage
+
 
 ### HNSW integration
 
@@ -1122,30 +1089,23 @@ Column storage:
 
 **Key metrics across all index types:**
 
-```cpp
-struct IndexMetrics {
-    // Effectiveness
-    double hit_rate;           // Bloom: skip rate, Zone: prune rate
-    double false_positive_rate; // Bloom filters
-    double skip_percentage;     // Zone maps
-    double recall_at_k;         // Vector indexes
-    
-    // Performance
-    double avg_query_latency_ms;
-    double p95_query_latency_ms;
-    double p99_query_latency_ms;
-    
-    // Resource usage
-    size_t memory_bytes;
-    double cpu_utilization;
-    size_t disk_bytes;
-    
-    // Maintenance
-    double index_build_time_sec;
-    double merge_time_sec;
-    uint64_t rebuild_count;
-};
-```
+
+**Logical Fields:**
+
+- `hit_rate` (double): Bloom: skip rate, Zone: prune rate
+- `false_positive_rate` (double): Bloom filters
+- `skip_percentage` (double): Zone maps
+- `recall_at_k` (double): Vector indexes
+- `avg_query_latency_ms` (double)
+- `p95_query_latency_ms` (double)
+- `p99_query_latency_ms` (double)
+- `memory_bytes` (size_t)
+- `cpu_utilization` (double)
+- `disk_bytes` (size_t)
+- `index_build_time_sec` (double)
+- `merge_time_sec` (double)
+- `rebuild_count` (uint64_t)
+
 
 ### Configuration best practices
 
@@ -1289,10 +1249,16 @@ These specifications provide production-ready building blocks for high-performan
 
 All advanced indexes must comply with `INDEX_GC_PROTOCOL.md`:
 
-- Indexes that store per-row TIDs (inverted, zone map, IVF) implement
-  `IndexGCInterface::removeDeadEntries()` and filter dead TIDs during sweep.
+- Indexes that store per-row record UUIDs (inverted, zone map, IVF) implement
+  `IndexGCInterface::removeDeadEntries()` and filter dead record UUIDs during sweep.
 - Immutable segment indexes (inverted, FST) perform GC during segment merges.
 - Probabilistic auxiliary indexes (Bloom, HLL, CMS) trigger rebuilds rather
   than per-row deletions.
 
 Each ScratchBird-specific index spec defines its GC behavior in detail.
+
+## See Also
+
+- `INDEX_IMPLEMENTATION_REFERENCE.md` — authoritative algorithm map (includes per-index specs).
+- `INDEX_IMPLEMENTATION_SPEC.md` — global MGA/UUID requirements.
+- `INDEX_GC_PROTOCOL.md` — index GC contract.

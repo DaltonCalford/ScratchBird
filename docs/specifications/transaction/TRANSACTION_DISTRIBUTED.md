@@ -1,4 +1,7 @@
 # ScratchBird Transaction Management - Distributed Transactions
+
+**Legacy term note:** This document may use xmin/xmax labels for creator/deleter transaction IDs. ScratchBird does not use PostgreSQL tuple headers; see the authoritative MGA specs above for the actual Firebird-style record header fields (e.g., `rhd_transaction`, `rhd_back_version`) and visibility/GC rules.
+
 ## Part 3 of Transaction and Lock Management Specification
 
 ## Overview

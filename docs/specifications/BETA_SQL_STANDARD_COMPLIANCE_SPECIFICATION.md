@@ -6,7 +6,7 @@
 **Owner:** Core Engineering Team
 **Related Documents:**
 - `/ScratchBird-Analysis-Reports/16-SQL-STANDARD-COMPLIANCE-GAP-ANALYSIS.md`
-- `/docs/specifications/reference/firebird/firebird_docs_split/10_Window_Functions.md`
+- `/docs/specifications/parser/v3/reference/firebird/firebird_docs_split/10_Window_Functions.md`
 
 ---
 
@@ -618,7 +618,7 @@ SELECT * FROM t GROUP BY CUBE (a,b,c,d,e,f,g,h,i,j);  -- 2^10 = 1024 sets
 ### 1.11 Documentation
 
 **Files to Create:**
-- `/docs/specifications/dml/DML_SELECT_GROUPING.md`
+- `/docs/specifications/parser/v3/dml/DML_SELECT_GROUPING.md`
 - `/docs/user_guide/sql_reference/grouping_sets.md`
 
 **Content Requirements:**
@@ -1399,7 +1399,7 @@ CREATE TABLE RDB$TEXT_SEARCH_DICTS (
 ### 2.11 Documentation
 
 **Files to Create:**
-- `/docs/specifications/dml/DML_FULLTEXT_SEARCH.md`
+- `/docs/specifications/parser/v3/dml/DML_FULLTEXT_SEARCH.md`
 - `/docs/user_guide/fulltext_search.md`
 
 **Content:**
@@ -1758,7 +1758,7 @@ COMMIT;
 ### 3.12 Documentation
 
 **Files to Create:**
-- `/docs/specifications/ddl/DDL_DEFERRABLE_CONSTRAINTS.md`
+- `/docs/specifications/parser/v3/ddl/DDL_DEFERRABLE_CONSTRAINTS.md`
 
 **Content:**
 - Complete syntax
@@ -2209,7 +2209,7 @@ struct CompiledState {
 ### 4.10 Documentation
 
 **Files to Create:**
-- `/docs/specifications/dml/DML_MATCH_RECOGNIZE.md`
+- `/docs/specifications/parser/v3/dml/DML_MATCH_RECOGNIZE.md`
 
 **Content:**
 - Complete syntax
@@ -2254,7 +2254,7 @@ CREATE TABLE reservations (
 
 ## 6. CHECK Constraints with Subqueries
 
-**Priority:** 🟢 VERY LOW (Post-Beta)
+**Priority:** 🟢 VERY LOW (optional extension)
 **Effort:** 1-2 weeks
 **Recommendation:** Issue WARNING, do not implement initially
 
@@ -2282,9 +2282,9 @@ CREATE TABLE orders (
 
 ## 7. Polymorphic Table Functions
 
-**Priority:** 🟢 VERY LOW (Post-Beta)
+**Priority:** 🟢 VERY LOW (optional extension)
 **Effort:** 10-12 weeks
-**Recommendation:** Defer to post-Beta
+**Recommendation:** Defer to optional extension
 
 **SQL Syntax:**
 ```sql
@@ -2379,7 +2379,7 @@ AS ...
 - EXCLUSION Constraints (simplified) (Weeks 24-25)
 - Testing and documentation (Weeks 26-30)
 
-**Post-Beta:**
+**optional extension:**
 - CHECK with Subqueries (optional)
 - Polymorphic Table Functions (deferred)
 

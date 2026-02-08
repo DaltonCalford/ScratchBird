@@ -1,7 +1,7 @@
 # sb_server Network CLI Specification
 
 Version: 1.0
-Status: Draft (Alpha IP layer)
+Status: Authoritative (V3)
 Last Updated: January 2026
 
 ## Purpose
@@ -81,5 +81,5 @@ spawned only when enabled by config or CLI flags.
 
 ## Related Specs
 
-- docs/specifications/network/NETWORK_LISTENER_AND_PARSER_POOL_SPEC.md
+- docs/specifications/parser/v3/network/NETWORK_LISTENER_AND_PARSER_POOL_SPEC.md
 - docs/specifications/deployment/SYSTEMD_SERVICE_SPECIFICATION.md

@@ -1,5 +1,14 @@
 # ScratchBird Core Engine Unified Specification (Alpha)
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 ## 1. Purpose
 Define a single, authoritative core-engine specification for Alpha that
 consolidates storage, catalog, transactions, execution, and persistence
@@ -33,71 +42,72 @@ driver, and tooling concerns.
 
 ## 3. Source Specifications
 This unified spec is derived from the following core documents:
-- Storage: `docs/specifications/storage/*`, `docs/specifications/compression/*`
-- Catalog: `docs/specifications/catalog/*`
-- Transactions: `docs/specifications/transaction/*`
-- Indexes: `docs/specifications/indexes/*`
-- Types: `docs/specifications/types/*`
-- DDL/DML: `docs/specifications/ddl/*`, `docs/specifications/dml/*`, `docs/specifications/triggers/*`
-- SBLR: `docs/specifications/sblr/*`
+- Storage: `docs/specifications/parser/v3/storage/*`, `docs/specifications/compression/*`
+- Catalog: `docs/specifications/parser/v3/catalog/*`
+- Transactions: `docs/specifications/parser/v3/transaction/*`
+- Indexes: `docs/specifications/parser/v3/indexes/*`
+- Types: `docs/specifications/parser/v3/types/*`
+- DDL/DML: `docs/specifications/parser/v3/ddl/*`, `docs/specifications/parser/v3/dml/*`, `docs/specifications/triggers/*`
+- SBLR: `docs/specifications/parser/v3/SBLR_V3_OPCODE_SPEC.md`, `docs/specifications/parser/v3/SBLR_V3_OPCODE_PAYLOADS.md`, `docs/specifications/parser/v3/SBLR_V3_OPCODE_SEMANTICS.md`
 - Security: `docs/specifications/Security Design Specification/*` (engine-core sections only)
-- Operations/Monitoring: `docs/specifications/operations/*`
+- Operations/Monitoring: `docs/specifications/parser/v3/operations/*`
 - Backup/Restore: `docs/specifications/BACKUP_AND_RESTORE.md`
 - Scheduler: `docs/specifications/scheduler/*`
-- Memory/Cache: `docs/specifications/MEMORY_MANAGEMENT.md`, `docs/specifications/core/CACHE_AND_BUFFER_ARCHITECTURE.md`
+- Memory/Cache: `docs/specifications/MEMORY_MANAGEMENT.md`, `docs/specifications/parser/v3/core/CACHE_AND_BUFFER_ARCHITECTURE.md`
 - Temporary tables: `docs/specifications/TEMPORARY_TABLES_SPECIFICATION.md`
 
 ## 4. Core Principles
 
 ### CORE-PRINCIPLE-001: MGA Transactions (No WAL in Alpha)
 ScratchBird uses Multi-Generational Architecture (MGA) for concurrency.
-Write-after log (WAL) is optional post-gold only (replication/PITR).
-Source: `docs/specifications/transaction/TRANSACTION_MGA_CORE.md`,
-`docs/specifications/storage/MGA_IMPLEMENTATION.md`.
+Write-after log (WAL) is optional optional extension only (replication/PITR).
+Source: `docs/specifications/parser/v3/transaction/TRANSACTION_MGA_CORE.md`,
+`docs/specifications/parser/v3/storage/MGA_IMPLEMENTATION.md`.
 
 ### CORE-PRINCIPLE-002: UUID-First Metadata
 All catalog objects use UUID IDs internally; names are user-facing only.
-Source: `docs/specifications/catalog/SYSTEM_CATALOG_STRUCTURE.md`.
+Source: `docs/specifications/parser/v3/catalog/SYSTEM_CATALOG_STRUCTURE.md`.
 
 ### CORE-PRINCIPLE-003: SBLR Execution Boundary
 SQL is converted to SBLR before execution; engine validates SBLR.
-Source: `docs/specifications/sblr/*`.
+Source: `docs/specifications/parser/v3/SBLR_V3_OPCODE_SPEC.md`,
+`docs/specifications/parser/v3/SBLR_V3_VALIDATION_RULES.md`.
 
 ### CORE-PRINCIPLE-004: Schema Hierarchy
 Canonical schema roots: `root`, `sys`, `app`, `users`, `remote/emulation`.
 Public schema is `/users/public` (not root). No `/emulated` root.
-Source: `docs/specifications/catalog/SYSTEM_CATALOG_STRUCTURE.md`,
-`docs/specifications/catalog/SCHEMA_PATH_RESOLUTION.md`.
+Source: `docs/specifications/parser/v3/catalog/SYSTEM_CATALOG_STRUCTURE.md`,
+`docs/specifications/parser/v3/catalog/SCHEMA_PATH_RESOLUTION.md`.
 
 ## 5. Storage Engine
 
 ### CORE-STORAGE-001: On-Disk Format and Page Types
 - Page header and catalog root are fixed and versioned.
 - Page types include heap, index, FSM, catalog, and specialized pages.
-Source: `docs/specifications/storage/ON_DISK_FORMAT.md`,
-`docs/specifications/storage/STORAGE_ENGINE_PAGE_MANAGEMENT.md`.
+Source: `docs/specifications/parser/v3/storage/ON_DISK_FORMAT.md`,
+`docs/specifications/parser/v3/storage/STORAGE_ENGINE_PAGE_MANAGEMENT.md`.
 
 ### CORE-STORAGE-002: Page Sizes
 - Engine supports configured page sizes (8K–128K).
-Source: `docs/specifications/storage/EXTENDED_PAGE_SIZES.md`.
+Source: `docs/specifications/parser/v3/storage/EXTENDED_PAGE_SIZES.md`.
 
 ### CORE-STORAGE-003: Buffer Pool and Cache
 - Shared buffer pool with pin/unpin, eviction policy, and dirty page flush.
 - Cache statistics and observability are required.
-Source: `docs/specifications/storage/STORAGE_ENGINE_BUFFER_POOL.md`,
-`docs/specifications/core/CACHE_AND_BUFFER_ARCHITECTURE.md`.
+Source: `docs/specifications/parser/v3/storage/STORAGE_ENGINE_BUFFER_POOL.md`,
+`docs/specifications/parser/v3/core/CACHE_AND_BUFFER_ARCHITECTURE.md`.
 
 ### CORE-STORAGE-004: Tablespaces and GPID
 - Objects are placed by tablespace; GPID addresses are required.
 - Multi-file tablespaces are supported in Alpha.
-Source: `docs/specifications/storage/TABLESPACE_SPECIFICATION.md`,
-`docs/specifications/storage/TABLESPACE_ONLINE_MIGRATION.md`.
+Source: `docs/specifications/parser/v3/storage/TABLESPACE_SPECIFICATION.md`,
+`docs/specifications/parser/v3/storage/TABLESPACE_ONLINE_MIGRATION.md`.
 
 ### CORE-STORAGE-005: Heap + TOAST/LOB
 - Heap tuples store version chains per MGA.
 - Large values stored in TOAST/LOB; TOAST uses tablespace of parent table.
-Source: `docs/specifications/storage/TOAST_LOB_STORAGE.md`,
-`docs/specifications/storage/HEAP_TOAST_INTEGRATION.md`.
+Source: `docs/specifications/parser/v3/storage/TOAST_LOB_STORAGE.md`,
+`docs/specifications/parser/v3/storage/HEAP_TOAST_INTEGRATION.md`.
 
 ### CORE-STORAGE-006: Compression
 - Optional page compression and compressed page I/O.
@@ -109,103 +119,105 @@ Source: `docs/specifications/compression/COMPRESSION_FRAMEWORK.md`.
 - Catalog root page (id 3) stores pointers to system tables.
 - Catalog tables persist schemas, tables, columns, indexes, constraints,
   sequences, views, triggers, permissions, statistics, dependencies.
-Source: `docs/specifications/catalog/SYSTEM_CATALOG_STRUCTURE.md`.
+Source: `docs/specifications/parser/v3/catalog/SYSTEM_CATALOG_STRUCTURE.md`.
 
 ### CORE-CATALOG-002: Schema Path Resolution
 - Search path resolution is deterministic; `public` resolves to `users.public`.
 - Emulated sessions are scoped under `/remote/emulation`.
-Source: `docs/specifications/catalog/SCHEMA_PATH_RESOLUTION.md`,
-`docs/specifications/catalog/SCHEMA_PATH_SECURITY_DEFAULTS.md`.
+Source: `docs/specifications/parser/v3/catalog/SCHEMA_PATH_RESOLUTION.md`,
+`docs/specifications/parser/v3/catalog/SCHEMA_PATH_SECURITY_DEFAULTS.md`.
 
 ### CORE-CATALOG-003: Object Persistence and Dependency Tracking
 - All SQL objects must be persistent in catalog tables.
 - Dependency graph is maintained for CASCADE and validation.
-Source: `docs/specifications/catalog/SYSTEM_CATALOG_STRUCTURE.md`,
-`docs/specifications/ddl/CASCADE_DROP_SPECIFICATION.md`.
+Source: `docs/specifications/parser/v3/catalog/SYSTEM_CATALOG_STRUCTURE.md`,
+`docs/specifications/parser/v3/ddl/CASCADE_DROP_SPECIFICATION.md`.
 
 **Optional Alpha:** Materialized object-name registry for fast lookup
-(`docs/specifications/alpha_requirements/optional/OBJECT_NAME_REGISTRY_MATERIALIZED_VIEW.md`).
+(`docs/specifications/parser/v3/alpha_requirements/optional/OBJECT_NAME_REGISTRY_MATERIALIZED_VIEW.md`).
 
 ## 7. Transactions, Locking, and GC
 
 ### CORE-TXN-001: Transaction Lifecycle
 - Begin/commit/rollback and snapshot visibility semantics per MGA.
-Source: `docs/specifications/transaction/TRANSACTION_MAIN.md`,
-`docs/specifications/transaction/TRANSACTION_MGA_CORE.md`.
+Source: `docs/specifications/parser/v3/transaction/TRANSACTION_MAIN.md`,
+`docs/specifications/parser/v3/transaction/TRANSACTION_MGA_CORE.md`.
 
 ### CORE-TXN-002: Lock Manager
 - Table/row locks, deadlock detection, and configurable timeouts.
-Source: `docs/specifications/transaction/TRANSACTION_LOCK_MANAGER.md`.
+Source: `docs/specifications/parser/v3/transaction/TRANSACTION_LOCK_MANAGER.md`.
 
 ### CORE-TXN-003: GC and Sweep
 - Background GC and sweep behaviors per Firebird model.
 - Sweeping is primary maintenance (VACUUM is alias only).
-Source: `docs/specifications/transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md`.
+Source: `docs/specifications/parser/v3/transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md`.
 
 ## 8. DDL and DML Execution Semantics
 
 ### CORE-DDL-001: Object Lifecycle (Execution)
 - CREATE/ALTER/DROP for schemas, tables, indexes, sequences, views,
   triggers, procedures, functions, roles, groups, users, UDRs.
-Source: `docs/specifications/ddl/*`.
+Source: `docs/specifications/parser/v3/ddl/*`.
 
 ### CORE-DDL-002: Table Features
 - Temporary tables, partitioning, row-level security, temporal tables,
   foreign data objects (as catalog entries even if runtime is deferred).
-Source: `docs/specifications/ddl/DDL_TABLES.md`,
+Source: `docs/specifications/parser/v3/ddl/DDL_TABLES.md`,
 `docs/specifications/TEMPORARY_TABLES_SPECIFICATION.md`,
-`docs/specifications/ddl/DDL_ROW_LEVEL_SECURITY.md`,
-`docs/specifications/ddl/DDL_TABLE_PARTITIONING.md`,
-`docs/specifications/ddl/DDL_TEMPORAL_TABLES.md`.
+`docs/specifications/parser/v3/ddl/DDL_ROW_LEVEL_SECURITY.md`,
+`docs/specifications/parser/v3/ddl/DDL_TABLE_PARTITIONING.md`,
+`docs/specifications/parser/v3/ddl/DDL_TEMPORAL_TABLES.md`.
 
 ### CORE-DML-001: DML Operations
 - SELECT/INSERT/UPDATE/DELETE/MERGE semantics, RETURNING, conflict handling.
-Source: `docs/specifications/dml/*`.
+Source: `docs/specifications/parser/v3/dml/*`.
 
 ### CORE-TRG-001: Trigger Semantics
 - Trigger context variables and execution points (BEFORE/AFTER/INSTEAD).
-Source: `docs/specifications/triggers/*`, `docs/specifications/ddl/DDL_TRIGGERS.md`.
+Source: `docs/specifications/triggers/*`, `docs/specifications/parser/v3/ddl/DDL_TRIGGERS.md`.
 
 ## 9. Indexes
 
 ### CORE-IDX-001: Index Types
 - B-tree, Hash, Bitmap, Columnstore, LSM, R-tree, GIN, GiST, SP-GiST, BRIN,
   Vector/HNSW, Full-text (GIN-based).
-Source: `docs/specifications/indexes/*`, `docs/specifications/ddl/DDL_INDEXES.md`.
+Source: `docs/specifications/parser/v3/indexes/*`, `docs/specifications/parser/v3/ddl/DDL_INDEXES.md`.
 
 ### CORE-IDX-002: Index Versioning and GC
 - Index rebuild/version metadata and GC protocol are required.
-Source: `docs/specifications/indexes/INDEX_GC_PROTOCOL.md`,
-`docs/specifications/indexes/INDEX_IMPLEMENTATION_SPEC.md`.
+Source: `docs/specifications/parser/v3/indexes/INDEX_GC_PROTOCOL.md`,
+`docs/specifications/parser/v3/indexes/INDEX_IMPLEMENTATION_SPEC.md`.
 
 ### CORE-IDX-003: Migration-Safe Index Maintenance
 - TID updates and index revalidation must exist for all index types.
-Source: `docs/specifications/storage/TABLESPACE_SPECIFICATION.md`.
+Source: `docs/specifications/parser/v3/storage/TABLESPACE_SPECIFICATION.md`.
 
 ## 10. Query Optimizer and Execution
 
 ### CORE-QRY-001: Statistics and Cost Model
 - Stats collection, per-table/index counts, and cost-based planning.
-Source: `docs/specifications/query/QUERY_OPTIMIZER_SPEC.md`,
-`docs/specifications/operations/MONITORING_SQL_VIEWS.md`.
+Source: `docs/specifications/parser/v3/query/QUERY_OPTIMIZER_SPEC.md`,
+`docs/specifications/parser/v3/operations/MONITORING_SQL_VIEWS.md`.
 
 ### CORE-QRY-002: Execution Pipeline
 - Plan caching and SBLR execution path.
-Source: `docs/specifications/sblr/*`, `docs/specifications/query/QUERY_OPTIMIZER_SPEC.md`.
+Source: `docs/specifications/parser/v3/SBLR_V3_OPCODE_SPEC.md`,
+`docs/specifications/parser/v3/SBLR_V3_OPCODE_SEMANTICS.md`,
+`docs/specifications/parser/v3/query/QUERY_OPTIMIZER_SPEC.md`.
 
 ### CORE-QRY-003: Parallel Execution (Beta)
 - Parallel query execution is Beta-only (not required for Alpha).
-Source: `docs/specifications/query/PARALLEL_EXECUTION_ARCHITECTURE.md`.
+Source: `docs/specifications/parser/v3/query/PARALLEL_EXECUTION_ARCHITECTURE.md`.
 
 ## 11. Types and Serialization
 
 ### CORE-TYPE-001: Primitive and Complex Types
 - Numeric, text, binary, datetime, UUID, arrays, geometry types.
-Source: `docs/specifications/types/*`.
+Source: `docs/specifications/parser/v3/types/*`.
 
 ### CORE-TYPE-002: On-Disk Encoding
 - TypedValue serialization and casting rules.
-Source: `docs/specifications/types/DATA_TYPE_PERSISTENCE_AND_CASTS.md`.
+Source: `docs/specifications/parser/v3/types/DATA_TYPE_PERSISTENCE_AND_CASTS.md`.
 
 ## 12. Security (Engine Core)
 
@@ -227,11 +239,11 @@ Source: `docs/specifications/Security Design Specification/08_AUDIT_COMPLIANCE.m
 
 ### CORE-MON-001: System Views
 - `sys.sessions`, `sys.locks`, `sys.performance`, `sys.statements`, etc.
-Source: `docs/specifications/operations/MONITORING_SQL_VIEWS.md`.
+Source: `docs/specifications/parser/v3/operations/MONITORING_SQL_VIEWS.md`.
 
 ### CORE-MON-002: Metrics
 - Prometheus metrics with core engine counters and IO stats.
-Source: `docs/specifications/operations/PROMETHEUS_METRICS_REFERENCE.md`.
+Source: `docs/specifications/parser/v3/operations/PROMETHEUS_METRICS_REFERENCE.md`.
 
 ## 14. Backup and Restore
 
@@ -249,8 +261,8 @@ Source: `docs/specifications/scheduler/*`.
 
 ### CORE-UDR-001: Catalog and Lifecycle
 - UDRs are catalog-persisted objects with permissions and dependencies.
-Source: `docs/specifications/udr/10-UDR-System-Specification.md`,
-`docs/specifications/catalog/SYSTEM_CATALOG_STRUCTURE.md`.
+Source: `docs/specifications/parser/v3/udr/10-UDR-System-Specification.md`,
+`docs/specifications/parser/v3/catalog/SYSTEM_CATALOG_STRUCTURE.md`.
 
 ## 17. Non-Core References (Explicitly Excluded)
 Parsers, wire protocols, drivers, network listeners, cluster/sharding,

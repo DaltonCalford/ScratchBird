@@ -811,5 +811,35 @@ bool TypeMapping::isBinaryType(core::DataType type) {
     }
 }
 
+
+// ============================================================================
+// PostgreSQL Array Detection
+// ============================================================================
+
+bool TypeMapping::isPostgreSQLArray(uint32_t oid) {
+    // PostgreSQL array OIDs are typically in the 1000+ range
+    // Common array OIDs:
+    // 1000 - bool[], 1001 - bytea[], 1002 - char[], 1003 - name[]
+    // 1005 - int2[], 1007 - int4[], 1009 - text[], 1016 - int8[]
+    // 1021 - float4[], 1022 - float8[]
+    
+    if (oid >= 1000 && oid <= 1200) {
+        return true;
+    }
+    
+    // Check for specific known array OIDs outside the range
+    switch (oid) {
+        case 1561: // bit[]
+        case 1563: // varbit[]
+        case 2201: // regclass[]
+        case 2203: // regtype[]
+        case 2951: // uuid[]
+        case 3807: // jsonb[]
+            return true;
+        default:
+            return false;
+    }
+}
+
 } // namespace udr
 } // namespace scratchbird

@@ -1,4 +1,13 @@
 # ScratchBird Implementation Recommendations
+
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
 ## Based on Database Internals Analysis
 
 ## Executive Summary
@@ -43,9 +52,9 @@ typedef struct sb_btree_page {
     uint16_t        btr_suffix_total;   // Suffix truncation (new)
     uint8_t         btr_compression;    // Compression type
     
-    // Multi-version support
-    TransactionId   btr_xmin;           // Creation transaction
-    TransactionId   btr_xmax;           // Deletion transaction
+    // Multi-version support (MGA)
+    TransactionId   btr_transaction;    // Creating transaction (page version)
+    uint16_t        btr_flags;          // BTR_DELETED/BTR_CHAIN (if used)
     
     BTNode          btr_nodes[];        // Variable array
 } SBBTreePage;
@@ -257,9 +266,8 @@ typedef struct sb_page_header {
     uint64_t        page_number;
     uint32_t        page_generation;
     
-    // Multi-version (enhanced)
-    TransactionId   page_xmin;
-    TransactionId   page_xmax;
+    // MGA note: page headers do not store xmin/xmax.
+    // Visibility is determined by record headers and TIP.
     uint64_t        page_lsn;        // For optional write-after log (WAL)
     
     // Checksums (PostgreSQL-style)
@@ -431,10 +439,12 @@ typedef struct sb_transaction {
 ## Conclusion
 
 ScratchBird should adopt a "best of breed" approach:
-- **Firebird's MGA** for transaction management (already planned)
+- **Firebird's MGA** for transaction management (already required)
 - **PostgreSQL's optimizer** sophistication (gradual adoption)
 - **MySQL's adaptive features** for performance tuning
 - **SQL Server's automation** for ease of use
 - **Novel UUID-based approaches** for distributed readiness
 
 This hybrid approach leverages proven techniques while maintaining ScratchBird's unique architectural advantages.
+
+**Terminology note:** ScratchBird uses Firebird MGA. Any MGA references in this file are legacy shorthand and must be interpreted as MGA per the authoritative references above.

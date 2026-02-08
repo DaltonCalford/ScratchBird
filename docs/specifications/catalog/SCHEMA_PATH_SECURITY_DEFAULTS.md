@@ -1,6 +1,5 @@
 # Schema Path Security Defaults
-
-**Status:** Draft (Alpha)
+**Status:** Authoritative (V3)
 **Last Updated:** 2026-01-20
 **Scope:** Default security behavior for schema search path resolution
 
@@ -97,6 +96,6 @@ is rejected.
 
 ## 8) Related Specifications
 
-- `docs/specifications/catalog/SCHEMA_PATH_RESOLUTION.md`
+- `docs/specifications/parser/v3/catalog/SCHEMA_PATH_RESOLUTION.md`
 - `docs/specifications/Security Design Specification/01_SECURITY_ARCHITECTURE.md`
-- `docs/specifications/parser/EMULATED_DATABASE_PARSER_SPECIFICATION.md`
+- `docs/specifications/parser/v3/parser/EMULATED_DATABASE_PARSER_SPECIFICATION.md`

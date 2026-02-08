@@ -1,5 +1,14 @@
 # ScratchBird Database Security Hardening Guide
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 A custom distributed database emulating FirebirdSQL's wire protocol faces a broad attack surface spanning protocol vulnerabilities, authentication bypass, access control circumvention, cryptographic implementation flaws, and distributed system exploitation. This comprehensive security analysis identifies **127 distinct attack vectors** across 8 domains, with **23 critical vulnerabilities** requiring immediate attention.
 
 **Priority findings**: FirebirdSQL wire protocol has documented remote code execution CVEs (CVE-2013-2492, CVE-2007-3181) with public Metasploit modules. Row-level security implementations are vulnerable to at least 10 bypass techniques including side-channel attacks leaking restricted column data through divide-by-zero errors. AES-GCM nonce reuse enables complete authentication bypass and plaintext recovery. UUID v7's timestamp-based ordering creates security decision manipulation vectors through clock synchronization attacks.
@@ -90,7 +99,7 @@ AND 1/(CASE SUBSTRING(CustomerName,1,1) WHEN 'E' THEN 0 ELSE 1 END) = 0;
 
 CVE-2019-10130 exposed PostgreSQL query planner statistics bypassing RLS to leak sampled column values through most-common-value lists and histograms. Research demonstrates timing attacks on PostgreSQL's memory compression enabling **2.69 bits/minute bytewise secret leakage** over internet connections.
 
-**Policy evaluation race conditions (TOCTOU)** enable unauthorized access. CVE-2024-10976 shows incomplete tracking of tables with row security in subqueries—queries planned under one role execute under another after SET ROLE, applying incorrect policies. Session context manipulation attacks exploit non-readonly SESSION_CONTEXT in SQL Server:
+**Policy evaluation race conditions (TOCTOU)** enable unauthorized access. CVE-2024-10976 shows incomplete tracking of tables with row security in subqueries—queries required under one role execute under another after SET ROLE, applying incorrect policies. Session context manipulation attacks exploit non-readonly SESSION_CONTEXT in SQL Server:
 ```sql
 -- If SESSION_CONTEXT not marked readonly, users can override
 EXEC sp_set_session_context 'TenantId', @attacker_tenant;

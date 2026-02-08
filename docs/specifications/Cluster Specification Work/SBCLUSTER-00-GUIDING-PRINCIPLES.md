@@ -1,5 +1,14 @@
 # SBCLUSTER-00: Guiding Principles
 
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
 ## Core Architectural Principles
 
 The ScratchBird cluster architecture is built on these foundational principles that inform all design decisions across the specification suite:
@@ -127,8 +136,9 @@ These principles intentionally trade certain capabilities for simplicity and rel
 - **EMULATED_DATABASE_PARSER_SPECIFICATION.md**: Parser design respecting engine authority
 
 ---
-
-**Document Status**: DRAFT (Beta Specification Phase)
+**Document Status**: Authoritative (V3)
 **Version**: 1.0
 **Date**: 2026-01-02
 **Author**: D. Calford
+
+**Terminology note:** ScratchBird uses Firebird MGA. Any MGA references in this file are legacy shorthand and must be interpreted as MGA per the authoritative references above.

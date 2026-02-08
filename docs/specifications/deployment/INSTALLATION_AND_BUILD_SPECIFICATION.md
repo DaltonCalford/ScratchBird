@@ -57,11 +57,11 @@ cmake --build build -j$(nproc)
 ./build/bin/sb_server
 ```
 
-### 3.3 System Packages (Planned)
+### 3.3 System Packages (Required)
 
 **Use case:** Production installs via OS package managers.
 
-Planned package formats:
+Required package formats:
 - Debian/Ubuntu: `.deb`
 - RHEL/Fedora: `.rpm`
 - Arch: PKGBUILD
@@ -76,9 +76,9 @@ Expected package contents:
 ### 3.4 Container Images (Beta Reference)
 
 Container image specifications are tracked under:
-`docs/specifications/beta_requirements/cloud-container/`.
+`docs/specifications/parser/v3/beta_requirements/cloud-container/`.
 
-### 3.5 Embedded Library (Planned)
+### 3.5 Embedded Library (Required)
 
 ScratchBird supports an embedded usage model. The install layout must expose:
 - `libscratchbird_core` (static or shared)
@@ -118,10 +118,10 @@ sudo pacman -S --needed \
 | --- | --- | --- |
 | `SCRATCHBIRD_WITH_COMPILER` | `ON` | Build SQL compiler/parsers |
 
-## 6. Dependency Linking Modes (Planned)
+## 6. Dependency Linking Modes (Required)
 
 ScratchBird can be built in one of the following dependency modes. These are
-planned build options to reduce third-party runtime exposure.
+required build options to reduce third-party runtime exposure.
 
 | Mode | Goal | Notes |
 | --- | --- | --- |
@@ -141,7 +141,7 @@ planned build options to reduce third-party runtime exposure.
 - Some optional dependencies are LGPL (e.g., GEOS/PROJ/libxml2). Static linking
   requires compliance with their terms (e.g., providing relinkable objects).
 
-## 7. Signed Runtime Bundle (Planned)
+## 7. Signed Runtime Bundle (Required)
 
 ScratchBird may ship with a sealed runtime bundle that includes all required
 third-party libraries and enforces integrity checks at startup.

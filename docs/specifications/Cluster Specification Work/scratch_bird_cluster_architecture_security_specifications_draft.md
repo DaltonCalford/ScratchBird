@@ -1,7 +1,16 @@
-# ScratchBird Cluster Architecture & Security Specifications (Draft)
+# ScratchBird Cluster Architecture & Security Specifications (Authoritative)
 
-> **Status:** Draft for architectural review
-> **Scope:** Clustered deployment of ScratchBird engine with shard‑local Firebird MVCC, distributed query execution, enterprise‑grade security, and a temporal configuration stack.
+
+**Authoritative MGA/Lock/GC References:**
+- [TRANSACTION_MGA_CORE.md](../transaction/TRANSACTION_MGA_CORE.md)
+- [TRANSACTION_LOCK_MANAGER.md](../transaction/TRANSACTION_LOCK_MANAGER.md)
+- [MGA_IMPLEMENTATION.md](../storage/MGA_IMPLEMENTATION.md)
+- [FIREBIRD_GC_SWEEP_GLOSSARY.md](../transaction/FIREBIRD_GC_SWEEP_GLOSSARY.md)
+- [FIREBIRD_CONSTANTS_REFERENCE.md](../transaction/FIREBIRD_CONSTANTS_REFERENCE.md)
+
+
+> **Status:** Archived for architectural review history
+> **Scope:** Clustered deployment of ScratchBird engine with shard‑local Firebird MGA, distributed query execution, enterprise‑grade security, and a temporal configuration stack.
 > **Authoritative Context:** SBSEC handoff summary, Firebird transactional model, prior design discussions.
 
 ---
@@ -249,5 +258,7 @@ This architecture enables future implementation of:
 
 ---
 
-**End of Draft**
+**End of Archived Document**
 
+
+**Terminology note:** ScratchBird uses Firebird MGA. Any MGA references in this file are legacy shorthand and must be interpreted as MGA per the authoritative references above.

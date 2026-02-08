@@ -47,8 +47,8 @@ public:
 |-----------|--------|------------------|-------|----------|
 | None | ✅ Implemented | 1.0 | N/A | No compression |
 | LZ4 | ✅ Implemented | ~2-4x | Very Fast | Default, general purpose |
-| Zstandard | 🔜 Planned | ~3-5x | Fast | Better ratio when needed |
-| Snappy | 🔜 Planned | ~2-3x | Very Fast | Alternative to LZ4 |
+| Zstandard | 🔜 Required | ~3-5x | Fast | Better ratio when needed |
+| Snappy | 🔜 Required | ~2-3x | Very Fast | Alternative to LZ4 |
 
 ### Compression Levels
 

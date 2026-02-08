@@ -128,7 +128,7 @@ All drivers must support:
 6. PHP (PDO PostgreSQL-compatible)
 7. Pascal/Delphi (Firebird-compatible)
 
-### Phase 3 (Post-Beta)
+### Phase 3 (optional extension)
 8. Ruby
 9. Rust
 10. R
