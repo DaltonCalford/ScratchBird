@@ -34,6 +34,7 @@
 #include <variant>
 #include <functional>
 #include <type_traits>
+#include <array>
 
 namespace scratchbird::parser::v2 {
 
@@ -93,6 +94,7 @@ enum class ASTKind : uint16_t {
     CreateDomainStmt,
     CreateForeignServerStmt,
     CreateForeignTableStmt,
+    CreateForeignDataWrapperStmt,
     CreateUserMappingStmt,
     CreateSynonymStmt,
     CreateUdrStmt,
@@ -192,6 +194,34 @@ enum class ASTKind : uint16_t {
 
     // Expressions
     LiteralExpr,
+    LiteralEnumExpr,
+    LiteralSetExpr,
+    LiteralRowExpr,
+    LiteralCompositeExpr,
+    LiteralDomainExpr,
+    LiteralBitExpr,
+    LiteralYearExpr,
+    LiteralDateTimeExpr,
+    LiteralMediumIntExpr,
+    LiteralGeometryExpr,
+    LiteralJsonPathExpr,
+    LiteralInt8Expr,
+    LiteralInt16Expr,
+    LiteralUInt8Expr,
+    LiteralUInt16Expr,
+    LiteralUInt32Expr,
+    LiteralUInt64Expr,
+    LiteralUInt128Expr,
+    LiteralInt128Expr,
+    LiteralFloat32Expr,
+    LiteralTimeTzExpr,
+    LiteralTimestampTzExpr,
+    LiteralRangeExpr,
+    LiteralArrayExpr,
+    LiteralVariantExpr,
+    LiteralTsVectorExpr,
+    LiteralTsQueryExpr,
+    LiteralBlobLocatorExpr,
     ColumnRefExpr,
     ParameterExpr,
     BinaryExpr,
@@ -993,6 +1023,22 @@ struct ForeignColumnDef {
     StringPool::StringId name = StringPool::INVALID_ID;
     TypeName type;
     std::string type_text;
+    std::vector<OptionPair> options;
+};
+
+/**
+ * CREATE FOREIGN DATA WRAPPER statement
+ */
+class CreateForeignDataWrapperStmt : public Statement {
+public:
+    ASTKind kind() const override { return ASTKind::CreateForeignDataWrapperStmt; }
+    void accept(ASTVisitor& visitor) override;
+
+    StringPool::StringId wrapper_name = StringPool::INVALID_ID;
+    bool has_handler = false;
+    StringPool::StringId handler_name = StringPool::INVALID_ID;
+    bool has_validator = false;
+    StringPool::StringId validator_name = StringPool::INVALID_ID;
     std::vector<OptionPair> options;
 };
 
@@ -2625,6 +2671,269 @@ public:
     StringPool::StringId string_value = StringPool::INVALID_ID;  // For STRING/BLOB
 };
 
+using U128 = std::array<uint8_t, 16>;
+
+struct RowFieldLiteral {
+    StringPool::StringId name = StringPool::INVALID_ID;
+    Expression* value = nullptr;
+};
+
+class LiteralEnumExpr : public Expression {
+public:
+    ASTKind kind() const override { return ASTKind::LiteralEnumExpr; }
+    void accept(ASTVisitor& visitor) override;
+
+    U128 enum_catalog_id{};
+    bool has_ordinal = false;
+    uint32_t ordinal = 0;
+    bool has_label = false;
+    StringPool::StringId label = StringPool::INVALID_ID;
+};
+
+class LiteralSetExpr : public Expression {
+public:
+    ASTKind kind() const override { return ASTKind::LiteralSetExpr; }
+    void accept(ASTVisitor& visitor) override;
+
+    U128 set_catalog_id{};
+    std::vector<LiteralEnumExpr*> elements;
+};
+
+class LiteralRowExpr : public Expression {
+public:
+    ASTKind kind() const override { return ASTKind::LiteralRowExpr; }
+    void accept(ASTVisitor& visitor) override;
+
+    U128 row_catalog_id{};
+    std::vector<RowFieldLiteral> fields;
+};
+
+class LiteralCompositeExpr : public Expression {
+public:
+    ASTKind kind() const override { return ASTKind::LiteralCompositeExpr; }
+    void accept(ASTVisitor& visitor) override;
+
+    U128 composite_catalog_id{};
+    std::vector<RowFieldLiteral> fields;
+};
+
+class LiteralDomainExpr : public Expression {
+public:
+    ASTKind kind() const override { return ASTKind::LiteralDomainExpr; }
+    void accept(ASTVisitor& visitor) override;
+
+    U128 domain_id{};
+    Expression* value = nullptr;
+};
+
+class LiteralBitExpr : public Expression {
+public:
+    ASTKind kind() const override { return ASTKind::LiteralBitExpr; }
+    void accept(ASTVisitor& visitor) override;
+
+    uint16_t bit_length = 0;
+    std::vector<uint8_t> bytes;
+};
+
+class LiteralYearExpr : public Expression {
+public:
+    ASTKind kind() const override { return ASTKind::LiteralYearExpr; }
+    void accept(ASTVisitor& visitor) override;
+
+    int32_t value = 0;
+    uint8_t format = 0;
+};
+
+class LiteralDateTimeExpr : public Expression {
+public:
+    ASTKind kind() const override { return ASTKind::LiteralDateTimeExpr; }
+    void accept(ASTVisitor& visitor) override;
+
+    int64_t epoch_usec = 0;
+    bool with_timezone = false;
+    uint8_t precision = 0;
+};
+
+class LiteralMediumIntExpr : public Expression {
+public:
+    ASTKind kind() const override { return ASTKind::LiteralMediumIntExpr; }
+    void accept(ASTVisitor& visitor) override;
+
+    int32_t value = 0;
+};
+
+class LiteralGeometryExpr : public Expression {
+public:
+    ASTKind kind() const override { return ASTKind::LiteralGeometryExpr; }
+    void accept(ASTVisitor& visitor) override;
+
+    uint8_t format = 0;
+    uint32_t srid = 0;
+    std::vector<uint8_t> bytes;
+};
+
+class LiteralJsonPathExpr : public Expression {
+public:
+    ASTKind kind() const override { return ASTKind::LiteralJsonPathExpr; }
+    void accept(ASTVisitor& visitor) override;
+
+    uint8_t dialect = 0;
+    StringPool::StringId text = StringPool::INVALID_ID;
+};
+
+class LiteralInt8Expr : public Expression {
+public:
+    ASTKind kind() const override { return ASTKind::LiteralInt8Expr; }
+    void accept(ASTVisitor& visitor) override;
+
+    int8_t value = 0;
+};
+
+class LiteralInt16Expr : public Expression {
+public:
+    ASTKind kind() const override { return ASTKind::LiteralInt16Expr; }
+    void accept(ASTVisitor& visitor) override;
+
+    int16_t value = 0;
+};
+
+class LiteralUInt8Expr : public Expression {
+public:
+    ASTKind kind() const override { return ASTKind::LiteralUInt8Expr; }
+    void accept(ASTVisitor& visitor) override;
+
+    uint8_t value = 0;
+};
+
+class LiteralUInt16Expr : public Expression {
+public:
+    ASTKind kind() const override { return ASTKind::LiteralUInt16Expr; }
+    void accept(ASTVisitor& visitor) override;
+
+    uint16_t value = 0;
+};
+
+class LiteralUInt32Expr : public Expression {
+public:
+    ASTKind kind() const override { return ASTKind::LiteralUInt32Expr; }
+    void accept(ASTVisitor& visitor) override;
+
+    uint32_t value = 0;
+};
+
+class LiteralUInt64Expr : public Expression {
+public:
+    ASTKind kind() const override { return ASTKind::LiteralUInt64Expr; }
+    void accept(ASTVisitor& visitor) override;
+
+    uint64_t value = 0;
+};
+
+class LiteralUInt128Expr : public Expression {
+public:
+    ASTKind kind() const override { return ASTKind::LiteralUInt128Expr; }
+    void accept(ASTVisitor& visitor) override;
+
+    U128 value{};
+};
+
+class LiteralInt128Expr : public Expression {
+public:
+    ASTKind kind() const override { return ASTKind::LiteralInt128Expr; }
+    void accept(ASTVisitor& visitor) override;
+
+    U128 value{};
+};
+
+class LiteralFloat32Expr : public Expression {
+public:
+    ASTKind kind() const override { return ASTKind::LiteralFloat32Expr; }
+    void accept(ASTVisitor& visitor) override;
+
+    float value = 0.0f;
+};
+
+class LiteralTimeTzExpr : public Expression {
+public:
+    ASTKind kind() const override { return ASTKind::LiteralTimeTzExpr; }
+    void accept(ASTVisitor& visitor) override;
+
+    int64_t time_usec = 0;
+    int16_t tz_offset_minutes = 0;
+    StringPool::StringId tz_name = StringPool::INVALID_ID;
+};
+
+class LiteralTimestampTzExpr : public Expression {
+public:
+    ASTKind kind() const override { return ASTKind::LiteralTimestampTzExpr; }
+    void accept(ASTVisitor& visitor) override;
+
+    int64_t epoch_usec = 0;
+    int16_t tz_offset_minutes = 0;
+    StringPool::StringId tz_name = StringPool::INVALID_ID;
+};
+
+class LiteralRangeExpr : public Expression {
+public:
+    ASTKind kind() const override { return ASTKind::LiteralRangeExpr; }
+    void accept(ASTVisitor& visitor) override;
+
+    TypeName range_base_type;
+    uint8_t flags = 0;
+    bool lower_present = false;
+    bool upper_present = false;
+    Expression* lower = nullptr;
+    Expression* upper = nullptr;
+};
+
+class LiteralArrayExpr : public Expression {
+public:
+    ASTKind kind() const override { return ASTKind::LiteralArrayExpr; }
+    void accept(ASTVisitor& visitor) override;
+
+    TypeName element_type;
+    uint8_t dimensions = 0;
+    std::vector<uint32_t> dim_lengths;
+    std::vector<Expression*> elements;
+};
+
+class LiteralVariantExpr : public Expression {
+public:
+    ASTKind kind() const override { return ASTKind::LiteralVariantExpr; }
+    void accept(ASTVisitor& visitor) override;
+
+    U128 variant_type_id{};
+    StringPool::StringId tag_name = StringPool::INVALID_ID;
+    Expression* value = nullptr;
+};
+
+class LiteralTsVectorExpr : public Expression {
+public:
+    ASTKind kind() const override { return ASTKind::LiteralTsVectorExpr; }
+    void accept(ASTVisitor& visitor) override;
+
+    StringPool::StringId text = StringPool::INVALID_ID;
+};
+
+class LiteralTsQueryExpr : public Expression {
+public:
+    ASTKind kind() const override { return ASTKind::LiteralTsQueryExpr; }
+    void accept(ASTVisitor& visitor) override;
+
+    StringPool::StringId text = StringPool::INVALID_ID;
+};
+
+class LiteralBlobLocatorExpr : public Expression {
+public:
+    ASTKind kind() const override { return ASTKind::LiteralBlobLocatorExpr; }
+    void accept(ASTVisitor& visitor) override;
+
+    U128 blob_id{};
+    int16_t blob_subtype = 0;
+    uint64_t blob_length = 0;
+    uint8_t compression = 0;
+};
+
 /**
  * Column reference expression
  */
@@ -3780,6 +4089,7 @@ public:
     virtual void visit(CreateTypeStmt* stmt) = 0;
     virtual void visit(CreateDomainStmt* stmt) = 0;
     virtual void visit(CreateForeignServerStmt* stmt) = 0;
+    virtual void visit(CreateForeignDataWrapperStmt* stmt) = 0;
     virtual void visit(CreateForeignTableStmt* stmt) = 0;
     virtual void visit(CreateUserMappingStmt* stmt) = 0;
     virtual void visit(CreateSynonymStmt* stmt) = 0;
@@ -3881,6 +4191,34 @@ public:
 
     // Expressions
     virtual void visit(LiteralExpr* expr) = 0;
+    virtual void visit(LiteralEnumExpr* expr) = 0;
+    virtual void visit(LiteralSetExpr* expr) = 0;
+    virtual void visit(LiteralRowExpr* expr) = 0;
+    virtual void visit(LiteralCompositeExpr* expr) = 0;
+    virtual void visit(LiteralDomainExpr* expr) = 0;
+    virtual void visit(LiteralBitExpr* expr) = 0;
+    virtual void visit(LiteralYearExpr* expr) = 0;
+    virtual void visit(LiteralDateTimeExpr* expr) = 0;
+    virtual void visit(LiteralMediumIntExpr* expr) = 0;
+    virtual void visit(LiteralGeometryExpr* expr) = 0;
+    virtual void visit(LiteralJsonPathExpr* expr) = 0;
+    virtual void visit(LiteralInt8Expr* expr) = 0;
+    virtual void visit(LiteralInt16Expr* expr) = 0;
+    virtual void visit(LiteralUInt8Expr* expr) = 0;
+    virtual void visit(LiteralUInt16Expr* expr) = 0;
+    virtual void visit(LiteralUInt32Expr* expr) = 0;
+    virtual void visit(LiteralUInt64Expr* expr) = 0;
+    virtual void visit(LiteralUInt128Expr* expr) = 0;
+    virtual void visit(LiteralInt128Expr* expr) = 0;
+    virtual void visit(LiteralFloat32Expr* expr) = 0;
+    virtual void visit(LiteralTimeTzExpr* expr) = 0;
+    virtual void visit(LiteralTimestampTzExpr* expr) = 0;
+    virtual void visit(LiteralRangeExpr* expr) = 0;
+    virtual void visit(LiteralArrayExpr* expr) = 0;
+    virtual void visit(LiteralVariantExpr* expr) = 0;
+    virtual void visit(LiteralTsVectorExpr* expr) = 0;
+    virtual void visit(LiteralTsQueryExpr* expr) = 0;
+    virtual void visit(LiteralBlobLocatorExpr* expr) = 0;
     virtual void visit(ColumnRefExpr* expr) = 0;
     virtual void visit(ParameterExpr* expr) = 0;
     virtual void visit(BinaryExpr* expr) = 0;

@@ -18,6 +18,265 @@
 #include <cctype>
 #include <cstring>
 #include <algorithm>
+
+namespace {
+
+struct ParsedTimeTz {
+    int64_t time_usec = 0;
+    int16_t offset_minutes = 0;
+    std::string tz_name;
+};
+
+struct ParsedTimestampTz {
+    int64_t epoch_usec = 0;
+    int16_t offset_minutes = 0;
+    std::string tz_name;
+};
+
+static int64_t daysFromCivil(int y, unsigned m, unsigned d) {
+    y -= m <= 2;
+    const int era = (y >= 0 ? y : y - 399) / 400;
+    const unsigned yoe = static_cast<unsigned>(y - era * 400);
+    const unsigned doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+    const unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    return static_cast<int64_t>(era) * 146097 + static_cast<int64_t>(doe) - 719468;
+}
+
+static bool parseTwoDigits(std::string_view s, size_t& pos, int& out) {
+    if (pos + 2 > s.size()) return false;
+    if (!std::isdigit(static_cast<unsigned char>(s[pos])) ||
+        !std::isdigit(static_cast<unsigned char>(s[pos + 1]))) {
+        return false;
+    }
+    out = (s[pos] - '0') * 10 + (s[pos + 1] - '0');
+    pos += 2;
+    return true;
+}
+
+static bool parseIntN(std::string_view s, size_t& pos, int n, int& out) {
+    if (pos + static_cast<size_t>(n) > s.size()) return false;
+    int value = 0;
+    for (int i = 0; i < n; ++i) {
+        char c = s[pos + static_cast<size_t>(i)];
+        if (!std::isdigit(static_cast<unsigned char>(c))) return false;
+        value = value * 10 + (c - '0');
+    }
+    pos += static_cast<size_t>(n);
+    out = value;
+    return true;
+}
+
+static void parseFraction(std::string_view s, size_t& pos, int64_t& usec_out) {
+    usec_out = 0;
+    if (pos >= s.size() || s[pos] != '.') return;
+    ++pos;
+    int digits = 0;
+    while (pos < s.size() && std::isdigit(static_cast<unsigned char>(s[pos])) && digits < 6) {
+        usec_out = usec_out * 10 + (s[pos] - '0');
+        ++pos;
+        ++digits;
+    }
+    while (digits++ < 6) {
+        usec_out *= 10;
+    }
+    while (pos < s.size() && std::isdigit(static_cast<unsigned char>(s[pos]))) {
+        ++pos;
+    }
+}
+
+static bool parseTimeCore(std::string_view s, size_t& pos, int64_t& time_usec_out) {
+    int hh = 0;
+    int mm = 0;
+    int ss = 0;
+    if (!parseTwoDigits(s, pos, hh)) return false;
+    if (pos >= s.size() || s[pos] != ':') return false;
+    ++pos;
+    if (!parseTwoDigits(s, pos, mm)) return false;
+    if (pos < s.size() && s[pos] == ':') {
+        ++pos;
+        if (!parseTwoDigits(s, pos, ss)) return false;
+    }
+    int64_t frac = 0;
+    parseFraction(s, pos, frac);
+    time_usec_out = (static_cast<int64_t>(hh) * 3600 +
+                     static_cast<int64_t>(mm) * 60 +
+                     static_cast<int64_t>(ss)) * 1000000 + frac;
+    return true;
+}
+
+static bool parseTimeTz(std::string_view s, ParsedTimeTz& out) {
+    auto trim = [](std::string_view v) {
+        size_t b = 0;
+        while (b < v.size() && std::isspace(static_cast<unsigned char>(v[b]))) ++b;
+        size_t e = v.size();
+        while (e > b && std::isspace(static_cast<unsigned char>(v[e - 1]))) --e;
+        return v.substr(b, e - b);
+    };
+    s = trim(s);
+    size_t pos = 0;
+    if (!parseTimeCore(s, pos, out.time_usec)) return false;
+
+    if (pos < s.size() && std::isspace(static_cast<unsigned char>(s[pos]))) {
+        ++pos;
+        out.tz_name = std::string(trim(s.substr(pos)));
+        return true;
+    }
+
+    if (pos < s.size()) {
+        char c = s[pos];
+        if (c == 'Z') {
+            out.offset_minutes = 0;
+            return true;
+        }
+        if (c == '+' || c == '-') {
+            int sign = (c == '-') ? -1 : 1;
+            ++pos;
+            int oh = 0;
+            int om = 0;
+            if (!parseTwoDigits(s, pos, oh)) return false;
+            if (pos < s.size() && s[pos] == ':') {
+                ++pos;
+                if (!parseTwoDigits(s, pos, om)) return false;
+            }
+            out.offset_minutes = static_cast<int16_t>(sign * (oh * 60 + om));
+            return true;
+        }
+    }
+    return true;
+}
+
+static bool parseTimestampTz(std::string_view s, ParsedTimestampTz& out) {
+    auto trim = [](std::string_view v) {
+        size_t b = 0;
+        while (b < v.size() && std::isspace(static_cast<unsigned char>(v[b]))) ++b;
+        size_t e = v.size();
+        while (e > b && std::isspace(static_cast<unsigned char>(v[e - 1]))) --e;
+        return v.substr(b, e - b);
+    };
+    s = trim(s);
+    size_t pos = 0;
+    int year = 0, mon = 0, day = 0;
+    if (!parseIntN(s, pos, 4, year)) return false;
+    if (pos >= s.size() || s[pos] != '-') return false;
+    ++pos;
+    if (!parseTwoDigits(s, pos, mon)) return false;
+    if (pos >= s.size() || s[pos] != '-') return false;
+    ++pos;
+    if (!parseTwoDigits(s, pos, day)) return false;
+
+    if (pos < s.size() && (s[pos] == 'T' || s[pos] == ' ')) ++pos;
+    int64_t time_usec = 0;
+    if (!parseTimeCore(s, pos, time_usec)) return false;
+
+    ParsedTimeTz tz;
+    if (pos < s.size()) {
+        if (std::isspace(static_cast<unsigned char>(s[pos]))) {
+            ++pos;
+            tz.tz_name = std::string(trim(s.substr(pos)));
+        } else {
+            std::string_view rest = s.substr(pos);
+            parseTimeTz(rest, tz);
+        }
+    }
+
+    int64_t days = daysFromCivil(year, static_cast<unsigned>(mon), static_cast<unsigned>(day));
+    int64_t epoch_usec = (days * 86400LL * 1000000LL) + time_usec;
+    epoch_usec -= static_cast<int64_t>(tz.offset_minutes) * 60LL * 1000000LL;
+    out.epoch_usec = epoch_usec;
+    out.offset_minutes = tz.offset_minutes;
+    out.tz_name = tz.tz_name;
+    return true;
+}
+
+static bool parseUuidBytes(std::string_view s, scratchbird::parser::v2::U128& out) {
+    auto hex = [](char c) -> int {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return 10 + (c - 'a');
+        if (c >= 'A' && c <= 'F') return 10 + (c - 'A');
+        return -1;
+    };
+    std::string hexs;
+    hexs.reserve(32);
+    for (char c : s) {
+        if (c == '-') continue;
+        if (hex(c) < 0) return false;
+        hexs.push_back(c);
+    }
+    if (hexs.size() != 32) return false;
+    for (size_t i = 0; i < 16; ++i) {
+        int hi = hex(hexs[i * 2]);
+        int lo = hex(hexs[i * 2 + 1]);
+        if (hi < 0 || lo < 0) return false;
+        out[i] = static_cast<uint8_t>((hi << 4) | lo);
+    }
+    return true;
+}
+
+static bool parseUnsigned128(std::string_view s, unsigned __int128& out) {
+    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front()))) s.remove_prefix(1);
+    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) s.remove_suffix(1);
+    if (s.empty()) return false;
+
+    int base = 10;
+    if (s.size() > 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) {
+        base = 16;
+        s.remove_prefix(2);
+    }
+    if (s.empty()) return false;
+
+    unsigned __int128 value = 0;
+    const unsigned __int128 maxv = ~static_cast<unsigned __int128>(0);
+    for (char c : s) {
+        int digit = -1;
+        if (base == 10) {
+            if (c >= '0' && c <= '9') digit = c - '0';
+        } else {
+            if (c >= '0' && c <= '9') digit = c - '0';
+            else if (c >= 'a' && c <= 'f') digit = 10 + (c - 'a');
+            else if (c >= 'A' && c <= 'F') digit = 10 + (c - 'A');
+        }
+        if (digit < 0 || digit >= base) return false;
+        if (value > (maxv - static_cast<unsigned __int128>(digit)) / static_cast<unsigned __int128>(base)) {
+            return false;
+        }
+        value = value * static_cast<unsigned __int128>(base) + static_cast<unsigned __int128>(digit);
+    }
+    out = value;
+    return true;
+}
+
+static bool parseSigned128(std::string_view s, unsigned __int128& out) {
+    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front()))) s.remove_prefix(1);
+    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) s.remove_suffix(1);
+    if (s.empty()) return false;
+    bool neg = false;
+    if (s.front() == '+' || s.front() == '-') {
+        neg = (s.front() == '-');
+        s.remove_prefix(1);
+    }
+    unsigned __int128 mag = 0;
+    if (!parseUnsigned128(s, mag)) return false;
+    const unsigned __int128 max_pos = (static_cast<unsigned __int128>(1) << 127) - 1;
+    const unsigned __int128 max_neg = (static_cast<unsigned __int128>(1) << 127);
+    if (neg) {
+        if (mag > max_neg) return false;
+        unsigned __int128 val = (~mag) + 1;
+        out = val;
+    } else {
+        if (mag > max_pos) return false;
+        out = mag;
+    }
+    return true;
+}
+
+static void storeU128LE(unsigned __int128 value, scratchbird::parser::v2::U128& out) {
+    for (size_t i = 0; i < out.size(); ++i) {
+        out[i] = static_cast<uint8_t>(value & 0xFF);
+        value >>= 8;
+    }
+}
+
+} // namespace
 #include <limits>
 
 namespace scratchbird::parser::v2 {
@@ -506,8 +765,10 @@ Statement* Parser::parseCreate() {
         }
         if (matchContextual("DATA")) {
             expectContextual("WRAPPER", "Expected WRAPPER after FOREIGN DATA");
-            error("CREATE FOREIGN DATA WRAPPER is not implemented");
-            return nullptr;
+            if (or_alter) {
+                error("CREATE OR ALTER is only supported for JOB");
+            }
+            return parseCreateForeignDataWrapper();
         }
         error("Expected TABLE or DATA WRAPPER after FOREIGN");
         return nullptr;
@@ -3068,6 +3329,88 @@ CreateForeignServerStmt* Parser::parseCreateForeignServer() {
 
     if (matchContextual("OPTIONS")) {
         stmt->options = parse_option_list();
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+CreateForeignDataWrapperStmt* Parser::parseCreateForeignDataWrapper() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<CreateForeignDataWrapperStmt>();
+    stmt->wrapper_name = expectIdentifier("Expected foreign data wrapper name");
+
+    auto parse_option_list = [&]() -> std::vector<OptionPair> {
+        std::vector<OptionPair> options;
+        if (!expect(TokenType::LEFT_PAREN, "Expected '(' after OPTIONS")) {
+            return options;
+        }
+        while (!check(TokenType::RIGHT_PAREN) && !isAtEnd()) {
+            if (!isIdentifier()) {
+                error("Expected option name");
+                break;
+            }
+            std::string key = std::string(stringPool().get(current().value.string_id));
+            advance();
+
+            std::string value;
+            if (check(TokenType::STRING_LITERAL)) {
+                value = std::string(stringPool().get(current().value.string_id));
+                advance();
+            } else if (check(TokenType::INTEGER_LITERAL)) {
+                value = std::to_string(current().value.int_value);
+                advance();
+            } else if (check(TokenType::FLOAT_LITERAL)) {
+                value = std::to_string(current().value.float_value);
+                advance();
+            } else if (isIdentifier()) {
+                value = std::string(stringPool().get(current().value.string_id));
+                advance();
+            } else {
+                error("Expected option value");
+            }
+
+            options.push_back({key, value});
+
+            if (!match(TokenType::COMMA)) {
+                break;
+            }
+        }
+        expect(TokenType::RIGHT_PAREN, "Expected ')' after OPTIONS");
+        return options;
+    };
+
+    while (!isAtEnd()) {
+        if (matchContextual("HANDLER")) {
+            stmt->has_handler = true;
+            stmt->handler_name = expectIdentifier("Expected handler function name");
+            continue;
+        }
+        if (matchContextual("VALIDATOR")) {
+            stmt->has_validator = true;
+            stmt->validator_name = expectIdentifier("Expected validator function name");
+            continue;
+        }
+        if (matchContextual("NO")) {
+            if (matchContextual("HANDLER")) {
+                stmt->has_handler = false;
+                stmt->handler_name = StringPool::INVALID_ID;
+                continue;
+            }
+            if (matchContextual("VALIDATOR")) {
+                stmt->has_validator = false;
+                stmt->validator_name = StringPool::INVALID_ID;
+                continue;
+            }
+            error("Expected HANDLER or VALIDATOR after NO");
+            continue;
+        }
+        if (matchContextual("OPTIONS")) {
+            stmt->options = parse_option_list();
+            continue;
+        }
+        break;
     }
 
     stmt->span = makeSpan(start);
@@ -5887,6 +6230,30 @@ SelectStmt* Parser::parseSelect() {
     if (match(TokenType::KW_ORDER)) {
         expectContextual("BY", "Expected BY after ORDER");
         parseOrderByClause(stmt);
+        // Resolve ORDER BY numeric positions (e.g., ORDER BY 1)
+        for (auto* item : stmt->order_by) {
+            if (!item || !item->expr) {
+                continue;
+            }
+            if (item->expr->kind() != ASTKind::LiteralExpr) {
+                continue;
+            }
+            auto* lit = static_cast<LiteralExpr*>(item->expr);
+            if (lit->literal_type != LiteralType::INTEGER) {
+                continue;
+            }
+            if (lit->int_value <= 0 ||
+                static_cast<size_t>(lit->int_value) > stmt->items.size()) {
+                error("ORDER BY position out of range");
+                continue;
+            }
+            SelectItem* sel = stmt->items[static_cast<size_t>(lit->int_value - 1)];
+            if (!sel || sel->item_type != SelectItem::Type::EXPRESSION || !sel->expr) {
+                error("ORDER BY position must reference a select expression");
+                continue;
+            }
+            item->expr = sel->expr;
+        }
     }
 
     // LIMIT/OFFSET clause (LIMIT is a Gatekeeper keyword)
@@ -6455,10 +6822,12 @@ void Parser::parseSetOperation(SelectStmt* stmt) {
     }
 
     // Parse right side SELECT
+    bool parenthesized = false;
     if (match(TokenType::KW_SELECT)) {
         stmt->set_op_right = parseSelect();
     } else if (check(TokenType::LEFT_PAREN)) {
         // Parenthesized SELECT
+        parenthesized = true;
         advance();
         if (match(TokenType::KW_SELECT)) {
             stmt->set_op_right = parseSelect();
@@ -6466,6 +6835,10 @@ void Parser::parseSetOperation(SelectStmt* stmt) {
         expect(TokenType::RIGHT_PAREN, "Expected ')' after SELECT");
     } else {
         error("Expected SELECT after set operation");
+    }
+
+    if (stmt->set_op_right && stmt->set_op_right->set_op != SetOpType::NONE && !parenthesized) {
+        error("Chained set operations require parentheses to disambiguate");
     }
 }
 
@@ -7115,7 +7488,7 @@ Expression* Parser::parseIsNullExpr(Expression* left) {
 }
 
 Expression* Parser::parseArrayExpr() {
-    auto* expr = arena_.create<ArrayExpr>();
+    auto* expr = arena_.create<LiteralArrayExpr>();
     SourceLocation start = currentLocation();
 
     // ARRAY already consumed
@@ -7128,6 +7501,9 @@ Expression* Parser::parseArrayExpr() {
     }
 
     expect(TokenType::RIGHT_BRACKET, "Expected ']' after ARRAY elements");
+
+    expr->dimensions = 1;
+    expr->dim_lengths.push_back(static_cast<uint32_t>(expr->elements.size()));
 
     expr->span = makeSpan(start);
     return expr;
@@ -7223,7 +7599,7 @@ Expression* Parser::parseNotExpr() {
 }
 
 Expression* Parser::parseComparisonExpr() {
-    Expression* left = parseBitOrExpr();
+    Expression* left = parseConcatExpr();
 
     // IS NULL / IS NOT NULL / IS TRUE / IS FALSE / IS UNKNOWN
     if (match(TokenType::KW_IS)) {
@@ -7260,7 +7636,7 @@ Expression* Parser::parseComparisonExpr() {
             auto* expr = arena_.create<BinaryExpr>();
             expr->op = is_not ? BinaryOp::EQ : BinaryOp::NE;  // IS DISTINCT FROM = not equal (null-safe)
             expr->left = left;
-            expr->right = parseBitOrExpr();
+            expr->right = parseConcatExpr();
             return expr;
         }
 
@@ -7387,28 +7763,28 @@ Expression* Parser::parseComparisonExpr() {
         auto* expr = arena_.create<BinaryExpr>();
         expr->op = BinaryOp::REGEX_MATCH;
         expr->left = left;
-        expr->right = parseBitOrExpr();
+        expr->right = parseConcatExpr();
         return expr;
     }
     if (match(TokenType::TILDE_STAR)) {
         auto* expr = arena_.create<BinaryExpr>();
         expr->op = BinaryOp::REGEX_MATCH_CI;
         expr->left = left;
-        expr->right = parseBitOrExpr();
+        expr->right = parseConcatExpr();
         return expr;
     }
     if (match(TokenType::EXCLAIM_TILDE)) {
         auto* expr = arena_.create<BinaryExpr>();
         expr->op = BinaryOp::REGEX_NOT_MATCH;
         expr->left = left;
-        expr->right = parseBitOrExpr();
+        expr->right = parseConcatExpr();
         return expr;
     }
     if (match(TokenType::EXCLAIM_TILDE_STAR)) {
         auto* expr = arena_.create<BinaryExpr>();
         expr->op = BinaryOp::REGEX_NOT_MATCH_CI;
         expr->left = left;
-        expr->right = parseBitOrExpr();
+        expr->right = parseConcatExpr();
         return expr;
     }
 
@@ -7416,21 +7792,21 @@ Expression* Parser::parseComparisonExpr() {
         auto* expr = arena_.create<BinaryExpr>();
         expr->op = BinaryOp::JSON_EXISTS;
         expr->left = left;
-        expr->right = parseBitOrExpr();
+        expr->right = parseConcatExpr();
         return expr;
     }
     if (match(TokenType::QUESTION_PIPE)) {
         auto* expr = arena_.create<BinaryExpr>();
         expr->op = BinaryOp::JSON_EXISTS_ANY;
         expr->left = left;
-        expr->right = parseBitOrExpr();
+        expr->right = parseConcatExpr();
         return expr;
     }
     if (match(TokenType::QUESTION_AMPERSAND)) {
         auto* expr = arena_.create<BinaryExpr>();
         expr->op = BinaryOp::JSON_EXISTS_ALL;
         expr->left = left;
-        expr->right = parseBitOrExpr();
+        expr->right = parseConcatExpr();
         return expr;
     }
 
@@ -7438,21 +7814,21 @@ Expression* Parser::parseComparisonExpr() {
         auto* expr = arena_.create<BinaryExpr>();
         expr->op = BinaryOp::ARRAY_CONTAINS;
         expr->left = left;
-        expr->right = parseBitOrExpr();
+        expr->right = parseConcatExpr();
         return expr;
     }
     if (match(TokenType::LESS_AT)) {
         auto* expr = arena_.create<BinaryExpr>();
         expr->op = BinaryOp::ARRAY_CONTAINED_BY;
         expr->left = left;
-        expr->right = parseBitOrExpr();
+        expr->right = parseConcatExpr();
         return expr;
     }
     if (match(TokenType::DOUBLE_AMPERSAND)) {
         auto* expr = arena_.create<BinaryExpr>();
         expr->op = BinaryOp::ARRAY_OVERLAP;
         expr->left = left;
-        expr->right = parseBitOrExpr();
+        expr->right = parseConcatExpr();
         return expr;
     }
 
@@ -7471,7 +7847,7 @@ Expression* Parser::parseComparisonExpr() {
         auto* expr = arena_.create<BinaryExpr>();
         expr->op = op;
         expr->left = left;
-        expr->right = parseBitOrExpr();
+        expr->right = parseConcatExpr();
         return expr;
     }
 
@@ -7479,7 +7855,7 @@ Expression* Parser::parseComparisonExpr() {
 }
 
 Expression* Parser::parseComparisonExprWithLeft(Expression* left) {
-    left = parseBitOrExprWithLeft(left);
+    left = parseConcatExprWithLeft(left);
 
     if (match(TokenType::KW_IS)) {
         bool is_not = match(TokenType::KW_NOT);
@@ -7512,7 +7888,7 @@ Expression* Parser::parseComparisonExprWithLeft(Expression* left) {
             auto* expr = arena_.create<BinaryExpr>();
             expr->op = is_not ? BinaryOp::EQ : BinaryOp::NE;
             expr->left = left;
-            expr->right = parseBitOrExpr();
+            expr->right = parseConcatExpr();
             return expr;
         }
 
@@ -7631,28 +8007,28 @@ Expression* Parser::parseComparisonExprWithLeft(Expression* left) {
         auto* expr = arena_.create<BinaryExpr>();
         expr->op = BinaryOp::REGEX_MATCH;
         expr->left = left;
-        expr->right = parseBitOrExpr();
+        expr->right = parseConcatExpr();
         return expr;
     }
     if (match(TokenType::TILDE_STAR)) {
         auto* expr = arena_.create<BinaryExpr>();
         expr->op = BinaryOp::REGEX_MATCH_CI;
         expr->left = left;
-        expr->right = parseBitOrExpr();
+        expr->right = parseConcatExpr();
         return expr;
     }
     if (match(TokenType::EXCLAIM_TILDE)) {
         auto* expr = arena_.create<BinaryExpr>();
         expr->op = BinaryOp::REGEX_NOT_MATCH;
         expr->left = left;
-        expr->right = parseBitOrExpr();
+        expr->right = parseConcatExpr();
         return expr;
     }
     if (match(TokenType::EXCLAIM_TILDE_STAR)) {
         auto* expr = arena_.create<BinaryExpr>();
         expr->op = BinaryOp::REGEX_NOT_MATCH_CI;
         expr->left = left;
-        expr->right = parseBitOrExpr();
+        expr->right = parseConcatExpr();
         return expr;
     }
 
@@ -7660,21 +8036,21 @@ Expression* Parser::parseComparisonExprWithLeft(Expression* left) {
         auto* expr = arena_.create<BinaryExpr>();
         expr->op = BinaryOp::JSON_EXISTS;
         expr->left = left;
-        expr->right = parseBitOrExpr();
+        expr->right = parseConcatExpr();
         return expr;
     }
     if (match(TokenType::QUESTION_PIPE)) {
         auto* expr = arena_.create<BinaryExpr>();
         expr->op = BinaryOp::JSON_EXISTS_ANY;
         expr->left = left;
-        expr->right = parseBitOrExpr();
+        expr->right = parseConcatExpr();
         return expr;
     }
     if (match(TokenType::QUESTION_AMPERSAND)) {
         auto* expr = arena_.create<BinaryExpr>();
         expr->op = BinaryOp::JSON_EXISTS_ALL;
         expr->left = left;
-        expr->right = parseBitOrExpr();
+        expr->right = parseConcatExpr();
         return expr;
     }
 
@@ -7682,21 +8058,21 @@ Expression* Parser::parseComparisonExprWithLeft(Expression* left) {
         auto* expr = arena_.create<BinaryExpr>();
         expr->op = BinaryOp::ARRAY_CONTAINS;
         expr->left = left;
-        expr->right = parseBitOrExpr();
+        expr->right = parseConcatExpr();
         return expr;
     }
     if (match(TokenType::LESS_AT)) {
         auto* expr = arena_.create<BinaryExpr>();
         expr->op = BinaryOp::ARRAY_CONTAINED_BY;
         expr->left = left;
-        expr->right = parseBitOrExpr();
+        expr->right = parseConcatExpr();
         return expr;
     }
     if (match(TokenType::DOUBLE_AMPERSAND)) {
         auto* expr = arena_.create<BinaryExpr>();
         expr->op = BinaryOp::ARRAY_OVERLAP;
         expr->left = left;
-        expr->right = parseBitOrExpr();
+        expr->right = parseConcatExpr();
         return expr;
     }
 
@@ -7714,8 +8090,36 @@ Expression* Parser::parseComparisonExprWithLeft(Expression* left) {
         auto* expr = arena_.create<BinaryExpr>();
         expr->op = op;
         expr->left = left;
-        expr->right = parseBitOrExpr();
+        expr->right = parseConcatExpr();
         return expr;
+    }
+
+    return left;
+}
+
+Expression* Parser::parseConcatExpr() {
+    Expression* left = parseBitOrExpr();
+
+    while (match(TokenType::DOUBLE_PIPE)) {
+        auto* expr = arena_.create<BinaryExpr>();
+        expr->op = BinaryOp::CONCAT;
+        expr->left = left;
+        expr->right = parseBitOrExpr();
+        left = expr;
+    }
+
+    return left;
+}
+
+Expression* Parser::parseConcatExprWithLeft(Expression* left) {
+    left = parseBitOrExprWithLeft(left);
+
+    while (match(TokenType::DOUBLE_PIPE)) {
+        auto* expr = arena_.create<BinaryExpr>();
+        expr->op = BinaryOp::CONCAT;
+        expr->left = left;
+        expr->right = parseBitOrExpr();
+        left = expr;
     }
 
     return left;
@@ -7822,7 +8226,6 @@ Expression* Parser::parseAddExpr() {
         BinaryOp op;
         if (match(TokenType::PLUS)) op = BinaryOp::ADD;
         else if (match(TokenType::MINUS)) op = BinaryOp::SUB;
-        else if (match(TokenType::DOUBLE_PIPE)) op = BinaryOp::CONCAT;
         else break;
 
         auto* expr = arena_.create<BinaryExpr>();
@@ -7842,7 +8245,6 @@ Expression* Parser::parseAddExprWithLeft(Expression* left) {
         BinaryOp op;
         if (match(TokenType::PLUS)) op = BinaryOp::ADD;
         else if (match(TokenType::MINUS)) op = BinaryOp::SUB;
-        else if (match(TokenType::DOUBLE_PIPE)) op = BinaryOp::CONCAT;
         else break;
 
         auto* expr = arena_.create<BinaryExpr>();
@@ -7953,6 +8355,423 @@ Expression* Parser::parsePrimaryExpr() {
         check(TokenType::KW_TRUE) || check(TokenType::KW_FALSE) ||
         check(TokenType::KW_NULL)) {
         expr = parseLiteral();
+    }
+
+    auto parseTypedLiteral = [&](const std::string& type_name,
+                                 bool allow_time_zone) -> Expression* {
+        TypeName type;
+        type.name = stringPool().intern(type_name);
+        if (allow_time_zone) {
+            if (check(TokenType::KW_WITH)) {
+                Token next = state_.lexer().peekToken();
+                if (next.type == TokenType::IDENTIFIER &&
+                    caseInsensitiveEquals(stringPool().get(next.value.string_id), "TIME")) {
+                    match(TokenType::KW_WITH);
+                    expectContextual("TIME", "Expected TIME after WITH");
+                    expectContextual("ZONE", "Expected ZONE after WITH TIME");
+                    type.with_time_zone = true;
+                }
+            } else if (checkContextual("WITHOUT")) {
+                Token next = state_.lexer().peekToken();
+                if (next.type == TokenType::IDENTIFIER &&
+                    caseInsensitiveEquals(stringPool().get(next.value.string_id), "TIME")) {
+                    matchContextual("WITHOUT");
+                    expectContextual("TIME", "Expected TIME after WITHOUT");
+                    matchContextual("ZONE");
+                    type.with_time_zone = false;
+                }
+            }
+        }
+
+        if (!check(TokenType::STRING_LITERAL)) {
+            error("Expected string literal after typed literal");
+            return nullptr;
+        }
+        auto* lit = arena_.create<LiteralExpr>();
+        lit->literal_type = LiteralType::STRING;
+        lit->string_value = current().value.string_id;
+        advance();
+
+        auto* cast = arena_.create<CastExpr>();
+        cast->expr = lit;
+        cast->target_type = type;
+        return cast;
+    };
+    auto parseStringLiteralId = [&]() -> StringPool::StringId {
+        if (!check(TokenType::STRING_LITERAL)) {
+            error("Expected string literal after typed literal");
+            return StringPool::INVALID_ID;
+        }
+        auto id = current().value.string_id;
+        advance();
+        return id;
+    };
+    auto parseInt64FromString = [&](StringPool::StringId id, int64_t& out) -> bool {
+        if (id == StringPool::INVALID_ID) return false;
+        try {
+            out = std::stoll(std::string(stringPool().get(id)));
+            return true;
+        } catch (...) {
+            return false;
+        }
+    };
+    auto parseUInt64FromString = [&](StringPool::StringId id, uint64_t& out) -> bool {
+        if (id == StringPool::INVALID_ID) return false;
+        try {
+            out = std::stoull(std::string(stringPool().get(id)));
+            return true;
+        } catch (...) {
+            return false;
+        }
+    };
+
+    auto next_is_string = [&]() -> bool {
+        return state_.lexer().peekToken().type == TokenType::STRING_LITERAL;
+    };
+    auto next_is_with = [&]() -> bool {
+        Token next = state_.lexer().peekToken();
+        return next.type == TokenType::KW_WITH ||
+               (next.type == TokenType::IDENTIFIER &&
+                caseInsensitiveEquals(stringPool().get(next.value.string_id), "WITHOUT"));
+    };
+
+    if (!expr && checkContextual("DATE") && next_is_string()) {
+        matchContextual("DATE");
+        expr = parseTypedLiteral("DATE", false);
+    }
+    if (!expr && checkContextual("TIME") && (next_is_string() || next_is_with())) {
+        matchContextual("TIME");
+        expr = parseTypedLiteral("TIME", true);
+    }
+    if (!expr && checkContextual("TIMESTAMP") && (next_is_string() || next_is_with())) {
+        matchContextual("TIMESTAMP");
+        expr = parseTypedLiteral("TIMESTAMP", true);
+    }
+    if (!expr && checkContextual("UUID") && next_is_string()) {
+        matchContextual("UUID");
+        expr = parseTypedLiteral("UUID", false);
+    }
+    if (!expr && checkContextual("JSONPATH") && next_is_string()) {
+        matchContextual("JSONPATH");
+        auto* lit = arena_.create<LiteralJsonPathExpr>();
+        lit->text = parseStringLiteralId();
+        expr = lit;
+    }
+    if (!expr && checkContextual("ENUM") && next_is_string()) {
+        matchContextual("ENUM");
+        auto* lit = arena_.create<LiteralEnumExpr>();
+        lit->label = parseStringLiteralId();
+        lit->has_label = lit->label != StringPool::INVALID_ID;
+        expr = lit;
+    }
+    if (!expr && checkContextual("SET") && state_.lexer().peekToken().type == TokenType::LEFT_BRACKET) {
+        matchContextual("SET");
+        expect(TokenType::LEFT_BRACKET, "Expected '[' after SET");
+        auto* set = arena_.create<LiteralSetExpr>();
+        if (!check(TokenType::RIGHT_BRACKET)) {
+            do {
+                auto* elem = arena_.create<LiteralEnumExpr>();
+                if (check(TokenType::STRING_LITERAL)) {
+                    elem->label = parseStringLiteralId();
+                    elem->has_label = true;
+                } else if (isIdentifier()) {
+                    elem->label = currentIdentifier();
+                    elem->has_label = true;
+                    advance();
+                } else {
+                    error("Expected enum label in SET literal");
+                }
+                set->elements.push_back(elem);
+            } while (match(TokenType::COMMA));
+        }
+        expect(TokenType::RIGHT_BRACKET, "Expected ']' after SET literal");
+        expr = set;
+    }
+    if (!expr && checkContextual("ROW") && state_.lexer().peekToken().type == TokenType::LEFT_PAREN) {
+        matchContextual("ROW");
+        expect(TokenType::LEFT_PAREN, "Expected '(' after ROW");
+        auto* row = arena_.create<LiteralRowExpr>();
+        if (!check(TokenType::RIGHT_PAREN)) {
+            do {
+                RowFieldLiteral field;
+                field.value = parseExpression();
+                row->fields.push_back(field);
+            } while (match(TokenType::COMMA));
+        }
+        expect(TokenType::RIGHT_PAREN, "Expected ')' after ROW literal");
+        expr = row;
+    }
+    if (!expr && checkContextual("COMPOSITE") && state_.lexer().peekToken().type == TokenType::LEFT_PAREN) {
+        matchContextual("COMPOSITE");
+        expect(TokenType::LEFT_PAREN, "Expected '(' after COMPOSITE");
+        auto* comp = arena_.create<LiteralCompositeExpr>();
+        if (!check(TokenType::RIGHT_PAREN)) {
+            do {
+                RowFieldLiteral field;
+                field.value = parseExpression();
+                comp->fields.push_back(field);
+            } while (match(TokenType::COMMA));
+        }
+        expect(TokenType::RIGHT_PAREN, "Expected ')' after COMPOSITE literal");
+        expr = comp;
+    }
+    if (!expr && checkContextual("DOMAIN") && isIdentifier()) {
+        matchContextual("DOMAIN");
+        parseSchemaPath(state_);
+        auto* dom = arena_.create<LiteralDomainExpr>();
+        if (check(TokenType::STRING_LITERAL) || check(TokenType::INTEGER_LITERAL) ||
+            check(TokenType::FLOAT_LITERAL) || check(TokenType::KW_NULL) ||
+            check(TokenType::KW_TRUE) || check(TokenType::KW_FALSE)) {
+            dom->value = parseLiteral();
+        } else {
+            dom->value = parseExpression();
+        }
+        expr = dom;
+    }
+    if (!expr && checkContextual("TSVECTOR") && next_is_string()) {
+        matchContextual("TSVECTOR");
+        auto* lit = arena_.create<LiteralTsVectorExpr>();
+        lit->text = parseStringLiteralId();
+        expr = lit;
+    }
+    if (!expr && checkContextual("TSQUERY") && next_is_string()) {
+        matchContextual("TSQUERY");
+        auto* lit = arena_.create<LiteralTsQueryExpr>();
+        lit->text = parseStringLiteralId();
+        expr = lit;
+    }
+    if (!expr && checkContextual("YEAR") && next_is_string()) {
+        matchContextual("YEAR");
+        auto* lit = arena_.create<LiteralYearExpr>();
+        auto id = parseStringLiteralId();
+        int64_t v = 0;
+        if (parseInt64FromString(id, v)) {
+            lit->value = static_cast<int32_t>(v);
+            std::string_view raw = stringPool().get(id);
+            lit->format = raw.size() <= 2 ? 0 : 1;
+        }
+        expr = lit;
+    }
+    if (!expr && checkContextual("MEDIUMINT") && next_is_string()) {
+        matchContextual("MEDIUMINT");
+        auto* lit = arena_.create<LiteralMediumIntExpr>();
+        auto id = parseStringLiteralId();
+        int64_t v = 0;
+        if (parseInt64FromString(id, v)) {
+            lit->value = static_cast<int32_t>(v);
+        }
+        expr = lit;
+    }
+    if (!expr && checkContextual("INT8") && next_is_string()) {
+        matchContextual("INT8");
+        auto* lit = arena_.create<LiteralInt8Expr>();
+        auto id = parseStringLiteralId();
+        int64_t v = 0;
+        if (parseInt64FromString(id, v)) lit->value = static_cast<int8_t>(v);
+        expr = lit;
+    }
+    if (!expr && checkContextual("INT16") && next_is_string()) {
+        matchContextual("INT16");
+        auto* lit = arena_.create<LiteralInt16Expr>();
+        auto id = parseStringLiteralId();
+        int64_t v = 0;
+        if (parseInt64FromString(id, v)) lit->value = static_cast<int16_t>(v);
+        expr = lit;
+    }
+    if (!expr && checkContextual("UINT8") && next_is_string()) {
+        matchContextual("UINT8");
+        auto* lit = arena_.create<LiteralUInt8Expr>();
+        auto id = parseStringLiteralId();
+        uint64_t v = 0;
+        if (parseUInt64FromString(id, v)) lit->value = static_cast<uint8_t>(v);
+        expr = lit;
+    }
+    if (!expr && checkContextual("UINT16") && next_is_string()) {
+        matchContextual("UINT16");
+        auto* lit = arena_.create<LiteralUInt16Expr>();
+        auto id = parseStringLiteralId();
+        uint64_t v = 0;
+        if (parseUInt64FromString(id, v)) lit->value = static_cast<uint16_t>(v);
+        expr = lit;
+    }
+    if (!expr && checkContextual("UINT32") && next_is_string()) {
+        matchContextual("UINT32");
+        auto* lit = arena_.create<LiteralUInt32Expr>();
+        auto id = parseStringLiteralId();
+        uint64_t v = 0;
+        if (parseUInt64FromString(id, v)) lit->value = static_cast<uint32_t>(v);
+        expr = lit;
+    }
+    if (!expr && checkContextual("UINT64") && next_is_string()) {
+        matchContextual("UINT64");
+        auto* lit = arena_.create<LiteralUInt64Expr>();
+        auto id = parseStringLiteralId();
+        uint64_t v = 0;
+        if (parseUInt64FromString(id, v)) lit->value = v;
+        expr = lit;
+    }
+    if (!expr && checkContextual("UINT128") && next_is_string()) {
+        matchContextual("UINT128");
+        auto* lit = arena_.create<LiteralUInt128Expr>();
+        auto id = parseStringLiteralId();
+        unsigned __int128 v = 0;
+        if (parseUnsigned128(stringPool().get(id), v)) {
+            storeU128LE(v, lit->value);
+        }
+        expr = lit;
+    }
+    if (!expr && checkContextual("INT128") && next_is_string()) {
+        matchContextual("INT128");
+        auto* lit = arena_.create<LiteralInt128Expr>();
+        auto id = parseStringLiteralId();
+        unsigned __int128 v = 0;
+        if (parseSigned128(stringPool().get(id), v)) {
+            storeU128LE(v, lit->value);
+        }
+        expr = lit;
+    }
+    if (!expr && checkContextual("FLOAT32") && next_is_string()) {
+        matchContextual("FLOAT32");
+        auto* lit = arena_.create<LiteralFloat32Expr>();
+        auto id = parseStringLiteralId();
+        try {
+            lit->value = std::stof(std::string(stringPool().get(id)));
+        } catch (...) {
+            lit->value = 0.0f;
+        }
+        expr = lit;
+    }
+    if (!expr && checkContextual("GEOMETRY") && next_is_string()) {
+        matchContextual("GEOMETRY");
+        auto* lit = arena_.create<LiteralGeometryExpr>();
+        auto id = parseStringLiteralId();
+        std::string_view raw = stringPool().get(id);
+        lit->bytes.assign(raw.begin(), raw.end());
+        expr = lit;
+    }
+    if (!expr && checkContextual("VARIANT") && next_is_string()) {
+        matchContextual("VARIANT");
+        auto* lit = arena_.create<LiteralVariantExpr>();
+        lit->value = nullptr;
+        auto id = parseStringLiteralId();
+        auto* inner = arena_.create<LiteralExpr>();
+        inner->literal_type = LiteralType::STRING;
+        inner->string_value = id;
+        lit->value = inner;
+        expr = lit;
+    }
+    if (!expr && checkContextual("RANGE") &&
+        (state_.lexer().peekToken().type == TokenType::LEFT_BRACKET ||
+         state_.lexer().peekToken().type == TokenType::LEFT_PAREN ||
+         next_is_string())) {
+        matchContextual("RANGE");
+        auto* lit = arena_.create<LiteralRangeExpr>();
+        if (next_is_string()) {
+            parseStringLiteralId();
+            expr = lit;
+        } else {
+            bool lower_inc = false;
+            bool upper_inc = false;
+            if (match(TokenType::LEFT_BRACKET)) lower_inc = true;
+            else expect(TokenType::LEFT_PAREN, "Expected '[' or '(' after RANGE");
+            if (!check(TokenType::COMMA)) {
+                lit->lower_present = true;
+                lit->lower = parseExpression();
+            }
+            expect(TokenType::COMMA, "Expected ',' in RANGE literal");
+            if (!check(TokenType::RIGHT_BRACKET) && !check(TokenType::RIGHT_PAREN)) {
+                lit->upper_present = true;
+                lit->upper = parseExpression();
+            }
+            if (match(TokenType::RIGHT_BRACKET)) upper_inc = true;
+            else expect(TokenType::RIGHT_PAREN, "Expected ')' or ']' after RANGE");
+            if (lower_inc) lit->flags |= 0x01;
+            if (upper_inc) lit->flags |= 0x02;
+            if (!lit->lower_present) lit->flags |= 0x04;
+            if (!lit->upper_present) lit->flags |= 0x08;
+            expr = lit;
+        }
+    }
+    if (!expr && checkContextual("BLOB_LOCATOR") &&
+        (state_.lexer().peekToken().type == TokenType::LEFT_PAREN || next_is_string())) {
+        matchContextual("BLOB_LOCATOR");
+        auto* lit = arena_.create<LiteralBlobLocatorExpr>();
+        if (match(TokenType::LEFT_PAREN)) {
+            auto id = parseStringLiteralId();
+            parseUuidBytes(stringPool().get(id), lit->blob_id);
+            if (match(TokenType::COMMA)) {
+                if (check(TokenType::INTEGER_LITERAL)) {
+                    lit->blob_subtype = static_cast<int16_t>(current().value.int_value);
+                    advance();
+                }
+            }
+            if (match(TokenType::COMMA)) {
+                if (check(TokenType::INTEGER_LITERAL)) {
+                    lit->blob_length = static_cast<uint64_t>(current().value.int_value);
+                    advance();
+                }
+            }
+            if (match(TokenType::COMMA)) {
+                if (check(TokenType::INTEGER_LITERAL)) {
+                    lit->compression = static_cast<uint8_t>(current().value.int_value);
+                    advance();
+                }
+            }
+            expect(TokenType::RIGHT_PAREN, "Expected ')' after BLOB_LOCATOR");
+        } else {
+            auto id = parseStringLiteralId();
+            parseUuidBytes(stringPool().get(id), lit->blob_id);
+        }
+        expr = lit;
+    }
+    if (!expr && checkContextual("BIT") && next_is_string()) {
+        matchContextual("BIT");
+        auto* lit = arena_.create<LiteralBitExpr>();
+        auto id = parseStringLiteralId();
+        std::string_view raw = stringPool().get(id);
+        lit->bit_length = static_cast<uint16_t>(raw.size());
+        lit->bytes.assign(raw.begin(), raw.end());
+        expr = lit;
+    }
+    if (!expr && checkContextual("DATETIME") && next_is_string()) {
+        matchContextual("DATETIME");
+        auto* lit = arena_.create<LiteralDateTimeExpr>();
+        auto id = parseStringLiteralId();
+        ParsedTimestampTz parsed;
+        if (parseTimestampTz(stringPool().get(id), parsed)) {
+            lit->epoch_usec = parsed.epoch_usec;
+            lit->with_timezone = false;
+            lit->precision = 0;
+        }
+        expr = lit;
+    }
+    if (!expr && checkContextual("TIME_TZ") && next_is_string()) {
+        matchContextual("TIME_TZ");
+        auto* lit = arena_.create<LiteralTimeTzExpr>();
+        auto id = parseStringLiteralId();
+        ParsedTimeTz parsed;
+        if (parseTimeTz(stringPool().get(id), parsed)) {
+            lit->time_usec = parsed.time_usec;
+            lit->tz_offset_minutes = parsed.offset_minutes;
+            if (!parsed.tz_name.empty()) {
+                lit->tz_name = stringPool().intern(parsed.tz_name);
+            }
+        }
+        expr = lit;
+    }
+    if (!expr && checkContextual("TIMESTAMP_TZ") && next_is_string()) {
+        matchContextual("TIMESTAMP_TZ");
+        auto* lit = arena_.create<LiteralTimestampTzExpr>();
+        auto id = parseStringLiteralId();
+        ParsedTimestampTz parsed;
+        if (parseTimestampTz(stringPool().get(id), parsed)) {
+            lit->epoch_usec = parsed.epoch_usec;
+            lit->tz_offset_minutes = parsed.offset_minutes;
+            if (!parsed.tz_name.empty()) {
+                lit->tz_name = stringPool().intern(parsed.tz_name);
+            }
+        }
+        expr = lit;
     }
 
     if (!expr && matchContextual("EXTRACT")) {
@@ -9467,11 +10286,10 @@ ShowStmt* Parser::parseShow() {
     else if (matchContextual("METRICS")) {
         stmt->show_type = ShowStmt::ShowType::METRICS;
     }
-    // SHOW PARSER VERSION (unsupported)
+    // SHOW PARSER VERSION
     else if (matchContextual("PARSER")) {
         expectContextual("VERSION", "Expected VERSION after PARSER");
-        error("SHOW PARSER VERSION is not supported");
-        stmt->show_type = ShowStmt::ShowType::VARIABLE;
+        stmt->show_type = ShowStmt::ShowType::VERSION;
     }
     // Default: SHOW variable_name
     else {

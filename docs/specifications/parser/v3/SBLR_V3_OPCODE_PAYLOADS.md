@@ -643,6 +643,15 @@ Examples:
 [options:OPTION_KV]
 ```
 
+### SCHEMA_DDL_CREATE_FOREIGN_DATA_WRAPPER
+
+```
+[name:ident]
+[handler:opt<ident>]
+[validator:opt<ident>]
+[options:OPTION_KV]
+```
+
 ### SCHEMA_DDL_CREATE_FOREIGN_TABLE
 
 ```
@@ -689,25 +698,45 @@ Examples:
 
 ```
 [table:schema_path]
-[action_count:varuint]
-repeat action_count:
-  [action:u8]
-  [payload:bytes]
+[if_exists:bool]
+[only:bool]
+[action:u8]
+[payload:bytes]
 ```
 
 Action payloads (by action code):
 - 1 ADD_COLUMN: `[column:COLUMN_DEF]`
-- 2 DROP_COLUMN: `[name:ident][if_exists:bool]`
-- 3 RENAME_COLUMN: `[old_name:ident][new_name:ident]`
-- 4 ALTER_COLUMN_TYPE: `[name:ident][type:TYPE_SPEC][using:opt<expr>]`
-- 5 SET_DEFAULT: `[name:ident][default:expr]`
-- 6 DROP_DEFAULT: `[name:ident]`
-- 7 SET_NOT_NULL: `[name:ident]`
-- 8 DROP_NOT_NULL: `[name:ident]`
-- 9 ADD_CONSTRAINT: `[constraint:TABLE_CONSTRAINT]`
-- 10 DROP_CONSTRAINT: `[name:ident][if_exists:bool]`
+- 2 ADD_CONSTRAINT: `[constraint:TABLE_CONSTRAINT]`
+- 3 DROP_COLUMN: `[name:ident][cascade:bool]`
+- 4 DROP_CONSTRAINT: `[name:ident][cascade:bool]`
+- 5 ALTER_COLUMN_TYPE: `[name:ident][type:TYPE_SPEC]`
+- 6 ALTER_COLUMN_POSITION: `[name:ident][position_1_based:u32]`
+- 7 ALTER_COLUMN_SET_DEFAULT: `[name:ident][default:expr]`
+- 8 ALTER_COLUMN_DROP_DEFAULT: `[name:ident]`
+- 9 ALTER_COLUMN_SET_NOT_NULL: `[name:ident]`
+- 10 ALTER_COLUMN_DROP_NOT_NULL: `[name:ident]`
 - 11 RENAME_TABLE: `[new_name:ident]`
-- 12 SET_TABLESPACE: `[tablespace:schema_path]`
+- 12 RENAME_CONSTRAINT: `[old_name:ident][new_name:ident]`
+- 13 SET_SCHEMA: `[schema:schema_path]`
+- 15 RENAME_COLUMN: `[old_name:ident][new_name:ident]`
+- 16 SET_STATISTICS: `[name:ident][target:i32]`
+- 17 SET_STORAGE: `[name:ident][storage:ident]`
+- 18 INHERIT: `[parent:schema_path]`
+- 19 NO_INHERIT: `[parent:opt<schema_path>]`
+- 20 ENABLE_TRIGGER: `[trigger_all:bool][trigger_name:opt<ident>]`
+- 21 DISABLE_TRIGGER: `[trigger_all:bool][trigger_name:opt<ident>]`
+- 22 ENABLE_RLS: *(empty)*
+- 23 DISABLE_RLS: *(empty)*
+- 24 FORCE_RLS: *(empty)*
+- 25 NO_FORCE_RLS: *(empty)*
+- 26 ATTACH_PARTITION: `[partition:schema_path][bounds:opt<string>]`
+- 27 DETACH_PARTITION: `[partition:schema_path]`
+- 28 VALIDATE_CONSTRAINT: `[name:ident]`
+- 29 ALTER_COLUMN_USING: `[name:ident][type:TYPE_SPEC][using:expr]`
+
+Notes:
+- `ALTER TABLE ... SET TABLESPACE` MUST use `SBLR3_ALTER_TABLE_SET_TABLESPACE` (no `ALTER_TABLE` action).
+- Multiple ALTER actions MUST be emitted as multiple `SBLR3_ALTER_TABLE` statements in source order.
 
 ### SCHEMA_DDL_ALTER_COLUMN_DEFAULT
 
@@ -767,6 +796,156 @@ Action payloads (by action code):
 [max_value:opt<i64>]
 [cycle:opt<bool>]
 [cache:opt<u64>]
+```
+
+### SCHEMA_RANGE_TYPE_OPTIONS
+
+```
+[subtype:opt<TYPE_SPEC>]
+[subtype_collation:opt<string>]
+[subtype_opclass:opt<string>]
+[canonical:opt<string>]
+[subtype_diff:opt<string>]
+[multirange:opt<bool>]
+```
+
+### SCHEMA_BASE_TYPE_OPTIONS
+
+```
+[storage:opt<TYPE_SPEC>]
+[input_function:opt<string>]
+[output_function:opt<string>]
+[receive_function:opt<string>]
+[send_function:opt<string>]
+[typmod_in_function:opt<string>]
+[typmod_out_function:opt<string>]
+[analyze_function:opt<string>]
+[alignment:opt<u8>]
+[storage_mode:opt<u8>]
+[category:opt<u8>]
+[preferred:opt<bool>]
+```
+
+### SCHEMA_DDL_ALTER_INDEX
+
+```
+[index:schema_path]
+[action:u8]
+[options:OPTION_KV]
+```
+
+### SCHEMA_DDL_ALTER_SCHEMA
+
+```
+[schema:schema_path]
+[action:u8]
+[new_name:opt<ident>]
+[owner:opt<ident>]
+[new_path:opt<schema_path>]
+```
+
+### SCHEMA_DDL_ALTER_DATABASE
+
+```
+[database:schema_path]
+[action:u8]
+[new_name:opt<ident>]
+[owner:opt<ident>]
+[alias:opt<ident>]
+[options:OPTION_KV]
+```
+
+### SCHEMA_DDL_ALTER_DOMAIN
+
+```
+[domain:schema_path]
+[action:u8]
+[value:opt<string>]
+[constraint:opt<ident>]
+[new_name:opt<ident>]
+```
+
+### SCHEMA_DDL_ALTER_TYPE
+
+```
+[type:schema_path]
+[action:u8]
+[new_name:opt<ident>]
+[new_schema:opt<ident>]
+[value_label:opt<ident>]
+[before_label:opt<ident>]
+[after_label:opt<ident>]
+[old_label:opt<ident>]
+[new_label:opt<ident>]
+[is_range_options:bool]
+[is_base_options:bool]
+[range_options:opt<SCHEMA_RANGE_TYPE_OPTIONS>]
+[base_options:opt<SCHEMA_BASE_TYPE_OPTIONS>]
+```
+
+### SCHEMA_DDL_ALTER_POLICY
+
+```
+[policy_name:ident]
+[table:schema_path]
+[roles:list<ident>]
+[using_expr:opt<expr>]
+[check_expr:opt<expr>]
+```
+
+### SCHEMA_DDL_ALTER_SYSTEM
+
+```
+[key:ident]
+[value:opt<expr>]
+```
+
+### SCHEMA_DDL_ALTER_JOB
+
+```
+[job_name:ident]
+[schedule_kind:opt<u8>]
+[cron_expression:opt<ident>]
+[at_timestamp:opt<ident>]
+[interval_seconds:opt<i64>]
+[starts_at:opt<ident>]
+[ends_at:opt<ident>]
+[job_type:opt<u8>]
+[job_sql:opt<string>]
+[procedure_name:opt<ident>]
+[external_command:opt<string>]
+[state:opt<u8>]
+[max_retries:opt<u32>]
+[retry_backoff_seconds:opt<u32>]
+[timeout_seconds:opt<u32>]
+[on_completion:opt<u8>]
+[run_as_role:opt<ident>]
+[description:opt<string>]
+[job_class:opt<ident>]
+[partition_strategy:opt<ident>]
+[partition_expression:opt<ident>]
+[partition_shard:opt<ident>]
+[depends_on:list<ident>]
+[clear_depends_on:bool]
+[secret_key:opt<ident>]
+[secret_value:opt<string>]
+[drop_secret:bool]
+```
+
+### SCHEMA_DDL_ATTACH_TABLESPACE
+
+```
+[name:ident]
+[location:string]
+[validate:bool]
+[allow_mismatch:bool]
+```
+
+### SCHEMA_DDL_DETACH_TABLESPACE
+
+```
+[name:ident]
+[force:bool]
 ```
 
 ### SCHEMA_DDL_DROP
@@ -890,6 +1069,7 @@ from `types/VALUE_SPEC_STORAGE_ENCODINGS.md`.
 - `SBLR3_CREATE_USER` / `SBLR3_CREATE_ROLE` / `SBLR3_CREATE_GROUP` -> `SCHEMA_DDL_CREATE_USER`
 - `SBLR3_CREATE_POLICY` -> `SCHEMA_DDL_CREATE_POLICY`
 - `SBLR3_CREATE_TABLESPACE` -> `SCHEMA_DDL_CREATE_TABLESPACE`
+- `SBLR3_CREATE_FOREIGN_DATA_WRAPPER` -> `SCHEMA_DDL_CREATE_FOREIGN_DATA_WRAPPER`
 - `SBLR3_CREATE_FOREIGN_SERVER` -> `SCHEMA_DDL_CREATE_FOREIGN_SERVER`
 - `SBLR3_CREATE_FOREIGN_TABLE` -> `SCHEMA_DDL_CREATE_FOREIGN_TABLE`
 - `SBLR3_CREATE_USER_MAPPING` -> `SCHEMA_DDL_CREATE_USER_MAPPING`
@@ -897,12 +1077,22 @@ from `types/VALUE_SPEC_STORAGE_ENCODINGS.md`.
 - `SBLR3_CREATE_UDR` -> `SCHEMA_DDL_CREATE_UDR`
 - `SBLR3_CREATE_JOB` -> `SCHEMA_DDL_CREATE_JOB`
 - `SBLR3_ALTER_TABLE` -> `SCHEMA_DDL_ALTER_TABLE`
+- `SBLR3_ALTER_INDEX` -> `SCHEMA_DDL_ALTER_INDEX`
+- `SBLR3_ALTER_SCHEMA` -> `SCHEMA_DDL_ALTER_SCHEMA`
+- `SBLR3_ALTER_DATABASE` -> `SCHEMA_DDL_ALTER_DATABASE`
+- `SBLR3_ALTER_DOMAIN` -> `SCHEMA_DDL_ALTER_DOMAIN`
+- `SBLR3_ALTER_TYPE` -> `SCHEMA_DDL_ALTER_TYPE`
+- `SBLR3_ALTER_POLICY` -> `SCHEMA_DDL_ALTER_POLICY`
+- `SBLR3_ALTER_SYSTEM` -> `SCHEMA_DDL_ALTER_SYSTEM`
+- `SBLR3_ALTER_JOB` -> `SCHEMA_DDL_ALTER_JOB`
 - `SBLR3_ALTER_SEQUENCE` -> `SCHEMA_DDL_ALTER_SEQUENCE`
 - `SBLR3_ALTER_COLUMN_DEFAULT` -> `SCHEMA_DDL_ALTER_COLUMN_DEFAULT`
 - `SBLR3_ALTER_COLUMN_TYPE` -> `SCHEMA_DDL_ALTER_COLUMN_TYPE`
 - `SBLR3_ALTER_COLUMN_NULL` -> `SCHEMA_DDL_ALTER_COLUMN_NULL`
 - `SBLR3_ALTER_TABLESPACE` -> `SCHEMA_DDL_ALTER_TABLESPACE`
 - `SBLR3_ALTER_TABLE_SET_TABLESPACE` -> `SCHEMA_DDL_ALTER_TABLE_SET_TABLESPACE`
+- `SBLR3_ATTACH_TABLESPACE` -> `SCHEMA_DDL_ATTACH_TABLESPACE`
+- `SBLR3_DETACH_TABLESPACE` -> `SCHEMA_DDL_DETACH_TABLESPACE`
 - `SBLR3_RENAME` -> `SCHEMA_DDL_ALTER_RENAME`
 - `SBLR3_DROP` -> `SCHEMA_DDL_DROP`
 - `SBLR3_TRUNCATE` -> `SCHEMA_DDL_TRUNCATE`

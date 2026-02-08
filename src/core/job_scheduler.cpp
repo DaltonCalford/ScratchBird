@@ -18,6 +18,8 @@
 #include "scratchbird/core/telemetry.h"
 #include "scratchbird/sblr/executor.h"
 #include "scratchbird/sblr/query_compiler_v2.h"
+#include "scratchbird/sblr/v3_container.h"
+#include "scratchbird/parser/v3_compiler.h"
 
 #include <chrono>
 #include <algorithm>
@@ -994,50 +996,68 @@ void JobScheduler::executeJobRun(const CatalogManager::JobInfo& job,
                     run_message = "Job has no SQL to execute";
                     run_error_code = -1;
                 } else {
-                    sblr::QueryCompilerV2 compiler(db_);
-                    if (!isZeroId(conn_ctx->getCurrentSchemaId())) {
-                        compiler.setCurrentSchema(conn_ctx->getCurrentSchemaId());
-                    }
-                    std::vector<core::ID> path_ids;
-                    const auto& paths = conn_ctx->search_path();
-                    for (const auto& path : paths) {
-                        CatalogManager::SchemaInfo schema_info;
-                        ErrorContext path_ctx;
-                        if (db_->catalog_manager()->getSchema(path, schema_info, &path_ctx) == Status::OK) {
-                            path_ids.push_back(schema_info.schema_id);
-                        }
-                    }
-                    compiler.setSearchPath(path_ids);
-
+                    parser::v3::Compiler compiler;
                     auto compile_result = compiler.compile(sql);
-                    if (!compile_result.success()) {
+                    if (!compile_result.ok) {
                         run_success = false;
-                        run_message = compile_result.errors().empty()
+                        run_message = compile_result.error.empty()
                             ? "Compilation error"
-                            : compile_result.errors()[0];
+                            : compile_result.error;
                         run_error_code = static_cast<int32_t>(Status::INVALID_ARGUMENT);
                     } else {
-                    auto executor = std::make_shared<scratchbird::sblr::Executor>(db_);
-                    executor->setConnectionContext(conn_ctx.get());
-                    uint32_t timeout_seconds = job.timeout_seconds;
-                    if (timeout_seconds == 0) {
-                        timeout_seconds = config_.job_timeout_seconds;
-                    }
-                    if (timeout_seconds > 0) {
-                        conn_ctx->set_statement_timeout(timeout_seconds);
-                        auto limits = executor->getQueryLimits();
-                        limits.max_execution_time_ms =
-                            static_cast<uint64_t>(timeout_seconds) * 1000ULL;
-                        executor->setQueryLimits(limits);
-                    }
-                    {
-                        std::lock_guard<std::mutex> lock(active_runs_mutex_);
-                        auto it = active_runs_.find(run_id);
+                        std::vector<uint8_t> bytecode = compile_result.bytecode;
+                        {
+                            sblr::QueryCompilerV2 v2_compiler(db_);
+                            auto v2_result = v2_compiler.compile(sql);
+                            if (v2_result.success()) {
+                                scratchbird::sblr::v3::Container container;
+                                std::string err;
+                                if (scratchbird::sblr::v3::decodeContainer(bytecode.data(),
+                                                                           bytecode.size(),
+                                                                           container,
+                                                                           err)) {
+                                    const auto& v2_bytes = v2_result.bytecode();
+                                    std::vector<uint8_t> debug;
+                                    debug.reserve(8 + v2_bytes.size());
+                                    debug.push_back('S');
+                                    debug.push_back('B');
+                                    debug.push_back('V');
+                                    debug.push_back('2');
+                                    uint32_t len = static_cast<uint32_t>(v2_bytes.size());
+                                    debug.push_back(static_cast<uint8_t>(len & 0xFF));
+                                    debug.push_back(static_cast<uint8_t>((len >> 8) & 0xFF));
+                                    debug.push_back(static_cast<uint8_t>((len >> 16) & 0xFF));
+                                    debug.push_back(static_cast<uint8_t>((len >> 24) & 0xFF));
+                                    debug.insert(debug.end(), v2_bytes.begin(), v2_bytes.end());
+                                    container.debug_info = std::move(debug);
+                                    std::vector<uint8_t> reencoded;
+                                    if (scratchbird::sblr::v3::encodeContainer(container, reencoded, err)) {
+                                        bytecode = std::move(reencoded);
+                                    }
+                                }
+                            }
+                        }
+                        auto executor = std::make_shared<scratchbird::sblr::Executor>(db_);
+                        executor->setConnectionContext(conn_ctx.get());
+                        uint32_t timeout_seconds = job.timeout_seconds;
+                        if (timeout_seconds == 0) {
+                            timeout_seconds = config_.job_timeout_seconds;
+                        }
+                        if (timeout_seconds > 0) {
+                            conn_ctx->set_statement_timeout(timeout_seconds);
+                            auto limits = executor->getQueryLimits();
+                            limits.max_execution_time_ms =
+                                static_cast<uint64_t>(timeout_seconds) * 1000ULL;
+                            executor->setQueryLimits(limits);
+                        }
+                        {
+                            std::lock_guard<std::mutex> lock(active_runs_mutex_);
+                            auto it = active_runs_.find(run_id);
                             if (it != active_runs_.end()) {
                                 it->second.executor = executor;
                             }
                         }
-                        auto exec_result = executor->execute(compile_result.bytecode());
+                        auto exec_result = executor->execute(bytecode);
                         if (!exec_result.success()) {
                             run_success = false;
                             run_message = exec_result.error();

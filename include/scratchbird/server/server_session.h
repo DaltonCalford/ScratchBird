@@ -55,6 +55,9 @@ namespace sblr {
     class PostgreSQLQueryCompiler;
     class MySQLQueryCompiler;
 }
+namespace parser::v3 {
+    class Compiler;
+}
 
 // Query compilation uses the selected parser (ScratchBird or emulated dialects).
 
@@ -314,6 +317,7 @@ private:
 
     // Query compilers
     std::unique_ptr<sblr::QueryCompilerV2> compiler_v2_;
+    std::unique_ptr<parser::v3::Compiler> compiler_v3_;
     std::unique_ptr<sblr::FirebirdQueryCompiler> compiler_firebird_;
     std::unique_ptr<sblr::PostgreSQLQueryCompiler> compiler_postgresql_;
     std::unique_ptr<sblr::MySQLQueryCompiler> compiler_mysql_;

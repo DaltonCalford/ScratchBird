@@ -266,6 +266,7 @@ namespace scratchbird
                                     core::ErrorContext* ctx = nullptr) -> core::Status override;
 
         private:
+            ExecutionResult executeV3(const std::vector<uint8_t> &bytecode);
             auto callFunctionByInfo(const core::CatalogManager::FunctionInfo& function_info,
                                     const std::vector<Value>& args,
                                     Value& result_out,

@@ -53,6 +53,7 @@ void CreateTypeStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateDomainStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateForeignServerStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateForeignTableStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void CreateForeignDataWrapperStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateUserMappingStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateSynonymStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void CreateUdrStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
@@ -159,6 +160,34 @@ void CloseCursorStmt::accept(ASTVisitor& visitor) { visitor.visit(this); }
 // =============================================================================
 
 void LiteralExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void LiteralEnumExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void LiteralSetExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void LiteralRowExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void LiteralCompositeExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void LiteralDomainExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void LiteralBitExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void LiteralYearExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void LiteralDateTimeExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void LiteralMediumIntExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void LiteralGeometryExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void LiteralJsonPathExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void LiteralInt8Expr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void LiteralInt16Expr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void LiteralUInt8Expr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void LiteralUInt16Expr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void LiteralUInt32Expr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void LiteralUInt64Expr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void LiteralUInt128Expr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void LiteralInt128Expr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void LiteralFloat32Expr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void LiteralTimeTzExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void LiteralTimestampTzExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void LiteralRangeExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void LiteralArrayExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void LiteralVariantExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void LiteralTsVectorExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void LiteralTsQueryExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
+void LiteralBlobLocatorExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void ColumnRefExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void ParameterExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
 void BinaryExpr::accept(ASTVisitor& visitor) { visitor.visit(this); }
@@ -297,6 +326,7 @@ const char* astKindToString(ASTKind kind) {
         case ASTKind::CreateExceptionStmt: return "CreateExceptionStmt";
         case ASTKind::CreateTypeStmt: return "CreateTypeStmt";
         case ASTKind::CreateDomainStmt: return "CreateDomainStmt";
+        case ASTKind::CreateForeignDataWrapperStmt: return "CreateForeignDataWrapperStmt";
         case ASTKind::AlterTypeStmt: return "AlterTypeStmt";
         case ASTKind::DropTypeStmt: return "DropTypeStmt";
         case ASTKind::AlterTableStmt: return "AlterTableStmt";
@@ -369,6 +399,34 @@ const char* astKindToString(ASTKind kind) {
 
         // Expressions
         case ASTKind::LiteralExpr: return "LiteralExpr";
+        case ASTKind::LiteralEnumExpr: return "LiteralEnumExpr";
+        case ASTKind::LiteralSetExpr: return "LiteralSetExpr";
+        case ASTKind::LiteralRowExpr: return "LiteralRowExpr";
+        case ASTKind::LiteralCompositeExpr: return "LiteralCompositeExpr";
+        case ASTKind::LiteralDomainExpr: return "LiteralDomainExpr";
+        case ASTKind::LiteralBitExpr: return "LiteralBitExpr";
+        case ASTKind::LiteralYearExpr: return "LiteralYearExpr";
+        case ASTKind::LiteralDateTimeExpr: return "LiteralDateTimeExpr";
+        case ASTKind::LiteralMediumIntExpr: return "LiteralMediumIntExpr";
+        case ASTKind::LiteralGeometryExpr: return "LiteralGeometryExpr";
+        case ASTKind::LiteralJsonPathExpr: return "LiteralJsonPathExpr";
+        case ASTKind::LiteralInt8Expr: return "LiteralInt8Expr";
+        case ASTKind::LiteralInt16Expr: return "LiteralInt16Expr";
+        case ASTKind::LiteralUInt8Expr: return "LiteralUInt8Expr";
+        case ASTKind::LiteralUInt16Expr: return "LiteralUInt16Expr";
+        case ASTKind::LiteralUInt32Expr: return "LiteralUInt32Expr";
+        case ASTKind::LiteralUInt64Expr: return "LiteralUInt64Expr";
+        case ASTKind::LiteralUInt128Expr: return "LiteralUInt128Expr";
+        case ASTKind::LiteralInt128Expr: return "LiteralInt128Expr";
+        case ASTKind::LiteralFloat32Expr: return "LiteralFloat32Expr";
+        case ASTKind::LiteralTimeTzExpr: return "LiteralTimeTzExpr";
+        case ASTKind::LiteralTimestampTzExpr: return "LiteralTimestampTzExpr";
+        case ASTKind::LiteralRangeExpr: return "LiteralRangeExpr";
+        case ASTKind::LiteralArrayExpr: return "LiteralArrayExpr";
+        case ASTKind::LiteralVariantExpr: return "LiteralVariantExpr";
+        case ASTKind::LiteralTsVectorExpr: return "LiteralTsVectorExpr";
+        case ASTKind::LiteralTsQueryExpr: return "LiteralTsQueryExpr";
+        case ASTKind::LiteralBlobLocatorExpr: return "LiteralBlobLocatorExpr";
         case ASTKind::ColumnRefExpr: return "ColumnRefExpr";
         case ASTKind::BinaryExpr: return "BinaryExpr";
         case ASTKind::UnaryExpr: return "UnaryExpr";

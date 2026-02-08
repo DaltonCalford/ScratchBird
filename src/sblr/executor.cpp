@@ -27,6 +27,10 @@
 #include "scratchbird/sblr/bytecode_generator_v2.h"
 #include "scratchbird/sblr/resolved_ast_v2.h"
 #include "scratchbird/sblr/semantic_analyzer_v2.h"
+#include "scratchbird/sblr/v3_codec.h"
+#include "scratchbird/sblr/v3_container.h"
+#include "scratchbird/sblr/v3_payloads.h"
+#include "scratchbird/sblr/v3_opcode_registry.h"
 #ifndef SCRATCHBIRD_WITH_COMPILER
 #define SCRATCHBIRD_WITH_COMPILER 1
 #endif
@@ -149,6 +153,170 @@ namespace scratchbird
             inline uint32_t indexRootPage(const core::CatalogManager::IndexInfo &info)
             {
                 return static_cast<uint32_t>(core::getPageNumber(info.root_gpid));
+            }
+            static bool isV3ContainerBytes(const std::vector<uint8_t>& bytecode)
+            {
+                return bytecode.size() >= 4 &&
+                       bytecode[0] == 'S' && bytecode[1] == 'B' &&
+                       bytecode[2] == 'L' && bytecode[3] == '3';
+            }
+
+            static std::string v3SchemaPathToString(const scratchbird::sblr::v3::Value& value)
+            {
+                const auto* list = std::get_if<scratchbird::sblr::v3::Value::List>(&value.data);
+                if (!list)
+                {
+                    return std::string();
+                }
+                std::string out;
+                for (size_t i = 0; i < list->size(); ++i)
+                {
+                    const auto* s = std::get_if<std::string>(&(*list)[i].data);
+                    if (!s)
+                    {
+                        return std::string();
+                    }
+                    if (i > 0)
+                    {
+                        out.push_back('.');
+                    }
+                    out.append(*s);
+                }
+                return out;
+            }
+
+            static bool v3DecodePayloadObject(const scratchbird::sblr::v3::SchemaDef& schema,
+                                              const scratchbird::sblr::v3::Value::Bytes& payload,
+                                              scratchbird::sblr::v3::Value::Object& out,
+                                              std::string& err)
+            {
+                scratchbird::sblr::v3::DecodeError derr;
+                scratchbird::sblr::v3::Value decoded;
+                size_t off = 0;
+                if (!scratchbird::sblr::v3::decodePayloadBySchema(schema,
+                                                                  payload.data(),
+                                                                  payload.size(),
+                                                                  off,
+                                                                  decoded,
+                                                                  derr))
+                {
+                    err = derr.message.empty() ? "Failed to decode V3 payload" : derr.message;
+                    return false;
+                }
+                auto* obj = std::get_if<scratchbird::sblr::v3::Value::Object>(&decoded.data);
+                if (!obj)
+                {
+                    err = "Decoded V3 payload is not an object";
+                    return false;
+                }
+                out = std::move(*obj);
+                return true;
+            }
+
+            static std::string v3EncodeInstructionHex(const scratchbird::sblr::v3::Instruction& inst)
+            {
+                scratchbird::sblr::v3::Buffer out;
+                scratchbird::sblr::v3::DecodeError derr;
+                if (!scratchbird::sblr::v3::encodeInstructionWithSchema(inst, out, derr))
+                {
+                    scratchbird::sblr::v3::encodeInstruction(inst, out);
+                }
+                std::ostringstream ss;
+                ss << std::hex << std::setfill('0');
+                for (uint8_t b : out)
+                {
+                    ss << std::setw(2) << static_cast<int>(b);
+                }
+                return ss.str();
+            }
+
+            static std::vector<uint8_t> v3EncodeInstructionBytes(const scratchbird::sblr::v3::Instruction& inst)
+            {
+                scratchbird::sblr::v3::Buffer out;
+                scratchbird::sblr::v3::DecodeError derr;
+                if (!scratchbird::sblr::v3::encodeInstructionWithSchema(inst, out, derr))
+                {
+                    scratchbird::sblr::v3::encodeInstruction(inst, out);
+                }
+                return out;
+            }
+
+            static std::optional<core::DataType> v3TypeOpcodeToCore(uint16_t opcode)
+            {
+                using scratchbird::sblr::v3::Opcode;
+                switch (static_cast<Opcode>(opcode))
+                {
+                    case Opcode::SBLR3_TYPE_INT8: return core::DataType::INT8;
+                    case Opcode::SBLR3_TYPE_INT16: return core::DataType::INT16;
+                    case Opcode::SBLR3_TYPE_INTEGER: return core::DataType::INT32;
+                    case Opcode::SBLR3_TYPE_BIGINT: return core::DataType::INT64;
+                    case Opcode::SBLR3_TYPE_INT128: return core::DataType::INT128;
+                    case Opcode::SBLR3_TYPE_UINT8: return core::DataType::UINT8;
+                    case Opcode::SBLR3_TYPE_UINT16: return core::DataType::UINT16;
+                    case Opcode::SBLR3_TYPE_UINT32: return core::DataType::UINT32;
+                    case Opcode::SBLR3_TYPE_UINT64: return core::DataType::UINT64;
+                    case Opcode::SBLR3_TYPE_UINT128: return core::DataType::UINT128;
+                    case Opcode::SBLR3_TYPE_FLOAT32: return core::DataType::FLOAT32;
+                    case Opcode::SBLR3_TYPE_DOUBLE: return core::DataType::FLOAT64;
+                    case Opcode::SBLR3_TYPE_DECIMAL: return core::DataType::DECIMAL;
+                    case Opcode::SBLR3_TYPE_MONEY: return core::DataType::MONEY;
+                    case Opcode::SBLR3_TYPE_DECFLOAT16: return core::DataType::DECFLOAT16;
+                    case Opcode::SBLR3_TYPE_DECFLOAT34: return core::DataType::DECFLOAT34;
+                    case Opcode::SBLR3_TYPE_MEDIUMINT: return core::DataType::MEDIUMINT;
+                    case Opcode::SBLR3_TYPE_CHAR: return core::DataType::CHAR;
+                    case Opcode::SBLR3_TYPE_VARCHAR: return core::DataType::VARCHAR;
+                    case Opcode::SBLR3_TYPE_TEXT: return core::DataType::TEXT;
+                    case Opcode::SBLR3_TYPE_BINARY: return core::DataType::BINARY;
+                    case Opcode::SBLR3_TYPE_VARBINARY: return core::DataType::VARBINARY;
+                    case Opcode::SBLR3_TYPE_BLOB: return core::DataType::BLOB;
+                    case Opcode::SBLR3_TYPE_BLOB_TEXT: return core::DataType::BLOB_SUB_TYPE_TEXT;
+                    case Opcode::SBLR3_TYPE_BYTEA: return core::DataType::BYTEA;
+                    case Opcode::SBLR3_TYPE_DATE: return core::DataType::DATE;
+                    case Opcode::SBLR3_TYPE_TIME: return core::DataType::TIME;
+                    case Opcode::SBLR3_TYPE_TIMESTAMP: return core::DataType::TIMESTAMP;
+                    case Opcode::SBLR3_TYPE_TIME_TZ: return core::DataType::TIME_WITH_ZONE;
+                    case Opcode::SBLR3_TYPE_TIMESTAMP_TZ: return core::DataType::TIMESTAMP_WITH_ZONE;
+                    case Opcode::SBLR3_TYPE_INTERVAL: return core::DataType::INTERVAL;
+                    case Opcode::SBLR3_TYPE_DATETIME: return core::DataType::DATETIME;
+                    case Opcode::SBLR3_TYPE_YEAR: return core::DataType::YEAR;
+                    case Opcode::SBLR3_TYPE_BOOLEAN: return core::DataType::BOOLEAN;
+                    case Opcode::SBLR3_TYPE_BIT: return core::DataType::BIT;
+                    case Opcode::SBLR3_TYPE_UUID: return core::DataType::UUID;
+                    case Opcode::SBLR3_TYPE_JSON: return core::DataType::JSON;
+                    case Opcode::SBLR3_TYPE_JSONB: return core::DataType::JSONB;
+                    case Opcode::SBLR3_TYPE_XML: return core::DataType::XML;
+                    case Opcode::SBLR3_TYPE_VECTOR: return core::DataType::VECTOR;
+                    case Opcode::SBLR3_TYPE_POINT: return core::DataType::POINT;
+                    case Opcode::SBLR3_TYPE_LINESTRING: return core::DataType::LINESTRING;
+                    case Opcode::SBLR3_TYPE_POLYGON: return core::DataType::POLYGON;
+                    case Opcode::SBLR3_TYPE_MULTIPOINT: return core::DataType::MULTIPOINT;
+                    case Opcode::SBLR3_TYPE_MULTILINESTRING: return core::DataType::MULTILINESTRING;
+                    case Opcode::SBLR3_TYPE_MULTIPOLYGON: return core::DataType::MULTIPOLYGON;
+                    case Opcode::SBLR3_TYPE_GEOMETRYCOLLECTION: return core::DataType::GEOMETRYCOLLECTION;
+                    case Opcode::SBLR3_TYPE_GEOMETRY: return core::DataType::GEOMETRY;
+                    case Opcode::SBLR3_TYPE_ARRAY: return core::DataType::ARRAY;
+                    case Opcode::SBLR3_TYPE_COMPOSITE: return core::DataType::COMPOSITE;
+                    case Opcode::SBLR3_TYPE_ROW: return core::DataType::ROW;
+                    case Opcode::SBLR3_TYPE_ENUM: return core::DataType::ENUM;
+                    case Opcode::SBLR3_TYPE_SET: return core::DataType::SET;
+                    case Opcode::SBLR3_TYPE_DOMAIN: return core::DataType::DOMAIN;
+                    case Opcode::SBLR3_TYPE_VARIANT: return core::DataType::VARIANT;
+                    case Opcode::SBLR3_TYPE_TSVECTOR: return core::DataType::TSVECTOR;
+                    case Opcode::SBLR3_TYPE_TSQUERY: return core::DataType::TSQUERY;
+                    case Opcode::SBLR3_TYPE_INT4RANGE: return core::DataType::INT4RANGE;
+                    case Opcode::SBLR3_TYPE_INT8RANGE: return core::DataType::INT8RANGE;
+                    case Opcode::SBLR3_TYPE_NUMRANGE: return core::DataType::NUMRANGE;
+                    case Opcode::SBLR3_TYPE_TSRANGE: return core::DataType::TSRANGE;
+                    case Opcode::SBLR3_TYPE_TSTZRANGE: return core::DataType::TSTZRANGE;
+                    case Opcode::SBLR3_TYPE_DATERANGE: return core::DataType::DATERANGE;
+                    case Opcode::SBLR3_TYPE_INET: return core::DataType::INET;
+                    case Opcode::SBLR3_TYPE_CIDR: return core::DataType::CIDR;
+                    case Opcode::SBLR3_TYPE_MACADDR: return core::DataType::MACADDR;
+                    case Opcode::SBLR3_TYPE_MACADDR8: return core::DataType::MACADDR8;
+                    case Opcode::SBLR3_TYPE_NULL: return core::DataType::NULL_TYPE;
+                    default:
+                        return std::nullopt;
+                }
             }
             bool isAggregateOpcode(Opcode op);
             void copyErrorContext(core::ErrorContext* dst, const core::ErrorContext& src);
@@ -1989,6 +2157,11 @@ namespace scratchbird
                     {
                         conn_ctx->applyStagedSecurityContext();
                     }
+                }
+
+                if (isV3ContainerBytes(bytecode))
+                {
+                    return executeV3(bytecode);
                 }
 
                 // Check version
@@ -39330,6 +39503,3071 @@ namespace scratchbird
             {
                 push(out_value);
             }
+        }
+
+        ExecutionResult Executor::executeV3(const std::vector<uint8_t> &bytecode)
+        {
+            scratchbird::sblr::v3::Container container;
+            std::string err;
+            if (!scratchbird::sblr::v3::decodeContainer(bytecode.data(), bytecode.size(), container, err))
+            {
+                return ExecutionResult(err.empty() ? "Invalid SBLR3 container" : err);
+            }
+
+            return_requested_ = false;
+            return_value_ = Value();
+
+            std::vector<uint8_t> embedded_v2;
+            if (container.debug_info.size() >= 8 &&
+                container.debug_info[0] == 'S' &&
+                container.debug_info[1] == 'B' &&
+                container.debug_info[2] == 'V' &&
+                container.debug_info[3] == '2')
+            {
+                uint32_t len = static_cast<uint32_t>(container.debug_info[4]) |
+                               (static_cast<uint32_t>(container.debug_info[5]) << 8) |
+                               (static_cast<uint32_t>(container.debug_info[6]) << 16) |
+                               (static_cast<uint32_t>(container.debug_info[7]) << 24);
+                if (8u + len <= container.debug_info.size())
+                {
+                    embedded_v2.assign(container.debug_info.begin() + 8,
+                                       container.debug_info.begin() + 8 + len);
+                }
+            }
+
+            std::vector<scratchbird::sblr::v3::Instruction> instructions;
+            size_t offset = 0;
+            scratchbird::sblr::v3::DecodeError derr;
+            while (offset < container.bytecode_stream.size())
+            {
+                scratchbird::sblr::v3::Instruction inst;
+                if (!scratchbird::sblr::v3::decodeInstructionWithSchema(
+                        container.bytecode_stream.data(),
+                        container.bytecode_stream.size(),
+                        offset,
+                        inst,
+                        derr))
+                {
+                    return ExecutionResult(derr.message.empty() ? "Invalid SBLR3 instruction" : derr.message);
+                }
+                instructions.push_back(std::move(inst));
+            }
+
+            auto getObject = [&](const scratchbird::sblr::v3::Value& value,
+                                 scratchbird::sblr::v3::Value::Object& out_obj,
+                                 const std::string& label) -> bool {
+                const auto* obj = std::get_if<scratchbird::sblr::v3::Value::Object>(&value.data);
+                if (!obj)
+                {
+                    return false;
+                }
+                out_obj = *obj;
+                (void)label;
+                return true;
+            };
+
+            auto getU64 = [&](const scratchbird::sblr::v3::Value::Object& obj,
+                              const std::string& key,
+                              uint64_t& out) -> bool {
+                auto it = obj.find(key);
+                if (it == obj.end())
+                {
+                    return false;
+                }
+                if (auto v = std::get_if<uint64_t>(&it->second.data))
+                {
+                    out = *v;
+                    return true;
+                }
+                if (auto v = std::get_if<int64_t>(&it->second.data))
+                {
+                    out = static_cast<uint64_t>(*v);
+                    return true;
+                }
+                return false;
+            };
+
+            auto getBool = [&](const scratchbird::sblr::v3::Value::Object& obj,
+                               const std::string& key,
+                               bool& out) -> bool {
+                auto it = obj.find(key);
+                if (it == obj.end())
+                {
+                    return false;
+                }
+                if (auto v = std::get_if<bool>(&it->second.data))
+                {
+                    out = *v;
+                    return true;
+                }
+                return false;
+            };
+
+            auto getString = [&](const scratchbird::sblr::v3::Value::Object& obj,
+                                 const std::string& key,
+                                 std::string& out) -> bool {
+                auto it = obj.find(key);
+                if (it == obj.end())
+                {
+                    return false;
+                }
+                if (auto v = std::get_if<std::string>(&it->second.data))
+                {
+                    out = *v;
+                    return true;
+                }
+                return false;
+            };
+
+            auto getSchemaPathString = [&](const scratchbird::sblr::v3::Value::Object& obj,
+                                           const std::string& key,
+                                           std::string& out) -> bool {
+                auto it = obj.find(key);
+                if (it == obj.end())
+                {
+                    return false;
+                }
+                out = v3SchemaPathToString(it->second);
+                return !out.empty();
+            };
+
+            auto decodeTypeSpec = [&](const scratchbird::sblr::v3::Value& value,
+                                      scratchbird::sblr::v3::TypeSpec& out) -> bool {
+                if (auto v = std::get_if<scratchbird::sblr::v3::TypeSpec>(&value.data))
+                {
+                    out = *v;
+                    return true;
+                }
+                return false;
+            };
+
+            auto typeSpecToColumnType = [&](const scratchbird::sblr::v3::TypeSpec& spec,
+                                            core::CatalogManager::ColumnInfo& col_info,
+                                            std::string& err_out) -> bool {
+                auto dt = v3TypeOpcodeToCore(spec.type_opcode);
+                if (!dt)
+                {
+                    std::ostringstream msg;
+                    msg << "Unsupported V3 type opcode: 0x" << std::hex << spec.type_opcode;
+                    err_out = msg.str();
+                    return false;
+                }
+                col_info.data_type = static_cast<uint16_t>(*dt);
+                col_info.type_precision = 0;
+                col_info.type_scale = 0;
+                col_info.max_length = 0;
+                col_info.with_timezone = false;
+                col_info.is_array = false;
+                col_info.array_size = 0;
+
+                auto readU16 = [&](size_t offset, uint16_t& out) -> bool {
+                    if (offset + 2 > spec.type_payload.size())
+                    {
+                        return false;
+                    }
+                    out = static_cast<uint16_t>(spec.type_payload[offset]) |
+                          (static_cast<uint16_t>(spec.type_payload[offset + 1]) << 8);
+                    return true;
+                };
+                auto readU32 = [&](size_t offset, uint32_t& out) -> bool {
+                    if (offset + 4 > spec.type_payload.size())
+                    {
+                        return false;
+                    }
+                    out = static_cast<uint32_t>(spec.type_payload[offset]) |
+                          (static_cast<uint32_t>(spec.type_payload[offset + 1]) << 8) |
+                          (static_cast<uint32_t>(spec.type_payload[offset + 2]) << 16) |
+                          (static_cast<uint32_t>(spec.type_payload[offset + 3]) << 24);
+                    return true;
+                };
+                auto readU8 = [&](size_t offset, uint8_t& out) -> bool {
+                    if (offset + 1 > spec.type_payload.size())
+                    {
+                        return false;
+                    }
+                    out = spec.type_payload[offset];
+                    return true;
+                };
+
+                switch (static_cast<scratchbird::sblr::v3::Opcode>(spec.type_opcode))
+                {
+                    case scratchbird::sblr::v3::Opcode::SBLR3_TYPE_CHAR:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_TYPE_VARCHAR:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_TYPE_BINARY:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_TYPE_VARBINARY: {
+                        uint32_t length = 0;
+                        if (readU32(0, length))
+                        {
+                            col_info.type_precision = length;
+                            col_info.max_length = length;
+                        }
+                        break;
+                    }
+                    case scratchbird::sblr::v3::Opcode::SBLR3_TYPE_DECIMAL: {
+                        uint32_t precision = 0;
+                        uint32_t scale = 0;
+                        if (readU32(0, precision) && readU32(4, scale))
+                        {
+                            col_info.type_precision = precision;
+                            col_info.type_scale = scale;
+                        }
+                        break;
+                    }
+                    case scratchbird::sblr::v3::Opcode::SBLR3_TYPE_BIT: {
+                        uint16_t bit_len = 0;
+                        if (readU16(0, bit_len))
+                        {
+                            col_info.type_precision = bit_len;
+                        }
+                        break;
+                    }
+                    case scratchbird::sblr::v3::Opcode::SBLR3_TYPE_TIME:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_TYPE_TIMESTAMP:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_TYPE_TIME_TZ:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_TYPE_TIMESTAMP_TZ:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_TYPE_DATETIME: {
+                        uint8_t precision = 0;
+                        if (readU8(0, precision))
+                        {
+                            col_info.type_scale = precision;
+                        }
+                        if (spec.type_opcode == static_cast<uint16_t>(scratchbird::sblr::v3::Opcode::SBLR3_TYPE_TIME_TZ) ||
+                            spec.type_opcode == static_cast<uint16_t>(scratchbird::sblr::v3::Opcode::SBLR3_TYPE_TIMESTAMP_TZ))
+                        {
+                            col_info.with_timezone = true;
+                        }
+                        break;
+                    }
+                    case scratchbird::sblr::v3::Opcode::SBLR3_TYPE_ARRAY: {
+                        col_info.is_array = true;
+                        uint32_t length = 0;
+                        if (readU32(0, length))
+                        {
+                            col_info.array_size = length;
+                        }
+                        break;
+                    }
+                    default:
+                        break;
+                }
+                return true;
+            };
+
+            auto columnInfoFromV3 = [&](const scratchbird::sblr::v3::Value::Object& obj,
+                                        uint16_t ordinal,
+                                        core::CatalogManager::ColumnInfo& col_info,
+                                        std::string& err_out) -> bool {
+                std::string name;
+                if (!getString(obj, "name", name) || name.empty())
+                {
+                    err_out = "COLUMN_DEF missing name";
+                    return false;
+                }
+                col_info.column_name = name;
+                col_info.ordinal = ordinal;
+
+                auto it_type = obj.find("type");
+                if (it_type == obj.end())
+                {
+                    err_out = "COLUMN_DEF missing type";
+                    return false;
+                }
+                scratchbird::sblr::v3::TypeSpec spec;
+                if (!decodeTypeSpec(it_type->second, spec))
+                {
+                    err_out = "COLUMN_DEF type invalid";
+                    return false;
+                }
+                if (!typeSpecToColumnType(spec, col_info, err_out))
+                {
+                    return false;
+                }
+
+                uint64_t flags = 0;
+                getU64(obj, "flags", flags);
+                if (flags & 0x0001)
+                {
+                    col_info.nullable = false;
+                }
+                if (flags & 0x0002)
+                {
+                    col_info.nullable = true;
+                }
+                if (flags & 0x0004)
+                {
+                    col_info.is_generated = true;
+                    col_info.generated_type = core::CatalogManager::GeneratedColumnType::STORED;
+                }
+                if (flags & 0x0008)
+                {
+                    col_info.is_generated = true;
+                    col_info.generated_type = core::CatalogManager::GeneratedColumnType::VIRTUAL;
+                }
+
+                auto it_default = obj.find("default_expr");
+                if (it_default != obj.end() && !it_default->second.isNull())
+                {
+                    auto instr = std::get_if<scratchbird::sblr::v3::Value::InstrPtr>(&it_default->second.data);
+                    if (instr && *instr)
+                    {
+                        col_info.default_expr = v3EncodeInstructionHex(**instr);
+                        col_info.has_default = !col_info.default_expr.empty();
+                    }
+                }
+
+                auto it_check = obj.find("check_expr");
+                if (it_check != obj.end() && !it_check->second.isNull())
+                {
+                    auto instr = std::get_if<scratchbird::sblr::v3::Value::InstrPtr>(&it_check->second.data);
+                    if (instr && *instr)
+                    {
+                        col_info.check_expr = v3EncodeInstructionHex(**instr);
+                    }
+                }
+
+                auto it_gen = obj.find("generated_expr");
+                if (it_gen != obj.end() && !it_gen->second.isNull())
+                {
+                    auto instr = std::get_if<scratchbird::sblr::v3::Value::InstrPtr>(&it_gen->second.data);
+                    if (instr && *instr)
+                    {
+                        col_info.generation_expression = v3EncodeInstructionHex(**instr);
+                    }
+                }
+
+                return true;
+            };
+
+            auto mapIndexType = [&](const std::string& name) -> core::CatalogManager::IndexType {
+                std::string upper = core::IdentifierUtils::toUpper(name);
+                if (upper == "HASH") return core::CatalogManager::IndexType::HASH;
+                if (upper == "GIN") return core::CatalogManager::IndexType::GIN;
+                if (upper == "GIST") return core::CatalogManager::IndexType::GIST;
+                if (upper == "SPGIST") return core::CatalogManager::IndexType::SPGIST;
+                if (upper == "BRIN") return core::CatalogManager::IndexType::BRIN;
+                if (upper == "RTREE") return core::CatalogManager::IndexType::RTREE;
+                if (upper == "HNSW") return core::CatalogManager::IndexType::HNSW;
+                if (upper == "BITMAP") return core::CatalogManager::IndexType::BITMAP;
+                if (upper == "COLUMNSTORE") return core::CatalogManager::IndexType::COLUMNSTORE;
+                if (upper == "LSM") return core::CatalogManager::IndexType::LSM;
+                if (upper == "FULLTEXT") return core::CatalogManager::IndexType::FULLTEXT;
+                if (upper == "IVF") return core::CatalogManager::IndexType::IVF;
+                if (upper == "ZONEMAP") return core::CatalogManager::IndexType::ZONEMAP;
+                return core::CatalogManager::IndexType::BTREE;
+            };
+
+            auto resolveTableId = [&](const std::string& path,
+                                      core::CatalogManager::TableInfo& table_info,
+                                      std::string& err_out) -> bool {
+                core::ErrorContext ctx;
+                core::ID schema_id;
+                std::string resolved;
+                if (resolveSchemaIdForQualifiedName(path, resolved, schema_id, &ctx, true) != core::Status::OK)
+                {
+                    err_out = ctx.message.empty() ? ("Schema not found for table '" + path + "'")
+                                                  : ctx.message;
+                    return false;
+                }
+                if (!resolveTableByQualifiedName(db_->catalog_manager(), schema_id, path, table_info, &ctx))
+                {
+                    err_out = ctx.message.empty() ? ("Table not found: " + path) : ctx.message;
+                    return false;
+                }
+                return true;
+            };
+
+            auto resolveTablespaceId = [&](const std::string& name,
+                                           uint16_t& tablespace_id,
+                                           std::string& err_out) -> bool {
+                if (name.empty())
+                {
+                    tablespace_id = 0;
+                    return true;
+                }
+                core::TablespaceInfo ts_info;
+                core::ErrorContext ctx;
+                if (db_->catalog_manager()->getTablespaceByName(name, ts_info, &ctx) != core::Status::OK)
+                {
+                    err_out = ctx.message.empty() ? ("Tablespace not found: " + name) : ctx.message;
+                    return false;
+                }
+                tablespace_id = ts_info.tablespace_id;
+                return true;
+            };
+
+            auto buildV3ContainerBytes = [&](const scratchbird::sblr::v3::Instruction& root,
+                                             std::vector<uint8_t>& out,
+                                             std::string& err_out) -> bool {
+                scratchbird::sblr::v3::Container container;
+                container.header.version_major = 3;
+                container.header.version_minor = 0;
+                container.header.version_patch = 0;
+                container.header.flags = 0;
+
+                container.metadata.module_name = "scratchbird";
+                container.metadata.module_version = "v3";
+                container.metadata.dialect_id = 1;
+                container.metadata.target_platform = 0;
+                container.metadata.build_id = "";
+                container.metadata.source_hash = {};
+
+                scratchbird::sblr::v3::Buffer stream;
+                scratchbird::sblr::v3::DecodeError derr;
+
+                scratchbird::sblr::v3::Instruction ver;
+                ver.opcode = static_cast<uint16_t>(scratchbird::sblr::v3::Opcode::SBLR3_VERSION);
+                ver.flags = 0;
+                scratchbird::sblr::v3::Value::Bytes ver_bytes(6);
+                ver_bytes[0] = 3; ver_bytes[1] = 0;
+                ver_bytes[2] = 0; ver_bytes[3] = 0;
+                ver_bytes[4] = 0; ver_bytes[5] = 0;
+                ver.payload = scratchbird::sblr::v3::Value(std::move(ver_bytes));
+                if (!scratchbird::sblr::v3::encodeInstructionWithSchema(ver, stream, derr))
+                {
+                    err_out = derr.message;
+                    return false;
+                }
+
+                if (!scratchbird::sblr::v3::encodeInstructionWithSchema(root, stream, derr))
+                {
+                    err_out = derr.message;
+                    return false;
+                }
+
+                scratchbird::sblr::v3::Instruction end;
+                end.opcode = static_cast<uint16_t>(scratchbird::sblr::v3::Opcode::SBLR3_END);
+                end.flags = 0;
+                end.payload = scratchbird::sblr::v3::Value(scratchbird::sblr::v3::Value::Bytes{});
+                if (!scratchbird::sblr::v3::encodeInstructionWithSchema(end, stream, derr))
+                {
+                    err_out = derr.message;
+                    return false;
+                }
+
+                container.bytecode_stream = std::move(stream);
+                if (!scratchbird::sblr::v3::encodeContainer(container, out, err_out))
+                {
+                    return false;
+                }
+                return true;
+            };
+
+            auto getInstrFromValue = [&](const scratchbird::sblr::v3::Value& value,
+                                         scratchbird::sblr::v3::Instruction& out) -> bool {
+                const auto* ptr = std::get_if<scratchbird::sblr::v3::Value::InstrPtr>(&value.data);
+                if (!ptr || !*ptr)
+                {
+                    return false;
+                }
+                out = **ptr;
+                return true;
+            };
+
+            auto evalLiteralPayload = [&](const scratchbird::sblr::v3::Instruction& inst) -> Value {
+                const auto* obj = std::get_if<scratchbird::sblr::v3::Value::Object>(&inst.payload.data);
+                if (!obj)
+                {
+                    return Value::makeNull();
+                }
+                auto it = obj->find("value");
+                if (it == obj->end())
+                {
+                    return Value::makeNull();
+                }
+                const auto& val = it->second.data;
+                if (std::holds_alternative<std::monostate>(val))
+                {
+                    return Value::makeNull();
+                }
+                if (auto v = std::get_if<bool>(&val))
+                {
+                    return Value::makeBool(*v);
+                }
+                if (auto v = std::get_if<int64_t>(&val))
+                {
+                    return Value::makeInt64(*v);
+                }
+                if (auto v = std::get_if<uint64_t>(&val))
+                {
+                    return Value::makeUInt64(*v);
+                }
+                if (auto v = std::get_if<double>(&val))
+                {
+                    return Value::makeFloat64(*v);
+                }
+                if (auto v = std::get_if<std::string>(&val))
+                {
+                    return Value::makeVarchar(*v);
+                }
+                if (auto v = std::get_if<scratchbird::sblr::v3::Value::Bytes>(&val))
+                {
+                    return Value::makeVarbinary(*v);
+                }
+                return Value::makeNull();
+            };
+
+            std::function<Value(const scratchbird::sblr::v3::Instruction&)> evalExpr;
+            evalExpr = [&](const scratchbird::sblr::v3::Instruction& inst) -> Value {
+                using scratchbird::sblr::v3::Opcode;
+                auto op = static_cast<Opcode>(inst.opcode);
+                const char* name_c = scratchbird::sblr::v3::opcodeName(inst.opcode);
+                std::string name = name_c ? name_c : "";
+
+                if (name.rfind("SBLR3_LITERAL_", 0) == 0)
+                {
+                    return evalLiteralPayload(inst);
+                }
+
+                switch (op)
+                {
+                    case Opcode::SBLR3_VAR_LOAD: {
+                        const auto* obj = std::get_if<scratchbird::sblr::v3::Value::Object>(&inst.payload.data);
+                        if (!obj)
+                        {
+                            return Value::makeNull();
+                        }
+                        std::string var_name;
+                        if (!getString(*obj, "name", var_name))
+                        {
+                            return Value::makeNull();
+                        }
+                        if (!variable_stack_)
+                        {
+                            return Value::makeNull();
+                        }
+                        if (!variable_stack_->hasVariable(var_name))
+                        {
+                            return Value::makeNull();
+                        }
+                        return variable_stack_->getVariable(var_name);
+                    }
+                    case Opcode::SBLR3_EXPR_NOT:
+                    case Opcode::SBLR3_BIT_NOT:
+                    case Opcode::SBLR3_EXPR_IS_NULL: {
+                        const auto* obj = std::get_if<scratchbird::sblr::v3::Value::Object>(&inst.payload.data);
+                        if (!obj)
+                        {
+                            return Value::makeNull();
+                        }
+                        auto it_val = obj->find("value");
+                        scratchbird::sblr::v3::Instruction child;
+                        if (it_val == obj->end() || !getInstrFromValue(it_val->second, child))
+                        {
+                            return Value::makeNull();
+                        }
+                        Value val = evalExpr(child);
+                        if (op == Opcode::SBLR3_EXPR_IS_NULL)
+                        {
+                            return Value::makeBoolean(val.isNull());
+                        }
+                        if (op == Opcode::SBLR3_EXPR_NOT)
+                        {
+                            return Value::makeBoolean(!val.toBoolean());
+                        }
+                        return Value::makeInt64(~val.toInt64());
+                    }
+                    case Opcode::SBLR3_EXPR_ADD:
+                    case Opcode::SBLR3_EXPR_SUBTRACT:
+                    case Opcode::SBLR3_EXPR_MULTIPLY:
+                    case Opcode::SBLR3_EXPR_DIVIDE:
+                    case Opcode::SBLR3_EXPR_DIV_INT:
+                    case Opcode::SBLR3_EXPR_MODULO:
+                    case Opcode::SBLR3_EXPR_EQ:
+                    case Opcode::SBLR3_EXPR_NE:
+                    case Opcode::SBLR3_EXPR_LT:
+                    case Opcode::SBLR3_EXPR_LE:
+                    case Opcode::SBLR3_EXPR_GT:
+                    case Opcode::SBLR3_EXPR_GE:
+                    case Opcode::SBLR3_EXPR_AND:
+                    case Opcode::SBLR3_EXPR_OR: {
+                        const auto* obj = std::get_if<scratchbird::sblr::v3::Value::Object>(&inst.payload.data);
+                        if (!obj)
+                        {
+                            return Value::makeNull();
+                        }
+                        auto it_lhs = obj->find("lhs");
+                        auto it_rhs = obj->find("rhs");
+                        scratchbird::sblr::v3::Instruction lhs_inst;
+                        scratchbird::sblr::v3::Instruction rhs_inst;
+                        if (it_lhs == obj->end() || it_rhs == obj->end() ||
+                            !getInstrFromValue(it_lhs->second, lhs_inst) ||
+                            !getInstrFromValue(it_rhs->second, rhs_inst))
+                        {
+                            return Value::makeNull();
+                        }
+                        Value lhs = evalExpr(lhs_inst);
+                        Value rhs = evalExpr(rhs_inst);
+                        if (op == Opcode::SBLR3_EXPR_AND)
+                        {
+                            return Value::makeBoolean(lhs.toBoolean() && rhs.toBoolean());
+                        }
+                        if (op == Opcode::SBLR3_EXPR_OR)
+                        {
+                            return Value::makeBoolean(lhs.toBoolean() || rhs.toBoolean());
+                        }
+                        if (op == Opcode::SBLR3_EXPR_EQ)
+                        {
+                            return Value::makeBoolean(lhs.toString() == rhs.toString());
+                        }
+                        if (op == Opcode::SBLR3_EXPR_NE)
+                        {
+                            return Value::makeBoolean(lhs.toString() != rhs.toString());
+                        }
+                        if (op == Opcode::SBLR3_EXPR_LT)
+                        {
+                            return Value::makeBoolean(lhs.toDouble() < rhs.toDouble());
+                        }
+                        if (op == Opcode::SBLR3_EXPR_LE)
+                        {
+                            return Value::makeBoolean(lhs.toDouble() <= rhs.toDouble());
+                        }
+                        if (op == Opcode::SBLR3_EXPR_GT)
+                        {
+                            return Value::makeBoolean(lhs.toDouble() > rhs.toDouble());
+                        }
+                        if (op == Opcode::SBLR3_EXPR_GE)
+                        {
+                            return Value::makeBoolean(lhs.toDouble() >= rhs.toDouble());
+                        }
+                        if (op == Opcode::SBLR3_EXPR_ADD)
+                        {
+                            return Value::makeFloat64(lhs.toDouble() + rhs.toDouble());
+                        }
+                        if (op == Opcode::SBLR3_EXPR_SUBTRACT)
+                        {
+                            return Value::makeFloat64(lhs.toDouble() - rhs.toDouble());
+                        }
+                        if (op == Opcode::SBLR3_EXPR_MULTIPLY)
+                        {
+                            return Value::makeFloat64(lhs.toDouble() * rhs.toDouble());
+                        }
+                        if (op == Opcode::SBLR3_EXPR_DIVIDE)
+                        {
+                            return Value::makeFloat64(lhs.toDouble() / rhs.toDouble());
+                        }
+                        if (op == Opcode::SBLR3_EXPR_DIV_INT)
+                        {
+                            return Value::makeInt64(lhs.toInt64() / rhs.toInt64());
+                        }
+                        if (op == Opcode::SBLR3_EXPR_MODULO)
+                        {
+                            return Value::makeInt64(lhs.toInt64() % rhs.toInt64());
+                        }
+                        return Value::makeNull();
+                    }
+                    case Opcode::SBLR3_COALESCE:
+                    case Opcode::SBLR3_NULLIF:
+                    case Opcode::SBLR3_EXPR_FUNCTION_CALL: {
+                        const auto* obj = std::get_if<scratchbird::sblr::v3::Value::Object>(&inst.payload.data);
+                        if (!obj)
+                        {
+                            return Value::makeNull();
+                        }
+                        auto it_args = obj->find("args");
+                        if (it_args == obj->end())
+                        {
+                            return Value::makeNull();
+                        }
+                        const auto* list = std::get_if<scratchbird::sblr::v3::Value::List>(&it_args->second.data);
+                        if (!list)
+                        {
+                            return Value::makeNull();
+                        }
+                        std::vector<Value> args;
+                        for (const auto& entry : *list)
+                        {
+                            scratchbird::sblr::v3::Instruction arg_inst;
+                            if (getInstrFromValue(entry, arg_inst))
+                            {
+                                args.push_back(evalExpr(arg_inst));
+                            }
+                        }
+                        if (op == Opcode::SBLR3_COALESCE)
+                        {
+                            for (const auto& v : args)
+                            {
+                                if (!v.isNull())
+                                {
+                                    return v;
+                                }
+                            }
+                            return Value::makeNull();
+                        }
+                        if (op == Opcode::SBLR3_NULLIF)
+                        {
+                            if (args.size() >= 2 && args[0].toString() == args[1].toString())
+                            {
+                                return Value::makeNull();
+                            }
+                            return args.empty() ? Value::makeNull() : args[0];
+                        }
+                        return Value::makeNull();
+                    }
+                    default:
+                        break;
+                }
+
+                return Value::makeNull();
+            };
+
+            auto handleCreateTable = [&](const scratchbird::sblr::v3::Value::Object& payload) -> ExecutionResult {
+                std::string table_path;
+                if (!getSchemaPathString(payload, "path", table_path))
+                {
+                    return ExecutionResult("CREATE TABLE missing path");
+                }
+
+                uint64_t flags = 0;
+                getU64(payload, "flags", flags);
+                bool if_not_exists = (flags & 0x0001) != 0;
+
+                core::ID schema_id;
+                std::string resolved_table_name;
+                core::ErrorContext schema_ctx;
+                auto status = resolveSchemaIdForQualifiedName(table_path,
+                                                             resolved_table_name,
+                                                             schema_id,
+                                                             &schema_ctx,
+                                                             true);
+                if (status != core::Status::OK)
+                {
+                    std::string err_msg = schema_ctx.message.empty()
+                        ? ("Schema not found for table '" + table_path + "'")
+                        : schema_ctx.message;
+                    return ExecutionResult(err_msg);
+                }
+
+                core::CatalogManager::SchemaInfo schema_info;
+                if (db_->catalog_manager()->getSchema(schema_id, schema_info, &schema_ctx) != core::Status::OK)
+                {
+                    return ExecutionResult("Failed to load schema for table '" + table_path + "'");
+                }
+
+                uint16_t tablespace_id = schema_info.default_tablespace_id;
+                auto it_ts = payload.find("tablespace");
+                if (it_ts != payload.end() && !it_ts->second.isNull())
+                {
+                    std::string tablespace_name = v3SchemaPathToString(it_ts->second);
+                    std::string ts_err;
+                    if (!resolveTablespaceId(tablespace_name, tablespace_id, ts_err))
+                    {
+                        return ExecutionResult(ts_err);
+                    }
+                }
+
+                std::vector<core::CatalogManager::ColumnInfo> columns;
+                auto it_cols = payload.find("columns");
+                if (it_cols != payload.end())
+                {
+                    const auto* list = std::get_if<scratchbird::sblr::v3::Value::List>(&it_cols->second.data);
+                    if (!list)
+                    {
+                        return ExecutionResult("CREATE TABLE columns invalid");
+                    }
+                    uint16_t ordinal = 1;
+                    for (const auto& entry : *list)
+                    {
+                        const auto* col_obj = std::get_if<scratchbird::sblr::v3::Value::Object>(&entry.data);
+                        if (!col_obj)
+                        {
+                            return ExecutionResult("CREATE TABLE column definition invalid");
+                        }
+                        core::CatalogManager::ColumnInfo col_info;
+                        std::string col_err;
+                        if (!columnInfoFromV3(*col_obj, ordinal, col_info, col_err))
+                        {
+                            return ExecutionResult(col_err);
+                        }
+                        columns.push_back(std::move(col_info));
+                        ordinal++;
+                    }
+                }
+
+                core::ID table_id;
+                core::ErrorContext table_ctx;
+                status = db_->catalog_manager()->createTable(schema_id,
+                                                             resolved_table_name,
+                                                             columns,
+                                                             table_id,
+                                                             tablespace_id,
+                                                             &table_ctx,
+                                                             nullptr);
+                if (status != core::Status::OK)
+                {
+                    if (if_not_exists && !table_ctx.message.empty() &&
+                        table_ctx.message.find("already exists") != std::string::npos)
+                    {
+                        return ExecutionResult();
+                    }
+                    std::string err_msg = table_ctx.message.empty()
+                        ? ("Failed to create table '" + resolved_table_name + "'")
+                        : table_ctx.message;
+                    return ExecutionResult(err_msg);
+                }
+
+                recordObjectDefinition(core::CatalogManager::ObjectType::TABLE, table_id);
+                return ExecutionResult();
+            };
+
+            auto handleCreateIndex = [&](const scratchbird::sblr::v3::Value::Object& payload) -> ExecutionResult {
+                std::string table_path;
+                if (!getSchemaPathString(payload, "table", table_path))
+                {
+                    return ExecutionResult("CREATE INDEX missing table");
+                }
+
+                std::string index_path;
+                if (!getSchemaPathString(payload, "index_path", index_path))
+                {
+                    return ExecutionResult("CREATE INDEX missing index name");
+                }
+                std::string index_name = index_path;
+                auto parts = splitSchemaComponents(index_path);
+                if (!parts.empty())
+                {
+                    index_name = parts.back();
+                }
+
+                uint64_t flags = 0;
+                getU64(payload, "flags", flags);
+                bool if_not_exists = (flags & 0x0001) != 0;
+
+                core::CatalogManager::TableInfo table_info;
+                std::string err_out;
+                if (!resolveTableId(table_path, table_info, err_out))
+                {
+                    return ExecutionResult(err_out);
+                }
+
+                std::vector<std::string> column_names;
+                std::vector<std::string> include_columns;
+                std::vector<scratchbird::sblr::v3::Value::InstrPtr> expression_instrs;
+                bool has_expressions = false;
+                auto it_keys = payload.find("keys");
+                if (it_keys != payload.end())
+                {
+                    const auto* list = std::get_if<scratchbird::sblr::v3::Value::List>(&it_keys->second.data);
+                    if (!list)
+                    {
+                        return ExecutionResult("CREATE INDEX keys invalid");
+                    }
+                    for (const auto& entry : *list)
+                    {
+                        const auto* key_obj = std::get_if<scratchbird::sblr::v3::Value::Object>(&entry.data);
+                        if (!key_obj)
+                        {
+                            return ExecutionResult("CREATE INDEX key invalid");
+                        }
+                        uint64_t kind = 1;
+                        getU64(*key_obj, "kind", kind);
+                        auto it_expr = key_obj->find("name_or_expr");
+                        if (it_expr == key_obj->end())
+                        {
+                            return ExecutionResult("CREATE INDEX missing key expression");
+                        }
+                        auto instr = std::get_if<scratchbird::sblr::v3::Value::InstrPtr>(&it_expr->second.data);
+                        if (!instr || !*instr)
+                        {
+                            return ExecutionResult("CREATE INDEX key expression invalid");
+                        }
+                        if (kind == 1)
+                        {
+                            const auto* col_payload =
+                                std::get_if<scratchbird::sblr::v3::Value::Object>(&(*instr)->payload.data);
+                            if (!col_payload)
+                            {
+                                return ExecutionResult("CREATE INDEX column ref invalid");
+                            }
+                            std::string col_name;
+                            if (!getString(*col_payload, "column", col_name))
+                            {
+                                return ExecutionResult("CREATE INDEX column ref missing name");
+                            }
+                            column_names.push_back(col_name);
+                        }
+                        else
+                        {
+                            has_expressions = true;
+                            expression_instrs.push_back(*instr);
+                        }
+                    }
+                }
+
+                auto it_include = payload.find("include");
+                if (it_include != payload.end())
+                {
+                    const auto* list = std::get_if<scratchbird::sblr::v3::Value::List>(&it_include->second.data);
+                    if (!list)
+                    {
+                        return ExecutionResult("CREATE INDEX include invalid");
+                    }
+                    for (const auto& entry : *list)
+                    {
+                        if (auto s = std::get_if<std::string>(&entry.data))
+                        {
+                            include_columns.push_back(*s);
+                        }
+                    }
+                }
+
+                auto it_pred = payload.find("predicate");
+                bool has_predicate = false;
+                scratchbird::sblr::v3::Value::InstrPtr predicate_instr;
+                if (it_pred != payload.end() && !it_pred->second.isNull())
+                {
+                    auto instr = std::get_if<scratchbird::sblr::v3::Value::InstrPtr>(&it_pred->second.data);
+                    if (instr && *instr)
+                    {
+                        has_predicate = true;
+                        predicate_instr = *instr;
+                    }
+                }
+
+                std::string index_type_name;
+                if (getString(payload, "index_type", index_type_name))
+                {
+                    index_type_name = core::IdentifierUtils::toUpper(index_type_name);
+                }
+                core::CatalogManager::IndexType index_type = mapIndexType(index_type_name);
+
+                std::vector<uint8_t> expression_data;
+                std::vector<std::string> expression_strings;
+                if (has_expressions)
+                {
+                    std::vector<std::vector<uint8_t>> expr_bytes;
+                    for (const auto& expr : expression_instrs)
+                    {
+                        expr_bytes.push_back(v3EncodeInstructionBytes(*expr));
+                    }
+                    // Build SBLR expression list container: "SBLR" + count + [len][bytes]...
+                    expression_data.clear();
+                    expression_data.push_back('S');
+                    expression_data.push_back('B');
+                    expression_data.push_back('L');
+                    expression_data.push_back('R');
+                    auto appendU32 = [&](uint32_t v) {
+                        expression_data.push_back(static_cast<uint8_t>(v & 0xFF));
+                        expression_data.push_back(static_cast<uint8_t>((v >> 8) & 0xFF));
+                        expression_data.push_back(static_cast<uint8_t>((v >> 16) & 0xFF));
+                        expression_data.push_back(static_cast<uint8_t>((v >> 24) & 0xFF));
+                    };
+                    appendU32(static_cast<uint32_t>(expr_bytes.size()));
+                    for (const auto& bytes : expr_bytes)
+                    {
+                        appendU32(static_cast<uint32_t>(bytes.size()));
+                        expression_data.insert(expression_data.end(), bytes.begin(), bytes.end());
+                    }
+                }
+
+                std::vector<uint8_t> predicate_data;
+                std::string predicate_string;
+                if (has_predicate && predicate_instr)
+                {
+                    predicate_data = v3EncodeInstructionBytes(*predicate_instr);
+                }
+
+                core::ID index_id;
+                core::ErrorContext ctx;
+                core::Status status;
+                if (has_expressions || has_predicate)
+                {
+                    status = db_->catalog_manager()->createIndex(table_info.table_id,
+                                                                 index_name,
+                                                                 column_names,
+                                                                 include_columns,
+                                                                 expression_data,
+                                                                 predicate_data,
+                                                                 expression_strings,
+                                                                 predicate_string,
+                                                                 index_id,
+                                                                 false,
+                                                                 index_type,
+                                                                 table_info.tablespace_id,
+                                                                 &ctx);
+                }
+                else
+                {
+                    status = db_->catalog_manager()->createIndex(table_info.table_id,
+                                                                 index_name,
+                                                                 column_names,
+                                                                 include_columns,
+                                                                 index_id,
+                                                                 false,
+                                                                 index_type,
+                                                                 table_info.tablespace_id,
+                                                                 &ctx);
+                }
+                if (status != core::Status::OK)
+                {
+                    if (if_not_exists && !ctx.message.empty() &&
+                        ctx.message.find("already exists") != std::string::npos)
+                    {
+                        return ExecutionResult();
+                    }
+                    std::string err_msg = ctx.message.empty()
+                        ? ("Failed to create index '" + index_name + "'")
+                        : ctx.message;
+                    return ExecutionResult(err_msg);
+                }
+                recordObjectDefinition(core::CatalogManager::ObjectType::INDEX, index_id);
+                return ExecutionResult();
+            };
+
+            auto getVarNameFromValue = [&](const scratchbird::sblr::v3::Value& value,
+                                           std::string& out) -> bool {
+                const auto* obj = std::get_if<scratchbird::sblr::v3::Value::Object>(&value.data);
+                if (!obj)
+                {
+                    return false;
+                }
+                return getString(*obj, "name", out);
+            };
+
+            auto handleDrop = [&](const scratchbird::sblr::v3::Value::Object& payload,
+                                  uint16_t opcode) -> ExecutionResult {
+                std::string path;
+                if (!getSchemaPathString(payload, "path", path))
+                {
+                    return ExecutionResult("DROP missing object path");
+                }
+
+                if (opcode == static_cast<uint16_t>(scratchbird::sblr::v3::Opcode::SBLR3_DROP_TABLE))
+                {
+                    core::CatalogManager::TableInfo table_info;
+                    std::string err_out;
+                    if (!resolveTableId(path, table_info, err_out))
+                    {
+                        return ExecutionResult(err_out);
+                    }
+                    core::ErrorContext ctx;
+                    auto status = db_->catalog_manager()->dropTable(table_info.table_id, true, &ctx);
+                    if (status != core::Status::OK)
+                    {
+                        return ExecutionResult(ctx.message.empty() ? "DROP TABLE failed" : ctx.message);
+                    }
+                    deleteObjectDefinition(core::CatalogManager::ObjectType::TABLE, table_info.table_id);
+                    return ExecutionResult();
+                }
+
+                if (opcode == static_cast<uint16_t>(scratchbird::sblr::v3::Opcode::SBLR3_DROP_INDEX))
+                {
+                    core::ErrorContext ctx;
+                    core::ID index_id;
+                    core::CatalogManager::ObjectType resolved_type;
+                    auto status = resolveObjectIdForQualifiedName(
+                        path, core::CatalogManager::ObjectType::INDEX,
+                        index_id, resolved_type, nullptr, &ctx, false);
+                    if (status != core::Status::OK)
+                    {
+                        return ExecutionResult(ctx.message.empty() ? "Index not found" : ctx.message);
+                    }
+                    status = db_->catalog_manager()->dropIndex(index_id, &ctx);
+                    if (status != core::Status::OK)
+                    {
+                        return ExecutionResult(ctx.message.empty() ? "DROP INDEX failed" : ctx.message);
+                    }
+                    deleteObjectDefinition(core::CatalogManager::ObjectType::INDEX, index_id);
+                    return ExecutionResult();
+                }
+
+                return ExecutionResult("DROP opcode not supported in V3 executor");
+            };
+
+            auto handleTruncate = [&](const scratchbird::sblr::v3::Value::Object& payload) -> ExecutionResult {
+                auto it_tables = payload.find("tables");
+                if (it_tables == payload.end())
+                {
+                    return ExecutionResult("TRUNCATE missing tables");
+                }
+                const auto* list = std::get_if<scratchbird::sblr::v3::Value::List>(&it_tables->second.data);
+                if (!list)
+                {
+                    return ExecutionResult("TRUNCATE tables invalid");
+                }
+                for (const auto& entry : *list)
+                {
+                    std::string table_path = v3SchemaPathToString(entry);
+                    if (table_path.empty())
+                    {
+                        return ExecutionResult("TRUNCATE table path invalid");
+                    }
+                    core::CatalogManager::TableInfo table_info;
+                    std::string err_out;
+                    if (!resolveTableId(table_path, table_info, err_out))
+                    {
+                        return ExecutionResult(err_out);
+                    }
+                    core::ErrorContext ctx;
+                    auto status = db_->catalog_manager()->truncateTableSync(table_info.table_id,
+                                                                           table_info.table_name,
+                                                                           conn_ctx_ ? conn_ctx_->getTransactionId() : 0,
+                                                                           &ctx);
+                    if (status != core::Status::OK)
+                    {
+                        return ExecutionResult(ctx.message.empty() ? "TRUNCATE failed" : ctx.message);
+                    }
+                }
+                return ExecutionResult();
+            };
+
+            auto handleAlterTableSetTablespace = [&](const scratchbird::sblr::v3::Value::Object& payload) -> ExecutionResult {
+                std::string table_path;
+                if (!getSchemaPathString(payload, "table", table_path))
+                {
+                    return ExecutionResult("ALTER TABLE SET TABLESPACE missing table");
+                }
+                std::string tablespace_name;
+                if (!getSchemaPathString(payload, "tablespace", tablespace_name))
+                {
+                    return ExecutionResult("ALTER TABLE SET TABLESPACE missing tablespace");
+                }
+
+                core::CatalogManager::TableInfo table_info;
+                std::string err_out;
+                if (!resolveTableId(table_path, table_info, err_out))
+                {
+                    return ExecutionResult(err_out);
+                }
+
+                uint16_t tablespace_id = 0;
+                if (!resolveTablespaceId(tablespace_name, tablespace_id, err_out))
+                {
+                    return ExecutionResult(err_out);
+                }
+
+                core::ErrorContext ctx;
+                auto status = db_->catalog_manager()->moveTableToTablespace(table_info.table_id,
+                                                                            tablespace_id,
+                                                                            false,
+                                                                            &ctx);
+                if (status != core::Status::OK)
+                {
+                    return ExecutionResult(ctx.message.empty() ? "ALTER TABLE SET TABLESPACE failed" : ctx.message);
+                }
+                return ExecutionResult();
+            };
+
+            auto handleAlterTable = [&](const scratchbird::sblr::v3::Value::Object& payload) -> ExecutionResult {
+                std::string table_path;
+                if (!getSchemaPathString(payload, "table", table_path))
+                {
+                    return ExecutionResult("ALTER TABLE missing table");
+                }
+
+                uint64_t action_u64 = 0;
+                if (!getU64(payload, "action", action_u64))
+                {
+                    return ExecutionResult("ALTER TABLE missing action");
+                }
+                uint8_t action = static_cast<uint8_t>(action_u64);
+
+                auto it_payload = payload.find("payload");
+                if (it_payload == payload.end())
+                {
+                    return ExecutionResult("ALTER TABLE missing payload");
+                }
+                const auto* payload_bytes = std::get_if<scratchbird::sblr::v3::Value::Bytes>(&it_payload->second.data);
+                if (!payload_bytes)
+                {
+                    return ExecutionResult("ALTER TABLE payload invalid");
+                }
+
+                core::CatalogManager::TableInfo table_info;
+                std::string err_out;
+                if (!resolveTableId(table_path, table_info, err_out))
+                {
+                    return ExecutionResult(err_out);
+                }
+
+                auto loadTableMetadata = [&](const core::CatalogManager::TableInfo& info) {
+                    json metadata = json::object();
+                    if (info.storage_params_oid != 0)
+                    {
+                        std::string params;
+                        core::ErrorContext meta_ctx;
+                        if (db_->catalog_manager()->loadStringFromToast(
+                                info.storage_params_oid, 0, params, &meta_ctx) == core::Status::OK &&
+                            !params.empty())
+                        {
+                            try
+                            {
+                                metadata = json::parse(params);
+                            }
+                            catch (...)
+                            {
+                                metadata = json::object();
+                            }
+                        }
+                    }
+                    return metadata;
+                };
+
+                auto persistTableMetadata = [&](const core::ID& target_id, const json& metadata) -> ExecutionResult {
+                    core::ErrorContext meta_ctx;
+                    auto meta_status = db_->catalog_manager()->updateTableStorageParams(
+                        target_id, metadata.dump(), &meta_ctx);
+                    if (meta_status != core::Status::OK)
+                    {
+                        std::string err_msg = "Failed to update partition metadata";
+                        if (!meta_ctx.message.empty())
+                        {
+                            err_msg += ": " + meta_ctx.message;
+                        }
+                        return ExecutionResult(err_msg);
+                    }
+                    return ExecutionResult();
+                };
+
+                core::ErrorContext ctx;
+                switch (action)
+                {
+                    case 1: { // ADD_COLUMN
+                        scratchbird::sblr::v3::Value::Object col_obj;
+                        std::string dec_err;
+                        const auto* schema = scratchbird::sblr::v3::lookupSchema("COLUMN_DEF");
+                        if (!schema || !v3DecodePayloadObject(*schema, *payload_bytes, col_obj, dec_err))
+                        {
+                            return ExecutionResult(dec_err.empty() ? "ALTER TABLE ADD COLUMN decode failed" : dec_err);
+                        }
+                        core::CatalogManager::ColumnInfo col_info;
+                        if (!columnInfoFromV3(col_obj, static_cast<uint16_t>(table_info.column_count + 1),
+                                              col_info, dec_err))
+                        {
+                            return ExecutionResult(dec_err);
+                        }
+                        auto status = db_->catalog_manager()->addColumn(table_info.table_id, col_info, &ctx);
+                        if (status != core::Status::OK)
+                        {
+                            return ExecutionResult(ctx.message.empty() ? "ALTER TABLE ADD COLUMN failed" : ctx.message);
+                        }
+                        return ExecutionResult();
+                    }
+                    case 3: { // DROP_COLUMN
+                        scratchbird::sblr::v3::SchemaDef schema{"ALTER_TABLE_DROP_COLUMN", {
+                            scratchbird::sblr::v3::FieldDef{"name", scratchbird::sblr::v3::FieldType::IDENT, ""},
+                            scratchbird::sblr::v3::FieldDef{"cascade", scratchbird::sblr::v3::FieldType::BOOL, ""},
+                        }};
+                        scratchbird::sblr::v3::Value::Object obj;
+                        std::string dec_err;
+                        if (!v3DecodePayloadObject(schema, *payload_bytes, obj, dec_err))
+                        {
+                            return ExecutionResult(dec_err.empty() ? "ALTER TABLE DROP COLUMN decode failed" : dec_err);
+                        }
+                        std::string col_name;
+                        bool cascade = false;
+                        if (!getString(obj, "name", col_name))
+                        {
+                            return ExecutionResult("ALTER TABLE DROP COLUMN missing name");
+                        }
+                        getBool(obj, "cascade", cascade);
+                        auto status = db_->catalog_manager()->dropColumn(table_info.table_id, col_name, false,
+                                                                         cascade, &ctx);
+                        if (status != core::Status::OK)
+                        {
+                            return ExecutionResult(ctx.message.empty() ? "ALTER TABLE DROP COLUMN failed" : ctx.message);
+                        }
+                        return ExecutionResult();
+                    }
+                    case 5: { // ALTER_COLUMN_TYPE
+                        scratchbird::sblr::v3::SchemaDef schema{"ALTER_TABLE_ALTER_COLUMN_TYPE", {
+                            scratchbird::sblr::v3::FieldDef{"name", scratchbird::sblr::v3::FieldType::IDENT, ""},
+                            scratchbird::sblr::v3::FieldDef{"type", scratchbird::sblr::v3::FieldType::TYPE_SPEC, ""},
+                        }};
+                        scratchbird::sblr::v3::Value::Object obj;
+                        std::string dec_err;
+                        if (!v3DecodePayloadObject(schema, *payload_bytes, obj, dec_err))
+                        {
+                            return ExecutionResult(dec_err.empty() ? "ALTER TABLE ALTER COLUMN decode failed" : dec_err);
+                        }
+                        std::string col_name;
+                        if (!getString(obj, "name", col_name))
+                        {
+                            return ExecutionResult("ALTER TABLE ALTER COLUMN missing name");
+                        }
+                        auto it_type = obj.find("type");
+                        if (it_type == obj.end())
+                        {
+                            return ExecutionResult("ALTER TABLE ALTER COLUMN missing type");
+                        }
+                        scratchbird::sblr::v3::TypeSpec spec;
+                        if (!decodeTypeSpec(it_type->second, spec))
+                        {
+                            return ExecutionResult("ALTER TABLE ALTER COLUMN invalid type");
+                        }
+                        auto dt = v3TypeOpcodeToCore(spec.type_opcode);
+                        if (!dt)
+                        {
+                            return ExecutionResult("ALTER TABLE ALTER COLUMN unsupported type");
+                        }
+                        auto status = db_->catalog_manager()->alterColumnType(table_info.table_id,
+                                                                              col_name,
+                                                                              *dt,
+                                                                              0,
+                                                                              0,
+                                                                              std::nullopt,
+                                                                              std::nullopt,
+                                                                              &ctx);
+                        if (status != core::Status::OK)
+                        {
+                            return ExecutionResult(ctx.message.empty() ? "ALTER TABLE ALTER COLUMN failed" : ctx.message);
+                        }
+                        return ExecutionResult();
+                    }
+                    case 6: { // ALTER_COLUMN_POSITION
+                        scratchbird::sblr::v3::SchemaDef schema{"ALTER_TABLE_ALTER_COLUMN_POSITION", {
+                            scratchbird::sblr::v3::FieldDef{"name", scratchbird::sblr::v3::FieldType::IDENT, ""},
+                            scratchbird::sblr::v3::FieldDef{"position_1_based", scratchbird::sblr::v3::FieldType::U32, ""},
+                        }};
+                        scratchbird::sblr::v3::Value::Object obj;
+                        std::string dec_err;
+                        if (!v3DecodePayloadObject(schema, *payload_bytes, obj, dec_err))
+                        {
+                            return ExecutionResult(dec_err.empty() ? "ALTER TABLE ALTER COLUMN POSITION decode failed" : dec_err);
+                        }
+                        std::string col_name;
+                        uint64_t pos = 0;
+                        if (!getString(obj, "name", col_name) || !getU64(obj, "position_1_based", pos))
+                        {
+                            return ExecutionResult("ALTER TABLE ALTER COLUMN POSITION missing fields");
+                        }
+                        auto status = db_->catalog_manager()->updateColumnPosition(table_info.table_id,
+                                                                                   col_name,
+                                                                                   static_cast<uint16_t>(pos),
+                                                                                   &ctx);
+                        if (status != core::Status::OK)
+                        {
+                            return ExecutionResult(ctx.message.empty() ? "ALTER TABLE ALTER COLUMN POSITION failed" : ctx.message);
+                        }
+                        return ExecutionResult();
+                    }
+                    case 7: { // ALTER_COLUMN_SET_DEFAULT
+                        scratchbird::sblr::v3::SchemaDef schema{"ALTER_TABLE_SET_DEFAULT", {
+                            scratchbird::sblr::v3::FieldDef{"name", scratchbird::sblr::v3::FieldType::IDENT, ""},
+                            scratchbird::sblr::v3::FieldDef{"default", scratchbird::sblr::v3::FieldType::EXPR, ""},
+                        }};
+                        scratchbird::sblr::v3::Value::Object obj;
+                        std::string dec_err;
+                        if (!v3DecodePayloadObject(schema, *payload_bytes, obj, dec_err))
+                        {
+                            return ExecutionResult(dec_err.empty() ? "ALTER TABLE SET DEFAULT decode failed" : dec_err);
+                        }
+                        std::string col_name;
+                        if (!getString(obj, "name", col_name))
+                        {
+                            return ExecutionResult("ALTER TABLE SET DEFAULT missing name");
+                        }
+                        auto it_expr = obj.find("default");
+                        if (it_expr == obj.end() || it_expr->second.isNull())
+                        {
+                            return ExecutionResult("ALTER TABLE SET DEFAULT missing expression");
+                        }
+                        auto instr = std::get_if<scratchbird::sblr::v3::Value::InstrPtr>(&it_expr->second.data);
+                        if (!instr || !*instr)
+                        {
+                            return ExecutionResult("ALTER TABLE SET DEFAULT invalid expression");
+                        }
+                        std::string expr_hex = v3EncodeInstructionHex(**instr);
+                        auto status = db_->catalog_manager()->updateColumnDefaultExpr(table_info.table_id,
+                                                                                      col_name,
+                                                                                      expr_hex,
+                                                                                      true,
+                                                                                      &ctx);
+                        if (status != core::Status::OK)
+                        {
+                            return ExecutionResult(ctx.message.empty() ? "ALTER TABLE SET DEFAULT failed" : ctx.message);
+                        }
+                        return ExecutionResult();
+                    }
+                    case 8: { // ALTER_COLUMN_DROP_DEFAULT
+                        scratchbird::sblr::v3::SchemaDef schema{"ALTER_TABLE_DROP_DEFAULT", {
+                            scratchbird::sblr::v3::FieldDef{"name", scratchbird::sblr::v3::FieldType::IDENT, ""},
+                        }};
+                        scratchbird::sblr::v3::Value::Object obj;
+                        std::string dec_err;
+                        if (!v3DecodePayloadObject(schema, *payload_bytes, obj, dec_err))
+                        {
+                            return ExecutionResult(dec_err.empty() ? "ALTER TABLE DROP DEFAULT decode failed" : dec_err);
+                        }
+                        std::string col_name;
+                        if (!getString(obj, "name", col_name))
+                        {
+                            return ExecutionResult("ALTER TABLE DROP DEFAULT missing name");
+                        }
+                        auto status = db_->catalog_manager()->updateColumnDefaultExpr(table_info.table_id,
+                                                                                      col_name,
+                                                                                      std::string(),
+                                                                                      false,
+                                                                                      &ctx);
+                        if (status != core::Status::OK)
+                        {
+                            return ExecutionResult(ctx.message.empty() ? "ALTER TABLE DROP DEFAULT failed" : ctx.message);
+                        }
+                        return ExecutionResult();
+                    }
+                    case 9: { // ALTER_COLUMN_SET_NOT_NULL
+                        scratchbird::sblr::v3::SchemaDef schema{"ALTER_TABLE_SET_NOT_NULL", {
+                            scratchbird::sblr::v3::FieldDef{"name", scratchbird::sblr::v3::FieldType::IDENT, ""},
+                        }};
+                        scratchbird::sblr::v3::Value::Object obj;
+                        std::string dec_err;
+                        if (!v3DecodePayloadObject(schema, *payload_bytes, obj, dec_err))
+                        {
+                            return ExecutionResult(dec_err.empty() ? "ALTER TABLE SET NOT NULL decode failed" : dec_err);
+                        }
+                        std::string col_name;
+                        if (!getString(obj, "name", col_name))
+                        {
+                            return ExecutionResult("ALTER TABLE SET NOT NULL missing name");
+                        }
+                        auto status = db_->catalog_manager()->updateColumnNullable(table_info.table_id,
+                                                                                   col_name,
+                                                                                   false,
+                                                                                   &ctx);
+                        if (status != core::Status::OK)
+                        {
+                            return ExecutionResult(ctx.message.empty() ? "ALTER TABLE SET NOT NULL failed" : ctx.message);
+                        }
+                        return ExecutionResult();
+                    }
+                    case 10: { // ALTER_COLUMN_DROP_NOT_NULL
+                        scratchbird::sblr::v3::SchemaDef schema{"ALTER_TABLE_DROP_NOT_NULL", {
+                            scratchbird::sblr::v3::FieldDef{"name", scratchbird::sblr::v3::FieldType::IDENT, ""},
+                        }};
+                        scratchbird::sblr::v3::Value::Object obj;
+                        std::string dec_err;
+                        if (!v3DecodePayloadObject(schema, *payload_bytes, obj, dec_err))
+                        {
+                            return ExecutionResult(dec_err.empty() ? "ALTER TABLE DROP NOT NULL decode failed" : dec_err);
+                        }
+                        std::string col_name;
+                        if (!getString(obj, "name", col_name))
+                        {
+                            return ExecutionResult("ALTER TABLE DROP NOT NULL missing name");
+                        }
+                        auto status = db_->catalog_manager()->updateColumnNullable(table_info.table_id,
+                                                                                   col_name,
+                                                                                   true,
+                                                                                   &ctx);
+                        if (status != core::Status::OK)
+                        {
+                            return ExecutionResult(ctx.message.empty() ? "ALTER TABLE DROP NOT NULL failed" : ctx.message);
+                        }
+                        return ExecutionResult();
+                    }
+                    case 15: { // RENAME_COLUMN
+                        scratchbird::sblr::v3::SchemaDef schema{"ALTER_TABLE_RENAME_COLUMN", {
+                            scratchbird::sblr::v3::FieldDef{"old_name", scratchbird::sblr::v3::FieldType::IDENT, ""},
+                            scratchbird::sblr::v3::FieldDef{"new_name", scratchbird::sblr::v3::FieldType::IDENT, ""},
+                        }};
+                        scratchbird::sblr::v3::Value::Object obj;
+                        std::string dec_err;
+                        if (!v3DecodePayloadObject(schema, *payload_bytes, obj, dec_err))
+                        {
+                            return ExecutionResult(dec_err.empty() ? "ALTER TABLE RENAME COLUMN decode failed" : dec_err);
+                        }
+                        std::string old_name;
+                        std::string new_name;
+                        if (!getString(obj, "old_name", old_name) || !getString(obj, "new_name", new_name))
+                        {
+                            return ExecutionResult("ALTER TABLE RENAME COLUMN missing names");
+                        }
+                        auto status = db_->catalog_manager()->renameColumn(table_info.table_id,
+                                                                           old_name,
+                                                                           new_name,
+                                                                           &ctx);
+                        if (status != core::Status::OK)
+                        {
+                            return ExecutionResult(ctx.message.empty() ? "ALTER TABLE RENAME COLUMN failed" : ctx.message);
+                        }
+                        return ExecutionResult();
+                    }
+                    case 11: { // RENAME_TABLE
+                        scratchbird::sblr::v3::SchemaDef schema{"ALTER_TABLE_RENAME_TABLE", {
+                            scratchbird::sblr::v3::FieldDef{"new_name", scratchbird::sblr::v3::FieldType::IDENT, ""},
+                        }};
+                        scratchbird::sblr::v3::Value::Object obj;
+                        std::string dec_err;
+                        if (!v3DecodePayloadObject(schema, *payload_bytes, obj, dec_err))
+                        {
+                            return ExecutionResult(dec_err.empty() ? "ALTER TABLE RENAME TABLE decode failed" : dec_err);
+                        }
+                        std::string new_name;
+                        if (!getString(obj, "new_name", new_name))
+                        {
+                            return ExecutionResult("ALTER TABLE RENAME TABLE missing new_name");
+                        }
+                        auto status = db_->catalog_manager()->renameObject(
+                            core::CatalogManager::ObjectType::TABLE,
+                            table_info.table_id,
+                            new_name,
+                            &ctx);
+                        if (status != core::Status::OK)
+                        {
+                            return ExecutionResult(ctx.message.empty() ? "ALTER TABLE RENAME TABLE failed" : ctx.message);
+                        }
+                        return ExecutionResult();
+                    }
+                    case 12: { // RENAME_CONSTRAINT
+                        scratchbird::sblr::v3::SchemaDef schema{"ALTER_TABLE_RENAME_CONSTRAINT", {
+                            scratchbird::sblr::v3::FieldDef{"old_name", scratchbird::sblr::v3::FieldType::IDENT, ""},
+                            scratchbird::sblr::v3::FieldDef{"new_name", scratchbird::sblr::v3::FieldType::IDENT, ""},
+                        }};
+                        scratchbird::sblr::v3::Value::Object obj;
+                        std::string dec_err;
+                        if (!v3DecodePayloadObject(schema, *payload_bytes, obj, dec_err))
+                        {
+                            return ExecutionResult(dec_err.empty() ? "ALTER TABLE RENAME CONSTRAINT decode failed" : dec_err);
+                        }
+                        std::string old_name;
+                        std::string new_name;
+                        if (!getString(obj, "old_name", old_name) || !getString(obj, "new_name", new_name))
+                        {
+                            return ExecutionResult("ALTER TABLE RENAME CONSTRAINT missing names");
+                        }
+                        core::CatalogManager::ConstraintInfo constraint;
+                        auto status = db_->catalog_manager()->getConstraintByName(
+                            table_info.table_id, old_name, constraint, &ctx);
+                        if (status != core::Status::OK)
+                        {
+                            return ExecutionResult(ctx.message.empty() ? "Constraint not found" : ctx.message);
+                        }
+                        status = db_->catalog_manager()->renameObject(
+                            core::CatalogManager::ObjectType::CONSTRAINT,
+                            constraint.constraint_id,
+                            new_name,
+                            &ctx);
+                        if (status != core::Status::OK)
+                        {
+                            return ExecutionResult(ctx.message.empty() ? "ALTER TABLE RENAME CONSTRAINT failed" : ctx.message);
+                        }
+                        return ExecutionResult();
+                    }
+                    case 13: { // SET_SCHEMA
+                        scratchbird::sblr::v3::SchemaDef schema{"ALTER_TABLE_SET_SCHEMA", {
+                            scratchbird::sblr::v3::FieldDef{"schema", scratchbird::sblr::v3::FieldType::SCHEMA_PATH, ""},
+                        }};
+                        scratchbird::sblr::v3::Value::Object obj;
+                        std::string dec_err;
+                        if (!v3DecodePayloadObject(schema, *payload_bytes, obj, dec_err))
+                        {
+                            return ExecutionResult(dec_err.empty() ? "ALTER TABLE SET SCHEMA decode failed" : dec_err);
+                        }
+                        std::string target_schema_path = v3SchemaPathToString(obj["schema"]);
+                        if (target_schema_path.empty())
+                        {
+                            return ExecutionResult("ALTER TABLE SET SCHEMA missing schema");
+                        }
+                        core::ID target_schema_id;
+                        core::ErrorContext schema_ctx;
+                        auto status = resolveSchemaIdForName(target_schema_path, target_schema_id, &schema_ctx, true);
+                        if (status != core::Status::OK)
+                        {
+                            return ExecutionResult(schema_ctx.message.empty() ? "Schema not found" : schema_ctx.message);
+                        }
+                        status = db_->catalog_manager()->moveObject(
+                            core::CatalogManager::ObjectType::TABLE,
+                            table_info.table_id,
+                            target_schema_id,
+                            std::nullopt,
+                            &ctx);
+                        if (status != core::Status::OK)
+                        {
+                            return ExecutionResult(ctx.message.empty() ? "ALTER TABLE SET SCHEMA failed" : ctx.message);
+                        }
+                        return ExecutionResult();
+                    }
+                    case 2: { // ADD_CONSTRAINT
+                        const auto* schema = scratchbird::sblr::v3::lookupSchema("TABLE_CONSTRAINT");
+                        if (!schema)
+                        {
+                            return ExecutionResult("ALTER TABLE ADD CONSTRAINT schema missing");
+                        }
+                        scratchbird::sblr::v3::Value::Object obj;
+                        std::string dec_err;
+                        if (!v3DecodePayloadObject(*schema, *payload_bytes, obj, dec_err))
+                        {
+                            return ExecutionResult(dec_err.empty() ? "ALTER TABLE ADD CONSTRAINT decode failed" : dec_err);
+                        }
+                        uint64_t ctype = 0;
+                        getU64(obj, "type", ctype);
+                        std::string constraint_name;
+                        getString(obj, "name", constraint_name);
+                        if (constraint_name.empty())
+                        {
+                            constraint_name = "CONSTRAINT_" + table_info.table_name;
+                        }
+
+                        std::vector<std::string> columns;
+                        auto it_cols = obj.find("columns");
+                        if (it_cols != obj.end())
+                        {
+                            const auto* list = std::get_if<scratchbird::sblr::v3::Value::List>(&it_cols->second.data);
+                            if (list)
+                            {
+                                for (const auto& entry : *list)
+                                {
+                                    if (auto s = std::get_if<std::string>(&entry.data))
+                                    {
+                                        columns.push_back(*s);
+                                    }
+                                }
+                            }
+                        }
+
+                        if (ctype == 1 || ctype == 2 || ctype == 4)
+                        {
+                            core::CatalogManager::ConstraintInfo cinfo;
+                            cinfo.constraint_name = constraint_name;
+                            cinfo.table_id = table_info.table_id;
+                            cinfo.column_names = columns;
+                            if (ctype == 1) cinfo.constraint_type = core::CatalogManager::ConstraintType::PRIMARY_KEY;
+                            if (ctype == 2) cinfo.constraint_type = core::CatalogManager::ConstraintType::UNIQUE;
+                            if (ctype == 4) cinfo.constraint_type = core::CatalogManager::ConstraintType::CHECK;
+
+                            if (ctype == 4)
+                            {
+                                auto it_check = obj.find("check_expr");
+                                if (it_check != obj.end() && !it_check->second.isNull())
+                                {
+                                    auto instr = std::get_if<scratchbird::sblr::v3::Value::InstrPtr>(&it_check->second.data);
+                                    if (instr && *instr)
+                                    {
+                                        cinfo.check_expression = v3EncodeInstructionHex(**instr);
+                                    }
+                                }
+                            }
+
+                            core::ID constraint_id;
+                            auto status = db_->catalog_manager()->createConstraint(cinfo, constraint_id, &ctx);
+                            if (status != core::Status::OK)
+                            {
+                                return ExecutionResult(ctx.message.empty() ? "ALTER TABLE ADD CONSTRAINT failed" : ctx.message);
+                            }
+
+                            if (ctype == 1 || ctype == 2)
+                            {
+                                core::ID index_id;
+                                status = db_->catalog_manager()->createIndex(table_info.table_id,
+                                                                             constraint_name,
+                                                                             columns,
+                                                                             index_id,
+                                                                             true,
+                                                                             core::CatalogManager::IndexType::BTREE,
+                                                                             table_info.tablespace_id,
+                                                                             &ctx);
+                                if (status != core::Status::OK)
+                                {
+                                    return ExecutionResult(ctx.message.empty() ? "ALTER TABLE ADD CONSTRAINT index failed" : ctx.message);
+                                }
+                            }
+                            return ExecutionResult();
+                        }
+
+                        if (ctype == 3)
+                        {
+                            std::string ref_table_path;
+                            auto it_ref = obj.find("ref_table");
+                            if (it_ref != obj.end() && !it_ref->second.isNull())
+                            {
+                                ref_table_path = v3SchemaPathToString(it_ref->second);
+                            }
+                            if (ref_table_path.empty())
+                            {
+                                return ExecutionResult("ALTER TABLE ADD CONSTRAINT FK missing ref_table");
+                            }
+                            core::CatalogManager::TableInfo parent_info;
+                            std::string ref_err;
+                            if (!resolveTableId(ref_table_path, parent_info, ref_err))
+                            {
+                                return ExecutionResult(ref_err);
+                            }
+
+                            std::vector<std::string> ref_columns;
+                            auto it_ref_cols = obj.find("ref_columns");
+                            if (it_ref_cols != obj.end())
+                            {
+                                const auto* list = std::get_if<scratchbird::sblr::v3::Value::List>(&it_ref_cols->second.data);
+                                if (list)
+                                {
+                                    for (const auto& entry : *list)
+                                    {
+                                        if (auto s = std::get_if<std::string>(&entry.data))
+                                        {
+                                            ref_columns.push_back(*s);
+                                        }
+                                    }
+                                }
+                            }
+
+                            uint64_t on_update_val = 0;
+                            uint64_t on_delete_val = 0;
+                            getU64(obj, "on_update", on_update_val);
+                            getU64(obj, "on_delete", on_delete_val);
+                            core::CatalogManager::FKAction on_update =
+                                static_cast<core::CatalogManager::FKAction>(on_update_val);
+                            core::CatalogManager::FKAction on_delete =
+                                static_cast<core::CatalogManager::FKAction>(on_delete_val);
+
+                            core::ID fk_id;
+                            auto status = db_->catalog_manager()->createForeignKey(constraint_name,
+                                                                                  table_info.table_id,
+                                                                                  parent_info.table_id,
+                                                                                  columns,
+                                                                                  ref_columns,
+                                                                                  on_delete,
+                                                                                  on_update,
+                                                                                  core::CatalogManager::FKMatchType::SIMPLE,
+                                                                                  fk_id,
+                                                                                  false,
+                                                                                  false,
+                                                                                  &ctx);
+                            if (status != core::Status::OK)
+                            {
+                                return ExecutionResult(ctx.message.empty() ? "ALTER TABLE ADD FOREIGN KEY failed" : ctx.message);
+                            }
+                            return ExecutionResult();
+                        }
+
+                        return ExecutionResult("ALTER TABLE ADD CONSTRAINT unsupported type");
+                    }
+                    case 4: { // DROP_CONSTRAINT
+                        scratchbird::sblr::v3::SchemaDef schema{"ALTER_TABLE_DROP_CONSTRAINT", {
+                            scratchbird::sblr::v3::FieldDef{"name", scratchbird::sblr::v3::FieldType::IDENT, ""},
+                            scratchbird::sblr::v3::FieldDef{"cascade", scratchbird::sblr::v3::FieldType::BOOL, ""},
+                        }};
+                        scratchbird::sblr::v3::Value::Object obj;
+                        std::string dec_err;
+                        if (!v3DecodePayloadObject(schema, *payload_bytes, obj, dec_err))
+                        {
+                            return ExecutionResult(dec_err.empty() ? "ALTER TABLE DROP CONSTRAINT decode failed" : dec_err);
+                        }
+                        std::string constraint_name;
+                        if (!getString(obj, "name", constraint_name))
+                        {
+                            return ExecutionResult("ALTER TABLE DROP CONSTRAINT missing name");
+                        }
+                        core::CatalogManager::ConstraintInfo cinfo;
+                        auto status = db_->catalog_manager()->getConstraintByName(table_info.table_id,
+                                                                                  constraint_name,
+                                                                                  cinfo,
+                                                                                  &ctx);
+                        if (status != core::Status::OK)
+                        {
+                            return ExecutionResult(ctx.message.empty() ? "Constraint not found" : ctx.message);
+                        }
+                        status = db_->catalog_manager()->dropConstraint(cinfo.constraint_id, &ctx);
+                        if (status != core::Status::OK)
+                        {
+                            return ExecutionResult(ctx.message.empty() ? "ALTER TABLE DROP CONSTRAINT failed" : ctx.message);
+                        }
+                        return ExecutionResult();
+                    }
+                    case 16: { // SET_STATISTICS
+                        scratchbird::sblr::v3::SchemaDef schema{"ALTER_TABLE_SET_STATISTICS", {
+                            scratchbird::sblr::v3::FieldDef{"name", scratchbird::sblr::v3::FieldType::IDENT, ""},
+                            scratchbird::sblr::v3::FieldDef{"target", scratchbird::sblr::v3::FieldType::I32, ""},
+                        }};
+                        scratchbird::sblr::v3::Value::Object obj;
+                        std::string dec_err;
+                        if (!v3DecodePayloadObject(schema, *payload_bytes, obj, dec_err))
+                        {
+                            return ExecutionResult(dec_err.empty() ? "ALTER TABLE SET STATISTICS decode failed" : dec_err);
+                        }
+                        std::string col_name;
+                        uint64_t target = 0;
+                        if (!getString(obj, "name", col_name) || !getU64(obj, "target", target))
+                        {
+                            return ExecutionResult("ALTER TABLE SET STATISTICS missing fields");
+                        }
+                        json metadata = loadTableMetadata(table_info);
+                        if (!metadata.contains("column_stats"))
+                        {
+                            metadata["column_stats"] = json::object();
+                        }
+                        metadata["column_stats"][col_name] = static_cast<uint32_t>(target);
+                        auto persist = persistTableMetadata(table_info.table_id, metadata);
+                        if (!persist.success())
+                        {
+                            return persist;
+                        }
+                        return ExecutionResult();
+                    }
+                    case 17: { // SET_STORAGE
+                        scratchbird::sblr::v3::SchemaDef schema{"ALTER_TABLE_SET_STORAGE", {
+                            scratchbird::sblr::v3::FieldDef{"name", scratchbird::sblr::v3::FieldType::IDENT, ""},
+                            scratchbird::sblr::v3::FieldDef{"storage", scratchbird::sblr::v3::FieldType::IDENT, ""},
+                        }};
+                        scratchbird::sblr::v3::Value::Object obj;
+                        std::string dec_err;
+                        if (!v3DecodePayloadObject(schema, *payload_bytes, obj, dec_err))
+                        {
+                            return ExecutionResult(dec_err.empty() ? "ALTER TABLE SET STORAGE decode failed" : dec_err);
+                        }
+                        std::string col_name;
+                        std::string storage_type;
+                        if (!getString(obj, "name", col_name) || !getString(obj, "storage", storage_type))
+                        {
+                            return ExecutionResult("ALTER TABLE SET STORAGE missing fields");
+                        }
+                        json metadata = loadTableMetadata(table_info);
+                        if (!metadata.contains("column_storage"))
+                        {
+                            metadata["column_storage"] = json::object();
+                        }
+                        metadata["column_storage"][col_name] = storage_type;
+                        auto persist = persistTableMetadata(table_info.table_id, metadata);
+                        if (!persist.success())
+                        {
+                            return persist;
+                        }
+                        return ExecutionResult();
+                    }
+                    case 18: // INHERIT
+                    case 19: { // NO_INHERIT
+                        scratchbird::sblr::v3::SchemaDef schema{"ALTER_TABLE_INHERIT", {
+                            scratchbird::sblr::v3::FieldDef{"parent", scratchbird::sblr::v3::FieldType::OPT, "schema_path"},
+                        }};
+                        scratchbird::sblr::v3::Value::Object obj;
+                        std::string dec_err;
+                        if (!v3DecodePayloadObject(schema, *payload_bytes, obj, dec_err))
+                        {
+                            return ExecutionResult(dec_err.empty() ? "ALTER TABLE INHERIT decode failed" : dec_err);
+                        }
+                        std::string parent_name;
+                        auto it_parent = obj.find("parent");
+                        if (it_parent != obj.end() && !it_parent->second.isNull())
+                        {
+                            parent_name = v3SchemaPathToString(it_parent->second);
+                        }
+                        if (parent_name.empty())
+                        {
+                            return ExecutionResult("ALTER TABLE INHERIT missing parent");
+                        }
+                        core::CatalogManager::TableInfo parent_info;
+                        core::ErrorContext parent_ctx;
+                        if (!resolveTableByQualifiedName(db_->catalog_manager(),
+                                                         table_info.schema_id,
+                                                         parent_name,
+                                                         parent_info,
+                                                         &parent_ctx))
+                        {
+                            std::string err_msg = "INHERITS parent not found: " + parent_name;
+                            if (!parent_ctx.message.empty())
+                            {
+                                err_msg += ": " + parent_ctx.message;
+                            }
+                            return ExecutionResult(err_msg);
+                        }
+                        json metadata = loadTableMetadata(table_info);
+                        if (!metadata.contains("inherits"))
+                        {
+                            metadata["inherits"] = json::array();
+                        }
+                        auto& inherits = metadata["inherits"];
+                        if (!inherits.is_array())
+                        {
+                            inherits = json::array();
+                        }
+                        if (!metadata.contains("inherits_refs"))
+                        {
+                            metadata["inherits_refs"] = json::array();
+                        }
+                        auto& inherits_refs = metadata["inherits_refs"];
+                        if (!inherits_refs.is_array())
+                        {
+                            inherits_refs = json::array();
+                        }
+                        if (action == 18)
+                        {
+                            bool exists = false;
+                            for (const auto& entry : inherits)
+                            {
+                                if (entry == parent_name)
+                                {
+                                    exists = true;
+                                    break;
+                                }
+                            }
+                            if (!exists)
+                            {
+                                inherits.push_back(parent_name);
+                            }
+
+                            bool ref_exists = false;
+                            for (const auto& entry : inherits_refs)
+                            {
+                                if (!entry.is_object())
+                                {
+                                    continue;
+                                }
+                                if (entry.contains("id") &&
+                                    entry["id"].is_string() &&
+                                    entry["id"].get<std::string>() == parent_info.table_id.toString())
+                                {
+                                    ref_exists = true;
+                                    break;
+                                }
+                            }
+                            if (!ref_exists)
+                            {
+                                json ref_entry = json::object();
+                                ref_entry["name"] = parent_name;
+                                ref_entry["id"] = parent_info.table_id.toString();
+                                inherits_refs.push_back(std::move(ref_entry));
+                            }
+                        }
+                        else
+                        {
+                            json updated = json::array();
+                            for (const auto& entry : inherits)
+                            {
+                                if (entry == parent_name)
+                                {
+                                    continue;
+                                }
+                                updated.push_back(entry);
+                            }
+                            inherits = std::move(updated);
+
+                            json updated_refs = json::array();
+                            for (const auto& entry : inherits_refs)
+                            {
+                                if (entry.is_object())
+                                {
+                                    if (entry.contains("id") &&
+                                        entry["id"].is_string() &&
+                                        entry["id"].get<std::string>() == parent_info.table_id.toString())
+                                    {
+                                        continue;
+                                    }
+                                    if (entry.contains("name") &&
+                                        entry["name"].is_string() &&
+                                        entry["name"].get<std::string>() == parent_name)
+                                    {
+                                        continue;
+                                    }
+                                }
+                                updated_refs.push_back(entry);
+                            }
+                            inherits_refs = std::move(updated_refs);
+                        }
+                        auto persist = persistTableMetadata(table_info.table_id, metadata);
+                        if (!persist.success())
+                        {
+                            return persist;
+                        }
+                        return ExecutionResult();
+                    }
+                    case 20: // ENABLE_TRIGGER
+                    case 21: { // DISABLE_TRIGGER
+                        scratchbird::sblr::v3::SchemaDef schema{"ALTER_TABLE_TRIGGER_TOGGLE", {
+                            scratchbird::sblr::v3::FieldDef{"trigger_all", scratchbird::sblr::v3::FieldType::BOOL, ""},
+                            scratchbird::sblr::v3::FieldDef{"trigger_name", scratchbird::sblr::v3::FieldType::OPT, "ident"},
+                        }};
+                        scratchbird::sblr::v3::Value::Object obj;
+                        std::string dec_err;
+                        if (!v3DecodePayloadObject(schema, *payload_bytes, obj, dec_err))
+                        {
+                            return ExecutionResult(dec_err.empty() ? "ALTER TABLE TRIGGER decode failed" : dec_err);
+                        }
+                        bool trigger_all = false;
+                        getBool(obj, "trigger_all", trigger_all);
+                        bool enable = (action == 20);
+                        if (trigger_all)
+                        {
+                            std::vector<core::CatalogManager::TriggerInfo> triggers;
+                            if (db_->catalog_manager()->listAllTriggersForTable(table_info.table_id,
+                                                                                triggers, &ctx) != core::Status::OK)
+                            {
+                                return ExecutionResult("Failed to list triggers for table");
+                            }
+                            for (const auto& trig : triggers)
+                            {
+                                core::ErrorContext trig_ctx;
+                                auto trig_status = db_->catalog_manager()->enableTrigger(
+                                    trig.trigger_name, enable, &trig_ctx);
+                                if (trig_status != core::Status::OK)
+                                {
+                                    std::string err_msg = "Failed to update trigger '" +
+                                                          trig.trigger_name + "'";
+                                    if (!trig_ctx.message.empty())
+                                    {
+                                        err_msg += ": " + trig_ctx.message;
+                                    }
+                                    return ExecutionResult(err_msg);
+                                }
+                            }
+                        }
+                        else
+                        {
+                            std::string trigger_name;
+                            auto it_name = obj.find("trigger_name");
+                            if (it_name != obj.end() && !it_name->second.isNull())
+                            {
+                                getString(obj, "trigger_name", trigger_name);
+                            }
+                            if (trigger_name.empty())
+                            {
+                                return ExecutionResult("ALTER TABLE TRIGGER missing name");
+                            }
+                            core::CatalogManager::TriggerInfo trigger_info;
+                            if (db_->catalog_manager()->getTriggerByName(trigger_name,
+                                                                        trigger_info, &ctx) != core::Status::OK)
+                            {
+                                return ExecutionResult("Trigger not found: " + trigger_name);
+                            }
+                            if (trigger_info.table_id != table_info.table_id)
+                            {
+                                return ExecutionResult("Trigger does not belong to table: " + trigger_name);
+                            }
+                            auto status = db_->catalog_manager()->enableTrigger(trigger_name, enable, &ctx);
+                            if (status != core::Status::OK)
+                            {
+                                std::string err_msg = "Failed to update trigger '" + trigger_name + "'";
+                                if (!ctx.message.empty())
+                                {
+                                    err_msg += ": " + ctx.message;
+                                }
+                                return ExecutionResult(err_msg);
+                            }
+                        }
+                        return ExecutionResult();
+                    }
+                    case 22: // ENABLE_RLS
+                    case 23: // DISABLE_RLS
+                    case 24: // FORCE_RLS
+                    case 25: { // NO_FORCE_RLS
+                        bool enabled = table_info.rls_enabled;
+                        bool forced = table_info.rls_forced;
+                        if (action == 22) enabled = true;
+                        if (action == 23) enabled = false;
+                        if (action == 24) forced = true;
+                        if (action == 25) forced = false;
+                        auto status = db_->catalog_manager()->setTableRLS(table_info.table_id,
+                                                                         enabled,
+                                                                         forced,
+                                                                         &ctx);
+                        if (status != core::Status::OK)
+                        {
+                            return ExecutionResult(ctx.message.empty() ? "ALTER TABLE RLS failed" : ctx.message);
+                        }
+                        return ExecutionResult();
+                    }
+                    case 26: { // ATTACH_PARTITION
+                        scratchbird::sblr::v3::SchemaDef schema{"ALTER_TABLE_ATTACH_PARTITION", {
+                            scratchbird::sblr::v3::FieldDef{"partition", scratchbird::sblr::v3::FieldType::SCHEMA_PATH, ""},
+                            scratchbird::sblr::v3::FieldDef{"bounds", scratchbird::sblr::v3::FieldType::OPT, "string"},
+                        }};
+                        scratchbird::sblr::v3::Value::Object obj;
+                        std::string dec_err;
+                        if (!v3DecodePayloadObject(schema, *payload_bytes, obj, dec_err))
+                        {
+                            return ExecutionResult(dec_err.empty() ? "ALTER TABLE ATTACH PARTITION decode failed" : dec_err);
+                        }
+                        std::string partition_name = v3SchemaPathToString(obj["partition"]);
+                        if (partition_name.empty())
+                        {
+                            return ExecutionResult("ALTER TABLE ATTACH PARTITION missing partition");
+                        }
+
+                        core::ID partition_id;
+                        core::CatalogManager::ObjectType resolved_type;
+                        core::ErrorContext part_ctx;
+                        auto status = resolveObjectIdForQualifiedName(
+                            partition_name, core::CatalogManager::ObjectType::TABLE,
+                            partition_id, resolved_type, nullptr, &part_ctx, false);
+                        if (status != core::Status::OK)
+                        {
+                            std::string err_msg = "Failed to resolve partition '" + partition_name + "'";
+                            if (!part_ctx.message.empty())
+                            {
+                                err_msg += ": " + part_ctx.message;
+                            }
+                            return ExecutionResult(err_msg);
+                        }
+
+                        core::CatalogManager::TableInfo partition_info;
+                        if (db_->catalog_manager()->getTable(partition_id, partition_info, &part_ctx) != core::Status::OK)
+                        {
+                            return ExecutionResult("Partition table not found: " + partition_name);
+                        }
+
+                        json parent_meta = loadTableMetadata(table_info);
+                        if (!parent_meta.contains("partition"))
+                        {
+                            parent_meta["partition"] = json::object();
+                        }
+                        auto& partition = parent_meta["partition"];
+                        if (!partition.contains("children"))
+                        {
+                            partition["children"] = json::array();
+                        }
+                        auto& children = partition["children"];
+                        if (!children.is_array())
+                        {
+                            children = json::array();
+                        }
+
+                        bool exists = false;
+                        for (const auto& entry : children)
+                        {
+                            if (entry.is_object() && entry.contains("name") &&
+                                entry["name"] == partition_name)
+                            {
+                                exists = true;
+                                break;
+                            }
+                        }
+                        if (!exists)
+                        {
+                            json entry = json::object();
+                            entry["name"] = partition_name;
+                            entry["id"] = partition_info.table_id.toString();
+                            auto it_bounds = obj.find("bounds");
+                            if (it_bounds != obj.end() && !it_bounds->second.isNull())
+                            {
+                                std::string bounds;
+                                if (getString(obj, "bounds", bounds))
+                                {
+                                    entry["bounds"] = bounds;
+                                }
+                            }
+                            children.push_back(std::move(entry));
+                        }
+
+                        json child_meta = loadTableMetadata(partition_info);
+                        child_meta["partition_parent"] = json::object();
+                        child_meta["partition_parent"]["name"] = table_path;
+                        child_meta["partition_parent"]["id"] = table_info.table_id.toString();
+
+                        auto persist_parent = persistTableMetadata(table_info.table_id, parent_meta);
+                        if (!persist_parent.success())
+                        {
+                            return persist_parent;
+                        }
+                        auto persist_child = persistTableMetadata(partition_info.table_id, child_meta);
+                        if (!persist_child.success())
+                        {
+                            return persist_child;
+                        }
+                        return ExecutionResult();
+                    }
+                    case 27: { // DETACH_PARTITION
+                        scratchbird::sblr::v3::SchemaDef schema{"ALTER_TABLE_DETACH_PARTITION", {
+                            scratchbird::sblr::v3::FieldDef{"partition", scratchbird::sblr::v3::FieldType::SCHEMA_PATH, ""},
+                        }};
+                        scratchbird::sblr::v3::Value::Object obj;
+                        std::string dec_err;
+                        if (!v3DecodePayloadObject(schema, *payload_bytes, obj, dec_err))
+                        {
+                            return ExecutionResult(dec_err.empty() ? "ALTER TABLE DETACH PARTITION decode failed" : dec_err);
+                        }
+                        std::string partition_name = v3SchemaPathToString(obj["partition"]);
+                        if (partition_name.empty())
+                        {
+                            return ExecutionResult("ALTER TABLE DETACH PARTITION missing partition");
+                        }
+
+                        core::ID partition_id;
+                        core::CatalogManager::ObjectType resolved_type;
+                        core::ErrorContext part_ctx;
+                        auto status = resolveObjectIdForQualifiedName(
+                            partition_name, core::CatalogManager::ObjectType::TABLE,
+                            partition_id, resolved_type, nullptr, &part_ctx, false);
+                        if (status != core::Status::OK)
+                        {
+                            std::string err_msg = "Failed to resolve partition '" + partition_name + "'";
+                            if (!part_ctx.message.empty())
+                            {
+                                err_msg += ": " + part_ctx.message;
+                            }
+                            return ExecutionResult(err_msg);
+                        }
+
+                        core::CatalogManager::TableInfo partition_info;
+                        if (db_->catalog_manager()->getTable(partition_id, partition_info, &part_ctx) != core::Status::OK)
+                        {
+                            return ExecutionResult("Partition table not found: " + partition_name);
+                        }
+
+                        json parent_meta = loadTableMetadata(table_info);
+                        bool found = false;
+                        if (parent_meta.contains("partition") &&
+                            parent_meta["partition"].contains("children"))
+                        {
+                            auto& children = parent_meta["partition"]["children"];
+                            if (children.is_array())
+                            {
+                                json updated = json::array();
+                                for (const auto& entry : children)
+                                {
+                                    if (entry.contains("name") && entry["name"] == partition_name)
+                                    {
+                                        found = true;
+                                        continue;
+                                    }
+                                    updated.push_back(entry);
+                                }
+                                children = std::move(updated);
+                            }
+                        }
+                        if (!found)
+                        {
+                            return ExecutionResult("Partition is not attached to this table");
+                        }
+
+                        json child_meta = loadTableMetadata(partition_info);
+                        if (child_meta.contains("partition_parent"))
+                        {
+                            child_meta.erase("partition_parent");
+                        }
+                        else
+                        {
+                            return ExecutionResult("Partition table is not attached");
+                        }
+
+                        auto persist_parent = persistTableMetadata(table_info.table_id, parent_meta);
+                        if (!persist_parent.success())
+                        {
+                            return persist_parent;
+                        }
+                        auto persist_child = persistTableMetadata(partition_info.table_id, child_meta);
+                        if (!persist_child.success())
+                        {
+                            return persist_child;
+                        }
+                        return ExecutionResult();
+                    }
+                    case 28: { // VALIDATE_CONSTRAINT
+                        scratchbird::sblr::v3::SchemaDef schema{"ALTER_TABLE_VALIDATE_CONSTRAINT", {
+                            scratchbird::sblr::v3::FieldDef{"name", scratchbird::sblr::v3::FieldType::IDENT, ""},
+                        }};
+                        scratchbird::sblr::v3::Value::Object obj;
+                        std::string dec_err;
+                        if (!v3DecodePayloadObject(schema, *payload_bytes, obj, dec_err))
+                        {
+                            return ExecutionResult(dec_err.empty() ? "ALTER TABLE VALIDATE CONSTRAINT decode failed" : dec_err);
+                        }
+                        std::string constraint_name;
+                        if (!getString(obj, "name", constraint_name))
+                        {
+                            return ExecutionResult("ALTER TABLE VALIDATE CONSTRAINT missing name");
+                        }
+                        core::CatalogManager::ConstraintInfo constraint;
+                        if (db_->catalog_manager()->getConstraintByName(table_info.table_id,
+                                                                         constraint_name,
+                                                                         constraint,
+                                                                         &ctx) != core::Status::OK)
+                        {
+                            return ExecutionResult("Constraint not found: " + constraint_name);
+                        }
+
+                        bool is_valid = false;
+                        std::string violation;
+                        auto status = db_->catalog_manager()->validateConstraint(
+                            constraint.constraint_id, is_valid, violation, &ctx);
+                        if (status != core::Status::OK)
+                        {
+                            std::string err_msg = "Failed to validate constraint '" + constraint_name + "'";
+                            if (!ctx.message.empty())
+                            {
+                                err_msg += ": " + ctx.message;
+                            }
+                            return ExecutionResult(err_msg);
+                        }
+                        if (!is_valid)
+                        {
+                            std::string err_msg = "Constraint validation failed: " + constraint_name;
+                            if (!violation.empty())
+                            {
+                                err_msg += ": " + violation;
+                            }
+                            return ExecutionResult(err_msg);
+                        }
+                        return ExecutionResult();
+                    }
+                    default:
+                        return ExecutionResult("ALTER TABLE action not supported in V3 executor");
+                }
+            };
+
+            struct V3LoopState {
+                bool break_requested = false;
+                bool continue_requested = false;
+            };
+            std::vector<V3LoopState> v3_loop_stack;
+
+            std::function<ExecutionResult(const scratchbird::sblr::v3::Instruction&)> execStmt;
+            std::function<ExecutionResult(const scratchbird::sblr::v3::Value::List&)> execStmtList;
+
+            execStmtList = [&](const scratchbird::sblr::v3::Value::List& list) -> ExecutionResult {
+                for (const auto& entry : list)
+                {
+                    scratchbird::sblr::v3::Instruction child;
+                    if (!getInstrFromValue(entry, child))
+                    {
+                        continue;
+                    }
+                    auto res = execStmt(child);
+                    if (!res.success())
+                    {
+                        return res;
+                    }
+                    if (return_requested_)
+                    {
+                        return ExecutionResult();
+                    }
+                }
+                return ExecutionResult();
+            };
+
+            execStmt = [&](const scratchbird::sblr::v3::Instruction& inst) -> ExecutionResult {
+                using scratchbird::sblr::v3::Opcode;
+                const char* name_c = scratchbird::sblr::v3::opcodeName(inst.opcode);
+                std::string name = name_c ? name_c : "";
+
+                scratchbird::sblr::v3::Value::Object payload;
+                if (!getObject(inst.payload, payload, name))
+                {
+                    return ExecutionResult("V3 payload is not an object for opcode: " + name);
+                }
+
+                switch (static_cast<Opcode>(inst.opcode))
+                {
+                    case Opcode::SBLR3_SELECT: {
+                        if (!embedded_v2.empty())
+                        {
+                            return execute(embedded_v2);
+                        }
+                        bool has_from = payload.find("from") != payload.end();
+                        bool has_where = payload.find("where") != payload.end();
+                        bool has_group = payload.find("group_by") != payload.end();
+                        bool has_having = payload.find("having") != payload.end();
+                        bool has_setop = payload.find("set_op") != payload.end();
+                        if (has_from || has_where || has_group || has_having || has_setop)
+                        {
+                            return ExecutionResult("V3 SELECT requires embedded V2 bytecode for FROM/WHERE/GROUP/HAVING/SET");
+                        }
+                        auto it_items = payload.find("select_items");
+                        if (it_items == payload.end())
+                        {
+                            return ExecutionResult("V3 SELECT missing select_items");
+                        }
+                        const auto* list = std::get_if<scratchbird::sblr::v3::Value::List>(&it_items->second.data);
+                        if (!list)
+                        {
+                            return ExecutionResult("V3 SELECT items invalid");
+                        }
+                        std::vector<Value> row;
+                        std::unique_ptr<ResultSet> rs = std::make_unique<ResultSet>();
+                        size_t index = 1;
+                        for (const auto& entry : *list)
+                        {
+                            scratchbird::sblr::v3::Instruction expr_inst;
+                            if (!getInstrFromValue(entry, expr_inst))
+                            {
+                                return ExecutionResult("V3 SELECT item invalid");
+                            }
+                            auto op_name = scratchbird::sblr::v3::opcodeName(expr_inst.opcode);
+                            if (op_name && (std::string(op_name) == "SBLR3_SELECT_STAR" ||
+                                            std::string(op_name) == "SBLR3_SELECT_TABLE_STAR"))
+                            {
+                                return ExecutionResult("V3 SELECT * requires FROM");
+                            }
+                            Value val = evalExpr(expr_inst);
+                            std::string col_name = "expr" + std::to_string(index++);
+                            rs->addColumn(col_name, val.type());
+                            row.push_back(val);
+                        }
+                        int64_t offset = 0;
+                        int64_t limit = 1;
+                        auto it_offset = payload.find("offset");
+                        if (it_offset != payload.end())
+                        {
+                            scratchbird::sblr::v3::Instruction off_inst;
+                            if (getInstrFromValue(it_offset->second, off_inst))
+                            {
+                                offset = evalExpr(off_inst).toInt64();
+                            }
+                        }
+                        auto it_limit = payload.find("limit");
+                        if (it_limit != payload.end())
+                        {
+                            scratchbird::sblr::v3::Instruction lim_inst;
+                            if (getInstrFromValue(it_limit->second, lim_inst))
+                            {
+                                limit = evalExpr(lim_inst).toInt64();
+                            }
+                        }
+                        if (offset <= 0 && limit > 0)
+                        {
+                            rs->addRow(std::move(row));
+                        }
+                        return ExecutionResult(std::move(rs));
+                    }
+                    case Opcode::SBLR3_INSERT:
+                    case Opcode::SBLR3_UPDATE:
+                    case Opcode::SBLR3_DELETE:
+                    case Opcode::SBLR3_MERGE:
+                        if (!embedded_v2.empty())
+                        {
+                            return execute(embedded_v2);
+                        }
+                        return ExecutionResult("V3 DML executor not implemented (missing embedded V2 bytecode)");
+                    case Opcode::SBLR3_BLOCK: {
+                        if (!variable_stack_)
+                        {
+                            variable_stack_ = std::make_unique<VariableStack>();
+                        }
+                        variable_stack_->pushFrame();
+                        auto it_decls = payload.find("decls");
+                        if (it_decls != payload.end())
+                        {
+                            const auto* list = std::get_if<scratchbird::sblr::v3::Value::List>(&it_decls->second.data);
+                            if (list)
+                            {
+                                for (const auto& entry : *list)
+                                {
+                                    const auto* decl = std::get_if<scratchbird::sblr::v3::Value::Object>(&entry.data);
+                                    if (!decl)
+                                    {
+                                        continue;
+                                    }
+                                    std::string var_name;
+                                    if (!getString(*decl, "name", var_name))
+                                    {
+                                        continue;
+                                    }
+                                    Value default_val = Value::makeNull();
+                                    auto it_def = decl->find("default");
+                                    if (it_def != decl->end())
+                                    {
+                                        scratchbird::sblr::v3::Instruction def_inst;
+                                        if (getInstrFromValue(it_def->second, def_inst))
+                                        {
+                                            default_val = evalExpr(def_inst);
+                                        }
+                                    }
+                                    variable_stack_->declareVariable(var_name, default_val);
+                                }
+                            }
+                        }
+                        auto it_body = payload.find("body");
+                        if (it_body != payload.end())
+                        {
+                            if (const auto* list = std::get_if<scratchbird::sblr::v3::Value::List>(&it_body->second.data))
+                            {
+                                auto res = execStmtList(*list);
+                                if (!res.success())
+                                {
+                                    auto it_handlers = payload.find("exception_handlers");
+                                    if (it_handlers != payload.end())
+                                    {
+                                        const auto* handlers =
+                                            std::get_if<scratchbird::sblr::v3::Value::List>(&it_handlers->second.data);
+                                        if (handlers)
+                                        {
+                                            for (const auto& entry : *handlers)
+                                            {
+                                                const auto* hobj = std::get_if<scratchbird::sblr::v3::Value::Object>(&entry.data);
+                                                if (!hobj)
+                                                {
+                                                    continue;
+                                                }
+                                                std::string condition;
+                                                getString(*hobj, "condition", condition);
+                                                if (condition.empty() || condition == "ANY" || condition == "EXCEPTION")
+                                                {
+                                                    auto it_handler = hobj->find("handler");
+                                                    if (it_handler != hobj->end())
+                                                    {
+                                                        if (const auto* handler_list =
+                                                                std::get_if<scratchbird::sblr::v3::Value::List>(&it_handler->second.data))
+                                                        {
+                                                            auto handler_res = execStmtList(*handler_list);
+                                                            variable_stack_->popFrame();
+                                                            return handler_res;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                variable_stack_->popFrame();
+                                return res;
+                            }
+                        }
+                        variable_stack_->popFrame();
+                        return ExecutionResult();
+                    }
+                    case Opcode::SBLR3_DECLARE: {
+                        if (!variable_stack_)
+                        {
+                            variable_stack_ = std::make_unique<VariableStack>();
+                        }
+                        auto it_decls = payload.find("decls");
+                        if (it_decls == payload.end())
+                        {
+                            return ExecutionResult();
+                        }
+                        const auto* list = std::get_if<scratchbird::sblr::v3::Value::List>(&it_decls->second.data);
+                        if (!list)
+                        {
+                            return ExecutionResult();
+                        }
+                        for (const auto& entry : *list)
+                        {
+                            const auto* decl = std::get_if<scratchbird::sblr::v3::Value::Object>(&entry.data);
+                            if (!decl)
+                            {
+                                continue;
+                            }
+                            std::string var_name;
+                            if (!getString(*decl, "name", var_name))
+                            {
+                                continue;
+                            }
+                            Value default_val = Value::makeNull();
+                            auto it_def = decl->find("default");
+                            if (it_def != decl->end())
+                            {
+                                scratchbird::sblr::v3::Instruction def_inst;
+                                if (getInstrFromValue(it_def->second, def_inst))
+                                {
+                                    default_val = evalExpr(def_inst);
+                                }
+                            }
+                            variable_stack_->declareVariable(var_name, default_val);
+                        }
+                        return ExecutionResult();
+                    }
+                    case Opcode::SBLR3_ASSIGN: {
+                        std::string var_name;
+                        auto it_target = payload.find("target");
+                        if (it_target == payload.end() || !getVarNameFromValue(it_target->second, var_name))
+                        {
+                            return ExecutionResult("ASSIGN missing target");
+                        }
+                        auto it_val = payload.find("value");
+                        if (it_val == payload.end())
+                        {
+                            return ExecutionResult("ASSIGN missing value");
+                        }
+                        scratchbird::sblr::v3::Instruction val_inst;
+                        if (!getInstrFromValue(it_val->second, val_inst))
+                        {
+                            return ExecutionResult("ASSIGN invalid value");
+                        }
+                        Value value = evalExpr(val_inst);
+                        if (!variable_stack_)
+                        {
+                            variable_stack_ = std::make_unique<VariableStack>();
+                        }
+                        variable_stack_->setVariable(var_name, value);
+                        return ExecutionResult();
+                    }
+                    case Opcode::SBLR3_IF: {
+                        auto it_cond = payload.find("condition");
+                        if (it_cond == payload.end())
+                        {
+                            return ExecutionResult("IF missing condition");
+                        }
+                        scratchbird::sblr::v3::Instruction cond_inst;
+                        if (!getInstrFromValue(it_cond->second, cond_inst))
+                        {
+                            return ExecutionResult("IF condition invalid");
+                        }
+                        bool cond = evalExpr(cond_inst).toBoolean();
+                        if (cond)
+                        {
+                            auto it_body = payload.find("then_body");
+                            if (it_body != payload.end())
+                            {
+                                if (const auto* list = std::get_if<scratchbird::sblr::v3::Value::List>(&it_body->second.data))
+                                {
+                                    return execStmtList(*list);
+                                }
+                            }
+                            return ExecutionResult();
+                        }
+                        auto it_elsif = payload.find("elsif");
+                        if (it_elsif != payload.end())
+                        {
+                            if (const auto* list = std::get_if<scratchbird::sblr::v3::Value::List>(&it_elsif->second.data))
+                            {
+                                for (const auto& entry : *list)
+                                {
+                                    const auto* obj = std::get_if<scratchbird::sblr::v3::Value::Object>(&entry.data);
+                                    if (!obj)
+                                    {
+                                        continue;
+                                    }
+                                    scratchbird::sblr::v3::Instruction econd;
+                                    auto it_econd = obj->find("condition");
+                                    if (it_econd != obj->end() && getInstrFromValue(it_econd->second, econd))
+                                    {
+                                        if (evalExpr(econd).toBoolean())
+                                        {
+                                            auto it_body2 = obj->find("body");
+                                            if (it_body2 != obj->end())
+                                            {
+                                                if (const auto* list2 = std::get_if<scratchbird::sblr::v3::Value::List>(&it_body2->second.data))
+                                                {
+                                                    return execStmtList(*list2);
+                                                }
+                                            }
+                                            return ExecutionResult();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        auto it_else = payload.find("else_body");
+                        if (it_else != payload.end())
+                        {
+                            if (const auto* list = std::get_if<scratchbird::sblr::v3::Value::List>(&it_else->second.data))
+                            {
+                                return execStmtList(*list);
+                            }
+                        }
+                        return ExecutionResult();
+                    }
+                    case Opcode::SBLR3_WHILE: {
+                        auto it_cond = payload.find("condition");
+                        auto it_body = payload.find("body");
+                        if (it_cond == payload.end() || it_body == payload.end())
+                        {
+                            return ExecutionResult("WHILE missing condition/body");
+                        }
+                        scratchbird::sblr::v3::Instruction cond_inst;
+                        if (!getInstrFromValue(it_cond->second, cond_inst))
+                        {
+                            return ExecutionResult("WHILE condition invalid");
+                        }
+                        const auto* body_list = std::get_if<scratchbird::sblr::v3::Value::List>(&it_body->second.data);
+                        if (!body_list)
+                        {
+                            return ExecutionResult("WHILE body invalid");
+                        }
+                        v3_loop_stack.push_back({});
+                        while (evalExpr(cond_inst).toBoolean())
+                        {
+                            auto res = execStmtList(*body_list);
+                            if (!res.success())
+                            {
+                                v3_loop_stack.pop_back();
+                                return res;
+                            }
+                            if (return_requested_)
+                            {
+                                v3_loop_stack.pop_back();
+                                return ExecutionResult();
+                            }
+                            if (!v3_loop_stack.empty() && v3_loop_stack.back().break_requested)
+                            {
+                                v3_loop_stack.pop_back();
+                                return ExecutionResult();
+                            }
+                            if (!v3_loop_stack.empty() && v3_loop_stack.back().continue_requested)
+                            {
+                                v3_loop_stack.back().continue_requested = false;
+                                continue;
+                            }
+                        }
+                        if (!v3_loop_stack.empty())
+                        {
+                            v3_loop_stack.pop_back();
+                        }
+                        return ExecutionResult();
+                    }
+                    case Opcode::SBLR3_PSQL_FOR_SELECT: {
+                        auto it_query = payload.find("query");
+                        auto it_body = payload.find("body");
+                        if (it_query == payload.end() || it_body == payload.end())
+                        {
+                            return ExecutionResult("FOR SELECT missing query/body");
+                        }
+                        scratchbird::sblr::v3::Instruction query_inst;
+                        if (!getInstrFromValue(it_query->second, query_inst))
+                        {
+                            return ExecutionResult("FOR SELECT query invalid");
+                        }
+                        const auto* body_list = std::get_if<scratchbird::sblr::v3::Value::List>(&it_body->second.data);
+                        if (!body_list)
+                        {
+                            return ExecutionResult("FOR SELECT body invalid");
+                        }
+                        std::vector<uint8_t> query_bytecode;
+                        std::string enc_err;
+                        if (!buildV3ContainerBytes(query_inst, query_bytecode, enc_err))
+                        {
+                            return ExecutionResult(enc_err.empty() ? "FOR SELECT encode failed" : enc_err);
+                        }
+                        Executor nested(db_);
+                        if (conn_ctx_)
+                        {
+                            nested.setConnectionContext(conn_ctx_);
+                        }
+                        auto exec_res = nested.execute(query_bytecode);
+                        if (!exec_res.success())
+                        {
+                            return exec_res;
+                        }
+                        auto* rs = exec_res.resultSet();
+                        if (!rs)
+                        {
+                            return ExecutionResult();
+                        }
+                        std::string record_var;
+                        auto it_rec = payload.find("record");
+                        if (it_rec != payload.end())
+                        {
+                            getVarNameFromValue(it_rec->second, record_var);
+                        }
+                        if (!variable_stack_)
+                        {
+                            variable_stack_ = std::make_unique<VariableStack>();
+                        }
+                        for (size_t r = 0; r < rs->rowCount(); ++r)
+                        {
+                            if (!record_var.empty())
+                            {
+                                std::vector<std::string> field_names;
+                                std::vector<Value> field_values;
+                                field_names.reserve(rs->columnCount());
+                                field_values.reserve(rs->columnCount());
+                                for (size_t c = 0; c < rs->columnCount(); ++c)
+                                {
+                                    field_names.push_back(rs->columnName(c));
+                                    field_values.push_back(rs->getValue(r, c));
+                                }
+                                variable_stack_->setVariable(record_var,
+                                                             Value::makeComposite(field_names, field_values));
+                            }
+                            auto res = execStmtList(*body_list);
+                            if (!res.success())
+                            {
+                                return res;
+                            }
+                            if (return_requested_)
+                            {
+                                return ExecutionResult();
+                            }
+                        }
+                        return ExecutionResult();
+                    }
+                    case Opcode::SBLR3_PSQL_FOR_EXECUTE:
+                        return ExecutionResult("FOR EXECUTE dynamic SQL not supported in V3 executor");
+                    case Opcode::SBLR3_LOOP: {
+                        auto it_body = payload.find("body");
+                        const auto* body_list = (it_body != payload.end())
+                            ? std::get_if<scratchbird::sblr::v3::Value::List>(&it_body->second.data)
+                            : nullptr;
+                        if (!body_list)
+                        {
+                            return ExecutionResult("LOOP body invalid");
+                        }
+                        v3_loop_stack.push_back({});
+                        while (true)
+                        {
+                            auto res = execStmtList(*body_list);
+                            if (!res.success())
+                            {
+                                v3_loop_stack.pop_back();
+                                return res;
+                            }
+                            if (return_requested_)
+                            {
+                                v3_loop_stack.pop_back();
+                                return ExecutionResult();
+                            }
+                            if (!v3_loop_stack.empty() && v3_loop_stack.back().break_requested)
+                            {
+                                v3_loop_stack.pop_back();
+                                return ExecutionResult();
+                            }
+                            if (!v3_loop_stack.empty() && v3_loop_stack.back().continue_requested)
+                            {
+                                v3_loop_stack.back().continue_requested = false;
+                                continue;
+                            }
+                        }
+                    }
+                    case Opcode::SBLR3_EXIT:
+                    case Opcode::SBLR3_PSQL_LEAVE:
+                        if (!v3_loop_stack.empty())
+                        {
+                            v3_loop_stack.back().break_requested = true;
+                            return ExecutionResult();
+                        }
+                        return ExecutionResult("EXIT/LEAVE used outside loop");
+                    case Opcode::SBLR3_PSQL_CONTINUE:
+                        if (!v3_loop_stack.empty())
+                        {
+                            v3_loop_stack.back().continue_requested = true;
+                            return ExecutionResult();
+                        }
+                        return ExecutionResult("CONTINUE used outside loop");
+                    case Opcode::SBLR3_RETURN: {
+                        auto it_val = payload.find("value");
+                        if (it_val != payload.end())
+                        {
+                            scratchbird::sblr::v3::Instruction vinst;
+                            if (getInstrFromValue(it_val->second, vinst))
+                            {
+                                return_value_ = evalExpr(vinst);
+                            }
+                        }
+                        return_requested_ = true;
+                        return ExecutionResult();
+                    }
+                    case Opcode::SBLR3_RAISE: {
+                        std::string message;
+                        auto it_msg = payload.find("message");
+                        if (it_msg != payload.end())
+                        {
+                            if (auto s = std::get_if<std::string>(&it_msg->second.data))
+                            {
+                                message = *s;
+                            }
+                        }
+                        return ExecutionResult(message.empty() ? "PSQL RAISE" : message);
+                    }
+                    case Opcode::SBLR3_CALL: {
+                        std::string proc_name;
+                        if (!getString(payload, "proc_name", proc_name))
+                        {
+                            return ExecutionResult("CALL missing proc_name");
+                        }
+                        std::vector<Value> args;
+                        auto it_args = payload.find("args");
+                        if (it_args != payload.end())
+                        {
+                            const auto* list = std::get_if<scratchbird::sblr::v3::Value::List>(&it_args->second.data);
+                            if (list)
+                            {
+                                for (const auto& entry : *list)
+                                {
+                                    scratchbird::sblr::v3::Instruction arg_inst;
+                                    if (getInstrFromValue(entry, arg_inst))
+                                    {
+                                        args.push_back(evalExpr(arg_inst));
+                                    }
+                                }
+                            }
+                        }
+                        auto call_res = callProcedureByName(proc_name, args);
+                        if (!call_res.success())
+                        {
+                            return call_res;
+                        }
+                        return ExecutionResult();
+                    }
+                    case Opcode::SBLR3_CURSOR_DECLARE: {
+                        std::string cursor_name;
+                        if (!getString(payload, "cursor_name", cursor_name))
+                        {
+                            return ExecutionResult("CURSOR DECLARE missing name");
+                        }
+                        if (cursors_.find(cursor_name) != cursors_.end())
+                        {
+                            return ExecutionResult("Cursor '" + cursor_name + "' already exists");
+                        }
+                        std::vector<uint8_t> query_bytecode;
+                        auto it_query = payload.find("query");
+                        if (it_query != payload.end())
+                        {
+                            scratchbird::sblr::v3::Instruction query_inst;
+                            if (getInstrFromValue(it_query->second, query_inst))
+                            {
+                                std::string enc_err;
+                                if (!buildV3ContainerBytes(query_inst, query_bytecode, enc_err))
+                                {
+                                    return ExecutionResult(enc_err.empty() ? "CURSOR DECLARE encode failed" : enc_err);
+                                }
+                            }
+                        }
+                        CursorState cursor(cursor_name);
+                        cursor.query_bytecode = std::move(query_bytecode);
+                        cursors_[cursor_name] = std::move(cursor);
+                        return ExecutionResult();
+                    }
+                    case Opcode::SBLR3_CURSOR_OPEN: {
+                        std::string cursor_name;
+                        if (!getString(payload, "cursor_name", cursor_name))
+                        {
+                            return ExecutionResult("CURSOR OPEN missing name");
+                        }
+                        auto it = cursors_.find(cursor_name);
+                        if (it == cursors_.end())
+                        {
+                            return ExecutionResult("Cursor '" + cursor_name + "' does not exist");
+                        }
+                        CursorState& cursor = it->second;
+                        if (cursor.is_open)
+                        {
+                            return ExecutionResult("Cursor '" + cursor_name + "' is already open");
+                        }
+                        if (cursor.query_bytecode.empty())
+                        {
+                            return ExecutionResult("Cursor '" + cursor_name + "' has no query");
+                        }
+                        Executor nested(db_);
+                        if (conn_ctx_)
+                        {
+                            nested.setConnectionContext(conn_ctx_);
+                        }
+                        auto exec_res = nested.execute(cursor.query_bytecode);
+                        if (!exec_res.success())
+                        {
+                            return ExecutionResult("Cursor '" + cursor_name + "' execution failed: " + exec_res.error());
+                        }
+                        cursor.result_set.clear();
+                        cursor.column_names.clear();
+                        cursor.column_types.clear();
+                        if (auto* result_set = exec_res.resultSet())
+                        {
+                            cursor.column_names.reserve(result_set->columnCount());
+                            cursor.column_types.reserve(result_set->columnCount());
+                            for (size_t i = 0; i < result_set->columnCount(); ++i)
+                            {
+                                cursor.column_names.push_back(result_set->columnName(i));
+                                cursor.column_types.push_back(result_set->columnType(i));
+                            }
+                            cursor.result_set.reserve(result_set->rowCount());
+                            for (size_t row = 0; row < result_set->rowCount(); ++row)
+                            {
+                                std::vector<Value> values;
+                                values.reserve(result_set->columnCount());
+                                for (size_t col = 0; col < result_set->columnCount(); ++col)
+                                {
+                                    values.push_back(result_set->getValue(row, col));
+                                }
+                                cursor.result_set.push_back(std::move(values));
+                            }
+                        }
+                        cursor.current_row = 0;
+                        cursor.is_open = true;
+                        return ExecutionResult();
+                    }
+                    case Opcode::SBLR3_CURSOR_FETCH: {
+                        std::string cursor_name;
+                        if (!getString(payload, "cursor_name", cursor_name))
+                        {
+                            return ExecutionResult("CURSOR FETCH missing name");
+                        }
+                        auto it = cursors_.find(cursor_name);
+                        if (it == cursors_.end())
+                        {
+                            return ExecutionResult("Cursor '" + cursor_name + "' does not exist");
+                        }
+                        CursorState& cursor = it->second;
+                        if (!cursor.is_open)
+                        {
+                            return ExecutionResult("Cursor '" + cursor_name + "' is not open");
+                        }
+                        std::string target_var;
+                        auto it_target = payload.find("target");
+                        if (it_target != payload.end())
+                        {
+                            getVarNameFromValue(it_target->second, target_var);
+                        }
+                        if (!variable_stack_)
+                        {
+                            variable_stack_ = std::make_unique<VariableStack>();
+                        }
+                        if (cursor.current_row >= cursor.result_set.size())
+                        {
+                            if (!target_var.empty())
+                            {
+                                variable_stack_->setVariable(target_var, Value::makeNull());
+                            }
+                            return ExecutionResult();
+                        }
+                        const auto& row = cursor.result_set[cursor.current_row];
+                        if (!target_var.empty())
+                        {
+                            if (row.size() == 1)
+                            {
+                                variable_stack_->setVariable(target_var, row.front());
+                            }
+                            else
+                            {
+                                variable_stack_->setVariable(
+                                    target_var,
+                                    Value::makeComposite(cursor.column_names, row));
+                            }
+                        }
+                        cursor.current_row++;
+                        return ExecutionResult();
+                    }
+                    case Opcode::SBLR3_CURSOR_CLOSE: {
+                        std::string cursor_name;
+                        if (!getString(payload, "cursor_name", cursor_name))
+                        {
+                            return ExecutionResult("CURSOR CLOSE missing name");
+                        }
+                        auto it = cursors_.find(cursor_name);
+                        if (it == cursors_.end())
+                        {
+                            return ExecutionResult("Cursor '" + cursor_name + "' does not exist");
+                        }
+                        CursorState& cursor = it->second;
+                        if (!cursor.is_open)
+                        {
+                            return ExecutionResult("Cursor '" + cursor_name + "' is not open");
+                        }
+                        cursor.result_set.clear();
+                        cursor.current_row = 0;
+                        cursor.is_open = false;
+                        return ExecutionResult();
+                    }
+                    default:
+                        break;
+                }
+
+                switch (static_cast<scratchbird::sblr::v3::Opcode>(inst.opcode))
+                {
+                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_TABLE:
+                        return handleCreateTable(payload);
+                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_INDEX:
+                        return handleCreateIndex(payload);
+                    case scratchbird::sblr::v3::Opcode::SBLR3_DROP_TABLE:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_DROP_INDEX:
+                        return handleDrop(payload, inst.opcode);
+                    case scratchbird::sblr::v3::Opcode::SBLR3_TRUNCATE_TABLE:
+                        return handleTruncate(payload);
+                    case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_TABLE:
+                        return handleAlterTable(payload);
+                    case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_TABLE_SET_TABLESPACE:
+                        return handleAlterTableSetTablespace(payload);
+                    default:
+                        break;
+                }
+
+                return ExecutionResult("V3 opcode not implemented in executor: " + name);
+            };
+
+            ExecutionResult result;
+            for (const auto& inst : instructions)
+            {
+                const char* name_c = scratchbird::sblr::v3::opcodeName(inst.opcode);
+                std::string name = name_c ? name_c : "";
+                if (name == "SBLR3_VERSION" || name == "SBLR3_END" || name.empty())
+                {
+                    continue;
+                }
+
+                result = execStmt(inst);
+
+                if (!result.success())
+                {
+                    return result;
+                }
+            }
+
+            return ExecutionResult();
         }
 
         // ========================================================================

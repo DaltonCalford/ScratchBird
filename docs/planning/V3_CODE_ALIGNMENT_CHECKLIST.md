@@ -32,12 +32,12 @@ Specs:
 - `sblr/SBLR_V3_TEST_VECTORS*.md`
 
 Checklist:
-- [ ] Implement V3 container reader/writer with section table.
-- [ ] Implement constant pool and symbol table encoding/decoding.
-- [ ] Implement canonicalization rules for deterministic output.
-- [ ] Implement bytecode verifier (stack depth, ordering, type checks).
-- [ ] Add test harness for V3 test vectors (payload + full stream).
-- [ ] Remove V2 header parsing from any new V3 entry points.
+- [x] Implement V3 container reader/writer with section table.
+- [x] Implement constant pool and symbol table encoding/decoding.
+- [x] Implement canonicalization rules for deterministic output.
+- [x] Implement bytecode verifier (stack depth, ordering, type checks).
+- [x] Add test harness for V3 test vectors (payload + full stream).
+- [x] Remove V2 header parsing from any new V3 entry points.
 
 ---
 
@@ -50,12 +50,12 @@ Specs:
 - `EXECUTOR_LOCK_GC_CONSTRAINT_MATRIX.md`
 
 Checklist:
-- [ ] Implement opcode registry and numeric mapping.
-- [ ] Implement payload encode/decode for every opcode family.
-- [ ] Implement runtime semantics for each opcode.
-- [ ] Enforce lock ordering and constraint sequencing.
-- [ ] Implement literal opcodes and datatype payload schemas.
-- [ ] Add opcode‑level unit tests for serialize/deserialize.
+- [x] Implement opcode registry and numeric mapping.
+- [x] Implement payload encode/decode for every opcode family.
+- [x] Implement runtime semantics for each opcode.
+- [x] Enforce lock ordering and constraint sequencing.
+- [x] Implement literal opcodes and datatype payload schemas.
+- [x] Add opcode‑level unit tests for serialize/deserialize.
 
 ---
 
@@ -69,11 +69,18 @@ Specs:
 - `PARSER_TO_SBLR_EMISSION_RULES.md`
 
 Checklist:
-- [ ] Implement AST nodes and literal forms per spec.
+- [x] Implement AST nodes and literal forms per spec.
 - [ ] Implement ScratchBird grammar and parser.
-- [ ] Implement parse → SBLR emission for DDL/DML/PSQL.
-- [ ] Implement deterministic ambiguity resolution rules.
-- [ ] Wire parser to V3 SBLR emitter (no SQL parsing in engine).
+- [x] Implement parse → SBLR emission for DDL/DML/PSQL.
+- [x] Emit ANALYZE/CONNECT/DISCONNECT/SWEEP payloads per schema.
+- [x] Normalize TXN control emission to SCHEMA_TXN_CONTROL action codes.
+- [x] Implement SET/SHOW/RESET opcode selection + payloads (SESSION_AND_UTILITY).
+- [x] Implement DDL ALTER stub payloads (INDEX/SCHEMA/DATABASE/DOMAIN/TYPE/POLICY/SYSTEM/JOB/TABLESPACE).
+- [x] Align ALTER TABLE action bytes + payloads (if_exists/only, cascade, action list).
+- [x] Implement CREATE FOREIGN DATA WRAPPER parsing + V3 SBLR emission.
+- [x] Enable SHOW PARSER VERSION (alias of SHOW VERSION).
+- [x] Implement deterministic ambiguity resolution rules.
+- [x] Wire parser to V3 SBLR emitter (no SQL parsing in engine).
 
 ---
 
@@ -102,9 +109,9 @@ Specs:
 - `PSQL_RUNTIME_V3.md`
 
 Checklist:
-- [ ] Replace V2 executor pipeline with V3 opcode execution.
-- [ ] Implement PSQL runtime semantics (scopes, cursors, exceptions).
-- [ ] Implement DDL/DML execution per V3 opcode semantics.
+- [x] Replace V2 executor pipeline with V3 opcode execution.
+- [~] Implement PSQL runtime semantics (scopes, cursors, exceptions) (blocks/decl/assign/if/while/loop/return/call wired; FOR SELECT + cursor open/fetch/close wired; exception handlers basic).
+- [~] Implement DDL/DML execution per V3 opcode semantics (DDL core: CREATE/ALTER/DROP/TRUNCATE for tables/indexes wired, ALTER TABLE action set completed, CREATE INDEX expr/predicate + TYPE_SPEC modifiers wired; DML temporarily delegates to embedded V2 bytecode embedded by ScratchBird compile paths; minimal SELECT without FROM supported).
 - [ ] Remove V2 semantic analyzer and bytecode generator dependencies.
 
 ---

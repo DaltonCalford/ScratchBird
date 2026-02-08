@@ -164,6 +164,7 @@ private:
     CreatePolicyStmt* parseCreatePolicy();
     CreateForeignServerStmt* parseCreateForeignServer();
     CreateForeignTableStmt* parseCreateForeignTable();
+    CreateForeignDataWrapperStmt* parseCreateForeignDataWrapper();
     CreateUserMappingStmt* parseCreateUserMapping();
     CreateSynonymStmt* parseCreateSynonym(bool is_public = false);
     CreateUdrStmt* parseCreateUdr();
@@ -379,6 +380,8 @@ private:
     Expression* parseNotExpr();
     Expression* parseComparisonExpr();
     Expression* parseComparisonExprWithLeft(Expression* left);
+    Expression* parseConcatExpr();
+    Expression* parseConcatExprWithLeft(Expression* left);
     Expression* parseBitOrExpr();
     Expression* parseBitOrExprWithLeft(Expression* left);
     Expression* parseBitAndExpr();

@@ -9439,3 +9439,71 @@ Each entry includes the spec path, the unclear point, and the missing detail nee
 ### /docs/specifications/parser/v3/PARSER_AMBIGUITY_RESOLUTION.md
 - Operator precedence list does not specify relative precedence of JSON operators or custom operators mentioned elsewhere.
 - Set operator precedence does not define parenthesized association rules beyond left-associative.
+
+### /docs/specifications/parser/v3/PARSER_TO_SBLR_EMISSION_RULES.md
+- Uses error codes like V3E-0091/V3E-0070 but does not define the full error code registry or SQLSTATE mapping.
+- Rules reference action numbers (e.g., ALTER_TABLE action 5/15/29) without pointing to the authoritative action enum table.
+- Identifier canonicalization requires UTF-8 + lowercase but does not define how to handle non-ASCII case folding beyond ASCII.
+
+### /docs/specifications/parser/v3/PERFORMANCE_BENCHMARKS.md
+- References `storage/MGA_IMPLEMENTATION.md`, which is not in the V3 inventory; unclear if it is authoritative or missing.
+- States WAL is forbidden, yet later mentions optional WAL for replication/PITR (conflict).
+- Benchmark targets are listed but do not define pass/fail tolerances for variance or hardware normalization.
+- Defines JSON Lines output fields but not required units/precision or clock source for timing.
+
+### /docs/specifications/parser/v3/PSQL_RUNTIME_V3.md
+- Shadowing must be explicit but no syntax for "explicit" shadowing is defined.
+- "Strict mode" for cursor close/open is referenced but not defined (flag name, default, or scope).
+- Sub-savepoint per statement is required but savepoint naming/visibility and interaction with outer transaction are not specified.
+- IF/ELSIF/ELSE mentions UNKNOWN handling but does not define how payload specifies UNKNOWN semantics.
+
+### /docs/specifications/parser/v3/PSQL_STATEMENTS.md
+- Assignment allows `=` or `:=` but does not specify precedence vs equality in expression context if ambiguous.
+- Error codes for unsupported PSQL forms (e.g., malformed DECLARE/EXECUTE) are not specified.
+
+### /docs/specifications/parser/v3/SBLR_V3_BYTECODE_CANONICALIZATION.md
+- Identifier folding says lowercase ASCII + NFC normalization; behavior for non-ASCII case folding is not specified.
+- Decimal normalization rules are referenced but not defined (scale handling, exponent form).
+- Sorting column lists in ON CONFLICT is mandated but does not discuss semantic impact or stable ordering with quoted identifiers.
+
+### /docs/specifications/parser/v3/SBLR_V3_BYTECODE_CONTAINER.md
+- Section formats for DEPENDENCIES, DEBUG_INFO, and INTEGRITY are not defined beyond IDs.
+- Dialect_id values are not enumerated; mapping to dialect tags is unspecified.
+- Module_id uses UUID v7 but does not define byte order or variant handling beyond "binary".
+
+### /docs/specifications/parser/v3/SBLR_V3_CONSTANT_POOL_AND_SYMBOLS.md
+- "Minimal-width canonical value representation" conflicts with fixed-size int64/uint64 tags (needs clarification).
+- String NFC normalization is conditional on being "identifier or catalog string" but no marker mechanism is defined.
+- Typed NULL references "TYPE opcode table" without defining where that table lives.
+- EXCEPTION_TABLE is included in hash input but no EXCEPTION_TABLE section is defined elsewhere.
+
+### /docs/specifications/parser/v3/SBLR_V3_OLD_TO_NEW_MAPPING.md
+- Mapping references V2 opcodes but does not define behavior for opcodes that have no V3 equivalent.
+- No guidance on partial/unsupported translation failure error codes.
+
+### /docs/specifications/parser/v3/SBLR_V3_OPCODE_PAYLOADS.md
+- Payload schemas use types like SCHEMA_* and TYPE_SPEC but do not always cross-reference their exact definitions.
+- Error handling for invalid payload lengths/types is not specified per opcode (defers to validator but not explicit).
+
+### /docs/specifications/parser/v3/SBLR_V3_OPCODE_SEMANTICS.md
+- Semantics are listed but do not specify side effects ordering for multi-step opcodes in error cases.
+- Runtime error codes for some opcodes are not explicitly listed (rely on global matrix).
+
+### /docs/specifications/parser/v3/SBLR_V3_OPCODE_SPEC.md
+- Opcode list does not define reserved ranges or forward-compatibility rules.
+- No guidance on how to handle unknown opcodes in mixed-version environments.
+
+### /docs/specifications/parser/v3/SBLR_V3_VALIDATION_RULES.md
+- Validation rules mention structural checks but do not define exact SQLSTATE or error codes for each class of failure.
+
+### /docs/specifications/parser/v3/SELECT_AND_QUERY.md
+- FOR UPDATE/SHARE OF table list is parsed but ignored; spec does not state whether this should error or be preserved.
+- ORDER BY numeric position resolution is described, but behavior with SELECT DISTINCT + ORDER BY alias conflicts is not specified.
+
+### /docs/specifications/parser/v3/SESSION_AND_UTILITY.md
+- SET/SHOW variable namespace is described but not enumerated; undefined variables behavior unclear (error vs ignore).
+- EXPLAIN options list exists but output formats (JSON/XML/YAML) schemas are not defined.
+
+### /docs/specifications/parser/v3/TRANSACTION_CONTROL.md
+- Transaction characteristic parsing allows free order but does not define conflict resolution when contradictory options are specified.
+- Error codes for invalid combinations are not specified.

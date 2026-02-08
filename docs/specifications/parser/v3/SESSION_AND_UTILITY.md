@@ -100,10 +100,10 @@ Same parsing rules as `START TRANSACTION`:
 - `SHOW SQL DIALECT`
 - `SHOW TIME ZONE`
 - `SHOW VERSION`
+- `SHOW PARSER VERSION` (alias of `SHOW VERSION`)
 - `SHOW DATABASE`
 - `SHOW SYSTEM`
 - `SHOW METRICS`
-- `SHOW PARSER VERSION` (explicitly rejected)
 - `SHOW <variable>` (default)
 
 ## DESCRIBE / DESC
@@ -169,7 +169,8 @@ Same parsing rules as `START TRANSACTION`:
 
 ## Notes and Constraints
 
-- `SET PARSER VERSION` and `SHOW PARSER VERSION` are explicitly rejected.
+- `SET PARSER VERSION` is explicitly rejected.
+- `SHOW PARSER VERSION` is accepted and maps to `SHOW VERSION`.
 - SHOW INDEX supports both MySQL-style and Firebird-style syntaxes.
 
 ---

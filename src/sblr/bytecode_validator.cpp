@@ -9,6 +9,8 @@
  */
 #include "scratchbird/sblr/bytecode_validator.h"
 
+#include "scratchbird/sblr/v3_validator.h"
+
 namespace scratchbird::sblr {
 
 core::Status validateBytecode(const std::vector<uint8_t>& bytecode,
@@ -17,6 +19,17 @@ core::Status validateBytecode(const std::vector<uint8_t>& bytecode,
         SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
                           "Empty SBLR bytecode");
         return core::Status::INVALID_ARGUMENT;
+    }
+
+    // V3 container detection
+    if (bytecode.size() >= 4 && bytecode[0] == 'S' && bytecode[1] == 'B' &&
+        bytecode[2] == 'L' && bytecode[3] == '3') {
+        std::string err;
+        if (!scratchbird::sblr::v3::validateContainer(bytecode.data(), bytecode.size(), err)) {
+            SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT, err.c_str());
+            return core::Status::INVALID_ARGUMENT;
+        }
+        return core::Status::OK;
     }
 
     if (bytecode.size() < 3) {

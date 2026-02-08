@@ -19,8 +19,11 @@
 #include "scratchbird/protocol/adapters/native_adapter.h"
 #include "scratchbird/protocol/adapters/firebird_adapter.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/sblr/bytecode_validator.h"
 #include "scratchbird/sblr/opcodes.h"
+#include "scratchbird/sblr/v3_container.h"
 #include "scratchbird/core/telemetry.h"
+#include "scratchbird/parser/v3_compiler.h"
 
 #include <cctype>
 #include <cstring>
@@ -522,6 +525,7 @@ core::Status ProtocolAdapter::ensureEngine(core::ErrorContext* ctx) {
     executor_ = std::make_unique<sblr::Executor>(db);
     executor_->setConnectionContext(connection_ctx_.get());
     compiler_v2_ = std::make_unique<sblr::QueryCompilerV2>(db);
+    compiler_v3_ = std::make_unique<parser::v3::Compiler>();
 
     return core::Status::OK;
 }
@@ -578,12 +582,51 @@ core::Status ProtocolAdapter::compileQuery(const std::string& sql,
             return core::Status::OK;
         }
     }
-    auto result = compiler_v2_->compile(sql);
-    if (!result.success()) {
-        error_out = result.errors().empty() ? "Compilation failed" : result.errors().front();
-        return core::Status::INVALID_ARGUMENT;
+    if (std::string(dialect_tag) == "scratchbird" && compiler_v3_) {
+        auto result = compiler_v3_->compile(sql);
+        if (!result.ok) {
+            error_out = result.error.empty() ? "Compilation failed" : result.error;
+            return core::Status::INVALID_ARGUMENT;
+        }
+        bytecode_out = result.bytecode;
+        if (compiler_v2_) {
+            auto v2_result = compiler_v2_->compile(sql);
+            if (v2_result.success()) {
+                scratchbird::sblr::v3::Container container;
+                std::string err;
+                if (scratchbird::sblr::v3::decodeContainer(bytecode_out.data(),
+                                                           bytecode_out.size(),
+                                                           container,
+                                                           err)) {
+                    const auto& v2_bytes = v2_result.bytecode();
+                    std::vector<uint8_t> debug;
+                    debug.reserve(8 + v2_bytes.size());
+                    debug.push_back('S');
+                    debug.push_back('B');
+                    debug.push_back('V');
+                    debug.push_back('2');
+                    uint32_t len = static_cast<uint32_t>(v2_bytes.size());
+                    debug.push_back(static_cast<uint8_t>(len & 0xFF));
+                    debug.push_back(static_cast<uint8_t>((len >> 8) & 0xFF));
+                    debug.push_back(static_cast<uint8_t>((len >> 16) & 0xFF));
+                    debug.push_back(static_cast<uint8_t>((len >> 24) & 0xFF));
+                    debug.insert(debug.end(), v2_bytes.begin(), v2_bytes.end());
+                    container.debug_info = std::move(debug);
+                    std::vector<uint8_t> reencoded;
+                    if (scratchbird::sblr::v3::encodeContainer(container, reencoded, err)) {
+                        bytecode_out = std::move(reencoded);
+                    }
+                }
+            }
+        }
+    } else {
+        auto result = compiler_v2_->compile(sql);
+        if (!result.success()) {
+            error_out = result.errors().empty() ? "Compilation failed" : result.errors().front();
+            return core::Status::INVALID_ARGUMENT;
+        }
+        bytecode_out = result.bytecode();
     }
-    bytecode_out = result.bytecode();
     if (translation_cache_ && translation_cache_->isEnabled()) {
         translation_cache_->put(dialect_tag, sql, schema_version,
                                 privilege_signature, bytecode_out);
@@ -595,13 +638,15 @@ core::Status ProtocolAdapter::executeBytecode(const std::string& sql,
                                               const std::vector<uint8_t>& bytecode,
                                               ResultContext& result,
                                               core::ErrorContext* ctx) {
-    if (bytecode.size() < 2 ||
-        bytecode[0] != static_cast<uint8_t>(sblr::Opcode::VERSION) ||
-        bytecode[1] != static_cast<uint8_t>(sblr::SBLR_VERSION)) {
+    core::ErrorContext validate_ctx;
+    core::Status validate_status = sblr::validateBytecode(bytecode, &validate_ctx);
+    if (validate_status != core::Status::OK) {
         result.has_error = true;
-        result.error_code = static_cast<uint32_t>(core::Status::NOT_SUPPORTED);
+        result.error_code = static_cast<uint32_t>(validate_status);
         result.sqlstate = "0A000";
-        result.error_message = "Unsupported SBLR version";
+        result.error_message = validate_ctx.message.empty()
+            ? "Invalid bytecode"
+            : validate_ctx.message;
         return core::Status::OK;
     }
 

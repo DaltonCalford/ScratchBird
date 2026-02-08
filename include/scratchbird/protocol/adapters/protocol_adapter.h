@@ -36,6 +36,10 @@
 #include <functional>
 
 namespace scratchbird {
+namespace parser::v3 {
+class Compiler;
+}
+
 namespace protocol {
 
 // Forward declarations
@@ -404,6 +408,7 @@ protected:
     std::unique_ptr<core::ConnectionContext> connection_ctx_;
     std::unique_ptr<sblr::Executor> executor_;
     std::unique_ptr<sblr::QueryCompilerV2> compiler_v2_;
+    std::unique_ptr<parser::v3::Compiler> compiler_v3_;
     TranslationCache* translation_cache_ = nullptr;
 };
 
