@@ -24,6 +24,25 @@
 namespace scratchbird {
 namespace network {
 
+namespace {
+    bool isTdsHandshake(const std::vector<uint8_t>& data) {
+        if (data.size() < 8) {
+            return false;
+        }
+        // TDS packet header:
+        // [0]=type (0x12 PRELOGIN, 0x10 LOGIN7), [2..3]=length (big-endian, includes header)
+        uint8_t type = data[0];
+        if (type != 0x12 && type != 0x10) {
+            return false;
+        }
+        uint16_t length = static_cast<uint16_t>((data[2] << 8) | data[3]);
+        if (length < 8 || length > 32768) {
+            return false;
+        }
+        return true;
+    }
+} // namespace
+
 // ============================================================================
 // Protocol Detection Magic Bytes
 // ============================================================================
@@ -474,20 +493,56 @@ std::vector<ConnectionId> ConnectionManager::getConnectionIds() const {
 void ConnectionManager::handleNewConnection(Connection* conn) {
     if (!conn) return;
 
-    // Move to protocol detection state
+    // Bind connection to a fixed listener protocol when configured.
+    if (config_.fixed_protocol != ProtocolType::AUTO_DETECT) {
+        if (!isProtocolAllowed(config_.fixed_protocol)) {
+            conn->close(CloseReason::PROTOCOL_ERROR);
+            return;
+        }
+        conn->setProtocol(config_.fixed_protocol);
+        if (auto handler = getProtocolHandler(config_.fixed_protocol)) {
+            handler->initializeConnection(conn);
+        }
+        conn->setState(ConnectionState::AUTHENTICATING);
+        return;
+    }
+
+    if (!config_.auto_detect_protocol) {
+        conn->close(CloseReason::PROTOCOL_ERROR);
+        return;
+    }
+
     conn->setState(ConnectionState::PROTOCOL_DETECTION);
 }
 
 void ConnectionManager::handleProtocolDetection(Connection* conn) {
     if (!conn) return;
 
+    if (!config_.auto_detect_protocol) {
+        conn->close(CloseReason::PROTOCOL_ERROR);
+        return;
+    }
+
     const auto& buffer = conn->getReadBuffer();
     if (buffer.empty()) {
         return;  // Need more data
     }
 
+    if (isTdsHandshake(buffer)) {
+        // TDS/MSSQL is explicitly unsupported in V3.
+        conn->close(CloseReason::PROTOCOL_ERROR);
+        return;
+    }
+
     // Detect protocol
     ProtocolType detected = detectProtocol(buffer);
+    if (detected == ProtocolType::AUTO_DETECT) {
+        return;  // Need more data (or TLS handshake preface not yet handled here)
+    }
+    if (!isProtocolAllowed(detected)) {
+        conn->close(CloseReason::PROTOCOL_ERROR);
+        return;
+    }
     conn->setProtocol(detected);
 
     // Get handler for detected protocol
@@ -540,17 +595,30 @@ void ConnectionManager::handleData(Connection* conn) {
     if (!conn) return;
 
     switch (conn->getState()) {
-        case ConnectionState::NEW:
+        case ConnectionState::NEW: {
             handleNewConnection(conn);
-            // Fall through to protocol detection
-            [[fallthrough]];
+
+            if (conn->getState() == ConnectionState::PROTOCOL_DETECTION) {
+                handleProtocolDetection(conn);
+                if (conn->getState() != ConnectionState::AUTHENTICATING) {
+                    break;
+                }
+                handleAuthentication(conn);
+                break;
+            }
+
+            if (conn->getState() == ConnectionState::AUTHENTICATING) {
+                handleAuthentication(conn);
+            }
+            break;
+        }
 
         case ConnectionState::PROTOCOL_DETECTION:
             handleProtocolDetection(conn);
-            if (conn->getState() != ConnectionState::AUTHENTICATING) {
-                break;
+            if (conn->getState() == ConnectionState::AUTHENTICATING) {
+                handleAuthentication(conn);
             }
-            [[fallthrough]];
+            break;
 
         case ConnectionState::AUTHENTICATING:
             handleAuthentication(conn);
@@ -637,9 +705,13 @@ ProtocolType ConnectionManager::detectProtocol(const std::vector<uint8_t>& data)
         return ProtocolType::FIREBIRD;
     }
 
-    // Default to PostgreSQL (most common)
-    // A more sophisticated implementation would wait for more data
-    return ProtocolType::POSTGRESQL;
+    // Unknown prefix: require more data instead of guessing protocol.
+    return ProtocolType::AUTO_DETECT;
+}
+
+bool ConnectionManager::isProtocolAllowed(ProtocolType protocol) const {
+    const auto& allowed = config_.allowed_protocols;
+    return std::find(allowed.begin(), allowed.end(), protocol) != allowed.end();
 }
 
 void ConnectionManager::fireEvent(const ConnectionEvent& event) {

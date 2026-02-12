@@ -57,7 +57,7 @@ constexpr ConnectionId INVALID_CONNECTION_ID = 0;
  */
 enum class ConnectionState : uint8_t {
     NEW = 0,                // Just accepted, no data yet
-    PROTOCOL_DETECTION = 1, // Detecting wire protocol
+    PROTOCOL_DETECTION = 1, // Detecting wire protocol (optional)
     SSL_HANDSHAKE = 2,      // SSL/TLS handshake
     AUTHENTICATING = 3,     // Client authentication
     AUTHENTICATED = 4,      // Authentication successful
@@ -330,6 +330,8 @@ struct ConnectionManagerConfig {
     bool enable_keepalive = true;
     bool enable_ssl = false;
     SSLMode ssl_mode = SSLMode::PREFER;
+    // If fixed_protocol != AUTO_DETECT, every connection is bound to that protocol.
+    ProtocolType fixed_protocol = ProtocolType::AUTO_DETECT;
     bool auto_detect_protocol = true;
     std::vector<ProtocolType> allowed_protocols{
         ProtocolType::NATIVE,
@@ -347,7 +349,7 @@ struct ConnectionManagerConfig {
  * Connection Manager
  *
  * Manages all client connections, handling connection lifecycle,
- * protocol detection, and routing to appropriate handlers.
+ * protocol binding/detection, and routing to appropriate handlers.
  *
  * Thread safety: All methods are thread-safe.
  */
@@ -482,6 +484,7 @@ private:
 
     // Detect wire protocol from first bytes
     ProtocolType detectProtocol(const std::vector<uint8_t>& data);
+    bool isProtocolAllowed(ProtocolType protocol) const;
 
     // Fire event callback
     void fireEvent(const ConnectionEvent& event);
