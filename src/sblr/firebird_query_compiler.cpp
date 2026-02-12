@@ -15,6 +15,8 @@
  */
 
 #include "scratchbird/sblr/firebird_query_compiler.h"
+#include "scratchbird/parser/v3_emitter.h"
+#include "scratchbird/sblr/v3_container.h"
 #include <chrono>
 
 namespace scratchbird {
@@ -23,11 +25,6 @@ namespace sblr {
 // Use explicit namespace prefixes to avoid ambiguity
 namespace fb = parser::firebird;
 
-// Import v2 types used from parser namespace
-using parser::v2::SemanticAnalyzerV2;
-using parser::v2::SemanticResult;
-using parser::v2::BytecodeGeneratorV2;
-using parser::v2::BytecodeResultV2;
 
 FirebirdQueryCompiler::FirebirdQueryCompiler(core::Database* db)
     : db_(db)
@@ -79,80 +76,30 @@ FirebirdCompilationResult FirebirdQueryCompiler::compileInternal(const std::stri
     }
 
     // =========================================================================
-    // Phase 2: Semantic Analysis (shared with ScratchBird parser)
+    // Phase 2: Emit V3 SBLR container from parser AST
     // =========================================================================
 
-    if (!catalog_) {
-        result.addError("Catalog manager not available");
+    parser::v3::V3Emitter emitter(parser.stringPool());
+    sblr::v3::Container container;
+    std::string emit_err;
+
+    if (!emitter.emitStatementToContainer(parse_result.statement.get(), container, emit_err)) {
+        result.addError("V3 emit failed: " + emit_err);
         return result;
     }
 
-    auto semantic_start = std::chrono::steady_clock::now();
+    // Annotate module metadata for Firebird emulation (dialect id reserved by spec)
+    container.metadata.module_name = "firebird_emulation";
 
-    SemanticAnalyzerV2 analyzer(*catalog_, parser.stringPool());
-    analyzer.setCurrentSchema(current_schema_);
-
-    SemanticResult sem_result = analyzer.analyze(parse_result.statement.get());
-
-    auto semantic_end = std::chrono::steady_clock::now();
-    stats.semantic_time = std::chrono::duration_cast<std::chrono::microseconds>(
-        semantic_end - semantic_start);
-
-    if (!sem_result.success()) {
-        for (const auto& err : sem_result.errors()) {
-            result.addError("Semantic error at line " + std::to_string(err.span.start.line) +
-                          ", column " + std::to_string(err.span.start.column) + ": " + err.message);
-        }
-        for (const auto& warn : sem_result.warnings()) {
-            result.addWarning("Warning at line " + std::to_string(warn.span.start.line) +
-                            ", column " + std::to_string(warn.span.start.column) + ": " + warn.message);
-        }
+    std::vector<uint8_t> encoded;
+    std::string encode_err;
+    if (!sblr::v3::encodeContainer(container, encoded, encode_err)) {
+        result.addError("V3 container encode failed: " + encode_err);
         return result;
     }
 
-    // Copy warnings even on success
-    for (const auto& warn : sem_result.warnings()) {
-        result.addWarning("Warning at line " + std::to_string(warn.span.start.line) +
-                        ", column " + std::to_string(warn.span.start.column) + ": " + warn.message);
-    }
-
-    // =========================================================================
-    // Phase 3: Bytecode Generation (shared with ScratchBird parser)
-    // =========================================================================
-
-    auto bytecode_start = std::chrono::steady_clock::now();
-
-    BytecodeGeneratorV2 generator(parser.stringPool());
-    generator.setOptimizationsEnabled(optimizations_enabled_);
-    generator.setSourceSql(sql);
-
-    BytecodeResultV2 bc_result = generator.generate(sem_result.statement());
-
-    auto bytecode_end = std::chrono::steady_clock::now();
-    stats.bytecode_time = std::chrono::duration_cast<std::chrono::microseconds>(
-        bytecode_end - bytecode_start);
-
-    if (!bc_result.success()) {
-        for (const auto& err : bc_result.errors()) {
-            result.addError("Bytecode generation error: " + err);
-        }
-        for (const auto& warn : bc_result.warnings()) {
-            result.addWarning("Bytecode warning: " + warn);
-        }
-        return result;
-    }
-
-    // Copy warnings
-    for (const auto& warn : bc_result.warnings()) {
-        result.addWarning("Bytecode warning: " + warn);
-    }
-
-    // =========================================================================
-    // Success - set bytecode and stats
-    // =========================================================================
-
-    result.setBytecode(bc_result.bytecode());
-    stats.bytecode_size = bc_result.bytecode().size();
+    result.setBytecode(std::move(encoded));
+    stats.bytecode_size = result.bytecode().size();
 
     auto total_end = std::chrono::steady_clock::now();
     stats.total_time = std::chrono::duration_cast<std::chrono::microseconds>(
@@ -161,7 +108,6 @@ FirebirdCompilationResult FirebirdQueryCompiler::compileInternal(const std::stri
     if (stats_enabled_) {
         result.setStats(stats);
     }
-
     return result;
 }
 

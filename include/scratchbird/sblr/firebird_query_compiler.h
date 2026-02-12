@@ -12,19 +12,16 @@
 /**
  * Firebird Query Compiler
  *
- * Compiles Firebird SQL to SBLR bytecode using:
+ * Compiles Firebird SQL to V3 SBLR bytecode using:
  * - Firebird Lexer (Firebird SQL tokenization)
- * - Firebird Parser (Firebird SQL → AST v2)
- * - Semantic Analyzer V2 (shared - name resolution, type checking)
- * - Bytecode Generator V2 (shared - AST v2 → SBLR bytecode)
+ * - Firebird Parser (Firebird SQL -> parser AST)
+ * - V3 emitter (parser AST -> SBLR v3 container)
  *
  * This compiler allows Firebird SQL syntax to be executed on the
  * ScratchBird engine, enabling Firebird client emulation.
  */
 
 #include "scratchbird/parser/firebird/firebird_parser.h"
-#include "scratchbird/sblr/semantic_analyzer_v2.h"
-#include "scratchbird/sblr/bytecode_generator_v2.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
 #include <string>

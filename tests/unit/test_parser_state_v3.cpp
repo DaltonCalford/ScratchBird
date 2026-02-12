@@ -8,18 +8,18 @@
  * https://www.firebirdsql.org/en/initial-developer-s-public-license-version-1-0/
  */
 /**
- * Unit Tests for ScratchBird Parser State v2.0
+ * Unit Tests for ScratchBird Parser State v3.0
  *
  * Tests the ParserState class which provides contextual keyword matching
  * for the "Smart Parser, Dumb Lexer" architecture.
  */
 
 #include <gtest/gtest.h>
-#include "scratchbird/parser/parser_state_v2.h"
+#include "scratchbird/parser/parser_state_v3.h"
 
-using namespace scratchbird::parser::v2;
+using namespace scratchbird::parser::v3;
 
-class ParserStateV2Test : public ::testing::Test {
+class ParserStateV3Test : public ::testing::Test {
 protected:
     std::unique_ptr<Lexer> makeLexer(const std::string& input) {
         // Store input in member to keep it alive
@@ -41,7 +41,7 @@ private:
 // Basic State Tests
 // =============================================================================
 
-TEST_F(ParserStateV2Test, InitialState) {
+TEST_F(ParserStateV3Test, InitialState) {
     auto state = makeState("SELECT");
 
     // Initial mode should be STATEMENT
@@ -51,7 +51,7 @@ TEST_F(ParserStateV2Test, InitialState) {
     EXPECT_EQ(state->current().type, TokenType::KW_SELECT);
 }
 
-TEST_F(ParserStateV2Test, ModeStackPushPop) {
+TEST_F(ParserStateV3Test, ModeStackPushPop) {
     auto state = makeState("CREATE TABLE");
 
     EXPECT_EQ(state->currentMode(), ParseMode::STATEMENT);
@@ -69,7 +69,7 @@ TEST_F(ParserStateV2Test, ModeStackPushPop) {
     EXPECT_EQ(state->currentMode(), ParseMode::STATEMENT);
 }
 
-TEST_F(ParserStateV2Test, IsInMode) {
+TEST_F(ParserStateV3Test, IsInMode) {
     auto state = makeState("SELECT");
 
     state->pushMode(ParseMode::DML_SELECT);
@@ -81,7 +81,7 @@ TEST_F(ParserStateV2Test, IsInMode) {
     EXPECT_FALSE(state->isInMode(ParseMode::DDL));
 }
 
-TEST_F(ParserStateV2Test, PopModeDoesNotRemoveBase) {
+TEST_F(ParserStateV3Test, PopModeDoesNotRemoveBase) {
     auto state = makeState("SELECT");
 
     // Pop multiple times - should not crash or remove STATEMENT mode
@@ -96,7 +96,7 @@ TEST_F(ParserStateV2Test, PopModeDoesNotRemoveBase) {
 // Token Navigation Tests
 // =============================================================================
 
-TEST_F(ParserStateV2Test, AdvanceAndPrevious) {
+TEST_F(ParserStateV3Test, AdvanceAndPrevious) {
     auto state = makeState("SELECT id FROM");
 
     // First token is SELECT
@@ -113,7 +113,7 @@ TEST_F(ParserStateV2Test, AdvanceAndPrevious) {
     EXPECT_EQ(state->previous().type, TokenType::IDENTIFIER);
 }
 
-TEST_F(ParserStateV2Test, MatchAdvancesOnSuccess) {
+TEST_F(ParserStateV3Test, MatchAdvancesOnSuccess) {
     auto state = makeState("SELECT FROM");
 
     EXPECT_TRUE(state->match(TokenType::KW_SELECT));
@@ -121,7 +121,7 @@ TEST_F(ParserStateV2Test, MatchAdvancesOnSuccess) {
     EXPECT_EQ(state->current().type, TokenType::KW_FROM);
 }
 
-TEST_F(ParserStateV2Test, MatchDoesNotAdvanceOnFailure) {
+TEST_F(ParserStateV3Test, MatchDoesNotAdvanceOnFailure) {
     auto state = makeState("SELECT FROM");
 
     EXPECT_FALSE(state->match(TokenType::KW_INSERT));
@@ -129,7 +129,7 @@ TEST_F(ParserStateV2Test, MatchDoesNotAdvanceOnFailure) {
     EXPECT_EQ(state->current().type, TokenType::KW_SELECT);
 }
 
-TEST_F(ParserStateV2Test, CheckDoesNotAdvance) {
+TEST_F(ParserStateV3Test, CheckDoesNotAdvance) {
     auto state = makeState("SELECT FROM");
 
     EXPECT_TRUE(state->check(TokenType::KW_SELECT));
@@ -137,7 +137,7 @@ TEST_F(ParserStateV2Test, CheckDoesNotAdvance) {
     EXPECT_EQ(state->current().type, TokenType::KW_SELECT);
 }
 
-TEST_F(ParserStateV2Test, IsAtEnd) {
+TEST_F(ParserStateV3Test, IsAtEnd) {
     auto state = makeState("SELECT");
 
     EXPECT_FALSE(state->isAtEnd());
@@ -149,7 +149,7 @@ TEST_F(ParserStateV2Test, IsAtEnd) {
 // Contextual Keyword Matching Tests
 // =============================================================================
 
-TEST_F(ParserStateV2Test, MatchContextual_Success) {
+TEST_F(ParserStateV3Test, MatchContextual_Success) {
     auto state = makeState("TABLE users");
 
     // TABLE is an identifier (not a Gatekeeper keyword)
@@ -162,7 +162,7 @@ TEST_F(ParserStateV2Test, MatchContextual_Success) {
     EXPECT_EQ(state->current().type, TokenType::IDENTIFIER);
 }
 
-TEST_F(ParserStateV2Test, MatchContextual_CaseInsensitive) {
+TEST_F(ParserStateV3Test, MatchContextual_CaseInsensitive) {
     auto state = makeState("table INDEX view");
 
     EXPECT_TRUE(state->matchContextual("TABLE"));
@@ -170,7 +170,7 @@ TEST_F(ParserStateV2Test, MatchContextual_CaseInsensitive) {
     EXPECT_TRUE(state->matchContextual("VIEW"));
 }
 
-TEST_F(ParserStateV2Test, MatchContextual_FailsOnMismatch) {
+TEST_F(ParserStateV3Test, MatchContextual_FailsOnMismatch) {
     auto state = makeState("TABLE users");
 
     EXPECT_FALSE(state->matchContextual("INDEX"));
@@ -178,7 +178,7 @@ TEST_F(ParserStateV2Test, MatchContextual_FailsOnMismatch) {
     EXPECT_TRUE(state->checkContextual("TABLE"));
 }
 
-TEST_F(ParserStateV2Test, MatchContextual_FailsOnGatekeeperKeyword) {
+TEST_F(ParserStateV3Test, MatchContextual_FailsOnGatekeeperKeyword) {
     auto state = makeState("SELECT id");
 
     // SELECT is a Gatekeeper keyword, not an IDENTIFIER
@@ -187,7 +187,7 @@ TEST_F(ParserStateV2Test, MatchContextual_FailsOnGatekeeperKeyword) {
     EXPECT_EQ(state->current().type, TokenType::KW_SELECT);
 }
 
-TEST_F(ParserStateV2Test, CheckContextual_DoesNotAdvance) {
+TEST_F(ParserStateV3Test, CheckContextual_DoesNotAdvance) {
     auto state = makeState("TABLE users");
 
     EXPECT_TRUE(state->checkContextual("TABLE"));
@@ -195,7 +195,7 @@ TEST_F(ParserStateV2Test, CheckContextual_DoesNotAdvance) {
     EXPECT_TRUE(state->checkContextual("TABLE"));
 }
 
-TEST_F(ParserStateV2Test, CheckContextual_CaseInsensitive) {
+TEST_F(ParserStateV3Test, CheckContextual_CaseInsensitive) {
     auto state = makeState("Table");
 
     EXPECT_TRUE(state->checkContextual("TABLE"));
@@ -207,7 +207,7 @@ TEST_F(ParserStateV2Test, CheckContextual_CaseInsensitive) {
 // Identifier Access Tests
 // =============================================================================
 
-TEST_F(ParserStateV2Test, IsIdentifier) {
+TEST_F(ParserStateV3Test, IsIdentifier) {
     auto state = makeState("myTable SELECT 123");
 
     // myTable is an identifier
@@ -222,7 +222,7 @@ TEST_F(ParserStateV2Test, IsIdentifier) {
     EXPECT_FALSE(state->isIdentifier());
 }
 
-TEST_F(ParserStateV2Test, CurrentIdentifierText) {
+TEST_F(ParserStateV3Test, CurrentIdentifierText) {
     auto state = makeState("myTable SELECT");
 
     EXPECT_EQ(state->currentIdentifierText(), "myTable");
@@ -232,7 +232,7 @@ TEST_F(ParserStateV2Test, CurrentIdentifierText) {
     EXPECT_EQ(state->currentIdentifierText(), "");
 }
 
-TEST_F(ParserStateV2Test, CurrentStringId) {
+TEST_F(ParserStateV3Test, CurrentStringId) {
     auto state = makeState("myTable SELECT");
 
     StringPool::StringId id = state->currentStringId();
@@ -248,7 +248,7 @@ TEST_F(ParserStateV2Test, CurrentStringId) {
 // Error Handling Tests
 // =============================================================================
 
-TEST_F(ParserStateV2Test, ExpectContextual_Success) {
+TEST_F(ParserStateV3Test, ExpectContextual_Success) {
     auto state = makeState("TABLE users");
 
     // Set up error tracking
@@ -264,7 +264,7 @@ TEST_F(ParserStateV2Test, ExpectContextual_Success) {
     EXPECT_TRUE(state->checkContextual("users"));
 }
 
-TEST_F(ParserStateV2Test, ExpectContextual_Failure) {
+TEST_F(ParserStateV3Test, ExpectContextual_Failure) {
     auto state = makeState("INDEX users");
 
     bool error_called = false;
@@ -283,7 +283,7 @@ TEST_F(ParserStateV2Test, ExpectContextual_Failure) {
 // ParseModeGuard Tests
 // =============================================================================
 
-TEST_F(ParserStateV2Test, ParseModeGuard_BasicScope) {
+TEST_F(ParserStateV3Test, ParseModeGuard_BasicScope) {
     auto state = makeState("SELECT");
 
     EXPECT_EQ(state->currentMode(), ParseMode::STATEMENT);
@@ -296,7 +296,7 @@ TEST_F(ParserStateV2Test, ParseModeGuard_BasicScope) {
     EXPECT_EQ(state->currentMode(), ParseMode::STATEMENT);
 }
 
-TEST_F(ParserStateV2Test, ParseModeGuard_NestedScopes) {
+TEST_F(ParserStateV3Test, ParseModeGuard_NestedScopes) {
     auto state = makeState("SELECT");
 
     EXPECT_EQ(state->currentMode(), ParseMode::STATEMENT);
@@ -320,7 +320,7 @@ TEST_F(ParserStateV2Test, ParseModeGuard_NestedScopes) {
 // Integration Tests - Parsing Patterns
 // =============================================================================
 
-TEST_F(ParserStateV2Test, CreateTablePattern) {
+TEST_F(ParserStateV3Test, CreateTablePattern) {
     // Simulates: CREATE TABLE users (id INT, name VARCHAR)
     auto state = makeState("CREATE TABLE users ( id INT , name VARCHAR )");
 
@@ -368,7 +368,7 @@ TEST_F(ParserStateV2Test, CreateTablePattern) {
     EXPECT_TRUE(state->isAtEnd());
 }
 
-TEST_F(ParserStateV2Test, SelectWithJoinPattern) {
+TEST_F(ParserStateV3Test, SelectWithJoinPattern) {
     // Simulates: SELECT name FROM users LEFT JOIN orders ON users.id = orders.user_id
     auto state = makeState("SELECT name FROM users LEFT JOIN orders ON users . id = orders . user_id");
 
@@ -428,7 +428,7 @@ TEST_F(ParserStateV2Test, SelectWithJoinPattern) {
     EXPECT_TRUE(state->isAtEnd());
 }
 
-TEST_F(ParserStateV2Test, ContextualKeywordsAsIdentifiers) {
+TEST_F(ParserStateV3Test, ContextualKeywordsAsIdentifiers) {
     // The key design test: common words should be valid identifiers
     // CREATE TABLE procedure (value INT, type VARCHAR, name TEXT)
     auto state = makeState("CREATE TABLE procedure ( value INT , type VARCHAR , name TEXT )");
@@ -482,7 +482,7 @@ TEST_F(ParserStateV2Test, ContextualKeywordsAsIdentifiers) {
 // Utility Function Tests
 // =============================================================================
 
-TEST_F(ParserStateV2Test, CaseInsensitiveEquals) {
+TEST_F(ParserStateV3Test, CaseInsensitiveEquals) {
     EXPECT_TRUE(caseInsensitiveEquals("TABLE", "TABLE"));
     EXPECT_TRUE(caseInsensitiveEquals("table", "TABLE"));
     EXPECT_TRUE(caseInsensitiveEquals("TaBlE", "tAbLe"));
@@ -493,7 +493,7 @@ TEST_F(ParserStateV2Test, CaseInsensitiveEquals) {
     EXPECT_FALSE(caseInsensitiveEquals("T", ""));
 }
 
-TEST_F(ParserStateV2Test, ParseModeToString) {
+TEST_F(ParserStateV3Test, ParseModeToString) {
     EXPECT_STREQ(parseModeToString(ParseMode::STATEMENT), "STATEMENT");
     EXPECT_STREQ(parseModeToString(ParseMode::DDL), "DDL");
     EXPECT_STREQ(parseModeToString(ParseMode::DML_SELECT), "DML_SELECT");

@@ -8,19 +8,19 @@
  * https://www.firebirdsql.org/en/initial-developer-s-public-license-version-1-0/
  */
 /**
- * Unit Tests for ScratchBird Schema Path v2.0
+ * Unit Tests for ScratchBird Schema Path v3.0
  *
  * Tests the hierarchical schema path parsing for the unique namespace
  * navigation system in ScratchBird.
  */
 
 #include <gtest/gtest.h>
-#include "scratchbird/parser/schema_path_v2.h"
-#include "scratchbird/parser/parser_state_v2.h"
+#include "scratchbird/parser/schema_path_v3.h"
+#include "scratchbird/parser/parser_state_v3.h"
 
-using namespace scratchbird::parser::v2;
+using namespace scratchbird::parser::v3;
 
-class SchemaPathV2Test : public ::testing::Test {
+class SchemaPathV3Test : public ::testing::Test {
 protected:
     std::unique_ptr<Lexer> makeLexer(const std::string& input) {
         input_ = input;
@@ -46,7 +46,7 @@ private:
 // DOUBLE_DOT Token Tests
 // =============================================================================
 
-TEST_F(SchemaPathV2Test, LexerRecognizesDoubleDot) {
+TEST_F(SchemaPathV3Test, LexerRecognizesDoubleDot) {
     auto lexer = makeLexer("..parent");
 
     Token t1 = lexer->nextToken();
@@ -56,7 +56,7 @@ TEST_F(SchemaPathV2Test, LexerRecognizesDoubleDot) {
     EXPECT_EQ(t2.type, TokenType::IDENTIFIER);
 }
 
-TEST_F(SchemaPathV2Test, LexerDistinguishesDotAndDoubleDot) {
+TEST_F(SchemaPathV3Test, LexerDistinguishesDotAndDoubleDot) {
     auto lexer = makeLexer(". .. . ..");
 
     EXPECT_EQ(lexer->nextToken().type, TokenType::DOT);
@@ -65,7 +65,7 @@ TEST_F(SchemaPathV2Test, LexerDistinguishesDotAndDoubleDot) {
     EXPECT_EQ(lexer->nextToken().type, TokenType::DOUBLE_DOT);
 }
 
-TEST_F(SchemaPathV2Test, LexerHandlesThreeDots) {
+TEST_F(SchemaPathV3Test, LexerHandlesThreeDots) {
     // "..." should be DOUBLE_DOT followed by DOT
     auto lexer = makeLexer("...");
 
@@ -77,7 +77,7 @@ TEST_F(SchemaPathV2Test, LexerHandlesThreeDots) {
 // Unqualified Path Tests
 // =============================================================================
 
-TEST_F(SchemaPathV2Test, ParseUnqualifiedSingleName) {
+TEST_F(SchemaPathV3Test, ParseUnqualifiedSingleName) {
     auto state = makeState("orders");
 
     SchemaPath path = parseSchemaPath(*state);
@@ -87,7 +87,7 @@ TEST_F(SchemaPathV2Test, ParseUnqualifiedSingleName) {
     EXPECT_EQ(getString(*state, path.components[0]), "orders");
 }
 
-TEST_F(SchemaPathV2Test, ParseUnqualifiedWithTrailingToken) {
+TEST_F(SchemaPathV3Test, ParseUnqualifiedWithTrailingToken) {
     auto state = makeState("orders WHERE");
 
     SchemaPath path = parseSchemaPath(*state);
@@ -102,7 +102,7 @@ TEST_F(SchemaPathV2Test, ParseUnqualifiedWithTrailingToken) {
 // Current Schema Path Tests (.name)
 // =============================================================================
 
-TEST_F(SchemaPathV2Test, ParseCurrentSchemaSingleName) {
+TEST_F(SchemaPathV3Test, ParseCurrentSchemaSingleName) {
     auto state = makeState(".orders");
 
     SchemaPath path = parseSchemaPath(*state);
@@ -112,7 +112,7 @@ TEST_F(SchemaPathV2Test, ParseCurrentSchemaSingleName) {
     EXPECT_EQ(getString(*state, path.components[0]), "orders");
 }
 
-TEST_F(SchemaPathV2Test, ParseCurrentSchemaMultipleParts) {
+TEST_F(SchemaPathV3Test, ParseCurrentSchemaMultipleParts) {
     auto state = makeState(".sub.schema.orders");
 
     SchemaPath path = parseSchemaPath(*state);
@@ -124,7 +124,7 @@ TEST_F(SchemaPathV2Test, ParseCurrentSchemaMultipleParts) {
     EXPECT_EQ(getString(*state, path.components[2]), "orders");
 }
 
-TEST_F(SchemaPathV2Test, ParseCurrentSchemaWithTrailingToken) {
+TEST_F(SchemaPathV3Test, ParseCurrentSchemaWithTrailingToken) {
     auto state = makeState(".orders AS o");
 
     SchemaPath path = parseSchemaPath(*state);
@@ -139,7 +139,7 @@ TEST_F(SchemaPathV2Test, ParseCurrentSchemaWithTrailingToken) {
 // Parent Schema Path Tests (..name)
 // =============================================================================
 
-TEST_F(SchemaPathV2Test, ParseParentSchemaSingleName) {
+TEST_F(SchemaPathV3Test, ParseParentSchemaSingleName) {
     auto state = makeState("..orders");
 
     SchemaPath path = parseSchemaPath(*state);
@@ -149,7 +149,7 @@ TEST_F(SchemaPathV2Test, ParseParentSchemaSingleName) {
     EXPECT_EQ(getString(*state, path.components[0]), "orders");
 }
 
-TEST_F(SchemaPathV2Test, ParseParentSchemaMultipleParts) {
+TEST_F(SchemaPathV3Test, ParseParentSchemaMultipleParts) {
     auto state = makeState("..sibling.orders");
 
     SchemaPath path = parseSchemaPath(*state);
@@ -164,7 +164,7 @@ TEST_F(SchemaPathV2Test, ParseParentSchemaMultipleParts) {
 // Absolute Path Tests (schema.name)
 // =============================================================================
 
-TEST_F(SchemaPathV2Test, ParseAbsoluteTwoParts) {
+TEST_F(SchemaPathV3Test, ParseAbsoluteTwoParts) {
     auto state = makeState("public.orders");
 
     SchemaPath path = parseSchemaPath(*state);
@@ -175,7 +175,7 @@ TEST_F(SchemaPathV2Test, ParseAbsoluteTwoParts) {
     EXPECT_EQ(getString(*state, path.components[1]), "orders");
 }
 
-TEST_F(SchemaPathV2Test, ParseAbsoluteThreeParts) {
+TEST_F(SchemaPathV3Test, ParseAbsoluteThreeParts) {
     auto state = makeState("sys.catalog.tables");
 
     SchemaPath path = parseSchemaPath(*state);
@@ -187,7 +187,7 @@ TEST_F(SchemaPathV2Test, ParseAbsoluteThreeParts) {
     EXPECT_EQ(getString(*state, path.components[2]), "tables");
 }
 
-TEST_F(SchemaPathV2Test, ParseAbsoluteManyParts) {
+TEST_F(SchemaPathV3Test, ParseAbsoluteManyParts) {
     auto state = makeState("a.b.c.d.e.f");
 
     SchemaPath path = parseSchemaPath(*state);
@@ -200,7 +200,7 @@ TEST_F(SchemaPathV2Test, ParseAbsoluteManyParts) {
 // Edge Cases
 // =============================================================================
 
-TEST_F(SchemaPathV2Test, ParseEmptyInput) {
+TEST_F(SchemaPathV3Test, ParseEmptyInput) {
     auto state = makeState("");
 
     SchemaPath path = parseSchemaPath(*state);
@@ -208,7 +208,7 @@ TEST_F(SchemaPathV2Test, ParseEmptyInput) {
     EXPECT_TRUE(path.isEmpty());
 }
 
-TEST_F(SchemaPathV2Test, ParseDotWithoutFollowingIdentifier) {
+TEST_F(SchemaPathV3Test, ParseDotWithoutFollowingIdentifier) {
     auto state = makeState(". WHERE");
 
     SchemaPath path = parseSchemaPath(*state);
@@ -218,7 +218,7 @@ TEST_F(SchemaPathV2Test, ParseDotWithoutFollowingIdentifier) {
     EXPECT_TRUE(path.isEmpty());
 }
 
-TEST_F(SchemaPathV2Test, ParseDoubleDotWithoutFollowingIdentifier) {
+TEST_F(SchemaPathV3Test, ParseDoubleDotWithoutFollowingIdentifier) {
     auto state = makeState(".. SELECT");
 
     SchemaPath path = parseSchemaPath(*state);
@@ -231,7 +231,7 @@ TEST_F(SchemaPathV2Test, ParseDoubleDotWithoutFollowingIdentifier) {
 // SchemaPath Methods
 // =============================================================================
 
-TEST_F(SchemaPathV2Test, IsQualified) {
+TEST_F(SchemaPathV3Test, IsQualified) {
     auto state = makeState("name");
     SchemaPath unqualified = parseSchemaPath(*state);
     EXPECT_FALSE(unqualified.isQualified());
@@ -249,14 +249,14 @@ TEST_F(SchemaPathV2Test, IsQualified) {
     EXPECT_TRUE(absolute.isQualified());
 }
 
-TEST_F(SchemaPathV2Test, ObjectName) {
+TEST_F(SchemaPathV3Test, ObjectName) {
     auto state = makeState("sys.catalog.tables");
     SchemaPath path = parseSchemaPath(*state);
 
     EXPECT_EQ(getString(*state, path.objectName()), "tables");
 }
 
-TEST_F(SchemaPathV2Test, SchemaComponents) {
+TEST_F(SchemaPathV3Test, SchemaComponents) {
     auto state = makeState("sys.catalog.tables");
     SchemaPath path = parseSchemaPath(*state);
 
@@ -270,7 +270,7 @@ TEST_F(SchemaPathV2Test, SchemaComponents) {
 // SchemaPathToString Tests
 // =============================================================================
 
-TEST_F(SchemaPathV2Test, SchemaPathToString_Unqualified) {
+TEST_F(SchemaPathV3Test, SchemaPathToString_Unqualified) {
     auto state = makeState("orders");
     SchemaPath path = parseSchemaPath(*state);
 
@@ -278,7 +278,7 @@ TEST_F(SchemaPathV2Test, SchemaPathToString_Unqualified) {
     EXPECT_EQ(str, "orders");
 }
 
-TEST_F(SchemaPathV2Test, SchemaPathToString_Current) {
+TEST_F(SchemaPathV3Test, SchemaPathToString_Current) {
     auto state = makeState(".orders");
     SchemaPath path = parseSchemaPath(*state);
 
@@ -286,7 +286,7 @@ TEST_F(SchemaPathV2Test, SchemaPathToString_Current) {
     EXPECT_EQ(str, ".orders");
 }
 
-TEST_F(SchemaPathV2Test, SchemaPathToString_CurrentMultiple) {
+TEST_F(SchemaPathV3Test, SchemaPathToString_CurrentMultiple) {
     auto state = makeState(".sub.orders");
     SchemaPath path = parseSchemaPath(*state);
 
@@ -294,7 +294,7 @@ TEST_F(SchemaPathV2Test, SchemaPathToString_CurrentMultiple) {
     EXPECT_EQ(str, ".sub.orders");
 }
 
-TEST_F(SchemaPathV2Test, SchemaPathToString_Parent) {
+TEST_F(SchemaPathV3Test, SchemaPathToString_Parent) {
     auto state = makeState("..orders");
     SchemaPath path = parseSchemaPath(*state);
 
@@ -302,7 +302,7 @@ TEST_F(SchemaPathV2Test, SchemaPathToString_Parent) {
     EXPECT_EQ(str, "..orders");
 }
 
-TEST_F(SchemaPathV2Test, SchemaPathToString_Absolute) {
+TEST_F(SchemaPathV3Test, SchemaPathToString_Absolute) {
     auto state = makeState("sys.catalog.tables");
     SchemaPath path = parseSchemaPath(*state);
 
@@ -314,27 +314,27 @@ TEST_F(SchemaPathV2Test, SchemaPathToString_Absolute) {
 // CanStartSchemaPath Tests
 // =============================================================================
 
-TEST_F(SchemaPathV2Test, CanStartSchemaPath_Identifier) {
+TEST_F(SchemaPathV3Test, CanStartSchemaPath_Identifier) {
     auto state = makeState("orders");
     EXPECT_TRUE(canStartSchemaPath(*state));
 }
 
-TEST_F(SchemaPathV2Test, CanStartSchemaPath_Dot) {
+TEST_F(SchemaPathV3Test, CanStartSchemaPath_Dot) {
     auto state = makeState(".orders");
     EXPECT_TRUE(canStartSchemaPath(*state));
 }
 
-TEST_F(SchemaPathV2Test, CanStartSchemaPath_DoubleDot) {
+TEST_F(SchemaPathV3Test, CanStartSchemaPath_DoubleDot) {
     auto state = makeState("..orders");
     EXPECT_TRUE(canStartSchemaPath(*state));
 }
 
-TEST_F(SchemaPathV2Test, CanStartSchemaPath_Keyword) {
+TEST_F(SchemaPathV3Test, CanStartSchemaPath_Keyword) {
     auto state = makeState("SELECT");
     EXPECT_FALSE(canStartSchemaPath(*state));
 }
 
-TEST_F(SchemaPathV2Test, CanStartSchemaPath_Number) {
+TEST_F(SchemaPathV3Test, CanStartSchemaPath_Number) {
     auto state = makeState("123");
     EXPECT_FALSE(canStartSchemaPath(*state));
 }
@@ -343,7 +343,7 @@ TEST_F(SchemaPathV2Test, CanStartSchemaPath_Number) {
 // Table Reference Tests
 // =============================================================================
 
-TEST_F(SchemaPathV2Test, ParseTableRef_Simple) {
+TEST_F(SchemaPathV3Test, ParseTableRef_Simple) {
     auto state = makeState("orders");
 
     TableRef ref = parseTableRef(*state);
@@ -353,7 +353,7 @@ TEST_F(SchemaPathV2Test, ParseTableRef_Simple) {
     EXPECT_FALSE(ref.has_alias);
 }
 
-TEST_F(SchemaPathV2Test, ParseTableRef_WithExplicitAlias) {
+TEST_F(SchemaPathV3Test, ParseTableRef_WithExplicitAlias) {
     auto state = makeState("orders AS o");
 
     TableRef ref = parseTableRef(*state);
@@ -364,7 +364,7 @@ TEST_F(SchemaPathV2Test, ParseTableRef_WithExplicitAlias) {
     EXPECT_EQ(getString(*state, ref.alias), "o");
 }
 
-TEST_F(SchemaPathV2Test, ParseTableRef_WithImplicitAlias) {
+TEST_F(SchemaPathV3Test, ParseTableRef_WithImplicitAlias) {
     auto state = makeState("orders o");
 
     TableRef ref = parseTableRef(*state);
@@ -374,7 +374,7 @@ TEST_F(SchemaPathV2Test, ParseTableRef_WithImplicitAlias) {
     EXPECT_EQ(getString(*state, ref.alias), "o");
 }
 
-TEST_F(SchemaPathV2Test, ParseTableRef_QualifiedWithAlias) {
+TEST_F(SchemaPathV3Test, ParseTableRef_QualifiedWithAlias) {
     auto state = makeState("sys.catalog.tables AS t");
 
     TableRef ref = parseTableRef(*state);
@@ -385,7 +385,7 @@ TEST_F(SchemaPathV2Test, ParseTableRef_QualifiedWithAlias) {
     EXPECT_EQ(getString(*state, ref.alias), "t");
 }
 
-TEST_F(SchemaPathV2Test, ParseTableRef_CurrentSchema) {
+TEST_F(SchemaPathV3Test, ParseTableRef_CurrentSchema) {
     auto state = makeState(".orders o");
 
     TableRef ref = parseTableRef(*state);
@@ -394,7 +394,7 @@ TEST_F(SchemaPathV2Test, ParseTableRef_CurrentSchema) {
     EXPECT_TRUE(ref.has_alias);
 }
 
-TEST_F(SchemaPathV2Test, ParseTableRef_ParentSchema) {
+TEST_F(SchemaPathV3Test, ParseTableRef_ParentSchema) {
     auto state = makeState("..customers c");
 
     TableRef ref = parseTableRef(*state);
@@ -407,7 +407,7 @@ TEST_F(SchemaPathV2Test, ParseTableRef_ParentSchema) {
 // Column Reference Tests
 // =============================================================================
 
-TEST_F(SchemaPathV2Test, ParseColumnRef_Simple) {
+TEST_F(SchemaPathV3Test, ParseColumnRef_Simple) {
     auto state = makeState("id");
 
     ColumnRef ref = parseColumnRef(*state);
@@ -416,7 +416,7 @@ TEST_F(SchemaPathV2Test, ParseColumnRef_Simple) {
     EXPECT_FALSE(ref.has_table_qualifier);
 }
 
-TEST_F(SchemaPathV2Test, ParseColumnRef_TableQualified) {
+TEST_F(SchemaPathV3Test, ParseColumnRef_TableQualified) {
     auto state = makeState("orders.id");
 
     ColumnRef ref = parseColumnRef(*state);
@@ -427,7 +427,7 @@ TEST_F(SchemaPathV2Test, ParseColumnRef_TableQualified) {
     EXPECT_EQ(getString(*state, ref.table_path.components[0]), "orders");
 }
 
-TEST_F(SchemaPathV2Test, ParseColumnRef_SchemaTableQualified) {
+TEST_F(SchemaPathV3Test, ParseColumnRef_SchemaTableQualified) {
     auto state = makeState("public.orders.id");
 
     ColumnRef ref = parseColumnRef(*state);
@@ -440,7 +440,7 @@ TEST_F(SchemaPathV2Test, ParseColumnRef_SchemaTableQualified) {
     EXPECT_EQ(getString(*state, ref.table_path.components[1]), "orders");
 }
 
-TEST_F(SchemaPathV2Test, ParseColumnRef_CurrentSchemaQualified) {
+TEST_F(SchemaPathV3Test, ParseColumnRef_CurrentSchemaQualified) {
     auto state = makeState(".orders.id");
 
     ColumnRef ref = parseColumnRef(*state);
@@ -450,7 +450,7 @@ TEST_F(SchemaPathV2Test, ParseColumnRef_CurrentSchemaQualified) {
     EXPECT_EQ(ref.table_path.type, PathType::CURRENT);
 }
 
-TEST_F(SchemaPathV2Test, ParseColumnRef_ParentSchemaQualified) {
+TEST_F(SchemaPathV3Test, ParseColumnRef_ParentSchemaQualified) {
     auto state = makeState("..orders.id");
 
     ColumnRef ref = parseColumnRef(*state);
@@ -460,7 +460,7 @@ TEST_F(SchemaPathV2Test, ParseColumnRef_ParentSchemaQualified) {
     EXPECT_EQ(ref.table_path.type, PathType::PARENT);
 }
 
-TEST_F(SchemaPathV2Test, ParseColumnRef_DeepPath) {
+TEST_F(SchemaPathV3Test, ParseColumnRef_DeepPath) {
     auto state = makeState("sys.catalog.columns.name");
 
     ColumnRef ref = parseColumnRef(*state);
@@ -474,7 +474,7 @@ TEST_F(SchemaPathV2Test, ParseColumnRef_DeepPath) {
 // Integration Tests - Real SQL Patterns
 // =============================================================================
 
-TEST_F(SchemaPathV2Test, SelectFromCurrentSchema) {
+TEST_F(SchemaPathV3Test, SelectFromCurrentSchema) {
     // SELECT * FROM .orders
     auto state = makeState("SELECT * FROM .orders WHERE id = 1");
 
@@ -493,7 +493,7 @@ TEST_F(SchemaPathV2Test, SelectFromCurrentSchema) {
     EXPECT_EQ(state->current().type, TokenType::KW_WHERE);
 }
 
-TEST_F(SchemaPathV2Test, SelectFromParentSchema) {
+TEST_F(SchemaPathV3Test, SelectFromParentSchema) {
     // SELECT * FROM ..customers
     auto state = makeState("SELECT * FROM ..customers");
 
@@ -507,7 +507,7 @@ TEST_F(SchemaPathV2Test, SelectFromParentSchema) {
     EXPECT_EQ(getString(*state, ref.path.components[0]), "customers");
 }
 
-TEST_F(SchemaPathV2Test, SelectFromSystemCatalog) {
+TEST_F(SchemaPathV3Test, SelectFromSystemCatalog) {
     // SELECT * FROM sys.catalog.tables
     auto state = makeState("SELECT name FROM sys.catalog.tables AS t");
 
@@ -523,7 +523,7 @@ TEST_F(SchemaPathV2Test, SelectFromSystemCatalog) {
     EXPECT_EQ(getString(*state, ref.alias), "t");
 }
 
-TEST_F(SchemaPathV2Test, JoinWithMixedPaths) {
+TEST_F(SchemaPathV3Test, JoinWithMixedPaths) {
     // SELECT * FROM .orders o JOIN ..customers c ON o.customer_id = c.id
     auto state = makeState(".orders o");
 
@@ -537,7 +537,7 @@ TEST_F(SchemaPathV2Test, JoinWithMixedPaths) {
     EXPECT_EQ(getString(*state, customers.alias), "c");
 }
 
-TEST_F(SchemaPathV2Test, ColumnRefsInWhereClause) {
+TEST_F(SchemaPathV3Test, ColumnRefsInWhereClause) {
     // WHERE .orders.total > 100 AND ..customers.active = TRUE
     auto state = makeState(".orders.total");
     ColumnRef col1 = parseColumnRef(*state);
@@ -554,7 +554,7 @@ TEST_F(SchemaPathV2Test, ColumnRefsInWhereClause) {
 // PathType Utility Tests
 // =============================================================================
 
-TEST_F(SchemaPathV2Test, PathTypeToString) {
+TEST_F(SchemaPathV3Test, PathTypeToString) {
     EXPECT_STREQ(pathTypeToString(PathType::UNQUALIFIED), "UNQUALIFIED");
     EXPECT_STREQ(pathTypeToString(PathType::CURRENT), "CURRENT");
     EXPECT_STREQ(pathTypeToString(PathType::PARENT), "PARENT");

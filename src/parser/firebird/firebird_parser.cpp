@@ -24,7 +24,7 @@ namespace scratchbird::parser::firebird {
 
 // Namespace aliases to avoid conflicts
 namespace fb = scratchbird::parser::firebird;
-namespace ast = scratchbird::parser::v2;
+namespace ast = scratchbird::parser::v3;
 
 // =============================================================================
 // ParseError
@@ -409,8 +409,8 @@ std::string Parser::captureStatementBody() {
 
 namespace {
 
-// Convert Firebird SourceSpan to v2 SourceSpan
-ast::SourceSpan toV2Span(const fb::SourceSpan& span) {
+// Convert Firebird SourceSpan to parser AST SourceSpan
+ast::SourceSpan toParserSpan(const fb::SourceSpan& span) {
     ast::SourceLocation loc;
     loc.line = span.start.line;
     loc.column = span.start.column;
@@ -917,7 +917,7 @@ Expression* Parser::parsePrimaryExpression() {
     // Literals
     if (check(TokenType::INTEGER_LITERAL)) {
         auto* expr = allocate<ast::LiteralExpr>();
-        expr->span = toV2Span(current_token_.span);
+        expr->span = toParserSpan(current_token_.span);
         expr->literal_type = ast::LiteralType::INTEGER;
         expr->int_value = current_token_.value.int_value;
         advance();
@@ -926,7 +926,7 @@ Expression* Parser::parsePrimaryExpression() {
 
     if (check(TokenType::FLOAT_LITERAL)) {
         auto* expr = allocate<ast::LiteralExpr>();
-        expr->span = toV2Span(current_token_.span);
+        expr->span = toParserSpan(current_token_.span);
         expr->literal_type = ast::LiteralType::FLOAT;
         expr->float_value = current_token_.value.float_value;
         advance();
@@ -935,7 +935,7 @@ Expression* Parser::parsePrimaryExpression() {
 
     if (check(TokenType::STRING_LITERAL) || check(TokenType::Q_STRING_LITERAL)) {
         auto* expr = allocate<ast::LiteralExpr>();
-        expr->span = toV2Span(current_token_.span);
+        expr->span = toParserSpan(current_token_.span);
         expr->literal_type = ast::LiteralType::STRING;
         expr->string_value = internFromLexer(current_token_.value.string_id);
         advance();
@@ -944,7 +944,7 @@ Expression* Parser::parsePrimaryExpression() {
 
     if (check(TokenType::BLOB_LITERAL)) {
         auto* expr = allocate<ast::LiteralExpr>();
-        expr->span = toV2Span(current_token_.span);
+        expr->span = toParserSpan(current_token_.span);
         expr->literal_type = ast::LiteralType::BLOB;
         expr->string_value = internFromLexer(current_token_.value.string_id);
         advance();
@@ -1076,11 +1076,11 @@ Expression* Parser::parsePrimaryExpression() {
     // Parameter - store as a column reference with special naming
     if (check(TokenType::PARAMETER)) {
         auto* expr = allocate<ast::ColumnRefExpr>();
-        expr->span = toV2Span(current_token_.span);
+        expr->span = toParserSpan(current_token_.span);
         // Store parameter name as a column reference
         expr->column = ast::ColumnRef(
             internFromLexer(current_token_.value.string_id),
-            toV2Span(current_token_.span)
+            toParserSpan(current_token_.span)
         );
         advance();
         return expr;
@@ -1089,7 +1089,7 @@ Expression* Parser::parsePrimaryExpression() {
     // Identifier or non-reserved keyword (column reference or function call)
     // Non-reserved keywords like COUNT, MAX, MIN can be used as function names
     if (check(TokenType::IDENTIFIER) || isNonReservedKeyword()) {
-        ast::SourceSpan span = toV2Span(current_token_.span);
+        ast::SourceSpan span = toParserSpan(current_token_.span);
         ast::StringPool::StringId id;
 
         if (check(TokenType::IDENTIFIER)) {
@@ -1534,7 +1534,7 @@ Expression* Parser::parseArrayExpression() {
 
 ast::TypeName Parser::parseTypeName() {
     ast::TypeName type;
-    type.span = toV2Span(current_token_.span);
+    type.span = toParserSpan(current_token_.span);
 
     // Parse base type name
     if (check(TokenType::IDENTIFIER)) {
@@ -1620,7 +1620,7 @@ bool Parser::isFirebirdTypeName() const {
 
 ast::TypeName Parser::parseFirebirdType() {
     ast::TypeName type;
-    type.span = toV2Span(current_token_.span);
+    type.span = toParserSpan(current_token_.span);
 
     // Map Firebird type keywords to standard type names
     switch (current_token_.type) {
@@ -1885,7 +1885,7 @@ Statement* Parser::parseCreateStatement() {
 
 Statement* Parser::parseCreateDatabase() {
     auto* stmt = allocate<ast::CreateDatabaseStmt>();
-    stmt->span = toV2Span(current_token_.span);
+    stmt->span = toParserSpan(current_token_.span);
 
     auto parseValueTokenText = [&]() -> std::string {
         if (check(TokenType::STRING_LITERAL) || check(TokenType::Q_STRING_LITERAL)) {
@@ -2176,7 +2176,7 @@ Statement* Parser::parseDropStatement() {
 
 Statement* Parser::parseDropDatabase() {
     auto* stmt = allocate<ast::DropDatabaseStmt>();
-    stmt->span = toV2Span(current_token_.span);
+    stmt->span = toParserSpan(current_token_.span);
 
     if (matchKeyword(TokenType::KW_IF)) {
         consume(TokenType::KW_EXISTS, "Expected EXISTS after IF");
@@ -2215,7 +2215,7 @@ Statement* Parser::parseDropDatabase() {
 
 Statement* Parser::parseAlterDatabase() {
     auto* stmt = allocate<ast::AlterDatabaseStmt>();
-    stmt->span = toV2Span(current_token_.span);
+    stmt->span = toParserSpan(current_token_.span);
 
     auto matchIdentifierText = [&](const char* keyword) -> bool {
         if (!check(TokenType::IDENTIFIER)) {
@@ -2747,7 +2747,7 @@ Statement* Parser::parseAlterDomainImpl() {
 // Stub for ALTER INDEX
 Statement* Parser::parseAlterIndexImpl() {
     auto* stmt = allocate<ast::AlterIndexStmt>();
-    stmt->span = toV2Span(current_token_.span);
+    stmt->span = toParserSpan(current_token_.span);
 
     stmt->index_path = parseSchemaPath();
 

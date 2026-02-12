@@ -8,18 +8,18 @@
  * https://www.firebirdsql.org/en/initial-developer-s-public-license-version-1-0/
  */
 /**
- * Unit tests for Lexer v2.0 - Gatekeeper Keyword Model
+ * Unit tests for Lexer v3.0 - Gatekeeper Keyword Model
  *
  * Tests the "Smart Parser, Dumb Lexer" architecture where only ~35 keywords
  * are reserved (Gatekeepers) and all others are emitted as IDENTIFIER.
  */
 
 #include <gtest/gtest.h>
-#include "scratchbird/parser/lexer_v2.h"
+#include "scratchbird/parser/lexer_v3.h"
 
-using namespace scratchbird::parser::v2;
+using namespace scratchbird::parser::v3;
 
-class LexerV2Test : public ::testing::Test {
+class LexerV3Test : public ::testing::Test {
 protected:
     void SetUp() override {
         error_reporter_ = std::make_unique<SimpleErrorReporter>();
@@ -51,32 +51,32 @@ protected:
 // Basic Token Tests
 // =============================================================================
 
-TEST_F(LexerV2Test, EmptyInput) {
+TEST_F(LexerV3Test, EmptyInput) {
     auto tokens = tokenize("");
     ASSERT_EQ(tokens.size(), 1);
     EXPECT_EQ(tokens[0].type, TokenType::END_OF_FILE);
 }
 
-TEST_F(LexerV2Test, WhitespaceOnly) {
+TEST_F(LexerV3Test, WhitespaceOnly) {
     auto tokens = tokenize("   \t\n  ");
     ASSERT_EQ(tokens.size(), 1);
     EXPECT_EQ(tokens[0].type, TokenType::END_OF_FILE);
 }
 
-TEST_F(LexerV2Test, SingleLineComment) {
+TEST_F(LexerV3Test, SingleLineComment) {
     auto tokens = tokenize("-- this is a comment\nSELECT");
     ASSERT_EQ(tokens.size(), 2);
     EXPECT_EQ(tokens[0].type, TokenType::KW_SELECT);
     EXPECT_EQ(tokens[1].type, TokenType::END_OF_FILE);
 }
 
-TEST_F(LexerV2Test, BlockComment) {
+TEST_F(LexerV3Test, BlockComment) {
     auto tokens = tokenize("/* comment */ SELECT /* another */");
     ASSERT_EQ(tokens.size(), 2);
     EXPECT_EQ(tokens[0].type, TokenType::KW_SELECT);
 }
 
-TEST_F(LexerV2Test, NestedBlockComment) {
+TEST_F(LexerV3Test, NestedBlockComment) {
     auto tokens = tokenize("/* outer /* nested */ end */ SELECT");
     ASSERT_EQ(tokens.size(), 2);
     EXPECT_EQ(tokens[0].type, TokenType::KW_SELECT);
@@ -86,7 +86,7 @@ TEST_F(LexerV2Test, NestedBlockComment) {
 // Gatekeeper Keyword Tests
 // =============================================================================
 
-TEST_F(LexerV2Test, GatekeeperKeywords_StatementInitiators) {
+TEST_F(LexerV3Test, GatekeeperKeywords_StatementInitiators) {
     // All statement initiators should be recognized as keywords
     auto test = [this](const char* text, TokenType expected) {
         auto tokens = tokenize(text);
@@ -119,7 +119,7 @@ TEST_F(LexerV2Test, GatekeeperKeywords_StatementInitiators) {
     test("PREPARE", TokenType::KW_PREPARE);
 }
 
-TEST_F(LexerV2Test, GatekeeperKeywords_ClauseInitiators) {
+TEST_F(LexerV3Test, GatekeeperKeywords_ClauseInitiators) {
     auto test = [this](const char* text, TokenType expected) {
         auto tokens = tokenize(text);
         ASSERT_GE(tokens.size(), 1) << "Testing: " << text;
@@ -139,7 +139,7 @@ TEST_F(LexerV2Test, GatekeeperKeywords_ClauseInitiators) {
     test("WITH", TokenType::KW_WITH);
 }
 
-TEST_F(LexerV2Test, GatekeeperKeywords_ExpressionKeywords) {
+TEST_F(LexerV3Test, GatekeeperKeywords_ExpressionKeywords) {
     auto test = [this](const char* text, TokenType expected) {
         auto tokens = tokenize(text);
         ASSERT_GE(tokens.size(), 1) << "Testing: " << text;
@@ -165,7 +165,7 @@ TEST_F(LexerV2Test, GatekeeperKeywords_ExpressionKeywords) {
     test("AS", TokenType::KW_AS);
 }
 
-TEST_F(LexerV2Test, GatekeeperKeywords_CaseInsensitive) {
+TEST_F(LexerV3Test, GatekeeperKeywords_CaseInsensitive) {
     auto tokens1 = tokenize("select");
     EXPECT_EQ(tokens1[0].type, TokenType::KW_SELECT);
 
@@ -180,7 +180,7 @@ TEST_F(LexerV2Test, GatekeeperKeywords_CaseInsensitive) {
 // Contextual Keywords (Now Identifiers) Tests
 // =============================================================================
 
-TEST_F(LexerV2Test, ContextualKeywords_TypeNames_AreIdentifiers) {
+TEST_F(LexerV3Test, ContextualKeywords_TypeNames_AreIdentifiers) {
     // Type names should be emitted as IDENTIFIER, not keywords
     auto test = [this](const char* text) {
         auto tokens = tokenize(text);
@@ -200,7 +200,7 @@ TEST_F(LexerV2Test, ContextualKeywords_TypeNames_AreIdentifiers) {
     test("JSONB");
 }
 
-TEST_F(LexerV2Test, ContextualKeywords_DDLObjects_AreIdentifiers) {
+TEST_F(LexerV3Test, ContextualKeywords_DDLObjects_AreIdentifiers) {
     auto test = [this](const char* text) {
         auto tokens = tokenize(text);
         ASSERT_GE(tokens.size(), 1) << "Testing: " << text;
@@ -218,7 +218,7 @@ TEST_F(LexerV2Test, ContextualKeywords_DDLObjects_AreIdentifiers) {
     test("DATABASE");
 }
 
-TEST_F(LexerV2Test, ContextualKeywords_CommonNames_AreIdentifiers) {
+TEST_F(LexerV3Test, ContextualKeywords_CommonNames_AreIdentifiers) {
     // These common names should be usable as column names without quoting
     auto test = [this](const char* text) {
         auto tokens = tokenize(text);
@@ -249,7 +249,7 @@ TEST_F(LexerV2Test, ContextualKeywords_CommonNames_AreIdentifiers) {
 // Real SQL Statement Tests
 // =============================================================================
 
-TEST_F(LexerV2Test, SelectStatement_Basic) {
+TEST_F(LexerV3Test, SelectStatement_Basic) {
     auto lexer = makeLexer("SELECT id, name FROM users WHERE active = TRUE");
 
     EXPECT_EQ(lexer->nextToken().type, TokenType::KW_SELECT);
@@ -277,7 +277,7 @@ TEST_F(LexerV2Test, SelectStatement_Basic) {
     EXPECT_EQ(lexer->nextToken().type, TokenType::END_OF_FILE);
 }
 
-TEST_F(LexerV2Test, CreateTable_WithReservedWordColumns) {
+TEST_F(LexerV3Test, CreateTable_WithReservedWordColumns) {
     // This is the key test case from the spec:
     // "CREATE TABLE procedure (value INT)"
     // - CREATE is a Gatekeeper → KW_CREATE
@@ -298,7 +298,7 @@ TEST_F(LexerV2Test, CreateTable_WithReservedWordColumns) {
     EXPECT_EQ(tokens[6].type, TokenType::RIGHT_PAREN);
 }
 
-TEST_F(LexerV2Test, Join_Statement) {
+TEST_F(LexerV3Test, Join_Statement) {
     // LEFT is now contextual (IDENTIFIER), not a Gatekeeper keyword
     auto tokens = tokenize("SELECT a.x FROM a LEFT JOIN b ON a.id = b.id");
 
@@ -319,7 +319,7 @@ TEST_F(LexerV2Test, Join_Statement) {
 // Literal Tests
 // =============================================================================
 
-TEST_F(LexerV2Test, IntegerLiterals) {
+TEST_F(LexerV3Test, IntegerLiterals) {
     auto test = [this](const char* text, int64_t expected) {
         auto tokens = tokenize(text);
         ASSERT_GE(tokens.size(), 1) << "Testing: " << text;
@@ -332,21 +332,21 @@ TEST_F(LexerV2Test, IntegerLiterals) {
     test("999999999", 999999999);
 }
 
-TEST_F(LexerV2Test, HexLiterals) {
+TEST_F(LexerV3Test, HexLiterals) {
     auto tokens = tokenize("0x1A");
     ASSERT_GE(tokens.size(), 1);
     EXPECT_EQ(tokens[0].type, TokenType::INTEGER_LITERAL);
     EXPECT_EQ(tokens[0].value.int_value, 0x1A);
 }
 
-TEST_F(LexerV2Test, BinaryLiterals) {
+TEST_F(LexerV3Test, BinaryLiterals) {
     auto tokens = tokenize("0b1010");
     ASSERT_GE(tokens.size(), 1);
     EXPECT_EQ(tokens[0].type, TokenType::INTEGER_LITERAL);
     EXPECT_EQ(tokens[0].value.int_value, 10); // 0b1010 = 10
 }
 
-TEST_F(LexerV2Test, FloatLiterals) {
+TEST_F(LexerV3Test, FloatLiterals) {
     auto test = [this](const char* text, double expected) {
         auto tokens = tokenize(text);
         ASSERT_GE(tokens.size(), 1) << "Testing: " << text;
@@ -361,7 +361,7 @@ TEST_F(LexerV2Test, FloatLiterals) {
     test("1.5e-3", 1.5e-3);
 }
 
-TEST_F(LexerV2Test, StringLiterals) {
+TEST_F(LexerV3Test, StringLiterals) {
     auto lexer = makeLexer("'hello world'");
     auto token = lexer->nextToken();
     EXPECT_EQ(token.type, TokenType::STRING_LITERAL);
@@ -370,7 +370,7 @@ TEST_F(LexerV2Test, StringLiterals) {
     EXPECT_EQ(text, "hello world");
 }
 
-TEST_F(LexerV2Test, StringLiterals_EscapedQuotes) {
+TEST_F(LexerV3Test, StringLiterals_EscapedQuotes) {
     auto lexer = makeLexer("'it''s a test'");
     auto token = lexer->nextToken();
     EXPECT_EQ(token.type, TokenType::STRING_LITERAL);
@@ -379,7 +379,7 @@ TEST_F(LexerV2Test, StringLiterals_EscapedQuotes) {
     EXPECT_EQ(text, "it's a test");
 }
 
-TEST_F(LexerV2Test, EscapeStringLiterals) {
+TEST_F(LexerV3Test, EscapeStringLiterals) {
     auto lexer = makeLexer("E'hello\\nworld'");
     auto token = lexer->nextToken();
     EXPECT_EQ(token.type, TokenType::STRING_LITERAL);
@@ -388,7 +388,7 @@ TEST_F(LexerV2Test, EscapeStringLiterals) {
     EXPECT_EQ(text, "hello\nworld");
 }
 
-TEST_F(LexerV2Test, BlobLiterals) {
+TEST_F(LexerV3Test, BlobLiterals) {
     auto lexer = makeLexer("X'DEADBEEF'");
     auto token = lexer->nextToken();
     EXPECT_EQ(token.type, TokenType::BLOB_LITERAL);
@@ -401,7 +401,7 @@ TEST_F(LexerV2Test, BlobLiterals) {
 // Identifier Tests
 // =============================================================================
 
-TEST_F(LexerV2Test, SimpleIdentifier) {
+TEST_F(LexerV3Test, SimpleIdentifier) {
     auto lexer = makeLexer("my_column");
     auto token = lexer->nextToken();
     EXPECT_EQ(token.type, TokenType::IDENTIFIER);
@@ -411,7 +411,7 @@ TEST_F(LexerV2Test, SimpleIdentifier) {
     EXPECT_EQ(text, "my_column");
 }
 
-TEST_F(LexerV2Test, QuotedIdentifier) {
+TEST_F(LexerV3Test, QuotedIdentifier) {
     auto lexer = makeLexer("\"My Column\"");
     auto token = lexer->nextToken();
     EXPECT_EQ(token.type, TokenType::IDENTIFIER);
@@ -421,7 +421,7 @@ TEST_F(LexerV2Test, QuotedIdentifier) {
     EXPECT_EQ(text, "My Column");
 }
 
-TEST_F(LexerV2Test, QuotedIdentifier_EscapedQuotes) {
+TEST_F(LexerV3Test, QuotedIdentifier_EscapedQuotes) {
     auto lexer = makeLexer("\"He said \"\"Hello\"\"\"");
     auto token = lexer->nextToken();
     EXPECT_EQ(token.type, TokenType::IDENTIFIER);
@@ -435,7 +435,7 @@ TEST_F(LexerV2Test, QuotedIdentifier_EscapedQuotes) {
 // Parameter Tests
 // =============================================================================
 
-TEST_F(LexerV2Test, PositionalParameters) {
+TEST_F(LexerV3Test, PositionalParameters) {
     auto test = [this](const char* text, uint32_t expected) {
         auto tokens = tokenize(text);
         ASSERT_GE(tokens.size(), 1) << "Testing: " << text;
@@ -448,7 +448,7 @@ TEST_F(LexerV2Test, PositionalParameters) {
     test("$123", 123);
 }
 
-TEST_F(LexerV2Test, NamedParameters) {
+TEST_F(LexerV3Test, NamedParameters) {
     auto lexer = makeLexer(":user_id");
     auto token = lexer->nextToken();
     EXPECT_EQ(token.type, TokenType::PARAMETER);
@@ -461,7 +461,7 @@ TEST_F(LexerV2Test, NamedParameters) {
 // Operator Tests
 // =============================================================================
 
-TEST_F(LexerV2Test, ArithmeticOperators) {
+TEST_F(LexerV3Test, ArithmeticOperators) {
     auto tokens = tokenize("+ - * / % ^");
     EXPECT_EQ(tokens[0].type, TokenType::PLUS);
     EXPECT_EQ(tokens[1].type, TokenType::MINUS);
@@ -471,7 +471,7 @@ TEST_F(LexerV2Test, ArithmeticOperators) {
     EXPECT_EQ(tokens[5].type, TokenType::CARET);
 }
 
-TEST_F(LexerV2Test, ComparisonOperators) {
+TEST_F(LexerV3Test, ComparisonOperators) {
     auto tokens = tokenize("= <> != < > <= >=");
     EXPECT_EQ(tokens[0].type, TokenType::EQUAL);
     EXPECT_EQ(tokens[1].type, TokenType::NOT_EQUAL);
@@ -482,12 +482,12 @@ TEST_F(LexerV2Test, ComparisonOperators) {
     EXPECT_EQ(tokens[6].type, TokenType::GREATER_EQUAL);
 }
 
-TEST_F(LexerV2Test, StringOperators) {
+TEST_F(LexerV3Test, StringOperators) {
     auto tokens = tokenize("||");
     EXPECT_EQ(tokens[0].type, TokenType::DOUBLE_PIPE);
 }
 
-TEST_F(LexerV2Test, JSONOperators) {
+TEST_F(LexerV3Test, JSONOperators) {
     auto tokens = tokenize("-> ->> #> #>>");
     EXPECT_EQ(tokens[0].type, TokenType::ARROW);
     EXPECT_EQ(tokens[1].type, TokenType::DOUBLE_ARROW);
@@ -495,7 +495,7 @@ TEST_F(LexerV2Test, JSONOperators) {
     EXPECT_EQ(tokens[3].type, TokenType::HASH_DOUBLE_ARROW);
 }
 
-TEST_F(LexerV2Test, ArrayOperators) {
+TEST_F(LexerV3Test, ArrayOperators) {
     auto tokens = tokenize("@> <@ && -|-");
     EXPECT_EQ(tokens[0].type, TokenType::AT_GREATER);
     EXPECT_EQ(tokens[1].type, TokenType::LESS_AT);
@@ -503,18 +503,18 @@ TEST_F(LexerV2Test, ArrayOperators) {
     EXPECT_EQ(tokens[3].type, TokenType::MINUS_PIPE_MINUS);
 }
 
-TEST_F(LexerV2Test, TypeCastOperator) {
+TEST_F(LexerV3Test, TypeCastOperator) {
     auto tokens = tokenize("::");
     EXPECT_EQ(tokens[0].type, TokenType::DOUBLE_COLON);
 }
 
-TEST_F(LexerV2Test, AssignmentOperators) {
+TEST_F(LexerV3Test, AssignmentOperators) {
     auto tokens = tokenize(":= =>");
     EXPECT_EQ(tokens[0].type, TokenType::COLON_EQUALS);
     EXPECT_EQ(tokens[1].type, TokenType::EQUALS_GREATER);
 }
 
-TEST_F(LexerV2Test, RegexOperators) {
+TEST_F(LexerV3Test, RegexOperators) {
     auto tokens = tokenize("~ ~* !~ !~*");
     EXPECT_EQ(tokens[0].type, TokenType::TILDE);
     EXPECT_EQ(tokens[1].type, TokenType::TILDE_STAR);
@@ -522,7 +522,7 @@ TEST_F(LexerV2Test, RegexOperators) {
     EXPECT_EQ(tokens[3].type, TokenType::EXCLAIM_TILDE_STAR);
 }
 
-TEST_F(LexerV2Test, BitOperators) {
+TEST_F(LexerV3Test, BitOperators) {
     auto tokens = tokenize("& | << >>");
     EXPECT_EQ(tokens[0].type, TokenType::AMPERSAND);
     EXPECT_EQ(tokens[1].type, TokenType::PIPE);
@@ -534,7 +534,7 @@ TEST_F(LexerV2Test, BitOperators) {
 // Punctuation Tests
 // =============================================================================
 
-TEST_F(LexerV2Test, Punctuation) {
+TEST_F(LexerV3Test, Punctuation) {
     auto tokens = tokenize("( ) [ ] { } , ; . :");
     EXPECT_EQ(tokens[0].type, TokenType::LEFT_PAREN);
     EXPECT_EQ(tokens[1].type, TokenType::RIGHT_PAREN);
@@ -552,7 +552,7 @@ TEST_F(LexerV2Test, Punctuation) {
 // Source Location Tests
 // =============================================================================
 
-TEST_F(LexerV2Test, SourceLocation_Simple) {
+TEST_F(LexerV3Test, SourceLocation_Simple) {
     auto lexer = makeLexer("SELECT id");
 
     auto select_token = lexer->nextToken();
@@ -566,7 +566,7 @@ TEST_F(LexerV2Test, SourceLocation_Simple) {
     EXPECT_EQ(id_token.span.length, 2);
 }
 
-TEST_F(LexerV2Test, SourceLocation_MultiLine) {
+TEST_F(LexerV3Test, SourceLocation_MultiLine) {
     auto lexer = makeLexer("SELECT\nid");
 
     auto select_token = lexer->nextToken();
@@ -582,7 +582,7 @@ TEST_F(LexerV2Test, SourceLocation_MultiLine) {
 // Peek Tests
 // =============================================================================
 
-TEST_F(LexerV2Test, PeekToken) {
+TEST_F(LexerV3Test, PeekToken) {
     auto lexer = makeLexer("SELECT FROM");
 
     // Peek should not consume
@@ -606,21 +606,21 @@ TEST_F(LexerV2Test, PeekToken) {
 // Error Handling Tests
 // =============================================================================
 
-TEST_F(LexerV2Test, UnterminatedString) {
+TEST_F(LexerV3Test, UnterminatedString) {
     auto lexer = makeLexer("'unterminated");
     auto token = lexer->nextToken();
     // Should still return a string token (lexer consumes to end)
     EXPECT_EQ(token.type, TokenType::STRING_LITERAL);
 }
 
-TEST_F(LexerV2Test, UnterminatedBlockComment) {
+TEST_F(LexerV3Test, UnterminatedBlockComment) {
     auto lexer = makeLexer("/* unterminated");
     auto token = lexer->nextToken();
     EXPECT_EQ(token.type, TokenType::END_OF_FILE);
     EXPECT_TRUE(error_reporter_->hasErrors());
 }
 
-TEST_F(LexerV2Test, InvalidCharacter) {
+TEST_F(LexerV3Test, InvalidCharacter) {
     auto lexer = makeLexer("SELECT ` FROM");
     lexer->nextToken(); // SELECT
     auto token = lexer->nextToken();
@@ -632,7 +632,7 @@ TEST_F(LexerV2Test, InvalidCharacter) {
 // Complex Statement Tests
 // =============================================================================
 
-TEST_F(LexerV2Test, ComplexQuery) {
+TEST_F(LexerV3Test, ComplexQuery) {
     const char* sql = R"(
         SELECT u.id, u.name, COUNT(*) as total
         FROM users u
@@ -655,7 +655,7 @@ TEST_F(LexerV2Test, ComplexQuery) {
     EXPECT_EQ(tokens.back().type, TokenType::END_OF_FILE);
 }
 
-TEST_F(LexerV2Test, InsertWithTypeCast) {
+TEST_F(LexerV3Test, InsertWithTypeCast) {
     const char* sql = "INSERT INTO t (col) VALUES ($1::INTEGER)";
     auto tokens = tokenize(sql);
 
@@ -689,7 +689,7 @@ TEST_F(LexerV2Test, InsertWithTypeCast) {
 // String Pool Tests
 // =============================================================================
 
-TEST_F(LexerV2Test, StringPool_Interning) {
+TEST_F(LexerV3Test, StringPool_Interning) {
     StringPool pool;
 
     auto id1 = pool.intern("hello");
@@ -705,7 +705,7 @@ TEST_F(LexerV2Test, StringPool_Interning) {
     EXPECT_EQ(pool.get(id2), "world");
 }
 
-TEST_F(LexerV2Test, StringPool_Clear) {
+TEST_F(LexerV3Test, StringPool_Clear) {
     StringPool pool;
 
     auto id1 = pool.intern("test");
