@@ -81,6 +81,9 @@ struct HandoffInfo {
     std::vector<uint8_t> initial_bytes;
 };
 
+bool tryParseProtocolType(const std::string& protocol,
+                          scratchbird::network::ProtocolType& out);
+
 void handleSignal(int) {
     g_shutdown.store(true, std::memory_order_release);
 }
@@ -193,6 +196,12 @@ bool validateConfig(const ParserConfig& config) {
             std::cerr << "TLS config not readable: " << config.tls_config << "\n";
             return false;
         }
+    }
+    scratchbird::network::ProtocolType protocol_type =
+        scratchbird::network::ProtocolType::AUTO_DETECT;
+    if (!tryParseProtocolType(config.protocol, protocol_type)) {
+        std::cerr << "Unsupported parser protocol: " << config.protocol << "\n";
+        return false;
     }
     return true;
 }
@@ -675,6 +684,9 @@ int runParser(ParserConfig& config) {
         if (type == scratchbird::network::ControlPlaneMessageType::HANDOFF_SOCKET) {
             HandoffInfo info;
             if (!parseHandoffPayload(msg, info)) {
+                if (recv_fd != scratchbird::network::INVALID_SOCKET_VALUE) {
+                    closeSocketFd(recv_fd);
+                }
                 scratchbird::network::ControlPlaneMessage nack;
                 nack.header.message_type = static_cast<uint16_t>(
                     scratchbird::network::ControlPlaneMessageType::HANDOFF_ACK);
