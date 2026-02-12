@@ -25,8 +25,8 @@
 // - Executor: CTE materialization and scanning implemented
 //
 // Files Tested:
-// - src/parser/parser_v2.cpp (parseWithClause)
-// - src/sblr/bytecode_generator_v2.cpp (CTE bytecode generation)
+// - src/parser/parser_v3.cpp (WITH/CTE parsing)
+// - src/parser/v3_emitter.cpp (CTE opcode emission)
 // - src/sblr/executor.cpp (CTE execution)
 
 #include <gtest/gtest.h>
@@ -36,7 +36,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/sblr/executor.h"
-#include "scratchbird/sblr/query_compiler_v2.h"
+#include "scratchbird/sblr/query_compiler_v3.h"
 #include "test_helpers.h"
 
 #include <filesystem>
@@ -82,7 +82,7 @@ protected:
         schema_id_ = schema.schema_id;
 
         // Create compiler + executor
-        compiler_ = std::make_unique<QueryCompilerV2>(db_.get());
+        compiler_ = std::make_unique<QueryCompilerV3>(db_.get());
         compiler_->setCurrentSchema(schema_id_);
 
         executor_ = std::make_unique<Executor>(db_.get());
@@ -162,7 +162,7 @@ protected:
     std::unique_ptr<core::Database> db_;
     std::unique_ptr<core::ConnectionContext> conn_ctx_;
     std::unique_ptr<Executor> executor_;
-    std::unique_ptr<QueryCompilerV2> compiler_;
+    std::unique_ptr<QueryCompilerV3> compiler_;
     core::ID schema_id_;
     uint32_t proc_id_ = 0;
 };

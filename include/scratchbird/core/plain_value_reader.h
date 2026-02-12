@@ -707,6 +707,91 @@ namespace scratchbird::core
                 break;
             }
             case DataType::ARRAY:
+            {
+                int32_t ndim = 0;
+                int32_t flags = 0;
+                uint32_t elem_oid = 0;
+                uint32_t ndim_u = 0;
+                uint32_t flags_u = 0;
+                if (!readUint32LE(data, size, offset, ndim_u) ||
+                    !readUint32LE(data, size, offset, flags_u) ||
+                    !readUint32LE(data, size, offset, elem_oid))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid ARRAY header");
+                    return Status::DATA_CORRUPTED;
+                }
+                ndim = static_cast<int32_t>(ndim_u);
+                flags = static_cast<int32_t>(flags_u);
+                (void)elem_oid;
+                if (ndim < 0)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid ARRAY dimensions");
+                    return Status::DATA_CORRUPTED;
+                }
+
+                uint64_t total_elements = 1;
+                for (int32_t i = 0; i < ndim; ++i)
+                {
+                    int32_t dim = 0;
+                    int32_t lower = 0;
+                    uint32_t dim_u = 0;
+                    uint32_t lower_u = 0;
+                    if (!readUint32LE(data, size, offset, dim_u) ||
+                        !readUint32LE(data, size, offset, lower_u))
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid ARRAY dimension header");
+                        return Status::DATA_CORRUPTED;
+                    }
+                    dim = static_cast<int32_t>(dim_u);
+                    lower = static_cast<int32_t>(lower_u);
+                    (void)lower;
+                    if (dim < 0)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid ARRAY dimension size");
+                        return Status::DATA_CORRUPTED;
+                    }
+                    if (dim == 0)
+                    {
+                        total_elements = 0;
+                    }
+                    else if (total_elements != 0)
+                    {
+                        total_elements *= static_cast<uint64_t>(dim);
+                    }
+                }
+
+                if ((flags & 1) != 0 && total_elements > 0)
+                {
+                    size_t bitmap_bytes = (static_cast<size_t>(total_elements) + 7) / 8;
+                    if (!skipBytes(size, offset, bitmap_bytes))
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid ARRAY null bitmap");
+                        return Status::DATA_CORRUPTED;
+                    }
+                }
+
+                for (uint64_t i = 0; i < total_elements; ++i)
+                {
+                    int32_t element_len = 0;
+                    uint32_t element_len_u = 0;
+                    if (!readUint32LE(data, size, offset, element_len_u))
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid ARRAY element length");
+                        return Status::DATA_CORRUPTED;
+                    }
+                    element_len = static_cast<int32_t>(element_len_u);
+                    if (element_len < 0)
+                    {
+                        continue;
+                    }
+                    if (!skipBytes(size, offset, static_cast<size_t>(element_len)))
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "ARRAY element payload exceeds buffer");
+                        return Status::DATA_CORRUPTED;
+                    }
+                }
+                break;
+            }
             case DataType::VARIANT:
             {
                 Status status = skipValueList(data, size, offset, ctx);

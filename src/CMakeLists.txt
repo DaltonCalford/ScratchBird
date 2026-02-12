@@ -102,9 +102,6 @@ set_target_properties(scratchbird_parser PROPERTIES
 
 # SBLR runtime library: scratchbird_sblr
 set(SCRATCHBIRD_SBLR_COMPILER_SOURCES
-    ${CMAKE_CURRENT_SOURCE_DIR}/sblr/bytecode_generator_v2.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/sblr/semantic_analyzer_v2.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/sblr/query_compiler_v2.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/sblr/firebird_query_compiler.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/sblr/mysql_query_compiler.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/sblr/postgresql_query_compiler.cpp
@@ -114,13 +111,14 @@ file(GLOB_RECURSE SCRATCHBIRD_SBLR_SOURCES
     sblr/*.cpp
 )
 list(FILTER SCRATCHBIRD_SBLR_SOURCES EXCLUDE REGEX
-    ".*/(bytecode_generator_v2|semantic_analyzer_v2|query_compiler_v2|firebird_query_compiler|mysql_query_compiler|postgresql_query_compiler)\\.cpp$"
+    ".*/(firebird_query_compiler|mysql_query_compiler|postgresql_query_compiler)\\.cpp$"
 )
 list(REMOVE_ITEM SCRATCHBIRD_SBLR_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/sblr/bytecode_validator.cpp
 )
 list(APPEND SCRATCHBIRD_SBLR_SOURCES
     ${CMAKE_CURRENT_SOURCE_DIR}/sblr/bytecode_validator.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/sblr/v3_payload_map.generated.cpp
 )
 
 add_library(scratchbird_sblr STATIC

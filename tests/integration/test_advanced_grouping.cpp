@@ -28,8 +28,8 @@
 //
 // Files Tested:
 // - src/sblr/executor.cpp (executeAdvancedGrouping)
-// - src/sblr/bytecode_generator_v2.cpp (ROLLUP/CUBE bytecode generation)
-// - src/parser/parser_v2.cpp (ROLLUP/CUBE parsing)
+// - src/parser/v3_emitter.cpp (ROLLUP/CUBE opcode emission)
+// - src/parser/parser_v3.cpp (ROLLUP/CUBE parsing)
 
 #include <gtest/gtest.h>
 
@@ -37,7 +37,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/sblr/executor.h"
-#include "scratchbird/sblr/query_compiler_v2.h"
+#include "scratchbird/sblr/query_compiler_v3.h"
 #include "test_helpers.h"
 
 #include <filesystem>
@@ -67,7 +67,7 @@ protected:
         ASSERT_EQ(status, core::Status::OK) << "Failed to get PUBLIC schema";
         schema_id_ = schema.schema_id;
 
-        compiler_ = std::make_unique<sblr::QueryCompilerV2>(db_.get());
+        compiler_ = std::make_unique<sblr::QueryCompilerV3>(db_.get());
         compiler_->setCurrentSchema(schema_id_);
         executor_ = std::make_unique<sblr::Executor>(db_.get());
         executor_->setCurrentSchema(schema_id_);
@@ -227,7 +227,7 @@ protected:
 
     std::string test_db_path_;
     std::unique_ptr<core::Database> db_;
-    std::unique_ptr<sblr::QueryCompilerV2> compiler_;
+    std::unique_ptr<sblr::QueryCompilerV3> compiler_;
     std::unique_ptr<sblr::Executor> executor_;
     core::ID schema_id_;
 };
