@@ -362,6 +362,9 @@ bool parseHandoffPayload(const scratchbird::network::ControlPlaneMessage& msg,
         ++proto_len;
     }
     info.protocol.assign(reinterpret_cast<const char*>(msg.payload.data() + offset), proto_len);
+    if (info.protocol.empty()) {
+        return false;
+    }
     offset += 16;
     size_t addr_len = 0;
     while (addr_len < 48 && msg.payload[offset + addr_len] != 0) {
@@ -417,20 +420,33 @@ scratchbird::network::AddressFamily detectAddressFamily(scratchbird::network::so
     }
 }
 
-scratchbird::network::ProtocolType protocolFromString(const std::string& protocol) {
+std::string normalizeProtocolString(const std::string& protocol) {
     std::string value = protocol;
     std::transform(value.begin(), value.end(), value.begin(),
                    [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
+    return value;
+}
+
+bool tryParseProtocolType(const std::string& protocol,
+                          scratchbird::network::ProtocolType& out) {
+    const std::string value = normalizeProtocolString(protocol);
     if (value == "postgresql" || value == "postgres" || value == "pg") {
-        return scratchbird::network::ProtocolType::POSTGRESQL;
+        out = scratchbird::network::ProtocolType::POSTGRESQL;
+        return true;
     }
     if (value == "mysql") {
-        return scratchbird::network::ProtocolType::MYSQL;
+        out = scratchbird::network::ProtocolType::MYSQL;
+        return true;
     }
     if (value == "firebird" || value == "firebirdsql") {
-        return scratchbird::network::ProtocolType::FIREBIRD;
+        out = scratchbird::network::ProtocolType::FIREBIRD;
+        return true;
     }
-    return scratchbird::network::ProtocolType::NATIVE;
+    if (value == "native" || value == "scratchbird" || value == "sbwp") {
+        out = scratchbird::network::ProtocolType::NATIVE;
+        return true;
+    }
+    return false;
 }
 
 bool flushWrites(scratchbird::network::Connection& conn) {
@@ -473,7 +489,12 @@ uint32_t runSession(const ParserConfig& config,
                                           static_cast<scratchbird::network::ConnectionId>(
                                               info.connection_id));
 
-    auto protocol_type = protocolFromString(config.protocol);
+    scratchbird::network::ProtocolType protocol_type =
+        scratchbird::network::ProtocolType::AUTO_DETECT;
+    if (!tryParseProtocolType(config.protocol, protocol_type)) {
+        conn.close(scratchbird::network::CloseReason::PROTOCOL_ERROR);
+        return static_cast<uint32_t>(scratchbird::core::Status::NOT_SUPPORTED);
+    }
     conn.setProtocol(protocol_type);
 
     scratchbird::protocol::ProtocolAdapterConfig adapter_config;
@@ -679,26 +700,24 @@ int runParser(ParserConfig& config) {
                 continue;
             }
 
-            if (!info.protocol.empty()) {
-                std::string expected = config.protocol;
-                std::string actual = info.protocol;
-                std::transform(expected.begin(), expected.end(), expected.begin(),
-                               [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-                std::transform(actual.begin(), actual.end(), actual.begin(),
-                               [](unsigned char ch) { return static_cast<char>(std::tolower(ch)); });
-                if (expected != actual) {
-                    scratchbird::network::ControlPlaneMessage nack;
-                    nack.header.message_type = static_cast<uint16_t>(
-                        scratchbird::network::ControlPlaneMessageType::HANDOFF_ACK);
-                    nack.header.request_id = msg.header.request_id;
-                    nack.payload = buildHandoffAck(info.connection_id, 1);
-                    nack.header.payload_len = nack.payload.size();
-                    scratchbird::network::sendControlPlaneMessage(*control, nack,
-                                                                  scratchbird::network::INVALID_SOCKET_VALUE,
-                                                                  0, nullptr);
-                    closeSocketFd(recv_fd);
-                    continue;
-                }
+            scratchbird::network::ProtocolType expected_type =
+                scratchbird::network::ProtocolType::AUTO_DETECT;
+            scratchbird::network::ProtocolType actual_type =
+                scratchbird::network::ProtocolType::AUTO_DETECT;
+            const bool expected_ok = tryParseProtocolType(config.protocol, expected_type);
+            const bool actual_ok = tryParseProtocolType(info.protocol, actual_type);
+            if (!expected_ok || !actual_ok || expected_type != actual_type) {
+                scratchbird::network::ControlPlaneMessage nack;
+                nack.header.message_type = static_cast<uint16_t>(
+                    scratchbird::network::ControlPlaneMessageType::HANDOFF_ACK);
+                nack.header.request_id = msg.header.request_id;
+                nack.payload = buildHandoffAck(info.connection_id, 1);
+                nack.header.payload_len = nack.payload.size();
+                scratchbird::network::sendControlPlaneMessage(*control, nack,
+                                                              scratchbird::network::INVALID_SOCKET_VALUE,
+                                                              0, nullptr);
+                closeSocketFd(recv_fd);
+                continue;
             }
 
             busy = true;
