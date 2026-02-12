@@ -14,7 +14,7 @@
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/types.h"
 #include "scratchbird/sblr/opcodes.h"
-#include "scratchbird/sblr/query_compiler_v2.h"
+#include "scratchbird/sblr/query_compiler_v3.h"
 #include <filesystem>
 #include <memory>
 #include <string>
@@ -31,7 +31,7 @@ using namespace scratchbird::sblr;
  * according to the SBLR (ScratchBird Binary Language Runner) specification.
  *
  * Date: November 20, 2025
- * Updated: December 2025 - Migrated to V2 parser
+ * Updated: December 2025 - Migrated to V3 parser
  */
 
 class IndexBytecodeGenerationTest : public ::testing::Test
@@ -144,15 +144,15 @@ protected:
     }
 
     /**
-     * Parse SQL and generate bytecode using QueryCompilerV2
+     * Parse SQL and generate bytecode using QueryCompilerV3
      */
-    CompilationResultV2 generateBytecode(const std::string &sql)
+    CompilationResultV3 generateBytecode(const std::string &sql)
     {
-        QueryCompilerV2 compiler(db_.get());
+        QueryCompilerV3 compiler(db_.get());
         return compiler.compile(sql);
     }
 
-    std::string formatErrors(const CompilationResultV2& result) const
+    std::string formatErrors(const CompilationResultV3& result) const
     {
         std::string out;
         for (const auto& err : result.errors())

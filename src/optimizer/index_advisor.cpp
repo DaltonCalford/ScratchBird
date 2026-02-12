@@ -14,7 +14,7 @@
 //
 // P2-25: Index Advisor Implementation
 //
-// V2 MIGRATION STATUS: COMPLETE
+// V3 MIGRATION STATUS: COMPLETE
 //
 // November 25, 2025
 
@@ -22,7 +22,6 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/logger.h"
-#include "scratchbird/parser/parser_v2.h"
 #include <algorithm>
 #include <cmath>
 #include <sstream>
@@ -416,299 +415,19 @@ Status IndexAdvisor::findUnusedIndexes(std::vector<IndexRecommendation>* recomme
     return Status::OK;
 }
 
-// OPT-3: Helper to extract predicate columns from WHERE clause expressions (V2 API)
-static void extractPredicateColumnsForIndex(const parser::v2::Expression* expr,
-                                             const parser::v2::StringPool& string_pool,
-                                             std::vector<std::pair<std::string, std::string>>& table_column_pairs,
-                                             std::unordered_set<std::string>& equality_columns,
-                                             std::unordered_set<std::string>& range_columns)
-{
-    if (!expr) return;
-
-    // Handle LIKE expressions (separate from binary ops in V2)
-    if (expr->kind() == parser::v2::ASTKind::LikeExpr)
-    {
-        auto* like_expr = static_cast<const parser::v2::LikeExpr*>(expr);
-        if (like_expr->expr && like_expr->expr->kind() == parser::v2::ASTKind::ColumnRefExpr)
-        {
-            auto* col_ref = static_cast<const parser::v2::ColumnRefExpr*>(like_expr->expr);
-            std::string col_name(string_pool.get(col_ref->column.column_name));
-            std::string table_name;
-            if (col_ref->column.has_table_qualifier && !col_ref->column.table_path.components.empty())
-            {
-                table_name = std::string(string_pool.get(col_ref->column.table_path.components.back()));
-            }
-            table_column_pairs.push_back({table_name, col_name});
-            // LIKE is treated as range predicate for indexing purposes
-            range_columns.insert(col_name);
-        }
-        return;
-    }
-
-    if (expr->kind() == parser::v2::ASTKind::BinaryExpr)
-    {
-        auto* bin_expr = static_cast<const parser::v2::BinaryExpr*>(expr);
-
-        // Check if this is a comparison operator (EQ, LT, LE, GT, GE, NE)
-        auto op = bin_expr->op;
-        bool is_comparison = (op == parser::v2::BinaryOp::EQ || op == parser::v2::BinaryOp::NE ||
-                              op == parser::v2::BinaryOp::LT || op == parser::v2::BinaryOp::LE ||
-                              op == parser::v2::BinaryOp::GT || op == parser::v2::BinaryOp::GE);
-
-        if (is_comparison)
-        {
-            // Extract column from left side
-            auto* left = bin_expr->left;
-            auto* right = bin_expr->right;
-
-            // Check if left is column reference and right is a literal/constant
-            if (left && left->kind() == parser::v2::ASTKind::ColumnRefExpr)
-            {
-                auto* col_ref = static_cast<const parser::v2::ColumnRefExpr*>(left);
-                std::string col_name(string_pool.get(col_ref->column.column_name));
-                std::string table_name;
-                if (col_ref->column.has_table_qualifier && !col_ref->column.table_path.components.empty())
-                {
-                    table_name = std::string(string_pool.get(col_ref->column.table_path.components.back()));
-                }
-
-                table_column_pairs.push_back({table_name, col_name});
-
-                // Classify as equality or range predicate
-                if (op == parser::v2::BinaryOp::EQ)
-                {
-                    equality_columns.insert(col_name);
-                }
-                else if (op == parser::v2::BinaryOp::LT || op == parser::v2::BinaryOp::LE ||
-                         op == parser::v2::BinaryOp::GT || op == parser::v2::BinaryOp::GE)
-                {
-                    range_columns.insert(col_name);
-                }
-            }
-
-            // Check if right is column reference (for cases like "5 = col")
-            if (right && right->kind() == parser::v2::ASTKind::ColumnRefExpr)
-            {
-                auto* col_ref = static_cast<const parser::v2::ColumnRefExpr*>(right);
-                std::string col_name(string_pool.get(col_ref->column.column_name));
-                std::string table_name;
-                if (col_ref->column.has_table_qualifier && !col_ref->column.table_path.components.empty())
-                {
-                    table_name = std::string(string_pool.get(col_ref->column.table_path.components.back()));
-                }
-
-                table_column_pairs.push_back({table_name, col_name});
-
-                if (op == parser::v2::BinaryOp::EQ)
-                {
-                    equality_columns.insert(col_name);
-                }
-                else if (op == parser::v2::BinaryOp::LT || op == parser::v2::BinaryOp::LE ||
-                         op == parser::v2::BinaryOp::GT || op == parser::v2::BinaryOp::GE)
-                {
-                    range_columns.insert(col_name);
-                }
-            }
-        }
-        else
-        {
-            // Recurse into AND/OR expressions
-            extractPredicateColumnsForIndex(bin_expr->left, string_pool, table_column_pairs,
-                                            equality_columns, range_columns);
-            extractPredicateColumnsForIndex(bin_expr->right, string_pool, table_column_pairs,
-                                            equality_columns, range_columns);
-        }
-    }
-}
-
 Status IndexAdvisor::suggestIndexesForQuery(const std::string& sql_text,
                                              std::vector<IndexRecommendation>* recommendations,
                                              ErrorContext* ctx)
 {
-    // OPT-3: Parse query and analyze predicates for index recommendations (V2 API)
     if (!recommendations) {
         SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Null recommendations output");
         return Status::INVALID_ARGUMENT;
     }
 
     recommendations->clear();
-
-    if (sql_text.empty()) {
-        return Status::OK;
-    }
-
-    // Parse the SQL query using V2 parser
-    parser::v2::Parser parser(sql_text);
-    auto result = parser.parseStatement();
-    if (!result.statement()) {
-        // Failed to parse - not an error, just can't make recommendations
-        return Status::OK;
-    }
-
-    // Only analyze SELECT statements for now
-    if (result.statement()->kind() != parser::v2::ASTKind::SelectStmt) {
-        return Status::OK;
-    }
-
-    auto* select_stmt = static_cast<parser::v2::SelectStmt*>(result.statement());
-    const auto& string_pool = parser.stringPool();
-
-    // Extract table name from FROM clause
-    std::string base_table_name;
-    if (select_stmt->from && !select_stmt->from->table_path.components.empty()) {
-        // Get last component of table path as table name
-        base_table_name = std::string(string_pool.get(select_stmt->from->table_path.components.back()));
-    }
-
-    // Extract predicate columns from WHERE clause
-    std::vector<std::pair<std::string, std::string>> table_column_pairs;
-    std::unordered_set<std::string> equality_columns;
-    std::unordered_set<std::string> range_columns;
-
-    if (select_stmt->where) {
-        extractPredicateColumnsForIndex(select_stmt->where, string_pool,
-                                        table_column_pairs, equality_columns, range_columns);
-    }
-
-    // Extract join condition columns
-    for (const auto* join : select_stmt->joins) {
-        if (join && join->on_condition) {
-            extractPredicateColumnsForIndex(join->on_condition, string_pool,
-                                            table_column_pairs, equality_columns, range_columns);
-        }
-    }
-
-    // Build recommendations for columns that could benefit from indexes
-    // Prioritize: 1) equality predicates, 2) range predicates, 3) join columns
-    std::unordered_set<std::string> recommended_columns;
-
-    // Get table info for ID lookup
-    ID default_schema_id{};
-    default_schema_id.bytes[1] = 1;  // Public schema
-
-    CatalogManager::TableInfo table_info;
-    if (!catalog_ || catalog_->getTable(default_schema_id, base_table_name, table_info, ctx) != Status::OK) {
-        // Can't find table - still generate recommendation without table ID
-        table_info.table_id = ID{};
-    }
-
-    // Check existing indexes for this table
-    // Note: IndexInfo stores column_ids (IDs), so we would need column name lookup
-    // For simplicity, we use the index_name to infer which columns might be indexed
-    std::unordered_set<std::string> indexed_columns;
-    if (catalog_) {
-        auto existing_indexes = catalog_->getTableIndexes(table_info.table_id, ctx);
-        for (const auto& idx : existing_indexes) {
-            // Try to extract column name from index name (convention: idx_tablename_colname)
-            // This is a heuristic - not perfect but avoids ID lookup overhead
-            size_t last_underscore = idx.index_name.rfind('_');
-            if (last_underscore != std::string::npos && last_underscore > 0) {
-                std::string potential_col = idx.index_name.substr(last_underscore + 1);
-                if (!potential_col.empty()) {
-                    indexed_columns.insert(potential_col);
-                }
-            }
-        }
-    }
-
-    // Recommend indexes for equality columns first (highest priority)
-    for (const auto& col : equality_columns) {
-        if (indexed_columns.find(col) == indexed_columns.end() &&
-            recommended_columns.find(col) == recommended_columns.end()) {
-
-            IndexRecommendation rec;
-            rec.table_id = table_info.table_id;
-            rec.table_name = base_table_name;
-            rec.column_names.push_back(col);
-            rec.type = IndexRecommendationType::CREATE_BTREE;
-            rec.index_name = "idx_" + base_table_name + "_" + col;
-            rec.create_sql = "CREATE INDEX " + rec.index_name + " ON " + base_table_name + " (" + col + ")";
-            rec.benefit_score = 80.0;  // High benefit for equality predicates
-            rec.cost_score = 10.0;
-            rec.net_benefit = rec.benefit_score - rec.cost_score;
-            rec.priority = 85.0;
-            rec.confidence = 0.8;
-            rec.estimated_speedup = 10.0;  // Index can be 10x faster than seq scan
-
-            recommendations->push_back(rec);
-            recommended_columns.insert(col);
-        }
-    }
-
-    // Recommend indexes for range columns (medium priority)
-    for (const auto& col : range_columns) {
-        if (indexed_columns.find(col) == indexed_columns.end() &&
-            recommended_columns.find(col) == recommended_columns.end()) {
-
-            IndexRecommendation rec;
-            rec.table_id = table_info.table_id;
-            rec.table_name = base_table_name;
-            rec.column_names.push_back(col);
-            rec.type = IndexRecommendationType::CREATE_BTREE;
-            rec.index_name = "idx_" + base_table_name + "_" + col;
-            rec.create_sql = "CREATE INDEX " + rec.index_name + " ON " + base_table_name + " (" + col + ")";
-            rec.benefit_score = 60.0;  // Medium benefit for range predicates
-            rec.cost_score = 10.0;
-            rec.net_benefit = rec.benefit_score - rec.cost_score;
-            rec.priority = 65.0;
-            rec.confidence = 0.7;
-            rec.estimated_speedup = 5.0;
-
-            recommendations->push_back(rec);
-            recommended_columns.insert(col);
-        }
-    }
-
-    // Consider composite index if multiple equality columns exist
-    if (equality_columns.size() >= 2) {
-        std::vector<std::string> composite_cols(equality_columns.begin(), equality_columns.end());
-        // Sort for consistent naming
-        std::sort(composite_cols.begin(), composite_cols.end());
-
-        // Only suggest if a composite index doesn't already exist
-        // (heuristic: check if index name contains both column names)
-        bool already_has_composite = false;
-        // Simple check: if both columns are already individually indexed, skip composite
-        // This is a conservative heuristic
-        if (indexed_columns.count(composite_cols[0]) > 0 &&
-            indexed_columns.count(composite_cols[1]) > 0) {
-            // Both columns already indexed individually - lower priority for composite
-            already_has_composite = false;  // Still suggest but will have lower priority
-        }
-
-        if (!already_has_composite) {
-            IndexRecommendation rec;
-            rec.table_id = table_info.table_id;
-            rec.table_name = base_table_name;
-            rec.column_names = composite_cols;
-            rec.type = IndexRecommendationType::CREATE_BTREE;
-
-            std::string col_list = composite_cols[0];
-            std::string name_suffix = composite_cols[0];
-            for (size_t i = 1; i < composite_cols.size() && i < 3; ++i) {
-                col_list += ", " + composite_cols[i];
-                name_suffix += "_" + composite_cols[i];
-            }
-
-            rec.index_name = "idx_" + base_table_name + "_" + name_suffix;
-            rec.create_sql = "CREATE INDEX " + rec.index_name + " ON " + base_table_name + " (" + col_list + ")";
-            rec.benefit_score = 90.0;  // High benefit for composite covering multiple predicates
-            rec.cost_score = 15.0;
-            rec.net_benefit = rec.benefit_score - rec.cost_score;
-            rec.priority = 75.0;  // Lower priority than single-column since more expensive
-            rec.confidence = 0.75;
-            rec.estimated_speedup = 15.0;
-
-            recommendations->push_back(rec);
-        }
-    }
-
-    // Sort recommendations by priority (highest first)
-    std::sort(recommendations->begin(), recommendations->end(),
-              [](const IndexRecommendation& a, const IndexRecommendation& b) {
-                  return a.priority > b.priority;
-              });
-
+    (void)sql_text;
+    (void)ctx;
+    // V3 optimizer integration required before query-based index suggestions.
     return Status::OK;
 }
 
