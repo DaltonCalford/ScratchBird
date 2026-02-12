@@ -239,16 +239,7 @@ endif()
 include(GoogleTest)
 include(GoogleTest)
 set(SCRATCHBIRD_SMOKE_TESTS
-    V2DataTypesTest.*
-    TextSearchTest.*
-    SemanticAnalyzerV2Test.*
-    ParserSessionV2Test.*
-    ParserV2DDLTest.*
     ShowSetCommandsTest.*
-    LexerV2Test.*
-    SchemaPathV2Test.*
-    ParserDMLV2Test.*
-    BytecodeGeneratorV2Test.*
     ConditionalFunctionTest.*
     ArithmeticOverflow.*
     NaNInfinityHandling.*
@@ -256,7 +247,7 @@ set(SCRATCHBIRD_SMOKE_TESTS
     FirebirdLexerTest.*
     CharsetTest.*
     ExpressionMatcherTest.*
-    ParserStateV2Test.*
+    ParserStateV3Test.*
     ConfigTest.*
 )
 list(JOIN SCRATCHBIRD_SMOKE_TESTS ":" SCRATCHBIRD_SMOKE_FILTER)
@@ -299,7 +290,7 @@ set(SCRATCHBIRD_INTEGRATION_TESTS
     *Integration*
     *EndToEnd*
     *E2E*
-    QueryCompilerV2Test.*
+    QueryCompilerV3Test.*
     Week3Week4ComprehensiveTest.*
 )
 list(JOIN SCRATCHBIRD_INTEGRATION_TESTS ":" SCRATCHBIRD_INTEGRATION_FILTER)
@@ -1265,8 +1256,8 @@ set_tests_properties(SecurityPhase3_5_RLS_DML PROPERTIES
     TIMEOUT 120
 )
 
-# Mathematical Functions Tests - DISABLED (V2 bytecode generator issue with complex expressions)
-# TODO: Fix V2 BytecodeGeneratorV2 for nested function calls (e.g., SQRT(POWER(3, 2) + POWER(4, 2)))
+# Mathematical Functions Tests - DISABLED (legacy bytecode issue with complex expressions)
+# TODO: Fix nested function call emission/execution (e.g., SQRT(POWER(3, 2) + POWER(4, 2)))
 # add_executable(test_mathematical_functions
 #     integration/test_mathematical_functions.cpp
 # )
@@ -1449,8 +1440,8 @@ set_tests_properties(ForeignKeys PROPERTIES
 
 # Phase 2C: Exclude all standalone tests with main() functions
 
-# Index Bytecode Generation Tests - DISABLED (V2 bytecode generator issue with CREATE/DROP INDEX)
-# TODO: Fix V2 BytecodeGeneratorV2 for DDL statements
+# Index Bytecode Generation Tests - DISABLED (legacy bytecode issue with CREATE/DROP INDEX)
+# TODO: Fix DDL statement emission/execution for index statements
 # add_executable(test_index_bytecode_generation
 #     integration/test_index_bytecode_generation.cpp
 # )
@@ -1701,14 +1692,14 @@ gtest_discover_tests(test_postgresql_parser
 )
 
 # ============================================================================
-# Parser V2 Performance Benchmarks (Phase 9)
+# Parser V3 Performance Benchmarks (Phase 9)
 # ============================================================================
 
-# Parser V2 Benchmark - DISABLED (no V2-only benchmark implementation yet)
-# add_executable(test_parser_v2_benchmark
-#     benchmark/test_parser_v2_benchmark.cpp
+# Parser V3 Benchmark - DISABLED (enable when benchmark target is reintroduced)
+# add_executable(test_parser_v3_benchmark
+#     benchmark/test_parser_v3_benchmark.cpp
 # )
-# target_link_libraries(test_parser_v2_benchmark
+# target_link_libraries(test_parser_v3_benchmark
 #     scratchbird_core
 #     scratchbird_parser
 #     scratchbird_sblr
@@ -1716,9 +1707,9 @@ gtest_discover_tests(test_postgresql_parser
 #     gtest
 #     gtest_main
 # )
-# add_test(NAME ParserV2Benchmark COMMAND test_parser_v2_benchmark)
-# set_tests_properties(ParserV2Benchmark PROPERTIES
-#     LABELS "benchmark;parser;v2;performance"
+# add_test(NAME ParserV3Benchmark COMMAND test_parser_v3_benchmark)
+# set_tests_properties(ParserV3Benchmark PROPERTIES
+#     LABELS "benchmark;parser;v3;performance"
 #     TIMEOUT 120
 # )
 
