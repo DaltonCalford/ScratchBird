@@ -23,6 +23,8 @@
 #include <fstream>
 #include <sstream>
 #include <algorithm>
+#include <cerrno>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
 #include <getopt.h>
@@ -1165,12 +1167,41 @@ void ServiceController::handleSignal(DaemonSignal signal) {
 
         case DaemonSignal::ROTATE_LOGS:
             log(ServiceConfig::LogLevel::INFO, "Received log rotation signal");
-            // TODO: Implement log rotation
+            std::fflush(stderr);
+            if (!config_.log_file.empty()) {
+                if (std::freopen(config_.log_file.c_str(), "a", stderr) == nullptr) {
+                    log(ServiceConfig::LogLevel::WARNING,
+                        "Log rotation failed for " + config_.log_file + ": " + std::strerror(errno));
+                } else {
+                    log(ServiceConfig::LogLevel::INFO,
+                        "Reopened log stream: " + config_.log_file);
+                }
+            }
             break;
 
         case DaemonSignal::DUMP_STATS:
             log(ServiceConfig::LogLevel::INFO, "Received stats dump signal");
-            // TODO: Dump stats to log
+            {
+                auto stats = getStats();
+                uint32_t listeners_running = 0;
+                {
+                    std::lock_guard<std::mutex> lock(listeners_mutex_);
+                    for (const auto& listener : listeners_) {
+                        if (listener.running) {
+                            ++listeners_running;
+                        }
+                    }
+                }
+                std::ostringstream details;
+                details << "Stats: uptime=" << static_cast<uint64_t>(stats.uptimeSeconds()) << "s"
+                        << " active_databases=" << stats.active_databases
+                        << " active_connections=" << stats.active_connections
+                        << " total_connections=" << stats.total_connections
+                        << " total_queries=" << stats.total_queries
+                        << " failed_queries=" << stats.failed_queries
+                        << " running_listeners=" << listeners_running;
+                log(ServiceConfig::LogLevel::INFO, details.str());
+            }
             break;
 
         default:
