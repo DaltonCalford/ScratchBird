@@ -912,6 +912,17 @@ core::Status ServiceController::openDatabases(core::ErrorContext* ctx) {
 core::Status ServiceController::startListeners(core::ErrorContext* ctx) {
     log(ServiceConfig::LogLevel::INFO, "Starting protocol listeners...");
 
+    bool has_open_databases = false;
+    {
+        std::lock_guard<std::mutex> db_lock(databases_mutex_);
+        has_open_databases = !databases_.empty();
+    }
+    if (!has_open_databases) {
+        log(ServiceConfig::LogLevel::WARNING,
+            "No open databases detected; protocol listeners remain disabled");
+        return core::Status::OK;
+    }
+
     std::lock_guard<std::mutex> lock(listeners_mutex_);
     listeners_.clear();
 
