@@ -15,7 +15,7 @@
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/sblr/executor.h"
-#include "scratchbird/sblr/query_compiler_v2.h"
+#include "scratchbird/sblr/query_compiler_v3.h"
 #include "test_helpers.h"
 
 #include "gtest/gtest.h"
@@ -596,7 +596,7 @@ TEST(JobSchedulerRuntimeSql, AlterSystemAppliesSchedulerConfig) {
     conn_ctx->setCurrentUser(system_user, true);
     ConnectionContext::setCurrent(conn_ctx.get());
 
-    sblr::QueryCompilerV2 compiler(&db);
+    sblr::QueryCompilerV3 compiler(&db);
     sblr::Executor executor(&db);
     executor.setConnectionContext(conn_ctx.get());
 

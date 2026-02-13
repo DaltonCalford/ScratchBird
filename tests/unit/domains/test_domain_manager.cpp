@@ -87,7 +87,7 @@ TEST(DomainManagerTest, Comprehensive) {
     {
         DomainInfo info;
         // Get first domain from test 1
-        ASSERT_EQ(dm->domainCount(), 1);
+        ASSERT_GE(dm->domainCount(), 1u);
 
         // List all domains to get the ID
         ID schema_id;

@@ -2917,12 +2917,10 @@ Status ColumnstoreIndex::createSegment(const ID &column_uuid,
         page->cs_header.checksum = 0;
         page->cs_header.lsn = 0;
         page->cs_header.flags = 0;
-        std::memcpy(page->cs_header.database_uuid, db_->uuid().bytes.data(), 16);
         page->cs_header.generation = 0;
-        page->cs_header.free_space = MAX_DATA_SIZE - data_chunk_size;
-        page->cs_header.item_count = 1;
-        page->cs_header.free_offset = 0;
-        page->cs_header.special_size = 0;
+        pageSetLower(page->cs_header, sizeof(SBColumnstorePage) + static_cast<uint32_t>(data_chunk_size));
+        pageSetUpper(page->cs_header, PAGE_SIZE);
+        pageSetSpecial(page->cs_header, PAGE_SIZE);
 
         // Step 6: Initialize columnstore metadata
         page->cs_index_uuid = index_info_.idx_uuid;
@@ -3404,6 +3402,11 @@ Status ColumnstoreIndex::createMetadataPage(Database *db,
     meta_page->cs_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1);
     meta_page->cs_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_COLUMNSTORE);
     meta_page->cs_header.page_size = db->page_size();
+    meta_page->cs_header.page_id = metadata_page;
+    meta_page->cs_header.generation = 1;
+    meta_page->cs_header.checksum = 0;
+    meta_page->cs_header.flags = 0;
+    meta_page->cs_header.lsn = 0;
 
     // Store index and table UUIDs
     std::memcpy(&meta_page->cs_index_uuid, &index_uuid, sizeof(ID));
@@ -3458,6 +3461,12 @@ Status ColumnstoreIndex::createMetadataPage(Database *db,
     {
         std::memcpy(uuid_data + (i * sizeof(ID)), &column_uuids[i], sizeof(ID));
     }
+
+    pageSetLower(meta_page->cs_header, sizeof(SBColumnstoreMetadataPage) + static_cast<uint32_t>(uuid_array_size));
+    pageSetUpper(meta_page->cs_header, static_cast<uint32_t>(PAGE_SIZE));
+    pageSetSpecial(meta_page->cs_header, static_cast<uint32_t>(PAGE_SIZE));
+    meta_page->cs_header.checksum =
+        calculatePageChecksum(reinterpret_cast<const uint8_t *>(meta_page), static_cast<uint32_t>(PAGE_SIZE));
 
     // Step 5: Mark page dirty and unpin
     Status unpin_status = buffer_pool->unpinPageGlobal(metadata_gpid, true, ctx);
@@ -3793,6 +3802,7 @@ Status ColumnstoreIndex::beginScan(const ID &column_uuid,
     iterator_out->current_xid = current_xid;
     iterator_out->scan_complete = false;
     iterator_out->segment_cached = false;
+    iterator_out->completed_segment_pages.clear();
 
     // Set predicate
     if (predicate)
@@ -3836,6 +3846,31 @@ Status ColumnstoreIndex::scanNext(ColumnScanIterator *iterator,
         return Status::OK;
     }
 
+    const uint32_t start_page = iterator->current_segment_page;
+    const uint32_t start_offset = iterator->offset_in_segment;
+    const bool start_cached = iterator->segment_cached;
+
+    auto advance_to_next_segment = [&](uint32_t next_page) -> bool {
+        const uint32_t previous_page = iterator->current_segment_page;
+        if (previous_page != 0)
+        {
+            iterator->completed_segment_pages.insert(previous_page);
+        }
+
+        if (next_page != 0 &&
+            iterator->completed_segment_pages.find(next_page) != iterator->completed_segment_pages.end())
+        {
+            iterator->current_segment_page = 0;
+            iterator->scan_complete = true;
+            iterator->segment_cached = false;
+            iterator->offset_in_segment = 0;
+            return true;
+        }
+
+        iterator->current_segment_page = next_page;
+        return false;
+    };
+
     BufferPool *buffer_pool = db_->buffer_pool();
     if (!buffer_pool)
     {
@@ -3868,7 +3903,10 @@ Status ColumnstoreIndex::scanNext(ColumnScanIterator *iterator,
         if (!isValueVisible(segment.xmin, segment.xmax, iterator->current_xid, ctx))
         {
             // Entire segment is invisible, skip to next
-            iterator->current_segment_page = segment.next_segment_page;
+            if (advance_to_next_segment(segment.next_segment_page))
+            {
+                break;
+            }
 
             iterator->segment_cached = false;
             segments_processed++;
@@ -3880,7 +3918,10 @@ Status ColumnstoreIndex::scanNext(ColumnScanIterator *iterator,
             canSkipSegment(segment.min_value, segment.max_value, iterator->predicate))
         {
             // Skip this segment entirely
-            iterator->current_segment_page = segment.next_segment_page;
+            if (advance_to_next_segment(segment.next_segment_page))
+            {
+                break;
+            }
 
             iterator->segment_cached = false;
             segments_processed++;
@@ -3972,7 +4013,10 @@ Status ColumnstoreIndex::scanNext(ColumnScanIterator *iterator,
         if (iterator->offset_in_segment >= segment.row_count)
         {
             // Move to next segment
-            iterator->current_segment_page = segment.next_segment_page;
+            if (advance_to_next_segment(segment.next_segment_page))
+            {
+                break;
+            }
 
             iterator->segment_cached = false;
             iterator->offset_in_segment = 0;
@@ -3985,6 +4029,29 @@ Status ColumnstoreIndex::scanNext(ColumnScanIterator *iterator,
                 break;
             }
         }
+    }
+
+    // If we reached the end of the segment chain (including skip-only scans),
+    // mark complete so callers do not spin on empty batches.
+    if (iterator->current_segment_page == 0)
+    {
+        iterator->scan_complete = true;
+        iterator->segment_cached = false;
+        iterator->offset_in_segment = 0;
+    }
+
+    // If we returned an empty batch without advancing iterator state, force completion
+    // to avoid repeated empty-batch loops on malformed or cyclic segment chains.
+    if (batch_out->count == 0 &&
+        !iterator->scan_complete &&
+        iterator->current_segment_page == start_page &&
+        iterator->offset_in_segment == start_offset &&
+        iterator->segment_cached == start_cached)
+    {
+        iterator->scan_complete = true;
+        iterator->current_segment_page = 0;
+        iterator->segment_cached = false;
+        iterator->offset_in_segment = 0;
     }
 
     // Safety: if we hit the segment limit, mark scan as complete to avoid infinite loops
@@ -4013,6 +4080,7 @@ Status ColumnstoreIndex::endScan(ColumnScanIterator *iterator,
     iterator->cached_segment.null_bitmap.clear();
     iterator->segment_cached = false;
     iterator->scan_complete = true;
+    iterator->completed_segment_pages.clear();
 
     return Status::OK;
 }

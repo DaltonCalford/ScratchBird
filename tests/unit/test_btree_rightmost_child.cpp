@@ -212,18 +212,23 @@ TEST(BtreeRightmostChildTest, Comprehensive) {
 
             auto *page = reinterpret_cast<PageHeader *>(page_data);
 
-            // Check if it's a B-tree internal page
-            if (page->page_type == PAGE_TYPE_BTREE_INTERNAL)
+            // Check if it's a B-tree page and then filter to internal nodes
+            if (page->page_type == PAGE_TYPE_INDEX_BTREE)
             {
                 auto *btree_page = reinterpret_cast<SBBTreePage *>(page_data);
-                internal_nodes_checked++;
-
-                // Internal node MUST have valid rightmost_child (non-zero)
-                if (btree_page->btr_rightmost_child == 0)
+                const bool is_leaf =
+                    (btree_page->btr_flags & static_cast<uint16_t>(BTreeFlags::LEAF)) != 0;
+                if (!is_leaf)
                 {
-                    std::cout << "\nERROR: Internal node page " << page_id
-                              << " has rightmost_child = 0!" << std::endl;
-                    rightmost_child_errors++;
+                    internal_nodes_checked++;
+
+                    // Internal node MUST have valid rightmost_child (non-zero)
+                    if (btree_page->btr_rightmost_child == 0)
+                    {
+                        std::cout << "\nERROR: Internal node page " << page_id
+                                  << " has rightmost_child = 0!" << std::endl;
+                        rightmost_child_errors++;
+                    }
                 }
             }
 

@@ -58,7 +58,7 @@ class ErrorContext;
 #pragma pack(push, 1)
 struct TablespaceHeaderV1
 {
-    PageHeader page_header; // Standard 80-byte header per ON_DISK_FORMAT.md v1.4.0 (includes table_id)
+    PageHeader page_header; // Standard 80-byte header per ON_DISK_FORMAT.md v1.4.0
 
     // === Identification (64 bytes) ===
     char tablespace_name[32];      // Tablespace name (max 31 chars + null terminator)
@@ -100,7 +100,7 @@ constexpr uint16_t TABLESPACE_HEADER_VERSION_V2 = 2;
 #pragma pack(push, 1)
 struct TablespaceHeader
 {
-    PageHeader page_header; // Standard 80-byte header per ON_DISK_FORMAT.md v1.4.0 (includes table_id)
+    PageHeader page_header; // Standard 80-byte header per ON_DISK_FORMAT.md v1.4.0
 
     // === Identification (96 bytes) ===
     char tablespace_name[64];      // Tablespace name (max 63 chars + null terminator)
@@ -295,7 +295,7 @@ struct TablespaceConfig
  * when creating/opening tablespace files.
  *
  * Fixed fields occupy 304 bytes (updated for ON_DISK_FORMAT.md v1.4.0):
- * - PageHeader: 80 bytes (includes table_id field at offset 0x30)
+ * - PageHeader: 80 bytes
  * - Identification: 96 bytes
  * - Configuration: 64 bytes
  * - File Layout: 32 bytes

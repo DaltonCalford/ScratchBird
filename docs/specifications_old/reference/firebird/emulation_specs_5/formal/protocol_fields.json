@@ -1,0 +1,491 @@
+{
+  "op_connect": [
+    "p_cnct_operation",
+    "p_cnct_cversion",
+    "p_cnct_client",
+    "p_cnct_file",
+    "p_cnct_count",
+    "p_cnct_user_id",
+    "p_cnct_versions[]"
+  ],
+  "op_accept": [
+    "p_acpt_version",
+    "p_acpt_architecture",
+    "p_acpt_type"
+  ],
+  "op_accept_data": [
+    "p_acpt_version",
+    "p_acpt_architecture",
+    "p_acpt_type",
+    "p_acpt_data",
+    "p_acpt_plugin",
+    "p_acpt_authenticated",
+    "p_acpt_keys"
+  ],
+  "op_cond_accept": [
+    "p_acpt_version",
+    "p_acpt_architecture",
+    "p_acpt_type",
+    "p_acpt_data",
+    "p_acpt_plugin",
+    "p_acpt_authenticated",
+    "p_acpt_keys"
+  ],
+  "op_connect_request": [
+    "p_req_type",
+    "p_req_object",
+    "p_req_partner"
+  ],
+  "op_aux_connect": [
+    "p_req_type",
+    "p_req_object",
+    "p_req_partner"
+  ],
+  "op_attach": [
+    "p_atch_database",
+    "p_atch_file",
+    "p_atch_dpb"
+  ],
+  "op_create": [
+    "p_atch_database",
+    "p_atch_file",
+    "p_atch_dpb"
+  ],
+  "op_service_attach": [
+    "p_atch_database",
+    "p_atch_file",
+    "p_atch_dpb"
+  ],
+  "op_compile": [
+    "p_cmpl_database",
+    "p_cmpl_blr"
+  ],
+  "op_receive": [
+    "p_data_request",
+    "p_data_incarnation",
+    "p_data_transaction",
+    "p_data_message_number",
+    "p_data_messages"
+  ],
+  "op_start": [
+    "p_data_request",
+    "p_data_incarnation",
+    "p_data_transaction",
+    "p_data_message_number",
+    "p_data_messages"
+  ],
+  "op_start_and_receive": [
+    "p_data_request",
+    "p_data_incarnation",
+    "p_data_transaction",
+    "p_data_message_number",
+    "p_data_messages"
+  ],
+  "op_send": [
+    "p_data_request",
+    "p_data_incarnation",
+    "p_data_transaction",
+    "p_data_message_number",
+    "p_data_messages",
+    "xdr_request(message)"
+  ],
+  "op_start_and_send": [
+    "p_data_request",
+    "p_data_incarnation",
+    "p_data_transaction",
+    "p_data_message_number",
+    "p_data_messages",
+    "xdr_request(message)"
+  ],
+  "op_start_send_and_receive": [
+    "p_data_request",
+    "p_data_incarnation",
+    "p_data_transaction",
+    "p_data_message_number",
+    "p_data_messages",
+    "xdr_request(message)"
+  ],
+  "op_response": [
+    "p_resp_object",
+    "p_resp_blob_id",
+    "p_resp_data",
+    "p_resp_status_vector"
+  ],
+  "op_response_piggyback": [
+    "p_resp_object",
+    "p_resp_blob_id",
+    "p_resp_data",
+    "p_resp_status_vector"
+  ],
+  "op_transact": [
+    "p_trrq_database",
+    "p_trrq_transaction",
+    "p_trrq_blr",
+    "p_trrq_messages",
+    "xdr_trrq_message(in)"
+  ],
+  "op_transact_response": [
+    "p_data_messages",
+    "xdr_trrq_message(out)"
+  ],
+  "op_open_blob2": [
+    "p_blob_bpb",
+    "p_blob_transaction",
+    "p_blob_id"
+  ],
+  "op_create_blob2": [
+    "p_blob_bpb",
+    "p_blob_transaction",
+    "p_blob_id"
+  ],
+  "op_open_blob": [
+    "p_blob_transaction",
+    "p_blob_id"
+  ],
+  "op_create_blob": [
+    "p_blob_transaction",
+    "p_blob_id"
+  ],
+  "op_get_segment": [
+    "p_sgmt_blob",
+    "p_sgmt_length",
+    "p_sgmt_segment"
+  ],
+  "op_put_segment": [
+    "p_sgmt_blob",
+    "p_sgmt_length",
+    "p_sgmt_segment"
+  ],
+  "op_batch_segments": [
+    "p_sgmt_blob",
+    "p_sgmt_length",
+    "p_sgmt_segment"
+  ],
+  "op_seek_blob": [
+    "p_seek_blob",
+    "p_seek_mode",
+    "p_seek_offset"
+  ],
+  "op_reconnect": [
+    "p_sttr_database",
+    "p_sttr_tpb"
+  ],
+  "op_transaction": [
+    "p_sttr_database",
+    "p_sttr_tpb"
+  ],
+  "op_info_blob": [
+    "p_info_object",
+    "p_info_incarnation",
+    "p_info_items",
+    "p_info_buffer_length"
+  ],
+  "op_info_database": [
+    "p_info_object",
+    "p_info_incarnation",
+    "p_info_items",
+    "p_info_buffer_length"
+  ],
+  "op_info_request": [
+    "p_info_object",
+    "p_info_incarnation",
+    "p_info_items",
+    "p_info_buffer_length"
+  ],
+  "op_info_transaction": [
+    "p_info_object",
+    "p_info_incarnation",
+    "p_info_items",
+    "p_info_buffer_length"
+  ],
+  "op_service_info": [
+    "p_info_object",
+    "p_info_incarnation",
+    "p_info_items",
+    "p_info_recv_items",
+    "p_info_buffer_length"
+  ],
+  "op_info_sql": [
+    "p_info_object",
+    "p_info_incarnation",
+    "p_info_items",
+    "p_info_buffer_length"
+  ],
+  "op_info_batch": [
+    "p_info_object",
+    "p_info_incarnation",
+    "p_info_items",
+    "p_info_buffer_length"
+  ],
+  "op_info_cursor": [
+    "p_info_object",
+    "p_info_incarnation",
+    "p_info_items",
+    "p_info_buffer_length"
+  ],
+  "op_service_start": [
+    "p_info_object",
+    "p_info_incarnation",
+    "p_info_items"
+  ],
+  "op_commit": [
+    "p_rlse_object"
+  ],
+  "op_prepare": [
+    "p_rlse_object"
+  ],
+  "op_rollback": [
+    "p_rlse_object"
+  ],
+  "op_unwind": [
+    "p_rlse_object"
+  ],
+  "op_release": [
+    "p_rlse_object"
+  ],
+  "op_close_blob": [
+    "p_rlse_object"
+  ],
+  "op_cancel_blob": [
+    "p_rlse_object"
+  ],
+  "op_detach": [
+    "p_rlse_object"
+  ],
+  "op_drop_database": [
+    "p_rlse_object"
+  ],
+  "op_service_detach": [
+    "p_rlse_object"
+  ],
+  "op_commit_retaining": [
+    "p_rlse_object"
+  ],
+  "op_rollback_retaining": [
+    "p_rlse_object"
+  ],
+  "op_allocate_statement": [
+    "p_rlse_object"
+  ],
+  "op_batch_rls": [
+    "p_rlse_object"
+  ],
+  "op_batch_cancel": [
+    "p_rlse_object"
+  ],
+  "op_prepare2": [
+    "p_prep_transaction",
+    "p_prep_data"
+  ],
+  "op_que_events": [
+    "p_event_database",
+    "p_event_items",
+    "p_event_ast",
+    "p_event_arg",
+    "p_event_rid"
+  ],
+  "op_event": [
+    "p_event_database",
+    "p_event_items",
+    "p_event_ast",
+    "p_event_arg",
+    "p_event_rid"
+  ],
+  "op_cancel_events": [
+    "p_event_database",
+    "p_event_rid"
+  ],
+  "op_ddl": [
+    "p_ddl_database",
+    "p_ddl_transaction",
+    "p_ddl_blr"
+  ],
+  "op_get_slice": [
+    "p_slc_transaction",
+    "p_slc_id",
+    "p_slc_length",
+    "p_slc_sdl",
+    "p_slc_parameters",
+    "p_slc_slice"
+  ],
+  "op_put_slice": [
+    "p_slc_transaction",
+    "p_slc_id",
+    "p_slc_length",
+    "p_slc_sdl",
+    "p_slc_parameters",
+    "p_slc_slice"
+  ],
+  "op_slice": [
+    "p_slr_length",
+    "p_slr_slice"
+  ],
+  "op_execute": [
+    "p_sqldata_statement",
+    "p_sqldata_transaction",
+    "p_sqldata_blr",
+    "p_sqldata_message_number",
+    "p_sqldata_messages",
+    "xdr_sql_message",
+    "p_sqldata_timeout?",
+    "p_sqldata_cursor_flags?",
+    "p_sqldata_inline_blob_size?"
+  ],
+  "op_execute2": [
+    "p_sqldata_statement",
+    "p_sqldata_transaction",
+    "p_sqldata_blr",
+    "p_sqldata_message_number",
+    "p_sqldata_messages",
+    "xdr_sql_message",
+    "p_sqldata_out_blr",
+    "p_sqldata_out_message_number",
+    "p_sqldata_timeout?",
+    "p_sqldata_cursor_flags?",
+    "p_sqldata_inline_blob_size?"
+  ],
+  "op_exec_immediate2": [
+    "p_sqlst_blr",
+    "p_sqlst_message_number",
+    "p_sqlst_messages",
+    "xdr_sql_message",
+    "p_sqlst_out_blr",
+    "p_sqlst_out_message_number",
+    "p_sqlst_inline_blob_size?",
+    "p_sqlst_transaction",
+    "p_sqlst_statement",
+    "p_sqlst_SQL_dialect",
+    "p_sqlst_SQL_str",
+    "p_sqlst_items",
+    "p_sqlst_buffer_length",
+    "p_sqlst_flags?"
+  ],
+  "op_exec_immediate": [
+    "p_sqlst_transaction",
+    "p_sqlst_statement",
+    "p_sqlst_SQL_dialect",
+    "p_sqlst_SQL_str",
+    "p_sqlst_items",
+    "p_sqlst_buffer_length",
+    "p_sqlst_flags?"
+  ],
+  "op_prepare_statement": [
+    "p_sqlst_transaction",
+    "p_sqlst_statement",
+    "p_sqlst_SQL_dialect",
+    "p_sqlst_SQL_str",
+    "p_sqlst_items",
+    "p_sqlst_buffer_length",
+    "p_sqlst_flags?"
+  ],
+  "op_fetch": [
+    "p_sqldata_statement",
+    "p_sqldata_blr",
+    "p_sqldata_message_number",
+    "p_sqldata_messages"
+  ],
+  "op_fetch_scroll": [
+    "p_sqldata_statement",
+    "p_sqldata_blr",
+    "p_sqldata_message_number",
+    "p_sqldata_messages",
+    "p_sqldata_fetch_op",
+    "p_sqldata_fetch_pos"
+  ],
+  "op_fetch_response": [
+    "p_sqldata_status",
+    "p_sqldata_messages",
+    "xdr_sql_message?"
+  ],
+  "op_free_statement": [
+    "p_sqlfree_statement",
+    "p_sqlfree_option"
+  ],
+  "op_set_cursor": [
+    "p_sqlcur_statement",
+    "p_sqlcur_cursor_name",
+    "p_sqlcur_type"
+  ],
+  "op_sql_response": [
+    "p_sqldata_messages",
+    "xdr_sql_message?"
+  ],
+  "op_update_account_info": [
+    "p_account_database",
+    "p_account_apb"
+  ],
+  "op_authenticate_user": [
+    "p_auth_database",
+    "p_auth_dpb",
+    "p_auth_items",
+    "p_auth_buffer_length"
+  ],
+  "op_trusted_auth": [
+    "p_trau_data"
+  ],
+  "op_cont_auth": [
+    "p_data",
+    "p_name",
+    "p_list",
+    "p_keys"
+  ],
+  "op_cancel": [
+    "p_co_kind"
+  ],
+  "op_crypt": [
+    "p_plugin",
+    "p_key"
+  ],
+  "op_crypt_key_callback": [
+    "p_cc_data",
+    "p_cc_reply?"
+  ],
+  "op_batch_create": [
+    "p_batch_statement",
+    "p_batch_blr",
+    "p_batch_msglen",
+    "p_batch_pb"
+  ],
+  "op_batch_msg": [
+    "p_batch_statement",
+    "p_batch_messages",
+    "p_batch_data"
+  ],
+  "op_batch_exec": [
+    "p_batch_statement",
+    "p_batch_transaction"
+  ],
+  "op_batch_cs": [
+    "p_batch_statement",
+    "p_batch_reccount",
+    "p_batch_updates",
+    "p_batch_vectors",
+    "p_batch_errors",
+    "update_counts",
+    "status_vectors"
+  ],
+  "op_batch_sync": [],
+  "op_batch_set_bpb": [
+    "p_batch_statement",
+    "p_batch_blob_bpb"
+  ],
+  "op_batch_regblob": [
+    "p_batch_statement",
+    "p_batch_exist_id",
+    "p_batch_blob_id"
+  ],
+  "op_batch_blob_stream": [
+    "p_batch_statement",
+    "p_batch_blob_data"
+  ],
+  "op_repl_data": [
+    "p_repl_database",
+    "p_repl_data"
+  ],
+  "op_inline_blob": [
+    "p_tran_id",
+    "p_blob_id",
+    "p_blob_info",
+    "p_blob_data"
+  ]
+}

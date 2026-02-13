@@ -337,7 +337,19 @@ namespace scratchbird::core
             new_header.btr_suffix_total += keys[i].suffix_trunc;
         }
 
-        new_header.btr_rightmost_child = children.back();
+        uint64_t rightmost = children.back();
+        if (rightmost == 0 && !children.empty())
+        {
+            for (auto it = children.rbegin(); it != children.rend(); ++it)
+            {
+                if (*it != 0)
+                {
+                    rightmost = *it;
+                    break;
+                }
+            }
+        }
+        new_header.btr_rightmost_child = rightmost;
         new_header.btr_min_prefix_len = 0;
 
         new_header.btr_flags &= ~static_cast<uint16_t>(BTreeFlags::COMPRESSED);
@@ -402,12 +414,10 @@ namespace scratchbird::core
         page->btr_header.checksum = 0; // Will be set on flush
         page->btr_header.lsn = 0;
         page->btr_header.flags = 0;
-        std::memcpy(page->btr_header.database_uuid, db->uuid().bytes.data(), 16);
         page->btr_header.generation = 0;
-        page->btr_header.free_space = 0; // Will be calculated below
-        page->btr_header.item_count = 0;
-        page->btr_header.free_offset = 0;
-        page->btr_header.special_size = 0;
+        pageSetLower(page->btr_header, sizeof(SBBTreePage));
+        pageSetUpper(page->btr_header, page_size);
+        pageSetSpecial(page->btr_header, page_size);
 
         // Set index and table UUIDs
         std::memcpy(page->btr_index_uuid.bytes.data(), index_uuid.bytes.data(), 16);
@@ -1691,7 +1701,21 @@ namespace scratchbird::core
                 keys.push_back(std::move(entry));
                 children.push_back(node->btn_child_page);
             }
-            children.push_back(parent_page->btr_rightmost_child);
+            {
+                uint64_t rightmost = parent_page->btr_rightmost_child;
+                if (rightmost == 0 && parent_page->btr_count > 0)
+                {
+                    const auto *last_node = reinterpret_cast<const SBBTreeNode *>(
+                        reinterpret_cast<const uint8_t *>(parent_page_data_ptr) +
+                        offsets[parent_page->btr_count - 1]);
+                    rightmost = last_node->btn_child_page;
+                }
+                else if (rightmost == 0 && parent_page->btr_count == 0)
+                {
+                    rightmost = left_child_page_num;
+                }
+                children.push_back(rightmost);
+            }
 
             // Find child index for insertion
             size_t child_index = keys.size();
@@ -1914,7 +1938,21 @@ namespace scratchbird::core
             keys.push_back(std::move(entry));
             children.push_back(node->btn_child_page);
         }
-        children.push_back(parent_page->btr_rightmost_child);
+        {
+            uint64_t rightmost = parent_page->btr_rightmost_child;
+            if (rightmost == 0 && parent_page->btr_count > 0)
+            {
+                const auto *last_node = reinterpret_cast<const SBBTreeNode *>(
+                    reinterpret_cast<const uint8_t *>(parent_page_data_ptr) +
+                    parent_offsets[parent_page->btr_count - 1]);
+                rightmost = last_node->btn_child_page;
+            }
+            else if (rightmost == 0 && parent_page->btr_count == 0)
+            {
+                rightmost = left_page_num;
+            }
+            children.push_back(rightmost);
+        }
 
         // Find child index for insertion
         size_t child_index = keys.size();
@@ -3212,7 +3250,13 @@ namespace scratchbird::core
             page->btr_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_BTREE_LEAF);
             page->btr_header.page_size = page_size;
             page->btr_header.page_id = leaf_page_num;
-            std::memcpy(page->btr_header.database_uuid, db_->uuid().bytes.data(), 16);
+            page->btr_header.generation = 0;
+            page->btr_header.checksum = 0;
+            page->btr_header.flags = 0;
+            page->btr_header.lsn = 0;
+            pageSetLower(page->btr_header, sizeof(SBBTreePage));
+            pageSetUpper(page->btr_header, page_size);
+            pageSetSpecial(page->btr_header, page_size);
 
             page->btr_index_uuid = index_info_.idx_uuid;
             page->btr_table_uuid = index_info_.idx_table_uuid;
@@ -3378,7 +3422,13 @@ namespace scratchbird::core
                 page->btr_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_BTREE_INTERNAL);
                 page->btr_header.page_size = page_size;
                 page->btr_header.page_id = internal_page_num;
-                std::memcpy(page->btr_header.database_uuid, db_->uuid().bytes.data(), 16);
+                page->btr_header.generation = 0;
+                page->btr_header.checksum = 0;
+                page->btr_header.flags = 0;
+                page->btr_header.lsn = 0;
+                pageSetLower(page->btr_header, sizeof(SBBTreePage));
+                pageSetUpper(page->btr_header, page_size);
+                pageSetSpecial(page->btr_header, page_size);
 
                 page->btr_index_uuid = index_info_.idx_uuid;
                 page->btr_table_uuid = index_info_.idx_table_uuid;

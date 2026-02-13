@@ -57,7 +57,7 @@ constexpr ConnectionId INVALID_CONNECTION_ID = 0;
  */
 enum class ConnectionState : uint8_t {
     NEW = 0,                // Just accepted, no data yet
-    PROTOCOL_DETECTION = 1, // Detecting wire protocol (optional)
+    PROTOCOL_DETECTION = 1, // Reserved slot (protocol detection is not supported)
     SSL_HANDSHAKE = 2,      // SSL/TLS handshake
     AUTHENTICATING = 3,     // Client authentication
     AUTHENTICATED = 4,      // Authentication successful
@@ -73,7 +73,7 @@ enum class ConnectionState : uint8_t {
 inline const char* connectionStateToString(ConnectionState state) {
     switch (state) {
         case ConnectionState::NEW: return "new";
-        case ConnectionState::PROTOCOL_DETECTION: return "protocol_detection";
+        case ConnectionState::PROTOCOL_DETECTION: return "reserved_protocol_detection";
         case ConnectionState::SSL_HANDSHAKE: return "ssl_handshake";
         case ConnectionState::AUTHENTICATING: return "authenticating";
         case ConnectionState::AUTHENTICATED: return "authenticated";
@@ -330,14 +330,10 @@ struct ConnectionManagerConfig {
     bool enable_keepalive = true;
     bool enable_ssl = false;
     SSLMode ssl_mode = SSLMode::PREFER;
-    // If fixed_protocol != AUTO_DETECT, every connection is bound to that protocol.
-    ProtocolType fixed_protocol = ProtocolType::AUTO_DETECT;
-    bool auto_detect_protocol = true;
+    // Listener ports are single-protocol: every accepted connection is bound here.
+    ProtocolType fixed_protocol = ProtocolType::NATIVE;
     std::vector<ProtocolType> allowed_protocols{
-        ProtocolType::NATIVE,
-        ProtocolType::POSTGRESQL,
-        ProtocolType::MYSQL,
-        ProtocolType::FIREBIRD
+        ProtocolType::NATIVE
     };
 };
 
@@ -349,7 +345,7 @@ struct ConnectionManagerConfig {
  * Connection Manager
  *
  * Manages all client connections, handling connection lifecycle,
- * protocol binding/detection, and routing to appropriate handlers.
+ * protocol binding, and routing to appropriate handlers.
  *
  * Thread safety: All methods are thread-safe.
  */
@@ -477,13 +473,10 @@ private:
 
     // Handle state transitions
     void handleNewConnection(Connection* conn);
-    void handleProtocolDetection(Connection* conn);
     void handleAuthentication(Connection* conn);
     void handleReady(Connection* conn);
     void handleData(Connection* conn);
 
-    // Detect wire protocol from first bytes
-    ProtocolType detectProtocol(const std::vector<uint8_t>& data);
     bool isProtocolAllowed(ProtocolType protocol) const;
 
     // Fire event callback

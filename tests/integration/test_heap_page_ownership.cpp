@@ -10,10 +10,10 @@
 /**
  * Plan 01 Task B: Heap Page Ownership Tests
  *
- * Tests for table_id field in PageHeader per ON_DISK_FORMAT.md v1.4.0
+ * Tests for table_id field in HeapPageSpecial per ON_DISK_FORMAT.md v1.4.0
  *
  * Test coverage:
- * 1. Happy path: PageHeader has table_id field set correctly
+ * 1. Happy path: HeapPageSpecial has table_id field set correctly
  * 2. Restart test: table_id persists across database restart
  * 3. Negative test: enumerateTablePages returns empty for non-existent table
  */
@@ -74,10 +74,10 @@ protected:
 };
 
 /**
- * Test 1: PageHeader contains table_id field
+ * Test 1: HeapPageSpecial contains table_id field
  *
- * This test verifies that PageHeader structure has the table_id field
- * and is exactly 80 bytes as specified in ON_DISK_FORMAT.md v1.4.0
+ * This test verifies that PageHeader structure is 80 bytes and that
+ * HeapPageSpecial stores the table_id at the expected offset.
  */
 TEST_F(HeapPageOwnershipTest, PageHeaderSize)
 {
@@ -85,16 +85,15 @@ TEST_F(HeapPageOwnershipTest, PageHeaderSize)
     EXPECT_EQ(sizeof(PageHeader), 80)
         << "PageHeader must be 80 bytes per ON_DISK_FORMAT.md v1.4.0";
 
-    // Verify table_id field is at correct offset (0x30)
-    PageHeader test_header;
-    uintptr_t header_addr = reinterpret_cast<uintptr_t>(&test_header);
-    uintptr_t table_id_addr = reinterpret_cast<uintptr_t>(&test_header.table_id);
+    // Verify HeapPageSpecial table_id offset and size
+    HeapPageSpecial special;
+    uintptr_t special_addr = reinterpret_cast<uintptr_t>(&special);
+    uintptr_t table_id_addr = reinterpret_cast<uintptr_t>(&special.table_id);
 
-    EXPECT_EQ(table_id_addr - header_addr, 0x30)
-        << "table_id must be at offset 0x30 in PageHeader";
+    EXPECT_EQ(table_id_addr - special_addr, 4u)
+        << "table_id must be at offset 0x04 in HeapPageSpecial";
 
-    // Verify table_id is 16 bytes
-    EXPECT_EQ(sizeof(test_header.table_id), 16)
+    EXPECT_EQ(sizeof(special.table_id), 16u)
         << "table_id must be 16 bytes (UUID)";
 }
 
@@ -102,7 +101,7 @@ TEST_F(HeapPageOwnershipTest, PageHeaderSize)
  * Test 2: Heap page initialization sets table_id
  *
  * This test verifies that when a heap page is initialized,
- * the table_id field is properly set in the PageHeader.
+ * the table_id field is properly set in the HeapPageSpecial.
  */
 TEST_F(HeapPageOwnershipTest, HeapPageSetsTableId)
 {
@@ -128,10 +127,13 @@ TEST_F(HeapPageOwnershipTest, HeapPageSetsTableId)
     status = heap_page.initialize(page_id, nullptr);
     ASSERT_EQ(status, Status::OK);
 
-    // Verify table_id was set in PageHeader
+    // Verify table_id was set in HeapPageSpecial
     const PageHeader* header = heap_page.header();
-    EXPECT_EQ(memcmp(header->table_id, test_table_id.bytes.data(), sizeof(header->table_id)), 0)
-        << "HeapPage::initialize() must set table_id in PageHeader";
+    const auto* special = reinterpret_cast<const HeapPageSpecial*>(
+        static_cast<const uint8_t*>(buffer) + header->page_size - sizeof(HeapPageSpecial));
+    EXPECT_EQ(memcmp(special->table_id.bytes.data(), test_table_id.bytes.data(),
+                     test_table_id.bytes.size()), 0)
+        << "HeapPage::initialize() must set table_id in HeapPageSpecial";
 
     // Verify page type is HEAP
     EXPECT_EQ(header->page_type, PAGE_TYPE_HEAP);
@@ -143,7 +145,7 @@ TEST_F(HeapPageOwnershipTest, HeapPageSetsTableId)
 /**
  * Test 3: Table ID persistence across restart
  *
- * This test verifies that table_id in PageHeader persists
+ * This test verifies that table_id in HeapPageSpecial persists
  * when the database is closed and reopened.
  */
 TEST_F(HeapPageOwnershipTest, TableIdPersistsAcrossRestart)
@@ -193,7 +195,10 @@ TEST_F(HeapPageOwnershipTest, TableIdPersistsAcrossRestart)
     ASSERT_EQ(status, Status::OK);
 
     const PageHeader* header = static_cast<const PageHeader*>(buffer);
-    EXPECT_EQ(memcmp(header->table_id, test_table_id.bytes.data(), sizeof(header->table_id)), 0)
+    const auto* special = reinterpret_cast<const HeapPageSpecial*>(
+        static_cast<const uint8_t*>(buffer) + header->page_size - sizeof(HeapPageSpecial));
+    EXPECT_EQ(memcmp(special->table_id.bytes.data(), test_table_id.bytes.data(),
+                     test_table_id.bytes.size()), 0)
         << "table_id must persist across database restart";
 
     db_->buffer_pool()->unpinPage(page_id, false, nullptr);
@@ -254,10 +259,12 @@ TEST_F(HeapPageOwnershipTest, ZeroTableIdWarning)
 
     // But verify the zero was set (system should log warning)
     const PageHeader* header = heap_page.header();
+    const auto* special = reinterpret_cast<const HeapPageSpecial*>(
+        static_cast<const uint8_t*>(buffer) + header->page_size - sizeof(HeapPageSpecial));
     bool all_zeros = true;
-    for (size_t i = 0; i < sizeof(header->table_id); i++)
+    for (size_t i = 0; i < special->table_id.bytes.size(); i++)
     {
-        if (header->table_id[i] != 0)
+        if (special->table_id.bytes[i] != 0)
         {
             all_zeros = false;
             break;

@@ -1,4 +1,5 @@
 #include "scratchbird/sblr/v3_codec.h"
+#include "scratchbird/sblr/v3_payloads.h"
 
 #include <cstring>
 #include <limits>
@@ -194,6 +195,68 @@ static Value defaultValueForField(const FieldDef& field) {
 }
 
 bool encodePayloadBySchema(const SchemaDef& schema, const Value& payload, Buffer& out, DecodeError& err) {
+    if (schema.name == "OPTION_KV") {
+        Value::List items;
+        if (auto list = std::get_if<Value::List>(&payload.data)) {
+            items = *list;
+        } else if (auto obj = std::get_if<Value::Object>(&payload.data)) {
+            auto it_items = obj->find("items");
+            if (it_items != obj->end()) {
+                if (auto list = std::get_if<Value::List>(&it_items->second.data)) {
+                    items = *list;
+                } else {
+                    err.message = "OPTION_KV items not list";
+                    return false;
+                }
+            } else {
+                uint64_t count = 0;
+                auto it_count = obj->find("count");
+                if (it_count != obj->end()) {
+                    if (auto c = std::get_if<uint64_t>(&it_count->second.data)) {
+                        count = *c;
+                    } else {
+                        err.message = "OPTION_KV count not varuint";
+                        return false;
+                    }
+                }
+                if (count == 0) {
+                    encodeVaruint(0, out);
+                    return true;
+                }
+                auto it_key = obj->find("key");
+                auto it_value = obj->find("value");
+                if (it_key == obj->end() || it_value == obj->end()) {
+                    err.message = "OPTION_KV missing key/value";
+                    return false;
+                }
+                Value::Object entry;
+                entry["key"] = it_key->second;
+                entry["value"] = it_value->second;
+                items.push_back(Value(std::move(entry)));
+            }
+        } else {
+            err.message = "OPTION_KV payload invalid";
+            return false;
+        }
+
+        encodeVaruint(static_cast<uint64_t>(items.size()), out);
+        FieldDef key_field{"key", FieldType::IDENT, ""};
+        FieldDef value_field{"value", FieldType::EXPR, ""};
+        for (const auto& entry : items) {
+            auto obj = std::get_if<Value::Object>(&entry.data);
+            if (!obj) { err.message = "OPTION_KV entry not object"; return false; }
+            auto it_key = obj->find("key");
+            auto it_value = obj->find("value");
+            if (it_key == obj->end() || it_value == obj->end()) {
+                err.message = "OPTION_KV entry missing key/value";
+                return false;
+            }
+            if (!encodeValue(key_field, it_key->second, out, err)) return false;
+            if (!encodeValue(value_field, it_value->second, out, err)) return false;
+        }
+        return true;
+    }
+
     if (!std::holds_alternative<Value::Object>(payload.data)) {
         err.message = "payload is not object";
         return false;
@@ -215,6 +278,30 @@ bool encodePayloadBySchema(const SchemaDef& schema, const Value& payload, Buffer
 }
 
 bool decodePayloadBySchema(const SchemaDef& schema, const uint8_t* data, size_t size, size_t& offset, Value& out, DecodeError& err) {
+    if (schema.name == "OPTION_KV") {
+        uint64_t count = 0;
+        if (!decodeVaruint(data, size, offset, count)) {
+            err.message = "expected varuint";
+            return false;
+        }
+        Value::List items;
+        FieldDef key_field{"key", FieldType::IDENT, ""};
+        FieldDef value_field{"value", FieldType::EXPR, ""};
+        items.reserve(static_cast<size_t>(count));
+        for (uint64_t i = 0; i < count; ++i) {
+            Value key;
+            Value value;
+            if (!decodeValue(key_field, data, size, offset, key, err)) return false;
+            if (!decodeValue(value_field, data, size, offset, value, err)) return false;
+            Value::Object entry;
+            entry["key"] = std::move(key);
+            entry["value"] = std::move(value);
+            items.push_back(Value(std::move(entry)));
+        }
+        out = Value(std::move(items));
+        return true;
+    }
+
     Value::Object obj;
     for (const auto& field : schema.fields) {
         Value value;
@@ -357,7 +444,11 @@ bool encodeValue(const FieldDef& field, const Value& value, Buffer& out, DecodeE
             auto v = std::get_if<Value::InstrPtr>(&value.data);
             if (!v || !*v) { err.message = "expected instruction"; return false; }
             Buffer tmp;
-            encodeInstruction(**v, tmp);
+            DecodeError derr;
+            if (!encodeInstructionWithSchema(**v, tmp, derr)) {
+                err.message = derr.message.empty() ? "encode instruction" : derr.message;
+                return false;
+            }
             out.insert(out.end(), tmp.begin(), tmp.end());
             return true;
         }
@@ -370,7 +461,11 @@ bool encodeValue(const FieldDef& field, const Value& value, Buffer& out, DecodeE
                 auto instr = std::get_if<Value::InstrPtr>(&item.data);
                 if (!instr || !*instr) { err.message = "list item not instruction"; return false; }
                 Buffer tmp;
-                encodeInstruction(**instr, tmp);
+                DecodeError derr;
+                if (!encodeInstructionWithSchema(**instr, tmp, derr)) {
+                    err.message = derr.message.empty() ? "encode instruction list" : derr.message;
+                    return false;
+                }
                 out.insert(out.end(), tmp.begin(), tmp.end());
             }
             return true;
@@ -557,7 +652,13 @@ bool decodeValue(const FieldDef& field, const uint8_t* data, size_t size, size_t
         }
         case FieldType::EXPR:
         case FieldType::STMT: {
-            Instruction inst; if (!decodeInstruction(data, size, offset, inst, err)) return false;
+            Instruction inst;
+            size_t start = offset;
+            DecodeError derr;
+            if (!decodeInstructionWithSchema(data, size, offset, inst, derr)) {
+                offset = start;
+                if (!decodeInstruction(data, size, offset, inst, err)) return false;
+            }
             out = Value(std::make_shared<Instruction>(std::move(inst)));
             return true;
         }
@@ -566,7 +667,13 @@ bool decodeValue(const FieldDef& field, const uint8_t* data, size_t size, size_t
             uint64_t count; if (!decodeVaruint(data, size, offset, count)) { err.message = "list"; return false; }
             Value::List list; list.reserve(static_cast<size_t>(count));
             for (size_t i = 0; i < count; ++i) {
-                Instruction inst; if (!decodeInstruction(data, size, offset, inst, err)) return false;
+                Instruction inst;
+                size_t start = offset;
+                DecodeError derr;
+                if (!decodeInstructionWithSchema(data, size, offset, inst, derr)) {
+                    offset = start;
+                    if (!decodeInstruction(data, size, offset, inst, err)) return false;
+                }
                 list.emplace_back(Value(std::make_shared<Instruction>(std::move(inst))));
             }
             out = Value(std::move(list));

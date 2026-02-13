@@ -116,7 +116,6 @@ protected:
         header.xmax = xmax;
         header.back_version_gpid = INVALID_GPID;
         header.back_version_slot = 0;
-        header.reserved1 = 0;
         header.ctid_gpid = INVALID_GPID;
         header.ctid_slot = 0;
         header.infomask = 0;
@@ -247,8 +246,6 @@ TEST_F(HeapToastIntegrationTest, ToastDeleteCleansUp)
 
     const ToastPointer *toast_ptr =
         reinterpret_cast<const ToastPointer *>(raw_data + sizeof(TupleHeader));
-    uint32_t value_id = toast_ptr->va_valueid;
-
     // Delete the tuple (should also delete TOAST data)
     ASSERT_EQ(heap_page.deleteTuple(item_id, TEST_XMAX, &error_ctx), Status::OK);
 

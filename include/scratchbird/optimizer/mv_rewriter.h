@@ -10,7 +10,7 @@
 /**
  * mv_rewriter.h - Materialized View Query Rewriter
  *
- * V2 MIGRATION STATUS: COMPLETE
+ * V3 MIGRATION STATUS: PENDING
  *
  * P3-15: Automatic query rewriting to use materialized views.
  * When a query could be answered using a materialized view instead of
@@ -42,13 +42,19 @@
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/error_context.h"
-#include "scratchbird/parser/ast_v2.h"
-#include "scratchbird/sblr/resolved_ast_v2.h"
 #include <vector>
 #include <memory>
 #include <string>
+#include <unordered_map>
 #include <unordered_set>
 #include <chrono>
+
+namespace scratchbird::parser::v3 {
+    class SelectStmt;
+    class Expression;
+    class StringPool;
+    class ASTArena;
+}
 
 namespace scratchbird::optimizer
 {
@@ -74,8 +80,8 @@ struct QueryPattern
     // Aggregate functions used
     std::vector<std::string> aggregates;  // e.g., "SUM", "COUNT", "AVG"
 
-    // Original WHERE clause expression (V2 type)
-    parser::v2::ResolvedExpression* where_clause = nullptr;
+    // Original WHERE clause expression (V3 type)
+    parser::v3::Expression* where_clause = nullptr;
 
     // Is this an aggregate query?
     bool is_aggregate = false;
@@ -100,7 +106,7 @@ struct MVCandidate
 };
 
 /**
- * MVRewriter - Rewrites queries to use materialized views when beneficial (V2 Complete)
+ * MVRewriter - Rewrites queries to use materialized views when beneficial (V3 pending)
  */
 class MVRewriter
 {
@@ -125,17 +131,17 @@ public:
     void setMaxStaleness(double seconds) { max_staleness_seconds_ = seconds; }
 
     /**
-     * Try to rewrite a SELECT query to use a materialized view (V2 API)
+     * Try to rewrite a SELECT query to use a materialized view (V3 API)
      *
-     * @param select_stmt Original SELECT statement (V2 unresolved AST)
+     * @param select_stmt Original SELECT statement (V3 unresolved AST)
      * @param string_pool String pool for identifier resolution
      * @param arena AST arena for allocation
      * @param ctx Error context
      * @return Rewritten SELECT (using MV) or nullptr if no beneficial rewrite found
      */
-    parser::v2::SelectStmt* tryRewrite(const parser::v2::SelectStmt* select_stmt,
-                                       parser::v2::StringPool& string_pool,
-                                       parser::v2::ASTArena& arena,
+    parser::v3::SelectStmt* tryRewrite(const parser::v3::SelectStmt* select_stmt,
+                                       parser::v3::StringPool& string_pool,
+                                       parser::v3::ASTArena& arena,
                                        core::ErrorContext* ctx = nullptr);
 
     /**
@@ -160,15 +166,15 @@ public:
                           const QueryPattern& query_pattern);
 
     /**
-     * Extract query pattern from a SELECT statement (V2 API)
+     * Extract query pattern from a SELECT statement (V3 API)
      *
-     * @param select_stmt SELECT statement (V2 unresolved AST)
+     * @param select_stmt SELECT statement (V3 unresolved AST)
      * @param string_pool String pool
      * @param ctx Error context
      * @return Query pattern
      */
-    QueryPattern extractPattern(const parser::v2::SelectStmt* select_stmt,
-                               const parser::v2::StringPool& string_pool,
+    QueryPattern extractPattern(const parser::v3::SelectStmt* select_stmt,
+                               const parser::v3::StringPool& string_pool,
                                core::ErrorContext* ctx = nullptr);
 
     /**
@@ -199,7 +205,7 @@ private:
                                core::ErrorContext* ctx);
 
     /**
-     * OPT-4: Extract pattern from MV definition string using V2 parser
+     * OPT-4: Extract pattern from MV definition string using V3 parser
      */
     bool extractPatternFromDefinition(const std::string& definition,
                                       QueryPattern& pattern_out);
@@ -217,26 +223,26 @@ private:
                                core::ErrorContext* ctx);
 
     /**
-     * Create rewritten SELECT that scans MV instead of base tables (V2 API)
+     * Create rewritten SELECT that scans MV instead of base tables (V3 API)
      */
-    parser::v2::SelectStmt* createMVSelect(const core::CatalogManager::ViewInfo& mv_info,
-                                           const parser::v2::SelectStmt* original,
-                                           parser::v2::StringPool& string_pool,
-                                           parser::v2::ASTArena& arena,
+    parser::v3::SelectStmt* createMVSelect(const core::CatalogManager::ViewInfo& mv_info,
+                                           const parser::v3::SelectStmt* original,
+                                           parser::v3::StringPool& string_pool,
+                                           parser::v3::ASTArena& arena,
                                            core::ErrorContext* ctx);
 
     /**
-     * Extract column names from SELECT list (V2 API)
+     * Extract column names from SELECT list (V3 API)
      */
-    void extractSelectColumns(const parser::v2::SelectStmt* stmt,
-                             const parser::v2::StringPool& string_pool,
+    void extractSelectColumns(const parser::v3::SelectStmt* stmt,
+                             const parser::v3::StringPool& string_pool,
                              std::vector<std::string>& columns);
 
     /**
-     * Extract column names from expression (WHERE clause) (V2 API)
+     * Extract column names from expression (WHERE clause) (V3 API)
      */
-    void extractPredicateColumns(const parser::v2::Expression* expr,
-                                const parser::v2::StringPool& string_pool,
+    void extractPredicateColumns(const parser::v3::Expression* expr,
+                                const parser::v3::StringPool& string_pool,
                                 std::vector<std::string>& columns);
 
     /**

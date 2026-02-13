@@ -8,6 +8,7 @@
  * https://www.firebirdsql.org/en/initial-developer-s-public-license-version-1-0/
  */
 #include "scratchbird/optimizer/selectivity_estimator.h"
+#include "scratchbird/parser/ast_v3.h"
 #include "scratchbird/core/debug.h"
 #include <algorithm>
 #include <cmath>
@@ -17,7 +18,7 @@ namespace scratchbird::optimizer
 {
 
     auto SelectivityEstimator::estimateWhereClause(
-        const parser::v2::ResolvedExpression *where_clause,
+        const parser::v3::Expression *where_clause,
         const core::ID &table_id,
         core::ErrorContext *ctx)
         -> double
@@ -499,7 +500,7 @@ namespace scratchbird::optimizer
     }
 
     auto SelectivityEstimator::estimateJoinSelectivity(
-        const parser::v2::ResolvedExpression* join_condition,
+        const parser::v3::Expression* join_condition,
         const core::ID& left_table_id,
         const core::ID& right_table_id,
         core::ErrorContext* ctx)
@@ -516,11 +517,11 @@ namespace scratchbird::optimizer
         // For Phase 1, use simplified heuristic based on expression type
         // Full implementation would recursively traverse the expression tree
 
-        // Check if this is a binary operation (V2 ResolvedBinaryExpr)
-        if (auto* binary_expr = dynamic_cast<const parser::v2::ResolvedBinaryExpr*>(join_condition))
+        // Check if this is a binary operation (V3 BinaryExpr)
+        if (auto* binary_expr = dynamic_cast<const parser::v3::BinaryExpr*>(join_condition))
         {
             // Check for equality (equi-join)
-            if (binary_expr->op == parser::v2::BinaryOp::EQ)
+            if (binary_expr->op == parser::v3::BinaryOp::EQ)
             {
                 // Try to extract column references from both sides
                 // For Phase 1, use default equi-join selectivity
@@ -531,17 +532,17 @@ namespace scratchbird::optimizer
                 return DEFAULT_EQUALITY_SEL;
             }
             // Range join (>, <, >=, <=)
-            else if (binary_expr->op == parser::v2::BinaryOp::GT ||
-                    binary_expr->op == parser::v2::BinaryOp::LT ||
-                    binary_expr->op == parser::v2::BinaryOp::GE ||
-                    binary_expr->op == parser::v2::BinaryOp::LE)
+            else if (binary_expr->op == parser::v3::BinaryOp::GT ||
+                    binary_expr->op == parser::v3::BinaryOp::LT ||
+                    binary_expr->op == parser::v3::BinaryOp::GE ||
+                    binary_expr->op == parser::v3::BinaryOp::LE)
             {
                 DEBUG_LOG_DB("Range join detected, using default selectivity: " +
                            std::to_string(DEFAULT_RANGE_SEL));
                 return DEFAULT_RANGE_SEL;
             }
             // AND - multiply selectivities (independence assumption)
-            else if (binary_expr->op == parser::v2::BinaryOp::AND)
+            else if (binary_expr->op == parser::v3::BinaryOp::AND)
             {
                 double left_sel = estimateJoinSelectivity(
                     binary_expr->left, left_table_id, right_table_id, ctx);
@@ -555,7 +556,7 @@ namespace scratchbird::optimizer
                 return combined;
             }
             // OR - add selectivities and subtract overlap
-            else if (binary_expr->op == parser::v2::BinaryOp::OR)
+            else if (binary_expr->op == parser::v3::BinaryOp::OR)
             {
                 double left_sel = estimateJoinSelectivity(
                     binary_expr->left, left_table_id, right_table_id, ctx);

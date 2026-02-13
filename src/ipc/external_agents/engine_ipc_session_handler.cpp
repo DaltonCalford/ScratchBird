@@ -14,10 +14,10 @@
 
 #include "scratchbird/ipc/engine_ipc_session_handler.h"
 #include "scratchbird/sblr/executor.h"
-#include "scratchbird/sblr/bytecode_generator_v2.h"
 #include "scratchbird/sblr/postgresql_query_compiler.h"
 #include "scratchbird/sblr/mysql_query_compiler.h"
-#include "scratchbird/parser/parser_v2.h"
+#include "scratchbird/sblr/firebird_query_compiler.h"
+#include "scratchbird/sblr/query_compiler_v3.h"
 #include "scratchbird/core/catalog_manager.h"
 
 #include <sstream>
@@ -27,6 +27,7 @@
 #include <cerrno>
 #include <cstdlib>
 #include <algorithm>
+#include <cctype>
 
 namespace scratchbird {
 namespace ipc {
@@ -278,6 +279,30 @@ enum class ClientProtocolType {
     NATIVE_SB
 };
 
+ClientProtocolType detectClientProtocol(const IPCStartupPayload& startup) {
+    std::string app = startup.application;
+    std::transform(app.begin(), app.end(), app.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+    // Listener/parser pool binds one protocol per port, so parser application
+    // identity is sufficient to select the compiler.
+    if (app.find("firebird") != std::string::npos || app.find("fb") != std::string::npos) {
+        return ClientProtocolType::FIREBIRD;
+    }
+    if (app.find("mysql") != std::string::npos) {
+        return ClientProtocolType::MYSQL;
+    }
+    if (app.find("native") != std::string::npos ||
+        app.find("scratchbird") != std::string::npos ||
+        app.find("sbwp") != std::string::npos) {
+        return ClientProtocolType::NATIVE_SB;
+    }
+    if (app.find("postgres") != std::string::npos || app.find("psql") != std::string::npos) {
+        return ClientProtocolType::POSTGRESQL;
+    }
+    return ClientProtocolType::UNKNOWN;
+}
+
 struct EngineSessionState {
     uint32_t session_id = 0;
     std::string database_name;
@@ -304,6 +329,8 @@ struct EngineSessionState {
     // Query compilers (lazily initialized)
     std::unique_ptr<sblr::PostgreSQLQueryCompiler> pg_compiler;
     std::unique_ptr<sblr::MySQLQueryCompiler> mysql_compiler;
+    std::unique_ptr<sblr::FirebirdQueryCompiler> firebird_compiler;
+    std::unique_ptr<sblr::QueryCompilerV3> native_compiler;
     
     // COPY state
     bool in_copy_in = false;
@@ -337,6 +364,22 @@ struct EngineSessionState {
             mysql_compiler->setDefaultSchema("remote.emulation.mysql.localhost.databases." + db_name);
         }
         return mysql_compiler.get();
+    }
+
+    // Get or create Firebird compiler
+    sblr::FirebirdQueryCompiler* getFirebirdCompiler(core::Database* db) {
+        if (!firebird_compiler) {
+            firebird_compiler = std::make_unique<sblr::FirebirdQueryCompiler>(db);
+        }
+        return firebird_compiler.get();
+    }
+
+    // Get or create native V3 compiler
+    sblr::QueryCompilerV3* getNativeCompiler(core::Database* db) {
+        if (!native_compiler) {
+            native_compiler = std::make_unique<sblr::QueryCompilerV3>(db);
+        }
+        return native_compiler.get();
     }
 };
 
@@ -391,6 +434,7 @@ core::Status EngineIPCSessionHandler::onAttach(uint32_t session_id,
     session->database = database_;
     session->created_at = std::chrono::steady_clock::now();
     session->last_activity = session->created_at;
+    session->client_protocol = detectClientProtocol(startup);
     
     // Create executor (ConnectionContext is optional for basic queries)
     session->executor = std::make_unique<sblr::Executor>(database_);
@@ -481,11 +525,32 @@ core::Status EngineIPCSessionHandler::onSimpleQuery(uint32_t session_id,
             warnings = result.warnings();
             break;
         }
-        case ClientProtocolType::FIREBIRD:
-        case ClientProtocolType::NATIVE_SB:
-            // TODO: Add Firebird and Native SB compilers when available
-            return sendError(session_id, "0A000", 
-                "SQL compilation not yet supported for this protocol");
+        case ClientProtocolType::FIREBIRD: {
+            auto* compiler = session->getFirebirdCompiler(database_);
+            auto result = compiler->compile(sql);
+            if (!result.success()) {
+                std::string error_msg = result.errors().empty()
+                    ? "Firebird SQL compilation failed"
+                    : result.errors().front();
+                return sendError(session_id, "42000", error_msg);
+            }
+            bytecode = result.bytecode();
+            warnings = result.warnings();
+            break;
+        }
+        case ClientProtocolType::NATIVE_SB: {
+            auto* compiler = session->getNativeCompiler(database_);
+            auto result = compiler->compile(sql);
+            if (!result.success()) {
+                std::string error_msg = result.errors().empty()
+                    ? "Native V3 SQL compilation failed"
+                    : result.errors().front();
+                return sendError(session_id, "42601", error_msg);
+            }
+            bytecode = result.bytecode();
+            warnings = result.warnings();
+            break;
+        }
     }
     
     // Execute the compiled bytecode
@@ -606,11 +671,30 @@ core::Status EngineIPCSessionHandler::onParse(uint32_t session_id,
             bytecode = result.bytecode();
             break;
         }
-        case ClientProtocolType::FIREBIRD:
-        case ClientProtocolType::NATIVE_SB:
-            // TODO: Add Firebird and Native SB compilers when available
-            return sendError(session_id, "0A000", 
-                "SQL compilation not yet supported for this protocol");
+        case ClientProtocolType::FIREBIRD: {
+            auto* compiler = session->getFirebirdCompiler(database_);
+            auto result = compiler->compile(sql);
+            if (!result.success()) {
+                std::string error_msg = result.errors().empty()
+                    ? "Firebird SQL compilation failed"
+                    : result.errors().front();
+                return sendError(session_id, "42000", error_msg);
+            }
+            bytecode = result.bytecode();
+            break;
+        }
+        case ClientProtocolType::NATIVE_SB: {
+            auto* compiler = session->getNativeCompiler(database_);
+            auto result = compiler->compile(sql);
+            if (!result.success()) {
+                std::string error_msg = result.errors().empty()
+                    ? "Native V3 SQL compilation failed"
+                    : result.errors().front();
+                return sendError(session_id, "42601", error_msg);
+            }
+            bytecode = result.bytecode();
+            break;
+        }
     }
     
     // Create prepared statement entry with compiled bytecode
@@ -1463,7 +1547,7 @@ void CopyBytecodeGenerator::writeOpcode(std::vector<uint8_t>& bytecode, sblr::Op
 }
 
 void CopyBytecodeGenerator::writeUVarint(std::vector<uint8_t>& bytecode, uint64_t value) {
-    // ULEB128 encoding (same as BytecodeResultV2::writeUVarint)
+    // Canonical ULEB128 encoding used by the current SBLR stream writer.
     do {
         uint8_t byte = value & 0x7F;
         value >>= 7;

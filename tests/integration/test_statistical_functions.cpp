@@ -27,7 +27,7 @@
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/sblr/executor.h"
-#include "scratchbird/sblr/query_compiler_v2.h"
+#include "scratchbird/sblr/query_compiler_v3.h"
 #include "test_helpers.h"
 
 #include <cmath>
@@ -42,7 +42,7 @@ class StatisticalFunctionsTest : public ::testing::Test
 protected:
     std::unique_ptr<core::Database> db_;
     std::unique_ptr<sblr::Executor> executor_;
-    std::unique_ptr<sblr::QueryCompilerV2> compiler_;
+    std::unique_ptr<sblr::QueryCompilerV3> compiler_;
     std::unique_ptr<TestDatabaseFile> db_file_;
     core::ID schema_id_;
 
@@ -63,7 +63,7 @@ protected:
             << "Failed to get PUBLIC schema: " << ctx.message;
         schema_id_ = schema.schema_id;
 
-        compiler_ = std::make_unique<sblr::QueryCompilerV2>(db_.get());
+        compiler_ = std::make_unique<sblr::QueryCompilerV3>(db_.get());
         compiler_->setCurrentSchema(schema_id_);
         executor_ = std::make_unique<sblr::Executor>(db_.get());
         executor_->setCurrentSchema(schema_id_);

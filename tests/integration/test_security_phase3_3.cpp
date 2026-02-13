@@ -307,37 +307,37 @@ TEST_F(SecurityPhase3_3Test, MultiplePrivilegesOnColumn)
 // Test 6: SQL parsing - GRANT with single column
 TEST_F(SecurityPhase3_3Test, ParseGrantSingleColumn)
 {
-    GTEST_SKIP() << "Parser V2 DCL support (column lists) pending";
+    GTEST_SKIP() << "Parser V3 DCL support (column lists) pending";
 }
 
 // Test 7: SQL parsing - GRANT with multiple columns
 TEST_F(SecurityPhase3_3Test, ParseGrantMultipleColumns)
 {
-    GTEST_SKIP() << "Parser V2 DCL support (column lists) pending";
+    GTEST_SKIP() << "Parser V3 DCL support (column lists) pending";
 }
 
 // Test 8: SQL parsing - REVOKE with columns
 TEST_F(SecurityPhase3_3Test, ParseRevokeColumns)
 {
-    GTEST_SKIP() << "Parser V2 DCL support (column lists) pending";
+    GTEST_SKIP() << "Parser V3 DCL support (column lists) pending";
 }
 
 // Test 9: Semantic analysis - reject column privileges on non-TABLE
 TEST_F(SecurityPhase3_3Test, SemanticRejectColumnOnNonTable)
 {
-    GTEST_SKIP() << "Parser V2 DCL semantic analysis pending";
+    GTEST_SKIP() << "Parser V3 DCL semantic analysis pending";
 }
 
 // Test 10: Semantic analysis - reject invalid privilege types for columns
 TEST_F(SecurityPhase3_3Test, SemanticRejectInvalidColumnPrivileges)
 {
-    GTEST_SKIP() << "Parser V2 DCL semantic analysis pending";
+    GTEST_SKIP() << "Parser V3 DCL semantic analysis pending";
 }
 
 // Test 11: Bytecode generation - GRANT with columns
 TEST_F(SecurityPhase3_3Test, BytecodeGenerationGrantColumns)
 {
-    GTEST_SKIP() << "Parser V2 DCL bytecode generation pending";
+    GTEST_SKIP() << "Parser V3 DCL bytecode generation pending";
 }
 
 int main(int argc, char** argv)

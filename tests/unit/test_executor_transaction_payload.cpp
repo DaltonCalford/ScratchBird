@@ -14,7 +14,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/sblr/executor.h"
-#include "scratchbird/sblr/query_compiler_v2.h"
+#include "scratchbird/sblr/query_compiler_v3.h"
 #include "test_helpers.h"
 
 using scratchbird::core::ConnectionContext;
@@ -24,7 +24,7 @@ using scratchbird::core::IsolationLevel;
 using scratchbird::core::ReadCommittedMode;
 using scratchbird::core::Status;
 using scratchbird::sblr::Executor;
-using scratchbird::sblr::QueryCompilerV2;
+using scratchbird::sblr::QueryCompilerV3;
 using scratchbird::testing::TestDatabaseFile;
 
 namespace {
@@ -100,8 +100,8 @@ protected:
         db_file_.reset();
     }
 
-    scratchbird::sblr::CompilationResultV2 compile(const std::string& sql) {
-        QueryCompilerV2 compiler(&db_);
+    scratchbird::sblr::CompilationResultV3 compile(const std::string& sql) {
+        QueryCompilerV3 compiler(&db_);
         return compiler.compile(sql);
     }
 

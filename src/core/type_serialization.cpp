@@ -30,7 +30,11 @@ namespace scratchbird::core
                     return 8;
                 case DataType::TIME:
                 case DataType::TIMESTAMP:
+                case DataType::TIME_WITH_ZONE:
+                case DataType::TIMESTAMP_WITH_ZONE:
                     return 12;
+                case DataType::BIT:
+                    return 4;
                 case DataType::UUID:
                 case DataType::INT128:
                 case DataType::UINT128:

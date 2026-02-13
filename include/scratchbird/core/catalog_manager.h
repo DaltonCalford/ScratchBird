@@ -248,9 +248,7 @@ namespace scratchbird::core
     namespace TableMigration
     {
         // Maximum number of pages to process in a single batch
-        // Limits: With 8KB pages, 1000 pages = ~8MB of heap data
-        // Add TID mapping overhead: ~32 bytes per page = 32KB
-        // Total per batch: ~8.032 MB (well within reasonable memory limits)
+        // Memory estimate: page_size * MAX_BATCH_SIZE_PAGES + ~32 bytes/page TID map overhead
         constexpr uint32_t MAX_BATCH_SIZE_PAGES = 1000;
 
         // Maximum memory usage per batch (approximate, in MB)
@@ -345,12 +343,14 @@ public:
             std::string full_path;              // Cached full dotted path (e.g., "emulation.firebird")
             SchemaType schema_type = SchemaType::APPLICATION;
             ID owner_id;                        // Owner UUID reference (NOT name)
-            uint16_t default_tablespace_id = 0; // Default tablespace for new tables
-            uint16_t permissions = 0;           // Bitmask of schema permissions
-            uint16_t default_charset = 0;       // Default character set (0 = inherit from database)
+            uint16_t default_tablespace_id = 0; // Internal numeric tablespace ID (0 = primary)
+            ID default_tablespace_uuid{};       // Catalog UUID for tablespace (SBDB$KEY_TABLESPACE)
+            uint32_t permissions = 0;           // Bitmask of schema permissions
+            uint16_t default_charset = 0;       // Default character set (0 = inherit)
+            ID default_charset_uuid{};          // Catalog UUID for charset (SBDB$KEY_CHARSET)
             uint16_t reserved = 0;
             uint32_t default_collation_id = 0;  // Default collation ID (0 = inherit from database)
-            uint32_t acl_oid = 0;               // TOAST reference for ACL (IMPLEMENTED)
+            ID acl_oid{};               // TOAST reference for ACL (IMPLEMENTED)
             // search_path_oid removed - session-only concept
             uint64_t created_time = 0;
             uint64_t last_modified_time = 0;
@@ -410,10 +410,12 @@ public:
             ID temp_schema_id{};               // Session-local temp schema (optional)
             bool has_toast = false;
             ID toast_table_id;                 // PHASE 5 TASK 5.1.3.1: UUID of TOAST table (zero if none)
-            uint16_t tablespace_id = 0;        // Tablespace ID (0 = default)
+            uint16_t tablespace_id = 0;        // Internal numeric tablespace ID (0 = primary)
+            ID tablespace_uuid{};              // Catalog UUID for tablespace (SBDB$KEY_TABLESPACE)
             uint16_t default_charset = 0;      // Default character set (0 = inherit from schema)
+            ID default_charset_uuid{};         // Catalog UUID for charset (SBDB$KEY_CHARSET)
             uint32_t default_collation_id = 0; // Default collation ID (0 = inherit from schema)
-            uint32_t storage_params_oid = 0;   // TOAST reference for storage parameters - IMPLEMENTED
+            ID storage_params_oid{};   // TOAST reference for storage parameters - IMPLEMENTED
             uint64_t created_time = 0;
             uint64_t last_modified_time = 0;
             uint64_t policy_epoch = 0;            // Security policy epoch (Plan 03)
@@ -593,7 +595,7 @@ public:
             // GENERATED column fields (ALPHA Phase 1 - Constraint Features)
             GeneratedColumnType generated_type = GeneratedColumnType::NOT_GENERATED;
             std::string generation_expression;  // SQL expression (or serialized bytecode)
-            uint32_t generation_expr_oid = 0;   // TOAST reference for large expressions
+            ID generation_expr_oid{};   // TOAST reference for large expressions
             std::vector<uint16_t> dependent_columns;  // Column ordinals this depends on
 
             // IDENTITY column fields (ALPHA Phase 1 - Constraint Features)
@@ -604,16 +606,18 @@ public:
             uint8_t storage_type = 0;       // TOAST storage strategy
             bool with_timezone = false;     // For TIMESTAMP: WITH TIME ZONE
             uint16_t charset = 0;           // Character set (0 = inherit from table)
+            ID charset_uuid{};              // Catalog UUID for charset (SBDB$KEY_CHARSET)
             ID domain_id;                   // WP-2 CAT-M7: Domain ID (zero if not domain-based)
             bool is_array = false;          // Array column flag (true when column stores array values)
             uint32_t array_size = 0;        // Fixed array size (0 = unspecified/unbounded)
             uint16_t timezone_hint = 0;     // Timezone ID for display (0 = use connection default)
+            ID timezone_uuid{};             // Catalog UUID for timezone (SBDB$KEY_TIMEZONE)
             uint32_t collation_id = 0;      // Collation ID (0 = inherit from table)
             std::string default_value;      // Serialized default (simple literals)
             std::string default_expr;       // DEFAULT expression (hex bytecode, ALPHA Phase A)
-            uint32_t default_value_oid = 0; // TOAST reference for large defaults
+            ID default_value_oid{}; // TOAST reference for large defaults
             std::string check_expr;         // CHECK constraint expression (hex bytecode)
-            uint32_t check_expr_oid = 0;    // TOAST reference for check expressions
+            ID check_expr_oid{};    // TOAST reference for check expressions
             uint64_t created_time = 0;
         };
 
@@ -656,12 +660,13 @@ public:
             bool name_is_delimited = false;    // True if name was double-quoted (case-sensitive)
             ID owner_id;                   // Owner UUID reference (NOT name)
             GPID root_gpid = 0;            // Root page of index (GPID)
-            uint16_t tablespace_id = 0;    // Tablespace ID (0 = primary file, 1-65535 = custom)
+            uint16_t tablespace_id = 0;    // Internal numeric tablespace ID
+            ID tablespace_uuid{};          // Catalog UUID for tablespace (SBDB$KEY_TABLESPACE)
             IndexType index_type = IndexType::BTREE;
             bool is_unique = false;
             std::vector<ID> column_ids;
             std::vector<ID> include_column_ids;
-            uint32_t index_params_oid = 0; // TOAST reference for index parameters - IMPLEMENTED
+            ID index_params_oid{}; // TOAST reference for index parameters - IMPLEMENTED
             uint64_t created_time = 0;
             uint32_t collation_id = 101; // Default: utf8_general_ci (binary comparison)
                                          // Collation-aware comparisons are handled by CharsetManager
@@ -672,8 +677,8 @@ public:
             // Task 17: Expression and Filtered Indexes
             bool is_expression_index = false;      // Index on expression(s) rather than columns
             bool is_partial_index = false;         // Index with WHERE clause (filtered)
-            uint32_t expression_oid = 0;           // TOAST reference for serialized expression tree(s)
-            uint32_t predicate_oid = 0;            // TOAST reference for serialized WHERE predicate
+            ID expression_oid{};           // TOAST reference for serialized expression tree(s)
+            ID predicate_oid{};            // TOAST reference for serialized WHERE predicate
             std::vector<std::string> expression_strings;  // Original SQL expressions (for EXPLAIN, etc.)
             std::string predicate_string;          // Original WHERE clause SQL (for EXPLAIN, etc.)
 
@@ -852,7 +857,7 @@ public:
 
             // CHECK constraint specific
             std::string check_expression;      // CHECK constraint SQL expression
-            uint32_t check_expr_oid = 0;      // TOAST reference for large expressions
+            ID check_expr_oid{};      // TOAST reference for large expressions
 
             // FOREIGN KEY specific
             ID referenced_table_id;            // For FK: parent table
@@ -1460,7 +1465,7 @@ public:
             ID exception_id;                 // UUID v7
             ID schema_id;                    // Schema containing the exception
             char name[CatalogConstants::MAX_IDENTIFIER_STORAGE]{}; // Exception name (UTF-8, truncated)
-            uint32_t message_oid = 0;        // TOAST OID for message text
+            ID message_oid{};        // TOAST OID for message text
             ID owner_id;                     // Owner user UUID
             uint64_t created_time = 0;
             uint64_t last_modified_time = 0;
@@ -1704,8 +1709,8 @@ public:
             float avg_width = 0.0f;       // Average width in bytes
 
             // TOAST references for variable-length data
-            uint32_t mcv_oid = 0;         // TOAST reference for MCV list (JSON)
-            uint32_t histogram_oid = 0;   // TOAST reference for histogram (JSON)
+            ID mcv_oid{};         // TOAST reference for MCV list (JSON)
+            ID histogram_oid{};   // TOAST reference for histogram (JSON)
 
             // Histogram metadata
             uint8_t histogram_type = 0;   // HistogramType enum (0=equal_height, 1=equal_width, 255=none)
@@ -3154,6 +3159,7 @@ public:
         struct TimezoneInfo
         {
             uint16_t timezone_id = 0;
+            ID timezone_uuid{};
             std::string name;
             std::string abbreviation;
             int32_t std_offset_minutes = 0;
@@ -3253,6 +3259,7 @@ public:
         struct CharsetInfo
         {
             uint16_t charset_id = 0;    // Character set ID (matches CharacterSet enum)
+            ID charset_uuid{};
             std::string name;           // e.g., "utf8", "latin1"
             std::string description;    // Human-readable description
             uint8_t min_bytes = 1;      // Minimum bytes per character
@@ -3281,6 +3288,7 @@ public:
             uint32_t collation_id = 0;
             std::string name;           // e.g., "utf8_general_ci"
             uint16_t charset_id = 0;    // Associated character set ID
+            ID charset_uuid{};
             uint8_t collation_type = 0; // CollationType enum value
             uint8_t strength = 0;       // CollationStrength enum value
             uint8_t pad_space = 1;      // 1 = PAD SPACE, 0 = NO PAD
@@ -3938,7 +3946,7 @@ public:
         // @param str_out Output string
         // @param ctx Error context
         // @return Status::OK on success
-        auto loadStringFromToast(uint32_t oid, uint64_t xmin,
+        auto loadStringFromToast(const ID &oid, uint64_t xmin,
                                 std::string& str_out, ErrorContext* ctx = nullptr) -> Status;
 
         // OPT-1/OPT-2: Public TOAST storage for statistics data (MCVs, histograms)
@@ -3949,7 +3957,7 @@ public:
         // @param ctx Error context
         // @return Status::OK on success
         auto storeStringInToast(const std::string& str, uint64_t xmin,
-                               uint32_t& oid_out, ErrorContext* ctx = nullptr) -> Status;
+                               ID& oid_out, ErrorContext* ctx = nullptr) -> Status;
 
         // Initialize policy TOAST storage (must be called after StorageEngine is ready)
         auto initializePolicyToastIfNeeded(ErrorContext* ctx = nullptr) -> Status;
@@ -3989,6 +3997,17 @@ public:
         // Internal helper functions (assume mutex_ is already held)
         auto getColumnInternal(const ID &table_id, const std::string &column_name,
                                ColumnInfo &info, ErrorContext *ctx) -> Status;
+        auto validateColumnDomains(const std::vector<ColumnInfo>& columns,
+                                   ErrorContext* ctx) -> Status;
+        auto applySystemDomainDefaults(const ID& schema_id,
+                                       const std::string& table_name,
+                                       std::vector<ColumnInfo>& columns,
+                                       ErrorContext* ctx) -> Status;
+        auto enforceSystemDomainBindings(ErrorContext* ctx) -> Status;
+        auto updateColumnDomainBindings(const ID& table_id,
+                                        const std::vector<ColumnInfo>& columns,
+                                        ErrorContext* ctx) -> Status;
+        auto isSystemSchemaId(const ID& schema_id) const -> bool;
 
         // Internal unlocked version of getUserByName - caller must hold mutex_
         auto getUserBasicUnlocked(const ID& user_id, BasicUserInfo& user_out,
@@ -4177,9 +4196,9 @@ public:
         // TOAST table ID for policy expressions (Phase 3.4.8 - TOAST Persistence)
         ID policy_toast_table_id_{};  // UUID for sb_toast_policy table
         std::unique_ptr<ToastManager> policy_toast_manager_;  // TOAST manager for policy expressions
-        std::unordered_map<uint32_t, std::string> toast_fallback_cache_;
+        std::unordered_map<ID, std::string, IDHash> toast_fallback_cache_;
         std::mutex toast_fallback_mutex_;
-        uint32_t toast_fallback_next_oid_ = 1;
+        ID toast_fallback_next_oid_{};
 
         // Object permissions cache (Phase 3.1 - SQL Object Permissions)
         std::unordered_map<ID, std::vector<ObjectPermissionInfo>> object_permissions_cache_;  // object_id -> permissions
@@ -4288,6 +4307,15 @@ public:
         std::unordered_map<ID, std::vector<ColumnInfo>> column_cache_;
         std::unordered_map<ID, IndexInfo> index_cache_;
         std::unordered_map<uint16_t, TablespaceInfo> tablespace_cache_;  // keyed by tablespace_id
+        std::unordered_map<uint16_t, ID> tablespace_id_to_uuid_;
+        std::unordered_map<ID, uint16_t, IDHash> tablespace_uuid_to_id_;
+        std::unordered_map<uint16_t, ID> charset_id_to_uuid_;
+        std::unordered_map<ID, uint16_t, IDHash> charset_uuid_to_id_;
+        std::unordered_map<uint16_t, ID> timezone_id_to_uuid_;
+        std::unordered_map<ID, uint16_t, IDHash> timezone_uuid_to_id_;
+
+        uint16_t next_charset_id_ = 100;
+        uint16_t next_timezone_id_ = 100;
 
         // Resolver cache (Plan 02 - UUID resolution)
         std::unordered_map<ID, ResolvedObject, IDHash> resolver_by_id_;
@@ -4342,6 +4370,7 @@ public:
         uint32_t tables_table_page_ = TABLES_TABLE_PAGE;
         uint32_t columns_table_page_ = COLUMNS_TABLE_PAGE;
         uint32_t indexes_table_page_ = INDEXES_TABLE_PAGE;
+        uint32_t index_versions_table_page_ = 0;  // Index versions/history table
         uint32_t constraints_table_page_ = 0;    // Will be allocated during init
         uint32_t sequences_table_page_ = 0;      // Will be allocated during init
         uint32_t views_table_page_ = 0;          // Will be allocated during init
@@ -4405,6 +4434,13 @@ public:
         uint64_t security_policy_epoch_ = 0;
 
         // Internal methods
+        auto resolveTablespaceUuid(uint16_t tablespace_id) const -> ID;
+        auto resolveTablespaceId(const ID &tablespace_uuid) const -> uint16_t;
+        void resolveTablespaceBindings();
+        auto resolveCharsetUuid(uint16_t charset_id) -> ID;
+        auto resolveCharsetId(const ID &charset_uuid) -> uint16_t;
+        auto resolveTimezoneUuid(uint16_t timezone_id) -> ID;
+        auto resolveTimezoneId(const ID &timezone_uuid) -> uint16_t;
         auto writeCatalogRoot(ErrorContext *ctx) -> Status;
         auto readCatalogRoot(ErrorContext *ctx) -> Status;
 

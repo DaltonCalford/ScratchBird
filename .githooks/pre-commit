@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_root="$(git rev-parse --show-toplevel)"
+spec_root="${repo_root}/docs/specifications"
+sync_script="${spec_root}/skills/spec-refactor-guardrails/scripts/sync_section_readmes.sh"
+start_marker='^<!-- AUTO-GENERATED:FILE-LIST:START -->$'
+end_marker='^<!-- AUTO-GENERATED:FILE-LIST:END -->$'
+
+if [[ ! -x "${sync_script}" ]]; then
+  exit 0
+fi
+
+changed_paths="$({
+  git diff --cached --name-only --diff-filter=ACMRD || true
+  git diff --name-only --diff-filter=ACMRD || true
+} | sort -u)"
+
+forbidden_work_pattern='^docs/specifications/[0-9][0-9]_[^/]+/(audits|audit|planning|implementation_tracks|findings|migration_notes|work)(/|$)'
+if rg -q "${forbidden_work_pattern}" <<< "${changed_paths}"; then
+  echo "ERROR: Work-area content detected under numbered section directory." >&2
+  echo "Move audits/planning/implementation tracks/findings/migration notes to docs/specifications/work/." >&2
+  exit 1
+fi
+
+has_section_changes=0
+if rg -q '^docs/specifications/[0-9][0-9]_[^/]+/' <<< "${changed_paths}"; then
+  has_section_changes=1
+fi
+
+if [[ ${has_section_changes} -eq 1 ]]; then
+  "${sync_script}" "${spec_root}" >/dev/null
+fi
+
+while IFS= read -r section_dir; do
+  readme="${section_dir}/README.md"
+  if [[ -f "${readme}" ]]; then
+    git add "${readme}"
+  fi
+done < <(find "${spec_root}" -mindepth 1 -maxdepth 1 -type d -name '[0-9][0-9]_*' | sort)
+
+validation_failed=0
+while IFS= read -r section_dir; do
+  section_name="$(basename "${section_dir}")"
+  readme="${section_dir}/README.md"
+
+  if [[ ! -f "${readme}" ]]; then
+    echo "ERROR: Missing section README: docs/specifications/${section_name}/README.md" >&2
+    validation_failed=1
+    continue
+  fi
+
+  if ! rg -q "${start_marker}" "${readme}"; then
+    echo "ERROR: Missing file list start marker in ${readme}" >&2
+    validation_failed=1
+  fi
+
+  if ! rg -q "${end_marker}" "${readme}"; then
+    echo "ERROR: Missing file list end marker in ${readme}" >&2
+    validation_failed=1
+  fi
+done < <(find "${spec_root}" -mindepth 1 -maxdepth 1 -type d -name '[0-9][0-9]_*' | sort)
+
+if [[ ${validation_failed} -ne 0 ]]; then
+  echo "Pre-commit check failed: section README requirements are not satisfied." >&2
+  exit 1
+fi
+
+exit 0

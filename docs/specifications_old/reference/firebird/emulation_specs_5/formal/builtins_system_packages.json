@@ -1,0 +1,28 @@
+{
+  "packages": [
+    {
+      "package": "RDB$TIME_ZONE_UTIL",
+      "ods": "ODS_13_0",
+      "procedures": [],
+      "functions": []
+    },
+    {
+      "package": "RDB$BLOB_UTIL",
+      "ods": "ODS_13_1",
+      "procedures": [],
+      "functions": []
+    },
+    {
+      "package": "RDB$PROFILER",
+      "ods": "ODS_13_1",
+      "procedures": [],
+      "functions": []
+    },
+    {
+      "package": "RDB$SQL",
+      "ods": "ODS_14_0",
+      "procedures": [],
+      "functions": []
+    }
+  ]
+}

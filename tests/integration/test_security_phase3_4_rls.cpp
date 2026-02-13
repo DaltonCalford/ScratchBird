@@ -33,7 +33,7 @@
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/sblr/executor.h"
-#include "scratchbird/sblr/query_compiler_v2.h"
+#include "scratchbird/sblr/query_compiler_v3.h"
 #include "scratchbird/sblr/opcodes.h"
 #include "test_helpers.h"
 
@@ -43,7 +43,7 @@
 using namespace scratchbird;
 using namespace scratchbird::core;
 using scratchbird::sblr::Executor;
-using scratchbird::sblr::QueryCompilerV2;
+using scratchbird::sblr::QueryCompilerV3;
 using scratchbird::sblr::Opcode;
 
 class SecurityPhase3_4_RLS_Test : public ::testing::Test
@@ -51,7 +51,7 @@ class SecurityPhase3_4_RLS_Test : public ::testing::Test
 protected:
     std::unique_ptr<Database> db;
     std::unique_ptr<ConnectionContext> conn_ctx_;
-    std::unique_ptr<QueryCompilerV2> compiler_;
+    std::unique_ptr<QueryCompilerV3> compiler_;
     std::unique_ptr<Executor> executor_;
     std::string test_db_path;
     uint32_t proc_id_ = 0;
@@ -94,7 +94,7 @@ protected:
             << "Failed to get PUBLIC schema: " << ctx.message;
         conn_ctx_->setCurrentSchemaId(schema.schema_id);
 
-        compiler_ = std::make_unique<QueryCompilerV2>(db.get());
+        compiler_ = std::make_unique<QueryCompilerV3>(db.get());
         compiler_->setCurrentSchema(schema.schema_id);
 
         executor_ = std::make_unique<Executor>(db.get());
@@ -407,22 +407,22 @@ TEST_F(SecurityPhase3_4_RLS_Test, DisableRLS)
 
 TEST_F(SecurityPhase3_4_RLS_Test, ParseCreatePolicy)
 {
-    GTEST_SKIP() << "Parser V2 RLS DDL support pending";
+    GTEST_SKIP() << "Parser V3 RLS DDL support pending";
 }
 
 TEST_F(SecurityPhase3_4_RLS_Test, ParseDropPolicy)
 {
-    GTEST_SKIP() << "Parser V2 RLS DDL support pending";
+    GTEST_SKIP() << "Parser V3 RLS DDL support pending";
 }
 
 TEST_F(SecurityPhase3_4_RLS_Test, ParseAlterTableEnableRLS)
 {
-    GTEST_SKIP() << "Parser V2 RLS DDL support pending";
+    GTEST_SKIP() << "Parser V3 RLS DDL support pending";
 }
 
 TEST_F(SecurityPhase3_4_RLS_Test, ParseAlterTableForceRLS)
 {
-    GTEST_SKIP() << "Parser V2 RLS DDL support pending";
+    GTEST_SKIP() << "Parser V3 RLS DDL support pending";
 }
 
 // ============================================================================
@@ -431,17 +431,17 @@ TEST_F(SecurityPhase3_4_RLS_Test, ParseAlterTableForceRLS)
 
 TEST_F(SecurityPhase3_4_RLS_Test, ExecuteCreatePolicySQL)
 {
-    GTEST_SKIP() << "Parser V2 RLS DDL execution pending";
+    GTEST_SKIP() << "Parser V3 RLS DDL execution pending";
 }
 
 TEST_F(SecurityPhase3_4_RLS_Test, ExecuteDropPolicySQL)
 {
-    GTEST_SKIP() << "Parser V2 RLS DDL execution pending";
+    GTEST_SKIP() << "Parser V3 RLS DDL execution pending";
 }
 
 TEST_F(SecurityPhase3_4_RLS_Test, ExecuteAlterTableRLSSQL)
 {
-    GTEST_SKIP() << "Parser V2 RLS DDL execution pending";
+    GTEST_SKIP() << "Parser V3 RLS DDL execution pending";
 }
 
 // ============================================================================

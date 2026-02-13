@@ -21,9 +21,173 @@
 
 namespace scratchbird::parser::postgresql {
 
+static parser::v3::SchemaPath buildPathFromQualified(parser::v3::StringPool& pool,
+                                                     const std::string& name) {
+    std::vector<parser::v3::StringPool::StringId> comps;
+    std::string cur;
+    for (char ch : name) {
+        if (ch == '.') {
+            if (!cur.empty()) {
+                comps.push_back(pool.intern(cur));
+                cur.clear();
+            }
+        } else {
+            cur.push_back(ch);
+        }
+    }
+    if (!cur.empty()) comps.push_back(pool.intern(cur));
+    return parser::v3::SchemaPath(parser::v3::PathType::UNQUALIFIED, std::move(comps));
+}
+
 // ============================================================================
 // SET Statement
 // ============================================================================
+
+parser::v3::Statement* Parser::parseSetStmtV3() {
+    if (!matchKeyword(TokenType::KW_SET)) {
+        return nullptr;
+    }
+
+    auto* stmt = arena()->create<parser::v3::SetStmt>();
+
+    if (matchKeyword(TokenType::KW_LOCAL)) {
+        stmt->scope = parser::v3::SetStmt::Scope::LOCAL;
+    } else if (matchKeyword(TokenType::KW_SESSION)) {
+        stmt->scope = parser::v3::SetStmt::Scope::SESSION;
+    }
+
+    if (matchKeyword(TokenType::KW_TRANSACTION)) {
+        stmt->set_type = parser::v3::SetStmt::SetType::TRANSACTION;
+        while (true) {
+            if (matchKeyword(TokenType::KW_ON)) {
+                error("PostgreSQL does not support ON CONFLICT in SET TRANSACTION");
+            } else if (matchIdentifierKeyword("AUTOCOMMIT")) {
+                error("PostgreSQL does not support AUTOCOMMIT in SET TRANSACTION");
+            } else if (matchKeyword(TokenType::KW_ISOLATION)) {
+                consumeKeyword(TokenType::KW_LEVEL, "Expected LEVEL");
+                stmt->has_isolation_level = true;
+                if (matchKeyword(TokenType::KW_SERIALIZABLE)) {
+                    stmt->isolation_level = parser::v3::IsolationLevel::SERIALIZABLE;
+                } else if (matchKeyword(TokenType::KW_REPEATABLE)) {
+                    consumeKeyword(TokenType::KW_READ, "Expected READ");
+                    stmt->isolation_level = parser::v3::IsolationLevel::REPEATABLE_READ;
+                } else if (matchKeyword(TokenType::KW_READ)) {
+                    if (matchKeyword(TokenType::KW_COMMITTED)) {
+                        stmt->isolation_level = parser::v3::IsolationLevel::READ_COMMITTED;
+                    } else if (matchKeyword(TokenType::KW_UNCOMMITTED)) {
+                        stmt->isolation_level = parser::v3::IsolationLevel::READ_UNCOMMITTED;
+                    }
+                }
+            } else if (matchKeyword(TokenType::KW_READ)) {
+                stmt->has_access_mode = true;
+                if (matchKeyword(TokenType::KW_ONLY)) {
+                    stmt->access_mode = parser::v3::TransactionAccess::READ_ONLY;
+                } else if (matchKeyword(TokenType::KW_WRITE)) {
+                    stmt->access_mode = parser::v3::TransactionAccess::READ_WRITE;
+                } else {
+                    error("Expected ONLY or WRITE after READ");
+                }
+            } else if (matchKeyword(TokenType::KW_DEFERRABLE)) {
+                stmt->deferrable = true;
+            } else if (matchKeyword(TokenType::KW_NOT)) {
+                consumeKeyword(TokenType::KW_DEFERRABLE, "Expected DEFERRABLE");
+                stmt->not_deferrable = true;
+            } else {
+                break;
+            }
+            match(TokenType::COMMA);
+        }
+        return stmt;
+    }
+
+    if (matchKeyword(TokenType::KW_ROLE)) {
+        stmt->set_type = parser::v3::SetStmt::SetType::ROLE;
+        if (matchKeyword(TokenType::KW_NONE) || matchKeyword(TokenType::KW_DEFAULT)) {
+            stmt->is_default = true;
+        } else {
+            stmt->name = parseIdentifierId();
+        }
+        return stmt;
+    }
+
+    if (matchKeyword(TokenType::KW_SESSION)) {
+        if (matchKeyword(TokenType::KW_AUTHORIZATION)) {
+            stmt->set_type = parser::v3::SetStmt::SetType::SESSION_AUTHORIZATION;
+            if (matchKeyword(TokenType::KW_DEFAULT) || matchKeyword(TokenType::KW_RESET)) {
+                stmt->is_default = true;
+            } else {
+                stmt->name = parseIdentifierId();
+            }
+            return stmt;
+        }
+    }
+
+    if (matchKeyword(TokenType::KW_TIME)) {
+        consumeKeyword(TokenType::KW_ZONE, "Expected ZONE");
+        stmt->set_type = parser::v3::SetStmt::SetType::TIME_ZONE;
+        if (matchKeyword(TokenType::KW_LOCAL) || matchKeyword(TokenType::KW_DEFAULT)) {
+            stmt->is_default = true;
+            return stmt;
+        }
+        stmt->value = parseExpression();
+        return stmt;
+    }
+
+    if (matchIdentifierKeyword("SQL_DIALECT")) {
+        stmt->set_type = parser::v3::SetStmt::SetType::SQL_DIALECT;
+        if (check(TokenType::INTEGER_LITERAL)) {
+            stmt->sql_dialect = static_cast<uint8_t>(current_token_.value.int_value);
+            advance();
+        } else {
+            error("Expected integer for SQL DIALECT");
+        }
+        return stmt;
+    }
+
+    if (matchKeyword(TokenType::KW_CONSTRAINTS) || matchIdentifierKeyword("CONSTRAINTS")) {
+        stmt->set_type = parser::v3::SetStmt::SetType::VARIABLE;
+        stmt->name = string_pool_.intern("constraints_mode");
+        if (!matchKeyword(TokenType::KW_ALL)) {
+            // Parse and discard explicit constraint names for now.
+            do {
+                parseIdentifierId();
+            } while (match(TokenType::COMMA));
+        }
+        auto* value = arena()->create<parser::v3::LiteralExpr>();
+        value->literal_type = parser::v3::LiteralType::STRING;
+        if (matchKeyword(TokenType::KW_DEFERRED)) {
+            value->string_value = string_pool_.intern("deferred");
+        } else {
+            consumeKeyword(TokenType::KW_IMMEDIATE, "Expected DEFERRED or IMMEDIATE");
+            value->string_value = string_pool_.intern("immediate");
+        }
+        stmt->value = value;
+        return stmt;
+    }
+
+    stmt->set_type = parser::v3::SetStmt::SetType::VARIABLE;
+    std::string name = parseIdentifier();
+    if (match(TokenType::DOT)) {
+        name += ".";
+        name += parseIdentifier();
+    }
+    stmt->name = string_pool_.intern(name);
+    if (match(TokenType::EQUAL) || matchKeyword(TokenType::KW_TO)) {
+        // optional
+    }
+    if (matchKeyword(TokenType::KW_DEFAULT)) {
+        stmt->is_default = true;
+    } else {
+        stmt->value = parseExpression();
+    }
+    std::string upper_name = name;
+    std::transform(upper_name.begin(), upper_name.end(), upper_name.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+    if (upper_name == "AUTOCOMMIT") {
+        error("PostgreSQL does not support SET AUTOCOMMIT");
+    }
+    return stmt;
+}
 
 void Parser::parseSetStmt() {
     consume(TokenType::KW_SET, "Expected SET");
@@ -259,6 +423,58 @@ void Parser::parseSetStmt() {
 // SHOW Statement
 // ============================================================================
 
+parser::v3::Statement* Parser::parseShowStmtV3() {
+    if (!matchKeyword(TokenType::KW_SHOW)) {
+        return nullptr;
+    }
+
+    auto* stmt = arena()->create<parser::v3::ShowStmt>();
+
+    if (matchKeyword(TokenType::KW_ALL)) {
+        stmt->show_type = parser::v3::ShowStmt::ShowType::ALL;
+        return stmt;
+    }
+    if (matchKeyword(TokenType::KW_TRANSACTION)) {
+        consumeKeyword(TokenType::KW_ISOLATION, "Expected ISOLATION");
+        consumeKeyword(TokenType::KW_LEVEL, "Expected LEVEL");
+        stmt->show_type = parser::v3::ShowStmt::ShowType::TRANSACTION_ISOLATION_LEVEL;
+        return stmt;
+    }
+    if (matchIdentifierKeyword("SEARCH_PATH")) {
+        stmt->show_type = parser::v3::ShowStmt::ShowType::VARIABLE;
+        stmt->name = string_pool_.intern("search_path");
+        return stmt;
+    }
+    if (matchKeyword(TokenType::KW_VERSION)) {
+        stmt->show_type = parser::v3::ShowStmt::ShowType::VERSION;
+        return stmt;
+    }
+    if (matchKeyword(TokenType::KW_TABLES) || matchKeyword(TokenType::KW_TABLE) ||
+        matchIdentifierKeyword("TABLES")) {
+        error("SHOW TABLES is not supported in PostgreSQL dialect");
+        return stmt;
+    }
+    if (matchKeyword(TokenType::KW_DATABASES) || matchKeyword(TokenType::KW_DATABASE) ||
+        matchIdentifierKeyword("DATABASES")) {
+        error("SHOW DATABASES is not supported in PostgreSQL dialect");
+        return stmt;
+    }
+    if (matchKeyword(TokenType::KW_COLUMNS) || matchIdentifierKeyword("COLUMNS")) {
+        error("SHOW COLUMNS is not supported in PostgreSQL dialect");
+        return stmt;
+    }
+    if (matchKeyword(TokenType::KW_INDEXES) || matchIdentifierKeyword("INDEXES")) {
+        error("SHOW INDEXES is not supported in PostgreSQL dialect");
+        return stmt;
+    }
+
+    stmt->show_type = parser::v3::ShowStmt::ShowType::VARIABLE;
+    if (check(TokenType::IDENTIFIER) || check(TokenType::QUOTED_IDENTIFIER)) {
+        stmt->name = parseIdentifierId();
+    }
+    return stmt;
+}
+
 void Parser::parseShowStmt() {
     consume(TokenType::KW_SHOW, "Expected SHOW");
 
@@ -301,6 +517,145 @@ void Parser::parseShowStmt() {
 // ============================================================================
 // Transaction Control
 // ============================================================================
+
+parser::v3::Statement* Parser::parseBeginStmtV3() {
+    if (!(matchKeyword(TokenType::KW_BEGIN) || matchKeyword(TokenType::KW_START))) {
+        return nullptr;
+    }
+    auto* stmt = arena()->create<parser::v3::StartTransactionStmt>();
+    matchKeyword(TokenType::KW_WORK) || matchKeyword(TokenType::KW_TRANSACTION);
+
+    while (true) {
+        if (matchKeyword(TokenType::KW_ISOLATION)) {
+            consumeKeyword(TokenType::KW_LEVEL, "Expected LEVEL");
+            stmt->has_isolation_level = true;
+            if (matchKeyword(TokenType::KW_SERIALIZABLE)) {
+                stmt->isolation_level = parser::v3::IsolationLevel::SERIALIZABLE;
+            } else if (matchKeyword(TokenType::KW_REPEATABLE)) {
+                consumeKeyword(TokenType::KW_READ, "Expected READ");
+                stmt->isolation_level = parser::v3::IsolationLevel::REPEATABLE_READ;
+            } else if (matchKeyword(TokenType::KW_READ)) {
+                if (matchKeyword(TokenType::KW_COMMITTED)) {
+                    stmt->isolation_level = parser::v3::IsolationLevel::READ_COMMITTED;
+                } else if (matchKeyword(TokenType::KW_UNCOMMITTED)) {
+                    stmt->isolation_level = parser::v3::IsolationLevel::READ_UNCOMMITTED;
+                }
+            }
+        } else if (matchKeyword(TokenType::KW_READ)) {
+            stmt->has_access_mode = true;
+            if (matchKeyword(TokenType::KW_ONLY)) {
+                stmt->access_mode = parser::v3::TransactionAccess::READ_ONLY;
+            } else if (matchKeyword(TokenType::KW_WRITE)) {
+                stmt->access_mode = parser::v3::TransactionAccess::READ_WRITE;
+            }
+        } else if (matchKeyword(TokenType::KW_DEFERRABLE)) {
+            stmt->deferrable = true;
+        } else if (matchKeyword(TokenType::KW_NOT)) {
+            consumeKeyword(TokenType::KW_DEFERRABLE, "Expected DEFERRABLE");
+            stmt->not_deferrable = true;
+        } else {
+            break;
+        }
+        match(TokenType::COMMA);
+    }
+
+    return stmt;
+}
+
+parser::v3::Statement* Parser::parsePrepareStmtV3() {
+    if (!matchKeyword(TokenType::KW_PREPARE)) {
+        return nullptr;
+    }
+    auto* stmt = arena()->create<parser::v3::PrepareTransactionStmt>();
+    if (matchKeyword(TokenType::KW_TRANSACTION)) {
+        // ok
+    }
+    if (check(TokenType::STRING_LITERAL)) {
+        stmt->gid = internFromLexer(current_token_.value.string_id);
+        advance();
+    } else {
+        stmt->gid = parseIdentifierId();
+    }
+    return stmt;
+}
+
+parser::v3::Statement* Parser::parseCommitStmtV3() {
+    if (!matchKeyword(TokenType::KW_COMMIT)) {
+        return nullptr;
+    }
+    auto* stmt = arena()->create<parser::v3::CommitStmt>();
+    if (matchIdentifierKeyword("PREPARED")) {
+        stmt->is_prepared = true;
+        if (check(TokenType::STRING_LITERAL)) {
+            stmt->prepared_gid = internFromLexer(current_token_.value.string_id);
+            advance();
+        } else {
+            stmt->prepared_gid = parseIdentifierId();
+        }
+        return stmt;
+    }
+    matchKeyword(TokenType::KW_WORK);
+    if (matchKeyword(TokenType::KW_AND)) {
+        if (matchKeyword(TokenType::KW_CHAIN)) {
+            stmt->and_chain = true;
+        } else if (matchKeyword(TokenType::KW_NO)) {
+            consumeKeyword(TokenType::KW_CHAIN, "Expected CHAIN");
+            stmt->and_no_chain = true;
+        }
+    }
+    return stmt;
+}
+
+parser::v3::Statement* Parser::parseRollbackStmtV3() {
+    if (!matchKeyword(TokenType::KW_ROLLBACK)) {
+        return nullptr;
+    }
+    auto* stmt = arena()->create<parser::v3::RollbackStmt>();
+    if (matchIdentifierKeyword("PREPARED")) {
+        stmt->is_prepared = true;
+        if (check(TokenType::STRING_LITERAL)) {
+            stmt->prepared_gid = internFromLexer(current_token_.value.string_id);
+            advance();
+        } else {
+            stmt->prepared_gid = parseIdentifierId();
+        }
+        return stmt;
+    }
+    matchKeyword(TokenType::KW_WORK);
+    if (matchKeyword(TokenType::KW_TO)) {
+        if (matchKeyword(TokenType::KW_SAVEPOINT)) {
+            stmt->to_savepoint = true;
+            stmt->savepoint_name = parseIdentifierId();
+        }
+    } else if (matchKeyword(TokenType::KW_AND)) {
+        if (matchKeyword(TokenType::KW_CHAIN)) {
+            stmt->and_chain = true;
+        } else if (matchKeyword(TokenType::KW_NO)) {
+            consumeKeyword(TokenType::KW_CHAIN, "Expected CHAIN");
+            stmt->and_no_chain = true;
+        }
+    }
+    return stmt;
+}
+
+parser::v3::Statement* Parser::parseSavepointStmtV3() {
+    if (!matchKeyword(TokenType::KW_SAVEPOINT)) {
+        return nullptr;
+    }
+    auto* stmt = arena()->create<parser::v3::SavepointStmt>();
+    stmt->name = parseIdentifierId();
+    return stmt;
+}
+
+parser::v3::Statement* Parser::parseReleaseStmtV3() {
+    if (!matchKeyword(TokenType::KW_RELEASE)) {
+        return nullptr;
+    }
+    auto* stmt = arena()->create<parser::v3::ReleaseSavepointStmt>();
+    matchKeyword(TokenType::KW_SAVEPOINT);
+    stmt->name = parseIdentifierId();
+    return stmt;
+}
 
 void Parser::parseBeginStmt() {
     consume(TokenType::KW_BEGIN, "Expected BEGIN");
@@ -1104,6 +1459,610 @@ void Parser::parseCopyStmt() {
     emitString(std::string(1, options.quote));
     emitString(std::string(1, options.escape));
     emitString(options.encoding);
+}
+
+// ============================================================================
+// V3 AST equivalents for GRANT/REVOKE/ANALYZE/EXPLAIN/COPY
+// ============================================================================
+
+parser::v3::Statement* Parser::parseGrantStmtV3() {
+    if (!matchKeyword(TokenType::KW_GRANT)) {
+        return nullptr;
+    }
+
+    auto* stmt = arena()->create<parser::v3::GrantStmt>();
+
+    if (matchKeyword(TokenType::KW_ALL)) {
+        matchKeyword(TokenType::KW_PRIVILEGES);
+        stmt->privileges.push_back(parser::v3::PrivilegeType::ALL);
+    } else {
+        while (true) {
+            if (matchKeyword(TokenType::KW_SELECT)) {
+                stmt->privileges.push_back(parser::v3::PrivilegeType::SELECT);
+            } else if (matchKeyword(TokenType::KW_INSERT)) {
+                stmt->privileges.push_back(parser::v3::PrivilegeType::INSERT);
+            } else if (matchKeyword(TokenType::KW_UPDATE)) {
+                stmt->privileges.push_back(parser::v3::PrivilegeType::UPDATE);
+            } else if (matchKeyword(TokenType::KW_DELETE)) {
+                stmt->privileges.push_back(parser::v3::PrivilegeType::DELETE);
+            } else if (matchKeyword(TokenType::KW_TRUNCATE)) {
+                stmt->privileges.push_back(parser::v3::PrivilegeType::TRUNCATE);
+            } else if (matchKeyword(TokenType::KW_REFERENCES)) {
+                stmt->privileges.push_back(parser::v3::PrivilegeType::REFERENCES);
+            } else if (matchKeyword(TokenType::KW_TRIGGER)) {
+                stmt->privileges.push_back(parser::v3::PrivilegeType::TRIGGER);
+            } else if (matchKeyword(TokenType::KW_EXECUTE)) {
+                stmt->privileges.push_back(parser::v3::PrivilegeType::EXECUTE);
+            } else if (matchKeyword(TokenType::KW_USAGE)) {
+                stmt->privileges.push_back(parser::v3::PrivilegeType::USAGE);
+            } else if (matchKeyword(TokenType::KW_CREATE) || matchKeyword(TokenType::KW_CONNECT) ||
+                       matchKeyword(TokenType::KW_TEMPORARY)) {
+                error("Unsupported GRANT privilege in V3 AST");
+                break;
+            } else if (matchKeyword(TokenType::KW_COPY)) {
+                stmt->privileges.push_back(parser::v3::PrivilegeType::COPY);
+            } else {
+                error("Unsupported GRANT privilege");
+                break;
+            }
+
+            if (match(TokenType::LEFT_PAREN)) {
+                // Column-level privileges are not modeled in AST v3 yet.
+                do {
+                    parseIdentifierId();
+                } while (match(TokenType::COMMA));
+                consume(TokenType::RIGHT_PAREN, "Expected ) after column list");
+                error("Column-level GRANT privileges are not supported in V3 AST");
+            }
+
+            if (!match(TokenType::COMMA)) {
+                break;
+            }
+        }
+    }
+
+    consumeKeyword(TokenType::KW_ON, "Expected ON");
+    if (matchKeyword(TokenType::KW_ALL)) {
+        if (matchKeyword(TokenType::KW_TABLES)) {
+            consumeKeyword(TokenType::KW_IN, "Expected IN");
+            consumeKeyword(TokenType::KW_SCHEMA, "Expected SCHEMA");
+            stmt->object_type = parser::v3::PrivilegeObjectType::ALL_TABLES_IN_SCHEMA;
+            stmt->objects.push_back(buildPathFromQualified(string_pool_, parseQualifiedName()));
+        } else if (matchKeyword(TokenType::KW_SEQUENCES)) {
+            consumeKeyword(TokenType::KW_IN, "Expected IN");
+            consumeKeyword(TokenType::KW_SCHEMA, "Expected SCHEMA");
+            stmt->object_type = parser::v3::PrivilegeObjectType::ALL_SEQUENCES_IN_SCHEMA;
+            stmt->objects.push_back(buildPathFromQualified(string_pool_, parseQualifiedName()));
+        } else if (matchKeyword(TokenType::KW_FUNCTIONS)) {
+            consumeKeyword(TokenType::KW_IN, "Expected IN");
+            consumeKeyword(TokenType::KW_SCHEMA, "Expected SCHEMA");
+            stmt->object_type = parser::v3::PrivilegeObjectType::ALL_FUNCTIONS_IN_SCHEMA;
+            stmt->objects.push_back(buildPathFromQualified(string_pool_, parseQualifiedName()));
+        }
+    } else if (matchKeyword(TokenType::KW_TABLE)) {
+        stmt->object_type = parser::v3::PrivilegeObjectType::TABLE;
+        do {
+            stmt->objects.push_back(buildPathFromQualified(string_pool_, parseQualifiedName()));
+        } while (match(TokenType::COMMA));
+    } else if (matchKeyword(TokenType::KW_VIEW)) {
+        stmt->object_type = parser::v3::PrivilegeObjectType::VIEW;
+        do {
+            stmt->objects.push_back(buildPathFromQualified(string_pool_, parseQualifiedName()));
+        } while (match(TokenType::COMMA));
+    } else if (matchKeyword(TokenType::KW_SEQUENCE)) {
+        stmt->object_type = parser::v3::PrivilegeObjectType::SEQUENCE;
+        do {
+            stmt->objects.push_back(buildPathFromQualified(string_pool_, parseQualifiedName()));
+        } while (match(TokenType::COMMA));
+    } else if (matchKeyword(TokenType::KW_FUNCTION)) {
+        stmt->object_type = parser::v3::PrivilegeObjectType::FUNCTION;
+        do {
+            stmt->objects.push_back(buildPathFromQualified(string_pool_, parseQualifiedName()));
+        } while (match(TokenType::COMMA));
+    } else if (matchKeyword(TokenType::KW_PROCEDURE)) {
+        stmt->object_type = parser::v3::PrivilegeObjectType::PROCEDURE;
+        do {
+            stmt->objects.push_back(buildPathFromQualified(string_pool_, parseQualifiedName()));
+        } while (match(TokenType::COMMA));
+    } else if (matchKeyword(TokenType::KW_SCHEMA)) {
+        stmt->object_type = parser::v3::PrivilegeObjectType::SCHEMA;
+        stmt->objects.push_back(buildPathFromQualified(string_pool_, parseQualifiedName()));
+    } else if (matchKeyword(TokenType::KW_DATABASE)) {
+        stmt->object_type = parser::v3::PrivilegeObjectType::DATABASE;
+        stmt->objects.push_back(buildPathFromQualified(string_pool_, parseQualifiedName()));
+    } else if (check(TokenType::IDENTIFIER) || check(TokenType::QUOTED_IDENTIFIER) ||
+               isNonReservedKeyword(current_token_.type)) {
+        stmt->object_type = parser::v3::PrivilegeObjectType::TABLE;
+        do {
+            stmt->objects.push_back(buildPathFromQualified(string_pool_, parseQualifiedName()));
+        } while (match(TokenType::COMMA));
+    } else {
+        // Default to table object semantics to keep grammar aligned with
+        // PostgreSQL's common "GRANT ... ON relname" form.
+        stmt->object_type = parser::v3::PrivilegeObjectType::TABLE;
+        stmt->objects.push_back(buildPathFromQualified(string_pool_, parseQualifiedName()));
+    }
+
+    consumeKeyword(TokenType::KW_TO, "Expected TO");
+    if (matchKeyword(TokenType::KW_PUBLIC)) {
+        stmt->is_public = true;
+    } else {
+        do {
+            stmt->grantees.push_back(parseIdentifierId());
+        } while (match(TokenType::COMMA));
+    }
+
+    if (matchKeyword(TokenType::KW_WITH)) {
+        consumeKeyword(TokenType::KW_GRANT, "Expected GRANT after WITH");
+        consumeKeyword(TokenType::KW_OPTION, "Expected OPTION after WITH GRANT");
+        stmt->with_grant_option = true;
+    }
+
+    return stmt;
+}
+
+parser::v3::Statement* Parser::parseRevokeStmtV3() {
+    if (!matchKeyword(TokenType::KW_REVOKE)) {
+        return nullptr;
+    }
+
+    auto* stmt = arena()->create<parser::v3::RevokeStmt>();
+
+    if (matchKeyword(TokenType::KW_GRANT)) {
+        consumeKeyword(TokenType::KW_OPTION, "Expected OPTION");
+        consumeKeyword(TokenType::KW_FOR, "Expected FOR");
+        stmt->grant_option_for = true;
+    }
+
+    if (matchKeyword(TokenType::KW_ALL)) {
+        matchKeyword(TokenType::KW_PRIVILEGES);
+        stmt->privileges.push_back(parser::v3::PrivilegeType::ALL);
+    } else {
+        while (true) {
+            if (matchKeyword(TokenType::KW_SELECT)) {
+                stmt->privileges.push_back(parser::v3::PrivilegeType::SELECT);
+            } else if (matchKeyword(TokenType::KW_INSERT)) {
+                stmt->privileges.push_back(parser::v3::PrivilegeType::INSERT);
+            } else if (matchKeyword(TokenType::KW_UPDATE)) {
+                stmt->privileges.push_back(parser::v3::PrivilegeType::UPDATE);
+            } else if (matchKeyword(TokenType::KW_DELETE)) {
+                stmt->privileges.push_back(parser::v3::PrivilegeType::DELETE);
+            } else if (matchKeyword(TokenType::KW_TRUNCATE)) {
+                stmt->privileges.push_back(parser::v3::PrivilegeType::TRUNCATE);
+            } else if (matchKeyword(TokenType::KW_REFERENCES)) {
+                stmt->privileges.push_back(parser::v3::PrivilegeType::REFERENCES);
+            } else if (matchKeyword(TokenType::KW_TRIGGER)) {
+                stmt->privileges.push_back(parser::v3::PrivilegeType::TRIGGER);
+            } else if (matchKeyword(TokenType::KW_EXECUTE)) {
+                stmt->privileges.push_back(parser::v3::PrivilegeType::EXECUTE);
+            } else if (matchKeyword(TokenType::KW_USAGE)) {
+                stmt->privileges.push_back(parser::v3::PrivilegeType::USAGE);
+            } else if (matchKeyword(TokenType::KW_CREATE) || matchKeyword(TokenType::KW_CONNECT) ||
+                       matchKeyword(TokenType::KW_TEMPORARY)) {
+                error("Unsupported REVOKE privilege in V3 AST");
+                break;
+            } else if (matchKeyword(TokenType::KW_COPY)) {
+                stmt->privileges.push_back(parser::v3::PrivilegeType::COPY);
+            } else {
+                error("Unsupported REVOKE privilege");
+                break;
+            }
+
+            if (match(TokenType::LEFT_PAREN)) {
+                do {
+                    parseIdentifierId();
+                } while (match(TokenType::COMMA));
+                consume(TokenType::RIGHT_PAREN, "Expected ) after column list");
+                error("Column-level REVOKE privileges are not supported in V3 AST");
+            }
+
+            if (!match(TokenType::COMMA)) {
+                break;
+            }
+        }
+    }
+
+    consumeKeyword(TokenType::KW_ON, "Expected ON");
+    if (matchKeyword(TokenType::KW_ALL)) {
+        if (matchKeyword(TokenType::KW_TABLES)) {
+            consumeKeyword(TokenType::KW_IN, "Expected IN");
+            consumeKeyword(TokenType::KW_SCHEMA, "Expected SCHEMA");
+            stmt->object_type = parser::v3::PrivilegeObjectType::ALL_TABLES_IN_SCHEMA;
+            stmt->objects.push_back(buildPathFromQualified(string_pool_, parseQualifiedName()));
+        } else if (matchKeyword(TokenType::KW_SEQUENCES)) {
+            consumeKeyword(TokenType::KW_IN, "Expected IN");
+            consumeKeyword(TokenType::KW_SCHEMA, "Expected SCHEMA");
+            stmt->object_type = parser::v3::PrivilegeObjectType::ALL_SEQUENCES_IN_SCHEMA;
+            stmt->objects.push_back(buildPathFromQualified(string_pool_, parseQualifiedName()));
+        } else if (matchKeyword(TokenType::KW_FUNCTIONS)) {
+            consumeKeyword(TokenType::KW_IN, "Expected IN");
+            consumeKeyword(TokenType::KW_SCHEMA, "Expected SCHEMA");
+            stmt->object_type = parser::v3::PrivilegeObjectType::ALL_FUNCTIONS_IN_SCHEMA;
+            stmt->objects.push_back(buildPathFromQualified(string_pool_, parseQualifiedName()));
+        }
+    } else if (matchKeyword(TokenType::KW_TABLE)) {
+        stmt->object_type = parser::v3::PrivilegeObjectType::TABLE;
+        do {
+            stmt->objects.push_back(buildPathFromQualified(string_pool_, parseQualifiedName()));
+        } while (match(TokenType::COMMA));
+    } else if (matchKeyword(TokenType::KW_VIEW)) {
+        stmt->object_type = parser::v3::PrivilegeObjectType::VIEW;
+        do {
+            stmt->objects.push_back(buildPathFromQualified(string_pool_, parseQualifiedName()));
+        } while (match(TokenType::COMMA));
+    } else if (matchKeyword(TokenType::KW_SEQUENCE)) {
+        stmt->object_type = parser::v3::PrivilegeObjectType::SEQUENCE;
+        do {
+            stmt->objects.push_back(buildPathFromQualified(string_pool_, parseQualifiedName()));
+        } while (match(TokenType::COMMA));
+    } else if (matchKeyword(TokenType::KW_FUNCTION)) {
+        stmt->object_type = parser::v3::PrivilegeObjectType::FUNCTION;
+        do {
+            stmt->objects.push_back(buildPathFromQualified(string_pool_, parseQualifiedName()));
+        } while (match(TokenType::COMMA));
+    } else if (matchKeyword(TokenType::KW_PROCEDURE)) {
+        stmt->object_type = parser::v3::PrivilegeObjectType::PROCEDURE;
+        do {
+            stmt->objects.push_back(buildPathFromQualified(string_pool_, parseQualifiedName()));
+        } while (match(TokenType::COMMA));
+    } else if (matchKeyword(TokenType::KW_SCHEMA)) {
+        stmt->object_type = parser::v3::PrivilegeObjectType::SCHEMA;
+        stmt->objects.push_back(buildPathFromQualified(string_pool_, parseQualifiedName()));
+    } else if (matchKeyword(TokenType::KW_DATABASE)) {
+        stmt->object_type = parser::v3::PrivilegeObjectType::DATABASE;
+        stmt->objects.push_back(buildPathFromQualified(string_pool_, parseQualifiedName()));
+    } else if (check(TokenType::IDENTIFIER) || check(TokenType::QUOTED_IDENTIFIER) ||
+               isNonReservedKeyword(current_token_.type)) {
+        stmt->object_type = parser::v3::PrivilegeObjectType::TABLE;
+        do {
+            stmt->objects.push_back(buildPathFromQualified(string_pool_, parseQualifiedName()));
+        } while (match(TokenType::COMMA));
+    } else {
+        stmt->object_type = parser::v3::PrivilegeObjectType::TABLE;
+        stmt->objects.push_back(buildPathFromQualified(string_pool_, parseQualifiedName()));
+    }
+
+    consumeKeyword(TokenType::KW_FROM, "Expected FROM");
+    if (matchKeyword(TokenType::KW_PUBLIC)) {
+        stmt->is_public = true;
+    } else {
+        do {
+            stmt->grantees.push_back(parseIdentifierId());
+        } while (match(TokenType::COMMA));
+    }
+
+    if (matchKeyword(TokenType::KW_CASCADE)) {
+        stmt->cascade = true;
+    }
+
+    return stmt;
+}
+
+parser::v3::Statement* Parser::parseAnalyzeStmtV3() {
+    if (!matchKeyword(TokenType::KW_ANALYZE)) {
+        return nullptr;
+    }
+
+    auto* stmt = arena()->create<parser::v3::AnalyzeStmt>();
+    if (matchKeyword(TokenType::KW_VERBOSE)) {
+        stmt->verbose = true;
+    }
+
+    if (check(TokenType::IDENTIFIER) || check(TokenType::QUOTED_IDENTIFIER) ||
+        isNonReservedKeyword(current_token_.type)) {
+        stmt->table_path = buildPathFromQualified(string_pool_, parseQualifiedName());
+        if (match(TokenType::LEFT_PAREN)) {
+            if (!check(TokenType::RIGHT_PAREN)) {
+                stmt->column_name = parseIdentifierId();
+                stmt->has_column = true;
+                while (match(TokenType::COMMA)) {
+                    // Additional columns are parsed for compatibility.
+                    parseIdentifierId();
+                }
+            }
+            consume(TokenType::RIGHT_PAREN, "Expected ) after column list");
+        }
+    }
+
+    return stmt;
+}
+
+parser::v3::Statement* Parser::parseExplainStmtV3() {
+    if (!matchKeyword(TokenType::KW_EXPLAIN)) {
+        return nullptr;
+    }
+
+    auto* stmt = arena()->create<parser::v3::ExplainStmt>();
+
+    auto parse_option = [&](parser::v3::ExplainStmt* target) {
+        if (matchKeyword(TokenType::KW_ANALYZE)) {
+            target->analyze = true;
+            return true;
+        }
+        if (matchKeyword(TokenType::KW_VERBOSE)) {
+            target->verbose = true;
+            return true;
+        }
+        if (matchKeyword(TokenType::KW_COSTS)) {
+            target->costs = true;
+            return true;
+        }
+        if (matchKeyword(TokenType::KW_BUFFERS)) {
+            target->buffers = true;
+            return true;
+        }
+        if (matchKeyword(TokenType::KW_TIMING)) {
+            target->timing = true;
+            return true;
+        }
+        if (matchKeyword(TokenType::KW_FORMAT)) {
+            if (matchKeyword(TokenType::KW_JSON)) {
+                target->format_json = true;
+            } else if (matchKeyword(TokenType::KW_XML)) {
+                target->format_xml = true;
+            } else if (matchKeyword(TokenType::KW_TEXT)) {
+                // default text
+            } else if (check(TokenType::IDENTIFIER)) {
+                std::string fmt = parseIdentifier();
+                if (fmt == "YAML" || fmt == "yaml") {
+                    target->format_yaml = true;
+                }
+            }
+            return true;
+        }
+        return false;
+    };
+
+    if (match(TokenType::LEFT_PAREN)) {
+        do {
+            parse_option(stmt);
+        } while (match(TokenType::COMMA));
+        consume(TokenType::RIGHT_PAREN, "Expected ) after EXPLAIN options");
+    } else {
+        while (parse_option(stmt)) {
+            // parse repeated options
+        }
+    }
+
+    stmt->query = parseStatementInternal();
+    if (!stmt->query) {
+        error("Expected statement after EXPLAIN");
+    }
+    return stmt;
+}
+
+parser::v3::Statement* Parser::parseCopyStmtV3() {
+    if (!matchKeyword(TokenType::KW_COPY)) {
+        return nullptr;
+    }
+
+    auto* stmt = arena()->create<parser::v3::CopyStmt>();
+
+    if (match(TokenType::LEFT_PAREN)) {
+        stmt->query = parseSelectStmt();
+        consume(TokenType::RIGHT_PAREN, "Expected ) after COPY query");
+    } else {
+        stmt->table_path = buildPathFromQualified(string_pool_, parseQualifiedName());
+        if (match(TokenType::LEFT_PAREN)) {
+            do {
+                stmt->columns.push_back(parseIdentifierId());
+            } while (match(TokenType::COMMA));
+            consume(TokenType::RIGHT_PAREN, "Expected ) after column list");
+        }
+    }
+
+    if (matchKeyword(TokenType::KW_FROM)) {
+        stmt->direction = parser::v3::CopyStmt::Direction::FROM;
+    } else {
+        consumeKeyword(TokenType::KW_TO, "Expected TO or FROM");
+        stmt->direction = parser::v3::CopyStmt::Direction::TO;
+    }
+
+    if (matchKeyword(TokenType::KW_STDIN)) {
+        stmt->target_is_stdin = true;
+    } else if (matchKeyword(TokenType::KW_STDOUT)) {
+        stmt->target_is_stdout = true;
+    } else {
+        if (check(TokenType::STRING_LITERAL)) {
+            uint32_t id = current_token_.value.string_id;
+            advance();
+            stmt->target = internFromLexer(id);
+        } else {
+            stmt->target = parseIdentifierId();
+        }
+    }
+
+    if (matchKeyword(TokenType::KW_WITH)) {
+        if (match(TokenType::LEFT_PAREN)) {
+            auto parse_string_or_ident = [&]() -> parser::v3::StringPool::StringId {
+                if (check(TokenType::STRING_LITERAL)) {
+                    uint32_t id = current_token_.value.string_id;
+                    advance();
+                    return internFromLexer(id);
+                }
+                return parseIdentifierId();
+            };
+            auto parse_single_char_option = [&](const std::string& option_name)
+                -> parser::v3::StringPool::StringId {
+                auto value = parse_string_or_ident();
+                if (value == parser::v3::StringPool::INVALID_ID) {
+                    return value;
+                }
+                std::string text = std::string(string_pool_.get(value));
+                if (text.size() != 1) {
+                    error("COPY " + option_name + " must be a single character");
+                }
+                return value;
+            };
+            while (!check(TokenType::RIGHT_PAREN) && !check(TokenType::END_OF_FILE)) {
+                std::string upper;
+                if (matchKeyword(TokenType::KW_FORMAT)) {
+                    upper = "FORMAT";
+                } else if (matchKeyword(TokenType::KW_DELIMITER)) {
+                    upper = "DELIMITER";
+                } else if (matchKeyword(TokenType::KW_NULL)) {
+                    upper = "NULL";
+                } else if (matchKeyword(TokenType::KW_HEADER)) {
+                    upper = "HEADER";
+                } else if (matchKeyword(TokenType::KW_QUOTE)) {
+                    upper = "QUOTE";
+                } else if (matchKeyword(TokenType::KW_ESCAPE)) {
+                    upper = "ESCAPE";
+                } else if (matchKeyword(TokenType::KW_ENCODING)) {
+                    upper = "ENCODING";
+                } else {
+                    std::string option = parseIdentifier();
+                    upper.reserve(option.size());
+                    for (char c : option) {
+                        upper.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+                    }
+                }
+
+                bool has_value = match(TokenType::EQUAL);
+                if (upper == "FORMAT") {
+                    if (matchKeyword(TokenType::KW_TEXT)) {
+                        stmt->options.format = parser::v3::CopyOptions::Format::TEXT;
+                    } else if (matchKeyword(TokenType::KW_CSV) || matchIdentifierKeyword("CSV")) {
+                        stmt->options.format = parser::v3::CopyOptions::Format::CSV;
+                    } else if (matchIdentifierKeyword("BINARY")) {
+                        stmt->options.format = parser::v3::CopyOptions::Format::BINARY;
+                    } else if (check(TokenType::IDENTIFIER)) {
+                        std::string fmt = parseIdentifier();
+                        if (fmt == "csv" || fmt == "CSV") {
+                            stmt->options.format = parser::v3::CopyOptions::Format::CSV;
+                        } else if (fmt == "binary" || fmt == "BINARY") {
+                            stmt->options.format = parser::v3::CopyOptions::Format::BINARY;
+                        }
+                    } else if (has_value) {
+                        error("Unsupported COPY FORMAT value");
+                    }
+                    stmt->options.format_set = true;
+                } else if (upper == "DELIMITER") {
+                    if (!has_value) {
+                        matchKeyword(TokenType::KW_AS);
+                    }
+                    stmt->options.delimiter = parse_single_char_option("DELIMITER");
+                    stmt->options.delimiter_set = true;
+                } else if (upper == "NULL") {
+                    if (!has_value) {
+                        matchKeyword(TokenType::KW_AS);
+                    }
+                    if (check(TokenType::STRING_LITERAL)) {
+                        uint32_t id = current_token_.value.string_id;
+                        advance();
+                        stmt->options.null_string = internFromLexer(id);
+                    } else {
+                        stmt->options.null_string = parseIdentifierId();
+                    }
+                    stmt->options.null_set = true;
+                } else if (upper == "HEADER") {
+                    if (!has_value) {
+                        stmt->options.header = true;
+                    } else if (matchKeyword(TokenType::KW_TRUE)) {
+                        stmt->options.header = true;
+                    } else if (matchKeyword(TokenType::KW_FALSE)) {
+                        stmt->options.header = false;
+                    } else {
+                        error("Expected TRUE/FALSE for HEADER");
+                    }
+                    stmt->options.header_set = true;
+                } else if (upper == "QUOTE") {
+                    if (!has_value) {
+                        matchKeyword(TokenType::KW_AS);
+                    }
+                    stmt->options.quote = parse_single_char_option("QUOTE");
+                    stmt->options.quote_set = true;
+                } else if (upper == "ESCAPE") {
+                    if (!has_value) {
+                        matchKeyword(TokenType::KW_AS);
+                    }
+                    stmt->options.escape = parse_single_char_option("ESCAPE");
+                    stmt->options.escape_set = true;
+                } else if (upper == "ENCODING") {
+                    if (!has_value) {
+                        matchKeyword(TokenType::KW_AS);
+                    }
+                    stmt->options.encoding = parse_string_or_ident();
+                    stmt->options.encoding_set = true;
+                } else {
+                    error("Unsupported COPY option");
+                }
+
+                if (!match(TokenType::COMMA)) {
+                    break;
+                }
+            }
+            consume(TokenType::RIGHT_PAREN, "Expected ) after COPY options");
+        }
+    }
+
+    auto id_to_string = [&](parser::v3::StringPool::StringId id) -> std::string {
+        if (id == parser::v3::StringPool::INVALID_ID) {
+            return "";
+        }
+        return std::string(string_pool_.get(id));
+    };
+    auto path_to_string = [&](const parser::v3::SchemaPath& path) -> std::string {
+        std::string out;
+        for (size_t i = 0; i < path.components.size(); ++i) {
+            if (i != 0) {
+                out.push_back('.');
+            }
+            out += string_pool_.get(path.components[i]);
+        }
+        return out;
+    };
+
+    std::string table_path = path_to_string(stmt->table_path);
+    uint8_t direction = (stmt->direction == parser::v3::CopyStmt::Direction::FROM) ? 1u : 2u;
+    std::string target;
+    if (stmt->target_is_stdin) {
+        target = "STDIN";
+    } else if (stmt->target_is_stdout) {
+        target = "STDOUT";
+    } else {
+        target = id_to_string(stmt->target);
+    }
+
+    uint8_t format = 1;  // TEXT
+    if (stmt->options.format == parser::v3::CopyOptions::Format::CSV) {
+        format = 2;
+    } else if (stmt->options.format == parser::v3::CopyOptions::Format::BINARY) {
+        format = 3;
+    }
+
+    std::string delimiter = stmt->options.delimiter_set ? id_to_string(stmt->options.delimiter) : "\t";
+    std::string null_string = stmt->options.null_set ? id_to_string(stmt->options.null_string) : "\\N";
+    if (format == 2) {
+        if (!stmt->options.delimiter_set) {
+            delimiter = ",";
+        }
+        if (!stmt->options.null_set) {
+            null_string.clear();
+        }
+    }
+    std::string quote = stmt->options.quote_set ? id_to_string(stmt->options.quote) : "\"";
+    std::string escape = stmt->options.escape_set ? id_to_string(stmt->options.escape) : "\\";
+    std::string encoding = stmt->options.encoding_set ? id_to_string(stmt->options.encoding) : "";
+
+    emit(sblr::Opcode::EXTENDED_OPCODE);
+    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_COPY));
+    emitString(table_path);
+    emitByte(direction);
+    emitString(target);
+    emitU32(static_cast<uint32_t>(stmt->columns.size()));
+    for (auto col : stmt->columns) {
+        emitString(id_to_string(col));
+    }
+    emitByte(format);
+    emitString(delimiter);
+    emitString(null_string);
+    emitByte(stmt->options.header ? 1 : 0);
+    emitString(quote);
+    emitString(escape);
+    emitString(encoding);
+
+    return stmt;
 }
 
 } // namespace scratchbird::parser::postgresql

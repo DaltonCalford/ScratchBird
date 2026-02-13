@@ -19,7 +19,7 @@
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/sblr/executor.h"
 #include "scratchbird/sblr/opcodes.h"
-#include "scratchbird/sblr/query_compiler_v2.h"
+#include "scratchbird/sblr/query_compiler_v3.h"
 #include "test_helpers.h"
 
 using namespace scratchbird::core;
@@ -156,7 +156,7 @@ protected:
         ASSERT_EQ(catalog_->getSchema("PUBLIC", schema_info, &ctx), Status::OK) << ctx.message;
         schema_id_ = schema_info.schema_id;
 
-        compiler_ = std::make_unique<QueryCompilerV2>(&db_);
+        compiler_ = std::make_unique<QueryCompilerV3>(&db_);
         compiler_->setCurrentSchema(schema_id_);
         executor_ = std::make_unique<Executor>(&db_);
         executor_->setCurrentSchema(schema_id_);
@@ -280,7 +280,7 @@ protected:
     ID ok_table_id_{};
     ID bad_table_id_{};
     ID conditional_table_id_{};
-    std::unique_ptr<QueryCompilerV2> compiler_;
+    std::unique_ptr<QueryCompilerV3> compiler_;
     std::unique_ptr<Executor> executor_;
     std::unique_ptr<ConnectionContext> connection_ctx_;
 };

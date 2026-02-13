@@ -33,14 +33,10 @@ static void fill_page(std::vector<uint8_t> &page, uint32_t page_size, uint32_t p
     header->lsn = 0;
     header->page_id = page_id;
     header->flags = 0;
-    // UUID v7 bytes
-    auto uuid = generateUuidV7();
-    std::memcpy(header->database_uuid, uuid.bytes.data(), uuid.bytes.size());
     header->generation = 1;
-    header->free_space = 0;
-    header->item_count = 0;
-    header->free_offset = sizeof(PageHeader);
-    header->special_size = 0;
+    pageSetLower(*header, sizeof(PageHeader));
+    pageSetUpper(*header, page_size);
+    pageSetSpecial(*header, page_size);
     // Compute checksum
     header->checksum = calculatePageChecksum(page.data(), page_size);
 }

@@ -105,8 +105,10 @@ namespace scratchbird
              */
             inline uint32_t getBitsetContainerSize(uint32_t page_size)
             {
-                // Reserve space for SBRoaringContainerPage header
-                constexpr uint32_t header_size = sizeof(PageHeader) + 16; // ~80 bytes
+                // Reserve space for SBRoaringContainerPage header (computed from field sizes)
+                constexpr uint32_t header_size =
+                    sizeof(PageHeader) + sizeof(ContainerType) + sizeof(uint16_t) +
+                    sizeof(uint16_t) + sizeof(uint8_t) * 3;
                 return page_size - header_size;
             }
 
@@ -499,9 +501,12 @@ namespace scratchbird
             Status saveContainer(const Container &container, ErrorContext *ctx);
             Container *findOrCreateContainer(uint64_t key, ErrorContext *ctx);
 
-            static void containerAnd(const Container &lhs, const Container &rhs, Container *result);
-            static void containerOr(const Container &lhs, const Container &rhs, Container *result);
-            static void containerNot(const Container &container, Container *result);
+            static void containerAnd(const Container &lhs, const Container &rhs,
+                                     Container *result, size_t word_count);
+            static void containerOr(const Container &lhs, const Container &rhs,
+                                    Container *result, size_t word_count);
+            static void containerNot(const Container &container, Container *result,
+                                     size_t word_count);
 
             Database *db_;
             BufferPool *buffer_pool_;

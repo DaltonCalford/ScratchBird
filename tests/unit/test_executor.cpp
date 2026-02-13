@@ -9,7 +9,7 @@
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/sblr/executor.h"
-#include "scratchbird/sblr/query_compiler_v2.h"
+#include "scratchbird/sblr/query_compiler_v3.h"
 #include "test_helpers.h"
 
 using namespace scratchbird::core;
@@ -57,10 +57,15 @@ protected:
     }
     
     std::vector<uint8_t> compileSQL(const std::string& sql) {
-        QueryCompilerV2 compiler(db_.get());
+        QueryCompilerV3 compiler(db_.get());
         compiler.setCurrentSchema(default_schema_id_);
         auto result = compiler.compile(sql);
         if (!result.success()) {
+            if (!result.errors().empty()) {
+                std::cerr << "Compile error: " << result.errors().front() << "\n";
+            } else {
+                std::cerr << "Compile error: unknown\n";
+            }
             return {};
         }
         return result.bytecode();
@@ -75,7 +80,11 @@ protected:
         Executor executor(db_.get());
         executor.setConnectionContext(conn_ctx_.get());
         executor.setCurrentSchema(default_schema_id_);
-        return executor.execute(bytecode);
+        auto result = executor.execute(bytecode);
+        if (!result.success()) {
+            std::cerr << "Executor error: " << result.error() << "\n";
+        }
+        return result;
     }
 
     ID resolveDefaultSchema(ErrorContext* ctx)

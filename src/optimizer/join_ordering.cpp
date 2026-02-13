@@ -12,7 +12,7 @@
  *
  * P3-20: Cost-based join ordering optimization using dynamic programming.
  *
- * V2 MIGRATION: Uses V2 ResolvedExpression types for join conditions.
+ * V3 MIGRATION: Uses V3 Expression types for join conditions.
  */
 
 #include "scratchbird/optimizer/join_ordering.h"
@@ -55,7 +55,7 @@ size_t JoinOrderingOptimizer::addRelation(const core::ID& table_id,
 
 void JoinOrderingOptimizer::addJoinEdge(size_t left_idx, size_t right_idx,
                                         parser::JoinType join_type,
-                                        parser::v2::ResolvedExpression* join_condition)
+                                        parser::v3::Expression* join_condition)
 {
     JoinEdge edge;
     edge.left_rel_idx = left_idx;
@@ -269,12 +269,12 @@ std::shared_ptr<Path> JoinOrderingOptimizer::optimizeGreedy(core::ErrorContext* 
                     best_rel = i;
                     best_join_rows = join_rows;
 
-                    // Create join path (V2: uses ResolvedExpression* for join condition)
+                    // Create join path (V3: uses Expression* for join condition)
                     auto join_path = std::make_shared<NestedLoopJoinPath>(
                         edge.join_type,
                         current_path,
                         relations_[i].best_path,
-                        edge.join_condition,  // V2 ResolvedExpression*
+                        edge.join_condition,
                         selectivity,
                         join_cost);
                     best_join_path = join_path;
@@ -425,15 +425,15 @@ JoinOrderingOptimizer::DPEntry JoinOrderingOptimizer::costJoin(
         std::shared_ptr<Path> probe_path = (left_rows < right_rows)
             ? right_entry.best_path : left_entry.best_path;
 
-        // V2: Hash keys are now ResolvedExpression* vectors
-        std::vector<parser::v2::ResolvedExpression*> hash_keys_outer;
-        std::vector<parser::v2::ResolvedExpression*> hash_keys_inner;
+        // Hash keys are Expression* vectors (V3)
+        std::vector<parser::v3::Expression*> hash_keys_outer;
+        std::vector<parser::v3::Expression*> hash_keys_inner;
 
         result.best_path = std::make_shared<HashJoinPath>(
             edge.join_type,
             build_path,
             probe_path,
-            edge.join_condition,  // V2 ResolvedExpression*
+            edge.join_condition,
             hash_keys_outer,
             hash_keys_inner,
             selectivity,
@@ -448,7 +448,7 @@ JoinOrderingOptimizer::DPEntry JoinOrderingOptimizer::costJoin(
             edge.join_type,
             left_entry.best_path,
             right_entry.best_path,
-            edge.join_condition,  // V2 ResolvedExpression*
+            edge.join_condition,
             selectivity,
             nl_cost);
     }

@@ -54,7 +54,7 @@ namespace scratchbird::core
 #pragma pack(push, 1)
     struct ClogPageHeader
     {
-        PageHeader page_header;  // Standard 64-byte header
+        PageHeader page_header;  // Standard 80-byte header
         uint64_t base_xid;       // First XID in this page (page_id * 65536)
         uint32_t next_clog_page; // Next CLOG page (0 if last)
         uint32_t reserved;       // Alignment

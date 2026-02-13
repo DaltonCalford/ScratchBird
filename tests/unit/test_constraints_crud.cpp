@@ -46,7 +46,7 @@ TEST_F(ConstraintsCRUDTest, ConstraintInfoDefaults) {
     EXPECT_EQ(constraint.table_id, ID{});
     EXPECT_TRUE(constraint.column_names.empty());
     EXPECT_TRUE(constraint.check_expression.empty());
-    EXPECT_EQ(constraint.check_expr_oid, 0);
+    EXPECT_EQ(constraint.check_expr_oid, ID{});
     EXPECT_EQ(constraint.referenced_table_id, ID{});
     EXPECT_TRUE(constraint.referenced_columns.empty());
     EXPECT_EQ(constraint.on_delete, FKAction::NO_ACTION);

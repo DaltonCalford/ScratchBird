@@ -13,10 +13,10 @@
  * MySQL Parser Token Types
  *
  * Token types for the MySQL 8.0 emulation parser.
- * This is SEPARATE from the ScratchBird V2 parser tokens.
+ * This is SEPARATE from the native ScratchBird parser tokens.
  *
  * MySQL has ~679 keywords with ~262 reserved.
- * Unlike the V2 "Gatekeeper" model, MySQL has many more reserved keywords
+ * Compared to the native "Gatekeeper" model, MySQL has many more reserved keywords
  * that cannot be used as identifiers without backtick quoting.
  */
 

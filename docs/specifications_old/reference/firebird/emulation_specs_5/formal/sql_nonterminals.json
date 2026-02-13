@@ -1,0 +1,10 @@
+{
+  "nonterminals": [
+    "Arg",
+    "ComparativeBoolNode",
+    "DeclareCursorNode",
+    "PlanNode",
+    "RelationNode"
+  ],
+  "note": "Full productions in sql_grammar.json; semantic actions are embedded in parse.y and implemented in dsql/*."
+}

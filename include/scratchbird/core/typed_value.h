@@ -200,6 +200,7 @@ namespace scratchbird::core
         uint8_t getDecimalPrecision() const { return decimal_precision_; }
         uint8_t getDecimalScale() const { return decimal_scale_; }
         const std::vector<uint8_t>& getDecfloatBytes() const { return binary_data_; }
+        uint32_t getBitLength() const { return bit_length_ == 0 ? static_cast<uint32_t>(binary_data_.size() * 8) : bit_length_; }
 
         // Utility methods
         std::string toString() const;
@@ -331,6 +332,7 @@ namespace scratchbird::core
         void setChar(const std::string& value);
         void setDecimalType(uint8_t precision, uint8_t scale);
         void setTimezoneOffsetSeconds(int32_t offset_seconds) { timezone_offset_seconds_ = offset_seconds; }
+        void setBitLength(uint32_t bit_length) { bit_length_ = bit_length; }
 
         // Comparison operators
         bool operator==(const TypedValue& other) const;
@@ -373,6 +375,7 @@ namespace scratchbird::core
 
         // Temporal timezone offset (seconds)
         int32_t timezone_offset_seconds_ = 0;
+        uint32_t bit_length_ = 0;
 
         // Storage for spatial types (heap-allocated for complex types)
         struct SpatialData

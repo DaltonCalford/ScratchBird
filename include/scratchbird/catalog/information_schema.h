@@ -1395,7 +1395,7 @@ private:
                     }
 
                     std::string check_clause = constraint.check_expression;
-                    if (check_clause.empty() && constraint.check_expr_oid != 0) {
+                    if (check_clause.empty() && constraint.check_expr_oid != core::ID{}) {
                         catalog_manager_->loadStringFromToast(constraint.check_expr_oid, 0, check_clause, ctx);
                     }
 

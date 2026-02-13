@@ -22,1043 +22,786 @@
 
 namespace scratchbird::parser::postgresql {
 
+parser::v3::Expression* Parser::makeBinary(parser::v3::BinaryOp op,
+                                       parser::v3::Expression* left,
+                                       parser::v3::Expression* right) {
+    auto* expr = arena()->create<parser::v3::BinaryExpr>();
+    expr->op = op;
+    expr->left = left;
+    expr->right = right;
+    return expr;
+}
+
+parser::v3::Expression* Parser::makeUnary(parser::v3::UnaryOp op,
+                                      parser::v3::Expression* operand) {
+    auto* expr = arena()->create<parser::v3::UnaryExpr>();
+    expr->op = op;
+    expr->operand = operand;
+    return expr;
+}
+
+parser::v3::Expression* Parser::makeLiteralInt(int64_t value) {
+    auto* expr = arena()->create<parser::v3::LiteralExpr>();
+    expr->literal_type = parser::v3::LiteralType::INTEGER;
+    expr->int_value = value;
+    return expr;
+}
+
+parser::v3::Expression* Parser::makeLiteralFloat(double value) {
+    auto* expr = arena()->create<parser::v3::LiteralExpr>();
+    expr->literal_type = parser::v3::LiteralType::FLOAT;
+    expr->float_value = value;
+    return expr;
+}
+
+parser::v3::Expression* Parser::makeLiteralString(const std::string& value) {
+    auto* expr = arena()->create<parser::v3::LiteralExpr>();
+    expr->literal_type = parser::v3::LiteralType::STRING;
+    expr->string_value = string_pool_.intern(value);
+    return expr;
+}
+
+parser::v3::Expression* Parser::makeLiteralBool(bool value) {
+    auto* expr = arena()->create<parser::v3::LiteralExpr>();
+    expr->literal_type = parser::v3::LiteralType::BOOLEAN;
+    expr->bool_value = value;
+    return expr;
+}
+
+parser::v3::Expression* Parser::makeLiteralNull() {
+    auto* expr = arena()->create<parser::v3::LiteralExpr>();
+    expr->literal_type = parser::v3::LiteralType::NULL_VALUE;
+    return expr;
+}
+
+parser::v3::Expression* Parser::makeColumnRef(const std::vector<std::string>& parts) {
+    auto* expr = arena()->create<parser::v3::ColumnRefExpr>();
+    if (parts.empty()) {
+        return expr;
+    }
+    auto col_id = string_pool_.intern(parts.back());
+    if (parts.size() == 1) {
+        expr->column = parser::v3::ColumnRef(col_id);
+        return expr;
+    }
+    std::vector<parser::v3::StringPool::StringId> comps;
+    comps.reserve(parts.size() - 1);
+    for (size_t i = 0; i + 1 < parts.size(); ++i) {
+        comps.push_back(string_pool_.intern(parts[i]));
+    }
+    parser::v3::SchemaPath path(parser::v3::PathType::UNQUALIFIED, std::move(comps));
+    expr->column = parser::v3::ColumnRef(std::move(path), col_id);
+    return expr;
+}
+
+std::vector<uint8_t> Parser::captureExpressionBytecode() {
+    bool prev = emit_enabled_;
+    emit_enabled_ = true;
+    size_t start = bytecode_.size();
+    parseExpression();
+    std::vector<uint8_t> out;
+    if (bytecode_.size() > start) {
+        out.assign(bytecode_.begin() + static_cast<long>(start), bytecode_.end());
+        bytecode_.resize(start);
+    }
+    emit_enabled_ = prev;
+    return out;
+}
+
+
+std::string Parser::parseExpressionText() {
+    // Consume an expression for DDL clauses that currently store text payloads.
+    bool prev_emit = emit_enabled_;
+    emit_enabled_ = false;
+    (void)parseExpression();
+    emit_enabled_ = prev_emit;
+    return "";
+}
+
+
 // ============================================================================
 // Expression Parsing (Operator Precedence)
 // ============================================================================
 
-void Parser::parseExpression() {
-    parseOrExpr();
+parser::v3::Expression* Parser::parseExpression() {
+    return parseOrExpr();
 }
 
-void Parser::parseOrExpr() {
-    parseAndExpr();
-
+parser::v3::Expression* Parser::parseOrExpr() {
+    auto* left = parseAndExpr();
     while (matchKeyword(TokenType::KW_OR)) {
-        parseAndExpr();
-        emit(sblr::Opcode::EXPR_OR);
+        auto* right = parseAndExpr();
+        left = makeBinary(parser::v3::BinaryOp::OR, left, right);
     }
+    return left;
 }
 
-void Parser::parseAndExpr() {
-    parseNotExpr();
-
+parser::v3::Expression* Parser::parseAndExpr() {
+    auto* left = parseNotExpr();
     while (matchKeyword(TokenType::KW_AND)) {
-        parseNotExpr();
-        emit(sblr::Opcode::EXPR_AND);
+        auto* right = parseNotExpr();
+        left = makeBinary(parser::v3::BinaryOp::AND, left, right);
     }
+    return left;
 }
 
-void Parser::parseNotExpr() {
+parser::v3::Expression* Parser::parseNotExpr() {
     if (matchKeyword(TokenType::KW_NOT)) {
-        parseNotExpr();
-        emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_BIT_NOT));
-        return;
+        return makeUnary(parser::v3::UnaryOp::NOT, parseNotExpr());
     }
-    parseComparisonExpr();
+    return parseComparisonExpr();
 }
 
-void Parser::parseComparisonExpr() {
-    parseIsExpr();
-
-    // Comparison operators
-    if (match(TokenType::EQUAL)) {
-        parseIsExpr();
-        emit(sblr::Opcode::EXPR_EQ);
-    } else if (match(TokenType::NOT_EQUAL) || match(TokenType::LESS_GREATER)) {
-        parseIsExpr();
-        emit(sblr::Opcode::EXPR_NE);
-    } else if (match(TokenType::LESS_THAN)) {
-        parseIsExpr();
-        emit(sblr::Opcode::EXPR_LT);
-    } else if (match(TokenType::GREATER_THAN)) {
-        parseIsExpr();
-        emit(sblr::Opcode::EXPR_GT);
-    } else if (match(TokenType::LESS_EQUAL)) {
-        parseIsExpr();
-        emit(sblr::Opcode::EXPR_LE);
-    } else if (match(TokenType::GREATER_EQUAL)) {
-        parseIsExpr();
-        emit(sblr::Opcode::EXPR_GE);
-    }
+parser::v3::Expression* Parser::parseComparisonExpr() {
+    auto* left = parseIsExpr();
+    if (match(TokenType::EQUAL)) return makeBinary(parser::v3::BinaryOp::EQ, left, parseIsExpr());
+    if (match(TokenType::NOT_EQUAL) || match(TokenType::LESS_GREATER))
+        return makeBinary(parser::v3::BinaryOp::NE, left, parseIsExpr());
+    if (match(TokenType::LESS_THAN)) return makeBinary(parser::v3::BinaryOp::LT, left, parseIsExpr());
+    if (match(TokenType::GREATER_THAN)) return makeBinary(parser::v3::BinaryOp::GT, left, parseIsExpr());
+    if (match(TokenType::LESS_EQUAL)) return makeBinary(parser::v3::BinaryOp::LE, left, parseIsExpr());
+    if (match(TokenType::GREATER_EQUAL)) return makeBinary(parser::v3::BinaryOp::GE, left, parseIsExpr());
+    return left;
 }
 
-void Parser::parseIsExpr() {
-    parseInExpr();
-
-    // IS [NOT] NULL, IS [NOT] TRUE, IS [NOT] FALSE, IS [NOT] DISTINCT FROM
+parser::v3::Expression* Parser::parseIsExpr() {
+    auto* left = parseInExpr();
     if (matchKeyword(TokenType::KW_IS)) {
         bool is_not = matchKeyword(TokenType::KW_NOT);
-
         if (matchKeyword(TokenType::KW_NULL)) {
-            // IS [NOT] NULL
-            emit(sblr::Opcode::LITERAL_NULL);
-            emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_NULL_SAFE_EQ));
-            if (is_not) {
-                emit(sblr::Opcode::LITERAL_INT32);
-                emitU32(0);
-                emit(sblr::Opcode::EXPR_EQ);
-            }
-        } else if (matchKeyword(TokenType::KW_TRUE)) {
-            // IS [NOT] TRUE
-            emit(sblr::Opcode::LITERAL_INT32);
-            emitU32(1);
-            emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_NULL_SAFE_EQ));
-            if (is_not) {
-                emit(sblr::Opcode::LITERAL_INT32);
-                emitU32(0);
-                emit(sblr::Opcode::EXPR_EQ);
-            }
-        } else if (matchKeyword(TokenType::KW_FALSE)) {
-            // IS [NOT] FALSE
-            emit(sblr::Opcode::LITERAL_INT32);
-            emitU32(0);
-            emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_NULL_SAFE_EQ));
-            if (is_not) {
-                emit(sblr::Opcode::LITERAL_INT32);
-                emitU32(0);
-                emit(sblr::Opcode::EXPR_EQ);
-            }
-        } else if (matchKeyword(TokenType::KW_DISTINCT)) {
-            consumeKeyword(TokenType::KW_FROM, "Expected FROM after DISTINCT");
-            parseInExpr();
-            emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_NULL_SAFE_EQ));
-            if (!is_not) {
-                emit(sblr::Opcode::LITERAL_INT32);
-                emitU32(0);
-                emit(sblr::Opcode::EXPR_EQ);
-            }
-        } else if (matchKeyword(TokenType::KW_UNKNOWN)) {
-            // IS [NOT] UNKNOWN (same as IS [NOT] NULL for boolean)
-            emit(sblr::Opcode::LITERAL_NULL);
-            emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_NULL_SAFE_EQ));
-            if (is_not) {
-                emit(sblr::Opcode::LITERAL_INT32);
-                emitU32(0);
-                emit(sblr::Opcode::EXPR_EQ);
-            }
-        } else {
-            error("Expected NULL, TRUE, FALSE, DISTINCT, or UNKNOWN after IS");
+            auto* expr = arena()->create<parser::v3::IsNullExpr>();
+            expr->expr = left;
+            expr->negated = is_not;
+            return expr;
         }
+        if (matchKeyword(TokenType::KW_TRUE)) {
+            auto* eq = makeBinary(parser::v3::BinaryOp::EQ, left, makeLiteralBool(true));
+            return is_not ? makeUnary(parser::v3::UnaryOp::NOT, eq) : eq;
+        }
+        if (matchKeyword(TokenType::KW_FALSE)) {
+            auto* eq = makeBinary(parser::v3::BinaryOp::EQ, left, makeLiteralBool(false));
+            return is_not ? makeUnary(parser::v3::UnaryOp::NOT, eq) : eq;
+        }
+        if (matchKeyword(TokenType::KW_UNKNOWN)) {
+            auto* expr = arena()->create<parser::v3::IsNullExpr>();
+            expr->expr = left;
+            expr->negated = is_not;
+            return expr;
+        }
+        if (matchKeyword(TokenType::KW_DISTINCT)) {
+            consumeKeyword(TokenType::KW_FROM, "Expected FROM after DISTINCT");
+            auto* right = parseInExpr();
+            auto* fn = arena()->create<parser::v3::FunctionCallExpr>();
+            fn->function_path = parser::v3::SchemaPath(parser::v3::PathType::UNQUALIFIED,
+                                                       {string_pool_.intern("is_distinct_from")});
+            fn->arguments.push_back(left);
+            fn->arguments.push_back(right);
+            emit(sblr::Opcode::EXTENDED_OPCODE);
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_NULL_SAFE_EQ));
+            return is_not ? makeUnary(parser::v3::UnaryOp::NOT, fn) : fn;
+        }
+        error("Expected NULL, TRUE, FALSE, DISTINCT, or UNKNOWN after IS");
     }
+    return left;
 }
 
-void Parser::parseInExpr() {
-    parseBetweenExpr();
-
-    // [NOT] IN (values) or [NOT] IN (subquery)
+parser::v3::Expression* Parser::parseInExpr() {
+    auto* expr = parseBetweenExpr();
     bool is_not = false;
-    if (matchKeyword(TokenType::KW_NOT)) {
-        is_not = true;
-    }
-
+    if (matchKeyword(TokenType::KW_NOT)) is_not = true;
     if (matchKeyword(TokenType::KW_IN)) {
         consume(TokenType::LEFT_PAREN, "Expected ( after IN");
-
+        auto* in_expr = arena()->create<parser::v3::InExpr>();
+        in_expr->expr = expr;
+        in_expr->negated = is_not;
         if (check(TokenType::KW_SELECT)) {
-            // Subquery
-            emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitU16(static_cast<uint16_t>(is_not ? sblr::ExtendedOpcode::EXT_SUBQUERY_NOT_IN
-                                                  : sblr::ExtendedOpcode::EXT_SUBQUERY_IN));
-            parseSubquery();
+            auto* sub = parseSubquery();
+            in_expr->subquery = sub;
+            in_expr->has_subquery = true;
         } else {
-            // Value list
-            uint64_t count = 0;
-            do {
-                parseExpression();
-                count++;
-            } while (match(TokenType::COMMA));
-            emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_IN_LIST));
-            emitByte(is_not ? 1 : 0);
-            emitUVarint(count);
+            do { in_expr->values.push_back(parseExpression()); } while (match(TokenType::COMMA));
         }
-
         consume(TokenType::RIGHT_PAREN, "Expected ) after IN list");
-    } else if (is_not) {
-        // NOT without IN - put back for parseBetweenExpr
-        // Actually we already consumed NOT, so this is an error
-        error("Expected IN after NOT");
+        return in_expr;
     }
+    if (is_not) error("Expected IN after NOT");
+    return expr;
 }
 
-void Parser::parseBetweenExpr() {
-    parseLikeExpr();
-
-    // [NOT] BETWEEN expr AND expr
+parser::v3::Expression* Parser::parseBetweenExpr() {
+    auto* expr = parseLikeExpr();
     bool is_not = false;
-    if (matchKeyword(TokenType::KW_NOT)) {
-        is_not = true;
-    }
-
+    if (matchKeyword(TokenType::KW_NOT)) is_not = true;
     if (matchKeyword(TokenType::KW_BETWEEN)) {
-        // BETWEEN is: expr >= low AND expr <= high
-        // NOT BETWEEN is: expr < low OR expr > high
-
-        parseLikeExpr();  // low value
+        auto* between = arena()->create<parser::v3::BetweenExpr>();
+        between->expr = expr;
+        between->negated = is_not;
+        between->low = parseLikeExpr();
         consumeKeyword(TokenType::KW_AND, "Expected AND in BETWEEN");
-        parseLikeExpr();  // high value
-
-        // Emit BETWEEN as compound comparison
-        if (is_not) {
-            // NOT BETWEEN: x < low OR x > high
-            emit(sblr::Opcode::EXPR_LT);
-            emit(sblr::Opcode::EXPR_GT);
-            emit(sblr::Opcode::EXPR_OR);
-        } else {
-            // BETWEEN: x >= low AND x <= high
-            emit(sblr::Opcode::EXPR_GE);
-            emit(sblr::Opcode::EXPR_LE);
-            emit(sblr::Opcode::EXPR_AND);
-        }
-    } else if (is_not) {
-        // NOT consumed but no BETWEEN - error
-        error("Expected BETWEEN after NOT");
+        between->high = parseLikeExpr();
+        return between;
     }
+    if (is_not) error("Expected BETWEEN after NOT");
+    return expr;
 }
 
-void Parser::parseLikeExpr() {
-    parseBitwiseOrExpr();
-
-    // [NOT] LIKE pattern [ESCAPE escape]
-    // [NOT] ILIKE pattern [ESCAPE escape]
-    // [NOT] SIMILAR TO pattern [ESCAPE escape]
+parser::v3::Expression* Parser::parseLikeExpr() {
+    auto* expr = parseBitwiseOrExpr();
     bool is_not = false;
-    if (matchKeyword(TokenType::KW_NOT)) {
-        is_not = true;
-    }
-
+    if (matchKeyword(TokenType::KW_NOT)) is_not = true;
     if (matchKeyword(TokenType::KW_LIKE)) {
-        parseBitwiseOrExpr();  // pattern
-        bool has_escape = false;
+        auto* like = arena()->create<parser::v3::LikeExpr>();
+        like->expr = expr;
+        like->negated = is_not;
+        like->match_kind = parser::v3::LikeMatchKind::LIKE;
+        like->pattern = parseBitwiseOrExpr();
         if (matchKeyword(TokenType::KW_ESCAPE)) {
-            parseBitwiseOrExpr();  // escape char
-            has_escape = true;
-        }
-
-        if (has_escape) {
+            like->escape = parseBitwiseOrExpr();
             emit(sblr::Opcode::EXTENDED_OPCODE);
             emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_LIKE_ESCAPE));
-        } else {
-            emit(sblr::Opcode::EXPR_LIKE);
         }
-
-        if (is_not) {
-            emit(sblr::Opcode::LITERAL_INT32);
-            emitU32(0);
-            emit(sblr::Opcode::EXPR_EQ);
-        }
-    } else if (matchKeyword(TokenType::KW_ILIKE)) {
-        parseBitwiseOrExpr();  // pattern
-        bool has_escape = false;
+        return like;
+    }
+    if (matchKeyword(TokenType::KW_ILIKE)) {
+        auto* like = arena()->create<parser::v3::LikeExpr>();
+        like->expr = expr;
+        like->negated = is_not;
+        like->case_insensitive = true;
+        like->match_kind = parser::v3::LikeMatchKind::ILIKE;
+        like->pattern = parseBitwiseOrExpr();
         if (matchKeyword(TokenType::KW_ESCAPE)) {
-            parseBitwiseOrExpr();
-            has_escape = true;
-        }
-
-        if (has_escape) {
+            like->escape = parseBitwiseOrExpr();
             emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ILIKE_ESCAPE));
-        } else {
-            emit(sblr::Opcode::EXPR_ILIKE);
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_LIKE_ESCAPE));
         }
-
-        if (is_not) {
-            emit(sblr::Opcode::LITERAL_INT32);
-            emitU32(0);
-            emit(sblr::Opcode::EXPR_EQ);
-        }
-    } else if (matchKeyword(TokenType::KW_SIMILAR)) {
+        return like;
+    }
+    if (matchKeyword(TokenType::KW_SIMILAR)) {
         consumeKeyword(TokenType::KW_TO, "Expected TO after SIMILAR");
-        parseBitwiseOrExpr();  // pattern
-        // SIMILAR TO uses regex matching
-        emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitU16(static_cast<uint16_t>(is_not ? sblr::ExtendedOpcode::EXT_REGEX_NOT_MATCH
-                                              : sblr::ExtendedOpcode::EXT_REGEX_MATCH));
-
+        auto* like = arena()->create<parser::v3::LikeExpr>();
+        like->expr = expr;
+        like->negated = is_not;
+        like->match_kind = parser::v3::LikeMatchKind::SIMILAR;
+        like->pattern = parseBitwiseOrExpr();
         if (matchKeyword(TokenType::KW_ESCAPE)) {
-            parseBitwiseOrExpr();
+            like->escape = parseBitwiseOrExpr();
+            emit(sblr::Opcode::EXTENDED_OPCODE);
+            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_LIKE_ESCAPE));
         }
-    } else if (is_not) {
-        error("Expected LIKE, ILIKE, or SIMILAR after NOT");
+        return like;
     }
+    if (is_not) error("Expected LIKE, ILIKE, or SIMILAR after NOT");
+    return expr;
 }
 
-void Parser::parseBitwiseOrExpr() {
-    parseBitwiseXorExpr();
 
+static parser::v3::TypeName pgTypeToTypeName(const PgDataType& type, parser::v3::StringPool& pool) {
+    parser::v3::TypeName out;
+    auto intern = [&](std::string_view s) { return pool.intern(s); };
+    switch (type.kind) {
+        case PgDataType::Kind::SMALLINT: out.name = intern("smallint"); break;
+        case PgDataType::Kind::INTEGER: out.name = intern("integer"); break;
+        case PgDataType::Kind::BIGINT: out.name = intern("bigint"); break;
+        case PgDataType::Kind::INT128: out.name = intern("int128"); break;
+        case PgDataType::Kind::UINT128: out.name = intern("uint128"); break;
+        case PgDataType::Kind::REAL: out.name = intern("real"); break;
+        case PgDataType::Kind::DOUBLE_PRECISION: out.name = intern("double_precision"); break;
+        case PgDataType::Kind::DECIMAL: out.name = intern("decimal"); break;
+        case PgDataType::Kind::NUMERIC: out.name = intern("numeric"); break;
+        case PgDataType::Kind::MONEY: out.name = intern("money"); break;
+        case PgDataType::Kind::SMALLSERIAL: out.name = intern("smallserial"); break;
+        case PgDataType::Kind::SERIAL: out.name = intern("serial"); break;
+        case PgDataType::Kind::BIGSERIAL: out.name = intern("bigserial"); break;
+        case PgDataType::Kind::CHAR: out.name = intern("char"); break;
+        case PgDataType::Kind::VARCHAR: out.name = intern("varchar"); break;
+        case PgDataType::Kind::TEXT: out.name = intern("text"); break;
+        case PgDataType::Kind::BYTEA: out.name = intern("bytea"); break;
+        case PgDataType::Kind::DATE: out.name = intern("date"); break;
+        case PgDataType::Kind::TIME: out.name = intern("time"); break;
+        case PgDataType::Kind::TIMETZ: out.name = intern("timetz"); break;
+        case PgDataType::Kind::TIMESTAMP: out.name = intern("timestamp"); break;
+        case PgDataType::Kind::TIMESTAMPTZ: out.name = intern("timestamptz"); break;
+        case PgDataType::Kind::INTERVAL: out.name = intern("interval"); break;
+        case PgDataType::Kind::BOOLEAN: out.name = intern("boolean"); break;
+        case PgDataType::Kind::UUID: out.name = intern("uuid"); break;
+        case PgDataType::Kind::JSON: out.name = intern("json"); break;
+        case PgDataType::Kind::JSONB: out.name = intern("jsonb"); break;
+        case PgDataType::Kind::JSONPATH: out.name = intern("jsonpath"); break;
+        case PgDataType::Kind::BIT: out.name = intern("bit"); break;
+        case PgDataType::Kind::VARBIT: out.name = intern("varbit"); break;
+        case PgDataType::Kind::TSVECTOR: out.name = intern("tsvector"); break;
+        case PgDataType::Kind::TSQUERY: out.name = intern("tsquery"); break;
+        case PgDataType::Kind::INT4RANGE: out.name = intern("int4range"); break;
+        case PgDataType::Kind::INT8RANGE: out.name = intern("int8range"); break;
+        case PgDataType::Kind::NUMRANGE: out.name = intern("numrange"); break;
+        case PgDataType::Kind::DATERANGE: out.name = intern("daterange"); break;
+        case PgDataType::Kind::TSRANGE: out.name = intern("tsrange"); break;
+        case PgDataType::Kind::TSTZRANGE: out.name = intern("tstzrange"); break;
+        case PgDataType::Kind::XML: out.name = intern("xml"); break;
+        case PgDataType::Kind::ENUM:
+        case PgDataType::Kind::DOMAIN:
+        case PgDataType::Kind::COMPOSITE:
+            out.name = intern(type.type_name);
+            break;
+        case PgDataType::Kind::ARRAY: {
+            out.is_array = true;
+            out.array_size = (type.array_size > 0) ? std::optional<int32_t>(type.array_size) : std::nullopt;
+            if (!type.element_type.empty()) {
+                out.name = intern(type.element_type);
+            } else {
+                PgDataType elem(type.element_kind);
+                out.name = pgTypeToTypeName(elem, pool).name;
+            }
+            break;
+        }
+        default:
+            out.name = intern("unknown");
+            break;
+    }
+    if (type.length > 0) out.length = type.length;
+    if (type.precision > 0) out.precision = type.precision;
+    if (type.scale > 0) out.scale = type.scale;
+    out.with_time_zone = type.with_time_zone;
+    return out;
+}
+
+parser::v3::Expression* Parser::parseBitwiseOrExpr() {
+    auto* left = parseBitwiseXorExpr();
     while (match(TokenType::PIPE)) {
-        parseBitwiseXorExpr();
-        emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_BIT_OR));
+        auto* right = parseBitwiseXorExpr();
+        left = makeBinary(parser::v3::BinaryOp::BIT_OR, left, right);
     }
+    return left;
 }
 
-void Parser::parseBitwiseXorExpr() {
-    parseBitwiseAndExpr();
-
+parser::v3::Expression* Parser::parseBitwiseXorExpr() {
+    auto* left = parseBitwiseAndExpr();
     while (match(TokenType::CARET)) {
-        parseBitwiseAndExpr();
-        emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_BIT_XOR));
+        auto* right = parseBitwiseAndExpr();
+        left = makeBinary(parser::v3::BinaryOp::BIT_XOR, left, right);
     }
+    return left;
 }
 
-void Parser::parseBitwiseAndExpr() {
-    parseShiftExpr();
-
+parser::v3::Expression* Parser::parseBitwiseAndExpr() {
+    auto* left = parseShiftExpr();
     while (match(TokenType::AMPERSAND)) {
-        parseShiftExpr();
-        emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_BIT_AND));
+        auto* right = parseShiftExpr();
+        left = makeBinary(parser::v3::BinaryOp::BIT_AND, left, right);
     }
+    return left;
 }
 
-void Parser::parseShiftExpr() {
-    parseAdditiveExpr();
-
+parser::v3::Expression* Parser::parseShiftExpr() {
+    auto* left = parseAdditiveExpr();
     while (true) {
         if (match(TokenType::LEFT_SHIFT)) {
-            parseAdditiveExpr();
-            emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_BIT_SHIFT_LEFT));
+            left = makeBinary(parser::v3::BinaryOp::SHIFT_LEFT, left, parseAdditiveExpr());
         } else if (match(TokenType::RIGHT_SHIFT)) {
-            parseAdditiveExpr();
-            emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_BIT_SHIFT_RIGHT));
+            left = makeBinary(parser::v3::BinaryOp::SHIFT_RIGHT, left, parseAdditiveExpr());
         } else {
             break;
         }
     }
+    return left;
 }
 
-void Parser::parseAdditiveExpr() {
-    parseMultiplicativeExpr();
-
+parser::v3::Expression* Parser::parseAdditiveExpr() {
+    auto* left = parseMultiplicativeExpr();
     while (true) {
         if (match(TokenType::PLUS)) {
-            parseMultiplicativeExpr();
-            emit(sblr::Opcode::EXPR_ADD);
+            left = makeBinary(parser::v3::BinaryOp::ADD, left, parseMultiplicativeExpr());
         } else if (match(TokenType::MINUS)) {
-            parseMultiplicativeExpr();
-            emit(sblr::Opcode::EXPR_SUBTRACT);
+            left = makeBinary(parser::v3::BinaryOp::SUB, left, parseMultiplicativeExpr());
         } else if (match(TokenType::CONCAT)) {
-            // || is string concatenation in PostgreSQL
-            parseMultiplicativeExpr();
-            emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ARRAY_CAT));  // Reuse for string concat
+            left = makeBinary(parser::v3::BinaryOp::CONCAT, left, parseMultiplicativeExpr());
         } else {
             break;
         }
     }
+    return left;
 }
 
-void Parser::parseMultiplicativeExpr() {
-    parseUnaryExpr();
-
+parser::v3::Expression* Parser::parseMultiplicativeExpr() {
+    auto* left = parseUnaryExpr();
     while (true) {
         if (match(TokenType::STAR)) {
-            parseUnaryExpr();
-            emit(sblr::Opcode::EXPR_MULTIPLY);
+            left = makeBinary(parser::v3::BinaryOp::MUL, left, parseUnaryExpr());
         } else if (match(TokenType::SLASH)) {
-            parseUnaryExpr();
-            emit(sblr::Opcode::EXPR_DIVIDE);
+            left = makeBinary(parser::v3::BinaryOp::DIV, left, parseUnaryExpr());
         } else if (match(TokenType::PERCENT)) {
-            parseUnaryExpr();
-            emit(sblr::Opcode::EXPR_MODULO);
+            left = makeBinary(parser::v3::BinaryOp::MOD, left, parseUnaryExpr());
         } else {
             break;
         }
     }
+    return left;
 }
 
-void Parser::parseUnaryExpr() {
-    if (match(TokenType::MINUS)) {
-        parseUnaryExpr();
-        // Negate: multiply by -1
-        emit(sblr::Opcode::LITERAL_INT64);
-        emitI64(-1);
-        emit(sblr::Opcode::EXPR_MULTIPLY);
-        return;
-    }
-    if (match(TokenType::PLUS)) {
-        parseUnaryExpr();
-        return;
-    }
-    if (match(TokenType::TILDE)) {
-        // Bitwise NOT
-        parseUnaryExpr();
-        emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_BIT_NOT));
-        return;
-    }
-
-    parsePostfixExpr();
+parser::v3::Expression* Parser::parseUnaryExpr() {
+    if (match(TokenType::MINUS)) return makeUnary(parser::v3::UnaryOp::NEGATE, parseUnaryExpr());
+    if (match(TokenType::PLUS)) return parseUnaryExpr();
+    if (match(TokenType::TILDE)) return makeUnary(parser::v3::UnaryOp::BIT_NOT, parseUnaryExpr());
+    return parsePostfixExpr();
 }
 
-void Parser::parsePostfixExpr() {
-    parsePrimaryExpr();
-    parsePostfixTail();
+parser::v3::Expression* Parser::parsePostfixExpr() {
+    auto* expr = parsePrimaryExpr();
+    return parsePostfixTail(expr);
 }
 
-void Parser::parsePostfixTail() {
-    // Handle postfix operators
+parser::v3::Expression* Parser::parsePostfixTail(parser::v3::Expression* base) {
+    auto* expr = base;
     while (true) {
         if (match(TokenType::DOUBLE_COLON)) {
-            // :: type cast operator
-            parseTypeCast();
+            expr = parseTypeCast(expr);
         } else if (match(TokenType::LEFT_BRACKET)) {
-            // Array subscript
-            parseExpression();
+            auto* idx = parseExpression();
             consume(TokenType::RIGHT_BRACKET, "Expected ]");
+            auto* fn = arena()->create<parser::v3::FunctionCallExpr>();
+            fn->function_path = parser::v3::SchemaPath(parser::v3::PathType::UNQUALIFIED,
+                                                       {string_pool_.intern("array_subscript")});
+            fn->arguments.push_back(expr);
+            fn->arguments.push_back(idx);
             emit(sblr::Opcode::EXTENDED_OPCODE);
             emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ARRAY_SUBSCRIPT));
+            expr = fn;
         } else if (match(TokenType::ARROW)) {
-            // -> JSON object field
-            parseExpression();
-            emit(sblr::Opcode::JSON_ARROW);
+            expr = makeBinary(parser::v3::BinaryOp::JSON_EXTRACT, expr, parseExpression());
         } else if (match(TokenType::DOUBLE_ARROW)) {
-            // ->> JSON object field as text
-            parseExpression();
-            emit(sblr::Opcode::JSON_DOUBLE_ARROW);
+            expr = makeBinary(parser::v3::BinaryOp::JSON_EXTRACT_TEXT, expr, parseExpression());
         } else if (match(TokenType::HASH_ARROW)) {
-            // #> JSON path
-            parseExpression();
-            emit(sblr::Opcode::JSON_HASH_ARROW);
+            expr = makeBinary(parser::v3::BinaryOp::JSON_HASH_EXTRACT, expr, parseExpression());
         } else if (match(TokenType::HASH_DOUBLE_ARROW)) {
-            // #>> JSON path as text
-            parseExpression();
-            emit(sblr::Opcode::JSON_HASH_DOUBLE_ARROW);
+            expr = makeBinary(parser::v3::BinaryOp::JSON_HASH_EXTRACT_TEXT, expr, parseExpression());
         } else if (match(TokenType::AT_GREATER)) {
-            // @> contains
-            parsePrimaryExpr();
-            emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ARRAY_CONTAINS));
+            expr = makeBinary(parser::v3::BinaryOp::ARRAY_CONTAINS, expr, parsePrimaryExpr());
         } else if (match(TokenType::LESS_AT)) {
-            // <@ contained by
-            parsePrimaryExpr();
-            emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ARRAY_CONTAINED_BY));
+            expr = makeBinary(parser::v3::BinaryOp::ARRAY_CONTAINED_BY, expr, parsePrimaryExpr());
         } else if (match(TokenType::QUESTION)) {
-            // ? key exists
-            parsePrimaryExpr();
-            // JSON key exists check
-            emit(sblr::Opcode::JSON_EXTRACT);
-            emit(sblr::Opcode::LITERAL_NULL);
-            emit(sblr::Opcode::EXPR_NE);
+            expr = makeBinary(parser::v3::BinaryOp::JSON_EXISTS, expr, parsePrimaryExpr());
         } else if (match(TokenType::QUESTION_PIPE)) {
-            // ?| any key exists
-            parsePrimaryExpr();
-            emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ARRAY_OVERLAP));
+            expr = makeBinary(parser::v3::BinaryOp::JSON_EXISTS_ANY, expr, parsePrimaryExpr());
         } else if (match(TokenType::QUESTION_AMPERSAND)) {
-            // ?& all keys exist
-            parsePrimaryExpr();
-            emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ARRAY_CONTAINS));
+            expr = makeBinary(parser::v3::BinaryOp::JSON_EXISTS_ALL, expr, parsePrimaryExpr());
         } else if (match(TokenType::AT_AT)) {
-            // @@ text search match or JSON path match
-            parsePrimaryExpr();
-            emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_TSMATCH));
+            auto* fn = arena()->create<parser::v3::FunctionCallExpr>();
+            fn->function_path = parser::v3::SchemaPath(parser::v3::PathType::UNQUALIFIED,
+                                                       {string_pool_.intern("ts_match")});
+            fn->arguments.push_back(expr);
+            fn->arguments.push_back(parsePrimaryExpr());
+            expr = fn;
         } else {
             break;
         }
     }
+    return expr;
 }
 
-void Parser::parsePrimaryExpr() {
-    // Literals
+parser::v3::Expression* Parser::parsePrimaryExpr() {
     if (check(TokenType::INTEGER_LITERAL)) {
-        emit(sblr::Opcode::LITERAL_INT64);
-        emitI64(current_token_.value.int_value);
+        auto* lit = makeLiteralInt(current_token_.value.int_value);
         advance();
-        return;
+        return lit;
     }
-
     if (check(TokenType::FLOAT_LITERAL)) {
-        emit(sblr::Opcode::LITERAL_DOUBLE);
-        emitF64(current_token_.value.float_value);
+        auto* lit = makeLiteralFloat(current_token_.value.float_value);
         advance();
-        return;
+        return lit;
     }
-
     if (check(TokenType::STRING_LITERAL) || check(TokenType::DOLLAR_STRING) ||
         check(TokenType::ESCAPE_STRING)) {
         uint32_t id = current_token_.value.string_id;
         std::string_view str = lexer_.stringPool().get(id);
-        emit(sblr::Opcode::LITERAL_STRING);
-        emitString(str);
+        auto* lit = makeLiteralString(std::string(str));
         advance();
-        return;
+        return lit;
+    }
+    if (matchKeyword(TokenType::KW_NULL)) return makeLiteralNull();
+    if (matchKeyword(TokenType::KW_TRUE)) return makeLiteralBool(true);
+    if (matchKeyword(TokenType::KW_FALSE)) return makeLiteralBool(false);
+    if (matchKeyword(TokenType::KW_DEFAULT)) {
+        auto* lit = arena()->create<parser::v3::LiteralExpr>();
+        lit->literal_type = parser::v3::LiteralType::DEFAULT;
+        return lit;
     }
 
-    if (matchKeyword(TokenType::KW_NULL)) {
-        emit(sblr::Opcode::LITERAL_NULL);
-        return;
-    }
+    if (check(TokenType::KW_CASE)) return parseCaseExpr();
+    if (check(TokenType::KW_CAST)) return parseCastExpr();
+    if (matchKeyword(TokenType::KW_EXTRACT)) return parseExtractExpr();
+    if (matchKeyword(TokenType::KW_ALTER_ELEMENT)) return parseAlterElementExpr();
+    if (check(TokenType::KW_ARRAY)) return parseArrayConstructor();
 
-    if (matchKeyword(TokenType::KW_TRUE)) {
-        emit(sblr::Opcode::LITERAL_INT32);
-        emitU32(1);
-        return;
-    }
-
-    if (matchKeyword(TokenType::KW_FALSE)) {
-        emit(sblr::Opcode::LITERAL_INT32);
-        emitU32(0);
-        return;
-    }
-
-    // CASE expression
-    if (check(TokenType::KW_CASE)) {
-        parseCaseExpr();
-        return;
-    }
-
-    // CAST expression
-    if (check(TokenType::KW_CAST)) {
-        parseCastExpr();
-        return;
-    }
-
-    if (matchKeyword(TokenType::KW_EXTRACT)) {
-        parseExtractExpr();
-        return;
-    }
-
-    if (matchKeyword(TokenType::KW_ALTER_ELEMENT)) {
-        parseAlterElementExpr();
-        return;
-    }
-
-    // ARRAY constructor
-    if (check(TokenType::KW_ARRAY)) {
-        parseArrayConstructor();
-        return;
-    }
-
-    // Subquery (SELECT)
     if (check(TokenType::LEFT_PAREN)) {
-        Token paren = current_token_;
         advance();
-
         if (check(TokenType::KW_SELECT)) {
-            // Scalar subquery
-            emit(sblr::Opcode::EXTENDED_OPCODE);
-            emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SUBQUERY_SCALAR));
-            parseSubquery();
+            auto* sub = parseSubquery();
             consume(TokenType::RIGHT_PAREN, "Expected ) after subquery");
-            return;
+            auto* subexpr = arena()->create<parser::v3::SubqueryExpr>();
+            subexpr->subquery = sub;
+            return subexpr;
         }
-
-        // Parenthesized expression
-        parseExpression();
+        auto* expr = parseExpression();
         consume(TokenType::RIGHT_PAREN, "Expected )");
-        return;
+        return expr;
     }
 
-    // EXISTS subquery
     if (matchKeyword(TokenType::KW_EXISTS)) {
         consume(TokenType::LEFT_PAREN, "Expected ( after EXISTS");
-        emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SUBQUERY_EXISTS));
-        parseSubquery();
+        auto* sub = parseSubquery();
         consume(TokenType::RIGHT_PAREN, "Expected ) after EXISTS subquery");
-        return;
+        auto* exists = arena()->create<parser::v3::ExistsExpr>();
+        exists->negated = false;
+        exists->subquery = sub;
+        return exists;
     }
 
-    // Positional parameter ($1, $2, etc.)
     if (check(TokenType::PARAMETER)) {
-        // Parameters are stored as their number
-        emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_PLACEHOLDER));
+        auto* param = arena()->create<parser::v3::ParameterExpr>();
         int64_t position = current_token_.value.int_value;
-        if (position <= 0 ||
-            position > static_cast<int64_t>(std::numeric_limits<uint16_t>::max())) {
+        if (position <= 0 || position > static_cast<int64_t>(std::numeric_limits<uint16_t>::max())) {
             error("Parameter index out of range");
             advance();
-            return;
+            return makeLiteralNull();
         }
+        param->is_named = false;
+        param->index = static_cast<uint32_t>(position);
+        emit(sblr::Opcode::EXTENDED_OPCODE);
+        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_PLACEHOLDER));
         emitU16(static_cast<uint16_t>(position));
-        emitU16(0);  // type hint unknown
         advance();
-        return;
+        return param;
     }
 
-    // Identifier (column reference or function call)
     if (check(TokenType::IDENTIFIER) || check(TokenType::QUOTED_IDENTIFIER) ||
         isNonReservedKeyword(current_token_.type)) {
-        std::string name = parseIdentifier();
-        int parts = 1;
-        std::string column = name;
-
-        // Check for function call
+        std::vector<std::string> parts;
+        parts.push_back(parseIdentifier());
         if (match(TokenType::LEFT_PAREN)) {
-            parseFunctionCall(name);
-            return;
+            return parseFunctionCall(parts.front());
         }
-
-        // Check for qualified name (table.column or schema.table.column)
         while (match(TokenType::DOT)) {
-            if (parts >= 3) {
-                error("PostgreSQL column references must be schema.table.column");
+            if (parts.size() >= 3) {
+                error("PostgreSQL column references support at most schema.table.column");
+                // Consume remaining qualifier segments to keep parser in sync.
+                parseIdentifier();
+                while (match(TokenType::DOT)) {
+                    parseIdentifier();
+                }
+                break;
             }
-            column = parseIdentifier();
-            parts++;
+            if (match(TokenType::STAR)) {
+                // SELECT table.* style wildcard reference.
+                auto* expr = arena()->create<parser::v3::ColumnRefExpr>();
+                std::vector<parser::v3::StringPool::StringId> path_parts;
+                path_parts.reserve(parts.size());
+                for (const auto& part : parts) {
+                    path_parts.push_back(string_pool_.intern(part));
+                }
+                expr->column = parser::v3::ColumnRef(
+                    parser::v3::SchemaPath(parser::v3::PathType::UNQUALIFIED, std::move(path_parts)),
+                    string_pool_.intern("*"));
+                return expr;
+            }
+            parts.push_back(parseIdentifier());
         }
-
-        emit(sblr::Opcode::COLUMN_REF);
-        emitString(column);
-        return;
+        return makeColumnRef(parts);
     }
 
-    // Special aggregate functions without arguments
     if (matchKeyword(TokenType::KW_COUNT)) {
         if (match(TokenType::LEFT_PAREN)) {
-            if (match(TokenType::STAR)) {
-                emit(sblr::Opcode::AGG_COUNT);
-                emitByte(1);
-                emit(sblr::Opcode::LITERAL_NULL);  // COUNT(*)
-            } else {
-                emit(sblr::Opcode::AGG_COUNT);
-                emitByte(1);
-                parseExpression();
+            auto* fn = arena()->create<parser::v3::FunctionCallExpr>();
+            fn->function_path = parser::v3::SchemaPath(parser::v3::PathType::UNQUALIFIED,
+                                                       {string_pool_.intern("count")});
+            if (!match(TokenType::STAR)) {
+                fn->arguments.push_back(parseExpression());
             }
             consume(TokenType::RIGHT_PAREN, "Expected ) after COUNT");
-            return;
+            return fn;
         }
     }
 
     error("Expected expression");
+    return makeLiteralNull();
 }
 
-void Parser::parseFunctionCall(const std::string& name) {
-    // Convert function name to lowercase for comparison
-    std::string lower_name = name;
-    std::transform(lower_name.begin(), lower_name.end(), lower_name.begin(), ::tolower);
-
-    // Special handling for aggregate functions
-    if (lower_name == "count") {
-        if (match(TokenType::STAR)) {
-            emit(sblr::Opcode::AGG_COUNT);
-            emitByte(1);
-            emit(sblr::Opcode::LITERAL_NULL);
-        } else {
-            emit(sblr::Opcode::AGG_COUNT);
-            emitByte(1);
-            parseExpression();
-        }
-        consume(TokenType::RIGHT_PAREN, "Expected ) after COUNT");
-        return;
+parser::v3::Expression* Parser::parseFunctionCall(const std::string& name) {
+    auto* fn = arena()->create<parser::v3::FunctionCallExpr>();
+    fn->function_path = parser::v3::SchemaPath(parser::v3::PathType::UNQUALIFIED,
+                                               {string_pool_.intern(name)});
+    if (matchKeyword(TokenType::KW_DISTINCT)) {
+        fn->distinct = true;
     }
-    if (lower_name == "sum") {
-        emit(sblr::Opcode::AGG_SUM);
-        emitByte(1);
-        parseExpression();
-        consume(TokenType::RIGHT_PAREN, "Expected )");
-        return;
-    }
-    if (lower_name == "avg") {
-        emit(sblr::Opcode::AGG_AVG);
-        emitByte(1);
-        parseExpression();
-        consume(TokenType::RIGHT_PAREN, "Expected )");
-        return;
-    }
-    if (lower_name == "min") {
-        emit(sblr::Opcode::AGG_MIN);
-        emitByte(1);
-        parseExpression();
-        consume(TokenType::RIGHT_PAREN, "Expected )");
-        return;
-    }
-    if (lower_name == "max") {
-        emit(sblr::Opcode::AGG_MAX);
-        emitByte(1);
-        parseExpression();
-        consume(TokenType::RIGHT_PAREN, "Expected )");
-        return;
-    }
-
-    // Window functions
-    if (lower_name == "row_number") {
-        emit(sblr::Opcode::WIN_ROW_NUMBER);
-        consume(TokenType::RIGHT_PAREN, "Expected )");
-        if (matchKeyword(TokenType::KW_OVER)) {
-            parseWindowClause();
-        }
-        return;
-    }
-    if (lower_name == "rank") {
-        emit(sblr::Opcode::WIN_RANK);
-        consume(TokenType::RIGHT_PAREN, "Expected )");
-        if (matchKeyword(TokenType::KW_OVER)) {
-            parseWindowClause();
-        }
-        return;
-    }
-    if (lower_name == "dense_rank") {
-        emit(sblr::Opcode::WIN_DENSE_RANK);
-        consume(TokenType::RIGHT_PAREN, "Expected )");
-        if (matchKeyword(TokenType::KW_OVER)) {
-            parseWindowClause();
-        }
-        return;
-    }
-    if (lower_name == "lag" || lower_name == "lead") {
-        emit(lower_name == "lag" ? sblr::Opcode::WIN_LAG : sblr::Opcode::WIN_LEAD);
-        parseExpression();  // value expression
-        if (match(TokenType::COMMA)) {
-            parseExpression();  // offset
-            if (match(TokenType::COMMA)) {
-                parseExpression();  // default
-            }
-        }
-        consume(TokenType::RIGHT_PAREN, "Expected )");
-        if (matchKeyword(TokenType::KW_OVER)) {
-            parseWindowClause();
-        }
-        return;
-    }
-
-    // String functions
-    if (lower_name == "upper") {
-        emit(sblr::Opcode::FUNC_UPPER);
-        parseExpression();
-        consume(TokenType::RIGHT_PAREN, "Expected )");
-        return;
-    }
-    if (lower_name == "lower") {
-        emit(sblr::Opcode::FUNC_LOWER);
-        parseExpression();
-        consume(TokenType::RIGHT_PAREN, "Expected )");
-        return;
-    }
-    if (lower_name == "length" || lower_name == "char_length" || lower_name == "character_length") {
-        emit(sblr::Opcode::FUNC_CHAR_LENGTH);
-        parseExpression();
-        consume(TokenType::RIGHT_PAREN, "Expected )");
-        return;
-    }
-    if (lower_name == "substring" || lower_name == "substr") {
-        emit(sblr::Opcode::FUNC_SUBSTRING);
-        parseExpression();  // string
-        if (matchKeyword(TokenType::KW_FROM) || match(TokenType::COMMA)) {
-            parseExpression();  // start
-        }
-        if (matchKeyword(TokenType::KW_FOR) || match(TokenType::COMMA)) {
-            parseExpression();  // length
-        }
-        consume(TokenType::RIGHT_PAREN, "Expected )");
-        return;
-    }
-    if (lower_name == "trim") {
-        emit(sblr::Opcode::FUNC_TRIM);
-        parseExpression();
-        consume(TokenType::RIGHT_PAREN, "Expected )");
-        return;
-    }
-
-    // Date/time functions
-    if (lower_name == "now" || lower_name == "current_timestamp") {
-        emit(sblr::Opcode::FUNC_NOW);
-        consume(TokenType::RIGHT_PAREN, "Expected )");
-        return;
-    }
-    if (lower_name == "current_date") {
-        emit(sblr::Opcode::FUNC_CURRENT_DATE);
-        consume(TokenType::RIGHT_PAREN, "Expected )");
-        return;
-    }
-
-    // Math functions
-    if (lower_name == "abs") {
-        emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_FUNC_ABS));
-        parseExpression();
-        consume(TokenType::RIGHT_PAREN, "Expected )");
-        return;
-    }
-    if (lower_name == "sqrt") {
-        emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_FUNC_SQRT));
-        parseExpression();
-        consume(TokenType::RIGHT_PAREN, "Expected )");
-        return;
-    }
-    if (lower_name == "round") {
-        emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_FUNC_ROUND));
-        parseExpression();
-        if (match(TokenType::COMMA)) {
-            parseExpression();  // precision
-        }
-        consume(TokenType::RIGHT_PAREN, "Expected )");
-        return;
-    }
-
-    // COALESCE and NULLIF
-    if (lower_name == "coalesce") {
-        emit(sblr::Opcode::COALESCE);
-        emit(sblr::Opcode::BEGIN_LIST);
-        size_t count_pos = bytecode_.size();
-        emitU32(0);
-        uint32_t count = 0;
-        do {
-            parseExpression();
-            count++;
-        } while (match(TokenType::COMMA));
-        sblr::writeInt32(&bytecode_[count_pos], count);
-        emit(sblr::Opcode::END_LIST);
-        consume(TokenType::RIGHT_PAREN, "Expected )");
-        return;
-    }
-    if (lower_name == "nullif") {
-        emit(sblr::Opcode::NULLIF);
-        parseExpression();
-        consume(TokenType::COMMA, "Expected , in NULLIF");
-        parseExpression();
-        consume(TokenType::RIGHT_PAREN, "Expected )");
-        return;
-    }
-
-    // JSON functions
-    if (lower_name == "json_object" || lower_name == "jsonb_build_object") {
-        emit(lower_name == "json_object" ? sblr::Opcode::JSON_OBJECT : sblr::Opcode::JSONB_BUILD_OBJECT);
-        emit(sblr::Opcode::BEGIN_LIST);
-        size_t count_pos = bytecode_.size();
-        emitU32(0);
-        uint32_t count = 0;
-        if (!check(TokenType::RIGHT_PAREN)) {
-            do {
-                parseExpression();
-                count++;
-            } while (match(TokenType::COMMA));
-        }
-        sblr::writeInt32(&bytecode_[count_pos], count);
-        emit(sblr::Opcode::END_LIST);
-        consume(TokenType::RIGHT_PAREN, "Expected )");
-        return;
-    }
-
-    // Generic function call
-    emit(sblr::Opcode::EXTENDED_OPCODE);
-    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_CALL));
-    emitString(name);
-
-    // Parse arguments
-    emit(sblr::Opcode::BEGIN_LIST);
-    size_t count_pos = bytecode_.size();
-    emitU32(0);
-
-    uint32_t count = 0;
-    if (!check(TokenType::RIGHT_PAREN)) {
-        do {
-            parseExpression();
-            count++;
-        } while (match(TokenType::COMMA));
-    }
-
-    sblr::writeInt32(&bytecode_[count_pos], count);
-    emit(sblr::Opcode::END_LIST);
-    consume(TokenType::RIGHT_PAREN, "Expected )");
-}
-
-void Parser::parseCaseExpr() {
-    consume(TokenType::KW_CASE, "Expected CASE");
-    emit(sblr::Opcode::CASE_WHEN);
-
-    // Simple CASE vs searched CASE
-    bool is_simple = !check(TokenType::KW_WHEN);
-    if (is_simple) {
-        // Simple CASE: CASE expr WHEN value1 THEN result1 ...
-        parseExpression();
-    }
-    emitByte(is_simple ? 1 : 0);
-
-    // Parse WHEN clauses
-    emit(sblr::Opcode::BEGIN_LIST);
-    size_t count_pos = bytecode_.size();
-    emitU32(0);
-
-    uint32_t count = 0;
-    while (matchKeyword(TokenType::KW_WHEN)) {
-        parseExpression();  // condition or value
-        consumeKeyword(TokenType::KW_THEN, "Expected THEN");
-        parseExpression();  // result
-        count++;
-    }
-
-    sblr::writeInt32(&bytecode_[count_pos], count);
-    emit(sblr::Opcode::END_LIST);
-
-    // ELSE clause
-    if (matchKeyword(TokenType::KW_ELSE)) {
-        parseExpression();
+    if (match(TokenType::RIGHT_PAREN)) {
+        // no args
+    } else if (match(TokenType::STAR)) {
+        consume(TokenType::RIGHT_PAREN, "Expected ) after *");
     } else {
-        emit(sblr::Opcode::LITERAL_NULL);
+        fn->arguments.push_back(parseExpression());
+        while (match(TokenType::COMMA)) {
+            fn->arguments.push_back(parseExpression());
+        }
+        // ORDER BY within aggregate
+        if (matchKeyword(TokenType::KW_ORDER)) {
+            consumeKeyword(TokenType::KW_BY, "Expected BY after ORDER");
+            do {
+                auto* item = arena()->create<parser::v3::OrderByItem>();
+                item->expr = parseExpression();
+                if (matchKeyword(TokenType::KW_ASC)) {
+                    item->ascending = true;
+                } else if (matchKeyword(TokenType::KW_DESC)) {
+                    item->ascending = false;
+                }
+                if (matchKeyword(TokenType::KW_NULLS)) {
+                    item->has_nulls_spec = true;
+                    if (matchKeyword(TokenType::KW_FIRST)) item->nulls_first = true;
+                    else if (matchKeyword(TokenType::KW_LAST)) item->nulls_last = true;
+                }
+                fn->order_by.push_back(item);
+            } while (match(TokenType::COMMA));
+        }
+        consume(TokenType::RIGHT_PAREN, "Expected ) after function arguments");
     }
 
-    consumeKeyword(TokenType::KW_END, "Expected END");
+    if (matchIdentifierKeyword("FILTER")) {
+        consume(TokenType::LEFT_PAREN, "Expected ( after FILTER");
+        consumeKeyword(TokenType::KW_WHERE, "Expected WHERE after FILTER (");
+        fn->filter = parseExpression();
+        consume(TokenType::RIGHT_PAREN, "Expected ) after FILTER");
+    }
+
+    if (matchKeyword(TokenType::KW_OVER)) {
+        fn->is_window = true;
+        if (check(TokenType::IDENTIFIER) || check(TokenType::QUOTED_IDENTIFIER) || isNonReservedKeyword(current_token_.type)) {
+            fn->window = arena()->create<parser::v3::WindowSpec>();
+            fn->window->ref_name = parseIdentifierId();
+            fn->window->has_ref = true;
+        } else if (match(TokenType::LEFT_PAREN)) {
+            auto* win = arena()->create<parser::v3::WindowSpec>();
+            if (matchKeyword(TokenType::KW_PARTITION)) {
+                consumeKeyword(TokenType::KW_BY, "Expected BY after PARTITION");
+                do { win->partition_by.push_back(parseExpression()); } while (match(TokenType::COMMA));
+            }
+            if (matchKeyword(TokenType::KW_ORDER)) {
+                consumeKeyword(TokenType::KW_BY, "Expected BY after ORDER");
+                do {
+                    auto* item = arena()->create<parser::v3::OrderByItem>();
+                    item->expr = parseExpression();
+                    if (matchKeyword(TokenType::KW_ASC)) item->ascending = true;
+                    else if (matchKeyword(TokenType::KW_DESC)) item->ascending = false;
+                    if (matchKeyword(TokenType::KW_NULLS)) {
+                        item->has_nulls_spec = true;
+                        if (matchKeyword(TokenType::KW_FIRST)) item->nulls_first = true;
+                        else if (matchKeyword(TokenType::KW_LAST)) item->nulls_last = true;
+                    }
+                    win->order_by.push_back(item);
+                } while (match(TokenType::COMMA));
+            }
+            consume(TokenType::RIGHT_PAREN, "Expected ) after window clause");
+            fn->window = win;
+        }
+    }
+
+    return fn;
 }
 
-void Parser::parseCastExpr() {
-    consume(TokenType::KW_CAST, "Expected CAST");
+parser::v3::Expression* Parser::parseCaseExpr() {
+    consumeKeyword(TokenType::KW_CASE, "Expected CASE");
+    auto* expr = arena()->create<parser::v3::CaseExpr>();
+    if (!check(TokenType::KW_WHEN)) {
+        expr->operand = parseExpression();
+    }
+    while (matchKeyword(TokenType::KW_WHEN)) {
+        parser::v3::CaseExpr::WhenClause clause;
+        clause.when_expr = parseExpression();
+        consumeKeyword(TokenType::KW_THEN, "Expected THEN in CASE");
+        clause.then_expr = parseExpression();
+        expr->when_clauses.push_back(clause);
+    }
+    if (matchKeyword(TokenType::KW_ELSE)) {
+        expr->else_expr = parseExpression();
+    }
+    consumeKeyword(TokenType::KW_END, "Expected END in CASE");
+    return expr;
+}
+
+parser::v3::Expression* Parser::parseCastExpr() {
+    consumeKeyword(TokenType::KW_CAST, "Expected CAST");
     consume(TokenType::LEFT_PAREN, "Expected (");
-
-    parseExpression();
-
+    auto* value = parseExpression();
     consumeKeyword(TokenType::KW_AS, "Expected AS");
-
     PgDataType type = parseDataType();
-    core::CastFormat cast_format = core::CastFormat::DEFAULT;
-    // CAST ... USING <format> (see docs/specifications/DATA_TYPE_PERSISTENCE_AND_CASTS.md)
-    if (matchKeyword(TokenType::KW_USING)) {
-        std::string fmt = parseIdentifier();
-        std::transform(fmt.begin(), fmt.end(), fmt.begin(),
-                       [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-        if (fmt == "hex" || fmt == "hexadecimal") {
-            cast_format = core::CastFormat::HEX;
-        } else if (fmt == "base64") {
-            cast_format = core::CastFormat::BASE64;
-        } else if (fmt == "escape") {
-            cast_format = core::CastFormat::ESCAPE;
-        } else {
-            error("Unknown CAST USING format: " + fmt);
-        }
-    }
-    emit(sblr::Opcode::EXPR_CAST);
-    emitByte(0);  // try_cast = false
-    emitTypeDefinition(type);
-    emitByte(static_cast<uint8_t>(cast_format));
-
     consume(TokenType::RIGHT_PAREN, "Expected )");
+    auto* expr = arena()->create<parser::v3::CastExpr>();
+    expr->expr = value;
+    expr->target_type = pgTypeToTypeName(type, string_pool_);
+    return expr;
 }
 
-void Parser::parseExtractExpr() {
-    consume(TokenType::LEFT_PAREN, "Expected ( after EXTRACT");
-    uint8_t arg_count = 0;
-    sblr::ExtractField field = parseElementSelector(arg_count);
-    consumeKeyword(TokenType::KW_FROM, "Expected FROM in EXTRACT expression");
-    parseExpression();
-    consume(TokenType::RIGHT_PAREN, "Expected ) after EXTRACT");
-
-    emit(sblr::Opcode::EXTENDED_OPCODE);
-    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_EXTRACT));
-    emitByte(static_cast<uint8_t>(field));
-    emitByte(arg_count);
+parser::v3::Expression* Parser::parseExtractExpr() {
+    auto* expr = arena()->create<parser::v3::ExtractExpr>();
+    expr->selector = parseElementSelector();
+    consumeKeyword(TokenType::KW_FROM, "Expected FROM in EXTRACT");
+    expr->source = parseExpression();
+    return expr;
 }
 
-void Parser::parseAlterElementExpr() {
-    consume(TokenType::LEFT_PAREN, "Expected ( after ALTER_ELEMENT");
-    uint8_t arg_count = 0;
-    sblr::ExtractField field = parseElementSelector(arg_count);
-    consumeKeyword(TokenType::KW_IN, "Expected IN in ALTER_ELEMENT expression");
-    parseExpression();
-    consumeKeyword(TokenType::KW_TO, "Expected TO in ALTER_ELEMENT expression");
-    parseExpression();
-    consume(TokenType::RIGHT_PAREN, "Expected ) after ALTER_ELEMENT");
-
-    emit(sblr::Opcode::EXTENDED_OPCODE);
-    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ALTER_ELEMENT));
-    emitByte(static_cast<uint8_t>(field));
-    emitByte(arg_count);
+parser::v3::Expression* Parser::parseAlterElementExpr() {
+    auto* expr = arena()->create<parser::v3::AlterElementExpr>();
+    expr->selector = parseElementSelector();
+    expr->source = parseExpression();
+    if (matchKeyword(TokenType::KW_SET)) {
+        expr->new_value = parseExpression();
+    }
+    return expr;
 }
 
-sblr::ExtractField Parser::parseElementSelector(uint8_t& arg_count) {
-    arg_count = 0;
-
-    if (check(TokenType::STRING_LITERAL) || check(TokenType::DOLLAR_STRING) ||
-        check(TokenType::ESCAPE_STRING)) {
-        std::string_view path = lexer_.stringPool().get(current_token_.value.string_id);
-        emit(sblr::Opcode::LITERAL_STRING);
-        emitString(path);
+parser::v3::ElementSelector Parser::parseElementSelector() {
+    parser::v3::ElementSelector sel;
+    if (check(TokenType::IDENTIFIER) || check(TokenType::QUOTED_IDENTIFIER) || isNonReservedKeyword(current_token_.type)) {
+        sel.kind = parser::v3::ElementSelector::Kind::IDENTIFIER;
+        sel.identifier = parseIdentifierId();
+    } else if (check(TokenType::STRING_LITERAL)) {
+        sel.kind = parser::v3::ElementSelector::Kind::STRING_LITERAL;
+        sel.string_literal = internFromLexer(current_token_.value.string_id);
         advance();
-        arg_count = 1;
-        return sblr::ExtractField::PATH;
+    } else if (check(TokenType::INTEGER_LITERAL)) {
+        sel.kind = parser::v3::ElementSelector::Kind::INTEGER_EXPR;
+        sel.expr = makeLiteralInt(current_token_.value.int_value);
+        advance();
+    } else {
+        error("Expected element selector");
     }
-
-    if (check(TokenType::INTEGER_LITERAL) || check(TokenType::PLUS) ||
-        check(TokenType::MINUS) || check(TokenType::LEFT_PAREN)) {
-        parseExpression();
-        arg_count = 1;
-        return sblr::ExtractField::ELEMENT;
-    }
-
-    std::string name = parseIdentifier();
-    bool has_args = false;
-
-    if (match(TokenType::LEFT_PAREN)) {
-        has_args = true;
-        if (!check(TokenType::RIGHT_PAREN)) {
-            do {
-                parseExpression();
-                arg_count++;
-            } while (match(TokenType::COMMA));
-        }
-        consume(TokenType::RIGHT_PAREN, "Expected ) after element selector arguments");
-    }
-
-    auto resolved = sblr::resolveExtractFieldName(name);
-    if (!resolved) {
-        if (has_args) {
-            error("Unknown EXTRACT element: " + name);
-            return sblr::ExtractField::VALUE;
-        }
-        emit(sblr::Opcode::LITERAL_STRING);
-        emitString(name);
-        arg_count = 1;
-        return sblr::ExtractField::FIELD;
-    }
-
-    return *resolved;
+    return sel;
 }
 
-void Parser::parseArrayConstructor() {
-    consume(TokenType::KW_ARRAY, "Expected ARRAY");
-
+parser::v3::Expression* Parser::parseArrayConstructor() {
+    consumeKeyword(TokenType::KW_ARRAY, "Expected ARRAY");
+    auto* expr = arena()->create<parser::v3::ArrayExpr>();
     if (match(TokenType::LEFT_BRACKET)) {
-        // ARRAY[val1, val2, ...]
-        uint64_t count = 0;
-        if (!check(TokenType::RIGHT_BRACKET)) {
-            do {
-                parseExpression();
-                count++;
-            } while (match(TokenType::COMMA));
+        if (!match(TokenType::RIGHT_BRACKET)) {
+            do { expr->elements.push_back(parseExpression()); } while (match(TokenType::COMMA));
+            consume(TokenType::RIGHT_BRACKET, "Expected ]");
         }
-        emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_ARRAY_CONSTRUCT));
-        emitUVarint(count);
-        consume(TokenType::RIGHT_BRACKET, "Expected ]");
     } else if (match(TokenType::LEFT_PAREN)) {
-        // ARRAY(SELECT ...) - array subquery
-        emit(sblr::Opcode::EXTENDED_OPCODE);
-        emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SUBQUERY_ARRAY));
-        parseSubquery();
+        auto* sub = parseSubquery();
+        expr->subquery = sub;
+        expr->has_subquery = true;
         consume(TokenType::RIGHT_PAREN, "Expected )");
     }
+    return expr;
 }
 
-void Parser::parseSubquery() {
-    // Parse a full SELECT statement
-    parseSelectStmt();
-    emit(sblr::Opcode::EXTENDED_OPCODE);
-    emitU16(static_cast<uint16_t>(sblr::ExtendedOpcode::EXT_SUBQUERY_END));
+parser::v3::SelectStmt* Parser::parseSubquery() {
+    return parseSelectStmt();
 }
 
-void Parser::parseTypeCast() {
-    // Already consumed ::
+parser::v3::Expression* Parser::parseTypeCast(parser::v3::Expression* base) {
     PgDataType type = parseDataType();
-    emit(sblr::Opcode::EXPR_CAST);
-    emitByte(0);  // try_cast = false
-    emitTypeDefinition(type);
-    emitByte(static_cast<uint8_t>(core::CastFormat::DEFAULT));
+    auto* expr = arena()->create<parser::v3::CastExpr>();
+    expr->expr = base;
+    expr->target_type = pgTypeToTypeName(type, string_pool_);
+    return expr;
 }
 
 } // namespace scratchbird::parser::postgresql

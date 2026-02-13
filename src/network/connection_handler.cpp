@@ -19,53 +19,9 @@
 #include "scratchbird/core/error_context.h"
 
 #include <algorithm>
-#include <cstring>
 
 namespace scratchbird {
 namespace network {
-
-namespace {
-    bool isTdsHandshake(const std::vector<uint8_t>& data) {
-        if (data.size() < 8) {
-            return false;
-        }
-        // TDS packet header:
-        // [0]=type (0x12 PRELOGIN, 0x10 LOGIN7), [2..3]=length (big-endian, includes header)
-        uint8_t type = data[0];
-        if (type != 0x12 && type != 0x10) {
-            return false;
-        }
-        uint16_t length = static_cast<uint16_t>((data[2] << 8) | data[3]);
-        if (length < 8 || length > 32768) {
-            return false;
-        }
-        return true;
-    }
-} // namespace
-
-// ============================================================================
-// Protocol Detection Magic Bytes
-// ============================================================================
-
-namespace {
-
-// PostgreSQL protocol v3 startup packet: 4 bytes length + 4 bytes version (196608 = 3.0)
-constexpr uint8_t PG_VERSION_3_0[] = {0x00, 0x03, 0x00, 0x00};
-
-// MySQL protocol: First packet is typically a handshake (0x0a as protocol version)
-constexpr uint8_t MYSQL_PROTOCOL_VERSION = 0x0a;
-
-// Firebird protocol: First 4 bytes are typically "cnct" or packet header
-constexpr uint8_t FB_CONNECT[] = {'c', 'n', 'c', 't'};
-
-// ScratchBird native protocol magic: "SBWP" (ScratchBird Wire Protocol)
-constexpr uint8_t SB_MAGIC[] = {0x53, 0x42, 0x57, 0x50};
-
-// SSL/TLS ClientHello: Content type 0x16 (Handshake), version 0x03 0x0X
-constexpr uint8_t SSL_CLIENT_HELLO = 0x16;
-constexpr uint8_t SSL_VERSION_MAJOR = 0x03;
-
-} // anonymous namespace
 
 // ============================================================================
 // Connection Implementation
@@ -260,7 +216,25 @@ std::unique_ptr<ConnectionManager> ConnectionManager::create(
     EventLoop* event_loop,
     ThreadPool* thread_pool,
     const ConnectionManagerConfig& config,
-    core::ErrorContext* /*ctx*/) {
+    core::ErrorContext* ctx) {
+    if (config.fixed_protocol == ProtocolType::AUTO_DETECT) {
+        if (ctx) {
+            SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                              "ConnectionManager fixed_protocol must not be AUTO_DETECT");
+        }
+        return nullptr;
+    }
+
+    if (std::find(config.allowed_protocols.begin(),
+                  config.allowed_protocols.end(),
+                  config.fixed_protocol) == config.allowed_protocols.end()) {
+        if (ctx) {
+            SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                              "ConnectionManager fixed_protocol is not in allowed_protocols");
+        }
+        return nullptr;
+    }
+
     return std::unique_ptr<ConnectionManager>(
         new ConnectionManager(event_loop, thread_pool, config));
 }
@@ -493,70 +467,21 @@ std::vector<ConnectionId> ConnectionManager::getConnectionIds() const {
 void ConnectionManager::handleNewConnection(Connection* conn) {
     if (!conn) return;
 
-    // Bind connection to a fixed listener protocol when configured.
-    if (config_.fixed_protocol != ProtocolType::AUTO_DETECT) {
-        if (!isProtocolAllowed(config_.fixed_protocol)) {
-            conn->close(CloseReason::PROTOCOL_ERROR);
-            return;
-        }
-        conn->setProtocol(config_.fixed_protocol);
-        if (auto handler = getProtocolHandler(config_.fixed_protocol)) {
-            handler->initializeConnection(conn);
-        }
-        conn->setState(ConnectionState::AUTHENTICATING);
-        return;
-    }
-
-    if (!config_.auto_detect_protocol) {
+    // Listener ports are single-protocol by design: fixed protocol is mandatory.
+    if (config_.fixed_protocol == ProtocolType::AUTO_DETECT) {
         conn->close(CloseReason::PROTOCOL_ERROR);
         return;
     }
 
-    conn->setState(ConnectionState::PROTOCOL_DETECTION);
-}
-
-void ConnectionManager::handleProtocolDetection(Connection* conn) {
-    if (!conn) return;
-
-    if (!config_.auto_detect_protocol) {
+    if (!isProtocolAllowed(config_.fixed_protocol)) {
         conn->close(CloseReason::PROTOCOL_ERROR);
         return;
     }
 
-    const auto& buffer = conn->getReadBuffer();
-    if (buffer.empty()) {
-        return;  // Need more data
+    conn->setProtocol(config_.fixed_protocol);
+    if (auto handler = getProtocolHandler(config_.fixed_protocol)) {
+        handler->initializeConnection(conn);
     }
-
-    if (isTdsHandshake(buffer)) {
-        // TDS/MSSQL is explicitly unsupported in V3.
-        conn->close(CloseReason::PROTOCOL_ERROR);
-        return;
-    }
-
-    // Detect protocol
-    ProtocolType detected = detectProtocol(buffer);
-    if (detected == ProtocolType::AUTO_DETECT) {
-        return;  // Need more data (or TLS handshake preface not yet handled here)
-    }
-    if (!isProtocolAllowed(detected)) {
-        conn->close(CloseReason::PROTOCOL_ERROR);
-        return;
-    }
-    conn->setProtocol(detected);
-
-    // Get handler for detected protocol
-    auto handler = getProtocolHandler(detected);
-    if (!handler) {
-        // No handler registered for this protocol
-        conn->close(CloseReason::PROTOCOL_ERROR);
-        return;
-    }
-
-    // Initialize connection for this protocol
-    handler->initializeConnection(conn);
-
-    // Move to authentication state
     conn->setState(ConnectionState::AUTHENTICATING);
 }
 
@@ -597,16 +522,6 @@ void ConnectionManager::handleData(Connection* conn) {
     switch (conn->getState()) {
         case ConnectionState::NEW: {
             handleNewConnection(conn);
-
-            if (conn->getState() == ConnectionState::PROTOCOL_DETECTION) {
-                handleProtocolDetection(conn);
-                if (conn->getState() != ConnectionState::AUTHENTICATING) {
-                    break;
-                }
-                handleAuthentication(conn);
-                break;
-            }
-
             if (conn->getState() == ConnectionState::AUTHENTICATING) {
                 handleAuthentication(conn);
             }
@@ -614,10 +529,7 @@ void ConnectionManager::handleData(Connection* conn) {
         }
 
         case ConnectionState::PROTOCOL_DETECTION:
-            handleProtocolDetection(conn);
-            if (conn->getState() == ConnectionState::AUTHENTICATING) {
-                handleAuthentication(conn);
-            }
+            conn->close(CloseReason::PROTOCOL_ERROR);
             break;
 
         case ConnectionState::AUTHENTICATING:
@@ -644,69 +556,6 @@ void ConnectionManager::handleData(Connection* conn) {
     if (conn->hasPendingWrites() && event_loop_) {
         event_loop_->modify(conn->getFd(), EventType::READ | EventType::WRITE);
     }
-}
-
-ProtocolType ConnectionManager::detectProtocol(const std::vector<uint8_t>& data) {
-    if (data.size() < 4) {
-        return ProtocolType::AUTO_DETECT;  // Need more data
-    }
-
-    // Check for SSL/TLS first
-    if (data[0] == SSL_CLIENT_HELLO && data[1] == SSL_VERSION_MAJOR) {
-        // SSL connection - after handshake we'll detect again
-        return ProtocolType::AUTO_DETECT;
-    }
-
-    // Check for ScratchBird native protocol (SBWP magic)
-    if (data.size() >= 4 && std::memcmp(data.data(), SB_MAGIC, 4) == 0) {
-        return ProtocolType::NATIVE;
-    }
-
-    // Check for PostgreSQL protocol v3
-    // Startup message: length (4 bytes) + version (4 bytes)
-    // Version 3.0 = 196608 = 0x00030000
-    if (data.size() >= 8) {
-        // Read length (big-endian)
-        uint32_t length = (data[0] << 24) | (data[1] << 16) | (data[2] << 8) | data[3];
-        if (length >= 8 && length < 10000) {  // Reasonable startup packet size
-            // Check version
-            if (data[4] == 0x00 && data[5] == 0x03 && data[6] == 0x00 && data[7] == 0x00) {
-                return ProtocolType::POSTGRESQL;
-            }
-            // SSLRequest: version = 80877103 = 0x04D2162F
-            if (data[4] == 0x04 && data[5] == 0xD2 && data[6] == 0x16 && data[7] == 0x2F) {
-                return ProtocolType::POSTGRESQL;  // SSL request, still PostgreSQL
-            }
-        }
-    }
-
-    // Check for MySQL protocol
-    // First packet from client is typically a capability flags packet
-    // Server sends handshake first, but if we're a server, we see client response
-    // MySQL packet: 3 bytes length + 1 byte sequence + payload
-    // For initial connect, look for specific patterns
-    if (data.size() >= 4) {
-        // Try to parse as MySQL packet
-        uint32_t mysql_len = data[0] | (data[1] << 8) | (data[2] << 16);
-        uint8_t mysql_seq = data[3];
-
-        // Reasonable MySQL packet size and sequence 1 (response to handshake)
-        if (mysql_len > 0 && mysql_len < 100000 && mysql_seq <= 1) {
-            // Could be MySQL, but need more specific check
-            // Look for capability flags pattern
-            if (data.size() >= mysql_len + 4) {
-                return ProtocolType::MYSQL;
-            }
-        }
-    }
-
-    // Check for Firebird protocol
-    if (data.size() >= 4 && std::memcmp(data.data(), FB_CONNECT, 4) == 0) {
-        return ProtocolType::FIREBIRD;
-    }
-
-    // Unknown prefix: require more data instead of guessing protocol.
-    return ProtocolType::AUTO_DETECT;
 }
 
 bool ConnectionManager::isProtocolAllowed(ProtocolType protocol) const {

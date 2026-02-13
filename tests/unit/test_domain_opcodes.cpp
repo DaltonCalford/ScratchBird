@@ -68,24 +68,24 @@ void appendId(std::vector<uint8_t>& out, const ID& id)
 
 void appendExtendedOpcode(std::vector<uint8_t>& out, ExtendedOpcode opcode)
 {
-    appendByte(out, static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
+    appendByte(out, static_cast<uint8_t>(scratchbird::sblr::Opcode::EXTENDED_OPCODE));
     appendInt16(out, static_cast<uint16_t>(opcode));
 }
 
 void appendLiteralString(std::vector<uint8_t>& out, const std::string& value)
 {
-    appendByte(out, static_cast<uint8_t>(Opcode::LITERAL_STRING));
+    appendByte(out, static_cast<uint8_t>(scratchbird::sblr::Opcode::LITERAL_STRING));
     appendString(out, value);
 }
 
 void appendLiteralNull(std::vector<uint8_t>& out)
 {
-    appendByte(out, static_cast<uint8_t>(Opcode::LITERAL_NULL));
+    appendByte(out, static_cast<uint8_t>(scratchbird::sblr::Opcode::LITERAL_NULL));
 }
 
 void appendLiteralInt32(std::vector<uint8_t>& out, int32_t value)
 {
-    appendByte(out, static_cast<uint8_t>(Opcode::LITERAL_INT32));
+    appendByte(out, static_cast<uint8_t>(scratchbird::sblr::Opcode::LITERAL_INT32));
     appendInt32(out, static_cast<uint32_t>(value));
 }
 
@@ -94,17 +94,17 @@ std::vector<uint8_t> buildSelectBytecode(
     const std::function<void(std::vector<uint8_t>&)>& emit)
 {
     std::vector<uint8_t> bytecode;
-    appendByte(bytecode, static_cast<uint8_t>(Opcode::VERSION));
+    appendByte(bytecode, static_cast<uint8_t>(scratchbird::sblr::Opcode::VERSION));
     appendByte(bytecode, SBLR_VERSION);
-    appendByte(bytecode, static_cast<uint8_t>(Opcode::SELECT));
+    appendByte(bytecode, static_cast<uint8_t>(scratchbird::sblr::Opcode::SELECT));
     appendByte(bytecode, 0); // flags
-    appendByte(bytecode, static_cast<uint8_t>(Opcode::BEGIN_LIST));
+    appendByte(bytecode, static_cast<uint8_t>(scratchbird::sblr::Opcode::BEGIN_LIST));
     appendUVarint(bytecode, select_count);
     emit(bytecode);
-    appendByte(bytecode, static_cast<uint8_t>(Opcode::END_LIST));
-    appendByte(bytecode, static_cast<uint8_t>(Opcode::BEGIN_LIST));
+    appendByte(bytecode, static_cast<uint8_t>(scratchbird::sblr::Opcode::END_LIST));
+    appendByte(bytecode, static_cast<uint8_t>(scratchbird::sblr::Opcode::BEGIN_LIST));
     appendUVarint(bytecode, 0);
-    appendByte(bytecode, static_cast<uint8_t>(Opcode::END_LIST));
+    appendByte(bytecode, static_cast<uint8_t>(scratchbird::sblr::Opcode::END_LIST));
     return bytecode;
 }
 
@@ -114,13 +114,13 @@ std::vector<uint8_t> buildConstantReturnFunction(const std::string& value)
     appendLiteralString(expr, value);
 
     std::vector<uint8_t> bytecode;
-    appendByte(bytecode, static_cast<uint8_t>(Opcode::VERSION));
+    appendByte(bytecode, static_cast<uint8_t>(scratchbird::sblr::Opcode::VERSION));
     appendByte(bytecode, SBLR_VERSION);
     appendExtendedOpcode(bytecode, ExtendedOpcode::EXT_RETURN);
     appendByte(bytecode, 1);
     appendInt32(bytecode, static_cast<uint32_t>(expr.size()));
     bytecode.insert(bytecode.end(), expr.begin(), expr.end());
-    appendByte(bytecode, static_cast<uint8_t>(Opcode::END));
+    appendByte(bytecode, static_cast<uint8_t>(scratchbird::sblr::Opcode::END));
     return bytecode;
 }
 
@@ -132,16 +132,18 @@ std::vector<uint8_t> buildBooleanReturnFunction(const std::string& param_name,
     appendString(expr, param_name);
     appendExtendedOpcode(expr, ExtendedOpcode::EXT_VAR_LOAD);
     appendString(expr, param_name);
-    appendByte(expr, static_cast<uint8_t>(return_true ? Opcode::EXPR_EQ : Opcode::EXPR_NE));
+    appendByte(expr, static_cast<uint8_t>(return_true
+                                              ? scratchbird::sblr::Opcode::EXPR_EQ
+                                              : scratchbird::sblr::Opcode::EXPR_NE));
 
     std::vector<uint8_t> bytecode;
-    appendByte(bytecode, static_cast<uint8_t>(Opcode::VERSION));
+    appendByte(bytecode, static_cast<uint8_t>(scratchbird::sblr::Opcode::VERSION));
     appendByte(bytecode, SBLR_VERSION);
     appendExtendedOpcode(bytecode, ExtendedOpcode::EXT_RETURN);
     appendByte(bytecode, 1);
     appendInt32(bytecode, static_cast<uint32_t>(expr.size()));
     bytecode.insert(bytecode.end(), expr.begin(), expr.end());
-    appendByte(bytecode, static_cast<uint8_t>(Opcode::END));
+    appendByte(bytecode, static_cast<uint8_t>(scratchbird::sblr::Opcode::END));
     return bytecode;
 }
 

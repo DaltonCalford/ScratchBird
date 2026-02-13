@@ -10,7 +10,7 @@
 #include "scratchbird/core/database.h"
 
 
-#include "scratchbird/sblr/query_compiler_v2.h"
+#include "scratchbird/sblr/query_compiler_v3.h"
 #include "scratchbird/sblr/executor.h"
 #include <iostream>
 #include <filesystem>
@@ -19,7 +19,7 @@
 
 using namespace scratchbird;
 
-void execute_sql(core::Database* db, sblr::QueryCompilerV2* compiler, const std::string& sql) {
+void execute_sql(core::Database* db, sblr::QueryCompilerV3* compiler, const std::string& sql) {
     auto result = compiler->compile(sql);
     if (!result.success()) {
         std::cerr << "Compile error: " << sql << std::endl;
@@ -69,7 +69,7 @@ int main() {
         return 1;
     }
 
-    sblr::QueryCompilerV2 compiler(db.get());
+    sblr::QueryCompilerV3 compiler(db.get());
 
     std::cout << "=== Views Expansion Test ===" << std::endl << std::endl;
 

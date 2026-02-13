@@ -116,6 +116,7 @@ Parser::Parser(std::string_view input, core::Database* db, std::string_view defa
 {
     // Prime the parser with first token
     advance();
+    arena_ = std::make_unique<parser::v3::ASTArena>();
 }
 
 // ============================================================================
@@ -327,13 +328,16 @@ void Parser::emitDebugSpan(const SourceSpan& span) {
 ParseResult Parser::parseStatement() {
     bytecode_.clear();
     errors_.clear();
+    statement_ = nullptr;
+    string_pool_.clear();
+    arena_ = std::make_unique<parser::v3::ASTArena>();
 
-    // Emit SBLR version header
+    // Emit parser-side bytecode header for parser diagnostics paths.
     emit(sblr::Opcode::VERSION);
     emitByte(sblr::SBLR_VERSION);
 
     try {
-        parseStatementInternal();
+        statement_ = parseStatementInternal();
 
         // Check for extra tokens after the statement
         if (!check(TokenType::END_OF_FILE) && !check(TokenType::SEMICOLON)) {
@@ -343,7 +347,6 @@ ParseResult Parser::parseStatement() {
         error(e.what());
     }
 
-    // Emit end marker
     emit(sblr::Opcode::END);
 
     ParseResult result;
@@ -352,6 +355,8 @@ ParseResult Parser::parseStatement() {
             result.addError(err.message, err.location);
         }
     } else {
+        result.setStatement(statement_);
+        result.setArena(std::move(arena_));
         result.setBytecode(std::move(bytecode_));
     }
     return result;
@@ -374,10 +379,11 @@ std::vector<ParseResult> Parser::parseAll() {
 // Statement Dispatch
 // ============================================================================
 
-void Parser::parseStatementInternal() {
+parser::v3::Statement* Parser::parseStatementInternal() {
+    parser::v3::WithClause* with = nullptr;
     // Handle WITH clause (CTE) for SELECT/INSERT/UPDATE/DELETE
     if (check(TokenType::KW_WITH)) {
-        parseWithClause();
+        with = parseWithClause();
         // After WITH, must be SELECT, INSERT, UPDATE, or DELETE
     }
 
@@ -385,74 +391,144 @@ void Parser::parseStatementInternal() {
 
     switch (current_token_.type) {
         case TokenType::KW_SELECT:
-            parseSelectStmt();
-            break;
+            {
+                auto* stmt = parseSelectStmt();
+                if (with) stmt->with = with;
+                return stmt;
+            }
         case TokenType::KW_INSERT:
-            parseInsertStmt();
-            break;
+            {
+                auto* stmt = parseInsertStmt();
+                if (with) stmt->with = with;
+                return stmt;
+            }
         case TokenType::KW_UPDATE:
-            parseUpdateStmt();
-            break;
+            {
+                auto* stmt = parseUpdateStmt();
+                if (with) stmt->with = with;
+                return stmt;
+            }
         case TokenType::KW_DELETE:
-            parseDeleteStmt();
-            break;
+            {
+                auto* stmt = parseDeleteStmt();
+                if (with) stmt->with = with;
+                return stmt;
+            }
         case TokenType::KW_MERGE:
-            parseMergeStmt();
-            break;
-        case TokenType::KW_CREATE:
-            parseCreateStmt();
-            break;
-        case TokenType::KW_ALTER:
-            parseAlterStmt();
-            break;
-        case TokenType::KW_DROP:
-            parseDropStmt();
-            break;
-        case TokenType::KW_TRUNCATE:
-            parseTruncateStmt();
-            break;
+            return parseMergeStmt();
+        case TokenType::KW_CREATE: {
+            consume(TokenType::KW_CREATE, "Expected CREATE");
+            parser::v3::Statement* stmt = parseCreateStmtV3();
+            if (stmt) {
+                return stmt;
+            }
+            error("Unsupported CREATE statement for V3 PostgreSQL parser");
+            return nullptr;
+        }
+        case TokenType::KW_ALTER: {
+            consume(TokenType::KW_ALTER, "Expected ALTER");
+            parser::v3::Statement* stmt = parseAlterStmtV3();
+            if (stmt) {
+                return stmt;
+            }
+            error("Unsupported ALTER statement for V3 PostgreSQL parser");
+            return nullptr;
+        }
+        case TokenType::KW_DROP: {
+            consume(TokenType::KW_DROP, "Expected DROP");
+            parser::v3::Statement* stmt = parseDropStmtV3();
+            if (stmt) {
+                return stmt;
+            }
+            error("Unsupported DROP statement for V3 PostgreSQL parser");
+            return nullptr;
+        }
+        case TokenType::KW_TRUNCATE: {
+            consume(TokenType::KW_TRUNCATE, "Expected TRUNCATE");
+            parser::v3::Statement* stmt = parseTruncateStmtV3();
+            if (stmt) {
+                return stmt;
+            }
+            error("Unsupported TRUNCATE statement for V3 PostgreSQL parser");
+            return nullptr;
+        }
         case TokenType::KW_SET:
-            parseSetStmt();
-            break;
+            {
+                parser::v3::Statement* stmt = parseSetStmtV3();
+                if (stmt) return stmt;
+                error("Unsupported SET statement for V3 PostgreSQL parser");
+                return nullptr;
+            }
         case TokenType::KW_SHOW:
-            parseShowStmt();
-            break;
+            {
+                parser::v3::Statement* stmt = parseShowStmtV3();
+                if (stmt) return stmt;
+                error("Unsupported SHOW statement for V3 PostgreSQL parser");
+                return nullptr;
+            }
         case TokenType::KW_BEGIN:
-            parseBeginStmt();
-            break;
+            {
+                parser::v3::Statement* stmt = parseBeginStmtV3();
+                if (stmt) return stmt;
+                error("Unsupported BEGIN statement for V3 PostgreSQL parser");
+                return nullptr;
+            }
+        case TokenType::KW_START:
+            {
+                parser::v3::Statement* stmt = parseBeginStmtV3();
+                if (stmt) return stmt;
+                error("Unsupported START statement for V3 PostgreSQL parser");
+                return nullptr;
+            }
         case TokenType::KW_PREPARE:
-            parsePrepareStmt();
-            break;
+            {
+                parser::v3::Statement* stmt = parsePrepareStmtV3();
+                if (stmt) return stmt;
+                error("Unsupported PREPARE statement for V3 PostgreSQL parser");
+                return nullptr;
+            }
         case TokenType::KW_COMMIT:
-            parseCommitStmt();
-            break;
+            {
+                parser::v3::Statement* stmt = parseCommitStmtV3();
+                if (stmt) return stmt;
+                error("Unsupported COMMIT statement for V3 PostgreSQL parser");
+                return nullptr;
+            }
         case TokenType::KW_ROLLBACK:
-            parseRollbackStmt();
-            break;
+            {
+                parser::v3::Statement* stmt = parseRollbackStmtV3();
+                if (stmt) return stmt;
+                error("Unsupported ROLLBACK statement for V3 PostgreSQL parser");
+                return nullptr;
+            }
         case TokenType::KW_SAVEPOINT:
-            parseSavepointStmt();
-            break;
+            {
+                parser::v3::Statement* stmt = parseSavepointStmtV3();
+                if (stmt) return stmt;
+                error("Unsupported SAVEPOINT statement for V3 PostgreSQL parser");
+                return nullptr;
+            }
         case TokenType::KW_RELEASE:
-            parseReleaseStmt();
-            break;
+            {
+                parser::v3::Statement* stmt = parseReleaseStmtV3();
+                if (stmt) return stmt;
+                error("Unsupported RELEASE statement for V3 PostgreSQL parser");
+                return nullptr;
+            }
         case TokenType::KW_GRANT:
-            parseGrantStmt();
-            break;
+            return parseGrantStmtV3();
         case TokenType::KW_REVOKE:
-            parseRevokeStmt();
-            break;
+            return parseRevokeStmtV3();
         case TokenType::KW_ANALYZE:
-            parseAnalyzeStmt();
-            break;
+            return parseAnalyzeStmtV3();
         case TokenType::KW_EXPLAIN:
-            parseExplainStmt();
-            break;
+            return parseExplainStmtV3();
         case TokenType::KW_COPY:
-            parseCopyStmt();
-            break;
+            return parseCopyStmtV3();
         default:
             error("Expected statement");
             synchronize();
+            return nullptr;
     }
 }
 
@@ -460,25 +536,38 @@ void Parser::parseStatementInternal() {
 // Identifier Parsing
 // ============================================================================
 
-std::string Parser::parseIdentifier() {
+parser::v3::StringPool::StringId Parser::internFromLexer(uint32_t lexer_id) {
+    std::string_view text = lexer_.stringPool().get(lexer_id);
+    return string_pool_.intern(text);
+}
+
+parser::v3::StringPool::StringId Parser::parseIdentifierId() {
     if (check(TokenType::IDENTIFIER)) {
         uint32_t id = current_token_.value.string_id;
         advance();
-        return std::string(lexer_.stringPool().get(id));
+        return internFromLexer(id);
     }
     if (check(TokenType::QUOTED_IDENTIFIER)) {
         uint32_t id = current_token_.value.string_id;
         advance();
-        return std::string(lexer_.stringPool().get(id));
+        return internFromLexer(id);
     }
     // Allow non-reserved keywords as identifiers
     if (isNonReservedKeyword(current_token_.type)) {
         std::string name = tokenToString(current_token_.type);
         advance();
-        return name;
+        return string_pool_.intern(name);
     }
     error("Expected identifier");
-    return "";
+    return parser::v3::StringPool::INVALID_ID;
+}
+
+std::string Parser::parseIdentifier() {
+    auto id = parseIdentifierId();
+    if (id == parser::v3::StringPool::INVALID_ID) {
+        return "";
+    }
+    return std::string(string_pool_.get(id));
 }
 
 std::string Parser::parseQualifiedName() {

@@ -138,6 +138,9 @@ std::unordered_map<std::string_view, TokenType> Lexer::initKeywords() {
         {"set", TokenType::KW_SET},
         {"reset", TokenType::KW_RESET},
         {"only", TokenType::KW_ONLY},
+        {"constraints", TokenType::KW_CONSTRAINTS},
+        {"tables", TokenType::KW_TABLES},
+        {"databases", TokenType::KW_DATABASES},
 
         // DDL keywords
         {"table", TokenType::KW_TABLE},
@@ -323,6 +326,11 @@ std::unordered_map<std::string_view, TokenType> Lexer::initKeywords() {
         {"exit", TokenType::KW_EXIT},
         {"continue", TokenType::KW_CONTINUE},
         {"restart", TokenType::KW_RESTART},
+        {"increment", TokenType::KW_INCREMENT},
+        {"minvalue", TokenType::KW_MINVALUE},
+        {"maxvalue", TokenType::KW_MAXVALUE},
+        {"cycle", TokenType::KW_CYCLE},
+        {"cache", TokenType::KW_CACHE},
         {"foreach", TokenType::KW_FOREACH},
         {"slice", TokenType::KW_SLICE},
         {"raise", TokenType::KW_RAISE},

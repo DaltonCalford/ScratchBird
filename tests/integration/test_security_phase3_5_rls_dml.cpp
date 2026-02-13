@@ -35,7 +35,7 @@
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/connection_context.h"
 
-#include "scratchbird/sblr/query_compiler_v2.h"
+#include "scratchbird/sblr/query_compiler_v3.h"
 #include "scratchbird/sblr/executor.h"
 #include "test_helpers.h"
 #include <filesystem>
@@ -101,7 +101,7 @@ protected:
     // Helper to execute SQL and return result
     std::string executeSQL(const std::string& sql)
     {
-        QueryCompilerV2 compiler(db.get());
+        QueryCompilerV3 compiler(db.get());
         compiler.setCurrentSchema(public_schema_id_);
         auto compile_result = compiler.compile(sql);
         if (!compile_result.success())

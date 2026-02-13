@@ -61,7 +61,7 @@ namespace scratchbird::core
         constexpr uint32_t CHUNK_DIVISOR = 4;      // page_size / 4 for chunk size
         constexpr uint32_t TARGET_DIVISOR = 16;    // page_size / 16 for target size
         constexpr uint32_t LEGACY_HEADER_SIZE = 28; // Pre-TupleHeader sizing constant
-        constexpr uint32_t HEADER_SIZE = sizeof(TupleHeader) + 12; // TupleHeader + chunk metadata
+        constexpr uint32_t HEADER_SIZE = sizeof(TupleHeader) + 24; // TupleHeader + chunk metadata (UUID + seq + size)
 
         /**
          * Calculate TOAST threshold based on page size
@@ -144,7 +144,7 @@ namespace scratchbird::core
     };
 
     /**
-     * TOAST Pointer Structure (18 bytes)
+     * TOAST Pointer Structure
      *
      * Stored in main tuple instead of actual data when value is TOASTed.
      * Points to chunks stored in TOAST table.
@@ -158,8 +158,8 @@ namespace scratchbird::core
         uint8_t va_tag;         // Type tag and compression info
         uint32_t va_rawsize;    // Original (uncompressed) data size
         uint32_t va_extsize;    // External stored size (after compression if applicable)
-        uint32_t va_valueid;    // Unique identifier for this TOAST value
-        uint32_t va_toastrelid; // TOAST table ID
+        ID va_valueid;          // Unique identifier for this TOAST value (UUID v7)
+        ID va_toastrelid;       // TOAST table ID (UUID)
     };
 #pragma pack(pop)
 
@@ -168,10 +168,10 @@ namespace scratchbird::core
      *
      * MGA-Compliant Chunk Format:
      * - TupleHeader for transaction/version metadata
-     * - value_id/chunk_seq/chunk_size for TOAST metadata (12 bytes)
+     * - value_id/chunk_seq/chunk_size for TOAST metadata (24 bytes)
      * - chunk_data for actual data (variable length, up to TOAST_MAX_CHUNK_SIZE)
      *
-     * Total Header Size: sizeof(TupleHeader) + 12 bytes
+     * Total Header Size: sizeof(TupleHeader) + 24 bytes
      *
      * Visibility:
      * - Chunk visible if xmin committed (via TIP) AND xmax NOT committed (via TIP)
@@ -187,8 +187,8 @@ namespace scratchbird::core
     {
         TupleHeader header;  // Tuple header for MGA/TIP visibility
 
-        // TOAST Metadata (12 bytes)
-        uint32_t chunk_id;   // Unique ID of the owning TOAST value
+        // TOAST Metadata (24 bytes)
+        ID chunk_id;         // Unique ID of the owning TOAST value (UUID v7)
         uint32_t chunk_seq;  // Sequence number (0-based)
         uint32_t chunk_size; // Size of data in this chunk
 
@@ -202,7 +202,7 @@ namespace scratchbird::core
     {
         uint64_t xmin;             // Transaction that created this
         uint64_t xmax;             // Transaction that deleted this (or 0)
-        uint32_t value_id;         // Unique TOAST value ID
+        ID value_id;               // Unique TOAST value ID (UUID v7)
         uint32_t chunk_seq;        // Chunk sequence number
         uint32_t chunk_size;       // Size of this chunk
         std::vector<uint8_t> data; // Chunk data
@@ -241,11 +241,11 @@ namespace scratchbird::core
                           uint64_t xmin, ErrorContext *ctx = nullptr) -> Status;
 
         // Delete TOASTed value
-        auto deleteToastValue(uint32_t value_id, uint64_t xmax, ErrorContext *ctx = nullptr)
+        auto deleteToastValue(const ID &value_id, uint64_t xmax, ErrorContext *ctx = nullptr)
             -> Status;
 
         // Delete TOASTed value using heap scan (fallback)
-        auto deleteToastValueHeapScan(uint32_t value_id, uint64_t xmax, ErrorContext *ctx = nullptr)
+        auto deleteToastValueHeapScan(const ID &value_id, uint64_t xmax, ErrorContext *ctx = nullptr)
             -> Status;
 
         // Check if a value should be TOASTed
@@ -256,7 +256,7 @@ namespace scratchbird::core
                                   bool compress_enabled = true) -> ToastStrategy;
 
         // Check if data is a TOAST pointer (Phase 3: Index TOAST Integration)
-        // Returns true if the data is exactly 18 bytes and has TOAST pointer magic
+        // Returns true if the data is exactly sizeof(ToastPointer) and has TOAST pointer magic
         static auto isToastPointer(const uint8_t *data, size_t size) -> bool;
 
         // Detoast a value if it's a TOAST pointer, otherwise return original data
@@ -274,21 +274,18 @@ namespace scratchbird::core
         Database *db_;
         ID table_id_;       // Regular table ID
         ID toast_table_id_; // Associated TOAST table ID
-        std::atomic<uint32_t>
-            next_value_id_; // Next TOAST value ID to assign (atomic for thread safety)
-
         // Helper methods
         auto createToastTableWithParent(const ID& schema_id, uint16_t tablespace_id,
                                         ErrorContext* ctx) -> Status;
         auto initializeNextValueId(ErrorContext *ctx) -> Status;
 
-        auto writeToastChunks(uint32_t value_id, const uint8_t *data, uint32_t size, uint64_t xmin,
+        auto writeToastChunks(const ID &value_id, const uint8_t *data, uint32_t size, uint64_t xmin,
                               ErrorContext *ctx) -> Status;
 
-        auto readToastChunks(uint32_t value_id, std::vector<uint8_t> *data_out, uint64_t xmin,
+        auto readToastChunks(const ID &value_id, std::vector<uint8_t> *data_out, uint64_t xmin,
                              ErrorContext *ctx) -> Status;
 
-        auto readToastChunksHeapScan(uint32_t value_id, std::vector<uint8_t> *data_out,
+        auto readToastChunksHeapScan(const ID &value_id, std::vector<uint8_t> *data_out,
                                      uint64_t xmin, ErrorContext *ctx) -> Status;
 
         auto compressData(const uint8_t *src, uint32_t src_size, std::vector<uint8_t> *dst,

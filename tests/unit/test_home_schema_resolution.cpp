@@ -14,7 +14,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/sblr/executor.h"
-#include "scratchbird/sblr/query_compiler_v2.h"
+#include "scratchbird/sblr/query_compiler_v3.h"
 #include "test_helpers.h"
 
 using namespace scratchbird::core;
@@ -59,7 +59,7 @@ protected:
         system_user_id_ = catalog_->getSystemUserId(&ctx);
         ASSERT_FALSE(isZeroUuid(system_user_id_));
 
-        compiler_ = std::make_unique<QueryCompilerV2>(db_.get());
+        compiler_ = std::make_unique<QueryCompilerV3>(db_.get());
         executor_ = std::make_unique<Executor>(db_.get());
 
         ASSERT_EQ(db_->connect(conn_ctx_, &ctx), Status::OK) << ctx.message;
@@ -92,7 +92,7 @@ protected:
     std::unique_ptr<TestDatabaseFile> db_file_;
     std::unique_ptr<Database> db_;
     CatalogManager* catalog_{};
-    std::unique_ptr<QueryCompilerV2> compiler_;
+    std::unique_ptr<QueryCompilerV3> compiler_;
     std::unique_ptr<Executor> executor_;
     std::unique_ptr<ConnectionContext> conn_ctx_;
     ID public_schema_id_{};

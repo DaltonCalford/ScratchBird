@@ -27,7 +27,7 @@
 #include "scratchbird/core/database.h"
 
 
-#include "scratchbird/sblr/query_compiler_v2.h"
+#include "scratchbird/sblr/query_compiler_v3.h"
 #include "scratchbird/sblr/executor.h"
 #include <iostream>
 #include <filesystem>
@@ -40,7 +40,7 @@ using namespace scratchbird;
 class SimpleTest {
 private:
     std::unique_ptr<core::Database> db_;
-    std::unique_ptr<sblr::QueryCompilerV2> compiler_;
+    std::unique_ptr<sblr::QueryCompilerV3> compiler_;
     const std::string db_path_ =
         "/tmp/test_rollup_simple_db_" + std::to_string(getpid());
     int test_count_ = 0;
@@ -151,7 +151,7 @@ public:
             return false;
         }
 
-        compiler_ = std::make_unique<sblr::QueryCompilerV2>(db_.get());
+        compiler_ = std::make_unique<sblr::QueryCompilerV3>(db_.get());
 
         std::cout << "Database ready!" << std::endl;
         return true;

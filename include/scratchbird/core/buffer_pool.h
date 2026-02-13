@@ -343,7 +343,7 @@ namespace scratchbird::core
             // Even though operations occur under mutex_, atomics provide memory ordering guarantees
             // and prevent torn reads/writes on all architectures
             std::atomic<uint32_t> pin_count{0};
-            bool is_dirty = false;
+            std::atomic<bool> is_dirty{false};
             std::atomic<uint32_t> usage_count{0}; // Clock Sweep algorithm: usage counter for eviction
             std::unique_ptr<uint8_t[]> data = nullptr;
             std::unique_ptr<std::mutex>
@@ -359,7 +359,7 @@ namespace scratchbird::core
             Frame(const Frame& other)
                 : gpid(other.gpid),
                   pin_count(other.pin_count.load(std::memory_order_relaxed)),
-                  is_dirty(other.is_dirty),
+                  is_dirty(other.is_dirty.load(std::memory_order_relaxed)),
                   usage_count(other.usage_count.load(std::memory_order_relaxed)),
                   data(nullptr),
                   content_mutex(std::make_unique<std::mutex>())
@@ -373,7 +373,8 @@ namespace scratchbird::core
                 if (this != &other) {
                     gpid = other.gpid;
                     pin_count.store(other.pin_count.load(std::memory_order_relaxed), std::memory_order_relaxed);
-                    is_dirty = other.is_dirty;
+                    is_dirty.store(other.is_dirty.load(std::memory_order_relaxed),
+                                   std::memory_order_relaxed);
                     usage_count.store(other.usage_count.load(std::memory_order_relaxed), std::memory_order_relaxed);
                     // data and content_mutex remain unchanged (unique per frame)
                 }
@@ -384,14 +385,14 @@ namespace scratchbird::core
             Frame(Frame&& other) noexcept
                 : gpid(other.gpid),
                   pin_count(other.pin_count.load(std::memory_order_relaxed)),
-                  is_dirty(other.is_dirty),
+                  is_dirty(other.is_dirty.load(std::memory_order_relaxed)),
                   usage_count(other.usage_count.load(std::memory_order_relaxed)),
                   data(std::move(other.data)),
                   content_mutex(std::move(other.content_mutex))
             {
                 other.gpid = INVALID_GPID;
                 other.pin_count.store(0, std::memory_order_relaxed);
-                other.is_dirty = false;
+                other.is_dirty.store(false, std::memory_order_relaxed);
                 other.usage_count.store(0, std::memory_order_relaxed);
             }
 
@@ -400,14 +401,15 @@ namespace scratchbird::core
                 if (this != &other) {
                     gpid = other.gpid;
                     pin_count.store(other.pin_count.load(std::memory_order_relaxed), std::memory_order_relaxed);
-                    is_dirty = other.is_dirty;
+                    is_dirty.store(other.is_dirty.load(std::memory_order_relaxed),
+                                   std::memory_order_relaxed);
                     usage_count.store(other.usage_count.load(std::memory_order_relaxed), std::memory_order_relaxed);
                     data = std::move(other.data);
                     content_mutex = std::move(other.content_mutex);
 
                     other.gpid = INVALID_GPID;
                     other.pin_count.store(0, std::memory_order_relaxed);
-                    other.is_dirty = false;
+                    other.is_dirty.store(false, std::memory_order_relaxed);
                     other.usage_count.store(0, std::memory_order_relaxed);
                 }
                 return *this;
@@ -473,7 +475,7 @@ namespace scratchbird::core
 
         std::mutex stats_debug_mutex_;
         FILE *stats_debug_fp_ = nullptr;
-        bool stats_debug_enabled_ = false;
+        std::atomic<bool> stats_debug_enabled_{false};
         uint64_t stats_debug_seq_ = 0;
 
         // Clock Sweep algorithm state
@@ -501,7 +503,7 @@ namespace scratchbird::core
 
         // Background writer state (Issue 2.20)
         std::unique_ptr<std::thread> bgwriter_thread_;      // Background writer thread
-        std::atomic<bool> bgwriter_shutdown_{false};        // Shutdown flag for background writer
+        bool bgwriter_shutdown_ = false;                    // Shutdown flag for background writer
         std::condition_variable bgwriter_cv_;               // Condition variable for bgwriter wake-up
         std::mutex bgwriter_mutex_;                         // Mutex for background writer coordination
         ScratchBirdMetrics *metrics_{nullptr};              // Telemetry wiring (optional)
@@ -527,6 +529,8 @@ namespace scratchbird::core
         void stopBackgroundWriter();                        // Stop background writer thread
         void updateDirtyTelemetry();                        // Sync dirty page gauge
         void updatePoolTelemetry();                         // Sync pool size/total gauges
+        bool tryMarkFrameDirty(uint32_t frame_index);       // Dirty transition false->true
+        bool tryClearFrameDirty(uint32_t frame_index);      // Dirty transition true->false
     };
 
 } // namespace scratchbird::core

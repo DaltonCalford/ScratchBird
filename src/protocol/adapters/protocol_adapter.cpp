@@ -524,7 +524,6 @@ core::Status ProtocolAdapter::ensureEngine(core::ErrorContext* ctx) {
 
     executor_ = std::make_unique<sblr::Executor>(db);
     executor_->setConnectionContext(connection_ctx_.get());
-    compiler_v2_ = std::make_unique<sblr::QueryCompilerV2>(db);
     compiler_v3_ = std::make_unique<parser::v3::Compiler>();
 
     return core::Status::OK;
@@ -582,50 +581,41 @@ core::Status ProtocolAdapter::compileQuery(const std::string& sql,
             return core::Status::OK;
         }
     }
-    if (std::string(dialect_tag) == "scratchbird" && compiler_v3_) {
+    std::string dialect = dialect_tag ? std::string(dialect_tag) : std::string();
+    for (auto& ch : dialect) {
+        ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+    }
+
+    if (dialect == "SCRATCHBIRD" && compiler_v3_) {
         auto result = compiler_v3_->compile(sql);
         if (!result.ok) {
             error_out = result.error.empty() ? "Compilation failed" : result.error;
             return core::Status::INVALID_ARGUMENT;
         }
         bytecode_out = result.bytecode;
-        if (compiler_v2_) {
-            auto v2_result = compiler_v2_->compile(sql);
-            if (v2_result.success()) {
-                scratchbird::sblr::v3::Container container;
-                std::string err;
-                if (scratchbird::sblr::v3::decodeContainer(bytecode_out.data(),
-                                                           bytecode_out.size(),
-                                                           container,
-                                                           err)) {
-                    const auto& v2_bytes = v2_result.bytecode();
-                    std::vector<uint8_t> debug;
-                    debug.reserve(8 + v2_bytes.size());
-                    debug.push_back('S');
-                    debug.push_back('B');
-                    debug.push_back('V');
-                    debug.push_back('2');
-                    uint32_t len = static_cast<uint32_t>(v2_bytes.size());
-                    debug.push_back(static_cast<uint8_t>(len & 0xFF));
-                    debug.push_back(static_cast<uint8_t>((len >> 8) & 0xFF));
-                    debug.push_back(static_cast<uint8_t>((len >> 16) & 0xFF));
-                    debug.push_back(static_cast<uint8_t>((len >> 24) & 0xFF));
-                    debug.insert(debug.end(), v2_bytes.begin(), v2_bytes.end());
-                    container.debug_info = std::move(debug);
-                    std::vector<uint8_t> reencoded;
-                    if (scratchbird::sblr::v3::encodeContainer(container, reencoded, err)) {
-                        bytecode_out = std::move(reencoded);
-                    }
-                }
-            }
+    } else if (dialect == "POSTGRESQL" || dialect == "POSTGRES" || dialect == "PG") {
+        if (!compiler_pg_) {
+            compiler_pg_ = std::make_unique<sblr::PostgreSQLQueryCompiler>(db);
         }
-    } else {
-        auto result = compiler_v2_->compile(sql);
+        auto result = compiler_pg_->compile(sql);
         if (!result.success()) {
             error_out = result.errors().empty() ? "Compilation failed" : result.errors().front();
             return core::Status::INVALID_ARGUMENT;
         }
         bytecode_out = result.bytecode();
+    } else if (dialect == "MYSQL") {
+        if (!compiler_mysql_) {
+            compiler_mysql_ = std::make_unique<sblr::MySQLQueryCompiler>(db);
+        }
+        auto result = compiler_mysql_->compile(sql);
+        if (!result.success()) {
+            error_out = result.errors().empty() ? "Compilation failed" : result.errors().front();
+            return core::Status::INVALID_ARGUMENT;
+        }
+        bytecode_out = result.bytecode();
+    } else {
+        error_out = "Unsupported dialect for protocol adapter";
+        return core::Status::INVALID_ARGUMENT;
     }
     if (translation_cache_ && translation_cache_->isEnabled()) {
         translation_cache_->put(dialect_tag, sql, schema_version,

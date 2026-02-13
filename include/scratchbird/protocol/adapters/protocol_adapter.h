@@ -25,7 +25,8 @@
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/connection_context.h"
-#include "scratchbird/sblr/query_compiler_v2.h"
+#include "scratchbird/sblr/postgresql_query_compiler.h"
+#include "scratchbird/sblr/mysql_query_compiler.h"
 #include "scratchbird/sblr/executor.h"
 #include "scratchbird/protocol/translation_cache.h"
 #include <filesystem>
@@ -407,8 +408,9 @@ protected:
     core::Database* shared_database_ = nullptr;
     std::unique_ptr<core::ConnectionContext> connection_ctx_;
     std::unique_ptr<sblr::Executor> executor_;
-    std::unique_ptr<sblr::QueryCompilerV2> compiler_v2_;
     std::unique_ptr<parser::v3::Compiler> compiler_v3_;
+    std::unique_ptr<sblr::PostgreSQLQueryCompiler> compiler_pg_;
+    std::unique_ptr<sblr::MySQLQueryCompiler> compiler_mysql_;
     TranslationCache* translation_cache_ = nullptr;
 };
 

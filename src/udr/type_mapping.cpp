@@ -258,10 +258,10 @@ core::DataType TypeMapping::fromPostgreSQL(uint32_t oid) {
         case pg_oid::VOID:
             return core::DataType::NULL_TYPE;
         default:
-            // Check if it's an array type
-            if (oid >= 1000 && oid <= 1009) return core::DataType::ARRAY;  // Array types
-            if (oid >= 1021 && oid <= 1022) return core::DataType::ARRAY;
-            if (oid == 1231 || oid == 2951 || oid == 3807) return core::DataType::ARRAY;
+            // Check if it's a PostgreSQL array type.
+            if (isPostgreSQLArray(oid)) {
+                return core::DataType::ARRAY;
+            }
             return core::DataType::UNKNOWN;
     }
 }
@@ -550,12 +550,158 @@ core::DataType TypeMapping::fromFirebird(uint32_t blr_type) {
 // ============================================================================
 
 uint32_t TypeMapping::toSBWP(core::DataType type) {
-    // SBWP type codes match internal DataType enum
-    return static_cast<uint32_t>(type);
+    // Explicit protocol mapping for canonical SBWP codes. Do not rely on
+    // enum ordinals because DataType aliases and protocol codes diverge.
+    switch (static_cast<uint16_t>(type)) {
+        case 0: return 0u;    // UNKNOWN
+        case 1: return 1u;    // INT8/TINYINT
+        case 2: return 2u;    // INT16/SMALLINT
+        case 3: return 3u;    // INT32/INTEGER/INT
+        case 4: return 4u;    // INT64/BIGINT
+        case 5: return 5u;    // INT128
+        case 6: return 6u;    // UINT8
+        case 7: return 7u;    // UINT16
+        case 8: return 8u;    // UINT32
+        case 9: return 9u;    // UINT64
+        case 10: return 10u;  // FLOAT32/REAL/FLOAT
+        case 11: return 11u;  // FLOAT64/DOUBLE
+        case 12: return 12u;  // DECIMAL/NUMERIC
+        case 13: return 13u;  // MONEY
+        case 14: return 14u;  // UINT128
+        case 15: return 15u;  // DECFLOAT16
+        case 16: return 16u;  // DECFLOAT34
+        case 17: return 3u;   // MEDIUMINT -> INT32 lane
+        case 20: return 20u;  // CHAR
+        case 21: return 21u;  // VARCHAR
+        case 22: return 22u;  // TEXT
+        case 30: return 30u;  // BINARY
+        case 31: return 31u;  // VARBINARY
+        case 32: return 32u;  // BLOB/TINYBLOB/MEDIUMBLOB/LONGBLOB
+        case 33: return 33u;  // BYTEA
+        case 40: return 40u;  // DATE
+        case 41: return 41u;  // TIME
+        case 42: return 42u;  // TIMESTAMP
+        case 43: return 45u;  // TIMESTAMP_WITH_ZONE
+        case 44: return 44u;  // TIME_WITH_ZONE
+        case 45: return 43u;  // INTERVAL
+        case 46: return 42u;  // DATETIME -> TIMESTAMP lane
+        case 47: return 47u;  // YEAR
+        case 50: return 50u;  // BOOLEAN
+        case 51: return 51u;  // BIT
+        case 60: return 60u;  // UUID
+        case 61: return 61u;  // JSON
+        case 62: return 62u;  // JSONB
+        case 63: return 63u;  // XML
+        case 64: return 64u;  // VECTOR
+        case 65: return 65u;  // POINT
+        case 66: return 66u;  // LINESTRING
+        case 67: return 67u;  // POLYGON
+        case 68: return 68u;  // MULTIPOINT
+        case 69: return 69u;  // MULTILINESTRING
+        case 70: return 70u;  // MULTIPOLYGON
+        case 71: return 71u;  // GEOMETRYCOLLECTION
+        case 72: return 82u;  // GEOMETRY (generic)
+        case 80: return 72u;  // ARRAY
+        case 81: return 73u;  // COMPOSITE
+        case 90: return 74u;  // TSVECTOR
+        case 91: return 75u;  // TSQUERY
+        case 92: return 76u;  // INT4RANGE
+        case 93: return 77u;  // INT8RANGE
+        case 94: return 78u;  // NUMRANGE
+        case 95: return 79u;  // TSRANGE
+        case 96: return 80u;  // TSTZRANGE
+        case 97: return 81u;  // DATERANGE
+        case 98: return 86u;  // INET
+        case 99: return 87u;  // CIDR
+        case 100: return 88u; // MACADDR
+        case 101: return 89u; // MACADDR8
+        case 102: return 83u; // DOMAIN
+        case 103: return 84u; // ROW
+        case 104: return 85u; // ENUM
+        case 105: return 91u; // SET
+        case 110: return 90u; // VARIANT
+        case 120: return 32u; // BLOB_SUB_TYPE_TEXT -> BLOB lane
+        case 255: return 255u; // NULL
+        default:
+            return static_cast<uint32_t>(static_cast<uint16_t>(type));
+    }
 }
 
 core::DataType TypeMapping::fromSBWP(uint32_t type_code) {
-    if (type_code <= static_cast<uint32_t>(core::DataType::UNKNOWN)) {
+    switch (type_code) {
+        case 0u: return core::DataType::UNKNOWN;
+        case 1u: return core::DataType::INT8;
+        case 2u: return core::DataType::INT16;
+        case 3u: return core::DataType::INT32;
+        case 4u: return core::DataType::INT64;
+        case 5u: return core::DataType::INT128;
+        case 6u: return core::DataType::UINT8;
+        case 7u: return core::DataType::UINT16;
+        case 8u: return core::DataType::UINT32;
+        case 9u: return core::DataType::UINT64;
+        case 10u: return core::DataType::FLOAT32;
+        case 11u: return core::DataType::FLOAT64;
+        case 12u: return core::DataType::DECIMAL;
+        case 13u: return core::DataType::MONEY;
+        case 14u: return core::DataType::UINT128;
+        case 15u: return core::DataType::DECFLOAT16;
+        case 16u: return core::DataType::DECFLOAT34;
+        case 20u: return core::DataType::CHAR;
+        case 21u: return core::DataType::VARCHAR;
+        case 22u: return core::DataType::TEXT;
+        case 30u: return core::DataType::BINARY;
+        case 31u: return core::DataType::VARBINARY;
+        case 32u: return core::DataType::BLOB;
+        case 33u: return core::DataType::BYTEA;
+        case 40u: return core::DataType::DATE;
+        case 41u: return core::DataType::TIME;
+        case 42u: return core::DataType::TIMESTAMP;
+        case 43u: return core::DataType::INTERVAL;
+        case 44u: return core::DataType::TIME_WITH_ZONE;
+        case 45u: return core::DataType::TIMESTAMP_WITH_ZONE;
+        case 47u: return core::DataType::YEAR;
+        case 50u: return core::DataType::BOOLEAN;
+        case 51u: return core::DataType::BIT;
+        case 60u: return core::DataType::UUID;
+        case 61u: return core::DataType::JSON;
+        case 62u: return core::DataType::JSONB;
+        case 63u: return core::DataType::XML;
+        case 64u: return core::DataType::VECTOR;
+        case 65u: return core::DataType::POINT;
+        case 66u: return core::DataType::LINESTRING;
+        case 67u: return core::DataType::POLYGON;
+        case 68u: return core::DataType::MULTIPOINT;
+        case 69u: return core::DataType::MULTILINESTRING;
+        case 70u: return core::DataType::MULTIPOLYGON;
+        case 71u: return core::DataType::GEOMETRYCOLLECTION;
+        case 72u: return core::DataType::ARRAY;
+        case 73u: return core::DataType::COMPOSITE;
+        case 74u: return core::DataType::TSVECTOR;
+        case 75u: return core::DataType::TSQUERY;
+        case 76u: return core::DataType::INT4RANGE;
+        case 77u: return core::DataType::INT8RANGE;
+        case 78u: return core::DataType::NUMRANGE;
+        case 79u: return core::DataType::TSRANGE;
+        case 80u: return core::DataType::TSTZRANGE;
+        case 81u: return core::DataType::DATERANGE;
+        case 82u: return core::DataType::GEOMETRY;
+        case 83u: return core::DataType::DOMAIN;
+        case 84u: return core::DataType::ROW;
+        case 85u: return core::DataType::ENUM;
+        case 86u: return core::DataType::INET;
+        case 87u: return core::DataType::CIDR;
+        case 88u: return core::DataType::MACADDR;
+        case 89u: return core::DataType::MACADDR8;
+        case 90u: return core::DataType::VARIANT;
+        case 91u: return core::DataType::SET;
+        case 255u: return core::DataType::NULL_TYPE;
+        default:
+            break;
+    }
+
+    // Preserve compatibility for any in-range values that are not in the
+    // canonical table above.
+    if (type_code <= 255u) {
         return static_cast<core::DataType>(type_code);
     }
     return core::DataType::UNKNOWN;
@@ -833,6 +979,7 @@ bool TypeMapping::isPostgreSQLArray(uint32_t oid) {
         case 1563: // varbit[]
         case 2201: // regclass[]
         case 2203: // regtype[]
+        case 1231: // numeric[]
         case 2951: // uuid[]
         case 3807: // jsonb[]
             return true;

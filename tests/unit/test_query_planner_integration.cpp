@@ -12,24 +12,28 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/optimizer/query_planner.h"
 #include "scratchbird/sblr/executor.h"
-#include "scratchbird/sblr/query_compiler_v2.h"
-#include "scratchbird/sblr/bytecode_generator_v2.h"
+#include "scratchbird/sblr/query_compiler_v3.h"
+#include "scratchbird/sblr/v3_container.h"
+#include "scratchbird/sblr/v3_codec.h"
+#include "scratchbird/sblr/v3_opcode_registry.h"
 #include "test_helpers.h"
 
 #include <memory>
 #include <string>
 #include <vector>
+#include <functional>
 
 using namespace scratchbird;
 using namespace scratchbird::core;
 using namespace scratchbird::sblr;
+namespace sblr_v3 = scratchbird::sblr::v3;
 using scratchbird::testing::TestDatabaseFile;
 
 /**
  * Integration test for Query Planner (Phase 1, Task 1.3)
  *
  * Verifies that:
- * 1. Query planner is properly integrated with QueryCompilerV2
+ * 1. Query planner is properly integrated with QueryCompilerV3
  * 2. Optimizer components are initialized
  * 3. Bytecode structure is preserved
  */
@@ -62,7 +66,7 @@ protected:
             return false;
         }
 
-        compiler_ = std::make_unique<QueryCompilerV2>(db_.get());
+        compiler_ = std::make_unique<QueryCompilerV3>(db_.get());
         executor_ = std::make_unique<Executor>(db_.get());
 
         const std::vector<std::string> ddl = {
@@ -108,11 +112,67 @@ protected:
         return compile_result.bytecode();
     }
 
-    bool containsOpcode(const std::vector<uint8_t> &bytecode, Opcode opcode)
+    bool containsOpcode(const std::vector<uint8_t> &bytecode, sblr_v3::Opcode opcode)
     {
-        for (uint8_t byte : bytecode)
+        const auto target = static_cast<uint16_t>(opcode);
+        std::function<bool(const sblr_v3::Value&)> valueContainsOpcode;
+        std::function<bool(const sblr_v3::Instruction&)> instructionContainsOpcode;
+
+        valueContainsOpcode = [&](const sblr_v3::Value& value) -> bool {
+            if (const auto* stmt = std::get_if<sblr_v3::Value::InstrPtr>(&value.data)) {
+                return *stmt && instructionContainsOpcode(**stmt);
+            }
+            if (const auto* list = std::get_if<sblr_v3::Value::List>(&value.data)) {
+                for (const auto& element : *list) {
+                    if (valueContainsOpcode(element)) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            if (const auto* obj = std::get_if<sblr_v3::Value::Object>(&value.data)) {
+                for (const auto& [_, element] : *obj) {
+                    if (valueContainsOpcode(element)) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+            return false;
+        };
+
+        instructionContainsOpcode = [&](const sblr_v3::Instruction& inst) -> bool {
+            if (inst.opcode == target) {
+                return true;
+            }
+            return valueContainsOpcode(inst.payload);
+        };
+
+        sblr_v3::Container container;
+        std::string err;
+        if (!sblr_v3::decodeContainer(bytecode.data(), bytecode.size(), container, err))
         {
-            if (byte == static_cast<uint8_t>(opcode))
+            return false;
+        }
+        size_t offset = 0;
+        sblr_v3::DecodeError decode_err;
+        while (offset < container.bytecode_stream.size())
+        {
+            sblr_v3::Instruction inst;
+            if (!sblr_v3::decodeInstructionWithSchema(container.bytecode_stream.data(),
+                                                      container.bytecode_stream.size(),
+                                                      offset,
+                                                      inst,
+                                                      decode_err) &&
+                !sblr_v3::decodeInstruction(container.bytecode_stream.data(),
+                                            container.bytecode_stream.size(),
+                                            offset,
+                                            inst,
+                                            decode_err))
+            {
+                break;
+            }
+            if (instructionContainsOpcode(inst))
             {
                 return true;
             }
@@ -120,31 +180,25 @@ protected:
         return false;
     }
 
-    std::string disassemble(const std::vector<uint8_t> &bytecode)
-    {
-        return scratchbird::parser::v2::BytecodeDisassemblerV2::disassemble(bytecode);
-    }
-
     std::unique_ptr<TestDatabaseFile> db_file_;
     std::unique_ptr<Database> db_;
-    std::unique_ptr<QueryCompilerV2> compiler_;
+    std::unique_ptr<QueryCompilerV3> compiler_;
     std::unique_ptr<Executor> executor_;
     std::string last_compile_errors_;
 };
 
 // ===== Basic Integration Tests =====
 
-TEST_F(QueryPlannerIntegrationTest, QueryCompilerV2ProducesBytecode)
+TEST_F(QueryPlannerIntegrationTest, QueryCompilerV3ProducesBytecode)
 {
     ASSERT_TRUE(createDatabase());
 
     auto bytecode = compileSQL("SELECT * FROM users");
     EXPECT_FALSE(bytecode.empty()) << last_compile_errors_;
-    EXPECT_TRUE(containsOpcode(bytecode, Opcode::VERSION));
-    EXPECT_TRUE(containsOpcode(bytecode, Opcode::SELECT));
-    EXPECT_TRUE(containsOpcode(bytecode, Opcode::SELECT_STAR) ||
-                containsOpcode(bytecode, Opcode::COLUMN_REF));
-    EXPECT_TRUE(containsOpcode(bytecode, Opcode::END));
+    EXPECT_TRUE(containsOpcode(bytecode, sblr_v3::Opcode::SBLR3_SELECT));
+    EXPECT_TRUE(containsOpcode(bytecode, sblr_v3::Opcode::SBLR3_SELECT_STAR) ||
+                containsOpcode(bytecode, sblr_v3::Opcode::SBLR3_SELECT_TABLE_STAR) ||
+                containsOpcode(bytecode, sblr_v3::Opcode::SBLR3_COLUMN_REF));
 }
 
 TEST_F(QueryPlannerIntegrationTest, DatabaseHasQueryPlannerComponents)
@@ -161,7 +215,7 @@ TEST_F(QueryPlannerIntegrationTest, DatabaseHasQueryPlannerComponents)
 
 TEST_F(QueryPlannerIntegrationTest, CompilerRequiresCatalog)
 {
-    QueryCompilerV2 compiler(nullptr);
+    QueryCompilerV3 compiler(nullptr);
     auto result = compiler.compile("SELECT 1");
     EXPECT_FALSE(result.success());
 }
@@ -174,8 +228,7 @@ TEST_F(QueryPlannerIntegrationTest, SelectGeneratesWithPlanner)
 
     auto select_bytecode = compileSQL("SELECT * FROM users");
     EXPECT_FALSE(select_bytecode.empty()) << last_compile_errors_;
-    EXPECT_TRUE(containsOpcode(select_bytecode, Opcode::SELECT));
-    EXPECT_TRUE(containsOpcode(select_bytecode, Opcode::END));
+    EXPECT_TRUE(containsOpcode(select_bytecode, sblr_v3::Opcode::SBLR3_SELECT));
 }
 
 TEST_F(QueryPlannerIntegrationTest, BytecodeContainsVersionHeader)
@@ -183,11 +236,12 @@ TEST_F(QueryPlannerIntegrationTest, BytecodeContainsVersionHeader)
     ASSERT_TRUE(createDatabase());
 
     auto bytecode = compileSQL("SELECT * FROM test");
-    ASSERT_GE(bytecode.size(), 3u);
-
-    EXPECT_EQ(bytecode[0], static_cast<uint8_t>(Opcode::VERSION));
-    EXPECT_EQ(bytecode[1], SBLR_VERSION);
-    EXPECT_EQ(bytecode.back(), static_cast<uint8_t>(Opcode::END));
+    ASSERT_FALSE(bytecode.empty());
+    sblr_v3::Container container;
+    std::string err;
+    ASSERT_TRUE(sblr_v3::decodeContainer(bytecode.data(), bytecode.size(), container, err))
+        << err;
+    EXPECT_EQ(std::string(container.header.magic, 4), std::string("SBL3"));
 }
 
 TEST_F(QueryPlannerIntegrationTest, SelectWithWhereClause)
@@ -196,8 +250,8 @@ TEST_F(QueryPlannerIntegrationTest, SelectWithWhereClause)
 
     auto bytecode = compileSQL("SELECT id, name FROM users WHERE id > 10");
     EXPECT_FALSE(bytecode.empty()) << last_compile_errors_;
-    EXPECT_TRUE(containsOpcode(bytecode, Opcode::WHERE_CLAUSE));
-    EXPECT_TRUE(containsOpcode(bytecode, Opcode::EXPR_GT));
+    EXPECT_TRUE(containsOpcode(bytecode, sblr_v3::Opcode::SBLR3_WHERE_CLAUSE));
+    EXPECT_TRUE(containsOpcode(bytecode, sblr_v3::Opcode::SBLR3_EXPR_GT));
 }
 
 TEST_F(QueryPlannerIntegrationTest, NonSelectStatementsBypassPlanner)
@@ -206,11 +260,11 @@ TEST_F(QueryPlannerIntegrationTest, NonSelectStatementsBypassPlanner)
 
     auto insert_bytecode = compileSQL("INSERT INTO users (id) VALUES (1)");
     EXPECT_FALSE(insert_bytecode.empty()) << last_compile_errors_;
-    EXPECT_TRUE(containsOpcode(insert_bytecode, Opcode::INSERT));
+    EXPECT_TRUE(containsOpcode(insert_bytecode, sblr_v3::Opcode::SBLR3_INSERT));
 
     auto create_bytecode = compileSQL("CREATE TABLE test2 (id INTEGER)");
     EXPECT_FALSE(create_bytecode.empty()) << last_compile_errors_;
-    EXPECT_TRUE(containsOpcode(create_bytecode, Opcode::CREATE_TABLE));
+    EXPECT_TRUE(containsOpcode(create_bytecode, sblr_v3::Opcode::SBLR3_CREATE_TABLE));
 }
 
 // ===== Stress Tests =====
@@ -226,12 +280,12 @@ TEST_F(QueryPlannerIntegrationTest, ComplexQueryWithPlanner)
 
     auto bytecode = compileSQL(complex_sql);
     EXPECT_FALSE(bytecode.empty()) << last_compile_errors_;
-    EXPECT_TRUE(containsOpcode(bytecode, Opcode::SELECT));
-    EXPECT_TRUE(containsOpcode(bytecode, Opcode::WHERE_CLAUSE));
-    EXPECT_TRUE(containsOpcode(bytecode, Opcode::EXPR_AND));
-    EXPECT_TRUE(containsOpcode(bytecode, Opcode::EXPR_GE));
-    EXPECT_TRUE(containsOpcode(bytecode, Opcode::EXPR_LIKE));
-    EXPECT_TRUE(containsOpcode(bytecode, Opcode::EXPR_MULTIPLY));
+    EXPECT_TRUE(containsOpcode(bytecode, sblr_v3::Opcode::SBLR3_SELECT));
+    EXPECT_TRUE(containsOpcode(bytecode, sblr_v3::Opcode::SBLR3_WHERE_CLAUSE));
+    EXPECT_TRUE(containsOpcode(bytecode, sblr_v3::Opcode::SBLR3_EXPR_AND));
+    EXPECT_TRUE(containsOpcode(bytecode, sblr_v3::Opcode::SBLR3_EXPR_GE));
+    EXPECT_TRUE(containsOpcode(bytecode, sblr_v3::Opcode::SBLR3_EXPR_LIKE));
+    EXPECT_TRUE(containsOpcode(bytecode, sblr_v3::Opcode::SBLR3_EXPR_MULTIPLY));
 }
 
 TEST_F(QueryPlannerIntegrationTest, MultipleSelectStatements)
@@ -250,12 +304,8 @@ TEST_F(QueryPlannerIntegrationTest, MultipleSelectStatements)
         auto bytecode = compileSQL(sql);
         EXPECT_FALSE(bytecode.empty()) << "Failed for query: " << sql << "\n"
                                        << last_compile_errors_;
-        EXPECT_TRUE(containsOpcode(bytecode, Opcode::SELECT))
+        EXPECT_TRUE(containsOpcode(bytecode, sblr_v3::Opcode::SBLR3_SELECT))
             << "Missing SELECT opcode for query: " << sql;
-        EXPECT_TRUE(containsOpcode(bytecode, Opcode::VERSION))
-            << "Missing VERSION opcode for query: " << sql;
-        EXPECT_TRUE(containsOpcode(bytecode, Opcode::END))
-            << "Missing END opcode for query: " << sql;
     }
 }
 
@@ -267,8 +317,9 @@ TEST_F(QueryPlannerIntegrationTest, EmptySelectList)
 
     auto bytecode = compileSQL("SELECT * FROM test");
     EXPECT_FALSE(bytecode.empty()) << last_compile_errors_;
-    EXPECT_TRUE(containsOpcode(bytecode, Opcode::SELECT_STAR) ||
-                containsOpcode(bytecode, Opcode::COLUMN_REF));
+    EXPECT_TRUE(containsOpcode(bytecode, sblr_v3::Opcode::SBLR3_SELECT_STAR) ||
+                containsOpcode(bytecode, sblr_v3::Opcode::SBLR3_SELECT_TABLE_STAR) ||
+                containsOpcode(bytecode, sblr_v3::Opcode::SBLR3_COLUMN_REF));
 }
 
 TEST_F(QueryPlannerIntegrationTest, SelectWithoutWhereClause)
@@ -277,9 +328,8 @@ TEST_F(QueryPlannerIntegrationTest, SelectWithoutWhereClause)
 
     auto bytecode = compileSQL("SELECT id, name FROM users");
     EXPECT_FALSE(bytecode.empty()) << last_compile_errors_;
-    EXPECT_TRUE(containsOpcode(bytecode, Opcode::SELECT));
-    std::string disasm = disassemble(bytecode);
-    EXPECT_EQ(disasm.find("WHERE_CLAUSE"), std::string::npos) << disasm;
+    EXPECT_TRUE(containsOpcode(bytecode, sblr_v3::Opcode::SBLR3_SELECT));
+    EXPECT_FALSE(containsOpcode(bytecode, sblr_v3::Opcode::SBLR3_WHERE_CLAUSE));
 }
 
 // ===== Diagnostic Test =====
@@ -293,10 +343,5 @@ TEST_F(QueryPlannerIntegrationTest, DiagnosticDisassemblyOutput)
 
     ASSERT_FALSE(bytecode.empty()) << last_compile_errors_;
 
-    std::string disasm = disassemble(bytecode);
-    SCOPED_TRACE("Bytecode disassembly:\n" + disasm);
-
-    EXPECT_NE(disasm.find("VERSION"), std::string::npos);
-    EXPECT_NE(disasm.find("SELECT"), std::string::npos);
-    EXPECT_NE(disasm.find("END"), std::string::npos);
+    EXPECT_TRUE(containsOpcode(bytecode, sblr_v3::Opcode::SBLR3_SELECT));
 }

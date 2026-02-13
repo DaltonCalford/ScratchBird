@@ -28,7 +28,7 @@
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/pool/statement_cache.h"
 #include "scratchbird/sblr/executor.h"
-#include "scratchbird/sblr/query_compiler_v2.h"
+#include "scratchbird/sblr/query_compiler_v3.h"
 #include "scratchbird/sblr/query_result_cache.h"
 #include "test_helpers.h"
 
@@ -41,7 +41,7 @@ using scratchbird::pool::StatementCacheConfig;
 using scratchbird::pool::StatementMetadata;
 using scratchbird::pool::StatementType;
 using scratchbird::sblr::Executor;
-using scratchbird::sblr::QueryCompilerV2;
+using scratchbird::sblr::QueryCompilerV3;
 using scratchbird::sblr::QueryResultCacheManager;
 using scratchbird::testing::TestDatabaseFile;
 
@@ -82,7 +82,7 @@ TEST(CacheIntegrationSequentialSuite, AllTests)
         ASSERT_EQ(db->catalog_manager()->getSchema("PUBLIC", schema, &ctx), Status::OK);
         ID schema_id = schema.schema_id;
         
-        auto compiler = std::make_unique<QueryCompilerV2>(db.get());
+        auto compiler = std::make_unique<QueryCompilerV3>(db.get());
         compiler->setCurrentSchema(schema_id);
         
         auto executor = std::make_unique<Executor>(db.get());

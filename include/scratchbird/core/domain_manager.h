@@ -339,6 +339,9 @@ struct DomainInfo
                         std::vector<DomainInfo>& domains,
                         ErrorContext* ctx = nullptr) -> Status;
 
+        // Ensure SBDB$ system domains are present in the sys schema.
+        auto ensureSystemDomains(ErrorContext* ctx = nullptr) -> Status;
+
         // Drop domain
         auto dropDomain(const ID& domain_id,
                         ErrorContext* ctx = nullptr) -> Status;

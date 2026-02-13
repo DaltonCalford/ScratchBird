@@ -92,15 +92,15 @@ TEST(DefragmentPdlowerFixTest, Comprehensive) {
         std::cout << "  Change: Lines 1021-1025 (added)\n";
         std::cout << "\n";
         std::cout << "  OLD CODE (Line 1019):\n";
-        std::cout << "    special->pd_upper = new_upper;\n";
+        std::cout << "    pageSetUpper(*special, new_upper);\n";
         std::cout << "    // MISSING: pd_lower update\n";
-        std::cout << "    uint32_t free_space_after = special->pd_upper - special->pd_lower;\n";
+        std::cout << "    uint32_t free_space_after = pageUpper(*special) - pageLower(*special);\n";
         std::cout << "\n";
         std::cout << "  NEW CODE (Lines 1019-1025):\n";
-        std::cout << "    special->pd_upper = new_upper;\n";
+        std::cout << "    pageSetUpper(*special, new_upper);\n";
         std::cout << "    // CRITICAL FIX (Issue 2.10): Update pd_lower\n";
-        std::cout << "    special->pd_lower = sizeof(PageHeader) + (item_count * sizeof(ItemPointer));\n";
-        std::cout << "    uint32_t free_space_after = special->pd_upper - special->pd_lower;\n";
+        std::cout << "    pageSetLower(*special, sizeof(PageHeader) + (item_count * sizeof(ItemPointer)));\n";
+        std::cout << "    uint32_t free_space_after = pageUpper(*special) - pageLower(*special);\n";
         std::cout << "  ✅ Code location verified\n\n";
     }
 
@@ -277,7 +277,7 @@ TEST(DefragmentPdlowerFixTest, Comprehensive) {
     std::cout << "  Status: ✅ FIXED\n\n";
 
     std::cout << "Fix Details:\n";
-    std::cout << "  - Added line: special->pd_lower = sizeof(PageHeader) + (item_count * sizeof(ItemPointer));\n";
+    std::cout << "  - Added line: pageSetLower(*special, sizeof(PageHeader) + (item_count * sizeof(ItemPointer)));\n";
     std::cout << "  - Ensures pd_lower always reflects actual item array size\n";
     std::cout << "  - Maintains page structure invariant: pd_lower <= pd_upper\n";
     std::cout << "  - Matches PostgreSQL PageRepairFragmentation() behavior\n";

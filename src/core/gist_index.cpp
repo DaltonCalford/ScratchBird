@@ -318,12 +318,10 @@ Status GiSTIndex::initialize(ErrorContext* ctx)
     root->gist_header.checksum = 0;
     root->gist_header.lsn = 0;
     root->gist_header.flags = 0;
-    std::memcpy(root->gist_header.database_uuid, db_->uuid().bytes.data(), 16);
     root->gist_header.generation = 0;
-    root->gist_header.free_space = 0;
-    root->gist_header.item_count = 0;
-    root->gist_header.free_offset = 0;
-    root->gist_header.special_size = 0;
+    pageSetLower(root->gist_header, sizeof(SBGiSTPage));
+    pageSetUpper(root->gist_header, db_->page_size());
+    pageSetSpecial(root->gist_header, db_->page_size());
 
     // Initialize GiST-specific fields
     root->gist_index_uuid = index_uuid_;
@@ -392,12 +390,10 @@ Status GiSTIndex::insert(const GiSTPredicate& predicate,
         new_root->gist_header.checksum = 0;
         new_root->gist_header.lsn = 0;
         new_root->gist_header.flags = 0;
-        std::memcpy(new_root->gist_header.database_uuid, db_->uuid().bytes.data(), 16);
         new_root->gist_header.generation = 0;
-        new_root->gist_header.free_space = 0;
-        new_root->gist_header.item_count = 0;
-        new_root->gist_header.free_offset = 0;
-        new_root->gist_header.special_size = 0;
+        pageSetLower(new_root->gist_header, sizeof(SBGiSTPage));
+        pageSetUpper(new_root->gist_header, db_->page_size());
+        pageSetSpecial(new_root->gist_header, db_->page_size());
 
         // Initialize GiST-specific fields
         new_root->gist_index_uuid = index_uuid_;
@@ -1528,8 +1524,18 @@ Status GiSTIndex::allocatePage(uint64_t* page_num, ErrorContext* ctx)
     }
 
     SBGiSTPage* gist_page = reinterpret_cast<SBGiSTPage*>(page_buffer);
-    gist_page->gist_header.page_type = PAGE_TYPE_GIST;
+    gist_page->gist_header.magic = K_MAGIC_SBRD;
     gist_page->gist_header.version = 1;
+    gist_page->gist_header.page_type = PAGE_TYPE_GIST;
+    gist_page->gist_header.page_size = db_->page_size();
+    gist_page->gist_header.page_id = *page_num;
+    gist_page->gist_header.generation = 1;
+    gist_page->gist_header.checksum = 0;
+    gist_page->gist_header.flags = 0;
+    gist_page->gist_header.lsn = 0;
+    pageSetLower(gist_page->gist_header, sizeof(SBGiSTPage));
+    pageSetUpper(gist_page->gist_header, db_->page_size());
+    pageSetSpecial(gist_page->gist_header, db_->page_size());
     gist_page->gist_count = 0;
     gist_page->gist_level = 0;
     gist_page->gist_flags = 0;

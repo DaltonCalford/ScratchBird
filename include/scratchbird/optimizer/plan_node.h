@@ -17,9 +17,9 @@
  *
  * Type Dependencies:
  * - Enum types (JoinType, WindowFunc, etc.) from shared_types.h
- * - Resolved expression types from sblr/resolved_ast_v2.h (V2 AST)
+ * - Expression types from V3 AST (optimizer path)
  *
- * MIGRATION COMPLETE: This file uses V2 resolved types exclusively.
+ * MIGRATION STATUS: V3 pending
  */
 
 #include "scratchbird/core/types.h"
@@ -27,7 +27,7 @@
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/optimizer/cost_model.h"
 #include "scratchbird/parser/shared_types.h"      // For JoinType, WindowFunc, etc.
-#include "scratchbird/sblr/resolved_ast_v2.h"     // For ResolvedExpression, ResolvedWindowSpec, etc. (V2 AST)
+#include "scratchbird/parser/ast_v3.h"
 #include <memory>
 #include <string>
 #include <vector>
@@ -35,6 +35,13 @@
 
 namespace scratchbird::core {
     using ID = UuidV7Bytes;
+}
+
+namespace scratchbird::parser::v3 {
+    class Expression;
+    class FunctionCallExpr;
+    struct OrderByItem;
+    struct WindowSpec;
 }
 
 namespace scratchbird::optimizer
@@ -889,7 +896,7 @@ namespace scratchbird::optimizer
         NestedLoopJoinNode(parser::JoinType join_type,
                           std::shared_ptr<PlanNode> outer_plan,
                           std::shared_ptr<PlanNode> inner_plan,
-                          parser::v2::ResolvedExpression* join_condition)
+                          parser::v3::Expression* join_condition)
             : PlanNode(PlanNodeType::NESTED_LOOP_JOIN),
               join_type_(join_type),
               outer_plan_(std::move(outer_plan)),
@@ -916,7 +923,7 @@ namespace scratchbird::optimizer
         /**
          * Get join condition
          */
-        parser::v2::ResolvedExpression* joinCondition() const { return join_condition_; }
+        parser::v3::Expression* joinCondition() const { return join_condition_; }
 
         /**
          * Set join condition string (for EXPLAIN)
@@ -1000,7 +1007,7 @@ namespace scratchbird::optimizer
         parser::JoinType join_type_;
         std::shared_ptr<PlanNode> outer_plan_;
         std::shared_ptr<PlanNode> inner_plan_;
-        parser::v2::ResolvedExpression* join_condition_;
+        parser::v3::Expression* join_condition_;
         std::string join_cond_str_;  // For EXPLAIN display
     };
 
@@ -1042,9 +1049,9 @@ namespace scratchbird::optimizer
         HashJoinNode(parser::JoinType join_type,
                     std::shared_ptr<PlanNode> outer_plan,
                     std::shared_ptr<PlanNode> inner_plan,
-                    parser::v2::ResolvedExpression* join_condition,
-                    const std::vector<parser::v2::ResolvedExpression*>& hash_keys_outer,
-                    const std::vector<parser::v2::ResolvedExpression*>& hash_keys_inner)
+                    parser::v3::Expression* join_condition,
+                    const std::vector<parser::v3::Expression*>& hash_keys_outer,
+                    const std::vector<parser::v3::Expression*>& hash_keys_inner)
             : PlanNode(PlanNodeType::HASH_JOIN),
               join_type_(join_type),
               outer_plan_(std::move(outer_plan)),
@@ -1073,12 +1080,12 @@ namespace scratchbird::optimizer
         /**
          * Get join condition
          */
-        parser::v2::ResolvedExpression* joinCondition() const { return join_condition_; }
+        parser::v3::Expression* joinCondition() const { return join_condition_; }
 
         /**
          * Get hash keys from outer table
          */
-        const std::vector<parser::v2::ResolvedExpression*>& hashKeysOuter() const
+        const std::vector<parser::v3::Expression*>& hashKeysOuter() const
         {
             return hash_keys_outer_;
         }
@@ -1086,7 +1093,7 @@ namespace scratchbird::optimizer
         /**
          * Get hash keys from inner table
          */
-        const std::vector<parser::v2::ResolvedExpression*>& hashKeysInner() const
+        const std::vector<parser::v3::Expression*>& hashKeysInner() const
         {
             return hash_keys_inner_;
         }
@@ -1174,9 +1181,9 @@ namespace scratchbird::optimizer
         parser::JoinType join_type_;
         std::shared_ptr<PlanNode> outer_plan_;
         std::shared_ptr<PlanNode> inner_plan_;
-        parser::v2::ResolvedExpression* join_condition_;
-        std::vector<parser::v2::ResolvedExpression*> hash_keys_outer_;
-        std::vector<parser::v2::ResolvedExpression*> hash_keys_inner_;
+        parser::v3::Expression* join_condition_;
+        std::vector<parser::v3::Expression*> hash_keys_outer_;
+        std::vector<parser::v3::Expression*> hash_keys_inner_;
         std::string join_cond_str_;  // For EXPLAIN display
     };
 
@@ -1200,11 +1207,11 @@ namespace scratchbird::optimizer
          * @param grouping_sets Explicit grouping sets (for GROUPING SETS)
          */
         AggregateNode(std::shared_ptr<PlanNode> child_plan,
-                     const std::vector<parser::v2::ResolvedExpression*>& grouping_exprs,
-                     const std::vector<parser::v2::ResolvedFunctionCall*>& aggregates,
-                     parser::v2::ResolvedExpression* having_clause = nullptr,
+                     const std::vector<parser::v3::Expression*>& grouping_exprs,
+                     const std::vector<parser::v3::FunctionCallExpr*>& aggregates,
+                     parser::v3::Expression* having_clause = nullptr,
                      parser::GroupingType grouping_type = parser::GroupingType::STANDARD,
-                     const std::vector<std::vector<parser::v2::ResolvedExpression*>>& grouping_sets = {})
+                     const std::vector<std::vector<parser::v3::Expression*>>& grouping_sets = {})
             : PlanNode(PlanNodeType::AGGREGATE),
               child_plan_(std::move(child_plan)),
               grouping_exprs_(grouping_exprs),
@@ -1223,17 +1230,17 @@ namespace scratchbird::optimizer
         /**
          * Get grouping expressions
          */
-        const std::vector<parser::v2::ResolvedExpression*>& groupingExprs() const { return grouping_exprs_; }
+        const std::vector<parser::v3::Expression*>& groupingExprs() const { return grouping_exprs_; }
 
         /**
          * Get aggregate expressions (function calls with is_aggregate=true)
          */
-        const std::vector<parser::v2::ResolvedFunctionCall*>& aggregates() const { return aggregates_; }
+        const std::vector<parser::v3::FunctionCallExpr*>& aggregates() const { return aggregates_; }
 
         /**
          * Get HAVING clause
          */
-        parser::v2::ResolvedExpression* havingClause() const { return having_clause_; }
+        parser::v3::Expression* havingClause() const { return having_clause_; }
 
         /**
          * Check if this is a simple aggregation (no GROUP BY)
@@ -1248,7 +1255,7 @@ namespace scratchbird::optimizer
         /**
          * Get explicit grouping sets (for GROUPING SETS)
          */
-        const std::vector<std::vector<parser::v2::ResolvedExpression*>>& groupingSets() const
+        const std::vector<std::vector<parser::v3::Expression*>>& groupingSets() const
         {
             return grouping_sets_;
         }
@@ -1279,11 +1286,11 @@ namespace scratchbird::optimizer
 
     private:
         std::shared_ptr<PlanNode> child_plan_;
-        std::vector<parser::v2::ResolvedExpression*> grouping_exprs_;
-        std::vector<parser::v2::ResolvedFunctionCall*> aggregates_;
-        parser::v2::ResolvedExpression* having_clause_;
+        std::vector<parser::v3::Expression*> grouping_exprs_;
+        std::vector<parser::v3::FunctionCallExpr*> aggregates_;
+        parser::v3::Expression* having_clause_;
         parser::GroupingType grouping_type_;
-        std::vector<std::vector<parser::v2::ResolvedExpression*>> grouping_sets_;
+        std::vector<std::vector<parser::v3::Expression*>> grouping_sets_;
     };
 
     /**
@@ -1299,10 +1306,10 @@ namespace scratchbird::optimizer
          * Constructor
          *
          * @param child_plan Input plan to sort
-         * @param order_by_items List of sort keys with direction (V2 resolved types)
+         * @param order_by_items List of sort keys with direction (V3 types)
          */
         SortNode(std::shared_ptr<PlanNode> child_plan,
-                const std::vector<parser::v2::ResolvedOrderByItem*>& order_by_items)
+                const std::vector<parser::v3::OrderByItem*>& order_by_items)
             : PlanNode(PlanNodeType::SORT),
               child_plan_(std::move(child_plan)),
               order_by_items_(order_by_items)
@@ -1317,7 +1324,7 @@ namespace scratchbird::optimizer
         /**
          * Get ORDER BY items
          */
-        const std::vector<parser::v2::ResolvedOrderByItem*>& orderByItems() const { return order_by_items_; }
+        const std::vector<parser::v3::OrderByItem*>& orderByItems() const { return order_by_items_; }
 
         /**
          * Generate EXPLAIN output
@@ -1339,7 +1346,7 @@ namespace scratchbird::optimizer
 
     private:
         std::shared_ptr<PlanNode> child_plan_;
-        std::vector<parser::v2::ResolvedOrderByItem*> order_by_items_;
+        std::vector<parser::v3::OrderByItem*> order_by_items_;
     };
 
     /**
@@ -1419,21 +1426,21 @@ namespace scratchbird::optimizer
     };
 
     // Window function node (Phase 1 Task 6.2)
-    // Represents window function evaluation - Now using V2 resolved types
+    // Represents window function evaluation using V3 expression types
     class WindowNode : public PlanNode
     {
     public:
-        // Window function specification (V2 resolved types)
+        // Window function specification (V3 types)
         struct WindowFunction
         {
             parser::WindowFunc func;                              // Function type (ROW_NUMBER, RANK, etc.)
-            std::vector<parser::v2::ResolvedExpression*> args;    // Function arguments
-            parser::v2::ResolvedWindowSpec* window_spec;          // Window specification (OVER clause)
+            std::vector<parser::v3::Expression*> args;    // Function arguments
+            parser::v3::WindowSpec* window_spec;          // Window specification (OVER clause)
             std::string output_column;                            // Output column name
 
             WindowFunction(parser::WindowFunc f,
-                          const std::vector<parser::v2::ResolvedExpression*>& a,
-                          parser::v2::ResolvedWindowSpec* spec,
+                          const std::vector<parser::v3::Expression*>& a,
+                          parser::v3::WindowSpec* spec,
                           const std::string& col)
                 : func(f), args(a), window_spec(spec), output_column(col) {}
         };
@@ -1514,7 +1521,7 @@ namespace scratchbird::optimizer
                 // Show frame clause
                 if (wf.window_spec && wf.window_spec->has_frame)
                 {
-                    result += " " + std::string(wf.window_spec->frame_mode == parser::FrameMode::ROWS ? "ROWS" : "RANGE");
+                    result += " " + std::string(wf.window_spec->frame_type == parser::v3::FrameType::ROWS ? "ROWS" : "RANGE");
                     result += " BETWEEN ... AND ...";
                 }
 

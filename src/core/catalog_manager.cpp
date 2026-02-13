@@ -28,6 +28,7 @@
 #include "scratchbird/core/spgist_index.h"
 #include "scratchbird/core/bitmap_index.h"
 #include "scratchbird/core/columnstore.h"
+#include "scratchbird/core/type_extractor.h"
 #include "scratchbird/core/lsm_tree_index.h"
 #include "scratchbird/core/index_factory.h"  // LSM Integration Phase 3: Index factory
 #include "scratchbird/core/config.h"
@@ -59,11 +60,707 @@ namespace scratchbird::core
 
 using CatalogMutex = CatalogManager::CatalogMutex;
 
-namespace {
 std::vector<uint8_t> hexToBytesLocal(const std::string& hex_str);
 bool isReasonableSequenceName(const std::string& name);
 void parseDefaultExprSequenceNames(const std::vector<uint8_t>& bytecode,
                                    std::vector<std::string>& names_out);
+bool isUuidV7Local(const ID& id)
+{
+    std::vector<uint8_t> bytes;
+    bytes.reserve(16);
+    for (auto b : id.bytes)
+    {
+        bytes.push_back(b);
+    }
+    return TypeExtractor::extractUUIDVersion(bytes) == 7;
+}
+
+std::string toLowerCopy(const std::string& input)
+{
+    std::string out;
+    out.reserve(input.size());
+    for (unsigned char c : input)
+    {
+        out.push_back(static_cast<char>(std::tolower(c)));
+    }
+    return out;
+}
+
+std::string normalizeCatalogName(std::string value)
+{
+    std::string out;
+    out.reserve(value.size());
+    for (unsigned char c : value)
+    {
+        if (std::isalnum(c))
+        {
+            out.push_back(static_cast<char>(std::tolower(c)));
+        }
+    }
+    return out;
+}
+
+bool resolveBuiltinCharsetIdLocal(const std::string& name, uint16_t& id_out)
+{
+    std::string normalized = normalizeCatalogName(name);
+    if (normalized == "ascii")
+    {
+        id_out = 0; // CharacterSet::ASCII
+        return true;
+    }
+    if (normalized == "latin1" || normalized == "iso88591")
+    {
+        id_out = 1; // CharacterSet::LATIN1
+        return true;
+    }
+    if (normalized == "utf8")
+    {
+        id_out = 2; // CharacterSet::UTF8
+        return true;
+    }
+    if (normalized == "utf16")
+    {
+        id_out = 3; // CharacterSet::UTF16
+        return true;
+    }
+    if (normalized == "utf32")
+    {
+        id_out = 4; // CharacterSet::UTF32
+        return true;
+    }
+    if (normalized == "utf8mb4")
+    {
+        id_out = 5; // CharacterSet::UTF8MB4
+        return true;
+    }
+    return false;
+}
+
+bool resolveBuiltinTimezoneIdLocal(const std::string& name,
+                                   const std::string& abbreviation,
+                                   uint16_t& id_out)
+{
+    std::string normalized_name = normalizeCatalogName(name);
+    std::string normalized_abbr = normalizeCatalogName(abbreviation);
+    if (normalized_name == "utc" || normalized_abbr == "utc")
+    {
+        id_out = 1;
+        return true;
+    }
+    if (normalized_name == "est" || normalized_abbr == "est")
+    {
+        id_out = 2;
+        return true;
+    }
+    if (normalized_name == "pst" || normalized_abbr == "pst")
+    {
+        id_out = 3;
+        return true;
+    }
+    if (normalized_name == "cst" || normalized_abbr == "cst")
+    {
+        id_out = 4;
+        return true;
+    }
+    if (normalized_name == "mst" || normalized_abbr == "mst")
+    {
+        id_out = 5;
+        return true;
+    }
+    return false;
+}
+
+const ID kTimezoneVersionUuid = []() {
+    ID id{};
+    id.bytes = {0x01, 0x99, 0x11, 0x22, 0x33, 0x44, 0x7a, 0xbc,
+                0x80, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x01};
+    return id;
+}();
+
+const ID kI18nVersionUuid = []() {
+    ID id{};
+    id.bytes = {0x01, 0x99, 0x11, 0x22, 0x33, 0x44, 0x7a, 0xbd,
+                0x80, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x02};
+    return id;
+}();
+
+// kSystemDomainByColumn (generated from SYSTEM_CATALOG_DOMAIN_MAP.md)
+const std::unordered_map<std::string, const char*> kSystemDomainByColumn = {
+    {"abbreviation", "SBDB$NAME_64"},
+    {"access_mode", "SBDB$U8"},
+    {"acl_oid", "SBDB$LOB_REF"},
+    {"action_oid", "SBDB$LOB_REF"},
+    {"array_size", "SBDB$U32"},
+    {"attachment_id", "SBDB$KEY_ATTACHMENT"},
+    {"audit_log_page", "SBDB$PAGE_ID"},
+    {"auth_method", "SBDB$U8"},
+    {"authkey_id", "SBDB$KEY_AUTHKEY"},
+    {"authkeys_page", "SBDB$PAGE_ID"},
+    {"auto_create_users", "SBDB$U8"},
+    {"autocommit_mode", "SBDB$U8"},
+    {"avg_width", "SBDB$F32"},
+    {"base_table_ids_oid", "SBDB$LOB_REF"},
+    {"base_type", "SBDB$U16"},
+    {"body_oid", "SBDB$LOB_REF"},
+    {"body_redacted", "SBDB$BOOL"},
+    {"build_completed_time", "SBDB$TIME_US"},
+    {"build_started_time", "SBDB$TIME_US"},
+    {"bytecode_oid", "SBDB$LOB_REF"},
+    {"cache_size", "SBDB$I64"},
+    {"catch_up_iterations", "SBDB$U32"},
+    {"change_log_table_id", "SBDB$KEY_TABLE"},
+    {"charset", "SBDB$KEY_CHARSET"},
+    {"charset_id", "SBDB$KEY_CHARSET"},
+    {"charsets_page", "SBDB$PAGE_ID"},
+    {"check_expr_oid", "SBDB$LOB_REF"},
+    {"check_expression", "SBDB$U32"},
+    {"check_option", "SBDB$U8"},
+    {"checksum", "SBDB$NAME_256"},
+    {"child_columns", "SBDB$NAME"},
+    {"child_table_id", "SBDB$UUID_V7"},
+    {"cluster_id", "SBDB$NAME_256"},
+    {"collation_defs_page", "SBDB$PAGE_ID"},
+    {"collation_id", "SBDB$U32"},
+    {"collation_type", "SBDB$U8"},
+    {"collations_page", "SBDB$PAGE_ID"},
+    {"column_count", "SBDB$U32"},
+    {"column_id", "SBDB$KEY_COLUMN"},
+    {"column_mapping_oid", "SBDB$LOB_REF"},
+    {"column_name", "SBDB$NAME"},
+    {"column_permissions_page", "SBDB$PAGE_ID"},
+    {"columns_oid", "SBDB$LOB_REF"},
+    {"columns_page", "SBDB$PAGE_ID"},
+    {"comment_id", "SBDB$KEY_COMMENT"},
+    {"comment_text_oid", "SBDB$LOB_REF"},
+    {"comments_page", "SBDB$PAGE_ID"},
+    {"compat_name", "SBDB$NAME"},
+    {"condition_oid", "SBDB$LOB_REF"},
+    {"config_oid", "SBDB$LOB_REF"},
+    {"connection_options_oid", "SBDB$LOB_REF"},
+    {"constraint_id", "SBDB$KEY_CONSTRAINT"},
+    {"constraint_name", "SBDB$NAME"},
+    {"constraint_type", "SBDB$U32"},
+    {"constraints_oid", "SBDB$LOB_REF"},
+    {"constraints_page", "SBDB$PAGE_ID"},
+    {"created_time", "SBDB$TIME_US"},
+    {"creating_session_id", "SBDB$KEY_SESSION"},
+    {"creating_transaction_id", "SBDB$U64"},
+    {"current_schema_id", "SBDB$KEY_SCHEMA"},
+    {"current_value", "SBDB$I64"},
+    {"cycle", "SBDB$U8"},
+    {"data_type", "SBDB$U16"},
+    {"data_type_oid", "SBDB$LOB_REF"},
+    {"database_id", "SBDB$KEY_DATABASE"},
+    {"database_name", "SBDB$NAME"},
+    {"db_metadata_oid", "SBDB$LOB_REF"},
+    {"ddl_text_oid", "SBDB$LOB_REF"},
+    {"default_charset", "SBDB$KEY_CHARSET"},
+    {"default_collation_id", "SBDB$U32"},
+    {"default_schema_id", "SBDB$KEY_SCHEMA"},
+    {"default_tablespace_id", "SBDB$KEY_TABLESPACE"},
+    {"default_value", "SBDB$NAME"},
+    {"default_value_oid", "SBDB$LOB_REF"},
+    {"definition_oid", "SBDB$LOB_REF"},
+    {"dependencies_oid", "SBDB$LOB_REF"},
+    {"dependencies_page", "SBDB$PAGE_ID"},
+    {"dependency_id", "SBDB$KEY_DEPENDENCY"},
+    {"description", "SBDB$NAME"},
+    {"details_oid", "SBDB$LOB_REF"},
+    {"deterministic", "SBDB$BOOL"},
+    {"dialect_tag", "SBDB$NAME_64"},
+    {"domain_id", "SBDB$KEY_DOMAIN"},
+    {"domain_name", "SBDB$NAME"},
+    {"domain_type", "SBDB$U8"},
+    {"domains_page", "SBDB$PAGE_ID"},
+    {"dormant_id", "SBDB$KEY_DORMANT_TXN"},
+    {"dormant_since", "SBDB$TIME_US"},
+    {"dormant_transactions_page", "SBDB$PAGE_ID"},
+    {"dst_end_day", "SBDB$U8"},
+    {"dst_end_hour", "SBDB$U8"},
+    {"dst_end_month", "SBDB$U8"},
+    {"dst_end_week", "SBDB$U8"},
+    {"dst_offset_minutes", "SBDB$I32"},
+    {"dst_start_day", "SBDB$U8"},
+    {"dst_start_hour", "SBDB$U8"},
+    {"dst_start_month", "SBDB$U8"},
+    {"dst_start_week", "SBDB$U8"},
+    {"emulated_db_id", "SBDB$KEY_EMULATED_DB"},
+    {"emulated_dbs_page", "SBDB$PAGE_ID"},
+    {"emulation_mode", "SBDB$NAME_64"},
+    {"emulation_name", "SBDB$NAME"},
+    {"emulation_servers_page", "SBDB$PAGE_ID"},
+    {"emulation_type_id", "SBDB$KEY_EMULATION_TYPE"},
+    {"emulation_types_page", "SBDB$PAGE_ID"},
+    {"enabled", "SBDB$U8"},
+    {"encryption_keys_page", "SBDB$PAGE_ID"},
+    {"end_time", "SBDB$TIME_US"},
+    {"engine_id", "SBDB$KEY_UDR_ENGINE"},
+    {"engine_name", "SBDB$NAME"},
+    {"engine_type", "SBDB$U8"},
+    {"entry_point", "SBDB$NAME_1024"},
+    {"enum_values_oid", "SBDB$LOB_REF"},
+    {"event_id", "SBDB$U64"},
+    {"event_type", "SBDB$U16"},
+    {"exception_id", "SBDB$KEY_EXCEPTION"},
+    {"exceptions_page", "SBDB$PAGE_ID"},
+    {"exclusion_operator", "SBDB$U32"},
+    {"expression_oid", "SBDB$LOB_REF"},
+    {"extensions_page", "SBDB$PAGE_ID"},
+    {"external_group_name", "SBDB$NAME"},
+    {"external_id", "SBDB$NAME_512"},
+    {"fields_oid", "SBDB$LOB_REF"},
+    {"final_phase", "SBDB$U32"},
+    {"fk_id", "SBDB$KEY_FOREIGN_KEY"},
+    {"fk_name", "SBDB$NAME"},
+    {"foreign_keys_page", "SBDB$PAGE_ID"},
+    {"foreign_server_id", "SBDB$KEY_FOREIGN_SERVER"},
+    {"foreign_servers_page", "SBDB$PAGE_ID"},
+    {"foreign_table_id", "SBDB$KEY_FOREIGN_TABLE"},
+    {"foreign_tables_page", "SBDB$PAGE_ID"},
+    {"gid", "SBDB$NAME_256"},
+    {"global_epoch", "SBDB$U64"},
+    {"grant_option", "SBDB$U8"},
+    {"granted_by", "SBDB$KEY_USER"},
+    {"granted_time", "SBDB$TIME_US"},
+    {"grantee_id", "SBDB$KEY_PRINCIPAL"},
+    {"grantee_type", "SBDB$U8"},
+    {"grantor_id", "SBDB$KEY_USER"},
+    {"granularity", "SBDB$U8"},
+    {"group_id", "SBDB$KEY_GROUP"},
+    {"group_mappings_page", "SBDB$PAGE_ID"},
+    {"group_members_page", "SBDB$PAGE_ID"},
+    {"group_metadata_oid", "SBDB$LOB_REF"},
+    {"group_name", "SBDB$NAME"},
+    {"group_scope_oid", "SBDB$LOB_REF"},
+    {"group_type", "SBDB$U8"},
+    {"groups_page", "SBDB$PAGE_ID"},
+    {"has_default", "SBDB$U8"},
+    {"has_toast", "SBDB$U32"},
+    {"hash_curr", "SBDB$HASH256"},
+    {"hash_prev", "SBDB$HASH256"},
+    {"header", "SBDB$U32"},
+    {"histogram_bucket_count", "SBDB$U32"},
+    {"histogram_oid", "SBDB$LOB_REF"},
+    {"histogram_type", "SBDB$U8"},
+    {"history_id", "SBDB$KEY_MIGRATION_HISTORY"},
+    {"host", "SBDB$NAME_512"},
+    {"increment_by", "SBDB$I64"},
+    {"index_id", "SBDB$KEY_INDEX"},
+    {"index_method", "SBDB$U32"},
+    {"index_name", "SBDB$NAME"},
+    {"index_params_oid", "SBDB$LOB_REF"},
+    {"index_type", "SBDB$U32"},
+    {"indexes_page", "SBDB$PAGE_ID"},
+    {"initially_deferred", "SBDB$U32"},
+    {"integrity_oid", "SBDB$LOB_REF"},
+    {"internal_group_id", "SBDB$UUID_V7"},
+    {"is_active", "SBDB$BOOL"},
+    {"is_array", "SBDB$BOOL"},
+    {"is_default", "SBDB$BOOL"},
+    {"is_deferrable", "SBDB$U32"},
+    {"is_expired", "SBDB$BOOL"},
+    {"is_expression_index", "SBDB$U32"},
+    {"is_foreign_key", "SBDB$BOOL"},
+    {"is_generated", "SBDB$BOOL"},
+    {"is_loaded", "SBDB$BOOL"},
+    {"is_materialized", "SBDB$BOOL"},
+    {"is_partial_index", "SBDB$U32"},
+    {"is_primary_key", "SBDB$BOOL"},
+    {"is_public", "SBDB$BOOL"},
+    {"is_selectable", "SBDB$BOOL"},
+    {"is_superuser", "SBDB$BOOL"},
+    {"is_system_generated", "SBDB$U32"},
+    {"is_valid", "SBDB$BOOL"},
+    {"is_validated", "SBDB$BOOL"},
+    {"isolation_level", "SBDB$U8"},
+    {"issuer", "SBDB$NAME"},
+    {"job_dependencies_page", "SBDB$PAGE_ID"},
+    {"job_runs_page", "SBDB$PAGE_ID"},
+    {"job_secrets_page", "SBDB$PAGE_ID"},
+    {"jobs_page", "SBDB$PAGE_ID"},
+    {"language", "SBDB$U8"},
+    {"last_activity_time", "SBDB$TIME_US"},
+    {"last_analyzed_time", "SBDB$TIME_US"},
+    {"last_error_code", "SBDB$U32"},
+    {"last_heartbeat", "SBDB$TIME_US"},
+    {"last_login_time", "SBDB$TIME_US"},
+    {"last_modified_time", "SBDB$TIME_US"},
+    {"last_refreshed", "SBDB$U64"},
+    {"last_rows_affected", "SBDB$I64"},
+    {"last_sqlstate", "SBDB$SQLSTATE"},
+    {"last_statement_hash", "SBDB$U64"},
+    {"last_statement_oid", "SBDB$LOB_REF"},
+    {"last_statement_status", "SBDB$U8"},
+    {"last_statement_time", "SBDB$TIME_US"},
+    {"last_statement_type", "SBDB$U8"},
+    {"last_xid", "SBDB$KEY_TXN"},
+    {"lease_expires_at", "SBDB$TIME_US"},
+    {"library_path", "SBDB$NAME_1024"},
+    {"loaded_count", "SBDB$U64"},
+    {"locale", "SBDB$NAME_64"},
+    {"lock_timeout_seconds", "SBDB$U32"},
+    {"logical_index_id", "SBDB$KEY_INDEX"},
+    {"login_time", "SBDB$TIME_US"},
+    {"mapping_id", "SBDB$KEY_MAPPING"},
+    {"mapping_rules_oid", "SBDB$LOB_REF"},
+    {"materialized_table_id", "SBDB$KEY_TABLE"},
+    {"max_bytes", "SBDB$U8"},
+    {"max_length", "SBDB$U32"},
+    {"max_value", "SBDB$I64"},
+    {"mcv_oid", "SBDB$LOB_REF"},
+    {"member_type", "SBDB$U8"},
+    {"membership_id", "SBDB$KEY_MEMBERSHIP"},
+    {"message_oid", "SBDB$LOB_REF"},
+    {"metadata_oid", "SBDB$LOB_REF"},
+    {"migration_history_page", "SBDB$PAGE_ID"},
+    {"migration_id", "SBDB$KEY_MIGRATION"},
+    {"migration_in_progress", "SBDB$U32"},
+    {"migration_phase", "SBDB$U8"},
+    {"migration_target_ts", "SBDB$U16"},
+    {"migration_xid", "SBDB$KEY_TXN"},
+    {"min_bytes", "SBDB$U8"},
+    {"min_value", "SBDB$I64"},
+    {"module_id", "SBDB$KEY_UDR_MODULE"},
+    {"module_name", "SBDB$NAME"},
+    {"name", "SBDB$NAME"},
+    {"name_is_delimited", "SBDB$BOOL"},
+    {"new_alias_oid", "SBDB$LOB_REF"},
+    {"null_fraction", "SBDB$F32"},
+    {"nullable", "SBDB$U8"},
+    {"num_distinct", "SBDB$U64"},
+    {"num_nulls", "SBDB$U64"},
+    {"num_rows", "SBDB$U64"},
+    {"object_definitions_page", "SBDB$PAGE_ID"},
+    {"object_id", "SBDB$KEY_OBJECT"},
+    {"object_name", "SBDB$NAME"},
+    {"object_permissions_page", "SBDB$PAGE_ID"},
+    {"object_type", "SBDB$OBJTYPE"},
+    {"observes_dst", "SBDB$BOOL"},
+    {"old_alias_oid", "SBDB$LOB_REF"},
+    {"ordinal", "SBDB$U16"},
+    {"owned_by_column_id", "SBDB$KEY_COLUMN"},
+    {"owned_by_table_id", "SBDB$KEY_TABLE"},
+    {"owner_id", "SBDB$KEY_USER"},
+    {"package_body_oid", "SBDB$LOB_REF"},
+    {"package_header_oid", "SBDB$LOB_REF"},
+    {"package_id", "SBDB$KEY_PACKAGE"},
+    {"package_name", "SBDB$NAME"},
+    {"packages_page", "SBDB$PAGE_ID"},
+    {"pad_space", "SBDB$BOOL"},
+    {"pages_copied", "SBDB$U32"},
+    {"parameter_count", "SBDB$U32"},
+    {"parameter_id", "SBDB$KEY_PROC_PARAM"},
+    {"parameter_mode", "SBDB$U8"},
+    {"parameter_name", "SBDB$NAME"},
+    {"parameter_position", "SBDB$U16"},
+    {"parent_columns", "SBDB$NAME"},
+    {"parent_domain_id", "SBDB$UUID_V7"},
+    {"parent_schema_id", "SBDB$KEY_SCHEMA"},
+    {"parent_table_id", "SBDB$UUID_V7"},
+    {"password_hash_oid", "SBDB$LOB_REF"},
+    {"permission_id", "SBDB$KEY_PERMISSION"},
+    {"permissions", "SBDB$PERMISSIONS_MASK"},
+    {"permissions_page", "SBDB$PAGE_ID"},
+    {"plugin_path", "SBDB$NAME_1024"},
+    {"policies_page", "SBDB$PAGE_ID"},
+    {"policy_epoch", "SBDB$U64"},
+    {"policy_epoch_global", "SBDB$U64"},
+    {"policy_epoch_table", "SBDB$U64"},
+    {"policy_toast_table_id", "SBDB$KEY_TABLE"},
+    {"port", "SBDB$U16"},
+    {"position", "SBDB$I32"},
+    {"precision", "SBDB$U32"},
+    {"predicate_oid", "SBDB$LOB_REF"},
+    {"predicate_string", "SBDB$U32"},
+    {"prepared_id", "SBDB$KEY_PREPARED_TXN"},
+    {"prepared_time", "SBDB$TIME_US"},
+    {"prepared_transactions_page", "SBDB$PAGE_ID"},
+    {"privileges", "SBDB$U32"},
+    {"proc_id", "SBDB$U32"},
+    {"proc_params_page", "SBDB$PAGE_ID"},
+    {"procedure_id", "SBDB$KEY_PROCEDURE"},
+    {"procedure_name", "SBDB$NAME"},
+    {"procedure_type", "SBDB$U8"},
+    {"procedures_page", "SBDB$PAGE_ID"},
+    {"quality_oid", "SBDB$LOB_REF"},
+    {"referenced_table_id", "SBDB$KEY_TABLE"},
+    {"refresh_on_commit", "SBDB$U8"},
+    {"refresh_strategy", "SBDB$U8"},
+    {"remote_credentials_oid", "SBDB$LOB_REF"},
+    {"remote_schema", "SBDB$NAME"},
+    {"remote_table", "SBDB$NAME"},
+    {"remote_user", "SBDB$NAME_256"},
+    {"replication_lag_ms", "SBDB$U64"},
+    {"retired_xid", "SBDB$KEY_TXN"},
+    {"return_type_oid", "SBDB$LOB_REF"},
+    {"rls_enabled", "SBDB$U32"},
+    {"rls_forced", "SBDB$U32"},
+    {"role", "SBDB$U8"},
+    {"role_id", "SBDB$KEY_ROLE"},
+    {"role_members_page", "SBDB$PAGE_ID"},
+    {"role_metadata_oid", "SBDB$LOB_REF"},
+    {"role_name", "SBDB$NAME"},
+    {"role_scope_oid", "SBDB$LOB_REF"},
+    {"roles_page", "SBDB$PAGE_ID"},
+    {"root_page", "SBDB$PAGE_ID"},
+    {"row_count", "SBDB$U64"},
+    {"rtree_max_entries", "SBDB$U32"},
+    {"sample_rate", "SBDB$F32"},
+    {"sample_size", "SBDB$U64"},
+    {"scale", "SBDB$U32"},
+    {"schema_count", "SBDB$U32"},
+    {"schema_id", "SBDB$KEY_SCHEMA"},
+    {"schema_name", "SBDB$NAME"},
+    {"schemas_page", "SBDB$PAGE_ID"},
+    {"scope", "SBDB$U8"},
+    {"security_oid", "SBDB$LOB_REF"},
+    {"security_policy_epoch_page", "SBDB$PAGE_ID"},
+    {"sequence_id", "SBDB$KEY_SEQUENCE"},
+    {"sequence_name", "SBDB$NAME"},
+    {"sequences_page", "SBDB$PAGE_ID"},
+    {"server_config_oid", "SBDB$LOB_REF"},
+    {"server_id", "SBDB$KEY_SERVER"},
+    {"server_instance_id", "SBDB$KEY_SERVER_INSTANCE"},
+    {"server_name", "SBDB$NAME"},
+    {"server_registry_page", "SBDB$PAGE_ID"},
+    {"server_type", "SBDB$NAME"},
+    {"server_version", "SBDB$NAME_256"},
+    {"session_id", "SBDB$KEY_SESSION"},
+    {"session_settings_oid", "SBDB$LOB_REF"},
+    {"session_user_id", "SBDB$KEY_USER"},
+    {"sessions_page", "SBDB$PAGE_ID"},
+    {"set_element_type", "SBDB$U16"},
+    {"signature_oid", "SBDB$LOB_REF"},
+    {"source_tablespace", "SBDB$KEY_TABLESPACE"},
+    {"sql_security", "SBDB$U8"},
+    {"start_time", "SBDB$TIME_US"},
+    {"start_value", "SBDB$I64"},
+    {"statistic_id", "SBDB$KEY_STATISTIC"},
+    {"statistics_page", "SBDB$PAGE_ID"},
+    {"status", "SBDB$U8"},
+    {"std_offset_minutes", "SBDB$I32"},
+    {"storage_params_oid", "SBDB$LOB_REF"},
+    {"storage_type", "SBDB$U8"},
+    {"strength", "SBDB$U8"},
+    {"success", "SBDB$BOOL"},
+    {"supports_concurrent", "SBDB$U8"},
+    {"synonym_id", "SBDB$KEY_SYNONYM"},
+    {"synonym_name", "SBDB$NAME"},
+    {"synonyms_page", "SBDB$PAGE_ID"},
+    {"table_count", "SBDB$U32"},
+    {"table_id", "SBDB$KEY_TABLE"},
+    {"table_name", "SBDB$NAME"},
+    {"table_type", "SBDB$U32"},
+    {"tables_page", "SBDB$PAGE_ID"},
+    {"tablespace_files_page", "SBDB$PAGE_ID"},
+    {"tablespace_id", "SBDB$KEY_TABLESPACE"},
+    {"tablespaces_page", "SBDB$PAGE_ID"},
+    {"target_path_oid", "SBDB$LOB_REF"},
+    {"target_tablespace", "SBDB$KEY_TABLESPACE"},
+    {"target_type", "SBDB$U8"},
+    {"target_user_id", "SBDB$KEY_USER"},
+    {"target_username", "SBDB$NAME"},
+    {"temp_data_scope", "SBDB$U32"},
+    {"temp_metadata_scope", "SBDB$U32"},
+    {"temp_on_commit", "SBDB$U32"},
+    {"temp_parent_table_id", "SBDB$KEY_TABLE"},
+    {"temp_schema_id", "SBDB$KEY_SCHEMA"},
+    {"timestamp", "SBDB$TIME_US"},
+    {"timezone_hint", "SBDB$KEY_TIMEZONE"},
+    {"timezone_id", "SBDB$KEY_TIMEZONE"},
+    {"timezones_page", "SBDB$PAGE_ID"},
+    {"toast_table_id", "SBDB$UUID_V7"},
+    {"total_bytes_copied", "SBDB$U64"},
+    {"total_pages", "SBDB$U32"},
+    {"trigger_event", "SBDB$U8"},
+    {"trigger_id", "SBDB$KEY_TRIGGER"},
+    {"trigger_name", "SBDB$NAME"},
+    {"trigger_timing", "SBDB$U8"},
+    {"triggers_page", "SBDB$PAGE_ID"},
+    {"txn_id", "SBDB$KEY_TXN"},
+    {"type_precision", "SBDB$U32"},
+    {"type_scale", "SBDB$U32"},
+    {"udr_engines_page", "SBDB$PAGE_ID"},
+    {"udr_id", "SBDB$KEY_UDR"},
+    {"udr_modules_page", "SBDB$PAGE_ID"},
+    {"udr_name", "SBDB$NAME"},
+    {"udr_page", "SBDB$PAGE_ID"},
+    {"udr_type", "SBDB$U8"},
+    {"usage_count", "SBDB$U32"},
+    {"usage_limit", "SBDB$U32"},
+    {"usage_type", "SBDB$U8"},
+    {"user_id", "SBDB$KEY_USER"},
+    {"user_mappings_page", "SBDB$PAGE_ID"},
+    {"user_metadata_oid", "SBDB$LOB_REF"},
+    {"username", "SBDB$NAME"},
+    {"users_page", "SBDB$PAGE_ID"},
+    {"valid_from", "SBDB$TIME_US"},
+    {"valid_from_xid", "SBDB$KEY_TXN"},
+    {"valid_to", "SBDB$TIME_US"},
+    {"validated_time", "SBDB$TIME_US"},
+    {"validation_oid", "SBDB$LOB_REF"},
+    {"variable_width", "SBDB$BOOL"},
+    {"version_major", "SBDB$U8"},
+    {"version_minor", "SBDB$U8"},
+    {"view_id", "SBDB$KEY_VIEW"},
+    {"view_name", "SBDB$NAME"},
+    {"views_page", "SBDB$PAGE_ID"},
+    {"wait_mode", "SBDB$U8"},
+    {"with_admin_option", "SBDB$U8"},
+    {"with_timezone", "SBDB$U8"},
+};
+
+// kSystemDomainByTableColumn (conflict-only)
+const std::unordered_map<std::string, const char*> kSystemDomainByTableColumn = {
+    {"sys.columnrecord.is_unique", "SBDB$BOOL"},
+    {"sys.constraintinfo.is_enabled", "SBDB$U32"},
+    {"sys.constraintinfo.match_type", "SBDB$U32"},
+    {"sys.constraintinfo.on_delete", "SBDB$U32"},
+    {"sys.constraintinfo.on_update", "SBDB$U32"},
+    {"sys.dormanttransactionrecord.state", "SBDB$U8"},
+    {"sys.foreignkeyrecord.is_enabled", "SBDB$BOOL"},
+    {"sys.foreignkeyrecord.match_type", "SBDB$U8"},
+    {"sys.foreignkeyrecord.on_delete", "SBDB$U8"},
+    {"sys.foreignkeyrecord.on_update", "SBDB$U8"},
+    {"sys.indexinfo.is_unique", "SBDB$U32"},
+    {"sys.indexinfo.state", "SBDB$U8"},
+    {"sys.indexversioninfo.state", "SBDB$U32"},
+    {"sys.serverregistryrecord.state", "SBDB$U8"},
+};
+
+// kSystemTableAliasMap (internal -> spec table name)
+const std::unordered_map<std::string, const char*> kSystemTableAliasMap = {
+    {"audit_log", "sys.auditlogrecord"},
+    {"authkeys", "sys.authkeyrecord"},
+    {"charsets", "sys.charsetrecord"},
+    {"collations", "sys.collationrecord"},
+    {"columns", "sys.columnrecord"},
+    {"comments", "sys.commentrecord"},
+    {"constraints", "sys.constraintinfo"},
+    {"domains", "sys.domainrecord"},
+    {"dormant_transactions", "sys.dormanttransactionrecord"},
+    {"emulated_dbs", "sys.emulateddatabaserecord"},
+    {"emulation_servers", "sys.emulationserverrecord"},
+    {"emulation_types", "sys.emulationtyperecord"},
+    {"exceptions", "sys.exceptionrecord"},
+    {"foreign_keys", "sys.foreignkeyrecord"},
+    {"foreign_servers", "sys.foreignserverrecord"},
+    {"foreign_tables", "sys.foreigntablerecord"},
+    {"group_mappings", "sys.groupmappingrecord"},
+    {"group_memberships", "sys.groupmembershiprecord"},
+    {"groups", "sys.grouprecord"},
+    {"indexes", "sys.indexinfo"},
+    {"index_versions", "sys.indexversioninfo"},
+    {"migration_history", "sys.migrationhistoryinfo"},
+    {"object_definitions", "sys.objectdefinitionrecord"},
+    {"packages", "sys.packagerecord"},
+    {"permissions", "sys.permissionrecord"},
+    {"prepared_transactions", "sys.preparedtransactionrecord"},
+    {"procedure_params", "sys.procedureparameterrecord"},
+    {"procedures", "sys.procedurerecord"},
+    {"role_memberships", "sys.rolemembershiprecord"},
+    {"roles", "sys.rolerecord"},
+    {"schemas", "sys.schemarecord"},
+    {"security_policy_epoch", "sys.securitypolicyepochrecord"},
+    {"sequences", "sys.sequencerecord"},
+    {"server_registry", "sys.serverregistryrecord"},
+    {"sessions", "sys.sessionrecord"},
+    {"statistics", "sys.statisticrecord"},
+    {"synonyms", "sys.synonymrecord"},
+    {"tables", "sys.tableinfo"},
+    {"timezones", "sys.timezonerecord"},
+    {"triggers", "sys.triggerrecord"},
+    {"udr", "sys.udrrecord"},
+    {"udr_engines", "sys.udrenginerecord"},
+    {"udr_modules", "sys.udrmodulerecord"},
+    {"user_mappings", "sys.usermappingrecord"},
+    {"users", "sys.userrecord"},
+    {"views", "sys.viewrecord"},
+};
+
+const std::unordered_set<std::string> kSystemDomainAmbiguousColumns = {
+    "is_enabled",
+    "is_unique",
+    "match_type",
+    "on_delete",
+    "on_update",
+    "state"
+};
+
+const char* defaultDomainForType(DataType type)
+{
+    switch (type)
+    {
+        case DataType::UUID: return "SBDB$UUID_V7";
+        case DataType::BOOLEAN: return "SBDB$BOOL";
+        case DataType::BIT: return "SBDB$BIT";
+        case DataType::INT8: return "SBDB$I8";
+        case DataType::INT16: return "SBDB$I16";
+        case DataType::UINT8: return "SBDB$U8";
+        case DataType::UINT16: return "SBDB$U16";
+        case DataType::UINT32: return "SBDB$U32";
+        case DataType::UINT64: return "SBDB$U64";
+        case DataType::UINT128: return "SBDB$U128";
+        case DataType::INT32: return "SBDB$I32";
+        case DataType::INT64: return "SBDB$I64";
+        case DataType::INT128: return "SBDB$I128";
+        case DataType::FLOAT32: return "SBDB$F32";
+        case DataType::FLOAT64: return "SBDB$F64";
+        case DataType::DECIMAL: return "SBDB$DECIMAL";
+        case DataType::MONEY: return "SBDB$MONEY";
+        case DataType::DECFLOAT16: return "SBDB$DECFLOAT16";
+        case DataType::DECFLOAT34: return "SBDB$DECFLOAT34";
+        case DataType::DATE: return "SBDB$DATE";
+        case DataType::TIME: return "SBDB$TIME";
+        case DataType::TIMESTAMP: return "SBDB$TIMESTAMP";
+        case DataType::TIMESTAMP_WITH_ZONE: return "SBDB$TIMESTAMPTZ";
+        case DataType::TIME_WITH_ZONE: return "SBDB$TIME_TZ";
+        case DataType::INTERVAL: return "SBDB$INTERVAL";
+        case DataType::YEAR: return "SBDB$YEAR";
+        case DataType::CHAR:
+        case DataType::VARCHAR:
+        case DataType::TEXT:
+            return "SBDB$NAME_1024";
+        case DataType::BINARY:
+        case DataType::VARBINARY:
+        case DataType::BLOB:
+        case DataType::BYTEA:
+            return "SBDB$BLOB";
+        case DataType::JSON: return "SBDB$JSON";
+        case DataType::JSONB: return "SBDB$JSONB";
+        case DataType::XML: return "SBDB$XML";
+        case DataType::VECTOR: return "SBDB$VECTOR";
+        case DataType::POINT: return "SBDB$POINT";
+        case DataType::LINESTRING: return "SBDB$LINESTRING";
+        case DataType::POLYGON: return "SBDB$POLYGON";
+        case DataType::MULTIPOINT: return "SBDB$MULTIPOINT";
+        case DataType::MULTILINESTRING: return "SBDB$MULTILINESTRING";
+        case DataType::MULTIPOLYGON: return "SBDB$MULTIPOLYGON";
+        case DataType::GEOMETRYCOLLECTION: return "SBDB$GEOMETRYCOLLECTION";
+        case DataType::GEOMETRY: return "SBDB$GEOMETRY";
+        case DataType::INET: return "SBDB$INET";
+        case DataType::CIDR: return "SBDB$CIDR";
+        case DataType::MACADDR: return "SBDB$MACADDR";
+        case DataType::MACADDR8: return "SBDB$MACADDR8";
+        case DataType::TSVECTOR: return "SBDB$TSVECTOR";
+        case DataType::TSQUERY: return "SBDB$TSQUERY";
+        case DataType::INT4RANGE: return "SBDB$RANGE_INT4";
+        case DataType::INT8RANGE: return "SBDB$RANGE_INT8";
+        case DataType::NUMRANGE: return "SBDB$RANGE_NUM";
+        case DataType::TSRANGE: return "SBDB$RANGE_TS";
+        case DataType::TSTZRANGE: return "SBDB$RANGE_TSTZ";
+        case DataType::DATERANGE: return "SBDB$RANGE_DATE";
+        case DataType::ARRAY: return "SBDB$ARRAY";
+        case DataType::COMPOSITE: return "SBDB$COMPOSITE";
+        case DataType::DOMAIN: return "SBDB$DOMAIN";
+        case DataType::ROW: return "SBDB$ROW";
+        case DataType::ENUM: return "SBDB$ENUM";
+        case DataType::SET: return "SBDB$SET";
+        case DataType::VARIANT: return "SBDB$VARIANT";
+        default:
+            return nullptr;
+    }
+}
 Status decodeTablespaceHeaderBuffer(const uint8_t *buffer,
                                    TablespaceHeader *header_out,
                                    uint16_t *version_out,
@@ -99,14 +796,12 @@ Status decodeTablespaceHeaderBuffer(const uint8_t *buffer,
         header_out->autoextend_enabled = legacy->autoextend_enabled;
         header_out->autoextend_size_mb = legacy->autoextend_size_mb;
         header_out->max_size_mb = legacy->max_size_mb;
-        std::memcpy(header_out->reserved1, legacy->reserved1, sizeof(legacy->reserved1));
         header_out->total_pages = legacy->total_pages;
         header_out->free_pages = legacy->free_pages;
         header_out->next_page_number = legacy->next_page_number;
         header_out->fsm_root_page = legacy->fsm_root_page;
         header_out->oldest_transaction_id = legacy->oldest_transaction_id;
         header_out->latest_completed_xid = legacy->latest_completed_xid;
-        std::memcpy(header_out->reserved2, legacy->reserved2, sizeof(legacy->reserved2));
         return Status::OK;
     }
 
@@ -127,6 +822,126 @@ bool isZeroUuidLocal(const ID& id) {
         }
     }
     return true;
+}
+
+ID CatalogManager::resolveTablespaceUuid(uint16_t tablespace_id) const
+{
+    if (tablespace_id == 0)
+    {
+        return ID{};
+    }
+    auto it = tablespace_id_to_uuid_.find(tablespace_id);
+    if (it != tablespace_id_to_uuid_.end())
+    {
+        return it->second;
+    }
+    return ID{};
+}
+
+uint16_t CatalogManager::resolveTablespaceId(const ID &tablespace_uuid) const
+{
+    if (isZeroUuidLocal(tablespace_uuid))
+    {
+        return 0;
+    }
+    auto it = tablespace_uuid_to_id_.find(tablespace_uuid);
+    if (it != tablespace_uuid_to_id_.end())
+    {
+        return it->second;
+    }
+    return 0;
+}
+
+void CatalogManager::resolveTablespaceBindings()
+{
+    for (auto &kv : schema_cache_)
+    {
+        auto &schema = kv.second;
+        if (schema.default_tablespace_id == 0 && !isZeroUuidLocal(schema.default_tablespace_uuid))
+        {
+            schema.default_tablespace_id = resolveTablespaceId(schema.default_tablespace_uuid);
+        }
+    }
+
+    for (auto &kv : table_cache_)
+    {
+        auto &table = kv.second;
+        if (table.tablespace_id == 0 && !isZeroUuidLocal(table.tablespace_uuid))
+        {
+            table.tablespace_id = resolveTablespaceId(table.tablespace_uuid);
+        }
+    }
+
+    for (auto &kv : index_cache_)
+    {
+        auto &index = kv.second;
+        if (index.tablespace_id == 0 && !isZeroUuidLocal(index.tablespace_uuid))
+        {
+            index.tablespace_id = resolveTablespaceId(index.tablespace_uuid);
+        }
+    }
+}
+
+ID CatalogManager::resolveCharsetUuid(uint16_t charset_id)
+{
+    if (charset_id == 0)
+    {
+        return ID{};
+    }
+    auto it = charset_id_to_uuid_.find(charset_id);
+    if (it != charset_id_to_uuid_.end())
+    {
+        return it->second;
+    }
+    ID new_uuid = generateUuidV7();
+    charset_id_to_uuid_[charset_id] = new_uuid;
+    charset_uuid_to_id_[new_uuid] = charset_id;
+    return new_uuid;
+}
+
+uint16_t CatalogManager::resolveCharsetId(const ID &charset_uuid)
+{
+    if (isZeroUuidLocal(charset_uuid))
+    {
+        return 0;
+    }
+    auto it = charset_uuid_to_id_.find(charset_uuid);
+    if (it != charset_uuid_to_id_.end())
+    {
+        return it->second;
+    }
+    return 0;
+}
+
+ID CatalogManager::resolveTimezoneUuid(uint16_t timezone_id)
+{
+    if (timezone_id == 0)
+    {
+        return ID{};
+    }
+    auto it = timezone_id_to_uuid_.find(timezone_id);
+    if (it != timezone_id_to_uuid_.end())
+    {
+        return it->second;
+    }
+    ID new_uuid = generateUuidV7();
+    timezone_id_to_uuid_[timezone_id] = new_uuid;
+    timezone_uuid_to_id_[new_uuid] = timezone_id;
+    return new_uuid;
+}
+
+uint16_t CatalogManager::resolveTimezoneId(const ID &timezone_uuid)
+{
+    if (isZeroUuidLocal(timezone_uuid))
+    {
+        return 0;
+    }
+    auto it = timezone_uuid_to_id_.find(timezone_uuid);
+    if (it != timezone_uuid_to_id_.end())
+    {
+        return it->second;
+    }
+    return 0;
 }
 
 ID resolveOwnerFromSession(CatalogManager* catalog, ErrorContext* ctx) {
@@ -357,7 +1172,6 @@ std::string makeUDREngineNameKey(const std::string& name) {
 std::string makeUDRModuleNameKey(const std::string& name) {
     return normalizeResolverName(name, false);
 }
-}
 
 // Catalog page structures
 #pragma pack(push, 1)
@@ -374,6 +1188,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         uint32_t tables_page;         // Page containing tables table
         uint32_t columns_page;        // Page containing columns table
         uint32_t indexes_page;        // Page containing indexes table
+        uint32_t index_versions_page; // Page containing index versions table
         uint32_t constraints_page;    // Page containing constraints table
         uint32_t sequences_page;      // Page containing sequences table
         uint32_t views_page;          // Page containing views table
@@ -454,7 +1269,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         uint32_t object_permissions_page; // Page containing object permissions table
         uint32_t policies_page;       // Page containing row-level security policies table
 
-        uint8_t reserved[3756];       // Padding for 4KB page (340 bytes used)
+        uint8_t reserved[3752];       // Padding for 4KB page (344 bytes used)
     };
 
     // Schema record on disk
@@ -464,13 +1279,13 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         ID parent_schema_id;            // Parent schema UUID (zero UUID for root schemas)
         char schema_name[512];          // SQL standard: 128 characters (512 bytes = 128 chars × 4 bytes/char max UTF-8)
         ID owner_id;                    // Owner UUID reference (NOT name - allows rename without breaking dependencies)
-        uint16_t default_tablespace_id; // Default tablespace for new tables
-        uint16_t permissions;           // Bitmask of schema permissions
-        uint16_t default_charset;       // CharacterSet enum (0 = inherit from database)
+        ID default_tablespace_id;       // Default tablespace UUID (SBDB$KEY_TABLESPACE)
+        uint32_t permissions;           // Bitmask of schema permissions
+        ID default_charset_id;          // Default charset UUID (SBDB$KEY_CHARSET)
         uint8_t name_is_delimited;      // 1 if quoted identifier
-        uint8_t reserved;
+        uint8_t reserved[7];
         uint32_t default_collation_id;  // Collation ID (0 = inherit from database)
-        uint32_t acl_oid;               // TOAST reference for ACL (access control list) - IMPLEMENTED
+        ID acl_oid;               // TOAST reference for ACL (access control list) - IMPLEMENTED
         // search_path_oid removed - search path is session-only, not stored per-schema
         uint64_t created_time;
         uint64_t last_modified_time;
@@ -507,12 +1322,11 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         uint8_t temp_data_scope;       // TempDataScope enum
         uint8_t temp_on_commit;        // TempOnCommitAction enum
         uint8_t temp_flags;            // Reserved for temp table flags
-        uint16_t tablespace_id;        // Tablespace ID (0 = default)
-        uint16_t default_charset;      // CharacterSet enum (0 = inherit from schema)
         uint8_t name_is_delimited;     // 1 if quoted identifier
-        uint8_t reserved1;             // Reserved for future use
+        ID tablespace_id;              // Tablespace UUID (SBDB$KEY_TABLESPACE)
+        ID default_charset_id;         // Default charset UUID (SBDB$KEY_CHARSET)
         uint32_t default_collation_id; // Collation ID (0 = inherit from schema)
-        uint32_t storage_params_oid;   // TOAST reference for storage parameters - IMPLEMENTED
+        ID storage_params_oid;   // TOAST reference for storage parameters - IMPLEMENTED
         ID creating_session_id;        // Session UUID for session-scoped temp metadata
         uint64_t creating_transaction_id; // Transaction ID for session/txn temp metadata
         ID temp_parent_table_id;       // Internal temp instance parent table (optional)
@@ -547,12 +1361,12 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         uint8_t storage_type;  // TOAST storage strategy
         uint8_t with_timezone; // For TIMESTAMP: 1 = WITH TIME ZONE, 0 = WITHOUT
         uint8_t name_is_delimited; // 1 if quoted identifier
-        uint16_t charset;       // CharacterSet enum (0 = inherit from table)
-        uint16_t timezone_hint; // Timezone ID for display (0 = use connection default)
+        ID charset_id;          // Charset UUID (SBDB$KEY_CHARSET)
+        ID timezone_id;         // Timezone UUID (SBDB$KEY_TIMEZONE)
         uint32_t collation_id;  // Collation ID (0 = inherit from table)
         char default_value[128];
-        uint32_t default_value_oid; // TOAST reference for large defaults
-        uint32_t check_expr_oid;    // TOAST reference for check expressions
+        ID default_value_oid; // TOAST reference for large defaults
+        ID check_expr_oid;    // TOAST reference for check expressions
         uint64_t created_time;
         uint32_t is_valid;
         uint32_t padding; // Alignment
@@ -584,9 +1398,9 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         ID column_ids[16];         // Max 16 columns per index
         uint16_t include_column_count;
         ID include_column_ids[16];
-        uint32_t index_params_oid; // TOAST reference for index parameters (HNSW config, etc.) - IMPLEMENTED
-        uint32_t expression_oid;   // TOAST reference for serialized expression tree(s)
-        uint32_t predicate_oid;    // TOAST reference for serialized WHERE predicate
+        ID index_params_oid; // TOAST reference for index parameters (HNSW config, etc.) - IMPLEMENTED
+        ID expression_oid;   // TOAST reference for serialized expression tree(s)
+        ID predicate_oid;    // TOAST reference for serialized WHERE predicate
         uint64_t created_time;
         uint32_t is_valid;
 
@@ -595,6 +1409,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         uint8_t state;             // 0=BUILDING, 1=ACTIVE, 2=RETIRED, 3=FAILED
         uint8_t name_is_delimited; // 1 if quoted identifier
         uint8_t padding1[6];       // Alignment
+        ID tablespace_id;          // Tablespace UUID (SBDB$KEY_TABLESPACE)
         uint64_t valid_from_xid;   // XID when new txns can use this index
         uint64_t retired_xid;      // XID after which no new txns use this index (0 = not retired)
         uint64_t build_started_time;
@@ -604,7 +1419,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     // Timezone record on disk
     struct TimezoneRecord
     {
-        uint16_t timezone_id;       // Unique timezone ID
+        ID timezone_id;             // Timezone UUID (SBDB$KEY_TIMEZONE)
         char name[64];              // Timezone name (e.g., "America/New_York")
         char abbreviation[16];      // Abbreviation (e.g., "EST", "PST")
         int32_t std_offset_minutes; // Standard offset from GMT in minutes
@@ -630,7 +1445,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     // Character set record on disk (sb_charset)
     struct CharsetRecord
     {
-        uint16_t charset_id;    // Character set ID (matches CharacterSet enum)
+        ID charset_id;          // Charset UUID (SBDB$KEY_CHARSET)
         char name[64];          // Character set name (e.g., "utf8", "latin1")
         char description[128];  // Human-readable description
         uint8_t min_bytes;      // Minimum bytes per character
@@ -649,7 +1464,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     {
         uint32_t collation_id;
         char name[128];         // Collation name (e.g., "utf8_general_ci")
-        uint16_t charset_id;    // Associated character set ID
+        ID charset_id;          // Charset UUID (SBDB$KEY_CHARSET)
         uint8_t collation_type; // CollationType enum value
         uint8_t strength;       // CollationStrength enum value
         uint8_t pad_space;      // 1 = PAD SPACE, 0 = NO PAD
@@ -679,8 +1494,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         float avg_width;              // Average width in bytes
 
         // TOAST references for variable-length data
-        uint32_t mcv_oid;             // TOAST reference for MCV list (JSON)
-        uint32_t histogram_oid;       // TOAST reference for histogram (JSON)
+        ID mcv_oid;             // TOAST reference for MCV list (JSON)
+        ID histogram_oid;       // TOAST reference for histogram (JSON)
 
         // Histogram metadata
         uint8_t histogram_type;       // HistogramType enum (0=equal_height, 1=equal_width, 255=none)
@@ -733,9 +1548,9 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         uint8_t name_is_delimited;  // 1 if quoted identifier
         uint8_t reserved;
         ID referenced_column_ids[16]; // Referenced columns for FK
-        uint32_t check_expr_oid;       // TOAST reference for check expression
-        uint32_t exclusion_operator_oid; // TOAST reference for exclusion operator
-        uint32_t index_method_oid;      // TOAST reference for exclusion index method
+        ID check_expr_oid;       // TOAST reference for check expression
+        ID exclusion_operator_oid; // TOAST reference for exclusion operator
+        ID index_method_oid;      // TOAST reference for exclusion index method
         uint64_t created_time;
         uint64_t validated_time;
         uint32_t is_valid;
@@ -775,9 +1590,9 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         ID owner_id;             // Owner UUID reference
         ID materialized_table_id; // Physical table backing materialized view
         ID change_log_table_id;  // Change log table for fast refresh (0 if none)
-        uint32_t definition_oid; // TOAST reference for view definition SQL - IMPLEMENTED
-        uint32_t columns_oid;    // TOAST reference for explicit column list
-        uint32_t base_table_ids_oid; // TOAST reference for base table IDs (MV)
+        ID definition_oid; // TOAST reference for view definition SQL - IMPLEMENTED
+        ID columns_oid;    // TOAST reference for explicit column list
+        ID base_table_ids_oid; // TOAST reference for base table IDs (MV)
         uint8_t name_is_delimited; // 1 if quoted identifier
         uint8_t check_option;    // 1 if WITH CHECK OPTION
         uint8_t is_materialized; // 1 if materialized view
@@ -808,10 +1623,10 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         uint8_t enabled;        // 1 if enabled/active
         uint8_t reserved[2];
         int32_t position;       // DB trigger position (0 for table triggers)
-        uint32_t condition_oid; // TOAST reference for WHEN condition
-        uint32_t action_oid;    // TOAST reference for trigger action or procedure name
-        uint32_t old_alias_oid; // TOAST reference for OLD TABLE alias (statement triggers)
-        uint32_t new_alias_oid; // TOAST reference for NEW TABLE alias (statement triggers)
+        ID condition_oid; // TOAST reference for WHEN condition
+        ID action_oid;    // TOAST reference for trigger action or procedure name
+        ID old_alias_oid; // TOAST reference for OLD TABLE alias (statement triggers)
+        ID new_alias_oid; // TOAST reference for NEW TABLE alias (statement triggers)
         uint64_t created_time;
         uint64_t last_modified_time;
         uint32_t is_valid;
@@ -882,9 +1697,9 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         ID table_id;            // References sb_tables
         char policy_name[64];   // Policy name (unique per table)
         uint8_t policy_type;    // ALL=0, SELECT=1, INSERT=2, UPDATE=3, DELETE=4
-        uint32_t roles_oid;     // TOAST reference for roles array (0 = all roles)
-        uint32_t using_expr_oid; // TOAST reference for USING expression (required)
-        uint32_t with_check_expr_oid; // TOAST reference for WITH CHECK expression (optional, 0 = none)
+        ID roles_oid;     // TOAST reference for roles array (0 = all roles)
+        ID using_expr_oid; // TOAST reference for USING expression (required)
+        ID with_check_expr_oid; // TOAST reference for WITH CHECK expression (optional, 0 = none)
         uint8_t is_enabled;     // Policy enabled flag
         uint64_t created_time;
         uint64_t modified_time;
@@ -917,8 +1732,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         int64_t n_distinct;            // Number of distinct values
         float null_frac;               // Fraction of null values
         float avg_width;               // Average width in bytes
-        uint32_t most_common_vals_oid; // TOAST reference for MCVs
-        uint32_t histogram_bounds_oid; // TOAST reference for histogram
+        ID most_common_vals_oid; // TOAST reference for MCVs
+        ID histogram_bounds_oid; // TOAST reference for histogram
         uint64_t last_analyzed;        // Timestamp of last ANALYZE
         uint32_t is_valid;
         uint32_t padding;
@@ -948,7 +1763,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         uint8_t object_type;        // TABLE, COLUMN, VIEW, etc.
         uint8_t reserved[7];        // Alignment
         ID owner_id;                // Owner UUID reference
-        uint32_t comment_text_oid;  // TOAST reference - unlimited size comment text
+        ID comment_text_oid;  // TOAST reference - unlimited size comment text
         uint64_t created_time;
         uint64_t last_modified_time;
         uint32_t is_valid;
@@ -961,8 +1776,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         ID object_id;
         uint8_t object_type;        // CatalogManager::ObjectType
         uint8_t reserved[7];        // Alignment
-        uint32_t ddl_text_oid;      // TOAST reference for original DDL SQL
-        uint32_t bytecode_oid;      // TOAST reference for compiled SBLR bytecode
+        ID ddl_text_oid;      // TOAST reference for original DDL SQL
+        ID bytecode_oid;      // TOAST reference for compiled SBLR bytecode
         uint64_t created_time;
         uint64_t last_modified_time;
         uint32_t is_valid;
@@ -1018,7 +1833,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         uint32_t retry_count;
         int64_t rows_affected;
         int32_t error_code;
-        uint32_t result_data_oid;
+        ID result_data_oid;
         char result_message[1024];
         uint32_t is_valid;
         uint32_t padding;
@@ -1039,7 +1854,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     {
         ID job_id;
         char secret_key[128];
-        uint32_t secret_value_oid;
+        ID secret_value_oid;
         uint64_t created_time;
         uint32_t is_valid;
         uint32_t padding;
@@ -1050,8 +1865,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     {
         ID user_id;
         char username[512];         // User login name
-        uint32_t password_hash_oid; // TOAST reference - hashed password (bcrypt, argon2, etc.)
-        uint32_t user_metadata_oid; // TOAST reference - JSON metadata (preferences, settings)
+        ID password_hash_oid; // TOAST reference - hashed password (bcrypt, argon2, etc.)
+        ID user_metadata_oid; // TOAST reference - JSON metadata (preferences, settings)
         ID default_schema_id;       // UUID reference to default schema
         uint8_t is_active;          // 1 if active, 0 if disabled
         uint8_t is_superuser;       // 1 if superuser, 0 if normal user
@@ -1069,7 +1884,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         char role_name[512];        // Role name
         ID owner_id;                // Owner UUID reference
         ID default_schema_id;       // Home schema UUID
-        uint32_t role_metadata_oid; // TOAST reference - JSON metadata (permissions, settings)
+        ID role_metadata_oid; // TOAST reference - JSON metadata (permissions, settings)
         uint8_t is_active;          // 1 if active, 0 if disabled
         uint8_t reserved[7];        // Alignment
         uint64_t created_time;
@@ -1087,7 +1902,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         uint8_t group_type;         // LOCAL, AD, LDAP
         uint8_t reserved[7];        // Alignment
         ID default_schema_id;       // Home schema UUID
-        uint32_t group_metadata_oid; // TOAST reference - JSON metadata
+        ID group_metadata_oid; // TOAST reference - JSON metadata
         uint64_t created_time;
         uint64_t last_modified_time;
         uint32_t is_valid;
@@ -1151,8 +1966,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         uint8_t status;             // AuthKeyStatus enum
         uint8_t usage_type;         // AuthKeyUsage enum
         uint8_t reserved[6];
-        uint32_t role_scope_oid;    // TOAST reference for role scope UUID list
-        uint32_t group_scope_oid;   // TOAST reference for group scope UUID list
+        ID role_scope_oid;    // TOAST reference for role scope UUID list
+        ID group_scope_oid;   // TOAST reference for group scope UUID list
         uint64_t created_time;
         uint64_t last_modified_time;
         uint32_t is_valid;
@@ -1195,7 +2010,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         char target_username[128];
         char object_type[64];
         char object_name[512];
-        uint32_t details_oid;       // TOAST reference for details JSON
+        ID details_oid;       // TOAST reference for details JSON
         uint8_t hash_prev[32];
         uint8_t hash_curr[32];
         uint32_t is_valid;
@@ -1228,9 +2043,9 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         uint8_t deterministic;      // Function determinism flag (0/1)
         uint8_t reserved;           // Alignment
         uint32_t parameter_count;
-        uint32_t return_type_oid;   // TOAST reference for return type definition
-        uint32_t body_oid;          // TOAST reference - procedure/function body
-        uint32_t bytecode_oid;      // TOAST reference - compiled SBLR bytecode
+        ID return_type_oid;   // TOAST reference for return type definition
+        ID body_oid;          // TOAST reference - procedure/function body
+        ID bytecode_oid;      // TOAST reference - compiled SBLR bytecode
         uint64_t created_time;
         uint64_t last_modified_time;
         uint32_t is_valid;
@@ -1246,8 +2061,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         uint16_t parameter_position; // Position in parameter list (1-based)
         uint8_t parameter_mode;     // IN, OUT, INOUT
         uint8_t reserved[5];        // Alignment
-        uint32_t data_type_oid;     // TOAST reference for data type definition
-        uint32_t default_value_oid; // TOAST reference for default value expression
+        ID data_type_oid;     // TOAST reference for data type definition
+        ID default_value_oid; // TOAST reference for default value expression
         uint32_t is_valid;
         uint32_t padding;
     };
@@ -1266,7 +2081,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         uint8_t udr_type;           // FUNCTION, PROCEDURE, TRIGGER
         uint8_t name_is_delimited;  // 1 if quoted identifier
         uint8_t reserved[6];        // Alignment
-        uint32_t signature_oid;     // TOAST reference for signature definition
+        ID signature_oid;     // TOAST reference for signature definition
         uint64_t created_time;
         uint64_t last_modified_time;
         uint32_t is_valid;
@@ -1281,8 +2096,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         ID schema_id;
         char package_name[512];
         ID owner_id;                // Owner UUID reference
-        uint32_t package_header_oid; // TOAST reference for package header
-        uint32_t package_body_oid;   // TOAST reference for package body
+        ID package_header_oid; // TOAST reference for package header
+        ID package_body_oid;   // TOAST reference for package body
         uint64_t created_time;
         uint64_t last_modified_time;
         uint32_t is_valid;
@@ -1298,7 +2113,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         uint8_t version_major;
         uint8_t version_minor;
         uint16_t reserved;
-        uint32_t mapping_rules_oid; // TOAST reference - JSON mapping rules
+        ID mapping_rules_oid; // TOAST reference - JSON mapping rules
         uint64_t created_time;
         uint32_t is_valid;
         uint32_t padding;
@@ -1311,7 +2126,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         char server_name[512];
         ID emulation_type_id;       // References EmulationTypeRecord
         ID owner_id;                // Owner UUID reference
-        uint32_t server_config_oid; // TOAST reference - JSON server configuration
+        ID server_config_oid; // TOAST reference - JSON server configuration
         uint8_t is_active;          // 1 if server is active
         uint8_t reserved[7];        // Alignment
         uint64_t created_time;
@@ -1328,7 +2143,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         ID server_id;               // References EmulationServerRecord
         ID schema_id;               // Schema containing emulation views
         ID owner_id;                // Owner UUID reference
-        uint32_t db_metadata_oid;   // TOAST reference - JSON database metadata
+        ID db_metadata_oid;   // TOAST reference - JSON database metadata
         uint8_t is_active;          // 1 if database emulation is active
         uint8_t reserved[7];        // Alignment
         uint64_t created_time;
@@ -1344,7 +2159,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         ID schema_id;
         char synonym_name[512];
         ID owner_id;
-        uint32_t target_path_oid;  // TOAST reference for target path
+        ID target_path_oid;  // TOAST reference for target path
         uint8_t target_type;       // ObjectType enum
         uint8_t is_public;         // 1 if PUBLIC synonym
         uint8_t name_is_delimited; // 1 if quoted identifier
@@ -1364,7 +2179,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         char host[512];
         uint16_t port;
         uint16_t reserved0;
-        uint32_t connection_options_oid; // TOAST reference for JSON options
+        ID connection_options_oid; // TOAST reference for JSON options
         ID owner_id;
         uint8_t is_active;               // 1 if active
         uint8_t reserved1[7];            // Alignment
@@ -1384,7 +2199,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         char remote_schema[512];
         char remote_table[512];
         ID owner_id;
-        uint32_t column_mapping_oid; // TOAST reference for column mapping JSON
+        ID column_mapping_oid; // TOAST reference for column mapping JSON
         uint64_t created_time;
         uint64_t last_modified_time;
         uint32_t is_valid;
@@ -1399,7 +2214,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         ID user_id;
         ID foreign_server_id;
         char remote_user[512];
-        uint32_t remote_credentials_oid; // TOAST reference for encrypted credentials
+        ID remote_credentials_oid; // TOAST reference for encrypted credentials
         uint64_t created_time;
         uint64_t last_modified_time;
         uint32_t is_valid;
@@ -1421,7 +2236,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         uint64_t replication_lag_ms;
         char cluster_id[256];
         char server_version[128];
-        uint32_t metadata_oid;        // TOAST reference for JSON metadata
+        ID metadata_oid;        // TOAST reference for JSON metadata
         uint64_t created_time;
         uint64_t last_modified_time;
         uint32_t is_valid;
@@ -1438,7 +2253,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         uint8_t is_default;
         uint8_t reserved0;
         char plugin_path[1024];
-        uint32_t config_oid;          // TOAST reference for JSON config
+        ID config_oid;          // TOAST reference for JSON config
         uint64_t created_time;
         uint64_t last_modified_time;
         uint32_t is_valid;
@@ -1454,7 +2269,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         char library_path[1024];
         char checksum[128];
         char entry_point[512];
-        uint32_t dependencies_oid;    // TOAST reference for dependency list
+        ID dependencies_oid;    // TOAST reference for dependency list
         uint8_t is_loaded;
         uint8_t is_validated;
         uint8_t reserved0[6];
@@ -1502,8 +2317,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         uint8_t autocommit_mode;       // 0/1
         uint32_t lock_timeout_seconds;
         ID current_schema_id;
-        uint32_t session_settings_oid; // TOAST reference
-        uint32_t last_statement_oid;   // TOAST reference
+        ID session_settings_oid; // TOAST reference
+        ID last_statement_oid;   // TOAST reference
         uint64_t last_statement_hash;
         uint8_t last_statement_type;   // DormantStatementType
         uint8_t last_statement_status; // DormantStatementStatus
@@ -1674,15 +2489,14 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         heap->header.page_size = db_->page_size();
         heap->header.page_id = schemas_table_page_;
         heap->header.flags = 0;
-        memcpy(heap->header.database_uuid, db_->uuid().bytes.data(), 16);
         heap->header.generation = 1;
         heap->record_count = 0;
         heap->free_offset = sizeof(CatalogHeapPage);
         heap->next_page = 0;  // No overflow page initially
         heap->reserved = 0;
-        heap->header.free_space = db_->page_size() - sizeof(CatalogHeapPage);
-        heap->header.item_count = 0;
-        heap->header.free_offset = sizeof(CatalogHeapPage);
+        pageSetLower(heap->header, sizeof(CatalogHeapPage));
+        pageSetUpper(heap->header, db_->page_size());
+        pageSetSpecial(heap->header, db_->page_size());
 
         status = db_->write_page(schemas_table_page_, page_buffer.get(), ctx);
         if (status != Status::OK)
@@ -1727,6 +2541,20 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
         heap->header.page_id = indexes_table_page_;
         status = db_->write_page(indexes_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        // Allocate and initialize index versions page
+        status = pm->allocatePage(index_versions_table_page_, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        heap->header.page_id = index_versions_table_page_;
+        status = db_->write_page(index_versions_table_page_, page_buffer.get(), ctx);
         if (status != Status::OK)
         {
             return status;
@@ -2250,7 +3078,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         status = createSchemaInternal("srv", "system", srv_id, sec_id, ctx);
         if (status != Status::OK) return status;
 
-        status = createSchemaInternal("sec_users", "system", users_sec_id, sec_id, ctx);
+        status = createSchemaInternal("users", "system", users_sec_id, sec_id, ctx);
         if (status != Status::OK) return status;
 
         status = createSchemaInternal("roles", "system", roles_id, sec_id, ctx);
@@ -2291,8 +3119,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         memset(&system_user, 0, sizeof(UserRecord));
         system_user.user_id = system_user_id_;
         strncpy(system_user.username, "SYSTEM", sizeof(system_user.username) - 1);
-        system_user.password_hash_oid = 0;  // No password (cannot login directly)
-        system_user.user_metadata_oid = 0;  // No metadata
+        system_user.password_hash_oid = ID{};  // No password (cannot login directly)
+        system_user.user_metadata_oid = ID{};  // No metadata
         system_user.default_schema_id = public_id;  // Default to public schema
         system_user.is_active = 1;
         system_user.is_superuser = 1;  // Superuser flag
@@ -2315,7 +3143,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         strncpy(public_role.role_name, "PUBLIC", sizeof(public_role.role_name) - 1);
         public_role.owner_id = system_user.user_id;  // Owned by SYSTEM
         public_role.default_schema_id = public_id;
-        public_role.role_metadata_oid = 0;
+        public_role.role_metadata_oid = ID{};
         public_role.is_active = 1;
         public_role.created_time = std::chrono::system_clock::now().time_since_epoch().count();
         public_role.last_modified_time = public_role.created_time;
@@ -2336,7 +3164,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         strncpy(db_owner_role.role_name, "DB_OWNER", sizeof(db_owner_role.role_name) - 1);
         db_owner_role.owner_id = system_user.user_id;  // Owned by SYSTEM
         db_owner_role.default_schema_id = public_id;
-        db_owner_role.role_metadata_oid = 0;
+        db_owner_role.role_metadata_oid = ID{};
         db_owner_role.is_active = 1;
         db_owner_role.created_time = std::chrono::system_clock::now().time_since_epoch().count();
         db_owner_role.last_modified_time = db_owner_role.created_time;
@@ -2543,6 +3371,11 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                     return status;
                 }
                 status = require_catalog_page(indexes_table_page_, "indexes");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(index_versions_table_page_, "index_versions");
                 if (status != Status::OK)
                 {
                     return status;
@@ -2877,9 +3710,17 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                     std::memcpy(record.schema_name, schema.schema_name.c_str(), schema.schema_name.size());
                     record.schema_name[schema.schema_name.size()] = '\0';
                     record.owner_id = schema.owner_id;
-                    record.default_tablespace_id = schema.default_tablespace_id;
+                    record.default_tablespace_id = schema.default_tablespace_uuid;
+                    if (isZeroUuidLocal(record.default_tablespace_id) && schema.default_tablespace_id != 0)
+                    {
+                        record.default_tablespace_id = resolveTablespaceUuid(schema.default_tablespace_id);
+                    }
                     record.permissions = schema.permissions;
-                    record.default_charset = schema.default_charset;
+                    record.default_charset_id = schema.default_charset_uuid;
+                    if (isZeroUuidLocal(record.default_charset_id) && schema.default_charset != 0)
+                    {
+                        record.default_charset_id = resolveCharsetUuid(schema.default_charset);
+                    }
                     record.name_is_delimited = schema.name_is_delimited ? 1 : 0;
                     record.default_collation_id = schema.default_collation_id;
                     record.acl_oid = schema.acl_oid;
@@ -3020,6 +3861,40 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                     return status;
                 }
 
+                // Build charset/timezone mappings before loading columns
+                {
+                    std::vector<CharsetInfo> charsets;
+                    Status cs_status = listCharsets(charsets, ctx);
+                    if (cs_status != Status::OK && cs_status != Status::NOT_FOUND)
+                    {
+                        return cs_status;
+                    }
+                }
+                {
+                    std::vector<TimezoneInfo> timezones;
+                    Status tz_status = listTimezones(timezones, ctx);
+                    if (tz_status != Status::OK && tz_status != Status::NOT_FOUND)
+                    {
+                        return tz_status;
+                    }
+                }
+                for (auto &kv : schema_cache_)
+                {
+                    auto &schema = kv.second;
+                    if (schema.default_charset == 0 && !isZeroUuidLocal(schema.default_charset_uuid))
+                    {
+                        schema.default_charset = resolveCharsetId(schema.default_charset_uuid);
+                    }
+                }
+                for (auto &kv : table_cache_)
+                {
+                    auto &table = kv.second;
+                    if (table.default_charset == 0 && !isZeroUuidLocal(table.default_charset_uuid))
+                    {
+                        table.default_charset = resolveCharsetId(table.default_charset_uuid);
+                    }
+                }
+
                 // Load columns for each table
                 for (const auto &[table_id, table_info] : table_cache_)
                 {
@@ -3028,6 +3903,12 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                     {
                         return status;
                     }
+                }
+
+                status = enforceSystemDomainBindings(ctx);
+                if (status != Status::OK)
+                {
+                    return status;
                 }
 
                 // Load constraints (after columns are available)
@@ -3055,6 +3936,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                 {
                     return status;
                 }
+                resolveTablespaceBindings();
 
                 const auto recovery_mode =
                     Config::getInstance().getString("storage", "tablespace_recovery_mode", "strict");
@@ -3341,6 +4223,12 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                                   "Schema UUID cannot be zero");
                 return Status::INVALID_ARGUMENT;
             }
+            if (!isUuidV7Local(*forced_schema_id))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "Schema UUID must be UUID v7");
+                return Status::INVALID_ARGUMENT;
+            }
             if (schema_cache_.find(*forced_schema_id) != schema_cache_.end())
             {
                 SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
@@ -3361,8 +4249,9 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             return ctx ? ctx->code : Status::NOT_FOUND;
         }
         schema.default_tablespace_id = 0;  // Default tablespace
+        schema.default_tablespace_uuid = resolveTablespaceUuid(schema.default_tablespace_id);
         schema.permissions = 0x0FFF;       // Default permissions (read, write, create)
-        schema.acl_oid = 0;                // No ACL initially
+        schema.acl_oid = ID{};                // No ACL initially
         // search_path_oid removed - session-only concept
         schema.created_time = std::chrono::duration_cast<std::chrono::microseconds>(
                                   std::chrono::system_clock::now().time_since_epoch())
@@ -3483,12 +4372,12 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     // ============================================================================
 
     auto CatalogManager::storeStringInToast(const std::string& str, uint64_t xmin,
-                                           uint32_t& oid_out, ErrorContext* ctx) -> Status
+                                           ID& oid_out, ErrorContext* ctx) -> Status
     {
-        // If string is empty, store 0 OID
+        // If string is empty, store zero UUID
         if (str.empty())
         {
-            oid_out = 0;
+            oid_out = ID{};
             return Status::OK;
         }
 
@@ -3518,13 +4407,9 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             {
                 // Fallback: If TOAST table is unavailable, retain values in memory.
                 std::lock_guard<std::mutex> lock(toast_fallback_mutex_);
-                if (toast_fallback_next_oid_ == 0)
-                {
-                    toast_fallback_next_oid_ = 1;
-                }
-                oid_out = toast_fallback_next_oid_++;
+                oid_out = generateUuidV7();
                 toast_fallback_cache_[oid_out] = str;
-                DEBUG_LOG_DB("TOAST unavailable, using in-memory OID: " << oid_out);
+                DEBUG_LOG_DB("TOAST unavailable, using in-memory OID: " << oid_out.toString());
                 return Status::OK;
             }
 
@@ -3597,13 +4482,9 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                     {
                         // Fallback: retain values in memory if TOAST table is unavailable.
                         std::lock_guard<std::mutex> lock(toast_fallback_mutex_);
-                        if (toast_fallback_next_oid_ == 0)
-                        {
-                            toast_fallback_next_oid_ = 1;
-                        }
-                        oid_out = toast_fallback_next_oid_++;
+                        oid_out = generateUuidV7();
                         toast_fallback_cache_[oid_out] = str;
-                        DEBUG_LOG_DB("TOAST write failed; using in-memory OID: " << oid_out);
+                        DEBUG_LOG_DB("TOAST write failed; using in-memory OID: " << oid_out.toString());
                         return Status::OK;
                     }
 
@@ -3627,30 +4508,26 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
             // Return the TOAST value_id as the OID
             oid_out = pointer.va_valueid;
-            DEBUG_LOG_DB("Stored policy expression in TOAST with value_id=" << oid_out);
+            DEBUG_LOG_DB("Stored policy expression in TOAST with value_id=" << oid_out.toString());
             return Status::OK;
         }
 
         // Fallback: If TOAST manager not available, retain values in memory
         {
             std::lock_guard<std::mutex> lock(toast_fallback_mutex_);
-            if (toast_fallback_next_oid_ == 0)
-            {
-                toast_fallback_next_oid_ = 1;
-            }
-            oid_out = toast_fallback_next_oid_++;
+            oid_out = generateUuidV7();
             toast_fallback_cache_[oid_out] = str;
         }
-        DEBUG_LOG_DB("TOAST manager unavailable, using in-memory OID: " << oid_out);
+        DEBUG_LOG_DB("TOAST manager unavailable, using in-memory OID: " << oid_out.toString());
 
         return Status::OK;
     }
 
-    auto CatalogManager::loadStringFromToast(uint32_t oid, uint64_t xmin,
+    auto CatalogManager::loadStringFromToast(const ID &oid, uint64_t xmin,
                                             std::string& str_out, ErrorContext* ctx) -> Status
     {
-        // If OID is 0, return empty string
-        if (oid == 0)
+        // If OID is zero, return empty string
+        if (isZeroUuidLocal(oid))
         {
             str_out.clear();
             return Status::OK;
@@ -3698,8 +4575,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             pointer.va_rawsize = 0;
             pointer.va_extsize = 0;
             pointer.va_valueid = oid;
-            pointer.va_toastrelid = static_cast<uint32_t>(
-                *reinterpret_cast<const uint32_t*>(policy_toast_table_id_.bytes.data()));
+            pointer.va_toastrelid = policy_toast_table_id_;
 
             // Read from TOAST
             std::vector<uint8_t> data;
@@ -3774,7 +4650,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             }
         }
 
-        DEBUG_LOG_DB("TOAST manager unavailable, cannot load from OID: " << oid);
+        DEBUG_LOG_DB("TOAST manager unavailable, cannot load from OID: " << oid.toString());
         SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND,
                          "TOAST manager not available - value not cached");
         return Status::NOT_FOUND;
@@ -6667,9 +7543,17 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         std::memcpy(record.schema_name, schema.schema_name.c_str(), schema.schema_name.size());
         record.schema_name[schema.schema_name.size()] = '\0';
         record.owner_id = schema.owner_id;
-        record.default_tablespace_id = schema.default_tablespace_id;
+        record.default_tablespace_id = schema.default_tablespace_uuid;
+        if (isZeroUuidLocal(record.default_tablespace_id) && schema.default_tablespace_id != 0)
+        {
+            record.default_tablespace_id = resolveTablespaceUuid(schema.default_tablespace_id);
+        }
         record.permissions = schema.permissions;
-        record.default_charset = schema.default_charset;
+        record.default_charset_id = schema.default_charset_uuid;
+        if (isZeroUuidLocal(record.default_charset_id) && schema.default_charset != 0)
+        {
+            record.default_charset_id = resolveCharsetUuid(schema.default_charset);
+        }
         record.name_is_delimited = schema.name_is_delimited ? 1 : 0;
         record.default_collation_id = schema.default_collation_id;
         record.acl_oid = schema.acl_oid;
@@ -6795,6 +7679,12 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                                   "Forced table ID cannot be zero");
                 return Status::INVALID_ARGUMENT;
             }
+            if (!isUuidV7Local(options->forced_table_id))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "Forced table ID must be UUID v7");
+                return Status::INVALID_ARGUMENT;
+            }
             if (table_cache_.find(options->forced_table_id) != table_cache_.end())
             {
                 SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
@@ -6827,7 +7717,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         table.temp_schema_id = options ? options->temp_schema_id : ID{};
         table.has_toast = false;            // Will be set to true if needed
         table.tablespace_id = tablespace_id; // Phase 2 Task 2.3: Use specified tablespace
-        table.storage_params_oid = 0;       // No custom storage parameters
+        table.tablespace_uuid = resolveTablespaceUuid(tablespace_id);
+        table.storage_params_oid = ID{};       // No custom storage parameters
         table.created_time = std::chrono::duration_cast<std::chrono::microseconds>(
                                  std::chrono::system_clock::now().time_since_epoch())
                                  .count();
@@ -6850,6 +7741,22 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             col.column_id = generateUuidV7();
             col.ordinal = ordinal++;
             col.created_time = table.created_time;
+        }
+
+        status = applySystemDomainDefaults(schema_id, table_name, columns_with_ids, ctx);
+        if (status != Status::OK)
+        {
+            deleteTableRecord(table.table_id, ctx);
+            pm->freePageGlobal(root_gpid, ctx);
+            return status;
+        }
+
+        status = validateColumnDomains(columns_with_ids, ctx);
+        if (status != Status::OK)
+        {
+            deleteTableRecord(table.table_id, ctx);
+            pm->freePageGlobal(root_gpid, ctx);
+            return status;
         }
 
         // Write column records
@@ -7286,6 +8193,324 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         return Status::INVALID_ARGUMENT;
     }
 
+    auto CatalogManager::validateColumnDomains(const std::vector<ColumnInfo>& columns,
+                                               ErrorContext* ctx) -> Status
+    {
+        DomainManager* domain_mgr = db_ ? db_->domain_manager() : nullptr;
+        for (const auto& col : columns)
+        {
+            if (col.domain_id == ID{})
+            {
+                continue;
+            }
+            if (!domain_mgr)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "Domain manager not available for domain validation");
+                return Status::INVALID_ARGUMENT;
+            }
+            DomainInfo domain;
+            Status status = domain_mgr->getDomain(col.domain_id, domain, ctx);
+            if (status != Status::OK)
+            {
+                std::string msg = "Domain not found for column '" + col.column_name + "'";
+                SET_ERROR_CONTEXT(ctx, status, msg.c_str());
+                return status;
+            }
+        }
+
+        return Status::OK;
+    }
+
+    auto CatalogManager::isSystemSchemaId(const ID& schema_id) const -> bool
+    {
+        ID current = schema_id;
+        while (!isZeroUuidLocal(current))
+        {
+            auto it = schema_cache_.find(current);
+            if (it == schema_cache_.end())
+            {
+                break;
+            }
+            if (it->second.schema_type == SchemaType::SYSTEM ||
+                it->second.schema_type == SchemaType::SYSTEM)
+            {
+                return true;
+            }
+            if (IdentifierUtils::namesMatch("sys", false,
+                                            it->second.schema_name, it->second.name_is_delimited))
+            {
+                return true;
+            }
+            if (isZeroUuidLocal(it->second.parent_schema_id))
+            {
+                break;
+            }
+            current = it->second.parent_schema_id;
+        }
+        return false;
+    }
+
+    auto CatalogManager::applySystemDomainDefaults(const ID& schema_id,
+                                                   const std::string& table_name,
+                                                   std::vector<ColumnInfo>& columns,
+                                                   ErrorContext* ctx) -> Status
+    {
+        if (!isSystemSchemaId(schema_id))
+        {
+            return Status::OK;
+        }
+
+        DomainManager* domain_mgr = db_ ? db_->domain_manager() : nullptr;
+        if (!domain_mgr)
+        {
+            std::string table_key = toLowerCopy(table_name);
+            if (table_key.rfind("sb_toast_", 0) == 0)
+            {
+                // Policy TOAST bootstrap runs before domain manager initialization.
+                return Status::OK;
+            }
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Domain manager not available for system domain binding");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        ID sys_schema_id{};
+        for (const auto& [id, info] : schema_cache_)
+        {
+            if (IdentifierUtils::namesMatch("sys", false,
+                                            info.schema_name, info.name_is_delimited))
+            {
+                sys_schema_id = info.schema_id;
+                break;
+            }
+        }
+        if (isZeroUuidLocal(sys_schema_id))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "System schema not found");
+            return Status::NOT_FOUND;
+        }
+
+        std::string table_key = toLowerCopy(table_name);
+        auto alias_it = kSystemTableAliasMap.find(table_key);
+        if (alias_it != kSystemTableAliasMap.end())
+        {
+            table_key = alias_it->second;
+        }
+
+        for (auto& col : columns)
+        {
+            if (!isZeroUuidLocal(col.domain_id))
+            {
+                continue;
+            }
+
+            const std::string key = toLowerCopy(col.column_name);
+            const char* domain_name = nullptr;
+
+            if (!table_key.empty())
+            {
+                std::string table_column_key = table_key;
+                table_column_key.push_back('.');
+                table_column_key += key;
+                auto table_it = kSystemDomainByTableColumn.find(table_column_key);
+                if (table_it != kSystemDomainByTableColumn.end())
+                {
+                    domain_name = table_it->second;
+                }
+            }
+
+            if (!domain_name)
+            {
+                auto it = kSystemDomainByColumn.find(key);
+                if (it != kSystemDomainByColumn.end())
+                {
+                    domain_name = it->second;
+                }
+            }
+            if (!domain_name)
+            {
+                if (kSystemDomainAmbiguousColumns.find(key) != kSystemDomainAmbiguousColumns.end())
+                {
+                    std::string msg = "Ambiguous system domain mapping for column '" + col.column_name + "'";
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, msg.c_str());
+                    return Status::INVALID_ARGUMENT;
+                }
+            }
+            if (!domain_name)
+            {
+                domain_name = defaultDomainForType(static_cast<DataType>(col.data_type));
+            }
+            if (!domain_name)
+            {
+                std::string msg = "No default system domain for column '" + col.column_name + "'";
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, msg.c_str());
+                return Status::INVALID_ARGUMENT;
+            }
+
+            DomainInfo domain;
+            Status status = domain_mgr->getDomain(sys_schema_id, domain_name, domain, ctx);
+            if (status != Status::OK)
+            {
+                std::string msg = "System domain not found: " + std::string(domain_name);
+                SET_ERROR_CONTEXT(ctx, status, msg.c_str());
+                return status;
+            }
+            col.domain_id = domain.domain_id;
+        }
+
+        return Status::OK;
+    }
+
+    auto CatalogManager::updateColumnDomainBindings(const ID& table_id,
+                                                    const std::vector<ColumnInfo>& columns,
+                                                    ErrorContext* ctx) -> Status
+    {
+        if (columns.empty())
+        {
+            return Status::OK;
+        }
+
+        BufferPool* bp = db_ ? db_->buffer_pool() : nullptr;
+        if (!bp)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "BufferPool not available");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        std::unordered_map<ID, ID, IDHash> domain_by_column;
+        domain_by_column.reserve(columns.size());
+        for (const auto& col : columns)
+        {
+            if (!isZeroUuidLocal(col.domain_id))
+            {
+                domain_by_column.emplace(col.column_id, col.domain_id);
+            }
+        }
+
+        if (domain_by_column.empty())
+        {
+            return Status::OK;
+        }
+
+        uint32_t current_page_id = columns_table_page_;
+        while (current_page_id != 0)
+        {
+            void* page_data = nullptr;
+            Status status = bp->pinPage(current_page_id, &page_data, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            auto* heap = reinterpret_cast<CatalogHeapPage*>(page_data);
+            uint32_t offset = sizeof(CatalogHeapPage);
+            bool page_dirty = false;
+
+            for (uint32_t i = 0; i < heap->record_count; ++i)
+            {
+                auto* record = reinterpret_cast<ColumnRecord*>(
+                    reinterpret_cast<uint8_t*>(page_data) + offset);
+
+                if (record->table_id == table_id && record->is_valid == 1)
+                {
+                    auto it = domain_by_column.find(record->column_id);
+                    if (it != domain_by_column.end() && record->domain_id != it->second)
+                    {
+                        record->domain_id = it->second;
+                        page_dirty = true;
+                    }
+                }
+
+                offset += sizeof(ColumnRecord);
+            }
+
+            uint32_t next_page = heap->next_page;
+            Status unpin_status = bp->unpinPage(current_page_id, page_dirty, ctx);
+            if (unpin_status != Status::OK)
+            {
+                return unpin_status;
+            }
+            current_page_id = next_page;
+        }
+
+        return Status::OK;
+    }
+
+    auto CatalogManager::enforceSystemDomainBindings(ErrorContext* ctx) -> Status
+    {
+        if (table_cache_.empty() || column_cache_.empty())
+        {
+            return Status::OK;
+        }
+
+        std::unordered_set<ID, IDHash> system_schema_ids;
+        system_schema_ids.reserve(schema_cache_.size());
+        for (const auto& [schema_id, schema] : schema_cache_)
+        {
+            if (schema.schema_type == SchemaType::SYSTEM ||
+                schema.schema_type == SchemaType::SYSTEM)
+            {
+                system_schema_ids.insert(schema_id);
+            }
+        }
+
+        if (system_schema_ids.empty())
+        {
+            return Status::OK;
+        }
+
+        for (const auto& [table_id, table_info] : table_cache_)
+        {
+            if (system_schema_ids.find(table_info.schema_id) == system_schema_ids.end())
+            {
+                continue;
+            }
+
+            auto col_it = column_cache_.find(table_id);
+            if (col_it == column_cache_.end())
+            {
+                continue;
+            }
+
+            std::vector<ColumnInfo> updated = col_it->second;
+            Status status = applySystemDomainDefaults(table_info.schema_id, table_info.table_name, updated, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            status = validateColumnDomains(updated, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            bool changed = false;
+            for (size_t i = 0; i < updated.size(); ++i)
+            {
+                if (isZeroUuidLocal(col_it->second[i].domain_id) ||
+                    updated[i].domain_id != col_it->second[i].domain_id)
+                {
+                    changed = true;
+                    break;
+                }
+            }
+
+            if (changed)
+            {
+                status = updateColumnDomainBindings(table_id, updated, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                col_it->second = std::move(updated);
+            }
+        }
+
+        return Status::OK;
+    }
+
     // WP-2 CAT-M3: Extract column references from expression bytecode
     // Scans bytecode for COLUMN_REF opcodes (0x41) and extracts column names
     void CatalogManager::extractColumnRefsFromBytecode(const std::vector<uint8_t>& bytecode,
@@ -7535,13 +8760,14 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         }
         index.root_gpid = root_gpid;
         index.tablespace_id = tablespace_id; // Phase 2 Task 2.3: Use specified tablespace
+        index.tablespace_uuid = resolveTablespaceUuid(tablespace_id);
         index.index_type = index_type;
         index.is_unique = is_unique;
         index.column_ids = column_ids;
         index.include_column_ids = include_column_ids;
-        index.index_params_oid = 0; // Will be set later when index params are added
-        index.expression_oid = 0;
-        index.predicate_oid = 0;
+        index.index_params_oid = ID{}; // Will be set later when index params are added
+        index.expression_oid = ID{};
+        index.predicate_oid = ID{};
         index.created_time = std::chrono::duration_cast<std::chrono::microseconds>(
                                  std::chrono::system_clock::now().time_since_epoch())
                                  .count();
@@ -7783,11 +9009,12 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         }
         index.root_gpid = root_gpid;
         index.tablespace_id = resolved_tablespace_id;
+        index.tablespace_uuid = resolveTablespaceUuid(resolved_tablespace_id);
         index.index_type = index_type;
         index.is_unique = is_unique;
         index.column_ids = column_ids;
         index.include_column_ids = include_column_ids;
-        index.index_params_oid = 0;
+        index.index_params_oid = ID{};
         index.created_time = std::chrono::duration_cast<std::chrono::microseconds>(
                                  std::chrono::system_clock::now().time_since_epoch())
                                  .count();
@@ -7807,8 +9034,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         index.predicate_data = predicate_data;
         index.expression_strings = expression_strings;
         index.predicate_string = predicate_string;
-        index.expression_oid = 0;
-        index.predicate_oid = 0;
+        index.expression_oid = ID{};
+        index.predicate_oid = ID{};
         uint64_t xmin = ConnectionContext::getCurrentTransactionId();
         if (xmin == 0)
         {
@@ -8016,7 +9243,12 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             root->header.version = 1;
             root->header.page_size = db_->page_size();
             root->header.page_id = CATALOG_ROOT_PAGE;
-            memcpy(root->header.database_uuid, db_->uuid().bytes.data(), 16);
+            root->header.checksum = 0;
+            root->header.flags = 0;
+            root->header.lsn = 0;
+            pageSetLower(root->header, sizeof(CatalogRootPage));
+            pageSetUpper(root->header, db_->page_size());
+            pageSetSpecial(root->header, db_->page_size());
         }
 
         // Always ensure page type is correct
@@ -8030,6 +9262,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         root->tables_page = tables_table_page_;
         root->columns_page = columns_table_page_;
         root->indexes_page = indexes_table_page_;
+        root->index_versions_page = index_versions_table_page_;
         root->constraints_page = constraints_table_page_;
         root->sequences_page = sequences_table_page_;
         root->views_page = views_table_page_;
@@ -8136,6 +9369,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         tables_table_page_ = root->tables_page;
         columns_table_page_ = root->columns_page;
         indexes_table_page_ = root->indexes_page;
+        index_versions_table_page_ = root->index_versions_page;
         constraints_table_page_ = root->constraints_page;
         sequences_table_page_ = root->sequences_page;
         views_table_page_ = root->views_page;
@@ -8221,6 +9455,13 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             return status;
         }
 
+        status = bp->lockPage(page_id, ctx);
+        if (status != Status::OK)
+        {
+            bp->unpinPage(page_id, false, ctx);
+            return status;
+        }
+
         // Backfill helper for older catalogs missing newer table pages.
         memset(page_buffer, 0, db_->page_size());
         auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
@@ -8231,17 +9472,22 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         heap->header.page_size = db_->page_size();
         heap->header.page_id = page_id;
         heap->header.flags = 0;
-        memcpy(heap->header.database_uuid, db_->uuid().bytes.data(), 16);
         heap->header.generation = 1;
         heap->record_count = 0;
         heap->free_offset = sizeof(CatalogHeapPage);
         heap->next_page = 0;
         heap->reserved = 0;
-        heap->header.free_space = db_->page_size() - sizeof(CatalogHeapPage);
-        heap->header.item_count = 0;
-        heap->header.free_offset = sizeof(CatalogHeapPage);
+        pageSetLower(heap->header, sizeof(CatalogHeapPage));
+        pageSetUpper(heap->header, db_->page_size());
+        pageSetSpecial(heap->header, db_->page_size());
 
-        return bp->unpinPage(page_id, true, ctx);
+        Status unlock_status = bp->unlockPage(page_id, ctx);
+        Status unpin_status = bp->unpinPage(page_id, true, ctx);
+        if (unlock_status != Status::OK)
+        {
+            return unlock_status;
+        }
+        return unpin_status;
     }
 
     // Helper to write a record to a catalog heap page (with overflow page support)
@@ -8277,6 +9523,13 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                 return status;
             }
 
+            status = bp->lockPage(current_page_id, ctx);
+            if (status != Status::OK)
+            {
+                bp->unpinPage(current_page_id, false, ctx);
+                return status;
+            }
+
             auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
 
             // Check if we have space on this page
@@ -8288,16 +9541,21 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                 memcpy(dest_record, &record, sizeof(RecordType));
 
                 heap->record_count++;
-                heap->header.item_count++;  // CRITICAL: HeapPage uses header.item_count!
                 heap->free_offset += sizeof(RecordType);
-                heap->header.free_space -= sizeof(RecordType);
+                pageSetLower(heap->header, heap->free_offset);
                 heap->header.generation++;
 
                 {
                     std::lock_guard<std::mutex> lock(heap_page_tail_mutex_);
                     heap_page_tail_cache_[page_id] = current_page_id;
                 }
-                return bp->unpinPage(current_page_id, true, ctx);
+                Status unlock_status = bp->unlockPage(current_page_id, ctx);
+                Status unpin_status = bp->unpinPage(current_page_id, true, ctx);
+                if (unlock_status != Status::OK)
+                {
+                    return unlock_status;
+                }
+                return unpin_status;
             }
 
             // Page is full - check if there's an overflow page
@@ -8305,6 +9563,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             {
                 // Follow the chain to the next page
                 uint32_t next_page_id = heap->next_page;
+                bp->unlockPage(current_page_id, ctx);
                 bp->unpinPage(current_page_id, false, ctx);
                 current_page_id = next_page_id;
                 continue;
@@ -8314,6 +9573,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             // to avoid holding too many pins during allocation
             uint32_t saved_page_id = current_page_id;
             LOG_DEBUG(STORAGE, "writeRecordToHeapPage: Page %u is full, allocating overflow page", saved_page_id);
+            bp->unlockPage(current_page_id, ctx);
             bp->unpinPage(current_page_id, false, ctx);
 
             // Allocate new overflow page using buffer pool
@@ -8325,6 +9585,13 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                       static_cast<int>(status), new_page_id);
             if (status != Status::OK)
             {
+                return status;
+            }
+
+            status = bp->lockPage(new_page_id, ctx);
+            if (status != Status::OK)
+            {
+                bp->unpinPage(new_page_id, false, ctx);
                 return status;
             }
 
@@ -8340,30 +9607,33 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             new_heap->header.page_size = db_->page_size();
             new_heap->header.page_id = new_page_id;
             new_heap->header.flags = 0;
-            memcpy(new_heap->header.database_uuid, db_->uuid().bytes.data(), 16);
             new_heap->header.generation = 1;
             new_heap->record_count = 0;
             new_heap->free_offset = sizeof(CatalogHeapPage);
             new_heap->next_page = 0;
             new_heap->reserved = 0;
-            new_heap->header.free_space = db_->page_size() - sizeof(CatalogHeapPage);
-            new_heap->header.item_count = 0;
-            new_heap->header.free_offset = sizeof(CatalogHeapPage);
+            pageSetLower(new_heap->header, sizeof(CatalogHeapPage));
+            pageSetUpper(new_heap->header, db_->page_size());
+            pageSetSpecial(new_heap->header, db_->page_size());
 
             // Write the record directly to the new page
             auto *dest_record = reinterpret_cast<RecordType *>(
                 reinterpret_cast<uint8_t *>(new_page_buffer) + new_heap->free_offset);
             memcpy(dest_record, &record, sizeof(RecordType));
             new_heap->record_count++;
-            new_heap->header.item_count++;  // CRITICAL: HeapPage uses header.item_count!
             new_heap->free_offset += sizeof(RecordType);
-            new_heap->header.free_space -= sizeof(RecordType);
+            pageSetLower(new_heap->header, new_heap->free_offset);
             new_heap->header.generation++;
 
             LOG_DEBUG(STORAGE, "writeRecordToHeapPage: Unpinning new page %u", new_page_id);
 
             // Unpin the new page (mark as dirty)
+            Status unlock_new_status = bp->unlockPage(new_page_id, ctx);
             status = bp->unpinPage(new_page_id, true, ctx);
+            if (unlock_new_status != Status::OK)
+            {
+                return unlock_new_status;
+            }
             if (status != Status::OK)
             {
                 LOG_DEBUG(STORAGE, "writeRecordToHeapPage: Failed to unpin new page: status=%d", static_cast<int>(status));
@@ -8379,6 +9649,13 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                 LOG_DEBUG(STORAGE, "writeRecordToHeapPage: Failed to re-pin: status=%d", static_cast<int>(status));
                 return status;
             }
+
+            status = bp->lockPage(saved_page_id, ctx);
+            if (status != Status::OK)
+            {
+                bp->unpinPage(saved_page_id, false, ctx);
+                return status;
+            }
             heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
 
             LOG_DEBUG(STORAGE, "writeRecordToHeapPage: Linking page %u -> %u", saved_page_id, new_page_id);
@@ -8386,7 +9663,12 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             // Link the current page to the new overflow page
             heap->next_page = new_page_id;
             heap->header.generation++;
+            Status unlock_saved_status = bp->unlockPage(saved_page_id, ctx);
             status = bp->unpinPage(saved_page_id, true, ctx);
+            if (unlock_saved_status != Status::OK)
+            {
+                return unlock_saved_status;
+            }
             {
                 std::lock_guard<std::mutex> lock(heap_page_tail_mutex_);
                 heap_page_tail_cache_[page_id] = new_page_id;
@@ -8477,9 +9759,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
             // Update heap metadata
             heap->record_count++;
-            heap->header.item_count++;  // CRITICAL: HeapPage uses header.item_count!
             heap->free_offset += sizeof(RecordType);
-            heap->header.free_space -= sizeof(RecordType);
+            pageSetLower(heap->header, heap->free_offset);
             heap->header.generation++;
 
             bp->unlockPage(page_id, ctx);
@@ -8625,7 +9906,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         uint32_t old_free_offset = heap->free_offset;
         heap->record_count = new_record_count;
         heap->free_offset = write_offset;
-        heap->header.free_space = db_->page_size() - write_offset;
+        pageSetLower(heap->header, write_offset);
         heap->header.generation++;
 
         // Log compaction results
@@ -8713,9 +9994,17 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
         // UUID-based owner reference (not name)
         record.owner_id = schema.owner_id;
-        record.default_tablespace_id = schema.default_tablespace_id;
+        record.default_tablespace_id = schema.default_tablespace_uuid;
+        if (isZeroUuidLocal(record.default_tablespace_id) && schema.default_tablespace_id != 0)
+        {
+            record.default_tablespace_id = resolveTablespaceUuid(schema.default_tablespace_id);
+        }
         record.permissions = schema.permissions;
-        record.default_charset = schema.default_charset;
+        record.default_charset_id = schema.default_charset_uuid;
+        if (isZeroUuidLocal(record.default_charset_id) && schema.default_charset != 0)
+        {
+            record.default_charset_id = resolveCharsetUuid(schema.default_charset);
+        }
         record.name_is_delimited = schema.name_is_delimited ? 1 : 0;
         record.default_collation_id = schema.default_collation_id;
         record.acl_oid = schema.acl_oid;
@@ -8729,7 +10018,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
     auto CatalogManager::readSchemaRecords(ErrorContext *ctx) -> Status
     {
-        auto converter = [](const SchemaRecord &record, SchemaInfo &info)
+        auto converter = [this](const SchemaRecord &record, SchemaInfo &info)
         {
             // Phase 4: Safety check - ensure null-termination at max position
             // This is defensive programming in case of corrupted catalog data
@@ -8740,9 +10029,11 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             info.schema_name = record.schema_name;
             info.name_is_delimited = record.name_is_delimited != 0;
             info.owner_id = record.owner_id;  // UUID-based owner reference
-            info.default_tablespace_id = record.default_tablespace_id;
+            info.default_tablespace_uuid = record.default_tablespace_id;
+            info.default_tablespace_id = resolveTablespaceId(record.default_tablespace_id);
             info.permissions = record.permissions;
-            info.default_charset = record.default_charset;
+            info.default_charset_uuid = record.default_charset_id;
+            info.default_charset = resolveCharsetId(record.default_charset_id);
             info.default_collation_id = record.default_collation_id;
             info.acl_oid = record.acl_oid;
             // search_path_oid removed - session-only concept
@@ -8787,8 +10078,16 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         record.has_toast = table.has_toast ? 1 : 0;
         record.rls_enabled = table.rls_enabled ? 1 : 0;  // Security Phase 3.4
         record.rls_forced = table.rls_forced ? 1 : 0;    // Security Phase 3.4
-        record.tablespace_id = table.tablespace_id;
-        record.default_charset = table.default_charset;
+        record.tablespace_id = table.tablespace_uuid;
+        if (isZeroUuidLocal(record.tablespace_id) && table.tablespace_id != 0)
+        {
+            record.tablespace_id = resolveTablespaceUuid(table.tablespace_id);
+        }
+        record.default_charset_id = table.default_charset_uuid;
+        if (isZeroUuidLocal(record.default_charset_id) && table.default_charset != 0)
+        {
+            record.default_charset_id = resolveCharsetUuid(table.default_charset);
+        }
         record.name_is_delimited = table.name_is_delimited ? 1 : 0;
         record.default_collation_id = table.default_collation_id;
         record.storage_params_oid = table.storage_params_oid;
@@ -8960,7 +10259,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         HeapPage heap_page(static_cast<uint8_t*>(page_data), db_->page_size());
         auto* mutable_page_data = static_cast<uint8_t*>(page_data);
         bool found = false;
-        uint32_t new_oid = 0;
+        ID new_oid{};
         uint64_t now = std::chrono::system_clock::now().time_since_epoch().count();
 
         for (uint16_t i = 0; i < heap_page.getItemCount(); ++i)
@@ -9029,7 +10328,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         HeapPage heap_page(static_cast<uint8_t*>(page_data), db_->page_size());
         auto *mutable_page_data = static_cast<uint8_t*>(page_data);
         bool found = false;
-        uint32_t new_oid = 0;
+        ID new_oid{};
 
         for (uint16_t i = 0; i < heap_page.getItemCount(); ++i)
         {
@@ -9080,7 +10379,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
     auto CatalogManager::readTableRecords(ErrorContext *ctx) -> Status
     {
-        auto converter = [](const TableRecord &record, TableInfo &info)
+        auto converter = [this](const TableRecord &record, TableInfo &info)
         {
             // Phase 4: Safety check - ensure null-termination at max position
             const_cast<char&>(record.table_name[511]) = '\0';
@@ -9103,8 +10402,10 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             info.has_toast = record.has_toast != 0;
             info.rls_enabled = record.rls_enabled != 0;  // Security Phase 3.4
             info.rls_forced = record.rls_forced != 0;    // Security Phase 3.4
-            info.tablespace_id = record.tablespace_id;
-            info.default_charset = record.default_charset;
+            info.tablespace_uuid = record.tablespace_id;
+            info.tablespace_id = resolveTablespaceId(record.tablespace_id);
+            info.default_charset_uuid = record.default_charset_id;
+            info.default_charset = resolveCharsetId(record.default_charset_id);
             info.name_is_delimited = record.name_is_delimited != 0;
             info.default_collation_id = record.default_collation_id;
             info.storage_params_oid = record.storage_params_oid;
@@ -9209,16 +10510,24 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             record.storage_type = col.storage_type;
             record.with_timezone = col.with_timezone ? 1 : 0;
             record.name_is_delimited = col.name_is_delimited ? 1 : 0;
-            record.charset = col.charset;
-            record.timezone_hint = col.timezone_hint;
+            record.charset_id = col.charset_uuid;
+            if (isZeroUuidLocal(record.charset_id) && col.charset != 0)
+            {
+                record.charset_id = resolveCharsetUuid(col.charset);
+            }
+            record.timezone_id = col.timezone_uuid;
+            if (isZeroUuidLocal(record.timezone_id) && col.timezone_hint != 0)
+            {
+                record.timezone_id = resolveTimezoneUuid(col.timezone_hint);
+            }
             record.collation_id = col.collation_id;
             strncpy(record.default_value, col.default_value.c_str(), 127);
             record.default_value[127] = '\0';
-            record.default_value_oid = 0;
+            record.default_value_oid = ID{};
             if (!col.default_expr.empty())
             {
                 uint64_t xmin = 0;
-                uint32_t default_oid = 0;
+                ID default_oid{};
                 Status st = storeStringInToast(col.default_expr, xmin, default_oid, ctx);
                 if (st != Status::OK)
                 {
@@ -9273,13 +10582,15 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             info.storage_type = record.storage_type;
             info.with_timezone = record.with_timezone != 0;
             info.name_is_delimited = record.name_is_delimited != 0;
-            info.charset = record.charset;
-            info.timezone_hint = record.timezone_hint;
+            info.charset_uuid = record.charset_id;
+            info.charset = resolveCharsetId(record.charset_id);
+            info.timezone_uuid = record.timezone_id;
+            info.timezone_hint = resolveTimezoneId(record.timezone_id);
             info.collation_id = record.collation_id;
             info.default_value = record.default_value;
             info.default_value_oid = record.default_value_oid;
             info.default_expr.clear();
-            if (record.default_value_oid != 0)
+            if (!isZeroUuidLocal(record.default_value_oid))
             {
                 uint64_t xmin = 0;
                 std::string expr_blob;
@@ -9344,6 +10655,11 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         record.predicate_oid = index.predicate_oid;
         record.created_time = index.created_time;
         record.is_valid = 1;
+        record.tablespace_id = index.tablespace_uuid;
+        if (isZeroUuidLocal(record.tablespace_id) && index.tablespace_id != 0)
+        {
+            record.tablespace_id = resolveTablespaceUuid(index.tablespace_id);
+        }
 
         // Plan 01 Task E: Shadow index rebuild + versioning fields
         record.logical_index_id = index.logical_index_id;
@@ -9385,6 +10701,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             info.expression_oid = record.expression_oid;
             info.predicate_oid = record.predicate_oid;
             info.created_time = record.created_time;
+            info.tablespace_uuid = record.tablespace_id;
+            info.tablespace_id = resolveTablespaceId(record.tablespace_id);
 
             // Plan 01 Task E: Shadow index rebuild + versioning fields
             info.logical_index_id = record.logical_index_id;
@@ -9398,7 +10716,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             info.expression_data.clear();
             info.predicate_data.clear();
 
-            if (record.expression_oid != 0)
+            if (!isZeroUuidLocal(record.expression_oid))
             {
                 std::string blob;
                 if (loadStringFromToast(record.expression_oid, xmin, blob, ctx) == Status::OK)
@@ -9407,7 +10725,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                 }
             }
 
-            if (record.predicate_oid != 0)
+            if (!isZeroUuidLocal(record.predicate_oid))
             {
                 std::string blob;
                 if (loadStringFromToast(record.predicate_oid, xmin, blob, ctx) == Status::OK)
@@ -9431,7 +10749,23 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         TimezoneRecord record{};
         memset(&record, 0, sizeof(TimezoneRecord));
 
-        record.timezone_id = tz_info.timezone_id;
+        record.timezone_id = tz_info.timezone_uuid;
+        if (isZeroUuidLocal(record.timezone_id))
+        {
+            if (tz_info.timezone_id != 0)
+            {
+                record.timezone_id = resolveTimezoneUuid(tz_info.timezone_id);
+            }
+            else
+            {
+                record.timezone_id = generateUuidV7();
+            }
+        }
+        if (tz_info.timezone_id != 0)
+        {
+            timezone_id_to_uuid_[tz_info.timezone_id] = record.timezone_id;
+            timezone_uuid_to_id_[record.timezone_id] = tz_info.timezone_id;
+        }
         strncpy(record.name, tz_info.name.c_str(), 63);
         record.name[63] = '\0';
         strncpy(record.abbreviation, tz_info.abbreviation.c_str(), 15);
@@ -9459,9 +10793,30 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     {
         std::lock_guard<CatalogMutex> lock(mutex_);
 
+        ID target_uuid{};
+        auto map_it = timezone_id_to_uuid_.find(timezone_id);
+        if (map_it != timezone_id_to_uuid_.end())
+        {
+            target_uuid = map_it->second;
+        }
+        else if (!isZeroUuidLocal(tz_info.timezone_uuid))
+        {
+            target_uuid = tz_info.timezone_uuid;
+        }
+        if (isZeroUuidLocal(target_uuid))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Timezone not found for update");
+            return Status::NOT_FOUND;
+        }
+        if (timezone_id != 0)
+        {
+            timezone_id_to_uuid_[timezone_id] = target_uuid;
+            timezone_uuid_to_id_[target_uuid] = timezone_id;
+        }
+
         // Step 1: Find existing timezone record
-        auto predicate = [timezone_id](const TimezoneRecord &rec)
-        { return rec.timezone_id == timezone_id && rec.is_valid; };
+        auto predicate = [&target_uuid](const TimezoneRecord &rec)
+        { return rec.timezone_id == target_uuid && rec.is_valid; };
 
         auto result = findRecordInHeapPage<TimezoneRecord>(timezones_table_page_, predicate, ctx);
         if (result.status != Status::OK)
@@ -9512,8 +10867,19 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     {
         std::lock_guard<CatalogMutex> lock(mutex_);
 
-        auto predicate = [timezone_id](const TimezoneRecord &rec)
-        { return rec.timezone_id == timezone_id && rec.is_valid; };
+        ID target_uuid{};
+        auto map_it = timezone_id_to_uuid_.find(timezone_id);
+        if (map_it != timezone_id_to_uuid_.end())
+        {
+            target_uuid = map_it->second;
+        }
+        if (isZeroUuidLocal(target_uuid))
+        {
+            return Status::NOT_FOUND;
+        }
+
+        auto predicate = [&target_uuid](const TimezoneRecord &rec)
+        { return rec.timezone_id == target_uuid && rec.is_valid; };
         auto result = findRecordInHeapPage<TimezoneRecord>(timezones_table_page_, predicate, ctx);
 
         if (result.status != Status::OK)
@@ -9523,7 +10889,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
         // Convert to TimezoneInfo
         const auto &rec = result.record;
-        info.timezone_id = rec.timezone_id;
+        info.timezone_uuid = rec.timezone_id;
+        info.timezone_id = resolveTimezoneId(rec.timezone_id);
         info.name = rec.name;
         info.abbreviation = rec.abbreviation;
         info.std_offset_minutes = rec.std_offset_minutes;
@@ -9559,7 +10926,22 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
         // Convert to TimezoneInfo
         const auto &rec = result.record;
-        info.timezone_id = rec.timezone_id;
+        info.timezone_uuid = rec.timezone_id;
+        info.timezone_id = resolveTimezoneId(rec.timezone_id);
+        if (info.timezone_id == 0)
+        {
+            uint16_t resolved_id = 0;
+            if (resolveBuiltinTimezoneIdLocal(rec.name, rec.abbreviation, resolved_id))
+            {
+                info.timezone_id = resolved_id;
+            }
+            else
+            {
+                info.timezone_id = next_timezone_id_++;
+            }
+            timezone_id_to_uuid_[info.timezone_id] = info.timezone_uuid;
+            timezone_uuid_to_id_[info.timezone_uuid] = info.timezone_id;
+        }
         info.name = rec.name;
         info.abbreviation = rec.abbreviation;
         info.std_offset_minutes = rec.std_offset_minutes;
@@ -9586,12 +10968,29 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
         auto filter = [](const TimezoneRecord &rec)
         {
-            return rec.is_valid == 1 && rec.timezone_id != 0 && rec.timezone_id != 65535;
+            return rec.is_valid == 1 &&
+                   rec.timezone_id != kTimezoneVersionUuid &&
+                   rec.timezone_id != kI18nVersionUuid;
         };
 
-        auto converter = [](const TimezoneRecord &rec, TimezoneInfo &info)
+        auto converter = [this](const TimezoneRecord &rec, TimezoneInfo &info)
         {
-            info.timezone_id = rec.timezone_id;
+            info.timezone_uuid = rec.timezone_id;
+            info.timezone_id = resolveTimezoneId(rec.timezone_id);
+            if (info.timezone_id == 0)
+            {
+                uint16_t resolved_id = 0;
+                if (resolveBuiltinTimezoneIdLocal(rec.name, rec.abbreviation, resolved_id))
+                {
+                    info.timezone_id = resolved_id;
+                }
+                else
+                {
+                    info.timezone_id = next_timezone_id_++;
+                }
+                timezone_id_to_uuid_[info.timezone_id] = info.timezone_uuid;
+                timezone_uuid_to_id_[info.timezone_uuid] = info.timezone_id;
+            }
             info.name = rec.name;
             info.abbreviation = rec.abbreviation;
             info.std_offset_minutes = rec.std_offset_minutes;
@@ -9618,8 +11017,19 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     {
         std::lock_guard<CatalogMutex> lock(mutex_);
 
-        auto predicate = [timezone_id](const TimezoneRecord &rec)
-        { return rec.timezone_id == timezone_id && rec.is_valid; };
+        ID target_uuid{};
+        auto map_it = timezone_id_to_uuid_.find(timezone_id);
+        if (map_it != timezone_id_to_uuid_.end())
+        {
+            target_uuid = map_it->second;
+        }
+        if (isZeroUuidLocal(target_uuid))
+        {
+            return Status::NOT_FOUND;
+        }
+
+        auto predicate = [&target_uuid](const TimezoneRecord &rec)
+        { return rec.timezone_id == target_uuid && rec.is_valid; };
         auto result = findRecordInHeapPage<TimezoneRecord>(timezones_table_page_, predicate, ctx);
 
         if (result.status != Status::OK)
@@ -9631,8 +11041,14 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         TimezoneRecord record = result.record;
         record.is_valid = 0;
 
-        return updateRecordInHeapPage<TimezoneRecord>(timezones_table_page_, result.slot_index,
-                                                      record, ctx);
+        Status status = updateRecordInHeapPage<TimezoneRecord>(timezones_table_page_, result.slot_index,
+                                                               record, ctx);
+        if (status == Status::OK)
+        {
+            timezone_id_to_uuid_.erase(timezone_id);
+            timezone_uuid_to_id_.erase(target_uuid);
+        }
+        return status;
     }
 
     auto CatalogManager::setTimezoneVersion(const std::string& version, ErrorContext* ctx) -> Status
@@ -9640,7 +11056,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         std::lock_guard<CatalogMutex> lock(mutex_);
 
         auto predicate = [](const TimezoneRecord& rec)
-        { return rec.timezone_id == 0 && rec.is_valid; };
+        { return rec.timezone_id == kTimezoneVersionUuid && rec.is_valid; };
         auto result = findRecordInHeapPage<TimezoneRecord>(timezones_table_page_, predicate, ctx);
 
         TimezoneRecord record{};
@@ -9649,7 +11065,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             record = result.record;
         }
 
-        record.timezone_id = 0;
+        record.timezone_id = kTimezoneVersionUuid;
         std::string name = "TZDATA_VERSION";
         std::string version_trim = version;
         if (version_trim.size() >= sizeof(record.abbreviation))
@@ -9685,7 +11101,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         std::lock_guard<CatalogMutex> lock(mutex_);
 
         auto predicate = [](const TimezoneRecord& rec)
-        { return rec.timezone_id == 0 && rec.is_valid; };
+        { return rec.timezone_id == kTimezoneVersionUuid && rec.is_valid; };
         auto result = findRecordInHeapPage<TimezoneRecord>(timezones_table_page_, predicate, ctx);
         if (result.status != Status::OK)
         {
@@ -9699,9 +11115,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     {
         std::lock_guard<CatalogMutex> lock(mutex_);
 
-        constexpr uint16_t kI18nVersionId = 65535;
-        auto predicate = [kI18nVersionId](const TimezoneRecord& rec)
-        { return rec.timezone_id == kI18nVersionId && rec.is_valid; };
+        auto predicate = [](const TimezoneRecord& rec)
+        { return rec.timezone_id == kI18nVersionUuid && rec.is_valid; };
         auto result = findRecordInHeapPage<TimezoneRecord>(timezones_table_page_, predicate, ctx);
 
         TimezoneRecord record{};
@@ -9710,7 +11125,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             record = result.record;
         }
 
-        record.timezone_id = kI18nVersionId;
+        record.timezone_id = kI18nVersionUuid;
         std::string name = "I18N_RESOURCE_VERSION";
         std::string version_trim = version;
         if (version_trim.size() >= sizeof(record.abbreviation))
@@ -9745,9 +11160,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     {
         std::lock_guard<CatalogMutex> lock(mutex_);
 
-        constexpr uint16_t kI18nVersionId = 65535;
-        auto predicate = [kI18nVersionId](const TimezoneRecord& rec)
-        { return rec.timezone_id == kI18nVersionId && rec.is_valid; };
+        auto predicate = [](const TimezoneRecord& rec)
+        { return rec.timezone_id == kI18nVersionUuid && rec.is_valid; };
         auto result = findRecordInHeapPage<TimezoneRecord>(timezones_table_page_, predicate, ctx);
         if (result.status != Status::OK)
         {
@@ -10055,7 +11469,23 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         CharsetRecord rec;
         memset(&rec, 0, sizeof(rec));
 
-        rec.charset_id = cs_info.charset_id;
+        rec.charset_id = cs_info.charset_uuid;
+        if (isZeroUuidLocal(rec.charset_id))
+        {
+            if (cs_info.charset_id != 0)
+            {
+                rec.charset_id = resolveCharsetUuid(cs_info.charset_id);
+            }
+            else
+            {
+                rec.charset_id = generateUuidV7();
+            }
+        }
+        if (cs_info.charset_id != 0)
+        {
+            charset_id_to_uuid_[cs_info.charset_id] = rec.charset_id;
+            charset_uuid_to_id_[rec.charset_id] = cs_info.charset_id;
+        }
         strncpy(rec.name, cs_info.name.c_str(), sizeof(rec.name) - 1);
         strncpy(rec.description, cs_info.description.c_str(), sizeof(rec.description) - 1);
         rec.min_bytes = cs_info.min_bytes;
@@ -10066,8 +11496,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         rec.last_modified_time = rec.created_time;
         rec.is_valid = 1;
 
-        auto matcher = [&cs_info](const CharsetRecord &existing)
-        { return existing.is_valid && existing.charset_id == cs_info.charset_id; };
+        auto matcher = [&rec](const CharsetRecord &existing)
+        { return existing.is_valid && existing.charset_id == rec.charset_id; };
 
         return updateRecordInHeapPage(charsets_table_page_, matcher, rec, ctx);
     }
@@ -10077,9 +11507,30 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     {
         std::lock_guard<CatalogMutex> lock(mutex_);
 
+        ID target_uuid{};
+        auto map_it = charset_id_to_uuid_.find(charset_id);
+        if (map_it != charset_id_to_uuid_.end())
+        {
+            target_uuid = map_it->second;
+        }
+        else if (!isZeroUuidLocal(cs_info.charset_uuid))
+        {
+            target_uuid = cs_info.charset_uuid;
+        }
+        if (isZeroUuidLocal(target_uuid))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Charset not found for update");
+            return Status::NOT_FOUND;
+        }
+        if (charset_id != 0)
+        {
+            charset_id_to_uuid_[charset_id] = target_uuid;
+            charset_uuid_to_id_[target_uuid] = charset_id;
+        }
+
         // Step 1: Find existing charset record
-        auto predicate = [charset_id](const CharsetRecord &rec)
-        { return rec.charset_id == charset_id && rec.is_valid; };
+        auto predicate = [&target_uuid](const CharsetRecord &rec)
+        { return rec.charset_id == target_uuid && rec.is_valid; };
 
         auto result = findRecordInHeapPage<CharsetRecord>(charsets_table_page_, predicate, ctx);
         if (result.status != Status::OK)
@@ -10124,8 +11575,19 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         // P0-8: Implemented charset retrieval using findRecordInHeapPage
         std::lock_guard<CatalogMutex> lock(mutex_);
 
-        auto predicate = [charset_id](const CharsetRecord &rec)
-        { return rec.charset_id == charset_id && rec.is_valid; };
+        ID target_uuid{};
+        auto map_it = charset_id_to_uuid_.find(charset_id);
+        if (map_it != charset_id_to_uuid_.end())
+        {
+            target_uuid = map_it->second;
+        }
+        if (isZeroUuidLocal(target_uuid))
+        {
+            return Status::NOT_FOUND;
+        }
+
+        auto predicate = [&target_uuid](const CharsetRecord &rec)
+        { return rec.charset_id == target_uuid && rec.is_valid; };
         auto result = findRecordInHeapPage<CharsetRecord>(charsets_table_page_, predicate, ctx);
 
         if (result.status != Status::OK)
@@ -10135,7 +11597,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
         // Convert to CharsetInfo
         const auto &rec = result.record;
-        info.charset_id = rec.charset_id;
+        info.charset_uuid = rec.charset_id;
+        info.charset_id = resolveCharsetId(rec.charset_id);
         info.name = rec.name;
         info.description = rec.description;
         info.min_bytes = rec.min_bytes;
@@ -10153,6 +11616,48 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     {
         // P0-8: Implemented charset retrieval by name using findRecordInHeapPage
         std::lock_guard<CatalogMutex> lock(mutex_);
+
+        auto fill_info = [&](const CharsetRecord& rec) {
+            info.charset_uuid = rec.charset_id;
+            info.charset_id = resolveCharsetId(rec.charset_id);
+            if (info.charset_id == 0)
+            {
+                uint16_t resolved_id = 0;
+                if (resolveBuiltinCharsetIdLocal(rec.name, resolved_id))
+                {
+                    info.charset_id = resolved_id;
+                }
+                else
+                {
+                    info.charset_id = next_charset_id_++;
+                }
+                charset_id_to_uuid_[info.charset_id] = info.charset_uuid;
+                charset_uuid_to_id_[info.charset_uuid] = info.charset_id;
+            }
+            info.name = rec.name;
+            info.description = rec.description;
+            info.min_bytes = rec.min_bytes;
+            info.max_bytes = rec.max_bytes;
+            info.variable_width = rec.variable_width;
+            info.default_collation_id = rec.default_collation_id;
+            info.created_time = rec.created_time;
+            info.last_modified_time = rec.last_modified_time;
+        };
+
+        auto exact_predicate = [&name](const CharsetRecord &rec)
+        {
+            return rec.is_valid && name == rec.name;
+        };
+        auto exact_result = findRecordInHeapPage<CharsetRecord>(charsets_table_page_, exact_predicate, ctx);
+        if (exact_result.status == Status::OK)
+        {
+            fill_info(exact_result.record);
+            return Status::OK;
+        }
+        if (exact_result.status != Status::NOT_FOUND)
+        {
+            return exact_result.status;
+        }
 
         auto normalize = [](std::string_view value) -> std::string {
             std::string out;
@@ -10180,16 +11685,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         }
 
         // Convert to CharsetInfo
-        const auto &rec = result.record;
-        info.charset_id = rec.charset_id;
-        info.name = rec.name;
-        info.description = rec.description;
-        info.min_bytes = rec.min_bytes;
-        info.max_bytes = rec.max_bytes;
-        info.variable_width = rec.variable_width;
-        info.default_collation_id = rec.default_collation_id;
-        info.created_time = rec.created_time;
-        info.last_modified_time = rec.last_modified_time;
+        fill_info(result.record);
 
         return Status::OK;
     }
@@ -10200,9 +11696,24 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         // P0-8: Implemented charset listing using scanHeapPage
         std::lock_guard<CatalogMutex> lock(mutex_);
 
-        auto converter = [](const CharsetRecord &rec, CharsetInfo &info)
+        auto converter = [this](const CharsetRecord &rec, CharsetInfo &info)
         {
-            info.charset_id = rec.charset_id;
+            info.charset_uuid = rec.charset_id;
+            info.charset_id = resolveCharsetId(rec.charset_id);
+            if (info.charset_id == 0)
+            {
+                uint16_t resolved_id = 0;
+                if (resolveBuiltinCharsetIdLocal(rec.name, resolved_id))
+                {
+                    info.charset_id = resolved_id;
+                }
+                else
+                {
+                    info.charset_id = next_charset_id_++;
+                }
+                charset_id_to_uuid_[info.charset_id] = info.charset_uuid;
+                charset_uuid_to_id_[info.charset_uuid] = info.charset_id;
+            }
             info.name = rec.name;
             info.description = rec.description;
             info.min_bytes = rec.min_bytes;
@@ -10220,6 +11731,17 @@ std::string makeUDRModuleNameKey(const std::string& name) {
     auto CatalogManager::deleteCharset(uint16_t charset_id, ErrorContext *ctx) -> Status
     {
         std::lock_guard<CatalogMutex> lock(mutex_);
+
+        ID target_uuid{};
+        auto map_it = charset_id_to_uuid_.find(charset_id);
+        if (map_it != charset_id_to_uuid_.end())
+        {
+            target_uuid = map_it->second;
+        }
+        if (isZeroUuidLocal(target_uuid))
+        {
+            return Status::NOT_FOUND;
+        }
 
         // Step 1: Check for dependent collations
         std::vector<CollationCatalogInfo> dependent_collations;
@@ -10244,7 +11766,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             auto *record =
                 reinterpret_cast<CollationRecord *>(reinterpret_cast<uint8_t *>(page_buffer) + offset);
 
-            if (record->is_valid && record->charset_id == charset_id)
+            if (record->is_valid && record->charset_id == target_uuid)
             {
                 has_dependent_collations = true;
                 break;
@@ -10265,7 +11787,10 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         // Step 2: Check if charset is used by any schemas, tables, or columns
         for (const auto& [schema_id, schema_info] : schema_cache_)
         {
-            if (schema_info.default_charset == charset_id)
+            if ((!isZeroUuidLocal(schema_info.default_charset_uuid) &&
+                 schema_info.default_charset_uuid == target_uuid) ||
+                (isZeroUuidLocal(schema_info.default_charset_uuid) &&
+                 schema_info.default_charset == charset_id))
             {
                 SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
                                   "Cannot delete charset in use by schema");
@@ -10275,7 +11800,10 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
         for (const auto& [table_id, table_info] : table_cache_)
         {
-            if (table_info.default_charset == charset_id)
+            if ((!isZeroUuidLocal(table_info.default_charset_uuid) &&
+                 table_info.default_charset_uuid == target_uuid) ||
+                (isZeroUuidLocal(table_info.default_charset_uuid) &&
+                 table_info.default_charset == charset_id))
             {
                 SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
                                   "Cannot delete charset in use by table");
@@ -10287,7 +11815,9 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         {
             for (const auto& col : columns)
             {
-                if (col.charset == charset_id)
+                if ((!isZeroUuidLocal(col.charset_uuid) &&
+                     col.charset_uuid == target_uuid) ||
+                    (isZeroUuidLocal(col.charset_uuid) && col.charset == charset_id))
                 {
                     SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
                                       "Cannot delete charset in use by column");
@@ -10297,14 +11827,17 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         }
 
         // Step 3: Delete record from charsets table using deleteRecordFromHeapPage
-        auto matcher = [charset_id](const CharsetRecord &rec)
-        { return rec.charset_id == charset_id && rec.is_valid; };
+        auto matcher = [&target_uuid](const CharsetRecord &rec)
+        { return rec.charset_id == target_uuid && rec.is_valid; };
 
         status = deleteRecordFromHeapPage<CharsetRecord>(charsets_table_page_, matcher, ctx);
         if (status != Status::OK)
         {
             return status;
         }
+
+        charset_id_to_uuid_.erase(charset_id);
+        charset_uuid_to_id_.erase(target_uuid);
 
         DEBUG_LOG_DB("Deleted charset ID: " << charset_id);
         return Status::OK;
@@ -10323,7 +11856,16 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
         rec.collation_id = col_info.collation_id;
         strncpy(rec.name, col_info.name.c_str(), sizeof(rec.name) - 1);
-        rec.charset_id = col_info.charset_id;
+        rec.charset_id = col_info.charset_uuid;
+        if (col_info.charset_id != 0)
+        {
+            ID resolved = resolveCharsetUuid(col_info.charset_id);
+            if (isZeroUuidLocal(rec.charset_id) ||
+                resolveCharsetId(rec.charset_id) != col_info.charset_id)
+            {
+                rec.charset_id = resolved;
+            }
+        }
         rec.collation_type = col_info.collation_type;
         rec.strength = col_info.strength;
         rec.pad_space = col_info.pad_space;
@@ -10368,7 +11910,16 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         std::memcpy(updated.locale, col_info.locale,
                     std::min(std::strlen(col_info.locale), sizeof(updated.locale) - 1));
 
-        updated.charset_id = col_info.charset_id;
+        updated.charset_id = col_info.charset_uuid;
+        if (col_info.charset_id != 0)
+        {
+            ID resolved = resolveCharsetUuid(col_info.charset_id);
+            if (isZeroUuidLocal(updated.charset_id) ||
+                resolveCharsetId(updated.charset_id) != col_info.charset_id)
+            {
+                updated.charset_id = resolved;
+            }
+        }
         updated.collation_type = col_info.collation_type;
         updated.strength = col_info.strength;
         updated.pad_space = col_info.pad_space;
@@ -10406,7 +11957,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         const auto &rec = result.record;
         info.collation_id = rec.collation_id;
         info.name = rec.name;
-        info.charset_id = rec.charset_id;
+        info.charset_uuid = rec.charset_id;
+        info.charset_id = resolveCharsetId(rec.charset_id);
         info.collation_type = rec.collation_type;
         info.strength = rec.strength;
         info.pad_space = rec.pad_space;
@@ -10438,7 +11990,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         const auto &rec = result.record;
         info.collation_id = rec.collation_id;
         info.name = rec.name;
-        info.charset_id = rec.charset_id;
+        info.charset_uuid = rec.charset_id;
+        info.charset_id = resolveCharsetId(rec.charset_id);
         info.collation_type = rec.collation_type;
         info.strength = rec.strength;
         info.pad_space = rec.pad_space;
@@ -10457,11 +12010,12 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         // P0-8: Implemented collation listing using scanHeapPage
         std::lock_guard<CatalogMutex> lock(mutex_);
 
-        auto converter = [](const CollationRecord &rec, CollationCatalogInfo &info)
+        auto converter = [this](const CollationRecord &rec, CollationCatalogInfo &info)
         {
             info.collation_id = rec.collation_id;
             info.name = rec.name;
-            info.charset_id = rec.charset_id;
+            info.charset_uuid = rec.charset_id;
+            info.charset_id = resolveCharsetId(rec.charset_id);
             info.collation_type = rec.collation_type;
             info.strength = rec.strength;
             info.pad_space = rec.pad_space;
@@ -10483,17 +12037,61 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         std::lock_guard<CatalogMutex> lock(mutex_);
 
         // Filter for collations with matching charset_id
-        auto filter = [charset_id](const CollationRecord &rec)
+        ID target_uuid{};
+        auto map_it = charset_id_to_uuid_.find(charset_id);
+        if (map_it != charset_id_to_uuid_.end())
         {
-            return rec.charset_id == charset_id;
+            target_uuid = map_it->second;
+        }
+        if (isZeroUuidLocal(target_uuid) && charset_id != 0)
+        {
+            std::vector<CharsetInfo> tmp;
+            auto converter = [this](const CharsetRecord &rec, CharsetInfo &info)
+            {
+                info.charset_uuid = rec.charset_id;
+                info.charset_id = resolveCharsetId(rec.charset_id);
+                if (info.charset_id == 0)
+                {
+                    uint16_t resolved_id = 0;
+                    if (resolveBuiltinCharsetIdLocal(rec.name, resolved_id))
+                    {
+                        info.charset_id = resolved_id;
+                    }
+                    else
+                    {
+                        info.charset_id = next_charset_id_++;
+                    }
+                    charset_id_to_uuid_[info.charset_id] = info.charset_uuid;
+                    charset_uuid_to_id_[info.charset_uuid] = info.charset_id;
+                }
+                info.name = rec.name;
+                info.description = rec.description;
+                info.min_bytes = rec.min_bytes;
+                info.max_bytes = rec.max_bytes;
+                info.variable_width = rec.variable_width;
+                info.default_collation_id = rec.default_collation_id;
+                info.created_time = rec.created_time;
+                info.last_modified_time = rec.last_modified_time;
+            };
+            (void)scanHeapPage<CharsetRecord, CharsetInfo>(charsets_table_page_, tmp, converter, ctx);
+            map_it = charset_id_to_uuid_.find(charset_id);
+            if (map_it != charset_id_to_uuid_.end())
+            {
+                target_uuid = map_it->second;
+            }
+        }
+        auto filter = [&target_uuid](const CollationRecord &rec)
+        {
+            return !isZeroUuidLocal(target_uuid) && rec.charset_id == target_uuid;
         };
 
         // Converter to CollationCatalogInfo
-        auto converter = [](const CollationRecord &rec, CollationCatalogInfo &info)
+        auto converter = [this](const CollationRecord &rec, CollationCatalogInfo &info)
         {
             info.collation_id = rec.collation_id;
             info.name = rec.name;
-            info.charset_id = rec.charset_id;
+            info.charset_uuid = rec.charset_id;
+            info.charset_id = resolveCharsetId(rec.charset_id);
             info.collation_type = rec.collation_type;
             info.strength = rec.strength;
             info.pad_space = rec.pad_space;
@@ -10619,6 +12217,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         uint32_t offset = sizeof(CatalogHeapPage);
 
         tablespace_cache_.clear();
+        tablespace_id_to_uuid_.clear();
+        tablespace_uuid_to_id_.clear();
 
         for (uint32_t i = 0; i < heap->record_count; i++)
         {
@@ -10663,6 +12263,8 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
                 // Add to cache (keyed by tablespace_id)
                 tablespace_cache_[info.tablespace_id] = info;
+                tablespace_id_to_uuid_[info.tablespace_id] = info.tablespace_uuid;
+                tablespace_uuid_to_id_[info.tablespace_uuid] = info.tablespace_id;
             }
 
             offset += sizeof(SBTablespaceCatalog);
@@ -12085,7 +13687,12 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                 heap_pages_found++;
 
                 // Check if table_id matches the requested table
-                table_id_matches = (memcmp(header->table_id, table_id.bytes.data(), sizeof(header->table_id)) == 0);
+                const auto *special = reinterpret_cast<const HeapPageSpecial *>(
+                    reinterpret_cast<const uint8_t *>(page_buffer) + db_->page_size() -
+                    sizeof(HeapPageSpecial));
+                table_id_matches = (memcmp(special->table_id.bytes.data(),
+                                           table_id.bytes.data(),
+                                           special->table_id.bytes.size()) == 0);
 
                 if (table_id_matches)
                 {
@@ -13155,9 +14762,9 @@ std::string makeUDRModuleNameKey(const std::string& name) {
             batch_size = std::max(TableMigration::MIN_BATCH_SIZE_PAGES, total_pages / 10);
         }
 
+        double mb_per_batch = (static_cast<double>(batch_size) * db_->page_size()) / (1024.0 * 1024.0);
         LOG_INFO(CATALOG, "Migrating table '%s': 0 / %u pages (batch size: %u pages, ~%.1f MB/batch)",
-                table_info.table_name.c_str(), total_pages, batch_size,
-                (batch_size * 8.0) / 1024.0); // Assuming 8KB pages
+                table_info.table_name.c_str(), total_pages, batch_size, mb_per_batch);
 
         // Track time for periodic logging (every 5 seconds)
         auto last_log_time = std::chrono::steady_clock::now();
@@ -13224,10 +14831,10 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
             // Memory tracking (Phase 4 Task 4.1.4)
             // Estimate memory usage for this batch:
-            // - Heap pages: this_batch_size * 8KB
+            // - Heap pages: this_batch_size * page_size
             // - Page mapping: this_batch_size * 32 bytes (old GPID -> new GPID)
             // - Overhead: ~5% for data structures
-            size_t heap_memory_kb = this_batch_size * 8;
+            size_t heap_memory_kb = (this_batch_size * db_->page_size()) / 1024;
             size_t tid_mapping_kb = (this_batch_size * 32) / 1024;
             size_t total_memory_kb = heap_memory_kb + tid_mapping_kb;
             size_t total_memory_mb = total_memory_kb / 1024;
@@ -13394,7 +15001,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                 uint8_t *page_data = reinterpret_cast<uint8_t *>(page_buffer);
 
                 // Parse page header to get tuple count
-                // HeapPage structure: PageHeader (64 bytes) + ItemPointerData array + tuples
+                // HeapPage structure: PageHeader (80 bytes) + ItemPointerData array + tuples
                 // For simplicity, we'll scan the entire page for TOAST markers
 
                 bool page_modified = false;
@@ -13480,6 +15087,7 @@ std::string makeUDRModuleNameKey(const std::string& name) {
 
         // ===== STEP 7: Update catalog metadata =====
         table_info.tablespace_id = target_tablespace_id;
+        table_info.tablespace_uuid = resolveTablespaceUuid(target_tablespace_id);
         table_info.last_modified_time = std::chrono::system_clock::now().time_since_epoch().count();
 
         // Note: In full implementation, we would:
@@ -14589,6 +16197,7 @@ Status CatalogManager::executeOnlineMigrationSwapPhase(
     // Update tablespace_id to target
     uint16_t old_tablespace = table_info.tablespace_id;
     table_info.tablespace_id = target_ts;
+    table_info.tablespace_uuid = resolveTablespaceUuid(target_ts);
 
     // Clear migration flags
     table_info.migration_in_progress = false;
@@ -16466,6 +18075,20 @@ Status CatalogManager::addColumn(const ID &table_id, const ColumnInfo &column_in
     new_column.column_id = generateUuidV7();
     new_column.ordinal = next_ordinal;
 
+    std::vector<ColumnInfo> domain_columns{new_column};
+    Status status = applySystemDomainDefaults(table_info.schema_id, table_info.table_name, domain_columns, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    new_column.domain_id = domain_columns.front().domain_id;
+
+    status = validateColumnDomains(domain_columns, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
     // 4. Write ColumnRecord to disk
     ColumnRecord record = {};
     record.table_id = table_id;
@@ -16489,15 +18112,23 @@ Status CatalogManager::addColumn(const ID &table_id, const ColumnInfo &column_in
     record.storage_type = static_cast<uint8_t>(new_column.storage_type);
     record.with_timezone = new_column.with_timezone ? 1 : 0;
     record.name_is_delimited = new_column.name_is_delimited ? 1 : 0;
-    record.charset = new_column.charset;
-    record.timezone_hint = new_column.timezone_hint;
+    record.charset_id = new_column.charset_uuid;
+    if (isZeroUuidLocal(record.charset_id) && new_column.charset != 0)
+    {
+        record.charset_id = resolveCharsetUuid(new_column.charset);
+    }
+    record.timezone_id = new_column.timezone_uuid;
+    if (isZeroUuidLocal(record.timezone_id) && new_column.timezone_hint != 0)
+    {
+        record.timezone_id = resolveTimezoneUuid(new_column.timezone_hint);
+    }
     record.collation_id = new_column.collation_id;
     if (new_column.has_default)
     {
         if (!new_column.default_expr.empty())
         {
             uint64_t xmin = 0;
-            uint32_t default_oid = 0;
+            ID default_oid{};
             Status st = storeStringInToast(new_column.default_expr, xmin, default_oid, ctx);
             if (st != Status::OK)
             {
@@ -16516,7 +18147,7 @@ Status CatalogManager::addColumn(const ID &table_id, const ColumnInfo &column_in
     record.created_time = std::chrono::system_clock::now().time_since_epoch().count();
     record.is_valid = 1;
 
-    Status status = writeRecordToHeapPage(columns_table_page_, record, ctx);
+    status = writeRecordToHeapPage(columns_table_page_, record, ctx);
 
     if (status != Status::OK)
     {
@@ -17200,9 +18831,17 @@ Status CatalogManager::renameObject(ObjectType object_type, const ID& object_id,
             std::memcpy(record.schema_name, schema.schema_name.c_str(), schema.schema_name.size());
             record.schema_name[schema.schema_name.size()] = '\0';
             record.owner_id = schema.owner_id;
-            record.default_tablespace_id = schema.default_tablespace_id;
+            record.default_tablespace_id = schema.default_tablespace_uuid;
+            if (isZeroUuidLocal(record.default_tablespace_id) && schema.default_tablespace_id != 0)
+            {
+                record.default_tablespace_id = resolveTablespaceUuid(schema.default_tablespace_id);
+            }
             record.permissions = schema.permissions;
-            record.default_charset = schema.default_charset;
+            record.default_charset_id = schema.default_charset_uuid;
+            if (isZeroUuidLocal(record.default_charset_id) && schema.default_charset != 0)
+            {
+                record.default_charset_id = resolveCharsetUuid(schema.default_charset);
+            }
             record.name_is_delimited = schema.name_is_delimited ? 1 : 0;
             record.default_collation_id = schema.default_collation_id;
             record.acl_oid = schema.acl_oid;
@@ -17280,8 +18919,16 @@ Status CatalogManager::renameObject(ObjectType object_type, const ID& object_id,
             record.has_toast = table.has_toast ? 1 : 0;
             record.rls_enabled = table.rls_enabled ? 1 : 0;
             record.rls_forced = table.rls_forced ? 1 : 0;
-            record.tablespace_id = table.tablespace_id;
-            record.default_charset = table.default_charset;
+            record.tablespace_id = table.tablespace_uuid;
+            if (isZeroUuidLocal(record.tablespace_id) && table.tablespace_id != 0)
+            {
+                record.tablespace_id = resolveTablespaceUuid(table.tablespace_id);
+            }
+            record.default_charset_id = table.default_charset_uuid;
+            if (isZeroUuidLocal(record.default_charset_id) && table.default_charset != 0)
+            {
+                record.default_charset_id = resolveCharsetUuid(table.default_charset);
+            }
             record.name_is_delimited = table.name_is_delimited ? 1 : 0;
             record.default_collation_id = table.default_collation_id;
             record.storage_params_oid = table.storage_params_oid;
@@ -18436,9 +20083,17 @@ Status CatalogManager::moveObject(ObjectType object_type, const ID& object_id,
             std::memcpy(record.schema_name, schema.schema_name.c_str(), schema.schema_name.size());
             record.schema_name[schema.schema_name.size()] = '\0';
             record.owner_id = schema.owner_id;
-            record.default_tablespace_id = schema.default_tablespace_id;
+            record.default_tablespace_id = schema.default_tablespace_uuid;
+            if (isZeroUuidLocal(record.default_tablespace_id) && schema.default_tablespace_id != 0)
+            {
+                record.default_tablespace_id = resolveTablespaceUuid(schema.default_tablespace_id);
+            }
             record.permissions = schema.permissions;
-            record.default_charset = schema.default_charset;
+            record.default_charset_id = schema.default_charset_uuid;
+            if (isZeroUuidLocal(record.default_charset_id) && schema.default_charset != 0)
+            {
+                record.default_charset_id = resolveCharsetUuid(schema.default_charset);
+            }
             record.name_is_delimited = schema.name_is_delimited ? 1 : 0;
             record.default_collation_id = schema.default_collation_id;
             record.acl_oid = schema.acl_oid;
@@ -18524,8 +20179,16 @@ Status CatalogManager::moveObject(ObjectType object_type, const ID& object_id,
             record.has_toast = table.has_toast ? 1 : 0;
             record.rls_enabled = table.rls_enabled ? 1 : 0;
             record.rls_forced = table.rls_forced ? 1 : 0;
-            record.tablespace_id = table.tablespace_id;
-            record.default_charset = table.default_charset;
+            record.tablespace_id = table.tablespace_uuid;
+            if (isZeroUuidLocal(record.tablespace_id) && table.tablespace_id != 0)
+            {
+                record.tablespace_id = resolveTablespaceUuid(table.tablespace_id);
+            }
+            record.default_charset_id = table.default_charset_uuid;
+            if (isZeroUuidLocal(record.default_charset_id) && table.default_charset != 0)
+            {
+                record.default_charset_id = resolveCharsetUuid(table.default_charset);
+            }
             record.name_is_delimited = table.name_is_delimited ? 1 : 0;
             record.default_collation_id = table.default_collation_id;
             record.storage_params_oid = table.storage_params_oid;
@@ -19338,7 +21001,7 @@ Status CatalogManager::alterColumnType(const ID &table_id, const std::string &co
                 record->type_scale = new_scale;
                 if (new_charset_id.has_value())
                 {
-                    record->charset = new_charset_id.value();
+                    record->charset_id = resolveCharsetUuid(new_charset_id.value());
                 }
                 if (new_collation_id.has_value())
                 {
@@ -19452,7 +21115,7 @@ Status CatalogManager::updateColumnDefaultExpr(const ID &table_id, const std::st
     // Update ColumnRecord on disk
     current_page_id = columns_table_page_;
     bool updated = false;
-    uint32_t new_default_oid = 0;
+    ID new_default_oid{};
 
     while (current_page_id != 0)
     {
@@ -19477,7 +21140,7 @@ Status CatalogManager::updateColumnDefaultExpr(const ID &table_id, const std::st
             {
                 record->has_default = has_default ? 1 : 0;
                 record->default_value[0] = '\0';
-                record->default_value_oid = 0;
+                record->default_value_oid = ID{};
 
                 if (has_default && !default_expr_hex.empty())
                 {
@@ -19528,7 +21191,7 @@ Status CatalogManager::updateColumnDefaultExpr(const ID &table_id, const std::st
                 col.has_default = has_default;
                 col.default_expr = (has_default && !default_expr_hex.empty()) ? default_expr_hex : std::string();
                 col.default_value.clear();
-                col.default_value_oid = has_default ? new_default_oid : 0;
+                col.default_value_oid = has_default ? new_default_oid : ID{};
                 break;
             }
         }
@@ -23222,8 +24885,6 @@ void CatalogManager::clearDependenciesForInternal(const ID& dependent_object_id,
     }
 }
 
-namespace {
-
 std::vector<uint8_t> hexToBytesLocal(const std::string& hex_str) {
     std::vector<uint8_t> out;
     if (hex_str.size() % 2 != 0) {
@@ -23352,8 +25013,6 @@ void parseDefaultExprSequenceNames(const std::vector<uint8_t>& bytecode,
         }
     }
 }
-
-}  // namespace
 
 // ========================================================================
 // Dependency Infrastructure Helpers (Phase 1)
@@ -24309,7 +25968,7 @@ auto CatalogManager::writeCommentRecord(const CommentInfo &comment, ErrorContext
 
     // Store comment_text in TOAST (Phase 1.4 - WP-1 TOAST Integration)
     uint64_t xmin = 0;  // Catalog operations use transaction 0 for visibility
-    record.comment_text_oid = 0;
+    record.comment_text_oid = ID{};
     if (!comment.comment_text.empty())
     {
         Status toast_status = storeStringInToast(comment.comment_text, xmin,
@@ -24349,7 +26008,7 @@ auto CatalogManager::readCommentRecords(ErrorContext *ctx) -> Status
 
         // Load comment_text from TOAST
         info.comment_text = "";
-        if (record.comment_text_oid != 0)
+        if (!isZeroUuidLocal(record.comment_text_oid))
         {
             loadStringFromToast(record.comment_text_oid, xmin, info.comment_text, ctx);
         }
@@ -24374,8 +26033,8 @@ auto CatalogManager::writeObjectDefinitionRecord(const ObjectDefinitionInfo &def
     ObjectDefinitionRecord record{};
     record.object_id = definition.object_id;
     record.object_type = static_cast<uint8_t>(definition.object_type);
-    record.ddl_text_oid = 0;
-    record.bytecode_oid = 0;
+    record.ddl_text_oid = ID{};
+    record.bytecode_oid = ID{};
     record.created_time = definition.created_time;
     record.last_modified_time = definition.last_modified_time;
     record.is_valid = 1;
@@ -24446,11 +26105,11 @@ auto CatalogManager::readObjectDefinitionRecords(ErrorContext *ctx) -> Status
         info.ddl_text.clear();
         info.bytecode.clear();
 
-        if (record.ddl_text_oid != 0)
+        if (!isZeroUuidLocal(record.ddl_text_oid))
         {
             loadStringFromToast(record.ddl_text_oid, xmin, info.ddl_text, ctx);
         }
-        if (record.bytecode_oid != 0)
+        if (!isZeroUuidLocal(record.bytecode_oid))
         {
             std::string bytecode_blob;
             loadStringFromToast(record.bytecode_oid, xmin, bytecode_blob, ctx);
@@ -24702,7 +26361,7 @@ auto CatalogManager::readViewRecords(ErrorContext *ctx) -> Status
         info.name_is_delimited = record.name_is_delimited != 0;
         info.owner_id = record.owner_id;
         info.definition.clear();
-        if (record.definition_oid != 0)
+        if (!isZeroUuidLocal(record.definition_oid))
         {
             loadStringFromToast(record.definition_oid, xmin, info.definition, ctx);
         }
@@ -24710,7 +26369,7 @@ auto CatalogManager::readViewRecords(ErrorContext *ctx) -> Status
         info.security_definer = record.security_definer != 0;
         info.security_barrier = record.security_barrier != 0;
         info.column_names.clear();
-        if (record.columns_oid != 0)
+        if (!isZeroUuidLocal(record.columns_oid))
         {
             std::string encoded;
             loadStringFromToast(record.columns_oid, xmin, encoded, ctx);
@@ -24724,7 +26383,7 @@ auto CatalogManager::readViewRecords(ErrorContext *ctx) -> Status
         info.refresh_strategy = static_cast<MVRefreshStrategy>(record.refresh_strategy);
         info.refresh_on_commit = record.refresh_on_commit != 0;
         info.base_table_ids.clear();
-        if (record.base_table_ids_oid != 0)
+        if (!isZeroUuidLocal(record.base_table_ids_oid))
         {
             std::string encoded;
             loadStringFromToast(record.base_table_ids_oid, xmin, encoded, ctx);
@@ -24892,7 +26551,7 @@ auto CatalogManager::readTriggerRecords(ErrorContext *ctx) -> Status
             info.position = record.position;
             info.created_time = record.created_time;
             info.owner_id = record.owner_id;
-            if (record.action_oid != 0)
+            if (!isZeroUuidLocal(record.action_oid))
             {
                 loadStringFromToast(record.action_oid, xmin, info.procedure_name, ctx);
             }
@@ -24921,19 +26580,19 @@ auto CatalogManager::readTriggerRecords(ErrorContext *ctx) -> Status
         info.granularity = static_cast<TriggerGranularity>(record.granularity);
         info.enabled = record.enabled != 0;
         info.created_time = record.created_time;
-        if (record.condition_oid != 0)
+        if (!isZeroUuidLocal(record.condition_oid))
         {
             loadStringFromToast(record.condition_oid, xmin, info.when_expression, ctx);
         }
-        if (record.action_oid != 0)
+        if (!isZeroUuidLocal(record.action_oid))
         {
             loadStringFromToast(record.action_oid, xmin, info.procedure_name, ctx);
         }
-        if (record.old_alias_oid != 0)
+        if (!isZeroUuidLocal(record.old_alias_oid))
         {
             loadStringFromToast(record.old_alias_oid, xmin, info.old_table_alias, ctx);
         }
-        if (record.new_alias_oid != 0)
+        if (!isZeroUuidLocal(record.new_alias_oid))
         {
             loadStringFromToast(record.new_alias_oid, xmin, info.new_table_alias, ctx);
         }
@@ -25315,20 +26974,20 @@ auto CatalogManager::readProcedureRecords(ErrorContext *ctx) -> Status
         const_cast<char&>(record.procedure_name[511]) = '\0';
         TypeDescriptorBlob return_type_blob{};
         std::string return_blob;
-        if (record.return_type_oid != 0)
+        if (!isZeroUuidLocal(record.return_type_oid))
         {
             loadStringFromToast(record.return_type_oid, xmin, return_blob, ctx);
             decodeTypeDescriptor(return_blob, return_type_blob);
         }
 
         std::string body;
-        if (record.body_oid != 0)
+        if (!isZeroUuidLocal(record.body_oid))
         {
             loadStringFromToast(record.body_oid, xmin, body, ctx);
         }
 
         std::string bytecode_blob;
-        if (record.bytecode_oid != 0)
+        if (!isZeroUuidLocal(record.bytecode_oid))
         {
             loadStringFromToast(record.bytecode_oid, xmin, bytecode_blob, ctx);
         }
@@ -25407,10 +27066,10 @@ auto CatalogManager::readProcedureParameterRecords(ErrorContext *ctx) -> Status
         ParameterInfo param{};
         param.name = record.parameter_name;
         param.mode = static_cast<ParameterMode>(record.parameter_mode);
-        param.has_default = record.default_value_oid != 0;
+        param.has_default = !isZeroUuidLocal(record.default_value_oid);
 
         std::string type_blob;
-        if (record.data_type_oid != 0)
+        if (!isZeroUuidLocal(record.data_type_oid))
         {
             loadStringFromToast(record.data_type_oid, xmin, type_blob, ctx);
             TypeDescriptorBlob type_desc{};
@@ -25422,7 +27081,7 @@ auto CatalogManager::readProcedureParameterRecords(ErrorContext *ctx) -> Status
             }
         }
 
-        if (record.default_value_oid != 0)
+        if (!isZeroUuidLocal(record.default_value_oid))
         {
             loadStringFromToast(record.default_value_oid, xmin, param.default_value, ctx);
         }
@@ -25553,7 +27212,7 @@ auto CatalogManager::writeConstraintRecord(const ConstraintInfo &constraint,
                                        record.check_expr_oid, ctx);
         if (st != Status::OK) return st;
     }
-    else if (constraint.check_expr_oid != 0)
+    else if (!isZeroUuidLocal(constraint.check_expr_oid))
     {
         record.check_expr_oid = constraint.check_expr_oid;
     }
@@ -25650,7 +27309,7 @@ auto CatalogManager::updateConstraintRecord(const ConstraintInfo &constraint,
                                        record.check_expr_oid, ctx);
         if (st != Status::OK) return st;
     }
-    else if (constraint.check_expr_oid != 0)
+    else if (!isZeroUuidLocal(constraint.check_expr_oid))
     {
         record.check_expr_oid = constraint.check_expr_oid;
     }
@@ -25773,16 +27432,16 @@ auto CatalogManager::readConstraintRecords(ErrorContext *ctx) -> Status
             }
         }
 
-        if (record.check_expr_oid != 0)
+        if (!isZeroUuidLocal(record.check_expr_oid))
         {
             loadStringFromToast(record.check_expr_oid, xmin, info.check_expression, ctx);
         }
-        if (record.exclusion_operator_oid != 0)
+        if (!isZeroUuidLocal(record.exclusion_operator_oid))
         {
             loadStringFromToast(record.exclusion_operator_oid, xmin,
                                 info.exclusion_operator, ctx);
         }
-        if (record.index_method_oid != 0)
+        if (!isZeroUuidLocal(record.index_method_oid))
         {
             loadStringFromToast(record.index_method_oid, xmin, info.index_method, ctx);
         }
@@ -25905,7 +27564,7 @@ auto CatalogManager::readSynonymRecords(ErrorContext *ctx) -> Status
         info.target_type = static_cast<ObjectType>(record.target_type);
         info.is_public = record.is_public != 0;
         info.target_path.clear();
-        if (record.target_path_oid != 0)
+        if (!isZeroUuidLocal(record.target_path_oid))
         {
             loadStringFromToast(record.target_path_oid, xmin, info.target_path, ctx);
         }
@@ -26075,7 +27734,7 @@ auto CatalogManager::readForeignTableRecords(ErrorContext *ctx) -> Status
         info.remote_table = record.remote_table;
         info.owner_id = record.owner_id;
         info.column_mapping.clear();
-        if (record.column_mapping_oid != 0)
+        if (!isZeroUuidLocal(record.column_mapping_oid))
         {
             loadStringFromToast(record.column_mapping_oid, xmin, info.column_mapping, ctx);
         }
@@ -26228,7 +27887,7 @@ auto CatalogManager::readForeignServerRecords(ErrorContext *ctx) -> Status
         info.created_time = record.created_time;
         info.last_modified_time = record.last_modified_time;
         info.connection_options.clear();
-        if (record.connection_options_oid != 0)
+        if (!isZeroUuidLocal(record.connection_options_oid))
         {
             loadStringFromToast(record.connection_options_oid, xmin,
                                 info.connection_options, ctx);
@@ -26326,7 +27985,7 @@ auto CatalogManager::readUserMappingRecords(ErrorContext *ctx) -> Status
         info.foreign_server_id = record.foreign_server_id;
         info.remote_user = record.remote_user;
         info.remote_credentials.clear();
-        if (record.remote_credentials_oid != 0)
+        if (!isZeroUuidLocal(record.remote_credentials_oid))
         {
             loadStringFromToast(record.remote_credentials_oid, xmin,
                                 info.remote_credentials, ctx);
@@ -26480,7 +28139,7 @@ auto CatalogManager::readServerRegistryRecords(ErrorContext *ctx) -> Status
         info.cluster_id = record.cluster_id;
         info.server_version = record.server_version;
         info.metadata.clear();
-        if (record.metadata_oid != 0)
+        if (!isZeroUuidLocal(record.metadata_oid))
         {
             loadStringFromToast(record.metadata_oid, xmin, info.metadata, ctx);
         }
@@ -26602,7 +28261,7 @@ auto CatalogManager::readUDREngineRecords(ErrorContext *ctx) -> Status
         info.is_active = record.is_active != 0;
         info.is_default = record.is_default != 0;
         info.config.clear();
-        if (record.config_oid != 0)
+        if (!isZeroUuidLocal(record.config_oid))
         {
             loadStringFromToast(record.config_oid, xmin, info.config, ctx);
         }
@@ -26751,7 +28410,7 @@ auto CatalogManager::readUDRModuleRecords(ErrorContext *ctx) -> Status
         info.is_validated = record.is_validated != 0;
         info.loaded_count = record.loaded_count;
         info.dependencies.clear();
-        if (record.dependencies_oid != 0)
+        if (!isZeroUuidLocal(record.dependencies_oid))
         {
             loadStringFromToast(record.dependencies_oid, xmin, info.dependencies, ctx);
         }
@@ -27023,7 +28682,7 @@ auto CatalogManager::ensureJobRunsCacheLoaded(ErrorContext* ctx) -> Status
         info.retry_count = rec.retry_count;
         info.result_message = rec.result_message;
         info.result_data.clear();
-        if (rec.result_data_oid != 0) {
+        if (!isZeroUuidLocal(rec.result_data_oid)) {
             std::string result_blob;
             if (loadStringFromToast(rec.result_data_oid, xmin, result_blob, ctx) == Status::OK) {
                 info.result_data.assign(result_blob.begin(), result_blob.end());
@@ -27388,7 +29047,7 @@ auto CatalogManager::createJobRun(const JobRunInfo& run_in, ID& run_id_out,
     record.retry_count = run_in.retry_count;
     record.rows_affected = run_in.rows_affected;
     record.error_code = run_in.error_code;
-    record.result_data_oid = 0;
+    record.result_data_oid = ID{};
     if (!run_in.result_data.empty())
     {
         std::string result_blob(run_in.result_data.begin(), run_in.result_data.end());
@@ -27505,7 +29164,7 @@ auto CatalogManager::getJobRun(const ID& run_id, JobRunInfo& run_out,
     run_out.retry_count = found.record.retry_count;
     run_out.result_message = found.record.result_message;
     run_out.result_data.clear();
-    if (found.record.result_data_oid != 0)
+    if (!isZeroUuidLocal(found.record.result_data_oid))
     {
         std::string result_blob;
         uint64_t xmin = 0;
@@ -27652,7 +29311,7 @@ auto CatalogManager::storeJobSecret(const ID& job_id,
 
     std::string encoded(reinterpret_cast<const char*>(encrypted_blob.data()), encrypted_blob.size());
     uint64_t xmin = 0;
-    uint32_t new_oid = 0;
+    ID new_oid{};
     Status toast_status = storeStringInToast(encoded, xmin, new_oid, ctx);
     if (toast_status != Status::OK)
     {
@@ -27801,8 +29460,8 @@ auto CatalogManager::createUser(const std::string& username, const std::string& 
 
     // Store password_hash in TOAST (Phase 1.4 - WP-1 TOAST Integration)
     uint64_t xmin = 0;  // Catalog operations use transaction 0 for visibility
-    user_rec.password_hash_oid = 0;
-    user_rec.user_metadata_oid = 0;
+    user_rec.password_hash_oid = ID{};
+    user_rec.user_metadata_oid = ID{};
 
     if (!password_hash.empty())
     {
@@ -27908,8 +29567,8 @@ auto CatalogManager::ensureUserExists(const std::string& username, const std::st
             sizeof(user_rec.username) - 1);
 
     uint64_t xmin = 0;
-    user_rec.password_hash_oid = 0;
-    user_rec.user_metadata_oid = 0;
+    user_rec.password_hash_oid = ID{};
+    user_rec.user_metadata_oid = ID{};
     if (!password_hash.empty())
     {
         status = storeStringInToast(password_hash, xmin, user_rec.password_hash_oid, ctx);
@@ -27961,7 +29620,7 @@ auto CatalogManager::getUser(const ID& user_id, UserInfo& user_out,
     uint64_t xmin = 0;  // Catalog operations use transaction 0 for visibility
     user_out.password_hash = "";
     user_out.user_metadata = "";
-    if (result.record.password_hash_oid != 0)
+    if (!isZeroUuidLocal(result.record.password_hash_oid))
     {
         Status load_status = loadStringFromToast(result.record.password_hash_oid, xmin,
                                                  user_out.password_hash, ctx);
@@ -27971,7 +29630,7 @@ auto CatalogManager::getUser(const ID& user_id, UserInfo& user_out,
             return load_status;
         }
     }
-    if (result.record.user_metadata_oid != 0)
+    if (!isZeroUuidLocal(result.record.user_metadata_oid))
     {
         Status load_status = loadStringFromToast(result.record.user_metadata_oid, xmin,
                                                  user_out.user_metadata, ctx);
@@ -28049,11 +29708,11 @@ auto CatalogManager::getUserByNameUnlocked(const std::string& username, UserInfo
     uint64_t xmin = 0;  // Catalog operations use transaction 0 for visibility
     user_out.password_hash = "";
     user_out.user_metadata = "";
-    if (result.record.password_hash_oid != 0)
+    if (!isZeroUuidLocal(result.record.password_hash_oid))
     {
         loadStringFromToast(result.record.password_hash_oid, xmin, user_out.password_hash, ctx);
     }
-    if (result.record.user_metadata_oid != 0)
+    if (!isZeroUuidLocal(result.record.user_metadata_oid))
     {
         loadStringFromToast(result.record.user_metadata_oid, xmin, user_out.user_metadata, ctx);
     }
@@ -28241,11 +29900,11 @@ auto CatalogManager::listUsers(std::vector<UserInfo>& users_out,
         // Load password_hash and user_metadata from TOAST
         info.password_hash = "";
         info.user_metadata = "";
-        if (rec.password_hash_oid != 0)
+        if (!isZeroUuidLocal(rec.password_hash_oid))
         {
             loadStringFromToast(rec.password_hash_oid, xmin, info.password_hash, ctx);
         }
-        if (rec.user_metadata_oid != 0)
+        if (!isZeroUuidLocal(rec.user_metadata_oid))
         {
             loadStringFromToast(rec.user_metadata_oid, xmin, info.user_metadata, ctx);
         }
@@ -28323,7 +29982,7 @@ auto CatalogManager::createRole(const std::string& role_name, const ID& owner_id
 
     role_rec.owner_id = owner_id;
     role_rec.default_schema_id = need_public_schema ? public_schema.schema_id : default_schema_id;
-    role_rec.role_metadata_oid = 0;
+    role_rec.role_metadata_oid = ID{};
     role_rec.is_active = 1;
     role_rec.created_time = std::chrono::system_clock::now().time_since_epoch().count();
     role_rec.last_modified_time = role_rec.created_time;
@@ -28366,7 +30025,7 @@ auto CatalogManager::getRole(const ID& role_id, RoleInfo& role_out,
     // Load role_metadata from TOAST (Phase 1.4 - WP-1 TOAST Integration)
     uint64_t xmin = 0;  // Catalog operations use transaction 0 for visibility
     role_out.role_metadata = "";
-    if (result.record.role_metadata_oid != 0)
+    if (!isZeroUuidLocal(result.record.role_metadata_oid))
     {
         loadStringFromToast(result.record.role_metadata_oid, xmin, role_out.role_metadata, ctx);
     }
@@ -28403,7 +30062,7 @@ auto CatalogManager::getRoleByName(const std::string& role_name, RoleInfo& role_
     // Load role_metadata from TOAST (Phase 1.4 - WP-1 TOAST Integration)
     uint64_t xmin = 0;  // Catalog operations use transaction 0 for visibility
     role_out.role_metadata = "";
-    if (result.record.role_metadata_oid != 0)
+    if (!isZeroUuidLocal(result.record.role_metadata_oid))
     {
         loadStringFromToast(result.record.role_metadata_oid, xmin, role_out.role_metadata, ctx);
     }
@@ -28505,7 +30164,7 @@ auto CatalogManager::listRoles(std::vector<RoleInfo>& roles_out,
         info.owner_id = rec.owner_id;
         info.default_schema_id = rec.default_schema_id;
         info.role_metadata.clear();
-        if (rec.role_metadata_oid != 0)
+        if (!isZeroUuidLocal(rec.role_metadata_oid))
         {
             loadStringFromToast(rec.role_metadata_oid, xmin, info.role_metadata, ctx);
         }
@@ -28618,8 +30277,8 @@ auto CatalogManager::updateRole(const ID& role_id, const std::optional<std::stri
                     }
                     if (new_metadata.has_value())
                     {
-                        uint32_t old_oid = record->role_metadata_oid;
-                        uint32_t new_oid = 0;
+                        ID old_oid = record->role_metadata_oid;
+                        ID new_oid{};
                         uint64_t xmin = ConnectionContext::getCurrentTransactionId();
                         if (xmin == 0)
                         {
@@ -28634,7 +30293,7 @@ auto CatalogManager::updateRole(const ID& role_id, const std::optional<std::stri
                             return toast_status;
                         }
 
-                        if (old_oid != 0 && policy_toast_manager_)
+                        if (!isZeroUuidLocal(old_oid) && policy_toast_manager_)
                         {
                             policy_toast_manager_->deleteToastValue(old_oid, xmin, ctx);
                         }
@@ -28896,7 +30555,7 @@ auto CatalogManager::createGroup(const std::string& group_name, GroupType group_
 
     group_rec.group_type = static_cast<uint8_t>(group_type);
     group_rec.default_schema_id = need_public_schema ? public_schema.schema_id : default_schema_id;
-    group_rec.group_metadata_oid = 0;
+    group_rec.group_metadata_oid = ID{};
     group_rec.created_time = std::chrono::system_clock::now().time_since_epoch().count();
     group_rec.last_modified_time = group_rec.created_time;
     group_rec.is_valid = 1;
@@ -28939,7 +30598,7 @@ auto CatalogManager::getGroup(const ID& group_id, GroupInfo& group_out,
     // Load group_metadata from TOAST (Phase 1.4 - WP-1 TOAST Integration)
     uint64_t xmin = 0;  // Catalog operations use transaction 0 for visibility
     group_out.group_metadata = "";
-    if (result.record.group_metadata_oid != 0)
+    if (!isZeroUuidLocal(result.record.group_metadata_oid))
     {
         loadStringFromToast(result.record.group_metadata_oid, xmin, group_out.group_metadata, ctx);
     }
@@ -28976,7 +30635,7 @@ auto CatalogManager::getGroupByName(const std::string& group_name, GroupInfo& gr
     // Load group_metadata from TOAST (Phase 1.4 - WP-1 TOAST Integration)
     uint64_t xmin = 0;  // Catalog operations use transaction 0 for visibility
     group_out.group_metadata = "";
-    if (result.record.group_metadata_oid != 0)
+    if (!isZeroUuidLocal(result.record.group_metadata_oid))
     {
         loadStringFromToast(result.record.group_metadata_oid, xmin, group_out.group_metadata, ctx);
     }
@@ -29094,7 +30753,7 @@ auto CatalogManager::listGroups(std::vector<GroupInfo>& groups_out,
 
         // Load group_metadata from TOAST
         info.group_metadata = "";
-        if (rec.group_metadata_oid != 0)
+        if (!isZeroUuidLocal(rec.group_metadata_oid))
         {
             loadStringFromToast(rec.group_metadata_oid, xmin, info.group_metadata, ctx);
         }
@@ -29498,8 +31157,8 @@ auto CatalogManager::updateGroup(const ID& group_id, const std::optional<std::st
                     }
                     if (new_metadata.has_value())
                     {
-                        uint32_t old_oid = record->group_metadata_oid;
-                        uint32_t new_oid = 0;
+                        ID old_oid = record->group_metadata_oid;
+                        ID new_oid{};
                         uint64_t xmin = ConnectionContext::getCurrentTransactionId();
                         if (xmin == 0)
                         {
@@ -29514,7 +31173,7 @@ auto CatalogManager::updateGroup(const ID& group_id, const std::optional<std::st
                             return toast_status;
                         }
 
-                        if (old_oid != 0 && policy_toast_manager_)
+                        if (!isZeroUuidLocal(old_oid) && policy_toast_manager_)
                         {
                             policy_toast_manager_->deleteToastValue(old_oid, xmin, ctx);
                         }
@@ -29758,8 +31417,8 @@ auto CatalogManager::createAuthKey(const AuthKeyInfo& authkey_in, ID& authkey_id
     record.is_valid = 1;
 
     uint64_t xmin = 0;
-    record.role_scope_oid = 0;
-    record.group_scope_oid = 0;
+    record.role_scope_oid = ID{};
+    record.group_scope_oid = ID{};
 
     if (!authkey_in.role_scope.empty())
     {
@@ -29843,7 +31502,7 @@ auto CatalogManager::getAuthKey(const ID& authkey_id, AuthKeyInfo& authkey_out,
     authkey_out.group_scope.clear();
 
     uint64_t xmin = 0;
-    if (record.role_scope_oid != 0)
+    if (!isZeroUuidLocal(record.role_scope_oid))
     {
         std::string blob;
         if (loadStringFromToast(record.role_scope_oid, xmin, blob, ctx) == Status::OK)
@@ -29851,7 +31510,7 @@ auto CatalogManager::getAuthKey(const ID& authkey_id, AuthKeyInfo& authkey_out,
             decodeUuidList(blob, authkey_out.role_scope);
         }
     }
-    if (record.group_scope_oid != 0)
+    if (!isZeroUuidLocal(record.group_scope_oid))
     {
         std::string blob;
         if (loadStringFromToast(record.group_scope_oid, xmin, blob, ctx) == Status::OK)
@@ -29998,7 +31657,7 @@ auto CatalogManager::listAuthKeys(std::vector<AuthKeyInfo>& authkeys_out,
 
         info.role_scope.clear();
         info.group_scope.clear();
-        if (rec.role_scope_oid != 0)
+        if (!isZeroUuidLocal(rec.role_scope_oid))
         {
             std::string blob;
             if (loadStringFromToast(rec.role_scope_oid, xmin, blob, ctx) == Status::OK)
@@ -30006,7 +31665,7 @@ auto CatalogManager::listAuthKeys(std::vector<AuthKeyInfo>& authkeys_out,
                 decodeUuidList(blob, info.role_scope);
             }
         }
-        if (rec.group_scope_oid != 0)
+        if (!isZeroUuidLocal(rec.group_scope_oid))
         {
             std::string blob;
             if (loadStringFromToast(rec.group_scope_oid, xmin, blob, ctx) == Status::OK)
@@ -30929,7 +32588,7 @@ auto CatalogManager::appendAuditLog(const AuditEvent& event,
     std::memset(record.object_name, 0, sizeof(record.object_name));
     std::strncpy(record.object_name, name_trunc.c_str(), sizeof(record.object_name) - 1);
 
-    record.details_oid = 0;
+    record.details_oid = ID{};
     if (!event.details.empty())
     {
         uint64_t xmin = 0;
@@ -30991,7 +32650,7 @@ auto CatalogManager::queryAuditLog(const AuditQuery& query, std::vector<AuditEve
         event.object_name = rec.object_name;
 
         event.details.clear();
-        if (rec.details_oid != 0)
+        if (!isZeroUuidLocal(rec.details_oid))
         {
             loadStringFromToast(rec.details_oid, xmin, event.details, ctx);
         }
@@ -31193,15 +32852,14 @@ auto CatalogManager::createDormantTransaction(DormantTransactionInfo& info,
         heap->header.page_size = db_->page_size();
         heap->header.page_id = dormant_transactions_table_page_;
         heap->header.flags = 0;
-        memcpy(heap->header.database_uuid, db_->uuid().bytes.data(), 16);
         heap->header.generation = 1;
         heap->record_count = 0;
         heap->free_offset = sizeof(CatalogHeapPage);
         heap->next_page = 0;
         heap->reserved = 0;
-        heap->header.free_space = db_->page_size() - sizeof(CatalogHeapPage);
-        heap->header.item_count = 0;
-        heap->header.free_offset = sizeof(CatalogHeapPage);
+        pageSetLower(heap->header, sizeof(CatalogHeapPage));
+        pageSetUpper(heap->header, db_->page_size());
+        pageSetSpecial(heap->header, db_->page_size());
 
         status = bp->unpinPage(dormant_transactions_table_page_, true, ctx);
         if (status != Status::OK)
@@ -31336,11 +32994,11 @@ auto CatalogManager::getDormantTransaction(const ID& dormant_id, DormantTransact
     uint64_t xmin = 0;
     info_out.session_settings.clear();
     info_out.last_statement_text.clear();
-    if (rec.session_settings_oid != 0)
+    if (!isZeroUuidLocal(rec.session_settings_oid))
     {
         loadStringFromToast(rec.session_settings_oid, xmin, info_out.session_settings, ctx);
     }
-    if (rec.last_statement_oid != 0)
+    if (!isZeroUuidLocal(rec.last_statement_oid))
     {
         loadStringFromToast(rec.last_statement_oid, xmin, info_out.last_statement_text, ctx);
     }
@@ -31555,11 +33213,11 @@ auto CatalogManager::listDormantTransactions(std::vector<DormantTransactionInfo>
 
         info.session_settings.clear();
         info.last_statement_text.clear();
-        if (rec.session_settings_oid != 0)
+        if (!isZeroUuidLocal(rec.session_settings_oid))
         {
             loadStringFromToast(rec.session_settings_oid, xmin, info.session_settings, ctx);
         }
-        if (rec.last_statement_oid != 0)
+        if (!isZeroUuidLocal(rec.last_statement_oid))
         {
             loadStringFromToast(rec.last_statement_oid, xmin, info.last_statement_text, ctx);
         }
@@ -32861,7 +34519,7 @@ auto CatalogManager::createPolicy(const ID& table_id, const std::string& policy_
     Status toast_status;
 
     // Store roles array in TOAST if non-empty
-    policy_rec.roles_oid = 0;
+    policy_rec.roles_oid = ID{};
     if (!roles.empty())
     {
         // Serialize roles as comma-separated string
@@ -32982,7 +34640,7 @@ auto CatalogManager::dropPolicy(const ID& table_id, const std::string& policy_na
     }
 
     // Delete USING expression from TOAST if it exists
-    if (result.record.using_expr_oid != 0 && policy_toast_manager_)
+    if (!isZeroUuidLocal(result.record.using_expr_oid) && policy_toast_manager_)
     {
         Status toast_status = policy_toast_manager_->deleteToastValue(
             result.record.using_expr_oid, xmax, ctx);
@@ -32994,7 +34652,7 @@ auto CatalogManager::dropPolicy(const ID& table_id, const std::string& policy_na
     }
 
     // Delete WITH CHECK expression from TOAST if it exists
-    if (result.record.with_check_expr_oid != 0 && policy_toast_manager_)
+    if (!isZeroUuidLocal(result.record.with_check_expr_oid) && policy_toast_manager_)
     {
         Status toast_status = policy_toast_manager_->deleteToastValue(
             result.record.with_check_expr_oid, xmax, ctx);
@@ -33084,7 +34742,7 @@ auto CatalogManager::alterPolicy(const ID& table_id, const std::string& policy_n
         }
 
         // Delete old expression if exists
-        if (updated_rec.using_expr_oid != 0 && policy_toast_manager_)
+        if (!isZeroUuidLocal(updated_rec.using_expr_oid) && policy_toast_manager_)
         {
             policy_toast_manager_->deleteToastValue(updated_rec.using_expr_oid, xmin, ctx);
         }
@@ -33109,7 +34767,7 @@ auto CatalogManager::alterPolicy(const ID& table_id, const std::string& policy_n
         }
 
         // Delete old expression if exists
-        if (updated_rec.with_check_expr_oid != 0 && policy_toast_manager_)
+        if (!isZeroUuidLocal(updated_rec.with_check_expr_oid) && policy_toast_manager_)
         {
             policy_toast_manager_->deleteToastValue(updated_rec.with_check_expr_oid, xmin, ctx);
         }
@@ -33252,7 +34910,7 @@ auto CatalogManager::getPolicy(const ID& table_id, const std::string& policy_nam
     }
 
     policy_out.role_ids.clear();
-    if (result.record.roles_oid != 0)
+    if (!isZeroUuidLocal(result.record.roles_oid))
     {
         std::string roles_str;
         Status roles_status = loadStringFromToast(result.record.roles_oid, xmin, roles_str, ctx);
@@ -33339,16 +34997,16 @@ auto CatalogManager::getTablePolicies(const ID& table_id, PolicyType type,
         info.using_expr.clear();
         info.with_check_expr.clear();
 
-        if (rec.using_expr_oid != 0)
+        if (!isZeroUuidLocal(rec.using_expr_oid))
         {
             loadStringFromToast(rec.using_expr_oid, xmin, info.using_expr, ctx);
         }
-        if (rec.with_check_expr_oid != 0)
+        if (!isZeroUuidLocal(rec.with_check_expr_oid))
         {
             loadStringFromToast(rec.with_check_expr_oid, xmin, info.with_check_expr, ctx);
         }
 
-        if (rec.roles_oid != 0)
+        if (!isZeroUuidLocal(rec.roles_oid))
         {
             std::string roles_str;
             if (loadStringFromToast(rec.roles_oid, xmin, roles_str, ctx) == Status::OK)
@@ -34469,7 +36127,7 @@ auto CatalogManager::getUDR(const ID& udr_id, UDRInfo& info_out, ErrorContext* c
     info_out.last_modified_time = result.record.last_modified_time;
 
     uint64_t xmin = 0;
-    if (result.record.signature_oid != 0)
+    if (!isZeroUuidLocal(result.record.signature_oid))
     {
         loadStringFromToast(result.record.signature_oid, xmin, info_out.signature, ctx);
     }
@@ -34509,7 +36167,7 @@ auto CatalogManager::getUDRByName(const ID& schema_id, const std::string& udr_na
     info_out.last_modified_time = result.record.last_modified_time;
 
     uint64_t xmin = 0;
-    if (result.record.signature_oid != 0)
+    if (!isZeroUuidLocal(result.record.signature_oid))
     {
         loadStringFromToast(result.record.signature_oid, xmin, info_out.signature, ctx);
     }
@@ -34674,7 +36332,7 @@ auto CatalogManager::listUDRs(const ID& schema_id, std::vector<UDRInfo>& udrs_ou
         info.created_time = rec.created_time;
         info.last_modified_time = rec.last_modified_time;
         uint64_t xmin = 0;
-        if (rec.signature_oid != 0)
+        if (!isZeroUuidLocal(rec.signature_oid))
             loadStringFromToast(rec.signature_oid, xmin, info.signature, ctx);
     };
 
@@ -34780,9 +36438,9 @@ auto CatalogManager::getPackage(const ID& package_id, PackageInfo& info_out, Err
     info_out.last_modified_time = result.record.last_modified_time;
 
     uint64_t xmin = 0;
-    if (result.record.package_header_oid != 0)
+    if (!isZeroUuidLocal(result.record.package_header_oid))
         loadStringFromToast(result.record.package_header_oid, xmin, info_out.package_header, ctx);
-    if (result.record.package_body_oid != 0)
+    if (!isZeroUuidLocal(result.record.package_body_oid))
         loadStringFromToast(result.record.package_body_oid, xmin, info_out.package_body, ctx);
 
     return Status::OK;
@@ -34817,9 +36475,9 @@ auto CatalogManager::getPackageByName(const ID& schema_id, const std::string& pa
     info_out.last_modified_time = result.record.last_modified_time;
 
     uint64_t xmin = 0;
-    if (result.record.package_header_oid != 0)
+    if (!isZeroUuidLocal(result.record.package_header_oid))
         loadStringFromToast(result.record.package_header_oid, xmin, info_out.package_header, ctx);
-    if (result.record.package_body_oid != 0)
+    if (!isZeroUuidLocal(result.record.package_body_oid))
         loadStringFromToast(result.record.package_body_oid, xmin, info_out.package_body, ctx);
 
     return Status::OK;
@@ -34962,9 +36620,9 @@ auto CatalogManager::dropPackage(const ID& package_id, bool cascade, ErrorContex
         info.created_time = rec.created_time;
         info.last_modified_time = rec.last_modified_time;
         uint64_t xmin = 0;
-        if (rec.package_header_oid != 0)
+        if (!isZeroUuidLocal(rec.package_header_oid))
             loadStringFromToast(rec.package_header_oid, xmin, info.package_header, ctx);
-        if (rec.package_body_oid != 0)
+        if (!isZeroUuidLocal(rec.package_body_oid))
             loadStringFromToast(rec.package_body_oid, xmin, info.package_body, ctx);
     };
 
@@ -35063,7 +36721,7 @@ Status CatalogManager::getException(const ID& exception_id, ExceptionInfo& info_
     info.created_time = result.record.created_time;
     info.last_modified_time = result.record.last_modified_time;
     info.is_valid = (result.record.is_valid == 1);
-    if (result.record.message_oid != 0) {
+    if (!isZeroUuidLocal(result.record.message_oid)) {
         uint64_t xmin = 0;
         loadStringFromToast(result.record.message_oid, xmin, info.message, ctx);
     }
@@ -35184,7 +36842,7 @@ Status CatalogManager::listExceptions(const ID& schema_id, std::vector<Exception
         info.created_time = rec.created_time;
         info.last_modified_time = rec.last_modified_time;
         info.is_valid = (rec.is_valid == 1);
-        if (rec.message_oid != 0) {
+        if (!isZeroUuidLocal(rec.message_oid)) {
             uint64_t xmin = 0;
             loadStringFromToast(rec.message_oid, xmin, info.message, ctx);
         }
@@ -35349,7 +37007,7 @@ auto CatalogManager::getEmulationType(const ID& emulation_type_id, EmulationType
     info_out.created_time = result.record.created_time;
 
     uint64_t xmin = 0;
-    if (result.record.mapping_rules_oid != 0)
+    if (!isZeroUuidLocal(result.record.mapping_rules_oid))
         loadStringFromToast(result.record.mapping_rules_oid, xmin, info_out.mapping_rules, ctx);
 
     return Status::OK;
@@ -35378,7 +37036,7 @@ auto CatalogManager::getEmulationTypeByName(const std::string& emulation_name,
     info_out.created_time = result.record.created_time;
 
     uint64_t xmin = 0;
-    if (result.record.mapping_rules_oid != 0)
+    if (!isZeroUuidLocal(result.record.mapping_rules_oid))
         loadStringFromToast(result.record.mapping_rules_oid, xmin, info_out.mapping_rules, ctx);
 
     return Status::OK;
@@ -35502,7 +37160,7 @@ auto CatalogManager::listEmulationTypes(std::vector<EmulationTypeInfo>& types_ou
         info.version_minor = rec.version_minor;
         info.created_time = rec.created_time;
         uint64_t xmin = 0;
-        if (rec.mapping_rules_oid != 0)
+        if (!isZeroUuidLocal(rec.mapping_rules_oid))
             loadStringFromToast(rec.mapping_rules_oid, xmin, info.mapping_rules, ctx);
     };
 
@@ -35599,7 +37257,7 @@ auto CatalogManager::getEmulationServer(const ID& server_id, EmulationServerInfo
     info_out.last_modified_time = result.record.last_modified_time;
 
     uint64_t xmin = 0;
-    if (result.record.server_config_oid != 0)
+    if (!isZeroUuidLocal(result.record.server_config_oid))
         loadStringFromToast(result.record.server_config_oid, xmin, info_out.server_config, ctx);
 
     return Status::OK;
@@ -35630,7 +37288,7 @@ auto CatalogManager::getEmulationServerByName(const std::string& server_name,
     info_out.last_modified_time = result.record.last_modified_time;
 
     uint64_t xmin = 0;
-    if (result.record.server_config_oid != 0)
+    if (!isZeroUuidLocal(result.record.server_config_oid))
         loadStringFromToast(result.record.server_config_oid, xmin, info_out.server_config, ctx);
 
     return Status::OK;
@@ -35772,7 +37430,7 @@ auto CatalogManager::listEmulationServers(std::vector<EmulationServerInfo>& serv
         info.created_time = rec.created_time;
         info.last_modified_time = rec.last_modified_time;
         uint64_t xmin = 0;
-        if (rec.server_config_oid != 0)
+        if (!isZeroUuidLocal(rec.server_config_oid))
             loadStringFromToast(rec.server_config_oid, xmin, info.server_config, ctx);
     };
 
@@ -35871,7 +37529,7 @@ auto CatalogManager::getEmulatedDatabase(const ID& emulated_db_id, EmulatedDatab
     info_out.last_modified_time = result.record.last_modified_time;
 
     uint64_t xmin = 0;
-    if (result.record.db_metadata_oid != 0)
+    if (!isZeroUuidLocal(result.record.db_metadata_oid))
         loadStringFromToast(result.record.db_metadata_oid, xmin, info_out.db_metadata, ctx);
 
     return Status::OK;
@@ -35905,7 +37563,7 @@ auto CatalogManager::getEmulatedDatabaseByName(const ID& server_id, const std::s
     info_out.last_modified_time = result.record.last_modified_time;
 
     uint64_t xmin = 0;
-    if (result.record.db_metadata_oid != 0)
+    if (!isZeroUuidLocal(result.record.db_metadata_oid))
         loadStringFromToast(result.record.db_metadata_oid, xmin, info_out.db_metadata, ctx);
 
     return Status::OK;
@@ -36177,7 +37835,7 @@ auto CatalogManager::listEmulatedDatabases(const ID& server_id,
         info.created_time = rec.created_time;
         info.last_modified_time = rec.last_modified_time;
         uint64_t xmin = 0;
-        if (rec.db_metadata_oid != 0)
+        if (!isZeroUuidLocal(rec.db_metadata_oid))
             loadStringFromToast(rec.db_metadata_oid, xmin, info.db_metadata, ctx);
     };
 

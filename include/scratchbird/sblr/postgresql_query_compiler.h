@@ -14,9 +14,8 @@
  *
  * Compiles PostgreSQL SQL to SBLR bytecode using:
  * - PostgreSQL Lexer (PostgreSQL SQL tokenization)
- * - PostgreSQL Parser (PostgreSQL SQL → AST v2)
- * - Semantic Analyzer V2 (shared - name resolution, type checking)
- * - Bytecode Generator V2 (shared - AST v2 → SBLR bytecode)
+ * - PostgreSQL Parser (PostgreSQL SQL → AST v3)
+ * - V3 Emitter + Container Encoder (AST v3 → SBLR v3 bytecode)
  *
  * This compiler allows PostgreSQL SQL syntax to be executed on the
  * ScratchBird engine, enabling PostgreSQL client emulation.
@@ -25,8 +24,6 @@
  */
 
 #include "scratchbird/parser/postgresql/pg_parser.h"
-#include "scratchbird/sblr/semantic_analyzer_v2.h"
-#include "scratchbird/sblr/bytecode_generator_v2.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
 #include <string>

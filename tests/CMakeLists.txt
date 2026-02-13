@@ -153,6 +153,8 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_gin_gc\.cpp$")  # Standalone mai
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_network\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_shadow_index_rebuild\.cpp$")  # Standalone main()
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_concurrent_page_access\.cpp$")  # Standalone main()
+# This file overrides global operator new/delete and must not share the aggregate test binary.
+list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_memory_safety\.cpp$")
 
 # Integration tests
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_rollup_simple\.cpp$")  # Root-level test with API issues
@@ -461,6 +463,37 @@ set_tests_properties(EngineIPCSessionHandlerTests PROPERTIES
 )
 
 # ==============================================================================
+# Memory Safety Tests (isolated binary for global allocator overrides)
+# ==============================================================================
+add_executable(test_memory_safety unit/test_memory_safety.cpp)
+target_include_directories(test_memory_safety PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+target_link_libraries(test_memory_safety
+    scratchbird_core
+    ${SCRATCHBIRD_TEST_COMPILER_LIBS}
+    scratchbird_sblr
+    ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
+    scratchbird_protocol
+    scratchbird_pool
+    scratchbird_server
+    scratchbird_network
+    GTest::gtest
+    GTest::gtest_main
+    scratchbird_parser
+    scratchbird_link_group
+)
+if(GEOS_FOUND)
+    target_link_libraries(test_memory_safety ${GEOS_LIBRARIES})
+endif()
+if(PROJ_FOUND)
+    target_link_libraries(test_memory_safety ${PROJ_LIBRARIES})
+endif()
+add_test(NAME MemorySafetyTests COMMAND test_memory_safety)
+set_tests_properties(MemorySafetyTests PROPERTIES
+    LABELS "unit;memory;isolated"
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_UNIT}
+)
+
+# ==============================================================================
 # IPC Integration Tests (End-to-End)
 # 5.1.2-5.1.8: IPC Integration Harness
 # ==============================================================================
@@ -721,8 +754,8 @@ set_tests_properties(RangeOperators PROPERTIES
     TIMEOUT 60
 )
 
-# Task 15 Phase 4: Range Lexer Tests - REMOVED (legacy parser path removed)
-# test_range_lexer.cpp removed alongside legacy parser cleanup
+# Task 15 Phase 4: Range Lexer Tests - REMOVED (obsolete parser path removed)
+# test_range_lexer.cpp removed alongside parser cleanup
 
 # ============================================================================
 # Task 16: Network Types Tests
@@ -1256,7 +1289,7 @@ set_tests_properties(SecurityPhase3_5_RLS_DML PROPERTIES
     TIMEOUT 120
 )
 
-# Mathematical Functions Tests - DISABLED (legacy bytecode issue with complex expressions)
+# Mathematical Functions Tests - DISABLED (V3 bytecode issue with complex expressions)
 # TODO: Fix nested function call emission/execution (e.g., SQRT(POWER(3, 2) + POWER(4, 2)))
 # add_executable(test_mathematical_functions
 #     integration/test_mathematical_functions.cpp
@@ -1440,7 +1473,7 @@ set_tests_properties(ForeignKeys PROPERTIES
 
 # Phase 2C: Exclude all standalone tests with main() functions
 
-# Index Bytecode Generation Tests - DISABLED (legacy bytecode issue with CREATE/DROP INDEX)
+# Index Bytecode Generation Tests - DISABLED (V3 bytecode issue with CREATE/DROP INDEX)
 # TODO: Fix DDL statement emission/execution for index statements
 # add_executable(test_index_bytecode_generation
 #     integration/test_index_bytecode_generation.cpp

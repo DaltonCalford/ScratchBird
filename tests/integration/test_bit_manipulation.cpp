@@ -24,11 +24,11 @@
 #include <filesystem>
 #include <unistd.h>
 
-#include "scratchbird/sblr/query_compiler_v2.h"
+#include "scratchbird/sblr/query_compiler_v3.h"
 #include <scratchbird/sblr/executor.h>
 
 using namespace scratchbird;
-using scratchbird::sblr::QueryCompilerV2;
+using scratchbird::sblr::QueryCompilerV3;
 
 class BitManipulationTest : public ::testing::Test
 {
@@ -68,7 +68,7 @@ protected:
     {
         std::cout << "Testing SQL: " << sql << std::endl;
 
-        QueryCompilerV2 compiler(db.get());
+        QueryCompilerV3 compiler(db.get());
         auto result = compiler.compile(sql);
 
         if (!result.success()) {

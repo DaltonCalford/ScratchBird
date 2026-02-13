@@ -12,7 +12,7 @@
 /**
  * MySQL Parser Lexer
  *
- * Lexer for MySQL 8.0 SQL dialect. Unlike the ScratchBird V2 parser's
+ * Lexer for MySQL 8.0 SQL dialect. Unlike the native ScratchBird parser's
  * "Gatekeeper" model with ~35 reserved keywords, MySQL has ~262 reserved
  * keywords that cannot be used as identifiers without backtick quoting.
  *
@@ -40,7 +40,7 @@ namespace scratchbird::parser::mysql {
 
 /**
  * String pool for efficient identifier storage.
- * Similar to V2 parser's StringPool but MySQL-specific.
+ * Similar to the native parser StringPool but MySQL-specific.
  */
 class StringPool {
 public:

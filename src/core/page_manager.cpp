@@ -59,14 +59,12 @@ namespace scratchbird::core
                 header_out->autoextend_enabled = legacy->autoextend_enabled;
                 header_out->autoextend_size_mb = legacy->autoextend_size_mb;
                 header_out->max_size_mb = legacy->max_size_mb;
-                std::memcpy(header_out->reserved1, legacy->reserved1, sizeof(legacy->reserved1));
                 header_out->total_pages = legacy->total_pages;
                 header_out->free_pages = legacy->free_pages;
                 header_out->next_page_number = legacy->next_page_number;
                 header_out->fsm_root_page = legacy->fsm_root_page;
                 header_out->oldest_transaction_id = legacy->oldest_transaction_id;
                 header_out->latest_completed_xid = legacy->latest_completed_xid;
-                std::memcpy(header_out->reserved2, legacy->reserved2, sizeof(legacy->reserved2));
                 return Status::OK;
             }
 
@@ -402,13 +400,16 @@ namespace scratchbird::core
             header->page_type = PAGE_TYPE_HEAP; // Default to heap page
             header->page_size = page_size_;
             header->page_id = total_pages_ + i;
-            header->flags = 0;
-            memcpy(header->database_uuid, db_->uuid().bytes.data(), 16);
             header->generation = 1;
-            header->free_space = page_size_ - sizeof(PageHeader);
+            header->checksum = 0;
+            header->flags = 0;
+            header->lsn = 0;
+            setDatabaseUuid(*header, db_->uuid());
+            setTableId(*header, ID{});
             header->item_count = 0;
-            header->free_offset = sizeof(PageHeader);
-            header->special_size = 0;
+            pageSetLower(*header, sizeof(PageHeader));
+            pageSetUpper(*header, page_size_);
+            pageSetSpecial(*header, page_size_);
 
             // Zero only the data portion after the header
             // This avoids wasting CPU cycles zeroing bytes that are immediately overwritten
@@ -518,9 +519,13 @@ namespace scratchbird::core
         fsm->header.page_type = PAGE_TYPE_FREE_SPACE_MAP;
         fsm->header.page_size = page_size_;
         fsm->header.page_id = FSM_PAGE_ID;
+        fsm->header.generation = 1;
+        fsm->header.checksum = 0;
         fsm->header.flags = 0;
-        memcpy(fsm->header.database_uuid, db_->uuid().bytes.data(), 16);
-        fsm->header.generation++;
+        fsm->header.lsn = 0;
+        setDatabaseUuid(fsm->header, db_->uuid());
+        setTableId(fsm->header, ID{});
+        fsm->header.item_count = 0;
 
         // FSM metadata
         fsm->total_pages = total_pages_;
@@ -532,11 +537,9 @@ namespace scratchbird::core
         memcpy(fsm->bitmap, bitmap_.data(), bitmap_bytes);
 
         // Update header fields
-        fsm->header.free_space =
-            page_size_ - sizeof(PageHeader) - sizeof(uint32_t) * 3 - bitmap_bytes;
-        fsm->header.item_count = 1; // One logical item (the bitmap)
-        fsm->header.free_offset = sizeof(PageHeader) + sizeof(uint32_t) * 3 + bitmap_bytes;
-        fsm->header.special_size = 0;
+        pageSetLower(fsm->header, sizeof(PageHeader) + sizeof(uint32_t) * 3 + bitmap_bytes);
+        pageSetUpper(fsm->header, page_size_);
+        pageSetSpecial(fsm->header, page_size_);
 
         // Calculate checksum for FSM page
         fsm->header.checksum = calculatePageChecksum(buffer, page_size_);
@@ -1074,15 +1077,18 @@ namespace scratchbird::core
         header->page_header.page_type = PAGE_TYPE_DATABASE_HEADER; // Tablespace header uses same type
         header->page_header.page_size = page_size_;
         header->page_header.page_id = 0;
+        header->page_header.generation = 1;
+        header->page_header.checksum = 0;
         header->page_header.flags = 0;
         header->page_header.lsn = 0;
-        const ID &db_uuid = db_->uuid();
-        memcpy(header->page_header.database_uuid, db_uuid.bytes.data(), 16);
-        header->page_header.generation = 1;
-        header->page_header.free_space = 0; // Header page has no free space
+        setDatabaseUuid(header->page_header, db_->uuid());
+        setTableId(header->page_header, ID{});
         header->page_header.item_count = 0;
-        header->page_header.free_offset = 0;
-        header->page_header.special_size = 0;
+        pageSetLower(header->page_header, sizeof(TablespaceHeader));
+        pageSetUpper(header->page_header, page_size_);
+        pageSetSpecial(header->page_header, page_size_);
+
+        const ID &db_uuid = db_->uuid();
 
         // Initialize TablespaceHeader fields
         strncpy(header->tablespace_name, name.c_str(), sizeof(header->tablespace_name) - 1);
@@ -1142,7 +1148,6 @@ namespace scratchbird::core
         fsm_header->page_id = 1;
         fsm_header->flags = 0;
         fsm_header->lsn = 0;
-        memcpy(fsm_header->database_uuid, db_uuid.bytes.data(), 16);
         fsm_header->generation = 1;
 
         // Initialize FSM data structure
@@ -1519,7 +1524,6 @@ namespace scratchbird::core
                 fsm_header->flags = 0;
                 fsm_header->lsn = 0;
                 const ID &db_uuid = db_->uuid();
-                memcpy(fsm_header->database_uuid, db_uuid.bytes.data(), 16);
                 fsm_header->generation = 1;
 
                 // Write FSM data

@@ -17,6 +17,7 @@
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/garbage_collector.h" // Phase 4: TOAST GC
 #include "scratchbird/core/gpid.h"
+#include "scratchbird/core/uuidv7.h"
 #include <chrono>
 #include "scratchbird/core/logger.h"
 #include <cstring>
@@ -163,7 +164,7 @@ namespace scratchbird::core
                     if (gc)
                     {
                         // Step 1: Detect orphaned TOAST chunks
-                        std::unordered_set<uint32_t> orphaned_value_ids;
+                        std::unordered_set<ID, IDHash> orphaned_value_ids;
                         Status orphan_status = gc->detectOrphanedToastChunks(table.table_id,
                                                                               &orphaned_value_ids,
                                                                               ctx);
@@ -472,14 +473,15 @@ namespace scratchbird::core
         auto *old_items = reinterpret_cast<ItemPointer *>(page_data + sizeof(PageHeader));
         auto *new_items = reinterpret_cast<ItemPointer *>(temp_data + sizeof(PageHeader));
 
-        uint16_t old_item_count = old_page_hdr->item_count;
+        uint16_t old_item_count =
+            static_cast<uint16_t>((pageLower(*old_page_hdr) - sizeof(PageHeader)) / sizeof(ItemPointer));
         uint16_t new_item_count = 0;
 
         // Calculate starting position for tuple data (from end of page, before special area)
         uint32_t tuple_data_offset = page_size - sizeof(HeapPageSpecial);
 
         // Track space reclaimed
-        uint32_t old_free_space = old_page_hdr->free_space;
+        uint32_t old_free_space = pageUpper(*old_page_hdr) - pageLower(*old_page_hdr);
 
         // Pass 1: Copy non-deleted tuples and build new item array
         for (uint16_t i = 0; i < old_item_count; ++i)
@@ -511,16 +513,12 @@ namespace scratchbird::core
         }
 
         // Update header with new counts and free space
-        temp_page_hdr->item_count = new_item_count;
+        pageSetLower(*temp_page_hdr, sizeof(PageHeader) + new_item_count * sizeof(ItemPointer));
+        pageSetUpper(*temp_page_hdr, tuple_data_offset);
+        pageSetSpecial(*temp_page_hdr, page_size - sizeof(HeapPageSpecial));
 
         // Calculate new free space
-        uint32_t items_size = new_item_count * sizeof(ItemPointer);
-        uint32_t header_size = sizeof(PageHeader);
-        uint32_t used_space =
-            header_size + items_size + (page_size - sizeof(HeapPageSpecial) - tuple_data_offset);
-        uint32_t new_free_space = page_size - sizeof(HeapPageSpecial) - used_space;
-
-        temp_page_hdr->free_space = static_cast<uint16_t>(new_free_space);
+        uint32_t new_free_space = pageUpper(*temp_page_hdr) - pageLower(*temp_page_hdr);
 
         // Copy special area
         auto *old_special =

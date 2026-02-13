@@ -81,7 +81,7 @@ TEST_F(StatisticsCRUDTest, HistogramTypes) {
 TEST_F(StatisticsCRUDTest, MCVEntryDefaults) {
     MCVEntry mcv;
 
-    EXPECT_EQ(mcv.value_oid, 0);
+    EXPECT_EQ(mcv.value_oid, ID{});
     EXPECT_FLOAT_EQ(mcv.frequency, 0.0f);
     // value_data should be zeroed
     bool all_zero = true;
@@ -98,8 +98,8 @@ TEST_F(StatisticsCRUDTest, MCVEntryDefaults) {
 TEST_F(StatisticsCRUDTest, HistogramBucketDefaults) {
     HistogramBucket bucket;
 
-    EXPECT_EQ(bucket.lower_oid, 0);
-    EXPECT_EQ(bucket.upper_oid, 0);
+    EXPECT_EQ(bucket.lower_oid, ID{});
+    EXPECT_EQ(bucket.upper_oid, ID{});
     EXPECT_EQ(bucket.row_count, 0);
     EXPECT_FLOAT_EQ(bucket.frequency, 0.0f);
 

@@ -40,13 +40,25 @@ namespace core
 
 namespace {
 
+bool isZeroId(const ID& id)
+{
+    for (auto b : id.bytes)
+    {
+        if (b != 0)
+        {
+            return false;
+        }
+    }
+    return true;
+}
+
 void attachBloomFilterIfConfigured(CatalogManager::IndexType index_type,
                                    void *index_ptr,
                                    Database *db,
                                    const CatalogManager::IndexInfo &index_info,
                                    ErrorContext *ctx)
 {
-    if (!db || !index_ptr || index_info.index_params_oid == 0)
+    if (!db || !index_ptr || isZeroId(index_info.index_params_oid))
     {
         return;
     }

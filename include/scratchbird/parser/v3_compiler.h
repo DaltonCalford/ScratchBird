@@ -2,9 +2,8 @@
 
 #include <string>
 #include <string_view>
+#include <cstdint>
 #include <vector>
-
-#include "scratchbird/parser/parser_v2.h"
 
 namespace scratchbird::parser::v3 {
 

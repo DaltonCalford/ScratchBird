@@ -901,12 +901,12 @@ namespace scratchbird
             EXT_SHOW_RESOLVED = 0x79,      // SHOW RESOLVED name - which object search path resolves to
             EXT_SHOW_OBJECTS = 0x7A,       // SHOW OBJECTS - all objects in current/specified schema
 
-            // Parser V2 SHOW variants (Session/GUC support)
+            // Parser V3 SHOW variants (Session/GUC support)
             EXT_SHOW_VARIABLE = 0x7B,      // SHOW variable_name - show session variable value
             EXT_SHOW_ALL = 0x7C,           // SHOW ALL - show all session variables
             EXT_SHOW_TRANSACTION_LEVEL = 0x7D, // SHOW TRANSACTION ISOLATION LEVEL
 
-            // Parser V2 completeness opcodes (0x80-0x8F range)
+            // Parser V3 completeness opcodes (0x80-0x8F range)
             EXT_SELECT_TABLE_STAR = 0x80,      // SELECT t.* - qualified table star (followed by table UUID)
             EXT_SET_VARIABLE = 0x81,           // SET variable = value - generic session variable
             EXT_ON_CONFLICT = 0x82,            // INSERT ... ON CONFLICT marker

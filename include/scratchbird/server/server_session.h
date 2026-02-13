@@ -50,7 +50,6 @@ namespace sblr {
     class Executor;
     class ResultSet;
     class ExecutionResult;
-    class QueryCompilerV2;  // Phase 9: Parser V2 integration
     class FirebirdQueryCompiler;
     class PostgreSQLQueryCompiler;
     class MySQLQueryCompiler;
@@ -316,7 +315,6 @@ private:
     std::unique_ptr<sblr::Executor> executor_;
 
     // Query compilers
-    std::unique_ptr<sblr::QueryCompilerV2> compiler_v2_;
     std::unique_ptr<parser::v3::Compiler> compiler_v3_;
     std::unique_ptr<sblr::FirebirdQueryCompiler> compiler_firebird_;
     std::unique_ptr<sblr::PostgreSQLQueryCompiler> compiler_postgresql_;

@@ -91,12 +91,10 @@ TEST(CRC32C_Comprehensive, ChecksumFieldExclusion)
     header->lsn = 0x1234567890ABCDEFull;
     header->page_id = 42;
     header->flags = PAGE_FLAG_DIRTY;
-    memset(header->database_uuid, 0xAB, 16);
     header->generation = 100;
-    header->free_space = 1000;
-    header->item_count = 5;
-    header->free_offset = sizeof(PageHeader);
-    header->special_size = 0;
+    pageSetLower(*header, sizeof(PageHeader));
+    pageSetUpper(*header, PAGE_SIZE);
+    pageSetSpecial(*header, PAGE_SIZE);
 
     // Calculate checksum with different values in checksum field
     header->checksum = 0xDEADBEEF;

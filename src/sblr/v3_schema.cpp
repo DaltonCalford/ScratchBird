@@ -47,7 +47,9 @@ const SchemaDef* lookupSchema(std::string_view name) {
         if (last_name != name) {
             literal_schema.name = std::string(name);
             literal_schema.fields.clear();
-            if (suffix == "DATE" || suffix == "TIME" || suffix == "TIMESTAMP" || suffix == "TIME_TZ" || suffix == "TIMESTAMP_TZ") {
+            if (suffix == "NULL") {
+                // NULL literal has no payload fields.
+            } else if (suffix == "DATE" || suffix == "TIME" || suffix == "TIMESTAMP" || suffix == "TIME_TZ" || suffix == "TIMESTAMP_TZ") {
                 literal_schema.fields.push_back(FieldDef{"value", FieldType::I64, ""});
                 literal_schema.fields.push_back(FieldDef{"offset_seconds", FieldType::I32, ""});
             } else if (suffix == "DATE32") {

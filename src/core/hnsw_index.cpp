@@ -131,6 +131,18 @@ Status HnswIndex::create(Database *db,
     std::memset(root, 0, sizeof(SBHnswPage));
 
     // Initialize page header
+    root->hnsw_header.magic = K_MAGIC_SBRD;
+    root->hnsw_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
+    root->hnsw_header.page_type = PAGE_TYPE_INDEX_HNSW;
+    root->hnsw_header.page_size = db->page_size();
+    root->hnsw_header.page_id = root_page;
+    root->hnsw_header.generation = 1;
+    root->hnsw_header.checksum = 0;
+    root->hnsw_header.flags = 0;
+    root->hnsw_header.lsn = 0;
+    pageSetLower(root->hnsw_header, sizeof(SBHnswPage));
+    pageSetUpper(root->hnsw_header, db->page_size());
+    pageSetSpecial(root->hnsw_header, db->page_size());
     root->hnsw_index_uuid = index_uuid;
     root->hnsw_table_uuid = table_uuid;
     root->hnsw_flags = static_cast<uint16_t>(HnswFlags::ROOT);
@@ -1198,6 +1210,18 @@ Status HnswIndex::create_node(const VectorValue &vector,
         uint8_t *new_page_data = static_cast<uint8_t*>(new_page_buffer);
         SBHnswPage *new_page = reinterpret_cast<SBHnswPage*>(new_page_data);
         std::memset(new_page_data, 0, db_->page_size());
+        new_page->hnsw_header.magic = K_MAGIC_SBRD;
+        new_page->hnsw_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
+        new_page->hnsw_header.page_type = PAGE_TYPE_INDEX_HNSW;
+        new_page->hnsw_header.page_size = db_->page_size();
+        new_page->hnsw_header.page_id = new_page_num;
+        new_page->hnsw_header.generation = 1;
+        new_page->hnsw_header.checksum = 0;
+        new_page->hnsw_header.flags = 0;
+        new_page->hnsw_header.lsn = 0;
+        pageSetLower(new_page->hnsw_header, sizeof(SBHnswPage));
+        pageSetUpper(new_page->hnsw_header, db_->page_size());
+        pageSetSpecial(new_page->hnsw_header, db_->page_size());
 
         // Copy header from root page (need to re-pin root to read it)
         void *root_buffer = nullptr;

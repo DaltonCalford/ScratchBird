@@ -127,7 +127,6 @@ protected:
         header.xmax = xmax;
         header.back_version_gpid = INVALID_GPID;
         header.back_version_slot = 0;
-        header.reserved1 = 0;
         header.ctid_gpid = INVALID_GPID;
         header.ctid_slot = 0;
         header.infomask = 0;

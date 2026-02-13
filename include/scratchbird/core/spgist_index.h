@@ -128,7 +128,7 @@ enum class SPGiSTFlags : uint16_t
  */
 struct SBSPGiSTPage
 {
-    // Standard page header (64 bytes)
+    // Standard page header (80 bytes)
     PageHeader spgist_header;
 
     // Index identification (32 bytes)

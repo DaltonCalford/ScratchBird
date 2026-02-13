@@ -36,6 +36,18 @@
 
 namespace scratchbird::optimizer
 {
+    static bool isZeroId(const core::ID& id)
+    {
+        for (auto b : id.bytes)
+        {
+            if (b != 0)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
     // Hash function for std::vector<uint8_t> (for use in unordered_set)
     struct VectorHash
     {
@@ -1153,8 +1165,8 @@ namespace scratchbird::optimizer
                 bucket.frequency = static_cast<float>(bucket_size) / static_cast<float>(sorted_values.size());
 
                 // TOAST references (0 = inline data, not TOASTed)
-                bucket.lower_oid = 0;
-                bucket.upper_oid = 0;
+                bucket.lower_oid = {};
+                bucket.upper_oid = {};
 
                 buckets.push_back(bucket);
                 idx += bucket_size;
@@ -1190,8 +1202,8 @@ namespace scratchbird::optimizer
 
                 bucket.row_count = non_null_values.size();
                 bucket.frequency = 1.0f;
-                bucket.lower_oid = 0;
-                bucket.upper_oid = 0;
+                bucket.lower_oid = {};
+                bucket.upper_oid = {};
 
                 buckets.push_back(bucket);
                 DEBUG_LOG_DB("Generated single-bucket histogram (all values equal)");
@@ -1297,7 +1309,7 @@ namespace scratchbird::optimizer
             mcv.frequency = static_cast<float>(count) / static_cast<float>(total_non_null);
 
             // TOAST reference (0 = inline data, not TOASTed)
-            mcv.value_oid = 0;
+            mcv.value_oid = {};
 
             mcv_list.push_back(mcv);
         }
@@ -1442,7 +1454,7 @@ namespace scratchbird::optimizer
             {
                 DEBUG_LOG_DB("Failed to store MCV list via TOAST");
                 // Continue anyway - stats will work without MCVs
-                info.mcv_oid = 0;
+                info.mcv_oid = {};
             }
         }
 
@@ -1485,7 +1497,7 @@ namespace scratchbird::optimizer
             {
                 DEBUG_LOG_DB("Failed to store histogram via TOAST");
                 // Continue anyway - stats will work without histogram
-                info.histogram_oid = 0;
+                info.histogram_oid = {};
             }
         }
 
@@ -1556,7 +1568,7 @@ namespace scratchbird::optimizer
         stats.sample_rate = info.sample_rate;
 
         // Load MCVs from TOAST if available
-        if (info.mcv_oid != 0)
+        if (!isZeroId(info.mcv_oid))
         {
             std::string json;
             status = catalog_->loadStringFromToast(info.mcv_oid, 0, json, ctx);
@@ -1604,7 +1616,7 @@ namespace scratchbird::optimizer
         }
 
         // Load histogram from TOAST if available
-        if (info.histogram_oid != 0)
+        if (!isZeroId(info.histogram_oid))
         {
             std::string json;
             status = catalog_->loadStringFromToast(info.histogram_oid, 0, json, ctx);

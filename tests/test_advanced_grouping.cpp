@@ -29,7 +29,7 @@
 #include "scratchbird/core/database.h"
 
 
-#include "scratchbird/sblr/query_compiler_v2.h"
+#include "scratchbird/sblr/query_compiler_v3.h"
 #include "scratchbird/sblr/executor.h"
 #include "test_helpers.h"
 #include <filesystem>
@@ -40,7 +40,7 @@ using namespace scratchbird;
 class AdvancedGroupingTest : public ::testing::Test {
 protected:
     std::unique_ptr<core::Database> db_;
-    std::unique_ptr<sblr::QueryCompilerV2> compiler_;
+    std::unique_ptr<sblr::QueryCompilerV3> compiler_;
     std::string db_path_;
 
     void SetUp() override {
@@ -58,7 +58,7 @@ protected:
         status = db_->open(db_path_, &ctx);
         ASSERT_EQ(status, core::Status::OK) << "Failed to open database: " << ctx.message;
 
-        compiler_ = std::make_unique<sblr::QueryCompilerV2>(db_.get());
+        compiler_ = std::make_unique<sblr::QueryCompilerV3>(db_.get());
 
         // Create test table and insert sample data
         createTestData();

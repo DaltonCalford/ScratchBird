@@ -495,9 +495,9 @@ TEST_F(ScramClientTest, ProcessServerFirstMessage) {
     client.generateClientFirstMessage();
     
     // Simulate server-first
-    std::string server_first = "r=clientnonce_servernonce,s=c2FsdDEyMw==,i=4096";
+    std::string server_first = "r=" + client.clientNonce() + "_servernonce,s=c2FsdDEyMw==,i=4096";
     EXPECT_TRUE(client.processServerFirstMessage(server_first));
-    EXPECT_EQ(client.combinedNonce(), "clientnonce_servernonce");
+    EXPECT_EQ(client.combinedNonce(), client.clientNonce() + "_servernonce");
 }
 
 // Test 8: Client rejects server-first with wrong nonce

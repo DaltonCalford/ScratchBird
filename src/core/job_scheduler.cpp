@@ -17,8 +17,6 @@
 #include "scratchbird/core/job_scheduler_utils.h"
 #include "scratchbird/core/telemetry.h"
 #include "scratchbird/sblr/executor.h"
-#include "scratchbird/sblr/query_compiler_v2.h"
-#include "scratchbird/sblr/v3_container.h"
 #include "scratchbird/parser/v3_compiler.h"
 
 #include <chrono>
@@ -28,6 +26,7 @@
 #include <unordered_set>
 #include <cstdlib>
 #include <cctype>
+#include <system_error>
 #include <poll.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
@@ -444,35 +443,45 @@ JobScheduler::~JobScheduler() {
 }
 
 Status JobScheduler::start(ErrorContext* ctx) {
-    if (running_.load()) {
-        return Status::OK;
-    }
-
     if (!db_ || !db_->catalog_manager()) {
         SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "JobScheduler requires catalog manager");
         return Status::INVALID_ARGUMENT;
     }
 
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (running_.load(std::memory_order_acquire)) {
+        return Status::OK;
+    }
+
     stop_requested_ = false;
-    running_.store(true);
-    worker_ = std::thread(&JobScheduler::runLoop, this);
+    running_.store(true, std::memory_order_release);
+    try {
+        worker_ = std::thread(&JobScheduler::runLoop, this);
+    } catch (const std::system_error& e) {
+        running_.store(false, std::memory_order_release);
+        stop_requested_ = true;
+        std::string msg = "Failed to start scheduler thread: ";
+        msg += e.what();
+        SET_ERROR_CONTEXT(ctx, Status::INTERNAL_ERROR, msg.c_str());
+        return Status::INTERNAL_ERROR;
+    }
     return Status::OK;
 }
 
 void JobScheduler::stop() {
-    if (!running_.load()) {
-        return;
-    }
-
     {
         std::lock_guard<std::mutex> lock(mutex_);
+        if (!running_.load(std::memory_order_acquire)) {
+            return;
+        }
         stop_requested_ = true;
+        cv_.notify_all();
     }
-    cv_.notify_all();
+
     if (worker_.joinable()) {
         worker_.join();
     }
-    running_.store(false);
+    running_.store(false, std::memory_order_release);
 
     std::unique_lock<std::mutex> lock(active_mutex_);
     active_cv_.wait(lock, [&]() { return active_jobs_.empty(); });
@@ -493,8 +502,8 @@ void JobScheduler::updateConfig(const Config& config) {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         config_ = config;
+        cv_.notify_all();
     }
-    cv_.notify_all();
 }
 
 void JobScheduler::runLoop() {
@@ -509,7 +518,8 @@ void JobScheduler::runLoop() {
         processDueJobs();
 
         std::unique_lock<std::mutex> lock(mutex_);
-        cv_.wait_for(lock, std::chrono::seconds(config_.polling_interval_seconds), [&]() {
+        const uint32_t polling_interval_seconds = config_.polling_interval_seconds;
+        cv_.wait_for(lock, std::chrono::seconds(polling_interval_seconds), [&]() {
             return stop_requested_;
         });
         if (stop_requested_) {
@@ -524,6 +534,15 @@ void JobScheduler::processDueJobs() {
         return static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::milliseconds>(now).count());
     };
+
+    Config cfg;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        if (stop_requested_) {
+            return;
+        }
+        cfg = config_;
+    }
 
     uint64_t now = now_ms();
     std::vector<CatalogManager::JobInfo> due_jobs;
@@ -540,9 +559,9 @@ void JobScheduler::processDueJobs() {
     }
 
     uint32_t handled = 0;
-    uint32_t max_jobs = config_.max_jobs_per_tick;
-    if (config_.max_concurrent_jobs > 0) {
-        max_jobs = std::min(max_jobs, config_.max_concurrent_jobs);
+    uint32_t max_jobs = cfg.max_jobs_per_tick;
+    if (cfg.max_concurrent_jobs > 0) {
+        max_jobs = std::min(max_jobs, cfg.max_concurrent_jobs);
     }
     for (auto& job : due_jobs) {
         if (handled >= max_jobs) {
@@ -560,7 +579,7 @@ void JobScheduler::processDueJobs() {
             }
         }
 
-        if (config_.catch_up_policy == CatchUpPolicy::NONE &&
+        if (cfg.catch_up_policy == CatchUpPolicy::NONE &&
             job.next_run_time < now &&
             job.schedule_kind != CatalogManager::ScheduleKind::AT) {
             if (job.schedule_kind == CatalogManager::ScheduleKind::EVERY &&
@@ -623,7 +642,7 @@ void JobScheduler::processDueJobs() {
             continue;
         }
 
-        if (config_.catch_up_policy == CatchUpPolicy::ALL &&
+        if (cfg.catch_up_policy == CatchUpPolicy::ALL &&
             job.schedule_kind != CatalogManager::ScheduleKind::AT) {
             uint64_t next_time = 0;
             if (job.schedule_kind == CatalogManager::ScheduleKind::EVERY &&
@@ -695,10 +714,17 @@ Status JobScheduler::startJobExecution(const CatalogManager::JobInfo& job,
         return Status::INVALID_ARGUMENT;
     }
 
+    Config cfg;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        cfg = config_;
+    }
+
+    size_t running_jobs_count = 0;
     {
         std::lock_guard<std::mutex> lock(active_mutex_);
-        if (config_.max_concurrent_jobs > 0 &&
-            active_jobs_.size() >= config_.max_concurrent_jobs) {
+        if (cfg.max_concurrent_jobs > 0 &&
+            active_jobs_.size() >= cfg.max_concurrent_jobs) {
             SET_ERROR_CONTEXT(&err_ctx, Status::LOCK_CONFLICT, "Scheduler is at max concurrency");
             return Status::LOCK_CONFLICT;
         }
@@ -707,12 +733,13 @@ Status JobScheduler::startJobExecution(const CatalogManager::JobInfo& job,
             return Status::LOCK_CONFLICT;
         }
         active_jobs_.insert(job.job_id);
+        running_jobs_count = active_jobs_.size();
     }
 
     auto& metrics = ScratchBirdMetrics::getInstance();
     metrics.initialize();
     if (metrics.scheduler_jobs_running) {
-        metrics.scheduler_jobs_running->set(static_cast<double>(active_jobs_.size()));
+        metrics.scheduler_jobs_running->set(static_cast<double>(running_jobs_count));
     }
 
     CatalogManager::JobRunInfo run;
@@ -755,7 +782,13 @@ Status JobScheduler::executeJobNow(const CatalogManager::JobInfo& job, ID& run_i
         return status;
     }
 
-    if (job.job_type == CatalogManager::JobType::SQL && config_.pre_execute_delay_ms == 0) {
+    Config cfg;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        cfg = config_;
+    }
+
+    if (job.job_type == CatalogManager::JobType::SQL && cfg.pre_execute_delay_ms == 0) {
         auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
         while (std::chrono::steady_clock::now() < deadline) {
             CatalogManager::JobRunInfo run;
@@ -836,8 +869,14 @@ void JobScheduler::executeJobRun(const CatalogManager::JobInfo& job,
     int64_t rows_affected = 0;
     auto execution_start = std::chrono::steady_clock::now();
 
-    if (config_.pre_execute_delay_ms > 0) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(config_.pre_execute_delay_ms));
+    Config cfg;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        cfg = config_;
+    }
+
+    if (cfg.pre_execute_delay_ms > 0) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(cfg.pre_execute_delay_ms));
     }
 
     std::shared_ptr<std::atomic<bool>> cancel_requested;
@@ -868,7 +907,7 @@ void JobScheduler::executeJobRun(const CatalogManager::JobInfo& job,
 
     if (!run_cancelled) {
         if (job.job_type == CatalogManager::JobType::EXTERNAL) {
-            if (!config_.external_jobs_enabled) {
+            if (!cfg.external_jobs_enabled) {
                 run_success = false;
                 run_message = "External jobs are disabled";
                 run_error_code = -1;
@@ -883,18 +922,18 @@ void JobScheduler::executeJobRun(const CatalogManager::JobInfo& job,
                     run_message = "External job command is empty";
                     run_error_code = -1;
                 } else if (!commandAllowed(args,
-                                           config_.external_allowed_commands,
-                                           config_.external_allowed_dirs)) {
+                                           cfg.external_allowed_commands,
+                                           cfg.external_allowed_dirs)) {
                     run_success = false;
                     run_message = "External command not allowed or not absolute";
                     run_error_code = -1;
-                } else if (config_.external_working_dir.empty()) {
+                } else if (cfg.external_working_dir.empty()) {
                     run_success = false;
                     run_message = "External working directory not configured";
                     run_error_code = -1;
                 } else {
                     std::string dir_error;
-                    if (!validateWorkingDir(config_.external_working_dir, dir_error)) {
+                    if (!validateWorkingDir(cfg.external_working_dir, dir_error)) {
                         run_success = false;
                         run_message = dir_error;
                         run_error_code = -1;
@@ -902,7 +941,7 @@ void JobScheduler::executeJobRun(const CatalogManager::JobInfo& job,
                         std::vector<std::string> env_entries;
                         std::string env_error;
                         if (!buildExternalEnv(db_, job, run,
-                                              config_.external_env_allowlist,
+                                              cfg.external_env_allowlist,
                                               env_entries, env_error)) {
                             run_success = false;
                             run_message = env_error;
@@ -910,16 +949,16 @@ void JobScheduler::executeJobRun(const CatalogManager::JobInfo& job,
                         } else {
                             uint32_t timeout_seconds = job.timeout_seconds;
                             if (timeout_seconds == 0) {
-                                timeout_seconds = config_.job_timeout_seconds;
+                                timeout_seconds = cfg.job_timeout_seconds;
                             }
                             auto run_result = runExternalCommand(args,
-                                                                 config_.external_working_dir,
+                                                                 cfg.external_working_dir,
                                                                  env_entries,
-                                                                 config_.external_output_max_bytes,
+                                                                 cfg.external_output_max_bytes,
                                                                  timeout_seconds,
-                                                                 config_.external_kill_grace_ms,
-                                                                 config_.external_cpu_time_limit_seconds,
-                                                                 config_.external_memory_max_bytes,
+                                                                 cfg.external_kill_grace_ms,
+                                                                 cfg.external_cpu_time_limit_seconds,
+                                                                 cfg.external_memory_max_bytes,
                                                                  cancel_requested);
                             if (run_result.cancelled) {
                                 run_cancelled = true;
@@ -1006,42 +1045,11 @@ void JobScheduler::executeJobRun(const CatalogManager::JobInfo& job,
                         run_error_code = static_cast<int32_t>(Status::INVALID_ARGUMENT);
                     } else {
                         std::vector<uint8_t> bytecode = compile_result.bytecode;
-                        {
-                            sblr::QueryCompilerV2 v2_compiler(db_);
-                            auto v2_result = v2_compiler.compile(sql);
-                            if (v2_result.success()) {
-                                scratchbird::sblr::v3::Container container;
-                                std::string err;
-                                if (scratchbird::sblr::v3::decodeContainer(bytecode.data(),
-                                                                           bytecode.size(),
-                                                                           container,
-                                                                           err)) {
-                                    const auto& v2_bytes = v2_result.bytecode();
-                                    std::vector<uint8_t> debug;
-                                    debug.reserve(8 + v2_bytes.size());
-                                    debug.push_back('S');
-                                    debug.push_back('B');
-                                    debug.push_back('V');
-                                    debug.push_back('2');
-                                    uint32_t len = static_cast<uint32_t>(v2_bytes.size());
-                                    debug.push_back(static_cast<uint8_t>(len & 0xFF));
-                                    debug.push_back(static_cast<uint8_t>((len >> 8) & 0xFF));
-                                    debug.push_back(static_cast<uint8_t>((len >> 16) & 0xFF));
-                                    debug.push_back(static_cast<uint8_t>((len >> 24) & 0xFF));
-                                    debug.insert(debug.end(), v2_bytes.begin(), v2_bytes.end());
-                                    container.debug_info = std::move(debug);
-                                    std::vector<uint8_t> reencoded;
-                                    if (scratchbird::sblr::v3::encodeContainer(container, reencoded, err)) {
-                                        bytecode = std::move(reencoded);
-                                    }
-                                }
-                            }
-                        }
                         auto executor = std::make_shared<scratchbird::sblr::Executor>(db_);
                         executor->setConnectionContext(conn_ctx.get());
                         uint32_t timeout_seconds = job.timeout_seconds;
                         if (timeout_seconds == 0) {
-                            timeout_seconds = config_.job_timeout_seconds;
+                            timeout_seconds = cfg.job_timeout_seconds;
                         }
                         if (timeout_seconds > 0) {
                             conn_ctx->set_statement_timeout(timeout_seconds);
@@ -1083,7 +1091,7 @@ void JobScheduler::executeJobRun(const CatalogManager::JobInfo& job,
 
     uint32_t timeout_seconds = job.timeout_seconds;
     if (timeout_seconds == 0) {
-        timeout_seconds = config_.job_timeout_seconds;
+        timeout_seconds = cfg.job_timeout_seconds;
     }
     if (!run_cancelled && run_success && timeout_seconds > 0) {
         auto elapsed_ms =
@@ -1146,7 +1154,7 @@ void JobScheduler::executeJobRun(const CatalogManager::JobInfo& job,
     CatalogManager::JobInfo updated_job = job;
     uint64_t now_actual = now_ms();
     uint64_t reference_time = now;
-    if (config_.catch_up_policy == CatchUpPolicy::LAST && reference_time < now_actual) {
+    if (cfg.catch_up_policy == CatchUpPolicy::LAST && reference_time < now_actual) {
         reference_time = now_actual;
     }
     if (!run_cancelled && !run_success && run.retry_count < job.max_retries) {
@@ -1193,7 +1201,7 @@ void JobScheduler::executeJobRun(const CatalogManager::JobInfo& job,
         updated_job.next_run_time = 0;
     }
 
-    if (config_.catch_up_policy == CatchUpPolicy::ALL) {
+    if (cfg.catch_up_policy == CatchUpPolicy::ALL) {
         CatalogManager::JobInfo latest_job;
         ErrorContext latest_ctx;
         if (db_->catalog_manager()->getJob(job.job_id, latest_job, &latest_ctx) == Status::OK) {
@@ -1205,16 +1213,18 @@ void JobScheduler::executeJobRun(const CatalogManager::JobInfo& job,
 
     db_->catalog_manager()->updateJob(updated_job, &ctx);
 
+    size_t remaining_jobs_count = 0;
     {
         std::lock_guard<std::mutex> lock(active_mutex_);
         active_jobs_.erase(job.job_id);
+        remaining_jobs_count = active_jobs_.size();
         active_cv_.notify_all();
     }
     {
         auto& metrics = ScratchBirdMetrics::getInstance();
         metrics.initialize();
         if (metrics.scheduler_jobs_running) {
-            metrics.scheduler_jobs_running->set(static_cast<double>(active_jobs_.size()));
+            metrics.scheduler_jobs_running->set(static_cast<double>(remaining_jobs_count));
         }
     }
 

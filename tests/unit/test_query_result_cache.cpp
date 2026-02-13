@@ -12,7 +12,7 @@
  */
 
 #include <gtest/gtest.h>
-#include "scratchbird/sblr/query_compiler_v2.h"
+#include "scratchbird/sblr/query_compiler_v3.h"
 #include "scratchbird/sblr/executor.h"
 #include "scratchbird/sblr/query_result_cache.h"
 #include "scratchbird/core/database.h"
@@ -59,7 +59,7 @@ protected:
 
         EnsureUser(catalog_, "test_user");
 
-        compiler_ = std::make_unique<QueryCompilerV2>(&db_);
+        compiler_ = std::make_unique<QueryCompilerV3>(&db_);
         executor_ = std::make_unique<Executor>(&db_);
 
         status = db_.connect(connection_ctx_, &ctx);
@@ -106,7 +106,7 @@ protected:
     Database db_;
     CatalogManager* catalog_ = nullptr;
     ID public_schema_id_;
-    std::unique_ptr<QueryCompilerV2> compiler_;
+    std::unique_ptr<QueryCompilerV3> compiler_;
     std::unique_ptr<Executor> executor_;
     std::unique_ptr<ConnectionContext> connection_ctx_;
 };
@@ -123,8 +123,6 @@ TEST_F(QueryResultCacheTest, SelectCachesAndReusesResult) {
     ASSERT_TRUE(compile_result.success()) << "Compilation failed";
     const auto& bytecode = compile_result.bytecode();
     ASSERT_GT(bytecode.size(), 2u);
-    EXPECT_TRUE(bytecode[2] == static_cast<uint8_t>(Opcode::SELECT) ||
-                bytecode[2] == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
 
     auto first = executor_->execute(bytecode);
     ASSERT_TRUE(first.success());
@@ -160,8 +158,6 @@ TEST_F(QueryResultCacheTest, DmlInvalidatesCachedResults) {
     ASSERT_TRUE(compile_result.success()) << "Compilation failed";
     const auto& bytecode = compile_result.bytecode();
     ASSERT_GT(bytecode.size(), 2u);
-    EXPECT_TRUE(bytecode[2] == static_cast<uint8_t>(Opcode::SELECT) ||
-                bytecode[2] == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE));
 
     auto first = executor_->execute(bytecode);
     ASSERT_TRUE(first.success());
@@ -171,7 +167,9 @@ TEST_F(QueryResultCacheTest, DmlInvalidatesCachedResults) {
     EXPECT_EQ(stats_after_first.misses, 1u);
     EXPECT_EQ(stats_after_first.insertions, 1u);
 
-    ASSERT_TRUE(compileAndExecute("UPDATE t SET value = 12 WHERE id = 1").success());
+    auto update_result = compileAndExecute("UPDATE t SET value = 12 WHERE id = 1");
+    ASSERT_TRUE(update_result.success());
+    EXPECT_EQ(update_result.affectedCount(), 1);
 
     auto stats_after_update = cache.getStatistics();
     EXPECT_EQ(stats_after_update.invalidations, 1u);

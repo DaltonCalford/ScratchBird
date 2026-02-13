@@ -11,7 +11,7 @@
  * Manual integration test for Query Planner (Phase 1, Task 1.3)
  *
  * This is a simple standalone program to verify the query planner
- * is properly integrated with bytecode generation via QueryCompilerV2.
+ * is properly integrated with bytecode generation via QueryCompilerV3.
  *
  * Compile and run:
  *   cd build
@@ -21,7 +21,7 @@
  */
 
 #include "scratchbird/core/database.h"
-#include "scratchbird/sblr/query_compiler_v2.h"
+#include "scratchbird/sblr/query_compiler_v3.h"
 
 #include <filesystem>
 #include <iostream>
@@ -101,7 +101,7 @@ int main()
 
     // Verify bytecode generation with planner available
     std::string sql = "SELECT id, name FROM users WHERE id = 42";
-    QueryCompilerV2 compiler(&db);
+    QueryCompilerV3 compiler(&db);
     auto compile_result = compiler.compile(sql);
 
     if (!compile_result.success())
@@ -150,7 +150,7 @@ int main()
     std::cout << "\n=== All tests PASSED ===\n";
     std::cout << "\nQuery Planner Integration verified:\n";
     std::cout << "  ✓ Database initializes optimizer components\n";
-    std::cout << "  ✓ QueryCompilerV2 generates bytecode with planner available\n";
+    std::cout << "  ✓ QueryCompilerV3 generates bytecode with planner available\n";
 
     return 0;
 }

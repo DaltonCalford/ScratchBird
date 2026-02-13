@@ -44,7 +44,7 @@ protected:
     std::unique_ptr<ThreadPool> pool_;
 };
 
-TEST_F(ConnectionManagerProtocolTest, DefaultConfigStartsInProtocolDetection) {
+TEST_F(ConnectionManagerProtocolTest, DefaultConfigBindsNativeProtocol) {
     auto manager = ConnectionManager::create(loop_.get(), pool_.get(), {}, &ctx_);
     ASSERT_NE(manager, nullptr);
 
@@ -53,8 +53,8 @@ TEST_F(ConnectionManagerProtocolTest, DefaultConfigStartsInProtocolDetection) {
 
     auto* conn = manager->getConnection(id);
     ASSERT_NE(conn, nullptr);
-    EXPECT_EQ(conn->getState(), ConnectionState::PROTOCOL_DETECTION);
-    EXPECT_EQ(conn->getProtocol(), ProtocolType::AUTO_DETECT);
+    EXPECT_EQ(conn->getState(), ConnectionState::AUTHENTICATING);
+    EXPECT_EQ(conn->getProtocol(), ProtocolType::NATIVE);
 
     manager->closeConnection(id);
 }
@@ -62,7 +62,6 @@ TEST_F(ConnectionManagerProtocolTest, DefaultConfigStartsInProtocolDetection) {
 TEST_F(ConnectionManagerProtocolTest, FixedProtocolBypassesDetection) {
     ConnectionManagerConfig config;
     config.fixed_protocol = ProtocolType::POSTGRESQL;
-    config.auto_detect_protocol = false;
     config.allowed_protocols = {ProtocolType::POSTGRESQL};
 
     auto manager = ConnectionManager::create(loop_.get(), pool_.get(), config, &ctx_);
@@ -82,19 +81,26 @@ TEST_F(ConnectionManagerProtocolTest, FixedProtocolBypassesDetection) {
 TEST_F(ConnectionManagerProtocolTest, FixedProtocolRespectsAllowList) {
     ConnectionManagerConfig config;
     config.fixed_protocol = ProtocolType::POSTGRESQL;
-    config.auto_detect_protocol = false;
     config.allowed_protocols = {ProtocolType::MYSQL};
 
     auto manager = ConnectionManager::create(loop_.get(), pool_.get(), config, &ctx_);
-    ASSERT_NE(manager, nullptr);
-
-    auto id = manager->acceptConnection(makeSocket());
-    ASSERT_NE(id, INVALID_CONNECTION_ID);
-
-    auto* conn = manager->getConnection(id);
-    ASSERT_NE(conn, nullptr);
-    EXPECT_EQ(conn->getState(), ConnectionState::CLOSED);
-
-    manager->closeConnection(id);
+    EXPECT_EQ(manager, nullptr);
 }
 
+TEST_F(ConnectionManagerProtocolTest, AutoDetectFixedProtocolRejected) {
+    ConnectionManagerConfig config;
+    config.fixed_protocol = ProtocolType::AUTO_DETECT;
+    config.allowed_protocols = {ProtocolType::NATIVE};
+
+    auto manager = ConnectionManager::create(loop_.get(), pool_.get(), config, &ctx_);
+    EXPECT_EQ(manager, nullptr);
+}
+
+TEST_F(ConnectionManagerProtocolTest, InvalidAllowListRejected) {
+    ConnectionManagerConfig config;
+    config.fixed_protocol = ProtocolType::NATIVE;
+    config.allowed_protocols.clear();
+
+    auto manager = ConnectionManager::create(loop_.get(), pool_.get(), config, &ctx_);
+    EXPECT_EQ(manager, nullptr);
+}

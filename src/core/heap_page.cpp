@@ -99,51 +99,21 @@ namespace scratchbird::core
             hdr->page_type = PAGE_TYPE_HEAP;
             hdr->page_size = page_size_;
             hdr->page_id = page_id;
+            hdr->generation = 1;
+            hdr->checksum = 0;
+            hdr->flags = 0;
+            hdr->lsn = 0;
+            setDatabaseUuid(*hdr, db_ ? db_->uuid() : ID{});
+            setTableId(*hdr, table_id_);
             hdr->item_count = 0;
-            hdr->free_space = 0; // Will be calculated
-            hdr->free_offset = sizeof(PageHeader);
-            hdr->special_size = sizeof(HeapPageSpecial);
-
-            // Set database_uuid and table_id per ON_DISK_FORMAT.md v1.4.0
-            if (db_ != nullptr)
-            {
-                // Get database UUID from database
-                const ID &db_uuid = db_->uuid();
-                memcpy(hdr->database_uuid, db_uuid.bytes.data(), sizeof(hdr->database_uuid));
-            }
-            else
-            {
-                // If no database available, zero it (will be set later)
-                memset(hdr->database_uuid, 0, sizeof(hdr->database_uuid));
-            }
-
-            // Set table_id (MUST be non-zero for PAGE_TYPE_HEAP per ON_DISK_FORMAT.md)
-            memcpy(hdr->table_id, table_id_.bytes.data(), sizeof(hdr->table_id));
-
-            // Validate: table_id must be non-zero for heap pages
-            bool table_id_is_zero = true;
-            for (size_t i = 0; i < sizeof(hdr->table_id); i++)
-            {
-                if (hdr->table_id[i] != 0)
-                {
-                    table_id_is_zero = false;
-                    break;
-                }
-            }
-
-            if (table_id_is_zero)
-            {
-                LOG_WARNING(STORAGE,
-                           "Heap page %u initialized with zero table_id (corruption risk per ON_DISK_FORMAT.md)",
-                           page_id);
-            }
+            pageSetLower(*hdr, sizeof(PageHeader));
+            pageSetUpper(*hdr, page_size_ - sizeof(HeapPageSpecial));
+            pageSetSpecial(*hdr, page_size_ - sizeof(HeapPageSpecial));
 
             // Initialize special area only for new pages
             HeapPageSpecial *special = getSpecial();
             special->pd_flags = 0;
-            special->pd_lower = sizeof(PageHeader);                   // After header
-            special->pd_upper = page_size_ - sizeof(HeapPageSpecial); // Before special
-            special->pd_special = page_size_ - sizeof(HeapPageSpecial);
+            special->table_id = table_id_;
             special->pd_prune_xid = 0;
         }
         else
@@ -170,18 +140,18 @@ namespace scratchbird::core
 
             // Validate special area is sane
             HeapPageSpecial *special = getSpecial();
-            bool special_valid = (special->pd_lower >= sizeof(PageHeader) &&
-                                  special->pd_upper <= page_size_ - sizeof(HeapPageSpecial) &&
-                                  special->pd_lower <= special->pd_upper &&
-                                  special->pd_special == page_size_ - sizeof(HeapPageSpecial));
+            bool special_valid = (pageLower(*hdr) >= sizeof(PageHeader) &&
+                                  pageUpper(*hdr) <= page_size_ - sizeof(HeapPageSpecial) &&
+                                  pageLower(*hdr) <= pageUpper(*hdr) &&
+                                  pageSpecial(*hdr) == page_size_ - sizeof(HeapPageSpecial));
 
             if (!special_valid)
             {
                 // Special area is corrupt - reinitialize it
                 special->pd_flags = 0;
-                special->pd_lower = sizeof(PageHeader);
-                special->pd_upper = page_size_ - sizeof(HeapPageSpecial);
-                special->pd_special = page_size_ - sizeof(HeapPageSpecial);
+                pageSetLower(*hdr, sizeof(PageHeader));
+                pageSetUpper(*hdr, page_size_ - sizeof(HeapPageSpecial));
+                pageSetSpecial(*hdr, page_size_ - sizeof(HeapPageSpecial));
                 special->pd_prune_xid = 0;
             }
         }
@@ -278,10 +248,11 @@ namespace scratchbird::core
 
         HeapPageSpecial *special = getSpecial();
         ItemPointer *items = getItemArray();
+        PageHeader *hdr = header();
 
         // Find a free slot (reuse deleted slots if possible)
-        uint16_t item_id = header()->item_count;
-        for (uint16_t i = 0; i < header()->item_count; i++)
+        uint16_t item_id = getItemCount();
+        for (uint16_t i = 0; i < getItemCount(); i++)
         {
             if (items[i].isDeleted() && items[i].length >= actual_tuple_size)
             {
@@ -299,13 +270,13 @@ namespace scratchbird::core
 
         // Allocate space for tuple from upper area
         // Validate no underflow
-        if (actual_tuple_size > special->pd_upper)
+        if (actual_tuple_size > pageUpper(*hdr))
         {
             SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
                               "Tuple size exceeds available space (underflow risk)");
             return Status::PAGE_CORRUPT;
         }
-        uint32_t tuple_offset = special->pd_upper - actual_tuple_size;
+        uint32_t tuple_offset = pageUpper(*hdr) - actual_tuple_size;
 
         // CRITICAL FIX (Issue 1.15): Align tuple_offset to 8-byte boundary
         // Per specification: "All structures are aligned to 8-byte boundaries"
@@ -346,14 +317,15 @@ namespace scratchbird::core
             tuple_hdr->null_bitmap_offset = 0;
         }
         tuple_hdr->padding = 0;
-        tuple_hdr->session_id = normalizeSessionId(db_, table_id_, ID{});
+        // Preserve caller-provided session scope for temp tables.
+        // StorageEngine stamps tuple header session_id before insert.
+        tuple_hdr->session_id = normalizeSessionId(db_, table_id_, tuple_hdr->session_id);
 
         // Update item pointer
-        if (item_id == header()->item_count)
+        if (item_id == getItemCount())
         {
             // New slot - advance lower boundary
-            special->pd_lower += sizeof(ItemPointer);
-            header()->item_count++;
+            pageSetLower(*hdr, pageLower(*hdr) + (sizeof(ItemPointer)));
         }
 
         items[item_id].offset = tuple_offset;
@@ -361,7 +333,7 @@ namespace scratchbird::core
         items[item_id].setDeleted(false);
 
         // Update upper boundary
-        special->pd_upper = tuple_offset;
+        pageSetUpper(*hdr, tuple_offset);
 
         updateHeaderStats();
 
@@ -376,7 +348,7 @@ namespace scratchbird::core
     auto HeapPage::getTuple(uint16_t item_id, const uint8_t **data_out, uint32_t *size_out,
                             ErrorContext *ctx) -> Status
     {
-        if (item_id >= header()->item_count)
+        if (item_id >= getItemCount())
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid item ID");
             return Status::INVALID_ARGUMENT;
@@ -492,7 +464,7 @@ namespace scratchbird::core
     {
         const bool force_delete = (xmax == UINT64_MAX);
 
-        if (item_id >= header()->item_count)
+        if (item_id >= getItemCount())
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid item ID");
             return Status::INVALID_ARGUMENT;
@@ -567,15 +539,15 @@ namespace scratchbird::core
 
     auto HeapPage::hasFreeSpace(uint32_t tuple_size) const -> bool
     {
-        const HeapPageSpecial *special = getSpecial();
+        const PageHeader *hdr = header();
 
         // Sanity check - if pd_upper < pd_lower, page is corrupt
-        if (special->pd_upper < special->pd_lower)
+        if (pageUpper(*hdr) < pageLower(*hdr))
         {
             return false;
         }
 
-        uint32_t free_space = special->pd_upper - special->pd_lower;
+        uint32_t free_space = pageUpper(*hdr) - pageLower(*hdr);
 
         // Need space for tuple and potentially a new item pointer
         uint32_t needed = tuple_size;
@@ -583,7 +555,7 @@ namespace scratchbird::core
         // Check if we need a new item slot
         bool found_deleted_slot = false;
         const ItemPointer *items = getItemArray();
-        for (uint16_t i = 0; i < header()->item_count; i++)
+        for (uint16_t i = 0; i < getItemCount(); i++)
         {
             if (items[i].isDeleted() && items[i].length >= tuple_size)
             {
@@ -602,13 +574,19 @@ namespace scratchbird::core
 
     auto HeapPage::getItemCount() const -> uint16_t
     {
-        return header()->item_count;
+        const PageHeader *hdr = header();
+        if (pageLower(*hdr) < sizeof(PageHeader))
+        {
+            return 0;
+        }
+        return static_cast<uint16_t>(
+            (pageLower(*hdr) - sizeof(PageHeader)) / sizeof(ItemPointer));
     }
 
     auto HeapPage::getFreeSpace() const -> uint32_t
     {
-        const HeapPageSpecial *special = getSpecial();
-        return special->pd_upper - special->pd_lower;
+        const PageHeader *hdr = header();
+        return pageUpper(*hdr) - pageLower(*hdr);
     }
 
     auto HeapPage::validate(ErrorContext *ctx) const -> Status
@@ -640,17 +618,17 @@ namespace scratchbird::core
         // Validate special area
         const HeapPageSpecial *special = getSpecial();
 
-        if (special->pd_lower < sizeof(PageHeader) || special->pd_lower > special->pd_upper ||
-            special->pd_upper > special->pd_special ||
-            special->pd_special != page_size_ - sizeof(HeapPageSpecial))
+        if (pageLower(*hdr) < sizeof(PageHeader) || pageLower(*hdr) > pageUpper(*hdr) ||
+            pageUpper(*hdr) > pageSpecial(*hdr) ||
+            pageSpecial(*hdr) != page_size_ - sizeof(HeapPageSpecial))
         {
             SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Invalid page boundaries");
             return Status::PAGE_CORRUPT;
         }
 
-        uint32_t item_bytes = special->pd_lower - sizeof(PageHeader);
+        uint32_t item_bytes = pageLower(*hdr) - sizeof(PageHeader);
         uint32_t max_items = item_bytes / sizeof(ItemPointer);
-        if (hdr->item_count > max_items)
+        if (getItemCount() > max_items)
         {
             SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Item count exceeds page bounds");
             return Status::PAGE_CORRUPT;
@@ -658,12 +636,12 @@ namespace scratchbird::core
 
         // Validate item pointers
         const ItemPointer *items = getItemArray();
-        for (uint16_t i = 0; i < hdr->item_count; i++)
+        for (uint16_t i = 0; i < getItemCount(); i++)
         {
             if (!items[i].isDeleted())
             {
-                if (items[i].offset < special->pd_upper ||
-                    items[i].offset + items[i].length > special->pd_special)
+                if (items[i].offset < pageUpper(*hdr) ||
+                    items[i].offset + items[i].length > pageSpecial(*hdr))
                 {
                     SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Invalid item pointer");
                     return Status::PAGE_CORRUPT;
@@ -679,8 +657,7 @@ namespace scratchbird::core
         PageHeader *hdr = header();
         HeapPageSpecial *special = getSpecial();
 
-        hdr->free_space = special->pd_upper - special->pd_lower;
-        hdr->free_offset = special->pd_lower;
+        // pd_lower/pd_upper already tracked in header
     }
 
     // MGA Phase 3: Version Chains - FIREBIRD MGA BACK VERSIONING
@@ -713,7 +690,7 @@ namespace scratchbird::core
         // ====================================================================
         // PHASE 1: VALIDATE OLD TUPLE EXISTS
         // ====================================================================
-        if (old_item_id >= header()->item_count)
+        if (old_item_id >= getItemCount())
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid old item ID");
             return Status::INVALID_ARGUMENT;
@@ -726,6 +703,7 @@ namespace scratchbird::core
             return Status::NOT_FOUND;
         }
 
+        auto *hdr = header();
         // Validate old item pointer bounds
         if (!items[old_item_id].isValid(page_size_))
         {
@@ -843,13 +821,13 @@ namespace scratchbird::core
         if (back_version_same_page)
         {
             // SAME-PAGE BACK VERSION (optimal case)
-            if (primary_length > special->pd_upper)
+            if (primary_length > pageUpper(*hdr))
             {
                 SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
                                   "Back version size exceeds available space");
                 return Status::PAGE_CORRUPT;
             }
-            back_version_offset = special->pd_upper - primary_length;
+            back_version_offset = pageUpper(*hdr) - primary_length;
 
             // Align to 8-byte boundary
             back_version_offset = (back_version_offset / 8) * 8;
@@ -872,109 +850,15 @@ namespace scratchbird::core
             back_version_hdr->infomask |= TupleHeader::HEAP_UPDATED; // Mark as updated
 
             // Update upper boundary to reflect back version allocation
-            special->pd_upper = back_version_offset;
+            pageSetUpper(*hdr, back_version_offset);
         }
         else
         {
-            // CROSS-PAGE BACK VERSION (required when page is full)
-            // This is a CRITICAL PATH requirement for a functioning database
-
-            // Validate buffer pool availability
-            if (db_ == nullptr || db_->buffer_pool() == nullptr)
-            {
-                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                                  "Cross-page back version requires Database and BufferPool");
-                return Status::INVALID_ARGUMENT;
-            }
-
-            BufferPool *buffer_pool = db_->buffer_pool();
-
-            // Allocate a new page for the back version
-            void *back_page_buffer = nullptr;
-            Status alloc_status = buffer_pool->allocatePage(&back_version_page_id, &back_page_buffer, ctx);
-            if (alloc_status != Status::OK)
-            {
-                SET_ERROR_CONTEXT(ctx, alloc_status, "Failed to allocate page for cross-page back version");
-                return alloc_status;
-            }
-
-            // RAII guard - automatically unpins page on ALL exit paths (including exceptions)
-            BufferPoolGuard guard(buffer_pool, back_version_page_id, &back_page_buffer, ctx);
-
-            // Initialize the back version page as a heap page
-            HeapPage back_page(static_cast<uint8_t *>(back_page_buffer), page_size_, toast_mgr_, db_, table_id_);
-            Status init_status = back_page.initialize(back_version_page_id, ctx);
-            if (init_status != Status::OK)
-            {
-                // Guard automatically unpins (clean) on return
-                return init_status;
-            }
-
-            // Insert old tuple as a back version on the new page
-            // Create back version tuple (copy of old tuple)
-            // EXCEPTION SAFETY: BufferPoolGuard now provides automatic cleanup
-            std::vector<uint8_t> back_version_tuple;
-            try
-            {
-                back_version_tuple.resize(primary_length);
-            }
-            catch (const std::bad_alloc &)
-            {
-                // Guard automatically unpins on exception
-                SET_ERROR_CONTEXT(ctx, Status::OOM,
-                                  "Out of memory allocating cross-page back version tuple");
-                return Status::OOM;
-            }
-            memcpy(back_version_tuple.data(), page_data_ + primary_offset, primary_length);
-
-            // Update back version tuple header
-            auto *back_version_hdr = reinterpret_cast<TupleHeader *>(back_version_tuple.data());
-            back_version_hdr->xmax = xmax; // Mark as updated/deleted by xmax
-            // Back version keeps existing back_version_tid (continues chain)
-            back_version_hdr->infomask |= TupleHeader::HEAP_CHAIN; // Mark as back version
-            back_version_hdr->infomask |= TupleHeader::HEAP_UPDATED; // Mark as updated
-
-            // Insert back version on the back page
-            // Note: We store by OFFSET, not item_id
-            // So we use insertTuple but will extract the offset, not use the item_id
-            uint16_t back_item_id;
-            Status insert_status = back_page.insertTuple(back_version_tuple.data(), primary_length,
-                                                        primary_tuple_hdr->xmin, &back_item_id, ctx);
-            if (insert_status != Status::OK)
-            {
-                // Guard automatically unpins (clean) on return
-                SET_ERROR_CONTEXT(ctx, insert_status, "Failed to insert back version on new page");
-                return insert_status;
-            }
-
-            // Get the offset of the inserted back version
-            const uint8_t *back_data_ptr;
-            uint32_t back_size;
-            Status get_status = back_page.getTuple(back_item_id, &back_data_ptr, &back_size, ctx);
-            if (get_status != Status::OK)
-            {
-                // Guard automatically unpins (clean) on return
-                return get_status;
-            }
-
-            // Restore back-version metadata that insertTuple overwrote.
-            // insertTuple initializes xmin/xmax/back_version/infomask for new tuples.
-            // For back versions we must preserve the original metadata so GC can prune.
-            auto *stored_hdr =
-                reinterpret_cast<TupleHeader *>(const_cast<uint8_t *>(back_data_ptr));
-            const auto *src_hdr =
-                reinterpret_cast<const TupleHeader *>(back_version_tuple.data());
-            stored_hdr->xmax = src_hdr->xmax;
-            stored_hdr->back_version_gpid = src_hdr->back_version_gpid;
-            stored_hdr->back_version_slot = src_hdr->back_version_slot;
-            stored_hdr->infomask |= (TupleHeader::HEAP_CHAIN | TupleHeader::HEAP_UPDATED);
-
-            // Calculate offset from page start
-            back_version_offset = static_cast<uint32_t>(back_data_ptr - static_cast<uint8_t *>(back_page_buffer));
-
-            // Mark page as dirty since we modified it
-            guard.markDirty();
-            // Guard automatically unpins (dirty) on scope exit
+            // HeapPage supports same-page back versions only.
+            // Cross-page handling is implemented by StorageEngine::updateTuple().
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_FULL,
+                              "No space for same-page back version");
+            return Status::PAGE_FULL;
         }
 
         // ====================================================================
@@ -997,21 +881,21 @@ namespace scratchbird::core
         else
         {
             // New tuple is larger - need to allocate new space at end of free area
-            uint32_t free_space = special->pd_upper - special->pd_lower;
+            uint32_t free_space = pageUpper(*hdr) - pageLower(*hdr);
             if (final_new_tuple_size > free_space)
             {
                 SET_ERROR_CONTEXT(ctx, Status::PAGE_FULL,
                                   "Not enough space for updated tuple");
                 return Status::PAGE_FULL;
             }
-            uint32_t new_primary_offset = special->pd_upper - final_new_tuple_size;
+            uint32_t new_primary_offset = pageUpper(*hdr) - final_new_tuple_size;
 
             // Align to 8-byte boundary
             new_primary_offset = (new_primary_offset / 8) * 8;
 
             // Validate offset
             if (new_primary_offset + final_new_tuple_size > page_size_ ||
-                new_primary_offset < special->pd_lower)
+                new_primary_offset < pageLower(*hdr))
             {
                 SET_ERROR_CONTEXT(ctx, Status::PAGE_FULL,
                                   "Not enough aligned space for updated tuple");
@@ -1026,7 +910,7 @@ namespace scratchbird::core
             items[old_item_id].length = final_new_tuple_size;
 
             // Update upper boundary
-            special->pd_upper = new_primary_offset;
+            pageSetUpper(*hdr, new_primary_offset);
         }
 
         // Initialize new primary tuple header
@@ -1102,6 +986,7 @@ namespace scratchbird::core
 
         ItemPointer *items = getItemArray();
         auto *special = getSpecial();
+        auto *hdr = header();
 
         // Validate item_id
         if (item_id >= getItemCount())
@@ -1124,8 +1009,8 @@ namespace scratchbird::core
         uint32_t old_length = item_ptr->length;
         ID old_session_id = reinterpret_cast<TupleHeader *>(page_data_ + old_offset)->session_id;
 
-        // Calculate size needed (TupleHeader + data)
-        uint32_t final_new_tuple_size = sizeof(TupleHeader) + new_tuple_size;
+        // new_tuple_size already includes TupleHeader.
+        uint32_t final_new_tuple_size = new_tuple_size;
 
         // Check if new tuple fits in old tuple's space
         if (final_new_tuple_size <= old_length)
@@ -1140,7 +1025,7 @@ namespace scratchbird::core
         else
         {
             // New tuple is larger - need to allocate new space at end of free area
-            uint32_t free_space = special->pd_upper - special->pd_lower;
+            uint32_t free_space = pageUpper(*hdr) - pageLower(*hdr);
             if (final_new_tuple_size > free_space)
             {
                 SET_ERROR_CONTEXT(ctx, Status::PAGE_FULL, "Not enough space for larger tuple");
@@ -1148,7 +1033,7 @@ namespace scratchbird::core
             }
 
             // Allocate space from end of page
-            uint32_t new_offset = special->pd_upper - final_new_tuple_size;
+            uint32_t new_offset = pageUpper(*hdr) - final_new_tuple_size;
 
             // Align to 8-byte boundary
             new_offset = (new_offset / 8) * 8;
@@ -1168,7 +1053,7 @@ namespace scratchbird::core
             item_ptr->length = final_new_tuple_size;
 
             // Update upper boundary
-            special->pd_upper = new_offset;
+            pageSetUpper(*hdr, new_offset);
         }
 
         // ====================================================================
@@ -1399,7 +1284,9 @@ namespace scratchbird::core
                 auto *items = reinterpret_cast<ItemPointer *>(current_page_data + sizeof(PageHeader));
 
                 // Validate item_id
-                if (current_item_id >= page_header->item_count)
+                uint16_t item_count =
+                    static_cast<uint16_t>((pageLower(*page_header) - sizeof(PageHeader)) / sizeof(ItemPointer));
+                if (current_item_id >= item_count)
                 {
                     SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Version chain broken");
                     return Status::NOT_FOUND;
@@ -1626,7 +1513,9 @@ namespace scratchbird::core
                 {
                     auto *page_header = reinterpret_cast<PageHeader *>(current_page_data);
                     auto *items = reinterpret_cast<ItemPointer *>(current_page_data + sizeof(PageHeader));
-                    for (uint16_t idx = 0; idx < page_header->item_count; ++idx)
+                    uint16_t item_count =
+                        static_cast<uint16_t>((pageLower(*page_header) - sizeof(PageHeader)) / sizeof(ItemPointer));
+                    for (uint16_t idx = 0; idx < item_count; ++idx)
                     {
                         if (items[idx].offset == offset && !items[idx].isDeleted())
                         {
@@ -1716,7 +1605,7 @@ namespace scratchbird::core
         uint32_t frozen_count = 0;
 
         // Iterate through all items
-        for (uint16_t i = 0; i < page_hdr->item_count; ++i)
+        for (uint16_t i = 0; i < getItemCount(); ++i)
         {
             auto *item = reinterpret_cast<ItemPointer *>(page_data_ + sizeof(PageHeader) +
                                                          i * sizeof(ItemPointer));
@@ -1763,7 +1652,7 @@ namespace scratchbird::core
 
     auto HeapPage::markTupleUnused(uint16_t item_id, ErrorContext *ctx) -> Status
     {
-        if (item_id >= header()->item_count)
+        if (item_id >= getItemCount())
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid item ID");
             return Status::INVALID_ARGUMENT;
@@ -1780,12 +1669,13 @@ namespace scratchbird::core
 
     auto HeapPage::defragmentPage(uint32_t *bytes_reclaimed_out, ErrorContext *ctx) -> Status
     {
+        auto *hdr = header();
         HeapPageSpecial *special = getSpecial();
         ItemPointer *items = getItemArray();
-        uint16_t item_count = header()->item_count;
+        uint16_t item_count = getItemCount();
 
         // Calculate space before defragmentation
-        uint32_t free_space_before = special->pd_upper - special->pd_lower;
+        uint32_t free_space_before = pageUpper(*hdr) - pageLower(*hdr);
 
         // Build list of live tuples
         struct TupleInfo
@@ -1839,16 +1729,16 @@ namespace scratchbird::core
         }
 
         // Update special area
-        special->pd_upper = new_upper;
+        pageSetUpper(*hdr, new_upper);
 
         // CRITICAL FIX (Issue 2.10): Update pd_lower to reflect actual item array size
         // pd_lower marks the end of the item pointer array
         // It should be: PageHeader + (number_of_items * sizeof(ItemPointer))
         // This ensures correct free space calculation after defragmentation
-        special->pd_lower = sizeof(PageHeader) + (item_count * sizeof(ItemPointer));
+        pageSetLower(*hdr, sizeof(PageHeader) + (item_count * sizeof(ItemPointer)));
 
         // Calculate space reclaimed
-        uint32_t free_space_after = special->pd_upper - special->pd_lower;
+        uint32_t free_space_after = pageUpper(*hdr) - pageLower(*hdr);
         uint32_t bytes_reclaimed = free_space_after - free_space_before;
 
         if (bytes_reclaimed_out != nullptr)
@@ -1864,7 +1754,7 @@ namespace scratchbird::core
                              uint32_t *space_reclaimed_out, ErrorContext *ctx) -> Status
     {
         ItemPointer *items = getItemArray();
-        uint16_t item_count = header()->item_count;
+        uint16_t item_count = getItemCount();
 
         uint32_t tuples_pruned = 0;
 
@@ -1949,7 +1839,8 @@ namespace scratchbird::core
 
         // Get item pointer array
         auto *items = reinterpret_cast<ItemPointer *>(page_data_ + sizeof(PageHeader));
-        uint16_t item_count = pg_header->item_count;
+        uint16_t item_count =
+            static_cast<uint16_t>((pageLower(*pg_header) - sizeof(PageHeader)) / sizeof(ItemPointer));
 
         dead_tids_out->clear();
 

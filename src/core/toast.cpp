@@ -9,6 +9,7 @@
  */
 #include "scratchbird/core/toast.h"
 #include "scratchbird/core/toast_visibility.h"
+#include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/buffer_pool.h"
@@ -158,7 +159,7 @@ namespace scratchbird::core
 {
 
     ToastManager::ToastManager(Database *db, const ID &table_id)
-        : db_(db), table_id_(table_id), toast_table_id_(), next_value_id_(1)
+        : db_(db), table_id_(table_id), toast_table_id_()
     {
     }
 
@@ -166,63 +167,8 @@ namespace scratchbird::core
 
     auto ToastManager::initializeNextValueId(ErrorContext *ctx) -> Status
     {
-        CatalogManager *catalog = db_->catalog_manager();
-        if (catalog == nullptr)
-        {
-            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "CatalogManager not available");
-            return Status::INVALID_ARGUMENT;
-        }
-
-        // Use the TOAST index to find the maximum chunk_id without heap scans.
-        CatalogManager::IndexInfo index_info;
-        Status status = resolveToastIndexById(db_, toast_table_id_, index_info, ctx);
-        if (status != Status::OK)
-        {
-            next_value_id_ = 1;
-            return Status::OK;
-        }
-
-        SBBTreeIndex btree_info;
-        btree_info.idx_uuid = index_info.index_id;
-        btree_info.idx_table_uuid = index_info.table_id;
-        btree_info.idx_root_page = static_cast<uint32_t>(getPageNumber(index_info.root_gpid));
-        btree_info.idx_tablespace_id = getTablespaceID(index_info.root_gpid);
-
-        BTree btree(db_, btree_info);
-        auto iter = btree.rangeScan(nullptr, nullptr, 0, true, true, ctx);
-        if (!iter)
-        {
-            next_value_id_ = 1;
-            return Status::OK;
-        }
-
-        uint32_t max_value_id = 0;
-        std::vector<uint8_t> key;
-        TID tid;
-        while (iter->hasNext())
-        {
-            Status next_status = iter->next(&key, &tid, ctx);
-            if (next_status != Status::OK)
-            {
-                break;
-            }
-
-            if (key.size() < sizeof(uint32_t))
-            {
-                continue;
-            }
-
-            uint32_t chunk_id = 0;
-            std::memcpy(&chunk_id, key.data(), sizeof(uint32_t));
-            if (chunk_id > max_value_id)
-            {
-                max_value_id = chunk_id;
-            }
-        }
-
-        // Set next_value_id_ to one more than the maximum found
-        next_value_id_ = max_value_id + 1;
-
+        (void)ctx;
+        // UUID v7 identifiers are generated per value; no counter needed.
         return Status::OK;
     }
 
@@ -300,7 +246,7 @@ namespace scratchbird::core
         CatalogManager *catalog = db_->catalog_manager();
 
         // TOAST table schema:
-        // chunk_id: INT (TOAST value ID)
+        // chunk_id: UUID (TOAST value ID)
         // chunk_seq: INT (sequence number)
         // chunk_data: BYTEA (actual data)
         std::vector<CatalogManager::ColumnInfo> columns;
@@ -308,8 +254,8 @@ namespace scratchbird::core
         // chunk_id column
         CatalogManager::ColumnInfo col1;
         col1.column_name = "chunk_id";
-        col1.data_type = static_cast<uint16_t>(DataType::INT32);
-        col1.max_length = 4;
+        col1.data_type = static_cast<uint16_t>(DataType::UUID);
+        col1.max_length = 16;
         col1.nullable = false;
         col1.has_default = false;
         columns.push_back(col1);
@@ -400,25 +346,15 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
-        // Assign unique value ID with atomic fetch_add for thread safety
-        // Check for wraparound - if we're approaching UINT32_MAX, we need to handle it
-        uint32_t value_id = next_value_id_.fetch_add(1, std::memory_order_relaxed);
-
-        // Overflow protection: Check if we've wrapped around to 0
-        // Value ID 0 is reserved/invalid, so if we hit it, we have a problem
-        if (value_id == 0 || value_id == UINT32_MAX)
-        {
-            SET_ERROR_CONTEXT(ctx, Status::PAGE_FULL,
-                              "TOAST value ID exhausted - too many TOAST values created");
-            return Status::PAGE_FULL;
-        }
+        // Assign unique value ID (UUID v7)
+        ID value_id = generateUuidV7();
 
         // Initialize pointer
         pointer_out->va_header = 0x01; // TOAST marker
         pointer_out->va_tag = static_cast<uint8_t>(strategy);
         pointer_out->va_rawsize = size;
         pointer_out->va_valueid = value_id;
-        pointer_out->va_toastrelid = 0; // toast_table_id_;
+        pointer_out->va_toastrelid = toast_table_id_;
 
         // Handle based on strategy
         switch (strategy)
@@ -534,7 +470,7 @@ namespace scratchbird::core
         }
     }
 
-    auto ToastManager::deleteToastValue(uint32_t value_id, uint64_t xmax, ErrorContext *ctx)
+    auto ToastManager::deleteToastValue(const ID &value_id, uint64_t xmax, ErrorContext *ctx)
         -> Status
     {
         StorageEngine *storage = db_->storage_engine();
@@ -559,8 +495,7 @@ namespace scratchbird::core
 
         // Seek to the first chunk for this value_id
         std::vector<uint8_t> key;
-        key.insert(key.end(), reinterpret_cast<const uint8_t *>(&value_id),
-                   reinterpret_cast<const uint8_t *>(&value_id) + 4);
+        key.insert(key.end(), value_id.bytes.begin(), value_id.bytes.end());
         status = scan->seek(key, ctx);
         if (status != Status::OK)
         {
@@ -587,13 +522,14 @@ namespace scratchbird::core
 
             // Parse tuple to verify it's for our value_id
             if ((heap_tuple.data == nullptr) ||
-                heap_tuple.data_size < sizeof(TupleHeader) + sizeof(uint32_t))
+                heap_tuple.data_size < sizeof(TupleHeader) + value_id.bytes.size())
             {
                 continue;
             }
 
             const uint8_t *ptr = heap_tuple.data + sizeof(TupleHeader);
-            uint32_t chunk_id = *reinterpret_cast<const uint32_t *>(ptr);
+            ID chunk_id{};
+            std::memcpy(chunk_id.bytes.data(), ptr, chunk_id.bytes.size());
             if (chunk_id != value_id)
             {
                 // We've moved past our value_id in the index
@@ -621,7 +557,7 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto ToastManager::deleteToastValueHeapScan(uint32_t value_id, uint64_t xmax, ErrorContext *ctx)
+    auto ToastManager::deleteToastValueHeapScan(const ID &value_id, uint64_t xmax, ErrorContext *ctx)
         -> Status
     {
         StorageEngine *storage = db_->storage_engine();
@@ -642,13 +578,14 @@ namespace scratchbird::core
         while ((status = scan->next(&tuple, ctx)) == Status::OK)
         {
             if ((tuple.data == nullptr) ||
-                tuple.data_size < sizeof(TupleHeader) + sizeof(uint32_t))
+                tuple.data_size < sizeof(TupleHeader) + value_id.bytes.size())
             {
                 continue;
             }
 
             const uint8_t *ptr = tuple.data + sizeof(TupleHeader);
-            uint32_t chunk_id = *reinterpret_cast<const uint32_t *>(ptr);
+            ID chunk_id{};
+            std::memcpy(chunk_id.bytes.data(), ptr, chunk_id.bytes.size());
             if (chunk_id == value_id)
             {
                 // MGA-compliant soft delete: Update xmax field only (do not mark item pointer as deleted)
@@ -699,15 +636,15 @@ namespace scratchbird::core
     // Phase 3: Index TOAST Integration - Helper methods
     auto ToastManager::isToastPointer(const uint8_t *data, size_t size) -> bool
     {
-        // TOAST pointer is exactly 18 bytes
+        // TOAST pointer is exactly sizeof(ToastPointer)
         if (size != sizeof(ToastPointer))
         {
             return false;
         }
 
         // Check magic bytes (first 2 bytes of ToastPointer)
-        // ToastPointer format: va_header (2) | va_rawsize (4) | va_extsize (4) |
-        //                      va_valueid (4) | va_toastrelid (4)
+        // ToastPointer format: va_header (1) | va_tag (1) | va_rawsize (4) | va_extsize (4) |
+        //                      va_valueid (16) | va_toastrelid (16)
         const ToastPointer *ptr = reinterpret_cast<const ToastPointer *>(data);
 
         // Check if va_header indicates external storage
@@ -738,7 +675,7 @@ namespace scratchbird::core
         }
     }
 
-    auto ToastManager::writeToastChunks(uint32_t value_id, const uint8_t *data, uint32_t size,
+    auto ToastManager::writeToastChunks(const ID &value_id, const uint8_t *data, uint32_t size,
                                         uint64_t xmin, ErrorContext *ctx) -> Status
     {
         StorageEngine *storage = db_->storage_engine();
@@ -784,9 +721,9 @@ namespace scratchbird::core
             uint32_t chunk_size = std::min(max_chunk_size, size - offset);
 
             // Build tuple data with TupleHeader + TOAST chunk metadata
-            // Format: TupleHeader | chunk_id (4) | chunk_seq (4) | chunk_size (4) | data
+            // Format: TupleHeader | chunk_id (16) | chunk_seq (4) | chunk_size (4) | data
             std::vector<uint8_t> tuple_data;
-            tuple_data.reserve(sizeof(TupleHeader) + 12 + chunk_size);
+            tuple_data.reserve(sizeof(TupleHeader) + 24 + chunk_size);
 
             TupleHeader toast_hdr{};
             toast_hdr.xmin = effective_xmin;
@@ -805,9 +742,7 @@ namespace scratchbird::core
                               reinterpret_cast<const uint8_t *>(&toast_hdr) + sizeof(TupleHeader));
 
             // Add chunk_id
-            uint32_t id = value_id;
-            tuple_data.insert(tuple_data.end(), reinterpret_cast<const uint8_t *>(&id),
-                              reinterpret_cast<const uint8_t *>(&id) + 4);
+            tuple_data.insert(tuple_data.end(), value_id.bytes.begin(), value_id.bytes.end());
 
             // Add chunk_seq
             tuple_data.insert(tuple_data.end(), reinterpret_cast<const uint8_t *>(&seq),
@@ -848,7 +783,7 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto ToastManager::readToastChunks(uint32_t value_id, std::vector<uint8_t> *data_out,
+    auto ToastManager::readToastChunks(const ID &value_id, std::vector<uint8_t> *data_out,
                                        uint64_t xmin, ErrorContext *ctx) -> Status
     {
         StorageEngine *storage = db_->storage_engine();
@@ -885,8 +820,7 @@ namespace scratchbird::core
 
         // Seek to the first chunk for this value_id
         std::vector<uint8_t> key;
-        key.insert(key.end(), reinterpret_cast<const uint8_t *>(&value_id),
-                   reinterpret_cast<const uint8_t *>(&value_id) + 4);
+        key.insert(key.end(), value_id.bytes.begin(), value_id.bytes.end());
         status = scan->seek(key, ctx);
         if (status != Status::OK)
         {
@@ -949,7 +883,7 @@ namespace scratchbird::core
 
             // Parse tuple format: TupleHeader | chunk_id | chunk_seq | chunk_size | data
             if ((tuple.data == nullptr) ||
-                tuple.data_size < sizeof(TupleHeader) + 12)
+                tuple.data_size < sizeof(TupleHeader) + 24)
             {
                 continue;
             }
@@ -970,7 +904,8 @@ namespace scratchbird::core
             }
 
             // Parse chunk_id
-            uint32_t chunk_id = *reinterpret_cast<const uint32_t *>(ptr);
+            ID chunk_id{};
+            std::memcpy(chunk_id.bytes.data(), ptr, chunk_id.bytes.size());
 
             if (chunk_id != value_id)
             {
@@ -978,7 +913,7 @@ namespace scratchbird::core
                 continue;
             }
 
-            ptr += 4;
+            ptr += chunk_id.bytes.size();
             // Parse chunk_seq
             uint32_t chunk_seq = *reinterpret_cast<const uint32_t *>(ptr);
             ptr += 4;
@@ -988,7 +923,7 @@ namespace scratchbird::core
 
             // Validate chunk size against page-size-based maximum
             if (chunk_size > max_chunk_size_allowed ||
-                sizeof(TupleHeader) + 12 + chunk_size > tuple.data_size)
+                sizeof(TupleHeader) + 24 + chunk_size > tuple.data_size)
             {
                 continue;
             }
@@ -1030,7 +965,7 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto ToastManager::readToastChunksHeapScan(uint32_t value_id, std::vector<uint8_t> *data_out,
+    auto ToastManager::readToastChunksHeapScan(const ID &value_id, std::vector<uint8_t> *data_out,
                                                uint64_t xmin, ErrorContext *ctx) -> Status
     {
         StorageEngine *storage = db_->storage_engine();
@@ -1063,7 +998,7 @@ namespace scratchbird::core
         {
             // Parse tuple format: TupleHeader | chunk_id | chunk_seq | chunk_size | data
             if ((tuple.data == nullptr) ||
-                tuple.data_size < sizeof(TupleHeader) + 12)
+                tuple.data_size < sizeof(TupleHeader) + 24)
             {
                 continue;
             }
@@ -1075,8 +1010,9 @@ namespace scratchbird::core
             ptr += sizeof(TupleHeader);
 
             // Parse chunk_id
-            uint32_t chunk_id = *reinterpret_cast<const uint32_t *>(ptr);
-            ptr += 4;
+            ID chunk_id{};
+            std::memcpy(chunk_id.bytes.data(), ptr, chunk_id.bytes.size());
+            ptr += chunk_id.bytes.size();
 
             if (chunk_id != value_id)
             {
@@ -1104,7 +1040,7 @@ namespace scratchbird::core
 
             // Validate chunk size against page-size-based maximum
             if (chunk_size > max_chunk_size_allowed ||
-                sizeof(TupleHeader) + 12 + chunk_size > tuple.data_size)
+                sizeof(TupleHeader) + 24 + chunk_size > tuple.data_size)
             {
                 continue;
             }

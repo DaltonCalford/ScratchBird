@@ -13,7 +13,7 @@
 #include <gtest/gtest.h>
 #include <scratchbird/core/database.h>
 
-#include "scratchbird/sblr/query_compiler_v2.h"
+#include "scratchbird/sblr/query_compiler_v3.h"
 #include <scratchbird/sblr/executor.h>
 #include "test_helpers.h"
 #include <cmath>
@@ -50,7 +50,7 @@ protected:
     // Helper to execute a simple SELECT statement and get the result
     double executeScalar(const std::string& sql)
     {
-        sblr::QueryCompilerV2 compiler(db.get());
+        sblr::QueryCompilerV3 compiler(db.get());
         auto compile_result = compiler.compile(sql);
         if (!compile_result.success()) {
             for (const auto& err : compile_result.errors()) {

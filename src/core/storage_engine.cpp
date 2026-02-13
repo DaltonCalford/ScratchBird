@@ -526,8 +526,15 @@ namespace scratchbird::core
 
         bool pageTableIdMatches(const PageHeader *header, const ID &table_id)
         {
-            return std::memcmp(header->table_id, table_id.bytes.data(),
-                               sizeof(header->table_id)) == 0;
+            if (header == nullptr)
+            {
+                return false;
+            }
+            auto *page_bytes = reinterpret_cast<const uint8_t *>(header);
+            const auto *special = reinterpret_cast<const HeapPageSpecial *>(
+                page_bytes + header->page_size - sizeof(HeapPageSpecial));
+            return std::memcmp(special->table_id.bytes.data(), table_id.bytes.data(),
+                               table_id.bytes.size()) == 0;
         }
     } // anonymous namespace
 
@@ -1068,6 +1075,30 @@ namespace scratchbird::core
         {
             return lock_status;
         }
+        struct TupleLockGuard
+        {
+            StorageEngine *engine;
+            ID table_id;
+            uint32_t page_id;
+            uint16_t item_id;
+            uint32_t proc_id;
+            ErrorContext *ctx;
+            bool armed;
+            ~TupleLockGuard()
+            {
+                if (!armed || engine == nullptr)
+                {
+                    return;
+                }
+                Status release_status =
+                    engine->releaseTupleLock(table_id, page_id, item_id, proc_id, ctx);
+                if (release_status != Status::OK && release_status != Status::NOT_FOUND)
+                {
+                    LOG_WARNING(STORAGE, "Failed to release tuple lock: status=%d",
+                                static_cast<int>(release_status));
+                }
+            }
+        } tuple_lock_guard{this, table_id, page_id, item_id, proc_id, ctx, true};
 
         // Pin the page
         GPID gpid = makeGPID(tablespace_id, static_cast<uint64_t>(page_id));
@@ -1242,10 +1273,6 @@ namespace scratchbird::core
 
         // Unpin the page
         buffer_pool_->unpinPageGlobal(gpid, status == Status::OK, ctx);
-
-        // Future lock release:
-        // releaseTupleLock(table_id, page_id, item_id, proc_id, ctx);
-        // Note: Locks are normally held until transaction end, not released here
 
         return status;
     }
@@ -2089,6 +2116,30 @@ namespace scratchbird::core
         {
             return lock_status;
         }
+        struct TupleLockGuard
+        {
+            StorageEngine *engine;
+            ID table_id;
+            uint32_t page_id;
+            uint16_t item_id;
+            uint32_t proc_id;
+            ErrorContext *ctx;
+            bool armed;
+            ~TupleLockGuard()
+            {
+                if (!armed || engine == nullptr)
+                {
+                    return;
+                }
+                Status release_status =
+                    engine->releaseTupleLock(table_id, page_id, item_id, proc_id, ctx);
+                if (release_status != Status::OK && release_status != Status::NOT_FOUND)
+                {
+                    LOG_WARNING(STORAGE, "Failed to release tuple lock: status=%d",
+                                static_cast<int>(release_status));
+                }
+            }
+        } tuple_lock_guard{this, table_id, page_id, item_id, proc_id, ctx, true};
 
         // Get current XID from connection context (same approach as insertTuple)
         uint64_t xmax = ConnectionContext::getCurrentTransactionId();
@@ -2413,14 +2464,95 @@ namespace scratchbird::core
             // Unpin old page temporarily (will re-pin after creating back version)
             buffer_pool_->unpinPageGlobal(gpid, false, ctx);
 
+            const uint8_t *overwrite_tuple_data = tuple_data_ptr;
+            uint32_t overwrite_tuple_size = new_tuple_size;
+            std::vector<uint8_t> toasted_overwrite_tuple;
+            bool overwrite_tuple_toasted = false;
+            ID overwrite_toast_id{};
+
+            auto cleanupToastedOverwrite = [&]()
+            {
+                if (!overwrite_tuple_toasted || toast_mgr == nullptr)
+                {
+                    return;
+                }
+                Status cleanup_status = toast_mgr->deleteToastValue(overwrite_toast_id, xmax, ctx);
+                if (cleanup_status != Status::OK && cleanup_status != Status::NOT_FOUND)
+                {
+                    LOG_WARNING(STORAGE,
+                                "Failed to cleanup toasted overwrite value (status=%d)",
+                                static_cast<int>(cleanup_status));
+                }
+                overwrite_tuple_toasted = false;
+            };
+
+            if ((toast_mgr != nullptr) && (db_ != nullptr) &&
+                ToastManager::shouldToast(new_tuple_size, db_->page_size()))
+            {
+                if (new_tuple_size <= sizeof(TupleHeader))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                      "Tuple too small to TOAST during cross-page update");
+                    return Status::INVALID_ARGUMENT;
+                }
+
+                try
+                {
+                    toasted_overwrite_tuple.resize(sizeof(TupleHeader) + sizeof(ToastPointer));
+                }
+                catch (const std::bad_alloc &)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::OOM,
+                                      "Out of memory allocating TOAST buffer for cross-page update");
+                    return Status::OOM;
+                }
+
+                auto *new_hdr = reinterpret_cast<TupleHeader *>(toasted_overwrite_tuple.data());
+                const auto *orig_hdr = reinterpret_cast<const TupleHeader *>(tuple_data_ptr);
+                *new_hdr = *orig_hdr;
+
+                ToastPointer toast_ptr{};
+                status = toast_mgr->toastValue(tuple_data_ptr + sizeof(TupleHeader),
+                                               new_tuple_size - sizeof(TupleHeader),
+                                               ToastStrategy::EXTERNAL, new_xmin, &toast_ptr, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                memcpy(toasted_overwrite_tuple.data() + sizeof(TupleHeader), &toast_ptr,
+                       sizeof(ToastPointer));
+
+                overwrite_tuple_data = toasted_overwrite_tuple.data();
+                overwrite_tuple_size = static_cast<uint32_t>(toasted_overwrite_tuple.size());
+                overwrite_tuple_toasted = true;
+                overwrite_toast_id = toast_ptr.va_valueid;
+            }
+
             // Step 2: Allocate page for BACK version (OLD data)
             uint32_t back_version_page_id;
             status = findFreePage(table_id, old_length, &back_version_page_id,
-                                  table_info.tablespace_id, ctx);
+                                  tablespace_id, ctx);
             if (status != Status::OK)
             {
+                cleanupToastedOverwrite();
                 SET_ERROR_CONTEXT(ctx, status, "Failed to find free page for back version");
                 return status;
+            }
+
+            // Cross-page update contract: back version must not be placed on the
+            // primary tuple page, otherwise overwriteTuple() can fail due to
+            // self-consumed free space.
+            if (back_version_page_id == page_id)
+            {
+                status = allocateHeapPage(table_id, tablespace_id, &back_version_page_id, ctx);
+                if (status != Status::OK)
+                {
+                    cleanupToastedOverwrite();
+                    SET_ERROR_CONTEXT(ctx, status,
+                                      "Failed to allocate non-primary page for back version");
+                    return status;
+                }
             }
 
             // Pin the back version page
@@ -2430,6 +2562,7 @@ namespace scratchbird::core
             status = buffer_pool_->pinPageGlobal(back_version_gpid, &back_page_buffer, ctx);
             if (status != Status::OK)
             {
+                cleanupToastedOverwrite();
                 SET_ERROR_CONTEXT(ctx, status, "Failed to pin page for back version");
                 return status;
             }
@@ -2437,21 +2570,48 @@ namespace scratchbird::core
             auto *back_page_data = static_cast<uint8_t *>(back_page_buffer);
             HeapPage back_heap_page(back_page_data, db_->page_size());
 
-            // Insert OLD tuple data as back version
-            uint16_t back_item_id;
-            status = back_heap_page.insertTuple(old_tuple_buffer.data(), old_length, old_xmin,
-                                               &back_item_id, ctx);
+	            // Insert OLD tuple data as back version
+	            uint16_t back_item_id;
+	            status = back_heap_page.insertTuple(old_tuple_buffer.data(), old_length, old_xmin,
+	                                               &back_item_id, ctx);
 
             if (status != Status::OK)
             {
                 buffer_pool_->unpinPageGlobal(back_version_gpid, false, ctx);
-                SET_ERROR_CONTEXT(ctx, status, "Failed to insert back version");
+                cleanupToastedOverwrite();
+		        SET_ERROR_CONTEXT(ctx, status, "Failed to insert back version");
+		        return status;
+	            }
+
+	            // Restore back-version metadata that insertTuple() reinitialized.
+	            // Back versions must carry xmax and chain state for MVCC/version-walk correctness.
+	            const uint8_t* back_tuple_data = nullptr;
+	            uint32_t back_tuple_size = 0;
+	            status = back_heap_page.getTuple(back_item_id, &back_tuple_data, &back_tuple_size, ctx);
+            if (status != Status::OK)
+            {
+                buffer_pool_->unpinPageGlobal(back_version_gpid, false, ctx);
+                cleanupToastedOverwrite();
+                SET_ERROR_CONTEXT(ctx, status, "Failed to read inserted back version");
                 return status;
             }
 
-            // Build GPID for back version (different page!)
-            back_version_gpid = makeGPID(tablespace_id,
-                                         static_cast<uint64_t>(back_version_page_id));
+	            auto* stored_back_hdr =
+	                reinterpret_cast<TupleHeader*>(const_cast<uint8_t*>(back_tuple_data));
+	            const auto* source_old_hdr =
+	                reinterpret_cast<const TupleHeader*>(old_tuple_buffer.data());
+
+	            stored_back_hdr->xmin = source_old_hdr->xmin;
+	            stored_back_hdr->xmax = xmax;
+	            stored_back_hdr->back_version_gpid = source_old_hdr->back_version_gpid;
+	            stored_back_hdr->back_version_slot = source_old_hdr->back_version_slot;
+	            stored_back_hdr->session_id = source_old_hdr->session_id;
+	            stored_back_hdr->infomask |=
+	                (TupleHeader::HEAP_CHAIN | TupleHeader::HEAP_UPDATED | TupleHeader::HEAP_MOVED);
+
+	            // Build GPID for back version (different page!)
+	            back_version_gpid = makeGPID(tablespace_id,
+	                                         static_cast<uint64_t>(back_version_page_id));
 
             // Unpin back version page (mark as dirty)
             buffer_pool_->unpinPageGlobal(back_version_gpid, true, ctx);
@@ -2469,6 +2629,7 @@ namespace scratchbird::core
             status = buffer_pool_->pinPageGlobal(gpid, &page_buffer, ctx);
             if (status != Status::OK)
             {
+                cleanupToastedOverwrite();
                 SET_ERROR_CONTEXT(ctx, status, "Failed to re-pin primary page");
                 return status;
             }
@@ -2477,13 +2638,14 @@ namespace scratchbird::core
             HeapPage primary_heap_page(page_data, db_->page_size());
 
             // Overwrite primary tuple in-place (NEW data, back version on different page)
-            status = primary_heap_page.overwriteTuple(item_id, tuple_data_ptr, new_tuple_size,
+            status = primary_heap_page.overwriteTuple(item_id, overwrite_tuple_data, overwrite_tuple_size,
                                                      xmax, new_xmin, back_version_gpid,
                                                      back_item_id, ctx);
 
             if (status != Status::OK)
             {
                 buffer_pool_->unpinPageGlobal(gpid, false, ctx);
+                cleanupToastedOverwrite();
                 SET_ERROR_CONTEXT(ctx, status, "Failed to overwrite primary tuple");
                 return status;
             }

@@ -1,0 +1,1673 @@
+{
+  "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables",
+  "tables": [
+    {
+      "name": "character_sets",
+      "fields": [
+        {
+          "name": "FIELD_ID",
+          "definition": "id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT"
+        },
+        {
+          "name": "FIELD_DEFAULT_COLLATION_ID",
+          "definition": "default_collation_id BIGINT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_MB_MAX_LENGTH",
+          "definition": "mb_max_length INT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_OPTIONS",
+          "definition": "options MEDIUMTEXT"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "INDEX_PK_ID",
+          "definition": "PRIMARY KEY(id)"
+        },
+        {
+          "name": "INDEX_UK_NAME",
+          "definition": "UNIQUE KEY(name)"
+        },
+        {
+          "name": "INDEX_UK_DEFAULT_COLLATION_ID",
+          "definition": "UNIQUE KEY(default_collation_id)"
+        }
+      ],
+      "foreign_keys": [],
+      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/character_sets.cc"
+    },
+    {
+      "name": "check_constraints",
+      "fields": [
+        {
+          "name": "FIELD_ID",
+          "definition": "id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT"
+        },
+        {
+          "name": "FIELD_SCHEMA_ID",
+          "definition": "schema_id BIGINT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_TABLE_ID",
+          "definition": "table_id BIGINT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_ENFORCED",
+          "definition": "enforced ENUM('NO', 'YES') NOT NULL"
+        },
+        {
+          "name": "FIELD_CHECK_CLAUSE",
+          "definition": "check_clause LONGBLOB NOT NULL"
+        },
+        {
+          "name": "FIELD_CHECK_CLAUSE_UTF8",
+          "definition": "check_clause_utf8 LONGTEXT NOT NULL"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "INDEX_PK_ID",
+          "definition": "PRIMARY KEY (id)"
+        },
+        {
+          "name": "INDEX_UK_SCHEMA_ID_NAME",
+          "definition": "UNIQUE KEY (schema_id, name)"
+        },
+        {
+          "name": "INDEX_UK_TABLE_ID_NAME",
+          "definition": "UNIQUE KEY (table_id, name)"
+        }
+      ],
+      "foreign_keys": [],
+      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/check_constraints.cc"
+    },
+    {
+      "name": "collations",
+      "fields": [
+        {
+          "name": "FIELD_ID",
+          "definition": "id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT"
+        },
+        {
+          "name": "FIELD_CHARACTER_SET_ID",
+          "definition": "character_set_id BIGINT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_IS_COMPILED",
+          "definition": "is_compiled BOOL NOT NULL"
+        },
+        {
+          "name": "FIELD_SORT_LENGTH",
+          "definition": "sort_length INT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_PAD_ATTRIBUTE",
+          "definition": "pad_attribute ENUM('PAD SPACE', 'NO PAD') NOT NULL"
+        },
+        {
+          "name": "FIELD_OPTIONS",
+          "definition": "options MEDIUMTEXT"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "INDEX_PK_ID",
+          "definition": "PRIMARY KEY(id)"
+        },
+        {
+          "name": "INDEX_UK_NAME",
+          "definition": "UNIQUE KEY(name)"
+        },
+        {
+          "name": "INDEX_K_CHARACTER_SET_ID",
+          "definition": "KEY(character_set_id)"
+        }
+      ],
+      "foreign_keys": [],
+      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/collations.cc"
+    },
+    {
+      "name": "column_statistics",
+      "fields": [
+        {
+          "name": "FIELD_ID",
+          "definition": "id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT"
+        },
+        {
+          "name": "FIELD_CATALOG_ID",
+          "definition": "catalog_id BIGINT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_NAME",
+          "definition": "name VARCHAR(255) NOT NULL"
+        },
+        {
+          "name": "FIELD_COLUMN_NAME",
+          "definition": "column_name VARCHAR(64) NOT NULL COLLATE \\\n                          utf8mb3_tolower_ci"
+        },
+        {
+          "name": "FIELD_HISTOGRAM",
+          "definition": "histogram JSON NOT NULL"
+        },
+        {
+          "name": "FIELD_OPTIONS",
+          "definition": "options MEDIUMTEXT"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "INDEX_PK_ID",
+          "definition": "PRIMARY KEY (id)"
+        },
+        {
+          "name": "INDEX_UK_CATALOG_ID_NAME",
+          "definition": "UNIQUE KEY (catalog_id, name)"
+        },
+        {
+          "name": "INDEX_UK_CATALOG_ID_SCHEMA_NAME_TABLE_NAME_COLUMN_NAME",
+          "definition": "UNIQUE KEY (catalog_id, schema_name, \\\n                                    table_name, column_name)"
+        }
+      ],
+      "foreign_keys": [
+        {
+          "name": "FK_CATALOGS_ID",
+          "definition": "FOREIGN KEY (catalog_id) REFERENCES \\\n                                catalogs (id)"
+        }
+      ],
+      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/column_statistics.cc"
+    },
+    {
+      "name": "column_type_elements",
+      "fields": [
+        {
+          "name": "FIELD_COLUMN_ID",
+          "definition": "column_id BIGINT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_ELEMENT_INDEX",
+          "definition": "element_index INT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_NAME",
+          "definition": "name VARBINARY(1020) NOT NULL"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "PK_COLUMN_ID_ELEMENT_INDEX",
+          "definition": "PRIMARY KEY(column_id, element_index)"
+        }
+      ],
+      "foreign_keys": [],
+      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/column_type_elements.cc"
+    },
+    {
+      "name": "columns",
+      "fields": [
+        {
+          "name": "FIELD_ID",
+          "definition": "id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT"
+        },
+        {
+          "name": "FIELD_TABLE_ID",
+          "definition": "table_id BIGINT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_ORDINAL_POSITION",
+          "definition": "ordinal_position INT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_IS_NULLABLE",
+          "definition": "is_nullable BOOL NOT NULL"
+        },
+        {
+          "name": "FIELD_IS_ZEROFILL",
+          "definition": "is_zerofill BOOL"
+        },
+        {
+          "name": "FIELD_IS_UNSIGNED",
+          "definition": "is_unsigned BOOL"
+        },
+        {
+          "name": "FIELD_CHAR_LENGTH",
+          "definition": "char_length INT UNSIGNED"
+        },
+        {
+          "name": "FIELD_NUMERIC_PRECISION",
+          "definition": "numeric_precision INT UNSIGNED"
+        },
+        {
+          "name": "FIELD_NUMERIC_SCALE",
+          "definition": "numeric_scale INT UNSIGNED"
+        },
+        {
+          "name": "FIELD_DATETIME_PRECISION",
+          "definition": "datetime_precision INT UNSIGNED"
+        },
+        {
+          "name": "FIELD_COLLATION_ID",
+          "definition": "collation_id BIGINT UNSIGNED"
+        },
+        {
+          "name": "FIELD_HAS_NO_DEFAULT",
+          "definition": "has_no_default BOOL"
+        },
+        {
+          "name": "FIELD_DEFAULT_VALUE",
+          "definition": "default_value BLOB"
+        },
+        {
+          "name": "FIELD_DEFAULT_VALUE_UTF8",
+          "definition": "default_value_utf8 TEXT"
+        },
+        {
+          "name": "FIELD_DEFAULT_OPTION",
+          "definition": "default_option BLOB"
+        },
+        {
+          "name": "FIELD_UPDATE_OPTION",
+          "definition": "update_option VARCHAR(32)"
+        },
+        {
+          "name": "FIELD_IS_AUTO_INCREMENT",
+          "definition": "is_auto_increment BOOL"
+        },
+        {
+          "name": "FIELD_IS_VIRTUAL",
+          "definition": "is_virtual BOOL"
+        },
+        {
+          "name": "FIELD_GENERATION_EXPRESSION",
+          "definition": "generation_expression LONGBLOB"
+        },
+        {
+          "name": "FIELD_GENERATION_EXPRESSION_UTF8",
+          "definition": "generation_expression_utf8 LONGTEXT"
+        },
+        {
+          "name": "FIELD_COMMENT",
+          "definition": "comment VARCHAR(2048) NOT NULL"
+        },
+        {
+          "name": "FIELD_HIDDEN",
+          "definition": "hidden ENUM('Visible', 'SE', 'SQL', 'User') NOT NULL"
+        },
+        {
+          "name": "FIELD_OPTIONS",
+          "definition": "options MEDIUMTEXT"
+        },
+        {
+          "name": "FIELD_SE_PRIVATE_DATA",
+          "definition": "se_private_data MEDIUMTEXT"
+        },
+        {
+          "name": "FIELD_COLUMN_KEY",
+          "definition": "column_key ENUM('','PRI','UNI','MUL') NOT NULL"
+        },
+        {
+          "name": "FIELD_COLUMN_TYPE_UTF8",
+          "definition": "column_type_utf8 MEDIUMTEXT NOT NULL"
+        },
+        {
+          "name": "FIELD_SRS_ID",
+          "definition": "srs_id INT UNSIGNED DEFAULT NULL"
+        },
+        {
+          "name": "FIELD_IS_EXPLICIT_COLLATION",
+          "definition": "is_explicit_collation BOOL"
+        },
+        {
+          "name": "FIELD_ENGINE_ATTRIBUTE",
+          "definition": "engine_attribute JSON"
+        },
+        {
+          "name": "FIELD_SECONDARY_ENGINE_ATTRIBUTE",
+          "definition": "secondary_engine_attribute JSON"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "INDEX_PK_ID",
+          "definition": "PRIMARY KEY(id)"
+        },
+        {
+          "name": "INDEX_UK_TABLE_ID_NAME",
+          "definition": "UNIQUE KEY(table_id, name)"
+        },
+        {
+          "name": "INDEX_UK_TABLE_ID_ORDINAL_POSITION",
+          "definition": "UNIQUE KEY(table_id, ordinal_position)"
+        },
+        {
+          "name": "INDEX_K_COLLATION_ID",
+          "definition": "KEY(collation_id)"
+        },
+        {
+          "name": "INDEX_K_SRS_ID",
+          "definition": "KEY(srs_id)"
+        }
+      ],
+      "foreign_keys": [
+        {
+          "name": "FK_TABLES_ID",
+          "definition": "FOREIGN KEY (table_id) REFERENCES tables(id)"
+        }
+      ],
+      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/columns.cc"
+    },
+    {
+      "name": "dd_properties",
+      "fields": [
+        {
+          "name": "FIELD_PROPERTIES",
+          "definition": "properties MEDIUMBLOB"
+        }
+      ],
+      "indexes": [],
+      "foreign_keys": [],
+      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/dd_properties.cc"
+    },
+    {
+      "name": "events",
+      "fields": [
+        {
+          "name": "FIELD_ID",
+          "definition": "id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT"
+        },
+        {
+          "name": "FIELD_SCHEMA_ID",
+          "definition": "schema_id BIGINT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_DEFINER",
+          "definition": "definer VARCHAR(288) NOT NULL"
+        },
+        {
+          "name": "FIELD_TIME_ZONE",
+          "definition": "time_zone VARCHAR(64) NOT NULL"
+        },
+        {
+          "name": "FIELD_DEFINITION",
+          "definition": "definition LONGBLOB NOT NULL"
+        },
+        {
+          "name": "FIELD_DEFINITION_UTF8",
+          "definition": "definition_utf8 LONGTEXT NOT NULL"
+        },
+        {
+          "name": "FIELD_EXECUTE_AT",
+          "definition": "execute_at DATETIME"
+        },
+        {
+          "name": "FIELD_INTERVAL_VALUE",
+          "definition": "interval_value INT"
+        },
+        {
+          "name": "FIELD_STARTS",
+          "definition": "starts DATETIME"
+        },
+        {
+          "name": "FIELD_ENDS",
+          "definition": "ends DATETIME"
+        },
+        {
+          "name": "FIELD_STATUS",
+          "definition": "status ENUM('ENABLED', 'DISABLED', 'REPLICA_SIDE_DISABLED') NOT NULL"
+        },
+        {
+          "name": "FIELD_ON_COMPLETION",
+          "definition": "on_completion ENUM('DROP', 'PRESERVE') NOT NULL"
+        },
+        {
+          "name": "FIELD_CREATED",
+          "definition": "created TIMESTAMP NOT NULL"
+        },
+        {
+          "name": "FIELD_LAST_ALTERED",
+          "definition": "last_altered TIMESTAMP NOT NULL"
+        },
+        {
+          "name": "FIELD_LAST_EXECUTED",
+          "definition": "last_executed DATETIME"
+        },
+        {
+          "name": "FIELD_COMMENT",
+          "definition": "comment VARCHAR(2048) NOT NULL"
+        },
+        {
+          "name": "FIELD_ORIGINATOR",
+          "definition": "originator INT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_CLIENT_COLLATION_ID",
+          "definition": "client_collation_id BIGINT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_CONNECTION_COLLATION_ID",
+          "definition": "connection_collation_id BIGINT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_SCHEMA_COLLATION_ID",
+          "definition": "schema_collation_id BIGINT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_OPTIONS",
+          "definition": "options MEDIUMTEXT"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "INDEX_PK_ID",
+          "definition": "PRIMARY KEY(id)"
+        },
+        {
+          "name": "INDEX_UK_SCHEMA_ID_NAME",
+          "definition": "UNIQUE KEY(schema_id, name)"
+        },
+        {
+          "name": "INDEX_K_CLIENT_COLLATION_ID",
+          "definition": "KEY(client_collation_id)"
+        },
+        {
+          "name": "INDEX_K_CONNECTION_COLLATION_ID",
+          "definition": "KEY(connection_collation_id)"
+        },
+        {
+          "name": "INDEX_K_SCHEMA_COLLATION_ID",
+          "definition": "KEY(schema_collation_id)"
+        },
+        {
+          "name": "INDEX_K_DEFINER",
+          "definition": "KEY(definer)"
+        }
+      ],
+      "foreign_keys": [],
+      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/events.cc"
+    },
+    {
+      "name": "foreign_key_column_usage",
+      "fields": [
+        {
+          "name": "FIELD_FOREIGN_KEY_ID",
+          "definition": "foreign_key_id BIGINT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_ORDINAL_POSITION",
+          "definition": "ordinal_position INT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_COLUMN_ID",
+          "definition": "column_id BIGINT UNSIGNED NOT NULL"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "INDEX_PK_FOREIGN_KEY_ID_ORDINAL_POSITION",
+          "definition": "PRIMARY KEY(foreign_key_id, ordinal_position)"
+        },
+        {
+          "name": "INDEX_K_COLUMN_ID",
+          "definition": "KEY(column_id)"
+        }
+      ],
+      "foreign_keys": [],
+      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/foreign_key_column_usage.cc"
+    },
+    {
+      "name": "foreign_keys",
+      "fields": [
+        {
+          "name": "FIELD_ID",
+          "definition": "id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT"
+        },
+        {
+          "name": "FIELD_SCHEMA_ID",
+          "definition": "schema_id BIGINT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_TABLE_ID",
+          "definition": "table_id BIGINT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_UNIQUE_CONSTRAINT_NAME",
+          "definition": "unique_constraint_name VARCHAR(64) COLLATE utf8mb3_tolower_ci"
+        },
+        {
+          "name": "FIELD_OPTIONS",
+          "definition": "options MEDIUMTEXT"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "INDEX_PK_ID",
+          "definition": "PRIMARY KEY (id)"
+        },
+        {
+          "name": "INDEX_UK_SCHEMA_ID_NAME",
+          "definition": "UNIQUE KEY (schema_id, name)"
+        },
+        {
+          "name": "INDEX_UK_TABLE_ID_NAME",
+          "definition": "UNIQUE KEY (table_id, name)"
+        }
+      ],
+      "foreign_keys": [],
+      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/foreign_keys.cc"
+    },
+    {
+      "name": "index_column_usage",
+      "fields": [
+        {
+          "name": "FIELD_INDEX_ID",
+          "definition": "index_id BIGINT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_ORDINAL_POSITION",
+          "definition": "ordinal_position INT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_COLUMN_ID",
+          "definition": "column_id BIGINT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_LENGTH",
+          "definition": "length INT UNSIGNED"
+        },
+        {
+          "name": "FIELD_HIDDEN",
+          "definition": "hidden BOOL NOT NULL"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "INDEX_UK_INDEX_ID_ORDINAL_POSITION",
+          "definition": "UNIQUE KEY (index_id, ordinal_position)"
+        },
+        {
+          "name": "INDEX_UK_INDEX_ID_COLUMN_ID_HIDDEN",
+          "definition": "UNIQUE KEY (index_id, column_id, hidden)"
+        },
+        {
+          "name": "INDEX_K_COLUMN_ID",
+          "definition": "KEY (column_id)"
+        }
+      ],
+      "foreign_keys": [],
+      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/index_column_usage.cc"
+    },
+    {
+      "name": "index_partitions",
+      "fields": [
+        {
+          "name": "FIELD_PARTITION_ID",
+          "definition": "partition_id BIGINT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_INDEX_ID",
+          "definition": "index_id BIGINT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_OPTIONS",
+          "definition": "options MEDIUMTEXT"
+        },
+        {
+          "name": "FIELD_SE_PRIVATE_DATA",
+          "definition": "se_private_data MEDIUMTEXT"
+        },
+        {
+          "name": "FIELD_TABLESPACE_ID",
+          "definition": "tablespace_id BIGINT UNSIGNED"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "INDEX_PK_PARTITION_ID_INDEX_ID",
+          "definition": "PRIMARY KEY(partition_id, index_id)"
+        },
+        {
+          "name": "INDEX_K_INDEX_ID",
+          "definition": "KEY(index_id)"
+        },
+        {
+          "name": "INDEX_K_TABLESPACE_ID",
+          "definition": "KEY(tablespace_id)"
+        }
+      ],
+      "foreign_keys": [],
+      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/index_partitions.cc"
+    },
+    {
+      "name": "index_stats",
+      "fields": [
+        {
+          "name": "FIELD_SCHEMA_NAME",
+          "definition": "schema_name VARCHAR(64) NOT NULL"
+        },
+        {
+          "name": "FIELD_TABLE_NAME",
+          "definition": "table_name VARCHAR(64) NOT NULL"
+        },
+        {
+          "name": "FIELD_INDEX_NAME",
+          "definition": "index_name VARCHAR(64) NOT NULL"
+        },
+        {
+          "name": "FIELD_COLUMN_NAME",
+          "definition": "column_name VARCHAR(64) NOT NULL"
+        },
+        {
+          "name": "FIELD_CARDINALITY",
+          "definition": "cardinality BIGINT UNSIGNED"
+        },
+        {
+          "name": "FIELD_CACHED_TIME",
+          "definition": "cached_time TIMESTAMP NOT NULL"
+        }
+      ],
+      "indexes": [],
+      "foreign_keys": [],
+      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/index_stats.cc"
+    },
+    {
+      "name": "indexes",
+      "fields": [
+        {
+          "name": "FIELD_ID",
+          "definition": "id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT"
+        },
+        {
+          "name": "FIELD_TABLE_ID",
+          "definition": "table_id BIGINT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_IS_ALGORITHM_EXPLICIT",
+          "definition": "is_algorithm_explicit BOOL NOT NULL"
+        },
+        {
+          "name": "FIELD_IS_VISIBLE",
+          "definition": "is_visible BOOL NOT NULL"
+        },
+        {
+          "name": "FIELD_IS_GENERATED",
+          "definition": "is_generated BOOL NOT NULL"
+        },
+        {
+          "name": "FIELD_HIDDEN",
+          "definition": "hidden BOOL NOT NULL"
+        },
+        {
+          "name": "FIELD_ORDINAL_POSITION",
+          "definition": "ordinal_position INT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_COMMENT",
+          "definition": "comment VARCHAR(2048) NOT NULL"
+        },
+        {
+          "name": "FIELD_OPTIONS",
+          "definition": "options MEDIUMTEXT"
+        },
+        {
+          "name": "FIELD_SE_PRIVATE_DATA",
+          "definition": "se_private_data MEDIUMTEXT"
+        },
+        {
+          "name": "FIELD_TABLESPACE_ID",
+          "definition": "tablespace_id BIGINT UNSIGNED"
+        },
+        {
+          "name": "FIELD_ENGINE",
+          "definition": "engine VARCHAR(64) NOT NULL COLLATE utf8mb3_general_ci"
+        },
+        {
+          "name": "FIELD_ENGINE_ATTRIBUTE",
+          "definition": "engine_attribute JSON"
+        },
+        {
+          "name": "FIELD_SECONDARY_ENGINE_ATTRIBUTE",
+          "definition": "secondary_engine_attribute JSON"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "INDEX_PK_ID",
+          "definition": "PRIMARY KEY(id)"
+        },
+        {
+          "name": "INDEX_UK_TABLE_ID_NAME",
+          "definition": "UNIQUE KEY(table_id, name)"
+        },
+        {
+          "name": "INDEX_K_TABLESPACE_ID",
+          "definition": "KEY(tablespace_id)"
+        }
+      ],
+      "foreign_keys": [],
+      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/indexes.cc"
+    },
+    {
+      "name": "parameter_type_elements",
+      "fields": [
+        {
+          "name": "FIELD_PARAMETER_ID",
+          "definition": "parameter_id BIGINT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_ELEMENT_INDEX",
+          "definition": "element_index INT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_NAME",
+          "definition": "name VARBINARY(1020) NOT NULL"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "INDEX_PK_PARAMETER_ID_ELEMENT_INDEX",
+          "definition": "PRIMARY KEY(parameter_id, element_index)"
+        }
+      ],
+      "foreign_keys": [],
+      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/parameter_type_elements.cc"
+    },
+    {
+      "name": "parameters",
+      "fields": [
+        {
+          "name": "FIELD_ID",
+          "definition": "id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT"
+        },
+        {
+          "name": "FIELD_ROUTINE_ID",
+          "definition": "routine_id BIGINT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_ORDINAL_POSITION",
+          "definition": "ordinal_position INT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_MODE",
+          "definition": "mode ENUM('IN','OUT','INOUT')"
+        },
+        {
+          "name": "FIELD_DATA_TYPE_UTF8",
+          "definition": "data_type_utf8 MEDIUMTEXT NOT NULL"
+        },
+        {
+          "name": "FIELD_IS_ZEROFILL",
+          "definition": "is_zerofill BOOL"
+        },
+        {
+          "name": "FIELD_IS_UNSIGNED",
+          "definition": "is_unsigned BOOL"
+        },
+        {
+          "name": "FIELD_CHAR_LENGTH",
+          "definition": "char_length INT UNSIGNED"
+        },
+        {
+          "name": "FIELD_NUMERIC_PRECISION",
+          "definition": "numeric_precision INT UNSIGNED"
+        },
+        {
+          "name": "FIELD_NUMERIC_SCALE",
+          "definition": "numeric_scale INT UNSIGNED"
+        },
+        {
+          "name": "FIELD_DATETIME_PRECISION",
+          "definition": "datetime_precision INT UNSIGNED"
+        },
+        {
+          "name": "FIELD_COLLATION_ID",
+          "definition": "collation_id BIGINT UNSIGNED"
+        },
+        {
+          "name": "FIELD_OPTIONS",
+          "definition": "options MEDIUMTEXT"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "INDEX_PK_ID",
+          "definition": "PRIMARY KEY(id)"
+        },
+        {
+          "name": "INDEX_UK_ROUTINE_ID_ORDINAL_POSITION",
+          "definition": "UNIQUE KEY (routine_id, ordinal_position)"
+        },
+        {
+          "name": "INDEX_K_COLLATION_ID",
+          "definition": "KEY (collation_id)"
+        }
+      ],
+      "foreign_keys": [],
+      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/parameters.cc"
+    },
+    {
+      "name": "resource_groups",
+      "fields": [
+        {
+          "name": "FIELD_ID",
+          "definition": "id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT"
+        },
+        {
+          "name": "FIELD_RESOURCE_GROUP_TYPE",
+          "definition": "resource_group_type enum('SYSTEM', 'USER') NOT NULL"
+        },
+        {
+          "name": "FIELD_RESOURCE_GROUP_ENABLED",
+          "definition": "resource_group_enabled  boolean NOT NULL"
+        },
+        {
+          "name": "FIELD_CPU_ID_MASK",
+          "definition": "cpu_id_mask VARCHAR(1024) NOT NULL"
+        },
+        {
+          "name": "FIELD_THREAD_PRIORITY",
+          "definition": "thread_priority int NOT NULL"
+        },
+        {
+          "name": "FIELD_OPTIONS",
+          "definition": "options MEDIUMTEXT"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "INDEX_PK_ID",
+          "definition": "PRIMARY KEY(id)"
+        },
+        {
+          "name": "INDEX_UK_RESOURCE_GROUP_NAME",
+          "definition": "UNIQUE KEY (resource_group_name)"
+        }
+      ],
+      "foreign_keys": [],
+      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/resource_groups.cc"
+    },
+    {
+      "name": "routines",
+      "fields": [
+        {
+          "name": "FIELD_ID",
+          "definition": "id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT"
+        },
+        {
+          "name": "FIELD_SCHEMA_ID",
+          "definition": "schema_id BIGINT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_TYPE",
+          "definition": "type ENUM('FUNCTION', 'PROCEDURE', 'LIBRARY') NOT NULL"
+        },
+        {
+          "name": "FIELD_RESULT_DATA_TYPE_UTF8",
+          "definition": "result_data_type_utf8 MEDIUMTEXT NOT NULL"
+        },
+        {
+          "name": "FIELD_RESULT_IS_ZEROFILL",
+          "definition": "result_is_zerofill BOOL DEFAULT NULL"
+        },
+        {
+          "name": "FIELD_RESULT_IS_UNSIGNED",
+          "definition": "result_is_unsigned BOOL DEFAULT NULL"
+        },
+        {
+          "name": "FIELD_RESULT_CHAR_LENGTH",
+          "definition": "result_char_length INT UNSIGNED DEFAULT NULL"
+        },
+        {
+          "name": "FIELD_RESULT_NUMERIC_PRECISION",
+          "definition": "result_numeric_precision INT UNSIGNED DEFAULT NULL"
+        },
+        {
+          "name": "FIELD_RESULT_NUMERIC_SCALE",
+          "definition": "result_numeric_scale INT UNSIGNED DEFAULT NULL"
+        },
+        {
+          "name": "FIELD_RESULT_DATETIME_PRECISION",
+          "definition": "result_datetime_precision INT UNSIGNED DEFAULT NULL"
+        },
+        {
+          "name": "FIELD_RESULT_COLLATION_ID",
+          "definition": "result_collation_id BIGINT UNSIGNED DEFAULT NULL"
+        },
+        {
+          "name": "FIELD_DEFINITION",
+          "definition": "definition LONGBLOB"
+        },
+        {
+          "name": "FIELD_DEFINITION_UTF8",
+          "definition": "definition_utf8 LONGTEXT"
+        },
+        {
+          "name": "FIELD_PARAMETER_STR",
+          "definition": "parameter_str BLOB"
+        },
+        {
+          "name": "FIELD_IS_DETERMINISTIC",
+          "definition": "is_deterministic BOOL NOT NULL"
+        },
+        {
+          "name": "FIELD_SECURITY_TYPE",
+          "definition": "security_type ENUM('DEFAULT', 'INVOKER', 'DEFINER') NOT NULL"
+        },
+        {
+          "name": "FIELD_DEFINER",
+          "definition": "definer VARCHAR(288) NOT NULL"
+        },
+        {
+          "name": "FIELD_CLIENT_COLLATION_ID",
+          "definition": "client_collation_id BIGINT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_CONNECTION_COLLATION_ID",
+          "definition": "connection_collation_id BIGINT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_SCHEMA_COLLATION_ID",
+          "definition": "schema_collation_id BIGINT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_CREATED",
+          "definition": "created TIMESTAMP NOT NULL"
+        },
+        {
+          "name": "FIELD_LAST_ALTERED",
+          "definition": "last_altered TIMESTAMP NOT NULL"
+        },
+        {
+          "name": "FIELD_COMMENT",
+          "definition": "comment TEXT NOT NULL"
+        },
+        {
+          "name": "FIELD_OPTIONS",
+          "definition": "options MEDIUMTEXT"
+        },
+        {
+          "name": "FIELD_EXTERNAL_LANGUAGE",
+          "definition": "external_language VARCHAR(64) NOT NULL DEFAULT 'SQL'"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "INDEX_PK_ID",
+          "definition": "PRIMARY KEY(id)"
+        },
+        {
+          "name": "INDEX_UK_SCHEMA_ID_TYPE_NAME",
+          "definition": "UNIQUE KEY(schema_id, type, name)"
+        },
+        {
+          "name": "INDEX_K_RESULT_COLLATION_ID",
+          "definition": "KEY(result_collation_id)"
+        },
+        {
+          "name": "INDEX_K_CLIENT_COLLATION_ID",
+          "definition": "KEY(client_collation_id)"
+        },
+        {
+          "name": "INDEX_K_CONNECTION_COLLATION_ID",
+          "definition": "KEY(connection_collation_id)"
+        },
+        {
+          "name": "INDEX_K_SCHEMA_COLLATION_ID",
+          "definition": "KEY(schema_collation_id)"
+        },
+        {
+          "name": "INDEX_K_DEFINER",
+          "definition": "KEY(definer)"
+        }
+      ],
+      "foreign_keys": [],
+      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/routines.cc"
+    },
+    {
+      "name": "schemata",
+      "fields": [
+        {
+          "name": "FIELD_ID",
+          "definition": "id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT"
+        },
+        {
+          "name": "FIELD_CATALOG_ID",
+          "definition": "catalog_id BIGINT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_DEFAULT_COLLATION_ID",
+          "definition": "default_collation_id BIGINT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_CREATED",
+          "definition": "created TIMESTAMP NOT NULL"
+        },
+        {
+          "name": "FIELD_LAST_ALTERED",
+          "definition": "last_altered TIMESTAMP NOT NULL"
+        },
+        {
+          "name": "FIELD_OPTIONS",
+          "definition": "options MEDIUMTEXT"
+        },
+        {
+          "name": "FIELD_DEFAULT_ENCRYPTION",
+          "definition": "default_encryption ENUM('NO', 'YES') NOT NULL"
+        },
+        {
+          "name": "FIELD_SE_PRIVATE_DATA",
+          "definition": "se_private_data MEDIUMTEXT"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "INDEX_PK_ID",
+          "definition": "PRIMARY KEY (id)"
+        },
+        {
+          "name": "INDEX_UK_CATALOG_ID_NAME",
+          "definition": "UNIQUE KEY (catalog_id, name)"
+        },
+        {
+          "name": "INDEX_K_DEFAULT_COLLATION_ID",
+          "definition": "KEY (default_collation_id)"
+        }
+      ],
+      "foreign_keys": [
+        {
+          "name": "FK_CATALOG_ID",
+          "definition": "FOREIGN KEY (catalog_id) REFERENCES \\\n                                catalogs(id)"
+        },
+        {
+          "name": "FK_DEFAULT_COLLATION_ID",
+          "definition": "FOREIGN KEY (default_collation_id) \\\n                                REFERENCES collations(id)"
+        }
+      ],
+      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/schemata.cc"
+    },
+    {
+      "name": "st_spatial_reference_systems",
+      "fields": [
+        {
+          "name": "FIELD_ID",
+          "definition": "id INTEGER UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_CATALOG_ID",
+          "definition": "catalog_id BIGINT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_ORGANIZATION_COORDSYS_ID",
+          "definition": "organization_coordsys_id INTEGER UNSIGNED"
+        },
+        {
+          "name": "FIELD_DESCRIPTION",
+          "definition": "description CHARACTER VARYING(2048)"
+        },
+        {
+          "name": "FIELD_OPTIONS",
+          "definition": "options MEDIUMTEXT"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "INDEX_PK_ID",
+          "definition": "PRIMARY KEY (id)"
+        },
+        {
+          "name": "INDEX_UK_CATALOG_ID_NAME",
+          "definition": "UNIQUE KEY SRS_NAME (catalog_id, name)"
+        }
+      ],
+      "foreign_keys": [
+        {
+          "name": "FK_CATALOG_ID",
+          "definition": "FOREIGN KEY (catalog_id) REFERENCES \\\n                                  catalogs(id)"
+        }
+      ],
+      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/spatial_reference_systems.cc"
+    },
+    {
+      "name": "table_partition_values",
+      "fields": [
+        {
+          "name": "FIELD_PARTITION_ID",
+          "definition": "partition_id BIGINT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_LIST_NUM",
+          "definition": "list_num SMALLINT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_COLUMN_NUM",
+          "definition": "column_num TINYINT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_VALUE_UTF8",
+          "definition": "value_utf8 TEXT NULL"
+        },
+        {
+          "name": "FIELD_MAX_VALUE",
+          "definition": "max_value BOOL NOT NULL"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "INDEX_PK_PARTITION_ID_LIST_NUM_COLUMN_NUM",
+          "definition": "PRIMARY KEY(partition_id, list_num, column_num)"
+        }
+      ],
+      "foreign_keys": [],
+      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/table_partition_values.cc"
+    },
+    {
+      "name": "table_partitions",
+      "fields": [
+        {
+          "name": "FIELD_ID",
+          "definition": "id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT"
+        },
+        {
+          "name": "FIELD_TABLE_ID",
+          "definition": "table_id BIGINT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_PARENT_PARTITION_ID",
+          "definition": "parent_partition_id BIGINT UNSIGNED"
+        },
+        {
+          "name": "FIELD_NUMBER",
+          "definition": "number SMALLINT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_ENGINE",
+          "definition": "engine VARCHAR(64) NOT NULL COLLATE utf8mb3_general_ci"
+        },
+        {
+          "name": "FIELD_DESCRIPTION_UTF8",
+          "definition": "description_utf8 TEXT"
+        },
+        {
+          "name": "FIELD_COMMENT",
+          "definition": "comment VARCHAR(2048) NOT NULL"
+        },
+        {
+          "name": "FIELD_OPTIONS",
+          "definition": "options MEDIUMTEXT"
+        },
+        {
+          "name": "FIELD_SE_PRIVATE_DATA",
+          "definition": "se_private_data MEDIUMTEXT"
+        },
+        {
+          "name": "FIELD_SE_PRIVATE_ID",
+          "definition": "se_private_id BIGINT UNSIGNED"
+        },
+        {
+          "name": "FIELD_TABLESPACE_ID",
+          "definition": "tablespace_id BIGINT UNSIGNED"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "INDEX_PK_ID",
+          "definition": "PRIMARY KEY(id)"
+        },
+        {
+          "name": "INDEX_UK_TABLE_ID_NAME",
+          "definition": "UNIQUE KEY(table_id, name)"
+        },
+        {
+          "name": "INDEX_UK_TABLE_ID_PARENT_PARTITION_ID_NUMBER",
+          "definition": "UNIQUE KEY(table_id, parent_partition_id, number)"
+        },
+        {
+          "name": "INDEX_UK_ENGINE_SE_PRIVATE_ID",
+          "definition": "UNIQUE KEY(engine, se_private_id)"
+        },
+        {
+          "name": "INDEX_K_ENGINE",
+          "definition": "KEY(engine)"
+        },
+        {
+          "name": "INDEX_K_TABLESPACE_ID",
+          "definition": "KEY(tablespace_id)"
+        },
+        {
+          "name": "INDEX_K_PARENT_PARTITION_ID",
+          "definition": "KEY(parent_partition_id)"
+        }
+      ],
+      "foreign_keys": [],
+      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/table_partitions.cc"
+    },
+    {
+      "name": "table_stats",
+      "fields": [
+        {
+          "name": "FIELD_SCHEMA_NAME",
+          "definition": "schema_name VARCHAR(64) NOT NULL"
+        },
+        {
+          "name": "FIELD_TABLE_NAME",
+          "definition": "table_name VARCHAR(64) NOT NULL"
+        },
+        {
+          "name": "FIELD_TABLE_ROWS",
+          "definition": "table_rows BIGINT UNSIGNED"
+        },
+        {
+          "name": "FIELD_AVG_ROW_LENGTH",
+          "definition": "avg_row_length BIGINT UNSIGNED"
+        },
+        {
+          "name": "FIELD_DATA_LENGTH",
+          "definition": "data_length BIGINT UNSIGNED"
+        },
+        {
+          "name": "FIELD_MAX_DATA_LENGTH",
+          "definition": "max_data_length BIGINT UNSIGNED"
+        },
+        {
+          "name": "FIELD_INDEX_LENGTH",
+          "definition": "index_length BIGINT UNSIGNED"
+        },
+        {
+          "name": "FIELD_DATA_FREE",
+          "definition": "data_free BIGINT UNSIGNED"
+        },
+        {
+          "name": "FIELD_AUTO_INCREMENT",
+          "definition": "auto_increment BIGINT UNSIGNED"
+        },
+        {
+          "name": "FIELD_CHECKSUM",
+          "definition": "checksum BIGINT UNSIGNED"
+        },
+        {
+          "name": "FIELD_UPDATE_TIME",
+          "definition": "update_time TIMESTAMP NULL"
+        },
+        {
+          "name": "FIELD_CHECK_TIME",
+          "definition": "check_time TIMESTAMP NULL"
+        },
+        {
+          "name": "FIELD_CACHED_TIME",
+          "definition": "cached_time TIMESTAMP NOT NULL"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "INDEX_PK_SCHEMA_ID_TABLE_NAME",
+          "definition": "PRIMARY KEY (schema_name, table_name)"
+        }
+      ],
+      "foreign_keys": [],
+      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/table_stats.cc"
+    },
+    {
+      "name": "tables",
+      "fields": [
+        {
+          "name": "FIELD_ID",
+          "definition": "id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT"
+        },
+        {
+          "name": "FIELD_SCHEMA_ID",
+          "definition": "schema_id BIGINT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_MYSQL_VERSION_ID",
+          "definition": "mysql_version_id INT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_COLLATION_ID",
+          "definition": "collation_id BIGINT UNSIGNED"
+        },
+        {
+          "name": "FIELD_COMMENT",
+          "definition": "comment VARCHAR(2048) NOT NULL"
+        },
+        {
+          "name": "FIELD_HIDDEN",
+          "definition": "hidden ENUM('Visible', 'System', 'SE', 'DDL') NOT NULL"
+        },
+        {
+          "name": "FIELD_OPTIONS",
+          "definition": "options MEDIUMTEXT"
+        },
+        {
+          "name": "FIELD_SE_PRIVATE_DATA",
+          "definition": "se_private_data MEDIUMTEXT"
+        },
+        {
+          "name": "FIELD_SE_PRIVATE_ID",
+          "definition": "se_private_id BIGINT UNSIGNED"
+        },
+        {
+          "name": "FIELD_TABLESPACE_ID",
+          "definition": "tablespace_id BIGINT UNSIGNED"
+        },
+        {
+          "name": "FIELD_PARTITION_EXPRESSION",
+          "definition": "partition_expression VARCHAR(2048)"
+        },
+        {
+          "name": "FIELD_PARTITION_EXPRESSION_UTF8",
+          "definition": "partition_expression_utf8 VARCHAR(2048)"
+        },
+        {
+          "name": "FIELD_DEFAULT_PARTITIONING",
+          "definition": "default_partitioning ENUM('NO', 'YES', 'NUMBER')"
+        },
+        {
+          "name": "FIELD_SUBPARTITION_EXPRESSION",
+          "definition": "subpartition_expression VARCHAR(2048)"
+        },
+        {
+          "name": "FIELD_SUBPARTITION_EXPRESSION_UTF8",
+          "definition": "subpartition_expression_utf8 VARCHAR(2048)"
+        },
+        {
+          "name": "FIELD_CREATED",
+          "definition": "created TIMESTAMP NOT NULL"
+        },
+        {
+          "name": "FIELD_LAST_ALTERED",
+          "definition": "last_altered TIMESTAMP NOT NULL"
+        },
+        {
+          "name": "FIELD_VIEW_DEFINITION",
+          "definition": "view_definition LONGBLOB"
+        },
+        {
+          "name": "FIELD_VIEW_DEFINITION_UTF8",
+          "definition": "view_definition_utf8 LONGTEXT"
+        },
+        {
+          "name": "FIELD_VIEW_IS_UPDATABLE",
+          "definition": "view_is_updatable ENUM('NO', 'YES')"
+        },
+        {
+          "name": "FIELD_VIEW_DEFINER",
+          "definition": "view_definer VARCHAR(288)"
+        },
+        {
+          "name": "FIELD_VIEW_CLIENT_COLLATION_ID",
+          "definition": "view_client_collation_id BIGINT UNSIGNED"
+        },
+        {
+          "name": "FIELD_VIEW_CONNECTION_COLLATION_ID",
+          "definition": "view_connection_collation_id BIGINT UNSIGNED"
+        },
+        {
+          "name": "FIELD_VIEW_COLUMN_NAMES",
+          "definition": "view_column_names LONGTEXT"
+        },
+        {
+          "name": "FIELD_LAST_CHECKED_FOR_UPGRADE_VERSION_ID",
+          "definition": "last_checked_for_upgrade_version_id INT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_ENGINE_ATTRIBUTE",
+          "definition": "engine_attribute JSON"
+        },
+        {
+          "name": "FIELD_SECONDARY_ENGINE_ATTRIBUTE",
+          "definition": "secondary_engine_attribute JSON"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "INDEX_PK_ID",
+          "definition": "PRIMARY KEY (id)"
+        },
+        {
+          "name": "INDEX_UK_SCHEMA_ID_NAME",
+          "definition": "UNIQUE KEY (schema_id, name)"
+        },
+        {
+          "name": "INDEX_UK_ENGINE_SE_PRIVATE_ID",
+          "definition": "UNIQUE KEY (engine, se_private_id)"
+        },
+        {
+          "name": "INDEX_K_ENGINE",
+          "definition": "KEY(engine)"
+        },
+        {
+          "name": "INDEX_K_COLLATION_ID",
+          "definition": "KEY(collation_id)"
+        },
+        {
+          "name": "INDEX_K_TABLESPACE_ID",
+          "definition": "KEY(tablespace_id)"
+        },
+        {
+          "name": "INDEX_K_TYPE",
+          "definition": "KEY(type)"
+        },
+        {
+          "name": "INDEX_K_VIEW_CLIENT_COLLATION_ID",
+          "definition": "KEY(view_client_collation_id)"
+        },
+        {
+          "name": "INDEX_K_VIEW_CONNECTION_COLLATION_ID",
+          "definition": "KEY(view_connection_collation_id)"
+        },
+        {
+          "name": "INDEX_K_TYPE_VIEW_DEFINER",
+          "definition": "KEY(type, view_definer)"
+        }
+      ],
+      "foreign_keys": [
+        {
+          "name": "FK_VIEW_CLIENT_COLLATION_ID",
+          "definition": "FOREIGN KEY (view_client_collation_id) REFERENCES collations(id)"
+        },
+        {
+          "name": "FK_VIEW_CONNECTION_COLLATION_ID",
+          "definition": "FOREIGN KEY (view_connection_collation_id) REFERENCES collations(id)"
+        }
+      ],
+      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/tables.cc"
+    },
+    {
+      "name": "tablespace_files",
+      "fields": [
+        {
+          "name": "FIELD_TABLESPACE_ID",
+          "definition": "tablespace_id BIGINT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_ORDINAL_POSITION",
+          "definition": "ordinal_position INT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_FILE_NAME",
+          "definition": "file_name VARCHAR(512) NOT NULL"
+        },
+        {
+          "name": "FIELD_SE_PRIVATE_DATA",
+          "definition": "se_private_data MEDIUMTEXT"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "INEDX_UK_TABLESPACE_ID_ORDINAL_POSITION",
+          "definition": "UNIQUE KEY (tablespace_id, ordinal_position)"
+        },
+        {
+          "name": "INEDX_UK_FILE_NAME",
+          "definition": "UNIQUE KEY (file_name)"
+        }
+      ],
+      "foreign_keys": [
+        {
+          "name": "FK_TABLESPACE_ID",
+          "definition": "FOREIGN KEY (tablespace_id) \\\n                                REFERENCES tablespaces(id)"
+        }
+      ],
+      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/tablespace_files.cc"
+    },
+    {
+      "name": "tablespaces",
+      "fields": [
+        {
+          "name": "FIELD_ID",
+          "definition": "id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT"
+        },
+        {
+          "name": "FIELD_OPTIONS",
+          "definition": "options MEDIUMTEXT"
+        },
+        {
+          "name": "FIELD_SE_PRIVATE_DATA",
+          "definition": "se_private_data MEDIUMTEXT"
+        },
+        {
+          "name": "FIELD_COMMENT",
+          "definition": "comment VARCHAR(2048) NOT NULL"
+        },
+        {
+          "name": "FIELD_ENGINE",
+          "definition": "engine VARCHAR(64) NOT NULL COLLATE utf8mb3_general_ci"
+        },
+        {
+          "name": "FIELD_ENGINE_ATTRIBUTE",
+          "definition": "engine_attribute JSON"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "INDEX_PK_ID",
+          "definition": "PRIMARY KEY(id)"
+        },
+        {
+          "name": "INDEX_UK_NAME",
+          "definition": "UNIQUE KEY(name)"
+        }
+      ],
+      "foreign_keys": [],
+      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/tablespaces.cc"
+    },
+    {
+      "name": "triggers",
+      "fields": [
+        {
+          "name": "FIELD_ID",
+          "definition": "id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT"
+        },
+        {
+          "name": "FIELD_SCHEMA_ID",
+          "definition": "schema_id BIGINT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_TABLE_ID",
+          "definition": "table_id BIGINT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_ACTION_TIMING",
+          "definition": "action_timing ENUM('BEFORE', 'AFTER') NOT NULL"
+        },
+        {
+          "name": "FIELD_ACTION_ORDER",
+          "definition": "action_order INT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_ACTION_STATEMENT",
+          "definition": "action_statement LONGBLOB NOT NULL"
+        },
+        {
+          "name": "FIELD_ACTION_STATEMENT_UTF8",
+          "definition": "action_statement_utf8 LONGTEXT NOT NULL"
+        },
+        {
+          "name": "FIELD_CREATED",
+          "definition": "created TIMESTAMP(2) NOT NULL"
+        },
+        {
+          "name": "FIELD_LAST_ALTERED",
+          "definition": "last_altered TIMESTAMP(2) NOT NULL"
+        },
+        {
+          "name": "FIELD_DEFINER",
+          "definition": "definer VARCHAR(288) NOT NULL"
+        },
+        {
+          "name": "FIELD_CLIENT_COLLATION_ID",
+          "definition": "client_collation_id BIGINT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_CONNECTION_COLLATION_ID",
+          "definition": "connection_collation_id BIGINT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_SCHEMA_COLLATION_ID",
+          "definition": "schema_collation_id BIGINT UNSIGNED NOT NULL"
+        },
+        {
+          "name": "FIELD_OPTIONS",
+          "definition": "options MEDIUMTEXT"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "INDEX_PK_ID",
+          "definition": "PRIMARY KEY(id)"
+        },
+        {
+          "name": "INDEX_UK_SCHEMA_ID_NAME",
+          "definition": "UNIQUE KEY (schema_id, name)"
+        },
+        {
+          "name": "INDEX_K_CLIENT_COLLATION_ID",
+          "definition": "KEY(client_collation_id)"
+        },
+        {
+          "name": "INDEX_K_CONNECTION_COLLATION_ID",
+          "definition": "KEY(connection_collation_id)"
+        },
+        {
+          "name": "INDEX_K_SCHEMA_COLLATION_ID",
+          "definition": "KEY(schema_collation_id)"
+        },
+        {
+          "name": "INDEX_K_DEFINER",
+          "definition": "KEY(definer)"
+        }
+      ],
+      "foreign_keys": [],
+      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/triggers.cc"
+    },
+    {
+      "name": "view_routine_usage",
+      "fields": [
+        {
+          "name": "FIELD_VIEW_ID",
+          "definition": "view_id BIGINT UNSIGNED NOT NULL"
+        }
+      ],
+      "indexes": [],
+      "foreign_keys": [],
+      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/view_routine_usage.cc"
+    },
+    {
+      "name": "view_table_usage",
+      "fields": [
+        {
+          "name": "FIELD_VIEW_ID",
+          "definition": "view_id BIGINT UNSIGNED NOT NULL"
+        }
+      ],
+      "indexes": [
+        {
+          "name": "INDEX_K_TABLE_CATALOG_TABLE_SCHEMA_TABLE_NAME",
+          "definition": "KEY (table_catalog, table_schema, table_name)"
+        }
+      ],
+      "foreign_keys": [],
+      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/view_table_usage.cc"
+    }
+  ]
+}

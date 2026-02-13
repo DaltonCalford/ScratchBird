@@ -1,0 +1,98 @@
+{
+  "dtype_text": {
+    "encoding": "opaque",
+    "bytes": "dsc_length"
+  },
+  "dtype_boolean": {
+    "encoding": "opaque",
+    "bytes": "dsc_length"
+  },
+  "dtype_varying": {
+    "encoding": "vary",
+    "length_prefix": "USHORT",
+    "data": "vary_length bytes",
+    "pad_zero_on_decode": true
+  },
+  "dtype_cstring": {
+    "encoding": "cstring",
+    "length_prefix": "USHORT",
+    "data": "n bytes",
+    "terminate_on_decode": true
+  },
+  "dtype_short": {
+    "encoding": "xdr_short",
+    "bytes": 2
+  },
+  "dtype_long": {
+    "encoding": "xdr_long",
+    "bytes": 4
+  },
+  "dtype_sql_date": {
+    "encoding": "xdr_long",
+    "bytes": 4
+  },
+  "dtype_sql_time": {
+    "encoding": "xdr_long",
+    "bytes": 4
+  },
+  "dtype_sql_time_tz": {
+    "encoding": "xdr_long + xdr_short",
+    "bytes": 6
+  },
+  "dtype_ex_time_tz": {
+    "encoding": "xdr_long + xdr_short + xdr_short",
+    "bytes": 8
+  },
+  "dtype_real": {
+    "encoding": "xdr_float",
+    "bytes": 4
+  },
+  "dtype_double": {
+    "encoding": "xdr_double",
+    "bytes": 8
+  },
+  "dtype_dec64": {
+    "encoding": "xdr_dec64",
+    "bytes": 16
+  },
+  "dtype_dec128": {
+    "encoding": "xdr_dec128",
+    "bytes": 32
+  },
+  "dtype_int128": {
+    "encoding": "xdr_int128",
+    "bytes": 16
+  },
+  "dtype_timestamp": {
+    "encoding": "xdr_long + xdr_long",
+    "bytes": 8
+  },
+  "dtype_timestamp_tz": {
+    "encoding": "xdr_long + xdr_long + xdr_short",
+    "bytes": 10
+  },
+  "dtype_ex_timestamp_tz": {
+    "encoding": "xdr_long + xdr_long + xdr_short + xdr_short",
+    "bytes": 12
+  },
+  "dtype_int64": {
+    "encoding": "xdr_hyper",
+    "bytes": 8
+  },
+  "dtype_blob": {
+    "encoding": "xdr_quad",
+    "bytes": 8
+  },
+  "dtype_array": {
+    "encoding": "xdr_quad",
+    "bytes": 8
+  },
+  "dtype_quad": {
+    "encoding": "xdr_quad",
+    "bytes": 8
+  },
+  "dtype_dbkey": {
+    "encoding": "opaque",
+    "bytes": "dsc_length"
+  }
+}

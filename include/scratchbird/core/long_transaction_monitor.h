@@ -114,11 +114,11 @@ namespace scratchbird::core
 
         // Monitoring thread
         std::thread monitor_thread_;
-        std::atomic<bool> monitoring_;
-        std::atomic<bool> shutdown_requested_;
+        bool monitoring_ = false;         // Guarded by wake_mutex_
+        bool shutdown_requested_ = false; // Guarded by wake_mutex_
 
         // Wake mechanism for monitoring thread
-        std::mutex wake_mutex_;
+        mutable std::mutex wake_mutex_;
         std::condition_variable wake_cv_;
 
         // Statistics

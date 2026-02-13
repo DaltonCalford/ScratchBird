@@ -230,9 +230,7 @@ namespace scratchbird::core
     {
         uint16_t pd_flags;     // Page flags
         uint16_t reserved;     // Reserved for alignment
-        uint32_t pd_lower;     // Offset to start of free space (supports up to 4GB pages)
-        uint32_t pd_upper;     // Offset to end of free space
-        uint32_t pd_special;   // Offset to start of special area
+        ID table_id;           // Table UUID (v7)
         uint64_t pd_prune_xid; // Oldest XID for pruning
     };
 #pragma pack(pop)

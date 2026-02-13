@@ -12,18 +12,21 @@
 /**
  * SelectivityEstimator - Estimates predicate selectivity for query optimization
  *
- * V2 MIGRATION STATUS: COMPLETE
+ * V3 MIGRATION STATUS: PENDING
  *
- * Uses V2 ResolvedExpression types for WHERE clause and join condition estimation.
+ * Uses V3 Expression types for WHERE clause and join condition estimation.
  */
 
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/types.h"
 #include "scratchbird/optimizer/statistics_manager.h"
-#include "scratchbird/sblr/resolved_ast_v2.h"
 #include <string>
 #include <vector>
+
+namespace scratchbird::parser::v3 {
+    class Expression;
+}
 
 namespace scratchbird::optimizer
 {
@@ -71,7 +74,7 @@ namespace scratchbird::optimizer
          *
          * Phase 1, Task 1.4.1
          */
-        auto estimateWhereClause(const parser::v2::ResolvedExpression *where_clause,
+        auto estimateWhereClause(const parser::v3::Expression *where_clause,
                                  const core::ID &table_id,
                                  core::ErrorContext *ctx = nullptr)
             -> double;
@@ -297,7 +300,7 @@ namespace scratchbird::optimizer
          *
          * Phase 1, Task 3.2
          */
-        auto estimateJoinSelectivity(const parser::v2::ResolvedExpression* join_condition,
+        auto estimateJoinSelectivity(const parser::v3::Expression* join_condition,
                                      const core::ID& left_table_id,
                                      const core::ID& right_table_id,
                                      core::ErrorContext* ctx = nullptr)

@@ -1,0 +1,99 @@
+#!/usr/bin/env python3
+import argparse
+import json
+import os
+import shutil
+import subprocess
+import sys
+
+
+def emit(status, code, summary, details=None):
+    if os.environ.get("SB_CI") == "1":
+        payload = {
+            "status": status,
+            "code": code,
+            "summary": summary,
+            "details": details or [],
+        }
+        print(json.dumps(payload))
+    else:
+        print(summary)
+        if details:
+            for line in details:
+                print(line)
+
+
+def run(cmd):
+    return subprocess.run(cmd, check=False)
+
+
+def main():
+    parser = argparse.ArgumentParser(prog="sb_build")
+    parser.add_argument("--clean", action="store_true")
+    parser.add_argument("--config", default="debug", choices=["debug", "release"])
+    parser.add_argument("--jobs", type=int, default=0)
+    parser.add_argument("--target", default="all", choices=["all", "engine", "drivers"])
+    args = parser.parse_args()
+
+    build_dir = os.environ.get("SB_BUILD_DIR", "build")
+    cmake_build_type = "Debug" if args.config == "debug" else "Release"
+
+    if args.clean and os.path.isdir(build_dir):
+        shutil.rmtree(build_dir)
+
+    os.makedirs(build_dir, exist_ok=True)
+
+    cache_path = os.path.join(build_dir, "CMakeCache.txt")
+    if not os.path.isfile(cache_path):
+        cfg_cmd = [
+            "cmake",
+            "-S",
+            ".",
+            "-B",
+            build_dir,
+            f"-DCMAKE_BUILD_TYPE={cmake_build_type}",
+        ]
+        cfg = run(cfg_cmd)
+        if cfg.returncode != 0:
+            emit("fail", 2, "Configuration failed", [" ".join(cfg_cmd)])
+            return 2
+
+    targets = []
+    if args.target == "engine":
+        targets = ["scratchbird", "sb_server"]
+    elif args.target == "drivers":
+        targets = [
+            "sb_listener_native",
+            "sb_listener_pg",
+            "sb_listener_mysql",
+            "sb_listener_fb",
+            "sb_parser_native",
+            "sb_parser_pg",
+            "sb_parser_mysql",
+            "sb_parser_fb",
+        ]
+
+    jobs = args.jobs if args.jobs and args.jobs > 0 else os.cpu_count() or 1
+
+    build_cmd = ["cmake", "--build", build_dir, "--config", cmake_build_type, f"-j{jobs}"]
+    if targets:
+        for tgt in targets:
+            cmd = build_cmd + ["--target", tgt]
+            proc = run(cmd)
+            if proc.returncode != 0:
+                emit("fail", 2, f"Build failed for target {tgt}", [" ".join(cmd)])
+                return 2
+        emit("ok", 0, "Build completed")
+        return 0
+
+    proc = run(build_cmd)
+    if proc.returncode != 0:
+        emit("fail", 2, "Build failed", [" ".join(build_cmd)])
+        return 2
+
+    emit("ok", 0, "Build completed")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

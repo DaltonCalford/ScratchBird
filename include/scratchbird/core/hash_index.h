@@ -46,7 +46,7 @@ namespace scratchbird
         // Meta Page - Page 0 of hash index
         struct SBHashIndexMetaPage
         {
-            PageHeader hip_header;       // Standard page header (64 bytes)
+            PageHeader hip_header;       // Standard page header (80 bytes)
             uint8_t hip_index_uuid[16];  // Index UUID bytes (16 bytes)
             uint32_t hip_hash_func_id;   // Hash function ID (4 bytes) - always HASH_FUNC_MURMUR3
             uint32_t hip_global_depth;   // Global depth (4 bytes) - max 20
@@ -59,7 +59,7 @@ namespace scratchbird
         // Directory Page - Maps hash values to bucket pages
         struct SBHashDirectoryPage
         {
-            PageHeader hdp_header;  // Standard page header (64 bytes)
+            PageHeader hdp_header;  // Standard page header (80 bytes)
             uint64_t hdp_next_page; // Next directory page (0 if last) (8 bytes)
             uint64_t hdp_bucket_pointers[]; // Bucket page numbers (flexible array, capacity depends on page size)
         } __attribute__((packed));
@@ -86,7 +86,7 @@ namespace scratchbird
         // Bucket Page - Stores hash entries
         struct SBHashBucketPage
         {
-            PageHeader hbp_header;                   // Standard page header (64 bytes)
+            PageHeader hbp_header;                   // Standard page header (80 bytes)
             uint16_t hbp_entry_count;                // Number of entries in this page (2 bytes)
             uint16_t hbp_local_depth;                // Local depth of this bucket (2 bytes)
             uint32_t hbp_deleted_count;              // Number of deleted entries (4 bytes)

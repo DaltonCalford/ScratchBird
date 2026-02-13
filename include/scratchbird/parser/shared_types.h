@@ -160,9 +160,86 @@ enum class NullsOrder : uint8_t {
 };
 
 // =============================================================================
+// DDL/Metadata Types (shared across parsers and executor)
+// =============================================================================
+
+/**
+ * Domain kinds (CREATE DOMAIN)
+ */
+enum class DomainKind : uint8_t {
+    BASIC = 0,
+    RECORD = 1,
+    ENUM = 2,
+    SET = 3,
+    VARIANT = 4,
+    RANGE = 5,
+    BASE = 6,
+    SHELL = 7,
+};
+
+/**
+ * ALTER TYPE action identifiers
+ */
+enum class AlterTypeAction : uint8_t {
+    RENAME_TO = 50,
+    SET_SCHEMA = 51,
+    ADD_VALUE = 52,
+    RENAME_VALUE = 53,
+    SET_OPTIONS = 54,
+    FINALIZE = 55,
+};
+
+/**
+ * COMMENT ON target object types
+ */
+enum class CommentObjectType : uint8_t {
+    TABLE = 0,
+    COLUMN = 1,
+    INDEX = 2,
+    VIEW = 3,
+    SEQUENCE = 4,
+    FUNCTION = 5,
+    PROCEDURE = 6,
+    TRIGGER = 7,
+    SCHEMA = 8,
+    DATABASE = 9,
+    ROLE = 10,
+    CONSTRAINT = 11,
+};
+
+/**
+ * User mapping target
+ */
+enum class UserMappingTarget : uint8_t {
+    USER_NAME = 0,
+    CURRENT_USER = 1,
+    SESSION_USER = 2,
+    PUBLIC_ROLE = 3,
+};
+
+/**
+ * Function kind identifiers for executor dispatch
+ */
+enum class FunctionKind : uint8_t {
+    BUILTIN = 0,
+    FUNCTION = 1,
+    PROCEDURE = 2,
+    UDR = 3,
+};
+
+/**
+ * DISCONNECT target identifiers
+ */
+enum class DisconnectTarget : uint8_t {
+    ALL = 0,
+    CURRENT = 1,
+    NAMED = 2,
+};
+
+// =============================================================================
 // Note: AST-level structs (FrameBoundary, OrderByItem, WindowSpec) remain
 // in ast.h as they contain Expression* pointers. These shared types are
-// enums only, which can be used by V2 ASTs, emulated parser ASTs, and plan nodes.
+// enums only, which can be used by V3 ASTs, emulated parser ASTs, and plan nodes.
 // =============================================================================
 
 // =============================================================================

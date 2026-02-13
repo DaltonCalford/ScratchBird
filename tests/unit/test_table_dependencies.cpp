@@ -12,7 +12,6 @@
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/uuidv7.h"
-#include "scratchbird/parser/ast_v2.h"
 #include <cstdio>
 #include <cstdint>
 #include <string>

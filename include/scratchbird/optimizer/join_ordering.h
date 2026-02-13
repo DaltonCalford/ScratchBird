@@ -10,16 +10,13 @@
 /**
  * join_ordering.h - Dynamic Programming Join Order Optimizer
  *
- * V2 MIGRATION STATUS: COMPLETE
+ * V3 MIGRATION STATUS: PENDING
  *
- * The join ordering optimizer uses V2 ResolvedExpression types for join conditions.
+ * The join ordering optimizer uses V3 Expression types for join conditions.
  * It provides cost-based join ordering optimization using dynamic programming
  * for small join counts and greedy optimization for larger queries.
  *
  * NOTE: This optimizer is NOT in the main client execution path.
- * The main execution path is:
- *   ServerSession → QueryCompilerV2 → BytecodeGeneratorV2 → Executor
- *
  * QueryPlanner uses JoinOrderingOptimizer for EXPLAIN functionality.
  */
 
@@ -29,8 +26,7 @@
 #include "scratchbird/optimizer/path.h"
 #include "scratchbird/optimizer/cost_model.h"
 #include "scratchbird/optimizer/selectivity_estimator.h"
-#include "scratchbird/parser/shared_types.h"      // For JoinType (shared between V1/V2)
-#include "scratchbird/sblr/resolved_ast_v2.h"     // For V2 ResolvedExpression
+#include "scratchbird/parser/shared_types.h"      // For JoinType (shared parser enums)
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/types.h"
 #include <vector>
@@ -38,6 +34,10 @@
 #include <memory>
 #include <cstdint>
 #include <limits>
+
+namespace scratchbird::parser::v3 {
+    class Expression;
+}
 
 namespace scratchbird::optimizer
 {
@@ -59,19 +59,19 @@ struct RelationInfo
 };
 
 /**
- * JoinEdge - Represents a join condition between two relations (V2 types)
+ * JoinEdge - Represents a join condition between two relations (V3 types)
  */
 struct JoinEdge
 {
     size_t left_rel_idx;
     size_t right_rel_idx;
     parser::JoinType join_type;
-    parser::v2::ResolvedExpression* join_condition;  // V2 type
+    parser::v3::Expression* join_condition;
     double selectivity;
 };
 
 /**
- * JoinOrderingOptimizer - Finds optimal join order (V2 Complete)
+ * JoinOrderingOptimizer - Finds optimal join order (V3)
  *
  * Uses dynamic programming for small queries (≤12 relations) and
  * greedy optimization for larger queries. Returns NestedLoopJoinPath
@@ -92,7 +92,7 @@ public:
 
     void addJoinEdge(size_t left_idx, size_t right_idx,
                     parser::JoinType join_type,
-                    parser::v2::ResolvedExpression* join_condition);  // V2 type
+                    parser::v3::Expression* join_condition);
 
     void setJoinSelectivity(size_t edge_idx, double selectivity);
 

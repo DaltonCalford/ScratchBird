@@ -17,7 +17,7 @@
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/sblr/executor.h"
-#include "scratchbird/sblr/query_compiler_v2.h"
+#include "scratchbird/sblr/query_compiler_v3.h"
 #include "test_helpers.h"
 
 using namespace scratchbird;
@@ -84,7 +84,7 @@ protected:
 
     void execSQL(const std::string &sql)
     {
-        QueryCompilerV2 compiler(db_.get());
+        QueryCompilerV3 compiler(db_.get());
         compiler.setCurrentSchema(schema_id_);
         auto compile_result = compiler.compile(sql);
         ASSERT_TRUE(compile_result.success())

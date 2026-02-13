@@ -84,6 +84,13 @@ namespace scratchbird
             meta->hip_header.page_type = static_cast<uint16_t>(PageType::HASH_INDEX_META);
             meta->hip_header.page_size = db->page_size();
             meta->hip_header.page_id = meta_page;
+            meta->hip_header.generation = 1;
+            meta->hip_header.checksum = 0;
+            meta->hip_header.flags = 0;
+            meta->hip_header.lsn = 0;
+            pageSetLower(meta->hip_header, sizeof(SBHashIndexMetaPage));
+            pageSetUpper(meta->hip_header, db->page_size());
+            pageSetSpecial(meta->hip_header, db->page_size());
 
             // Initialize meta data
             std::memcpy(meta->hip_index_uuid, index_uuid.bytes.data(), 16);
@@ -122,6 +129,13 @@ namespace scratchbird
             dir->hdp_header.page_type = static_cast<uint16_t>(PageType::HASH_INDEX_DIRECTORY);
             dir->hdp_header.page_size = db->page_size();
             dir->hdp_header.page_id = dir_page;
+            dir->hdp_header.generation = 1;
+            dir->hdp_header.checksum = 0;
+            dir->hdp_header.flags = 0;
+            dir->hdp_header.lsn = 0;
+            pageSetLower(dir->hdp_header, sizeof(SBHashDirectoryPage));
+            pageSetUpper(dir->hdp_header, db->page_size());
+            pageSetSpecial(dir->hdp_header, db->page_size());
             dir->hdp_next_page = 0;
 
             // Step 5: Allocate initial bucket pages (2^INITIAL_GLOBAL_DEPTH buckets)
@@ -158,6 +172,13 @@ namespace scratchbird
                 bucket->hbp_header.page_type = static_cast<uint16_t>(PageType::HASH_INDEX_BUCKET);
                 bucket->hbp_header.page_size = db->page_size();
                 bucket->hbp_header.page_id = bucket_page;
+                bucket->hbp_header.generation = 1;
+                bucket->hbp_header.checksum = 0;
+                bucket->hbp_header.flags = 0;
+                bucket->hbp_header.lsn = 0;
+                pageSetLower(bucket->hbp_header, sizeof(SBHashBucketPage));
+                pageSetUpper(bucket->hbp_header, db->page_size());
+                pageSetSpecial(bucket->hbp_header, db->page_size());
                 bucket->hbp_entry_count = 0;
                 bucket->hbp_local_depth = INITIAL_GLOBAL_DEPTH;
                 bucket->hbp_deleted_count = 0;
@@ -357,6 +378,13 @@ namespace scratchbird
             bucket->hbp_header.page_type = static_cast<uint16_t>(PageType::HASH_INDEX_BUCKET);
             bucket->hbp_header.page_size = db_->page_size();
             bucket->hbp_header.page_id = page_num;
+            bucket->hbp_header.generation = 1;
+            bucket->hbp_header.checksum = 0;
+            bucket->hbp_header.flags = 0;
+            bucket->hbp_header.lsn = 0;
+            pageSetLower(bucket->hbp_header, sizeof(SBHashBucketPage));
+            pageSetUpper(bucket->hbp_header, db_->page_size());
+            pageSetSpecial(bucket->hbp_header, db_->page_size());
             bucket->hbp_entry_count = 0;
             bucket->hbp_local_depth = 0; // Will be set by caller
             bucket->hbp_deleted_count = 0;
@@ -1169,6 +1197,13 @@ namespace scratchbird
                     new_dir->hdp_header.page_type = static_cast<uint16_t>(PageType::HASH_INDEX_DIRECTORY);
                     new_dir->hdp_header.page_size = db_->page_size();
                     new_dir->hdp_header.page_id = new_dir_page_num;
+                    new_dir->hdp_header.generation = 1;
+                    new_dir->hdp_header.checksum = 0;
+                    new_dir->hdp_header.flags = 0;
+                    new_dir->hdp_header.lsn = 0;
+                    pageSetLower(new_dir->hdp_header, sizeof(SBHashDirectoryPage));
+                    pageSetUpper(new_dir->hdp_header, db_->page_size());
+                    pageSetSpecial(new_dir->hdp_header, db_->page_size());
                     new_dir->hdp_next_page = 0;
 
                     unpinIndexPage(new_dir_page_num, true, ctx);

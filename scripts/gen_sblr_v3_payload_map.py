@@ -6,13 +6,18 @@ ROOT = Path(__file__).resolve().parents[1]
 SPEC = ROOT / "docs/specifications/parser/v3/SBLR_V3_OPCODE_PAYLOADS.md"
 OUT_CPP = ROOT / "src/sblr/v3_payload_map.generated.cpp"
 
-map_re = re.compile(r"`(SBLR3_[A-Z0-9_]+)`\s*->\s*`(SCHEMA_[A-Z0-9_]+)`")
+map_re = re.compile(r"->\s*`(SCHEMA_[A-Z0-9_]+)`")
+opcode_re = re.compile(r"`(SBLR3_[A-Z0-9_]+)`")
 
 mappings = []
 for line in SPEC.read_text().splitlines():
-    m = map_re.search(line)
-    if m:
-        mappings.append((m.group(1), m.group(2)))
+    schema_match = map_re.search(line)
+    if not schema_match:
+        continue
+    schema = schema_match.group(1)
+    opcodes = opcode_re.findall(line.split("->", 1)[0])
+    for op in opcodes:
+        mappings.append((op, schema))
 
 # de-dup
 seen = {}
@@ -27,7 +32,7 @@ with OUT_CPP.open("w") as f:
     f.write("#include <unordered_map>\n")
     f.write("#include <string>\n")
     f.write("\nnamespace scratchbird::sblr::v3 {\n")
-    f.write("const std::unordered_map<std::string, std::string> kOpcodeSchemaMapGenerated = {\n")
+    f.write("extern const std::unordered_map<std::string, std::string> kOpcodeSchemaMapGenerated = {\n")
     for op, schema in items:
         f.write(f"    {{\"{op}\", \"{schema}\"}},\n")
     f.write("};\n}\n")

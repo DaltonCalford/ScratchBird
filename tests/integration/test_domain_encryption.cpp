@@ -15,7 +15,7 @@
 #include "scratchbird/core/heap_page.h"
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/sblr/executor.h"
-#include "scratchbird/sblr/query_compiler_v2.h"
+#include "scratchbird/sblr/query_compiler_v3.h"
 #include <chrono>
 #include <cstring>
 #include <filesystem>
@@ -86,7 +86,7 @@ protected:
         status = catalog_->createTable(schema_id_, "secure_data", columns_, table_id_, 0, &ctx);
         ASSERT_EQ(status, Status::OK) << ctx.message;
 
-        compiler_ = std::make_unique<QueryCompilerV2>(&db_);
+        compiler_ = std::make_unique<QueryCompilerV3>(&db_);
         compiler_->setCurrentSchema(schema_id_);
         executor_ = std::make_unique<Executor>(&db_);
         Status conn_status = db_.connect(connection_ctx_, &ctx);
@@ -130,7 +130,7 @@ protected:
     ID domain_id_;
     ID table_id_;
     std::vector<CatalogManager::ColumnInfo> columns_;
-    std::unique_ptr<QueryCompilerV2> compiler_;
+    std::unique_ptr<QueryCompilerV3> compiler_;
     std::unique_ptr<Executor> executor_;
     std::unique_ptr<ConnectionContext> connection_ctx_;
 };

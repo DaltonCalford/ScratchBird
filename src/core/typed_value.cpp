@@ -3993,6 +3993,85 @@ namespace scratchbird::core
             return Status::OK;
         };
 
+        constexpr uint32_t kComplexPayloadMagic = 0x53424331u; // "SBC1"
+        constexpr uint8_t kComplexPayloadFlagHasNames = 0x01u;
+        constexpr uint8_t kComplexPayloadFlagHasVariantTag = 0x02u;
+
+        auto serializeCompositePayload = [&](const std::vector<TypedValue>& values,
+                                             const std::vector<std::string>* field_names,
+                                             const std::optional<DataType>& variant_tag) -> Status
+        {
+            if (values.size() > static_cast<size_t>(std::numeric_limits<int32_t>::max()))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE, "Too many composite fields to serialize");
+                return Status::OUT_OF_RANGE;
+            }
+            appendInt32(out, static_cast<int32_t>(values.size()));
+
+            uint8_t flags = 0;
+            if (field_names != nullptr)
+            {
+                if (field_names->size() != values.size())
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                      "Composite field name/value count mismatch");
+                    return Status::INVALID_ARGUMENT;
+                }
+                flags |= kComplexPayloadFlagHasNames;
+            }
+            if (variant_tag.has_value())
+            {
+                flags |= kComplexPayloadFlagHasVariantTag;
+            }
+
+            appendUint32(out, kComplexPayloadMagic);
+            appendUint8(out, flags);
+
+            if (field_names != nullptr)
+            {
+                for (const auto& name : *field_names)
+                {
+                    if (name.size() > max_u32)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                                          "Composite field name too large to serialize");
+                        return Status::OUT_OF_RANGE;
+                    }
+                    appendUint32(out, static_cast<uint32_t>(name.size()));
+                    out.insert(out.end(), name.begin(), name.end());
+                }
+            }
+
+            if (variant_tag.has_value())
+            {
+                appendInt32(out, static_cast<int32_t>(variant_tag.value()));
+            }
+
+            for (const auto& element : values)
+            {
+                appendInt32(out, static_cast<int32_t>(element.type()));
+                if (element.isNull())
+                {
+                    appendInt32(out, -1);
+                    continue;
+                }
+                std::vector<uint8_t> element_data;
+                Status status = element.serializePlainValue(element_data, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                if (element_data.size() > static_cast<size_t>(std::numeric_limits<int32_t>::max()))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE, "Composite field too large to serialize");
+                    return Status::OUT_OF_RANGE;
+                }
+                appendInt32(out, static_cast<int32_t>(element_data.size()));
+                out.insert(out.end(), element_data.begin(), element_data.end());
+            }
+            return Status::OK;
+        };
+
         switch (type_)
         {
             case DataType::INT8:
@@ -4028,6 +4107,19 @@ namespace scratchbird::core
             case DataType::BOOLEAN:
                 appendUint8(out, data_.bool_val ? 1 : 0);
                 break;
+            case DataType::BIT:
+            {
+                uint32_t nbits = getBitLength();
+                appendInt32(out, static_cast<int32_t>(nbits));
+                size_t byte_len = (nbits + 7) / 8;
+                if (binary_data_.size() < byte_len)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "BIT payload too short for declared length");
+                    return Status::DATA_CORRUPTED;
+                }
+                out.insert(out.end(), binary_data_.begin(), binary_data_.begin() + byte_len);
+                break;
+            }
             case DataType::MONEY:
                 appendInt64(out, data_.int64_val);
                 break;
@@ -4136,6 +4228,7 @@ namespace scratchbird::core
                 break;
             }
             case DataType::TIME:
+            case DataType::TIME_WITH_ZONE:
             {
                 int64_t micros = data_.int64_val;
                 appendInt64(out, micros);
@@ -4143,6 +4236,7 @@ namespace scratchbird::core
                 break;
             }
             case DataType::TIMESTAMP:
+            case DataType::TIMESTAMP_WITH_ZONE:
             {
                 int64_t micros = data_.int64_val;
                 appendInt64(out, micros);
@@ -4310,6 +4404,8 @@ namespace scratchbird::core
                 const auto& inet = *complex_data_->inet;
                 appendUint8(out, static_cast<uint8_t>(inet.family()));
                 appendUint8(out, inet.netmask());
+                appendUint8(out, 0);
+                appendUint8(out, 0);
                 out.insert(out.end(), inet.data(), inet.data() + inet.size());
                 break;
             }
@@ -4323,6 +4419,8 @@ namespace scratchbird::core
                 const auto inet = complex_data_->cidr->toInet();
                 appendUint8(out, static_cast<uint8_t>(inet.family()));
                 appendUint8(out, inet.netmask());
+                appendUint8(out, 1);
+                appendUint8(out, 0);
                 out.insert(out.end(), inet.data(), inet.data() + inet.size());
                 break;
             }
@@ -4400,8 +4498,20 @@ namespace scratchbird::core
                 if (range->lowerBoundType() == BoundType::INCLUSIVE) flags |= 0x08;
                 if (range->upperBoundType() == BoundType::INCLUSIVE) flags |= 0x10;
                 appendUint8(out, flags);
-                if (flags & 0x02) appendInt32(out, *range->lower());
-                if (flags & 0x04) appendInt32(out, *range->upper());
+                if (flags & 0x02)
+                {
+                    std::vector<uint8_t> payload;
+                    appendInt32(payload, *range->lower());
+                    appendInt32(out, static_cast<int32_t>(payload.size()));
+                    out.insert(out.end(), payload.begin(), payload.end());
+                }
+                if (flags & 0x04)
+                {
+                    std::vector<uint8_t> payload;
+                    appendInt32(payload, *range->upper());
+                    appendInt32(out, static_cast<int32_t>(payload.size()));
+                    out.insert(out.end(), payload.begin(), payload.end());
+                }
                 break;
             }
             case DataType::INT8RANGE:
@@ -4426,8 +4536,56 @@ namespace scratchbird::core
                 if (range->lowerBoundType() == BoundType::INCLUSIVE) flags |= 0x08;
                 if (range->upperBoundType() == BoundType::INCLUSIVE) flags |= 0x10;
                 appendUint8(out, flags);
-                if (flags & 0x02) appendInt64(out, *range->lower());
-                if (flags & 0x04) appendInt64(out, *range->upper());
+                auto appendBound = [&](int64_t value) -> Status
+                {
+                    std::vector<uint8_t> payload;
+                    switch (type_)
+                    {
+                        case DataType::INT8RANGE:
+                            appendInt64(payload, value);
+                            break;
+                        case DataType::DATERANGE:
+                        {
+                            int64_t mjd64 = value + FirebirdDateTime::UNIX_EPOCH_MJD;
+                            if (mjd64 < std::numeric_limits<int32_t>::min() ||
+                                mjd64 > std::numeric_limits<int32_t>::max())
+                            {
+                                SET_ERROR_CONTEXT(ctx, Status::DATETIME_FIELD_OVERFLOW, "DATERANGE bound out of range");
+                                return Status::DATETIME_FIELD_OVERFLOW;
+                            }
+                            appendInt32(payload, static_cast<int32_t>(mjd64));
+                            appendInt32(payload, 0);
+                            break;
+                        }
+                        case DataType::TSRANGE:
+                        case DataType::TSTZRANGE:
+                            appendInt64(payload, value);
+                            appendInt32(payload, 0);
+                            break;
+                        default:
+                            SET_ERROR_CONTEXT(ctx, Status::NOT_SUPPORTED, "Unsupported range type");
+                            return Status::NOT_SUPPORTED;
+                    }
+                    appendInt32(out, static_cast<int32_t>(payload.size()));
+                    out.insert(out.end(), payload.begin(), payload.end());
+                    return Status::OK;
+                };
+                if (flags & 0x02)
+                {
+                    Status st = appendBound(*range->lower());
+                    if (st != Status::OK)
+                    {
+                        return st;
+                    }
+                }
+                if (flags & 0x04)
+                {
+                    Status st = appendBound(*range->upper());
+                    if (st != Status::OK)
+                    {
+                        return st;
+                    }
+                }
                 break;
             }
             case DataType::NUMRANGE:
@@ -4449,8 +4607,20 @@ namespace scratchbird::core
                 if (range->lowerBoundType() == BoundType::INCLUSIVE) flags |= 0x08;
                 if (range->upperBoundType() == BoundType::INCLUSIVE) flags |= 0x10;
                 appendUint8(out, flags);
-                if (flags & 0x02) appendDouble(out, *range->lower());
-                if (flags & 0x04) appendDouble(out, *range->upper());
+                if (flags & 0x02)
+                {
+                    std::vector<uint8_t> payload;
+                    appendDouble(payload, *range->lower());
+                    appendInt32(out, static_cast<int32_t>(payload.size()));
+                    out.insert(out.end(), payload.begin(), payload.end());
+                }
+                if (flags & 0x04)
+                {
+                    std::vector<uint8_t> payload;
+                    appendDouble(payload, *range->upper());
+                    appendInt32(out, static_cast<int32_t>(payload.size()));
+                    out.insert(out.end(), payload.begin(), payload.end());
+                }
                 break;
             }
             case DataType::ARRAY:
@@ -4460,26 +4630,99 @@ namespace scratchbird::core
                     SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Array data not initialized");
                     return Status::INVALID_ARGUMENT;
                 }
-                Status status = serializeValueList(*complex_data_->array);
-                if (status != Status::OK)
+                const auto& elements = *complex_data_->array;
+                bool has_nulls = false;
+                DataType elem_type = DataType::UNKNOWN;
+                for (const auto& element : elements)
                 {
-                    return status;
+                    if (element.isNull())
+                    {
+                        has_nulls = true;
+                        continue;
+                    }
+                    if (elem_type == DataType::UNKNOWN)
+                    {
+                        elem_type = element.type();
+                    }
+                    else if (elem_type != element.type())
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "ARRAY elements must be homogeneous");
+                        return Status::INVALID_ARGUMENT;
+                    }
+                }
+
+                int32_t ndim = elements.empty() ? 0 : 1;
+                int32_t flags = has_nulls ? 1 : 0;
+                uint32_t elem_oid = static_cast<uint32_t>(elem_type);
+
+                appendInt32(out, ndim);
+                appendInt32(out, flags);
+                appendUint32(out, elem_oid);
+
+                if (ndim > 0)
+                {
+                    appendInt32(out, static_cast<int32_t>(elements.size()));
+                    appendInt32(out, 1);
+                }
+
+                if (has_nulls && !elements.empty())
+                {
+                    size_t bitmap_bytes = (elements.size() + 7) / 8;
+                    for (size_t i = 0; i < bitmap_bytes; ++i)
+                    {
+                        uint8_t byte = 0;
+                        for (size_t bit = 0; bit < 8; ++bit)
+                        {
+                            size_t idx = i * 8 + bit;
+                            if (idx >= elements.size())
+                            {
+                                break;
+                            }
+                            if (!elements[idx].isNull())
+                            {
+                                byte |= static_cast<uint8_t>(1u << bit);
+                            }
+                        }
+                        appendUint8(out, byte);
+                    }
+                }
+
+                for (const auto& element : elements)
+                {
+                    if (element.isNull())
+                    {
+                        appendInt32(out, -1);
+                        continue;
+                    }
+                    std::vector<uint8_t> element_data;
+                    Status status = element.serializePlainValue(element_data, ctx);
+                    if (status != Status::OK)
+                    {
+                        return status;
+                    }
+                    if (element_data.size() > static_cast<size_t>(std::numeric_limits<int32_t>::max()))
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE, "Array element too large to serialize");
+                        return Status::OUT_OF_RANGE;
+                    }
+                    appendInt32(out, static_cast<int32_t>(element_data.size()));
+                    out.insert(out.end(), element_data.begin(), element_data.end());
                 }
                 break;
             }
             case DataType::COMPOSITE:
+            case DataType::ROW:
             {
                 if (!complex_data_ || !complex_data_->array)
                 {
                     SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Composite data not initialized");
                     return Status::INVALID_ARGUMENT;
                 }
-                Status status = appendLengthPrefixedString(string_data_);
-                if (status != Status::OK)
-                {
-                    return status;
-                }
-                status = serializeValueList(*complex_data_->array);
+                const std::vector<std::string> field_names = getCompositeFieldNames();
+                const std::vector<std::string>* names_ptr =
+                    (field_names.size() == complex_data_->array->size()) ? &field_names : nullptr;
+                Status status = serializeCompositePayload(*complex_data_->array, names_ptr,
+                                                         std::nullopt);
                 if (status != Status::OK)
                 {
                     return status;
@@ -4493,7 +4736,24 @@ namespace scratchbird::core
                     SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Variant data not initialized");
                     return Status::INVALID_ARGUMENT;
                 }
-                Status status = serializeValueList(*complex_data_->array);
+                if (complex_data_->array->empty())
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Variant data missing payload");
+                    return Status::INVALID_ARGUMENT;
+                }
+                const auto& variant_values = *complex_data_->array;
+                const TypedValue* payload = &variant_values.back();
+                std::optional<DataType> explicit_tag;
+                if (variant_values.size() >= 2 &&
+                    variant_values[0].type() == DataType::INT32 &&
+                    !variant_values[0].isNull())
+                {
+                    explicit_tag = static_cast<DataType>(variant_values[0].getInt32());
+                    payload = &variant_values[1];
+                }
+                std::vector<TypedValue> payload_list;
+                payload_list.push_back(*payload);
+                Status status = serializeCompositePayload(payload_list, nullptr, explicit_tag);
                 if (status != Status::OK)
                 {
                     return status;
@@ -4744,6 +5004,29 @@ namespace scratchbird::core
                 data_.bool_val = (value != 0);
                 break;
             }
+            case DataType::BIT:
+            {
+                int32_t nbits = 0;
+                if (!readInt32(data, offset, nbits))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid BIT header");
+                    return Status::DATA_CORRUPTED;
+                }
+                if (nbits < 0)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid BIT length");
+                    return Status::DATA_CORRUPTED;
+                }
+                uint32_t bit_len = static_cast<uint32_t>(nbits);
+                size_t byte_len = (bit_len + 7) / 8;
+                if (!readBytes(data, offset, byte_len, binary_data_))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid BIT payload");
+                    return Status::DATA_CORRUPTED;
+                }
+                bit_length_ = bit_len;
+                break;
+            }
             case DataType::MONEY:
             {
                 int64_t value = 0;
@@ -4828,6 +5111,7 @@ namespace scratchbird::core
                 break;
             }
             case DataType::TIME:
+            case DataType::TIME_WITH_ZONE:
             {
                 int64_t micros = 0;
                 int32_t offset_seconds = 0;
@@ -4842,6 +5126,7 @@ namespace scratchbird::core
                 break;
             }
             case DataType::TIMESTAMP:
+            case DataType::TIMESTAMP_WITH_ZONE:
             {
                 int64_t micros = 0;
                 int32_t offset_seconds = 0;
@@ -5084,9 +5369,19 @@ namespace scratchbird::core
             {
                 uint8_t family = 0;
                 uint8_t netmask = 0;
-                if (!readUint8(data, offset, family) || !readUint8(data, offset, netmask))
+                uint8_t is_cidr = 0;
+                uint8_t reserved = 0;
+                if (!readUint8(data, offset, family) ||
+                    !readUint8(data, offset, netmask) ||
+                    !readUint8(data, offset, is_cidr) ||
+                    !readUint8(data, offset, reserved))
                 {
                     SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid INET header");
+                    return Status::DATA_CORRUPTED;
+                }
+                if (is_cidr != 0 || reserved != 0)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid INET header flags");
                     return Status::DATA_CORRUPTED;
                 }
                 if (family != static_cast<uint8_t>(AddressFamily::IPv4) &&
@@ -5111,9 +5406,19 @@ namespace scratchbird::core
             {
                 uint8_t family = 0;
                 uint8_t netmask = 0;
-                if (!readUint8(data, offset, family) || !readUint8(data, offset, netmask))
+                uint8_t is_cidr = 0;
+                uint8_t reserved = 0;
+                if (!readUint8(data, offset, family) ||
+                    !readUint8(data, offset, netmask) ||
+                    !readUint8(data, offset, is_cidr) ||
+                    !readUint8(data, offset, reserved))
                 {
                     SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid CIDR header");
+                    return Status::DATA_CORRUPTED;
+                }
+                if (is_cidr != 1 || reserved != 0)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid CIDR header flags");
                     return Status::DATA_CORRUPTED;
                 }
                 if (family != static_cast<uint8_t>(AddressFamily::IPv4) &&
@@ -5218,6 +5523,12 @@ namespace scratchbird::core
                 std::optional<int32_t> upper;
                 if (flags & 0x02)
                 {
+                    int32_t len = 0;
+                    if (!readInt32(data, offset, len) || len != 4)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid INT4RANGE lower length");
+                        return Status::DATA_CORRUPTED;
+                    }
                     int32_t val = 0;
                     if (!readInt32(data, offset, val))
                     {
@@ -5228,6 +5539,12 @@ namespace scratchbird::core
                 }
                 if (flags & 0x04)
                 {
+                    int32_t len = 0;
+                    if (!readInt32(data, offset, len) || len != 4)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid INT4RANGE upper length");
+                        return Status::DATA_CORRUPTED;
+                    }
                     int32_t val = 0;
                     if (!readInt32(data, offset, val))
                     {
@@ -5261,25 +5578,92 @@ namespace scratchbird::core
                 }
                 std::optional<int64_t> lower;
                 std::optional<int64_t> upper;
-                if (flags & 0x02)
+                auto readBound = [&](std::optional<int64_t>& target) -> Status
                 {
-                    int64_t val = 0;
-                    if (!readInt64(data, offset, val))
+                    int32_t len = 0;
+                    if (!readInt32(data, offset, len))
                     {
-                        SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid range lower bound");
+                        SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid range bound length");
                         return Status::DATA_CORRUPTED;
                     }
-                    lower = val;
+                    switch (type_)
+                    {
+                        case DataType::INT8RANGE:
+                        {
+                            if (len != 8)
+                            {
+                                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid INT8RANGE bound length");
+                                return Status::DATA_CORRUPTED;
+                            }
+                            int64_t val = 0;
+                            if (!readInt64(data, offset, val))
+                            {
+                                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid INT8RANGE bound");
+                                return Status::DATA_CORRUPTED;
+                            }
+                            target = val;
+                            break;
+                        }
+                        case DataType::DATERANGE:
+                        {
+                            if (len != 8)
+                            {
+                                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid DATERANGE bound length");
+                                return Status::DATA_CORRUPTED;
+                            }
+                            int32_t mjd = 0;
+                            int32_t offset_seconds = 0;
+                            if (!readInt32(data, offset, mjd) ||
+                                !readInt32(data, offset, offset_seconds))
+                            {
+                                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid DATERANGE bound");
+                                return Status::DATA_CORRUPTED;
+                            }
+                            (void)offset_seconds;
+                            target = static_cast<int64_t>(mjd) - FirebirdDateTime::UNIX_EPOCH_MJD;
+                            break;
+                        }
+                        case DataType::TSRANGE:
+                        case DataType::TSTZRANGE:
+                        {
+                            if (len != 12)
+                            {
+                                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid TSRANGE bound length");
+                                return Status::DATA_CORRUPTED;
+                            }
+                            int64_t micros = 0;
+                            int32_t offset_seconds = 0;
+                            if (!readInt64(data, offset, micros) ||
+                                !readInt32(data, offset, offset_seconds))
+                            {
+                                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid TSRANGE bound");
+                                return Status::DATA_CORRUPTED;
+                            }
+                            (void)offset_seconds;
+                            target = micros;
+                            break;
+                        }
+                        default:
+                            SET_ERROR_CONTEXT(ctx, Status::NOT_SUPPORTED, "Unsupported range type");
+                            return Status::NOT_SUPPORTED;
+                    }
+                    return Status::OK;
+                };
+                if (flags & 0x02)
+                {
+                    Status st = readBound(lower);
+                    if (st != Status::OK)
+                    {
+                        return st;
+                    }
                 }
                 if (flags & 0x04)
                 {
-                    int64_t val = 0;
-                    if (!readInt64(data, offset, val))
+                    Status st = readBound(upper);
+                    if (st != Status::OK)
                     {
-                        SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid range upper bound");
-                        return Status::DATA_CORRUPTED;
+                        return st;
                     }
-                    upper = val;
                 }
                 BoundType lower_type = (flags & 0x08) ? BoundType::INCLUSIVE : BoundType::EXCLUSIVE;
                 BoundType upper_type = (flags & 0x10) ? BoundType::INCLUSIVE : BoundType::EXCLUSIVE;
@@ -5305,6 +5689,12 @@ namespace scratchbird::core
                 std::optional<double> upper;
                 if (flags & 0x02)
                 {
+                    int32_t len = 0;
+                    if (!readInt32(data, offset, len) || len != 8)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid NUMRANGE lower length");
+                        return Status::DATA_CORRUPTED;
+                    }
                     double val = 0.0;
                     if (!readDouble(data, offset, val))
                     {
@@ -5315,6 +5705,12 @@ namespace scratchbird::core
                 }
                 if (flags & 0x04)
                 {
+                    int32_t len = 0;
+                    if (!readInt32(data, offset, len) || len != 8)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid NUMRANGE upper length");
+                        return Status::DATA_CORRUPTED;
+                    }
                     double val = 0.0;
                     if (!readDouble(data, offset, val))
                     {
@@ -5331,39 +5727,248 @@ namespace scratchbird::core
             }
             case DataType::ARRAY:
             {
+                int32_t ndim = 0;
+                int32_t flags = 0;
+                uint32_t elem_oid = 0;
+                if (!readInt32(data, offset, ndim) ||
+                    !readInt32(data, offset, flags) ||
+                    !readUint32(data, offset, elem_oid))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid ARRAY header");
+                    return Status::DATA_CORRUPTED;
+                }
+                if (ndim < 0)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid ARRAY dimensions");
+                    return Status::DATA_CORRUPTED;
+                }
+                std::vector<int32_t> dims;
+                std::vector<int32_t> lower_bounds;
+                dims.reserve(static_cast<size_t>(ndim));
+                lower_bounds.reserve(static_cast<size_t>(ndim));
+                uint64_t total = 1;
+                for (int32_t i = 0; i < ndim; ++i)
+                {
+                    int32_t dim = 0;
+                    int32_t lower = 0;
+                    if (!readInt32(data, offset, dim) || !readInt32(data, offset, lower))
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid ARRAY dimensions");
+                        return Status::DATA_CORRUPTED;
+                    }
+                    if (dim < 0)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid ARRAY dimension size");
+                        return Status::DATA_CORRUPTED;
+                    }
+                    dims.push_back(dim);
+                    lower_bounds.push_back(lower);
+                    if (dim == 0)
+                    {
+                        total = 0;
+                    }
+                    else if (total != 0)
+                    {
+                        total *= static_cast<uint64_t>(dim);
+                    }
+                }
+
+                std::vector<uint8_t> null_bitmap;
+                if ((flags & 1) != 0 && total > 0)
+                {
+                    size_t bitmap_bytes = (static_cast<size_t>(total) + 7) / 8;
+                    if (!readBytes(data, offset, bitmap_bytes, null_bitmap))
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid ARRAY null bitmap");
+                        return Status::DATA_CORRUPTED;
+                    }
+                }
+                (void)null_bitmap;
+
+                if (total > static_cast<uint64_t>(std::numeric_limits<uint32_t>::max()))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE, "ARRAY element count too large");
+                    return Status::OUT_OF_RANGE;
+                }
+
+                DataType elem_type = static_cast<DataType>(elem_oid);
                 complex_data_ = std::make_unique<ComplexData>();
                 complex_data_->array = std::make_unique<std::vector<TypedValue>>();
-                status = deserializeValueList(*complex_data_->array);
-                if (status != Status::OK)
+                complex_data_->array->reserve(static_cast<size_t>(total));
+
+                for (uint64_t i = 0; i < total; ++i)
                 {
-                    return status;
+                    int32_t len = 0;
+                    if (!readInt32(data, offset, len))
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid ARRAY element length");
+                        return Status::DATA_CORRUPTED;
+                    }
+                    if (len < 0)
+                    {
+                        complex_data_->array->push_back(TypedValue::makeNull(elem_type));
+                        continue;
+                    }
+                    if (elem_type == DataType::UNKNOWN)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "ARRAY element type missing");
+                        return Status::INVALID_ARGUMENT;
+                    }
+                    std::vector<uint8_t> element_data;
+                    if (!readBytes(data, offset, static_cast<size_t>(len), element_data))
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "ARRAY element payload exceeds buffer");
+                        return Status::DATA_CORRUPTED;
+                    }
+                    TypedValue element(elem_type);
+                    status = element.deserializePlainValue(element_data, ctx);
+                    if (status != Status::OK)
+                    {
+                        return status;
+                    }
+                    complex_data_->array->push_back(std::move(element));
                 }
                 break;
             }
             case DataType::COMPOSITE:
-            {
-                status = readLengthPrefixedString(string_data_);
-                if (status != Status::OK)
-                {
-                    return status;
-                }
-                complex_data_ = std::make_unique<ComplexData>();
-                complex_data_->array = std::make_unique<std::vector<TypedValue>>();
-                status = deserializeValueList(*complex_data_->array);
-                if (status != Status::OK)
-                {
-                    return status;
-                }
-                break;
-            }
+            case DataType::ROW:
             case DataType::VARIANT:
             {
+                int32_t column_count = 0;
+                if (!readInt32(data, offset, column_count) || column_count < 0)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid composite column count");
+                    return Status::DATA_CORRUPTED;
+                }
+                if (type_ == DataType::VARIANT && column_count != 1)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "VARIANT payload must contain exactly one value");
+                    return Status::DATA_CORRUPTED;
+                }
+
+                constexpr uint32_t kComplexPayloadMagic = 0x53424331u; // "SBC1"
+                constexpr uint8_t kComplexPayloadFlagHasNames = 0x01u;
+                constexpr uint8_t kComplexPayloadFlagHasVariantTag = 0x02u;
+
+                size_t payload_offset = offset;
+                bool has_names = false;
+                bool has_variant_tag = false;
+                std::vector<std::string> field_names;
+                std::optional<DataType> explicit_variant_tag;
+
+                uint32_t magic = 0;
+                if (readUint32(data, offset, magic) && magic == kComplexPayloadMagic)
+                {
+                    uint8_t flags = 0;
+                    if (!readUint8(data, offset, flags))
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                          "Invalid composite metadata flags");
+                        return Status::DATA_CORRUPTED;
+                    }
+                    has_names = (flags & kComplexPayloadFlagHasNames) != 0;
+                    has_variant_tag = (flags & kComplexPayloadFlagHasVariantTag) != 0;
+
+                    if (has_names)
+                    {
+                        field_names.reserve(static_cast<size_t>(column_count));
+                        for (int32_t i = 0; i < column_count; ++i)
+                        {
+                            uint32_t name_len = 0;
+                            if (!readUint32(data, offset, name_len))
+                            {
+                                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                                  "Invalid composite field name length");
+                                return Status::DATA_CORRUPTED;
+                            }
+                            std::vector<uint8_t> name_bytes;
+                            if (!readBytes(data, offset, static_cast<size_t>(name_len), name_bytes))
+                            {
+                                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                                  "Composite field name exceeds buffer");
+                                return Status::DATA_CORRUPTED;
+                            }
+                            field_names.emplace_back(name_bytes.begin(), name_bytes.end());
+                        }
+                    }
+
+                    if (has_variant_tag)
+                    {
+                        int32_t tag = 0;
+                        if (!readInt32(data, offset, tag))
+                        {
+                            SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                              "Invalid VARIANT explicit tag");
+                            return Status::DATA_CORRUPTED;
+                        }
+                        explicit_variant_tag = static_cast<DataType>(tag);
+                    }
+                }
+                else
+                {
+                    // Legacy payload format without metadata.
+                    offset = payload_offset;
+                }
+
                 complex_data_ = std::make_unique<ComplexData>();
                 complex_data_->array = std::make_unique<std::vector<TypedValue>>();
-                status = deserializeValueList(*complex_data_->array);
-                if (status != Status::OK)
+                complex_data_->array->reserve(static_cast<size_t>(column_count));
+                for (int32_t i = 0; i < column_count; ++i)
                 {
-                    return status;
+                    int32_t type_oid = 0;
+                    int32_t len = 0;
+                    if (!readInt32(data, offset, type_oid) ||
+                        !readInt32(data, offset, len))
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid composite field header");
+                        return Status::DATA_CORRUPTED;
+                    }
+                    DataType field_type = static_cast<DataType>(type_oid);
+                    if (len < 0)
+                    {
+                        complex_data_->array->push_back(TypedValue::makeNull(field_type));
+                        continue;
+                    }
+                    std::vector<uint8_t> field_data;
+                    if (!readBytes(data, offset, static_cast<size_t>(len), field_data))
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Composite field payload exceeds buffer");
+                        return Status::DATA_CORRUPTED;
+                    }
+                    TypedValue field(field_type);
+                    status = field.deserializePlainValue(field_data, ctx);
+                    if (status != Status::OK)
+                    {
+                        return status;
+                    }
+                    complex_data_->array->push_back(std::move(field));
+                }
+
+                if ((type_ == DataType::COMPOSITE || type_ == DataType::ROW) && has_names)
+                {
+                    string_data_.clear();
+                    for (const auto& name : field_names)
+                    {
+                        string_data_.append(name);
+                        string_data_.push_back('\0');
+                    }
+                }
+
+                if (type_ == DataType::VARIANT && has_variant_tag && explicit_variant_tag.has_value())
+                {
+                    std::vector<TypedValue> tagged_payload;
+                    tagged_payload.reserve(2);
+                    tagged_payload.push_back(TypedValue::makeInt32(
+                        static_cast<int32_t>(explicit_variant_tag.value())));
+                    if (!complex_data_->array->empty())
+                    {
+                        tagged_payload.push_back((*complex_data_->array)[0]);
+                    }
+                    else
+                    {
+                        tagged_payload.push_back(TypedValue::makeNull(DataType::UNKNOWN));
+                    }
+                    *complex_data_->array = std::move(tagged_payload);
                 }
                 break;
             }
@@ -5392,6 +5997,7 @@ namespace scratchbird::core
         decimal_precision_ = other.decimal_precision_;
         decimal_scale_ = other.decimal_scale_;
         timezone_offset_seconds_ = other.timezone_offset_seconds_;
+        bit_length_ = other.bit_length_;
 
         if (other.is_null_) {
             return;  // Nothing to copy for NULL values
@@ -5452,6 +6058,7 @@ namespace scratchbird::core
         decimal_precision_ = other.decimal_precision_;
         decimal_scale_ = other.decimal_scale_;
         timezone_offset_seconds_ = other.timezone_offset_seconds_;
+        bit_length_ = other.bit_length_;
 
         if (other.is_null_) {
             other.is_encrypted_ = false;
@@ -5511,6 +6118,7 @@ namespace scratchbird::core
         decimal_precision_ = 0;
         decimal_scale_ = 0;
         timezone_offset_seconds_ = 0;
+        bit_length_ = 0;
     }
 
     // GeometryCollection equality operator implementation

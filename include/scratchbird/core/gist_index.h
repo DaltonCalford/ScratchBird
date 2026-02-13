@@ -132,7 +132,7 @@ enum class GiSTStrategy : uint16_t
  */
 struct SBGiSTPage
 {
-    // Standard page header (64 bytes)
+    // Standard page header (80 bytes)
     PageHeader gist_header;
 
     // Index identification (32 bytes)

@@ -1,6 +1,7 @@
 #include "scratchbird/parser/v3_compiler.h"
 
 #include "scratchbird/parser/v3_emitter.h"
+#include "scratchbird/parser/parser_v3.h"
 #include "scratchbird/sblr/v3_container.h"
 
 namespace scratchbird::parser::v3 {
@@ -8,7 +9,7 @@ namespace scratchbird::parser::v3 {
 CompileResult Compiler::compile(std::string_view sql) {
     CompileResult result;
 
-    parser::v2::Parser parser(sql);
+    parser::v3::Parser parser(sql);
     auto parse_result = parser.parseStatement();
     if (!parse_result.success()) {
         result.ok = false;

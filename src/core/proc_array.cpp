@@ -190,6 +190,7 @@ namespace scratchbird::core
             return Status::PAGE_FULL;
         }
 
+        pthread_rwlock_wrlock(&array->array_lock);
         // Initialize PCB
         ProcessControlBlock *pcb = &pcbs[proc_id];
         pcb->is_active = true;
@@ -209,6 +210,7 @@ namespace scratchbird::core
         std::memset(pcb->query_text, 0, sizeof(pcb->query_text));
 
         array->num_active++;
+        pthread_rwlock_unlock(&array->array_lock);
 
         pthread_mutex_unlock(&array->alloc_lock);
 
@@ -241,12 +243,14 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
+        pthread_rwlock_wrlock(&array->array_lock);
         // Clear PCB
         std::memset(pcb, 0, sizeof(ProcessControlBlock));
         pcb->proc_id = proc_id;
         pcb->is_active = false;
 
         array->num_active--;
+        pthread_rwlock_unlock(&array->array_lock);
 
         pthread_mutex_unlock(&array->alloc_lock);
 

@@ -23,7 +23,7 @@
 #include "scratchbird/core/proc_array.h"
 #include "scratchbird/pool/statement_cache.h"
 #include "scratchbird/sblr/executor.h"
-#include "scratchbird/sblr/query_compiler_v2.h"
+#include "scratchbird/sblr/query_compiler_v3.h"
 #include "scratchbird/sblr/query_result_cache.h"
 #include "test_helpers.h"
 
@@ -42,7 +42,7 @@ using scratchbird::pool::StatementCacheConfig;
 using scratchbird::pool::StatementMetadata;
 using scratchbird::pool::StatementType;
 using scratchbird::sblr::Executor;
-using scratchbird::sblr::QueryCompilerV2;
+using scratchbird::sblr::QueryCompilerV3;
 using scratchbird::sblr::QueryResultCacheManager;
 using scratchbird::testing::TestDatabaseFile;
 
@@ -80,7 +80,7 @@ protected:
             << "Failed to get PUBLIC schema: " << ctx.message;
         schema_id_ = schema.schema_id;
 
-        compiler_ = std::make_unique<QueryCompilerV2>(db_.get());
+        compiler_ = std::make_unique<QueryCompilerV3>(db_.get());
         compiler_->setCurrentSchema(schema_id_);
 
         executor_ = std::make_unique<Executor>(db_.get());
@@ -129,7 +129,7 @@ protected:
     std::unique_ptr<TestDatabaseFile> db_file_;
     std::unique_ptr<Database> db_;
     std::unique_ptr<scratchbird::core::ConnectionContext> conn_ctx_;
-    std::unique_ptr<QueryCompilerV2> compiler_;
+    std::unique_ptr<QueryCompilerV3> compiler_;
     std::unique_ptr<Executor> executor_;
     scratchbird::core::ID schema_id_{};
     uint32_t proc_id_{0};

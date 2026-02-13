@@ -1,11 +1,119 @@
 #include "scratchbird/sblr/v3_payloads.h"
 
 #include <unordered_map>
+#include <vector>
+#include <string>
+#include <cstring>
 
 namespace scratchbird::sblr::v3 {
 
 extern const std::unordered_map<std::string, std::string> kOpcodeSchemaMapGenerated;
 
+namespace {
+    void writeLE32(uint32_t v, Buffer &out) {
+        out.push_back(static_cast<uint8_t>(v & 0xFF));
+        out.push_back(static_cast<uint8_t>((v >> 8) & 0xFF));
+        out.push_back(static_cast<uint8_t>((v >> 16) & 0xFF));
+        out.push_back(static_cast<uint8_t>((v >> 24) & 0xFF));
+    }
+
+    void writeLE64(uint64_t v, Buffer &out) {
+        for (int i = 0; i < 8; ++i) {
+            out.push_back(static_cast<uint8_t>((v >> (i * 8)) & 0xFF));
+        }
+    }
+
+    void writeLEDouble(double d, Buffer &out) {
+        static_assert(sizeof(double) == sizeof(uint64_t), "double size");
+        uint64_t v;
+        std::memcpy(&v, &d, sizeof(v));
+        writeLE64(v, out);
+    }
+
+    void encodeVaruint(uint64_t v, Buffer &out) {
+        while (v >= 0x80) {
+            out.push_back(static_cast<uint8_t>(v | 0x80));
+            v >>= 7;
+        }
+        out.push_back(static_cast<uint8_t>(v));
+    }
+
+    bool encodeLiteralPayload(uint16_t opcode, const Value &payload, Buffer &out, DecodeError &err) {
+        const auto *obj = std::get_if<Value::Object>(&payload.data);
+        if (!obj) {
+            return false;
+        }
+        auto it = obj->find("value");
+        if (it == obj->end()) {
+            return false;
+        }
+        const auto &val = it->second.data;
+        const char *name_c = opcodeName(opcode);
+        std::string name = name_c ? name_c : "";
+
+        if (name == "SBLR3_LITERAL_NULL") {
+            return true;
+        }
+        if (name == "SBLR3_LITERAL_BOOLEAN") {
+            auto b = std::get_if<bool>(&val);
+            if (!b) { err.message = "literal bool"; return false; }
+            out.push_back(*b ? 1 : 0);
+            return true;
+        }
+        if (name == "SBLR3_LITERAL_INT32") {
+            auto i = std::get_if<int64_t>(&val);
+            if (!i) { err.message = "literal int32"; return false; }
+            writeLE32(static_cast<uint32_t>(*i), out);
+            return true;
+        }
+        if (name == "SBLR3_LITERAL_INT64") {
+            auto i = std::get_if<int64_t>(&val);
+            if (!i) { err.message = "literal int64"; return false; }
+            writeLE64(static_cast<uint64_t>(*i), out);
+            return true;
+        }
+        if (name == "SBLR3_LITERAL_DOUBLE") {
+            auto d = std::get_if<double>(&val);
+            if (!d) { err.message = "literal double"; return false; }
+            writeLEDouble(*d, out);
+            return true;
+        }
+        if (name == "SBLR3_LITERAL_STRING" || name == "SBLR3_LITERAL_JSON" ||
+            name == "SBLR3_LITERAL_XML" || name == "SBLR3_LITERAL_DECIMAL") {
+            auto s = std::get_if<std::string>(&val);
+            if (!s) { err.message = "literal string"; return false; }
+            encodeVaruint(static_cast<uint64_t>(s->size()), out);
+            out.insert(out.end(), s->begin(), s->end());
+            return true;
+        }
+        if (name == "SBLR3_LITERAL_BINARY") {
+            auto b = std::get_if<Value::Bytes>(&val);
+            if (!b) { err.message = "literal binary"; return false; }
+            encodeVaruint(static_cast<uint64_t>(b->size()), out);
+            out.insert(out.end(), b->begin(), b->end());
+            return true;
+        }
+        if (name == "SBLR3_LITERAL_UUID") {
+            auto b = std::get_if<Value::Bytes>(&val);
+            if (!b || b->size() != 16) { err.message = "literal uuid"; return false; }
+            out.insert(out.end(), b->begin(), b->end());
+            return true;
+        }
+        if (name == "SBLR3_LITERAL_DATE") {
+            auto i = std::get_if<int64_t>(&val);
+            if (!i) { err.message = "literal date"; return false; }
+            writeLE32(static_cast<uint32_t>(*i), out);
+            return true;
+        }
+        if (name == "SBLR3_LITERAL_TIME" || name == "SBLR3_LITERAL_TIMESTAMP") {
+            auto i = std::get_if<int64_t>(&val);
+            if (!i) { err.message = "literal time"; return false; }
+            writeLE64(static_cast<uint64_t>(*i), out);
+            return true;
+        }
+        return false;
+    }
+} // namespace
 
 
 static const std::unordered_map<std::string, std::string> kExprUnary = {
@@ -67,13 +175,27 @@ const SchemaDef* schemaForOpcode(uint16_t opcode) {
     if (name == "SBLR3_EXPR_FUNCTION_CALL" || name.rfind("SBLR3_FUNC_", 0) == 0) {
         return lookupSchema("SCHEMA_FUNC_CALL");
     }
+    if (name == "SBLR3_JSON_OBJECT" || name == "SBLR3_JSON_ARRAY" ||
+        name == "SBLR3_JSON_SET" || name == "SBLR3_JSON_INSERT" ||
+        name == "SBLR3_JSON_REMOVE") {
+        return lookupSchema("SCHEMA_FUNC_CALL");
+    }
 
     if (name.rfind("SBLR3_AGG_", 0) == 0) {
+        return lookupSchema("SCHEMA_AGG_CALL");
+    }
+    if (name == "SBLR3_XMLAGG") {
         return lookupSchema("SCHEMA_AGG_CALL");
     }
 
     if (name.rfind("SBLR3_WIN_", 0) == 0) {
         return lookupSchema("SCHEMA_WINDOW_CALL");
+    }
+
+    if (name == "SBLR3_TO_TSVECTOR" || name == "SBLR3_PLAINTO_TSQUERY" ||
+        name == "SBLR3_TO_TSQUERY" || name == "SBLR3_TSMATCH" ||
+        name == "SBLR3_TS_RANK") {
+        return lookupSchema("SCHEMA_FUNC_CALL");
     }
 
     if (auto it = kExprUnary.find(name); it != kExprUnary.end()) {
@@ -84,6 +206,9 @@ const SchemaDef* schemaForOpcode(uint16_t opcode) {
     }
 
     if (name == "SBLR3_EXPR_CAST") return lookupSchema("SCHEMA_EXPR_CAST");
+    if (name == "SBLR3_COALESCE" || name == "SBLR3_NULLIF") {
+        return lookupSchema("SCHEMA_FUNC_CALL");
+    }
     if (name == "SBLR3_CASE_WHEN") return lookupSchema("SCHEMA_EXPR_CASE");
     if (name == "SBLR3_IN_LIST" || name == "SBLR3_SUBQUERY_IN" || name == "SBLR3_SUBQUERY_NOT_IN") {
         return lookupSchema("SCHEMA_EXPR_IN");
@@ -96,10 +221,9 @@ const SchemaDef* schemaForOpcode(uint16_t opcode) {
     if (name == "SBLR3_EXTRACT" || name == "SBLR3_ALTER_ELEMENT") return lookupSchema("SCHEMA_FUNC_CALL");
     if (name == "SBLR3_RENAME_OBJECT" || name == "SBLR3_MOVE_OBJECT") return lookupSchema("SCHEMA_DDL_ALTER_RENAME");
 
-    if (name == "SBLR3_SET_VARIABLE" || name == "SBLR3_SET_NAMES" || name == "SBLR3_SET_SQL_DIALECT" ||
-        name == "SBLR3_SET_TIME_ZONE" || name == "SBLR3_RESET" || name == "SBLR3_RESET_ALL" ||
-        name == "SBLR3_RESET_ROLE" || name == "SBLR3_RESET_SESSION_AUTH" || name == "SBLR3_RESET_TIME_ZONE" ||
-        name == "SBLR3_SHOW_ALL") {
+    if (name == "SBLR3_SET" || name == "SBLR3_SHOW" || name == "SBLR3_RESET" ||
+        name.rfind("SBLR3_SET_", 0) == 0 || name.rfind("SBLR3_SHOW_", 0) == 0 ||
+        name.rfind("SBLR3_RESET_", 0) == 0) {
         return lookupSchema("SCHEMA_SET_SHOW_RESET");
     }
     if (name == "SBLR3_EXPLAIN_PLAN") return lookupSchema("SCHEMA_EXPLAIN");
@@ -149,6 +273,13 @@ bool encodeInstructionWithSchema(const Instruction& inst, Buffer& out, DecodeErr
     } else {
         if (auto bytes = std::get_if<Value::Bytes>(&inst.payload.data)) {
             payload = *bytes;
+        } else if (std::holds_alternative<Value::Object>(inst.payload.data)) {
+            if (!encodeLiteralPayload(inst.opcode, inst.payload, payload, err)) {
+                const char* name_c = opcodeName(inst.opcode);
+                std::string name = name_c ? name_c : "UNKNOWN";
+                err.message = "missing schema for opcode payload: " + name;
+                return false;
+            }
         }
     }
 

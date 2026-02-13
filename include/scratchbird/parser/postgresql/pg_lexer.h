@@ -12,7 +12,7 @@
 /**
  * PostgreSQL Parser Lexer
  *
- * Lexer for PostgreSQL 16 SQL dialect. Unlike the ScratchBird V2 parser's
+ * Lexer for PostgreSQL 16 SQL dialect. Unlike the native ScratchBird parser's
  * "Gatekeeper" model with ~35 reserved keywords, PostgreSQL has ~96 reserved
  * keywords that cannot be used as identifiers without double-quote quoting.
  *

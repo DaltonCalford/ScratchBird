@@ -38,6 +38,172 @@ namespace scratchbird::core
             return true;
         }
 
+        struct SystemDomainDef {
+            const char* name;
+            DataType base_type;
+            uint32_t precision;
+            uint32_t scale;
+        };
+
+        const SystemDomainDef kSystemDomains[] = {
+            {"SBDB$UUID_V7", DataType::UUID, 0, 0},
+            {"SBDB$NAME", DataType::VARCHAR, 128, 0},
+            {"SBDB$NAME_64", DataType::VARCHAR, 64, 0},
+            {"SBDB$NAME_256", DataType::VARCHAR, 256, 0},
+            {"SBDB$NAME_512", DataType::VARCHAR, 512, 0},
+            {"SBDB$NAME_1024", DataType::VARCHAR, 1024, 0},
+            {"SBDB$BOOL", DataType::BOOLEAN, 0, 0},
+            {"SBDB$BIT", DataType::BIT, 0, 0},
+            {"SBDB$U8", DataType::UINT8, 0, 0},
+            {"SBDB$U16", DataType::UINT16, 0, 0},
+            {"SBDB$U32", DataType::UINT32, 0, 0},
+            {"SBDB$U64", DataType::UINT64, 0, 0},
+            {"SBDB$U128", DataType::UINT128, 0, 0},
+            {"SBDB$I8", DataType::INT8, 0, 0},
+            {"SBDB$I16", DataType::INT16, 0, 0},
+            {"SBDB$I32", DataType::INT32, 0, 0},
+            {"SBDB$I64", DataType::INT64, 0, 0},
+            {"SBDB$I128", DataType::INT128, 0, 0},
+            {"SBDB$F32", DataType::FLOAT32, 0, 0},
+            {"SBDB$F64", DataType::FLOAT64, 0, 0},
+            {"SBDB$DECIMAL", DataType::DECIMAL, 0, 0},
+            {"SBDB$MONEY", DataType::MONEY, 0, 0},
+            {"SBDB$DECFLOAT16", DataType::DECFLOAT16, 0, 0},
+            {"SBDB$DECFLOAT34", DataType::DECFLOAT34, 0, 0},
+            {"SBDB$TIME_US", DataType::UINT64, 0, 0},
+            {"SBDB$DATE", DataType::DATE, 0, 0},
+            {"SBDB$TIME", DataType::TIME, 0, 0},
+            {"SBDB$TIMESTAMP", DataType::TIMESTAMP, 0, 0},
+            {"SBDB$TIMESTAMPTZ", DataType::TIMESTAMP_WITH_ZONE, 0, 0},
+            {"SBDB$TIME_TZ", DataType::TIME_WITH_ZONE, 0, 0},
+            {"SBDB$INTERVAL", DataType::INTERVAL, 0, 0},
+            {"SBDB$YEAR", DataType::YEAR, 0, 0},
+            {"SBDB$SQLSTATE", DataType::CHAR, 5, 0},
+            {"SBDB$HASH256", DataType::BINARY, 32, 0},
+            {"SBDB$BINARY", DataType::BINARY, 0, 0},
+            {"SBDB$VARBINARY", DataType::VARBINARY, 0, 0},
+            {"SBDB$BLOB", DataType::BLOB, 0, 0},
+            {"SBDB$BYTEA", DataType::BYTEA, 0, 0},
+            {"SBDB$TEXT", DataType::TEXT, 0, 0},
+            {"SBDB$JSON", DataType::JSON, 0, 0},
+            {"SBDB$JSONB", DataType::JSONB, 0, 0},
+            {"SBDB$XML", DataType::XML, 0, 0},
+            {"SBDB$VECTOR", DataType::VECTOR, 0, 0},
+            {"SBDB$POINT", DataType::POINT, 0, 0},
+            {"SBDB$LINESTRING", DataType::LINESTRING, 0, 0},
+            {"SBDB$POLYGON", DataType::POLYGON, 0, 0},
+            {"SBDB$MULTIPOINT", DataType::MULTIPOINT, 0, 0},
+            {"SBDB$MULTILINESTRING", DataType::MULTILINESTRING, 0, 0},
+            {"SBDB$MULTIPOLYGON", DataType::MULTIPOLYGON, 0, 0},
+            {"SBDB$GEOMETRYCOLLECTION", DataType::GEOMETRYCOLLECTION, 0, 0},
+            {"SBDB$GEOMETRY", DataType::GEOMETRY, 0, 0},
+            {"SBDB$INET", DataType::INET, 0, 0},
+            {"SBDB$CIDR", DataType::CIDR, 0, 0},
+            {"SBDB$MACADDR", DataType::MACADDR, 0, 0},
+            {"SBDB$MACADDR8", DataType::MACADDR8, 0, 0},
+            {"SBDB$TSVECTOR", DataType::TSVECTOR, 0, 0},
+            {"SBDB$TSQUERY", DataType::TSQUERY, 0, 0},
+            {"SBDB$RANGE_INT4", DataType::INT4RANGE, 0, 0},
+            {"SBDB$RANGE_INT8", DataType::INT8RANGE, 0, 0},
+            {"SBDB$RANGE_NUM", DataType::NUMRANGE, 0, 0},
+            {"SBDB$RANGE_TS", DataType::TSRANGE, 0, 0},
+            {"SBDB$RANGE_TSTZ", DataType::TSTZRANGE, 0, 0},
+            {"SBDB$RANGE_DATE", DataType::DATERANGE, 0, 0},
+            {"SBDB$ARRAY", DataType::ARRAY, 0, 0},
+            {"SBDB$COMPOSITE", DataType::COMPOSITE, 0, 0},
+            {"SBDB$DOMAIN", DataType::DOMAIN, 0, 0},
+            {"SBDB$ROW", DataType::ROW, 0, 0},
+            {"SBDB$ENUM", DataType::ENUM, 0, 0},
+            {"SBDB$SET", DataType::SET, 0, 0},
+            {"SBDB$VARIANT", DataType::VARIANT, 0, 0},
+            {"SBDB$PAGE_ID", DataType::UINT32, 0, 0},
+            {"SBDB$LOB_REF", DataType::UUID, 0, 0},
+            {"SBDB$OBJTYPE", DataType::UINT8, 0, 0},
+            {"SBDB$SCHEMA_TYPE", DataType::UINT8, 0, 0},
+            {"SBDB$INDEX_TYPE", DataType::UINT8, 0, 0},
+            {"SBDB$TABLE_TYPE", DataType::UINT8, 0, 0},
+            {"SBDB$POLICY_TYPE", DataType::UINT8, 0, 0},
+            {"SBDB$SECURITY_FLAGS", DataType::UINT32, 0, 0},
+            {"SBDB$PERMISSIONS_MASK", DataType::UINT32, 0, 0}
+        };
+
+        const char* const kSystemKeyDomains[] = {
+            "SBDB$KEY_SCHEMA",
+            "SBDB$KEY_TABLE",
+            "SBDB$KEY_COLUMN",
+            "SBDB$KEY_INDEX",
+            "SBDB$KEY_CONSTRAINT",
+            "SBDB$KEY_SEQUENCE",
+            "SBDB$KEY_VIEW",
+            "SBDB$KEY_TRIGGER",
+            "SBDB$KEY_PERMISSION",
+            "SBDB$KEY_OBJECT",
+            "SBDB$KEY_STATISTICS",
+            "SBDB$KEY_STATISTIC",
+            "SBDB$KEY_COLLATION",
+            "SBDB$KEY_TIMEZONE",
+            "SBDB$KEY_CHARSET",
+            "SBDB$KEY_COLLATION_DEF",
+            "SBDB$KEY_DEPENDENCY",
+            "SBDB$KEY_COMMENT",
+            "SBDB$KEY_OBJECT_DEF",
+            "SBDB$KEY_ATTACHMENT",
+            "SBDB$KEY_JOB",
+            "SBDB$KEY_JOB_RUN",
+            "SBDB$KEY_JOB_DEPENDENCY",
+            "SBDB$KEY_JOB_SECRET",
+            "SBDB$KEY_NODE",
+            "SBDB$KEY_SHARD",
+            "SBDB$KEY_USER",
+            "SBDB$KEY_PRINCIPAL",
+            "SBDB$KEY_ROLE",
+            "SBDB$KEY_GROUP",
+            "SBDB$KEY_ROLE_MEMBER",
+            "SBDB$KEY_GROUP_MEMBER",
+            "SBDB$KEY_GROUP_MAPPING",
+            "SBDB$KEY_MEMBERSHIP",
+            "SBDB$KEY_MAPPING",
+            "SBDB$KEY_PROCEDURE",
+            "SBDB$KEY_PROC_PARAM",
+            "SBDB$KEY_DOMAIN",
+            "SBDB$KEY_UDR",
+            "SBDB$KEY_EXCEPTION",
+            "SBDB$KEY_PACKAGE",
+            "SBDB$KEY_EMULATION_TYPE",
+            "SBDB$KEY_EMULATION_SERVER",
+            "SBDB$KEY_EMULATED_DB",
+            "SBDB$KEY_TABLESPACE",
+            "SBDB$KEY_TABLESPACE_FILE",
+            "SBDB$KEY_EXTENSION",
+            "SBDB$KEY_FOREIGN_KEY",
+            "SBDB$KEY_SYNONYM",
+            "SBDB$KEY_FOREIGN_SERVER",
+            "SBDB$KEY_FOREIGN_TABLE",
+            "SBDB$KEY_USER_MAPPING",
+            "SBDB$KEY_SERVER",
+            "SBDB$KEY_SERVER_INSTANCE",
+            "SBDB$KEY_SERVER_REGISTRY",
+            "SBDB$KEY_UDR_ENGINE",
+            "SBDB$KEY_UDR_MODULE",
+            "SBDB$KEY_MIGRATION",
+            "SBDB$KEY_MIGRATION_HISTORY",
+            "SBDB$KEY_DORMANT_TXN",
+            "SBDB$KEY_PREPARED_TXN",
+            "SBDB$KEY_TXN",
+            "SBDB$KEY_STATEMENT",
+            "SBDB$KEY_LOCK",
+            "SBDB$KEY_DATABASE",
+            "SBDB$KEY_RELATION",
+            "SBDB$KEY_ENCRYPTION_KEY",
+            "SBDB$KEY_AUTHKEY",
+            "SBDB$KEY_SESSION",
+            "SBDB$KEY_AUDIT_LOG",
+            "SBDB$KEY_SECURITY_POLICY_EPOCH",
+            "SBDB$KEY_POLICY",
+            "SBDB$KEY_COLUMN_PERMISSION",
+            "SBDB$KEY_OBJECT_PERMISSION"
+        };
+
         std::string defaultDialectTagForCreate() {
             auto* conn_ctx = ConnectionContext::getCurrent();
             if (conn_ctx && !conn_ctx->dialect_tag().empty()) {
@@ -1268,13 +1434,13 @@ namespace scratchbird::core
         uint8_t is_valid;           // Soft delete flag
         uint64_t created_time;
         uint64_t last_modified_time;
-        uint32_t constraints_oid;   // TOAST reference for constraints
-        uint32_t fields_oid;        // TOAST reference for RECORD fields
-        uint32_t enum_values_oid;   // TOAST reference for ENUM values
-        uint32_t security_oid;      // TOAST reference for security config
-        uint32_t integrity_oid;     // TOAST reference for integrity config
-        uint32_t validation_oid;    // TOAST reference for validation config
-        uint32_t quality_oid;       // TOAST reference for quality config
+        ID constraints_oid;   // TOAST reference for constraints
+        ID fields_oid;        // TOAST reference for RECORD fields
+        ID enum_values_oid;   // TOAST reference for ENUM values
+        ID security_oid;      // TOAST reference for security config
+        ID integrity_oid;     // TOAST reference for integrity config
+        ID validation_oid;    // TOAST reference for validation config
+        ID quality_oid;       // TOAST reference for quality config
         uint16_t set_element_type;  // For SET domains
         char dialect_tag[32];        // Cross-dialect compatibility tag
         char compat_name[128];       // Dialect-specific type name
@@ -1282,8 +1448,8 @@ namespace scratchbird::core
 
         DomainRecord() : domain_type(0), base_type(0), precision(0), scale(0),
                         nullable(1), is_valid(1), created_time(0), last_modified_time(0),
-                        constraints_oid(0), fields_oid(0), enum_values_oid(0),
-                        security_oid(0), integrity_oid(0), validation_oid(0), quality_oid(0),
+                        constraints_oid(ID{}), fields_oid(ID{}), enum_values_oid(ID{}),
+                        security_oid(ID{}), integrity_oid(ID{}), validation_oid(ID{}), quality_oid(ID{}),
                         set_element_type(0), reserved(0)
         {
             std::memset(domain_name, 0, sizeof(domain_name));
@@ -1299,6 +1465,8 @@ namespace scratchbird::core
         PageHeader header;
         uint32_t record_count;
         uint32_t free_offset;
+        uint32_t next_page;
+        uint32_t reserved;
         uint8_t data[];
     };
 
@@ -1366,17 +1534,18 @@ namespace scratchbird::core
             catalog_page->header.page_type = PAGE_TYPE_HEAP;
             catalog_page->header.page_size = db_->page_size();
             catalog_page->header.page_id = domains_table_page_;
-            catalog_page->header.flags = 0;
-            std::memcpy(catalog_page->header.database_uuid, db_->uuid().bytes.data(), 16);
             catalog_page->header.generation = 1;
-            catalog_page->header.item_count = 0;
-            catalog_page->header.free_offset = sizeof(DomainCatalogPage);
-            catalog_page->header.free_space =
-                static_cast<uint16_t>(db_->page_size() - sizeof(DomainCatalogPage));
-            catalog_page->header.special_size = 0;
+            catalog_page->header.checksum = 0;
+            catalog_page->header.flags = 0;
+            catalog_page->header.lsn = 0;
+            pageSetLower(catalog_page->header, sizeof(DomainCatalogPage));
+            pageSetUpper(catalog_page->header, db_->page_size());
+            pageSetSpecial(catalog_page->header, db_->page_size());
 
             catalog_page->record_count = 0;
             catalog_page->free_offset = sizeof(DomainCatalogPage);
+            catalog_page->next_page = 0;
+            catalog_page->reserved = 0;
         }
 
         status = bp->unpinPage(domains_table_page_, needs_init, ctx);
@@ -1558,6 +1727,108 @@ namespace scratchbird::core
                 continue;
             }
             domains.push_back(info);
+        }
+
+        return Status::OK;
+    }
+
+    auto DomainManager::ensureSystemDomains(ErrorContext* ctx) -> Status
+    {
+        CatalogManager* catalog = db_ ? db_->catalog_manager() : nullptr;
+        if (!catalog)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "CatalogManager not available");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        std::vector<CatalogManager::SchemaInfo> schemas;
+        Status status = catalog->listSchemas(schemas, ctx);
+        if (status != Status::OK && status != Status::NOT_FOUND)
+        {
+            return status;
+        }
+
+        ID sys_schema_id{};
+        for (const auto& schema : schemas)
+        {
+            if (IdentifierUtils::namesMatch("sys", false,
+                                            schema.schema_name, schema.name_is_delimited))
+            {
+                sys_schema_id = schema.schema_id;
+                break;
+            }
+        }
+
+        if (isZeroUuidLocal(sys_schema_id))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "System schema not found");
+            return Status::NOT_FOUND;
+        }
+
+        auto ensure_domain = [&](const SystemDomainDef& def) -> Status {
+            DomainInfo existing;
+            if (getDomain(sys_schema_id, def.name, existing, nullptr) == Status::OK)
+            {
+                return Status::OK;
+            }
+            DomainCreateOptions options;
+            options.nullable = true;
+            options.dialect_tag = "SBDB";
+            ID domain_id;
+            return createBasicDomain(sys_schema_id, def.name,
+                                     def.base_type, def.precision, def.scale,
+                                     options, domain_id, ctx);
+        };
+
+        for (const auto& def : kSystemDomains)
+        {
+            status = ensure_domain(def);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+        }
+
+        DomainInfo uuid_domain;
+        status = getDomain(sys_schema_id, "SBDB$UUID_V7", uuid_domain, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        for (const char* name : kSystemKeyDomains)
+        {
+            DomainInfo existing;
+            if (getDomain(sys_schema_id, name, existing, nullptr) == Status::OK)
+            {
+                if (isZeroUuidLocal(existing.parent_domain_id))
+                {
+                    auto parent_status = setParentDomain(existing.domain_id,
+                                                         uuid_domain.domain_id, ctx);
+                    if (parent_status != Status::OK)
+                    {
+                        return parent_status;
+                    }
+                }
+                continue;
+            }
+
+            DomainCreateOptions options;
+            options.nullable = true;
+            options.dialect_tag = "SBDB";
+            ID domain_id;
+            status = createBasicDomain(sys_schema_id, name,
+                                       DataType::UUID, 0, 0,
+                                       options, domain_id, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            status = setParentDomain(domain_id, uuid_domain.domain_id, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
         }
 
         return Status::OK;
@@ -4464,50 +4735,116 @@ namespace scratchbird::core
     auto DomainManager::writeDomainRecord(const DomainInfo& domain, ErrorContext* ctx) -> Status
     {
         BufferPool* bp = db_->buffer_pool();
-        void* page_buffer;
-
-        Status status = bp->pinPage(domains_table_page_, &page_buffer, ctx);
-        if (status != Status::OK)
+        Status status = Status::OK;
+        if (!bp)
         {
-            SET_ERROR_CONTEXT(ctx, status, "Failed to pin domains catalog page");
-            return status;
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "BufferPool not available");
+            return Status::INVALID_ARGUMENT;
         }
 
-        auto* catalog_page = reinterpret_cast<DomainCatalogPage*>(page_buffer);
+        uint32_t current_page = domains_table_page_;
+        DomainRecord* record = nullptr;
+        uint32_t record_page = 0;
 
-        // Check if domain already exists (for updates)
-        DomainRecord* existing_record = nullptr;
-        for (uint32_t i = 0; i < catalog_page->record_count; i++)
+        while (current_page != 0)
         {
-            auto* record = reinterpret_cast<DomainRecord*>(
-                catalog_page->data + (i * sizeof(DomainRecord)));
-
-            if (record->domain_id == domain.domain_id)
+            void* page_buffer = nullptr;
+            Status status = bp->pinPage(current_page, &page_buffer, ctx);
+            if (status != Status::OK)
             {
-                existing_record = record;
+                SET_ERROR_CONTEXT(ctx, status, "Failed to pin domains catalog page");
+                return status;
+            }
+
+            auto* catalog_page = reinterpret_cast<DomainCatalogPage*>(page_buffer);
+
+            // Scan for existing record in this page
+            for (uint32_t i = 0; i < catalog_page->record_count; i++)
+            {
+                auto* candidate = reinterpret_cast<DomainRecord*>(
+                    catalog_page->data + (i * sizeof(DomainRecord)));
+
+                if (candidate->domain_id == domain.domain_id)
+                {
+                    record = candidate;
+                    record_page = current_page;
+                    break;
+                }
+            }
+
+            if (record)
+            {
                 break;
             }
-        }
 
-        DomainRecord* record;
-        if (existing_record)
-        {
-            // Update existing record
-            record = existing_record;
-        }
-        else
-        {
-            // Add new record
-            if (catalog_page->record_count >= (db_->page_size() - sizeof(DomainCatalogPage)) / sizeof(DomainRecord))
+            const uint32_t capacity =
+                (db_->page_size() - sizeof(DomainCatalogPage)) / sizeof(DomainRecord);
+
+            if (catalog_page->record_count < capacity)
             {
-                bp->unpinPage(domains_table_page_, false, ctx);
-                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Domain catalog page full");
-                return Status::IO_ERROR;
+                record = reinterpret_cast<DomainRecord*>(
+                    catalog_page->data + (catalog_page->record_count * sizeof(DomainRecord)));
+                catalog_page->record_count++;
+                record_page = current_page;
+                break;
             }
 
-            record = reinterpret_cast<DomainRecord*>(
-                catalog_page->data + (catalog_page->record_count * sizeof(DomainRecord)));
-            catalog_page->record_count++;
+            if (catalog_page->next_page == 0)
+            {
+                uint32_t new_page_id = 0;
+                void* new_buffer = nullptr;
+                status = bp->allocatePage(&new_page_id, &new_buffer, ctx);
+                if (status != Status::OK)
+                {
+                    bp->unpinPage(current_page, false, ctx);
+                    return status;
+                }
+
+                std::memset(new_buffer, 0, db_->page_size());
+                auto* new_page = reinterpret_cast<DomainCatalogPage*>(new_buffer);
+                new_page->header.magic = K_MAGIC_SBRD;
+                new_page->header.version = 1;
+                new_page->header.page_type = PAGE_TYPE_HEAP;
+                new_page->header.page_size = db_->page_size();
+                new_page->header.page_id = new_page_id;
+                new_page->header.generation = 1;
+                new_page->header.checksum = 0;
+                new_page->header.flags = 0;
+                new_page->header.lsn = 0;
+                pageSetLower(new_page->header, sizeof(DomainCatalogPage));
+                pageSetUpper(new_page->header, db_->page_size());
+                pageSetSpecial(new_page->header, db_->page_size());
+                new_page->record_count = 0;
+                new_page->free_offset = sizeof(DomainCatalogPage);
+                new_page->next_page = 0;
+                new_page->reserved = 0;
+
+                catalog_page->next_page = new_page_id;
+                status = bp->unpinPage(new_page_id, true, ctx);
+                if (status != Status::OK)
+                {
+                    bp->unpinPage(current_page, true, ctx);
+                    return status;
+                }
+
+                status = bp->unpinPage(current_page, true, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                current_page = new_page_id;
+                continue;
+            }
+
+            uint32_t next_page = catalog_page->next_page;
+            bp->unpinPage(current_page, false, ctx);
+            current_page = next_page;
+        }
+
+        if (!record || record_page == 0)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to allocate domain record slot");
+            return Status::IO_ERROR;
         }
 
         // Populate record from DomainInfo
@@ -4541,79 +4878,79 @@ namespace scratchbird::core
         CatalogManager* catalog = db_->catalog_manager();
         if (!catalog)
         {
-            bp->unpinPage(domains_table_page_, false, ctx);
+            bp->unpinPage(record_page, false, ctx);
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "CatalogManager not available");
             return Status::INVALID_ARGUMENT;
         }
 
         uint64_t xmin = ConnectionContext::getCurrentTransactionId();
 
-        record->security_oid = 0;
+        record->security_oid = ID{};
         std::string security_blob = serializeDomainSecurity(domain.security);
         if (!security_blob.empty())
         {
             status = catalog->storeStringInToast(security_blob, xmin, record->security_oid, ctx);
             if (status != Status::OK)
             {
-                bp->unpinPage(domains_table_page_, false, ctx);
+                bp->unpinPage(record_page, false, ctx);
                 SET_ERROR_CONTEXT(ctx, status, "Failed to store domain security in TOAST");
                 return status;
             }
         }
 
-        record->integrity_oid = 0;
+        record->integrity_oid = ID{};
         std::string integrity_blob = serializeDomainIntegrity(domain.integrity);
         if (!integrity_blob.empty())
         {
             status = catalog->storeStringInToast(integrity_blob, xmin, record->integrity_oid, ctx);
             if (status != Status::OK)
             {
-                bp->unpinPage(domains_table_page_, false, ctx);
+                bp->unpinPage(record_page, false, ctx);
                 SET_ERROR_CONTEXT(ctx, status, "Failed to store domain integrity in TOAST");
                 return status;
             }
         }
 
-        record->validation_oid = 0;
+        record->validation_oid = ID{};
         std::string validation_blob = serializeDomainValidation(domain.validation);
         if (!validation_blob.empty())
         {
             status = catalog->storeStringInToast(validation_blob, xmin, record->validation_oid, ctx);
             if (status != Status::OK)
             {
-                bp->unpinPage(domains_table_page_, false, ctx);
+                bp->unpinPage(record_page, false, ctx);
                 SET_ERROR_CONTEXT(ctx, status, "Failed to store domain validation in TOAST");
                 return status;
             }
         }
 
-        record->quality_oid = 0;
+        record->quality_oid = ID{};
         std::string quality_blob = serializeDomainQuality(domain.quality);
         if (!quality_blob.empty())
         {
             status = catalog->storeStringInToast(quality_blob, xmin, record->quality_oid, ctx);
             if (status != Status::OK)
             {
-                bp->unpinPage(domains_table_page_, false, ctx);
+                bp->unpinPage(record_page, false, ctx);
                 SET_ERROR_CONTEXT(ctx, status, "Failed to store domain quality in TOAST");
                 return status;
             }
         }
 
-        record->constraints_oid = 0;
+        record->constraints_oid = ID{};
         std::string constraints_blob = serializeDomainConstraints(domain);
         if (!constraints_blob.empty())
         {
             status = catalog->storeStringInToast(constraints_blob, xmin, record->constraints_oid, ctx);
             if (status != Status::OK)
             {
-                bp->unpinPage(domains_table_page_, false, ctx);
+                bp->unpinPage(record_page, false, ctx);
                 SET_ERROR_CONTEXT(ctx, status, "Failed to store domain constraints in TOAST");
                 return status;
             }
         }
 
-        record->fields_oid = 0;
+        record->fields_oid = ID{};
         std::string fields_blob;
         if (domain.domain_type == DomainType::RECORD)
         {
@@ -4632,13 +4969,13 @@ namespace scratchbird::core
             status = catalog->storeStringInToast(fields_blob, xmin, record->fields_oid, ctx);
             if (status != Status::OK)
             {
-                bp->unpinPage(domains_table_page_, false, ctx);
+                bp->unpinPage(record_page, false, ctx);
                 SET_ERROR_CONTEXT(ctx, status, "Failed to store domain fields in TOAST");
                 return status;
             }
         }
 
-        record->enum_values_oid = 0;
+        record->enum_values_oid = ID{};
         std::string enum_values_blob;
         if (domain.domain_type == DomainType::ENUM)
         {
@@ -4650,246 +4987,258 @@ namespace scratchbird::core
                                                  record->enum_values_oid, ctx);
             if (status != Status::OK)
             {
-                bp->unpinPage(domains_table_page_, false, ctx);
+                bp->unpinPage(record_page, false, ctx);
                 SET_ERROR_CONTEXT(ctx, status, "Failed to store domain enum values in TOAST");
                 return status;
             }
         }
 
-        return bp->unpinPage(domains_table_page_, true, ctx);
+        return bp->unpinPage(record_page, true, ctx);
     }
 
     auto DomainManager::readDomainRecords(ErrorContext* ctx) -> Status
     {
-        BufferPool* bp = db_->buffer_pool();
-        void* page_buffer;
-
-        Status status = bp->pinPage(domains_table_page_, &page_buffer, ctx);
-        if (status != Status::OK)
-        {
-            SET_ERROR_CONTEXT(ctx, status, "Failed to pin domains catalog page");
-            return status;
-        }
-
-        auto* catalog_page = reinterpret_cast<DomainCatalogPage*>(page_buffer);
         domain_cache_.clear();
         domain_count_ = 0;
+        BufferPool* bp = db_->buffer_pool();
+        void* page_buffer;
+        uint32_t page_id = domains_table_page_;
 
-        for (uint32_t i = 0; i < catalog_page->record_count; i++)
+        while (page_id != 0)
         {
-            auto* record = reinterpret_cast<DomainRecord*>(
-                catalog_page->data + (i * sizeof(DomainRecord)));
-
-            if (record->is_valid)
+            Status status = bp->pinPage(page_id, &page_buffer, ctx);
+            if (status != Status::OK)
             {
-                DomainInfo info;
-                info.domain_id = record->domain_id;
-                info.schema_id = record->schema_id;
-                info.domain_name = record->domain_name;
-                info.domain_type = static_cast<DomainType>(record->domain_type);
-                info.base_type = static_cast<DataType>(record->base_type);
-                info.precision = record->precision;
-                info.scale = record->scale;
-                info.nullable = record->nullable != 0;
-                info.default_value = record->default_value;
-                info.parent_domain_id = record->parent_domain_id;
-                info.created_time = record->created_time;
-                info.last_modified_time = record->last_modified_time;
-                info.set_element_type.type = static_cast<DataType>(record->set_element_type);
-                info.dialect_tag = record->dialect_tag;
-                if (info.dialect_tag.empty())
-                {
-                    info.dialect_tag = "scratchbird";
-                }
-                info.compat_name = record->compat_name;
-
-                CatalogManager* catalog = db_->catalog_manager();
-                if (!catalog)
-                {
-                    bp->unpinPage(domains_table_page_, false, ctx);
-                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "CatalogManager not available");
-                    return Status::INVALID_ARGUMENT;
-                }
-
-                uint64_t xmin = ConnectionContext::getCurrentTransactionId();
-                std::string blob;
-
-                if (record->security_oid != 0)
-                {
-                    Status load_status = catalog->loadStringFromToast(record->security_oid,
-                                                                      xmin, blob, ctx);
-                    if (load_status != Status::OK)
-                    {
-                        bp->unpinPage(domains_table_page_, false, ctx);
-                        return load_status;
-                    }
-                    load_status = deserializeDomainSecurity(blob, info.security, ctx);
-                    if (load_status != Status::OK)
-                    {
-                        bp->unpinPage(domains_table_page_, false, ctx);
-                        return load_status;
-                    }
-                    blob.clear();
-                }
-
-                if (record->integrity_oid != 0)
-                {
-                    Status load_status = catalog->loadStringFromToast(record->integrity_oid,
-                                                                      xmin, blob, ctx);
-                    if (load_status != Status::OK)
-                    {
-                        bp->unpinPage(domains_table_page_, false, ctx);
-                        return load_status;
-                    }
-                    load_status = deserializeDomainIntegrity(blob, info.integrity, ctx);
-                    if (load_status != Status::OK)
-                    {
-                        bp->unpinPage(domains_table_page_, false, ctx);
-                        return load_status;
-                    }
-                    blob.clear();
-                }
-
-                info.enforce_global_uniqueness = info.integrity.uniqueness_check;
-
-                if (record->validation_oid != 0)
-                {
-                    Status load_status = catalog->loadStringFromToast(record->validation_oid,
-                                                                      xmin, blob, ctx);
-                    if (load_status != Status::OK)
-                    {
-                        bp->unpinPage(domains_table_page_, false, ctx);
-                        return load_status;
-                    }
-                    load_status = deserializeDomainValidation(blob, info.validation, ctx);
-                    if (load_status != Status::OK)
-                    {
-                        bp->unpinPage(domains_table_page_, false, ctx);
-                        return load_status;
-                    }
-                    blob.clear();
-                }
-
-                if (record->quality_oid != 0)
-                {
-                    Status load_status = catalog->loadStringFromToast(record->quality_oid,
-                                                                      xmin, blob, ctx);
-                    if (load_status != Status::OK)
-                    {
-                        bp->unpinPage(domains_table_page_, false, ctx);
-                        return load_status;
-                    }
-                    load_status = deserializeDomainQuality(blob, info.quality, ctx);
-                    if (load_status != Status::OK)
-                    {
-                        bp->unpinPage(domains_table_page_, false, ctx);
-                        return load_status;
-                    }
-                    blob.clear();
-                }
-
-                if (record->constraints_oid != 0)
-                {
-                    Status load_status = catalog->loadStringFromToast(record->constraints_oid,
-                                                                      xmin, blob, ctx);
-                    if (load_status != Status::OK)
-                    {
-                        bp->unpinPage(domains_table_page_, false, ctx);
-                        return load_status;
-                    }
-                    load_status = deserializeDomainConstraints(blob,
-                                                               info.constraints,
-                                                               info.variant_allowed_types,
-                                                               info.collation_name,
-                                                               info.enum_wrap,
-                                                               info.set_element_type,
-                                                               ctx);
-                    if (load_status != Status::OK)
-                    {
-                        bp->unpinPage(domains_table_page_, false, ctx);
-                        return load_status;
-                    }
-                    blob.clear();
-                }
-
-                if (record->fields_oid != 0)
-                {
-                    Status load_status = catalog->loadStringFromToast(record->fields_oid,
-                                                                      xmin, blob, ctx);
-                    if (load_status != Status::OK)
-                    {
-                        bp->unpinPage(domains_table_page_, false, ctx);
-                        return load_status;
-                    }
-
-                    if (info.domain_type == DomainType::RECORD)
-                    {
-                        load_status = deserializeDomainFields(blob, info.fields, ctx);
-                    }
-                    else if (info.domain_type == DomainType::RANGE)
-                    {
-                        load_status = deserializeDomainRangeInfo(blob, info.range_info, ctx);
-                    }
-                    else if (info.domain_type == DomainType::BASE)
-                    {
-                        load_status = deserializeDomainBaseInfo(blob, info.base_info, ctx);
-                    }
-                    if (load_status != Status::OK)
-                    {
-                        bp->unpinPage(domains_table_page_, false, ctx);
-                        return load_status;
-                    }
-                    blob.clear();
-                }
-
-                if (record->enum_values_oid != 0)
-                {
-                    Status load_status = catalog->loadStringFromToast(record->enum_values_oid,
-                                                                      xmin, blob, ctx);
-                    if (load_status != Status::OK)
-                    {
-                        bp->unpinPage(domains_table_page_, false, ctx);
-                        return load_status;
-                    }
-                    if (info.domain_type == DomainType::ENUM)
-                    {
-                        load_status = deserializeDomainEnumValues(blob, info.enum_values, ctx);
-                    }
-                    if (load_status != Status::OK)
-                    {
-                        bp->unpinPage(domains_table_page_, false, ctx);
-                        return load_status;
-                    }
-                    blob.clear();
-                }
-
-                if (info.domain_type != DomainType::VARIANT)
-                {
-                    info.variant_allowed_types.clear();
-                }
-                if (info.domain_type != DomainType::SET)
-                {
-                    info.set_element_type = DomainTypeRef{};
-                }
-                if (info.domain_type != DomainType::ENUM)
-                {
-                    info.enum_wrap = false;
-                }
-                if (info.domain_type != DomainType::RANGE)
-                {
-                    info.range_info = RangeTypeInfo{};
-                }
-                if (info.domain_type != DomainType::BASE)
-                {
-                    info.base_info = BaseTypeInfo{};
-                }
-
-                domain_cache_[info.domain_id] = info;
-                domain_count_++;
+                SET_ERROR_CONTEXT(ctx, status, "Failed to pin domains catalog page");
+                return status;
             }
+
+            auto* catalog_page = reinterpret_cast<DomainCatalogPage*>(page_buffer);
+            uint32_t next_page = catalog_page->next_page;
+
+            for (uint32_t i = 0; i < catalog_page->record_count; i++)
+            {
+                auto* record = reinterpret_cast<DomainRecord*>(
+                    catalog_page->data + (i * sizeof(DomainRecord)));
+
+                if (record->is_valid)
+                {
+                    DomainInfo info;
+                    info.domain_id = record->domain_id;
+                    info.schema_id = record->schema_id;
+                    info.domain_name = record->domain_name;
+                    info.domain_type = static_cast<DomainType>(record->domain_type);
+                    info.base_type = static_cast<DataType>(record->base_type);
+                    info.precision = record->precision;
+                    info.scale = record->scale;
+                    info.nullable = record->nullable != 0;
+                    info.default_value = record->default_value;
+                    info.parent_domain_id = record->parent_domain_id;
+                    info.created_time = record->created_time;
+                    info.last_modified_time = record->last_modified_time;
+                    info.set_element_type.type = static_cast<DataType>(record->set_element_type);
+                    info.dialect_tag = record->dialect_tag;
+                    if (info.dialect_tag.empty())
+                    {
+                        info.dialect_tag = "scratchbird";
+                    }
+                    info.compat_name = record->compat_name;
+
+                    CatalogManager* catalog = db_->catalog_manager();
+                    if (!catalog)
+                    {
+                        bp->unpinPage(page_id, false, ctx);
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "CatalogManager not available");
+                        return Status::INVALID_ARGUMENT;
+                    }
+
+                    uint64_t xmin = ConnectionContext::getCurrentTransactionId();
+                    std::string blob;
+
+                    if (!isZeroUuidLocal(record->security_oid))
+                    {
+                        Status load_status = catalog->loadStringFromToast(record->security_oid,
+                                                                          xmin, blob, ctx);
+                        if (load_status != Status::OK)
+                        {
+                            bp->unpinPage(page_id, false, ctx);
+                            return load_status;
+                        }
+                        load_status = deserializeDomainSecurity(blob, info.security, ctx);
+                        if (load_status != Status::OK)
+                        {
+                            bp->unpinPage(page_id, false, ctx);
+                            return load_status;
+                        }
+                        blob.clear();
+                    }
+
+                    if (!isZeroUuidLocal(record->integrity_oid))
+                    {
+                        Status load_status = catalog->loadStringFromToast(record->integrity_oid,
+                                                                          xmin, blob, ctx);
+                        if (load_status != Status::OK)
+                        {
+                            bp->unpinPage(page_id, false, ctx);
+                            return load_status;
+                        }
+                        load_status = deserializeDomainIntegrity(blob, info.integrity, ctx);
+                        if (load_status != Status::OK)
+                        {
+                            bp->unpinPage(page_id, false, ctx);
+                            return load_status;
+                        }
+                        blob.clear();
+                    }
+
+                    info.enforce_global_uniqueness = info.integrity.uniqueness_check;
+
+                    if (!isZeroUuidLocal(record->validation_oid))
+                    {
+                        Status load_status = catalog->loadStringFromToast(record->validation_oid,
+                                                                          xmin, blob, ctx);
+                        if (load_status != Status::OK)
+                        {
+                            bp->unpinPage(page_id, false, ctx);
+                            return load_status;
+                        }
+                        load_status = deserializeDomainValidation(blob, info.validation, ctx);
+                        if (load_status != Status::OK)
+                        {
+                            bp->unpinPage(page_id, false, ctx);
+                            return load_status;
+                        }
+                        blob.clear();
+                    }
+
+                    if (!isZeroUuidLocal(record->quality_oid))
+                    {
+                        Status load_status = catalog->loadStringFromToast(record->quality_oid,
+                                                                          xmin, blob, ctx);
+                        if (load_status != Status::OK)
+                        {
+                            bp->unpinPage(page_id, false, ctx);
+                            return load_status;
+                        }
+                        load_status = deserializeDomainQuality(blob, info.quality, ctx);
+                        if (load_status != Status::OK)
+                        {
+                            bp->unpinPage(page_id, false, ctx);
+                            return load_status;
+                        }
+                        blob.clear();
+                    }
+
+                    if (!isZeroUuidLocal(record->constraints_oid))
+                    {
+                        Status load_status = catalog->loadStringFromToast(record->constraints_oid,
+                                                                          xmin, blob, ctx);
+                        if (load_status != Status::OK)
+                        {
+                            bp->unpinPage(page_id, false, ctx);
+                            return load_status;
+                        }
+                        load_status = deserializeDomainConstraints(blob,
+                                                                   info.constraints,
+                                                                   info.variant_allowed_types,
+                                                                   info.collation_name,
+                                                                   info.enum_wrap,
+                                                                   info.set_element_type,
+                                                                   ctx);
+                        if (load_status != Status::OK)
+                        {
+                            bp->unpinPage(page_id, false, ctx);
+                            return load_status;
+                        }
+                        blob.clear();
+                    }
+
+                    if (!isZeroUuidLocal(record->fields_oid))
+                    {
+                        Status load_status = catalog->loadStringFromToast(record->fields_oid,
+                                                                          xmin, blob, ctx);
+                        if (load_status != Status::OK)
+                        {
+                            bp->unpinPage(page_id, false, ctx);
+                            return load_status;
+                        }
+
+                        if (info.domain_type == DomainType::RECORD)
+                        {
+                            load_status = deserializeDomainFields(blob, info.fields, ctx);
+                        }
+                        else if (info.domain_type == DomainType::RANGE)
+                        {
+                            load_status = deserializeDomainRangeInfo(blob, info.range_info, ctx);
+                        }
+                        else if (info.domain_type == DomainType::BASE)
+                        {
+                            load_status = deserializeDomainBaseInfo(blob, info.base_info, ctx);
+                        }
+                        if (load_status != Status::OK)
+                        {
+                            bp->unpinPage(page_id, false, ctx);
+                            return load_status;
+                        }
+                        blob.clear();
+                    }
+
+                    if (!isZeroUuidLocal(record->enum_values_oid))
+                    {
+                        Status load_status = catalog->loadStringFromToast(record->enum_values_oid,
+                                                                          xmin, blob, ctx);
+                        if (load_status != Status::OK)
+                        {
+                            bp->unpinPage(page_id, false, ctx);
+                            return load_status;
+                        }
+                        if (info.domain_type == DomainType::ENUM)
+                        {
+                            load_status = deserializeDomainEnumValues(blob, info.enum_values, ctx);
+                        }
+                        if (load_status != Status::OK)
+                        {
+                            bp->unpinPage(page_id, false, ctx);
+                            return load_status;
+                        }
+                        blob.clear();
+                    }
+
+                    if (info.domain_type != DomainType::VARIANT)
+                    {
+                        info.variant_allowed_types.clear();
+                    }
+                    if (info.domain_type != DomainType::SET)
+                    {
+                        info.set_element_type = DomainTypeRef{};
+                    }
+                    if (info.domain_type != DomainType::ENUM)
+                    {
+                        info.enum_wrap = false;
+                    }
+                    if (info.domain_type != DomainType::RANGE)
+                    {
+                        info.range_info = RangeTypeInfo{};
+                    }
+                    if (info.domain_type != DomainType::BASE)
+                    {
+                        info.base_info = BaseTypeInfo{};
+                    }
+
+                    domain_cache_[info.domain_id] = info;
+                    domain_count_++;
+                }
+            }
+
+            status = bp->unpinPage(page_id, false, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            page_id = next_page;
         }
 
-        return bp->unpinPage(domains_table_page_, false, ctx);
+        return Status::OK;
     }
 
     auto DomainManager::deleteDomainRecord(const ID& domain_id, ErrorContext* ctx) -> Status

@@ -24,26 +24,15 @@ namespace scratchbird::core
           critical_threshold_seconds_(3600) // 1 hour default
           ,
           check_interval_seconds_(60) // Check every minute default
-          ,
-          policy_(LongTransactionPolicy::LOG), monitoring_(false), shutdown_requested_(false)
+          , policy_(LongTransactionPolicy::LOG)
     {
     }
 
     LongTransactionMonitor::~LongTransactionMonitor()
     {
-        // Stop monitoring thread if running
-        if (monitoring_.load(std::memory_order_acquire))
-        {
-            shutdown_requested_.store(true, std::memory_order_release);
-
-            // Wake the monitoring thread so it can exit
-            wake_cv_.notify_one();
-
-            if (monitor_thread_.joinable())
-            {
-                monitor_thread_.join();
-            }
-        }
+        // Best-effort shutdown; destructor should never throw.
+        ErrorContext ctx;
+        (void) stopMonitoring(&ctx);
     }
 
     Status LongTransactionMonitor::initialize(ErrorContext *ctx)
@@ -133,17 +122,20 @@ namespace scratchbird::core
 
     Status LongTransactionMonitor::startMonitoring(ErrorContext *ctx)
     {
-        // Check if already running
-        if (monitoring_.load(std::memory_order_acquire))
         {
-            LOG_WARNING(TRANSACTION, "Long transaction monitor already running");
-            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Long transaction monitor already running");
-            return Status::IO_ERROR;
-        }
+            std::lock_guard<std::mutex> lock(wake_mutex_);
+            // Check if already running
+            if (monitoring_)
+            {
+                LOG_WARNING(TRANSACTION, "Long transaction monitor already running");
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Long transaction monitor already running");
+                return Status::IO_ERROR;
+            }
 
-        // Start monitoring thread
-        shutdown_requested_.store(false, std::memory_order_release);
-        monitoring_.store(true, std::memory_order_release);
+            // Start monitoring thread
+            shutdown_requested_ = false;
+            monitoring_ = true;
+        }
 
         monitor_thread_ = std::thread(&LongTransactionMonitor::monitoringLoop, this);
 
@@ -155,18 +147,20 @@ namespace scratchbird::core
 
     Status LongTransactionMonitor::stopMonitoring(ErrorContext *ctx)
     {
-        if (!monitoring_.load(std::memory_order_acquire))
+        (void) ctx;
+
         {
-            LOG_WARNING(TRANSACTION, "Long transaction monitor not running");
-            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Long transaction monitor not running");
-            return Status::IO_ERROR;
+            std::lock_guard<std::mutex> lock(wake_mutex_);
+            if (!monitoring_)
+            {
+                // Normal for repeated stop calls from shutdown paths.
+                return Status::OK;
+            }
+
+            // Signal shutdown while holding wake mutex.
+            shutdown_requested_ = true;
+            wake_cv_.notify_one();
         }
-
-        // Signal shutdown
-        shutdown_requested_.store(true, std::memory_order_release);
-
-        // Wake the monitoring thread so it can exit
-        wake_cv_.notify_one();
 
         // Wait for thread to finish
         if (monitor_thread_.joinable())
@@ -174,7 +168,11 @@ namespace scratchbird::core
             monitor_thread_.join();
         }
 
-        monitoring_.store(false, std::memory_order_release);
+        {
+            std::lock_guard<std::mutex> lock(wake_mutex_);
+            monitoring_ = false;
+            shutdown_requested_ = false;
+        }
 
         LOG_INFO(TRANSACTION, "Long transaction monitor thread stopped");
         return Status::OK;
@@ -182,7 +180,8 @@ namespace scratchbird::core
 
     bool LongTransactionMonitor::isMonitoring() const
     {
-        return monitoring_.load(std::memory_order_acquire);
+        std::lock_guard<std::mutex> lock(wake_mutex_);
+        return monitoring_;
     }
 
     void LongTransactionMonitor::enable()
@@ -241,8 +240,26 @@ namespace scratchbird::core
     {
         LOG_INFO(TRANSACTION, "Long transaction monitoring loop started");
 
-        while (!shutdown_requested_.load(std::memory_order_acquire))
+        while (true)
         {
+            bool should_shutdown = false;
+            {
+                std::unique_lock<std::mutex> lock(wake_mutex_);
+                should_shutdown = shutdown_requested_;
+                if (!should_shutdown)
+                {
+                    uint32_t interval = check_interval_seconds_.load(std::memory_order_acquire);
+                    wake_cv_.wait_for(lock, std::chrono::seconds(interval),
+                                      [this] { return shutdown_requested_; });
+                    should_shutdown = shutdown_requested_;
+                }
+            }
+
+            if (should_shutdown)
+            {
+                break;
+            }
+
             // Check if monitoring is enabled
             if (enabled_.load(std::memory_order_acquire))
             {
@@ -250,12 +267,6 @@ namespace scratchbird::core
                 ErrorContext err_ctx;
                 checkLongTransactions(&err_ctx);
             }
-
-            // Wait for wake signal or timeout
-            std::unique_lock<std::mutex> lock(wake_mutex_);
-            uint32_t interval = check_interval_seconds_.load(std::memory_order_acquire);
-            wake_cv_.wait_for(lock, std::chrono::seconds(interval), [this]
-                              { return shutdown_requested_.load(std::memory_order_acquire); });
         }
 
         LOG_INFO(TRANSACTION, "Long transaction monitoring loop stopped");

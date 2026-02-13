@@ -1,0 +1,9 @@
+# catalog/SCHEMA_PATH_SECURITY_DEFAULTS.md - Review
+
+Spec: /home/dcalford/CliWork/ScratchBird/docs/specifications/parser/v3/catalog/SCHEMA_PATH_SECURITY_DEFAULTS.md
+
+Status notes:
+- The document explicitly states it is **Non-Authoritative**, but includes an internal "Authoritative (V3)" label. Treating it as non-authoritative per inventory rules.
+
+Verification:
+- No code-level verification performed (requirements only).

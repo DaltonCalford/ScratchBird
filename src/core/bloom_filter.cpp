@@ -199,6 +199,13 @@ Status BloomFilter::create(Database *db,
     meta->bf_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_BLOOM_FILTER_META);
     meta->bf_header.page_size = page_size;
     meta->bf_header.page_id = static_cast<uint32_t>(getPageNumber(meta_gpid));
+    meta->bf_header.generation = 1;
+    meta->bf_header.checksum = 0;
+    meta->bf_header.flags = 0;
+    meta->bf_header.lsn = 0;
+    pageSetLower(meta->bf_header, sizeof(SBBloomFilterMetaPage));
+    pageSetUpper(meta->bf_header, page_size);
+    pageSetSpecial(meta->bf_header, page_size);
 
     std::memcpy(meta->bf_uuid, index_uuid.bytes.data(), sizeof(meta->bf_uuid));
     meta->bf_num_keys = 0;
@@ -233,6 +240,13 @@ Status BloomFilter::create(Database *db,
         data_page->bf_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_BLOOM_FILTER_DATA);
         data_page->bf_header.page_size = page_size;
         data_page->bf_header.page_id = static_cast<uint32_t>(getPageNumber(data_pages[i]));
+        data_page->bf_header.generation = 1;
+        data_page->bf_header.checksum = 0;
+        data_page->bf_header.flags = 0;
+        data_page->bf_header.lsn = 0;
+        pageSetLower(data_page->bf_header, sizeof(SBBloomFilterDataPage));
+        pageSetUpper(data_page->bf_header, page_size);
+        pageSetSpecial(data_page->bf_header, page_size);
         data_page->bf_next_page = (i + 1 < data_pages.size()) ? data_pages[i + 1] : 0;
         bp->unpinPageGlobal(data_pages[i], true, ctx);
     }

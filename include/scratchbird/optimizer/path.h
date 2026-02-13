@@ -12,10 +12,16 @@
 #include "scratchbird/core/types.h"
 #include "scratchbird/optimizer/cost_model.h"
 #include "scratchbird/parser/shared_types.h"      // For JoinType, WindowFunc, GroupingType, etc.
-#include "scratchbird/sblr/resolved_ast_v2.h"     // For V2 ResolvedExpression types
 #include <memory>
 #include <string>
 #include <vector>
+
+namespace scratchbird::parser::v3 {
+    class Expression;
+    class FunctionCallExpr;
+    struct OrderByItem;
+    struct WindowSpec;
+}
 
 namespace scratchbird::optimizer
 {
@@ -178,15 +184,15 @@ namespace scratchbird::optimizer
 
         /**
          * Set WHERE expression (OPT-L2: for EXPLAIN filter display)
-         * @param expr WHERE clause expression (non-owning pointer) - V2 resolved expression
+         * @param expr WHERE clause expression (non-owning pointer) - V3 expression
          */
-        void setWhereExpr(const parser::v2::ResolvedExpression* expr) { where_expr_ = expr; }
+        void setWhereExpr(const parser::v3::Expression* expr) { where_expr_ = expr; }
 
         /**
          * Get WHERE expression
          * @return WHERE clause expression or nullptr if none
          */
-        const parser::v2::ResolvedExpression* whereExpr() const { return where_expr_; }
+        const parser::v3::Expression* whereExpr() const { return where_expr_; }
 
         /**
          * Convert to string for debugging
@@ -204,7 +210,7 @@ namespace scratchbird::optimizer
         uint64_t num_pages_;
         uint64_t num_tuples_;
         double qual_cost_;
-        const parser::v2::ResolvedExpression* where_expr_ = nullptr;  // OPT-L2: WHERE clause for EXPLAIN (V2)
+        const parser::v3::Expression* where_expr_ = nullptr;  // OPT-L2: WHERE clause for EXPLAIN (V3)
     };
 
     /**
@@ -325,15 +331,15 @@ namespace scratchbird::optimizer
 
         /**
          * Set WHERE expression (OPT-L2: for EXPLAIN filter display)
-         * @param expr WHERE clause expression (non-owning pointer) - V2 resolved expression
+         * @param expr WHERE clause expression (non-owning pointer) - V3 expression
          */
-        void setWhereExpr(const parser::v2::ResolvedExpression* expr) { where_expr_ = expr; }
+        void setWhereExpr(const parser::v3::Expression* expr) { where_expr_ = expr; }
 
         /**
          * Get WHERE expression
          * @return WHERE clause expression or nullptr if none
          */
-        const parser::v2::ResolvedExpression* whereExpr() const { return where_expr_; }
+        const parser::v3::Expression* whereExpr() const { return where_expr_; }
 
         /**
          * Convert to string for debugging
@@ -358,7 +364,7 @@ namespace scratchbird::optimizer
         uint64_t heap_tuples_;
         double qual_cost_;
         double correlation_;
-        const parser::v2::ResolvedExpression* where_expr_ = nullptr;  // OPT-L2: WHERE clause for EXPLAIN (V2)
+        const parser::v3::Expression* where_expr_ = nullptr;  // OPT-L2: WHERE clause for EXPLAIN (V3)
     };
 
     /**
@@ -535,14 +541,14 @@ namespace scratchbird::optimizer
          * @param join_type Type of join (INNER, LEFT, RIGHT, FULL, CROSS)
          * @param outer_path Outer (left) relation path
          * @param inner_path Inner (right) relation path
-         * @param join_condition Join condition expression (V2 resolved)
+         * @param join_condition Join condition expression (V3)
          * @param selectivity Estimated selectivity of join condition
          * @param cost Cost estimate
          */
         NestedLoopJoinPath(parser::JoinType join_type,
                           std::shared_ptr<Path> outer_path,
                           std::shared_ptr<Path> inner_path,
-                          parser::v2::ResolvedExpression* join_condition,
+                          parser::v3::Expression* join_condition,
                           double selectivity,
                           const CostEstimate& cost)
             : Path(PathType::NESTED_LOOP_JOIN, cost),
@@ -570,9 +576,9 @@ namespace scratchbird::optimizer
         const std::shared_ptr<Path>& innerPath() const { return inner_path_; }
 
         /**
-         * Get join condition (V2 resolved expression)
+         * Get join condition (V3 expression)
          */
-        parser::v2::ResolvedExpression* joinCondition() const { return join_condition_; }
+        parser::v3::Expression* joinCondition() const { return join_condition_; }
 
         /**
          * Get join selectivity
@@ -593,7 +599,7 @@ namespace scratchbird::optimizer
         parser::JoinType join_type_;
         std::shared_ptr<Path> outer_path_;
         std::shared_ptr<Path> inner_path_;
-        parser::v2::ResolvedExpression* join_condition_;
+        parser::v3::Expression* join_condition_;
         double selectivity_;
     };
 
@@ -623,18 +629,18 @@ namespace scratchbird::optimizer
          * @param join_type Type of join (INNER, LEFT, RIGHT, FULL)
          * @param outer_path Outer (build side) relation path
          * @param inner_path Inner (probe side) relation path
-         * @param join_condition Join condition expression (V2 resolved)
-         * @param hash_keys_outer Hash key expressions from outer table (V2 resolved)
-         * @param hash_keys_inner Hash key expressions from inner table (V2 resolved)
+         * @param join_condition Join condition expression (V3)
+         * @param hash_keys_outer Hash key expressions from outer table (V3)
+         * @param hash_keys_inner Hash key expressions from inner table (V3)
          * @param selectivity Estimated selectivity of join condition
          * @param cost Cost estimate
          */
         HashJoinPath(parser::JoinType join_type,
                     std::shared_ptr<Path> outer_path,
                     std::shared_ptr<Path> inner_path,
-                    parser::v2::ResolvedExpression* join_condition,
-                    const std::vector<parser::v2::ResolvedExpression*>& hash_keys_outer,
-                    const std::vector<parser::v2::ResolvedExpression*>& hash_keys_inner,
+                    parser::v3::Expression* join_condition,
+                    const std::vector<parser::v3::Expression*>& hash_keys_outer,
+                    const std::vector<parser::v3::Expression*>& hash_keys_inner,
                     double selectivity,
                     const CostEstimate& cost)
             : Path(PathType::HASH_JOIN, cost),
@@ -664,22 +670,22 @@ namespace scratchbird::optimizer
         const std::shared_ptr<Path>& innerPath() const { return inner_path_; }
 
         /**
-         * Get join condition (V2 resolved expression)
+         * Get join condition (V3 expression)
          */
-        parser::v2::ResolvedExpression* joinCondition() const { return join_condition_; }
+        parser::v3::Expression* joinCondition() const { return join_condition_; }
 
         /**
-         * Get hash keys from outer table (V2 resolved expressions)
+         * Get hash keys from outer table (V3 expressions)
          */
-        const std::vector<parser::v2::ResolvedExpression*>& hashKeysOuter() const
+        const std::vector<parser::v3::Expression*>& hashKeysOuter() const
         {
             return hash_keys_outer_;
         }
 
         /**
-         * Get hash keys from inner table (V2 resolved expressions)
+         * Get hash keys from inner table (V3 expressions)
          */
-        const std::vector<parser::v2::ResolvedExpression*>& hashKeysInner() const
+        const std::vector<parser::v3::Expression*>& hashKeysInner() const
         {
             return hash_keys_inner_;
         }
@@ -703,9 +709,9 @@ namespace scratchbird::optimizer
         parser::JoinType join_type_;
         std::shared_ptr<Path> outer_path_;
         std::shared_ptr<Path> inner_path_;
-        parser::v2::ResolvedExpression* join_condition_;
-        std::vector<parser::v2::ResolvedExpression*> hash_keys_outer_;
-        std::vector<parser::v2::ResolvedExpression*> hash_keys_inner_;
+        parser::v3::Expression* join_condition_;
+        std::vector<parser::v3::Expression*> hash_keys_outer_;
+        std::vector<parser::v3::Expression*> hash_keys_inner_;
         double selectivity_;
     };
 
@@ -731,22 +737,22 @@ namespace scratchbird::optimizer
          * Constructor
          *
          * @param input_path Input path to aggregate
-         * @param grouping_exprs GROUP BY expressions (V2 resolved, empty for simple aggregation)
-         * @param aggregates Aggregate function expressions (V2 resolved)
-         * @param having_clause HAVING clause expression (V2 resolved, may be nullptr)
+         * @param grouping_exprs GROUP BY expressions (V3, empty for simple aggregation)
+         * @param aggregates Aggregate function expressions (V3)
+         * @param having_clause HAVING clause expression (V3, may be nullptr)
          * @param num_groups Estimated number of groups (1 for simple aggregation)
          * @param cost Cost estimate
          * @param grouping_type Type of grouping (STANDARD, ROLLUP, CUBE, GROUPING_SETS)
-         * @param grouping_sets Explicit grouping sets (V2 resolved, for GROUPING SETS)
+         * @param grouping_sets Explicit grouping sets (V3, for GROUPING SETS)
          */
         AggregatePath(std::shared_ptr<Path> input_path,
-                     const std::vector<parser::v2::ResolvedExpression*>& grouping_exprs,
-                     const std::vector<parser::v2::ResolvedFunctionCall*>& aggregates,
-                     parser::v2::ResolvedExpression* having_clause,
+                     const std::vector<parser::v3::Expression*>& grouping_exprs,
+                     const std::vector<parser::v3::FunctionCallExpr*>& aggregates,
+                     parser::v3::Expression* having_clause,
                      uint64_t num_groups,
                      const CostEstimate& cost,
                      parser::GroupingType grouping_type = parser::GroupingType::STANDARD,
-                     const std::vector<std::vector<parser::v2::ResolvedExpression*>>& grouping_sets = {})
+                     const std::vector<std::vector<parser::v3::Expression*>>& grouping_sets = {})
             : Path(PathType::AGGREGATE, cost),
               input_path_(std::move(input_path)),
               grouping_exprs_(grouping_exprs),
@@ -764,25 +770,25 @@ namespace scratchbird::optimizer
         const std::shared_ptr<Path>& inputPath() const { return input_path_; }
 
         /**
-         * Get GROUP BY expressions (V2 resolved)
+         * Get GROUP BY expressions (V3)
          */
-        const std::vector<parser::v2::ResolvedExpression*>& groupingExprs() const
+        const std::vector<parser::v3::Expression*>& groupingExprs() const
         {
             return grouping_exprs_;
         }
 
         /**
-         * Get aggregate functions (V2 resolved function calls)
+         * Get aggregate functions (V3 function calls)
          */
-        const std::vector<parser::v2::ResolvedFunctionCall*>& aggregates() const
+        const std::vector<parser::v3::FunctionCallExpr*>& aggregates() const
         {
             return aggregates_;
         }
 
         /**
-         * Get HAVING clause (V2 resolved expression)
+         * Get HAVING clause (V3 expression)
          */
-        parser::v2::ResolvedExpression* havingClause() const { return having_clause_; }
+        parser::v3::Expression* havingClause() const { return having_clause_; }
 
         /**
          * Get number of groups
@@ -800,9 +806,9 @@ namespace scratchbird::optimizer
         parser::GroupingType groupingType() const { return grouping_type_; }
 
         /**
-         * Get explicit grouping sets (V2 resolved, for GROUPING SETS)
+         * Get explicit grouping sets (V3, for GROUPING SETS)
          */
-        const std::vector<std::vector<parser::v2::ResolvedExpression*>>& groupingSets() const
+        const std::vector<std::vector<parser::v3::Expression*>>& groupingSets() const
         {
             return grouping_sets_;
         }
@@ -825,12 +831,12 @@ namespace scratchbird::optimizer
 
     private:
         std::shared_ptr<Path> input_path_;
-        std::vector<parser::v2::ResolvedExpression*> grouping_exprs_;
-        std::vector<parser::v2::ResolvedFunctionCall*> aggregates_;
-        parser::v2::ResolvedExpression* having_clause_;
+        std::vector<parser::v3::Expression*> grouping_exprs_;
+        std::vector<parser::v3::FunctionCallExpr*> aggregates_;
+        parser::v3::Expression* having_clause_;
         uint64_t num_groups_;
         parser::GroupingType grouping_type_;
-        std::vector<std::vector<parser::v2::ResolvedExpression*>> grouping_sets_;
+        std::vector<std::vector<parser::v3::Expression*>> grouping_sets_;
     };
 
     /**
@@ -855,12 +861,12 @@ namespace scratchbird::optimizer
          * Constructor
          *
          * @param input_path Input path to sort
-         * @param order_by_items ORDER BY expressions with direction (V2 resolved)
+         * @param order_by_items ORDER BY expressions with direction (V3)
          * @param row_width Estimated average row width
          * @param cost Cost estimate
          */
         SortPath(std::shared_ptr<Path> input_path,
-                const std::vector<parser::v2::ResolvedOrderByItem*>& order_by_items,
+                const std::vector<parser::v3::OrderByItem*>& order_by_items,
                 uint64_t row_width,
                 const CostEstimate& cost)
             : Path(PathType::SORT, cost),
@@ -876,9 +882,9 @@ namespace scratchbird::optimizer
         const std::shared_ptr<Path>& inputPath() const { return input_path_; }
 
         /**
-         * Get ORDER BY items (V2 resolved)
+         * Get ORDER BY items (V3)
          */
-        const std::vector<parser::v2::ResolvedOrderByItem*>& orderByItems() const
+        const std::vector<parser::v3::OrderByItem*>& orderByItems() const
         {
             return order_by_items_;
         }
@@ -900,7 +906,7 @@ namespace scratchbird::optimizer
 
     private:
         std::shared_ptr<Path> input_path_;
-        std::vector<parser::v2::ResolvedOrderByItem*> order_by_items_;
+        std::vector<parser::v3::OrderByItem*> order_by_items_;
         uint64_t row_width_;
     };
 
@@ -996,11 +1002,11 @@ namespace scratchbird::optimizer
          * Constructor
          *
          * @param input_path Input path to evaluate window functions over
-         * @param window_funcs Window function expressions (V2 resolved function calls with window specs)
+         * @param window_funcs Window function expressions (V3 function calls with window specs)
          * @param cost Cost estimate
          */
         WindowPath(std::shared_ptr<Path> input_path,
-                  const std::vector<parser::v2::ResolvedFunctionCall*>& window_funcs,
+                  const std::vector<parser::v3::FunctionCallExpr*>& window_funcs,
                   const CostEstimate& cost)
             : Path(PathType::WINDOW, cost),
               input_path_(std::move(input_path)),
@@ -1014,9 +1020,9 @@ namespace scratchbird::optimizer
         const std::shared_ptr<Path>& inputPath() const { return input_path_; }
 
         /**
-         * Get window function expressions (V2 resolved, with window specs)
+         * Get window function expressions (V3, with window specs)
          */
-        const std::vector<parser::v2::ResolvedFunctionCall*>& windowFuncs() const { return window_funcs_; }
+        const std::vector<parser::v3::FunctionCallExpr*>& windowFuncs() const { return window_funcs_; }
 
         /**
          * Convert to string for debugging
@@ -1032,7 +1038,7 @@ namespace scratchbird::optimizer
 
     private:
         std::shared_ptr<Path> input_path_;
-        std::vector<parser::v2::ResolvedFunctionCall*> window_funcs_;
+        std::vector<parser::v3::FunctionCallExpr*> window_funcs_;
     };
 
     /**

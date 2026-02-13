@@ -378,18 +378,17 @@ TEST_F(StorageCorruptionTest, CorruptPageSpecialArea)
         db.close();
     }
 
-    // Corrupt the special area with invalid offsets
-    HeapPageSpecial bad_special;
-    bad_special.pd_flags = 0xFFFF;
-    bad_special.pd_lower = 8000; // Invalid - beyond page
-    bad_special.pd_upper = 100;  // Invalid - upper < lower
-    bad_special.pd_special = 0;
-    bad_special.pd_prune_xid = UINT32_MAX;
+    // Corrupt the page header offsets
+    PageHeader bad_header{};
+    bad_header.magic = K_MAGIC_SBRD;
+    bad_header.page_size = page_size;
+    pageSetLower(bad_header, page_size + 1000); // Invalid - beyond page
+    pageSetUpper(bad_header, 100);              // Invalid - upper < lower
+    pageSetSpecial(bad_header, 0);
 
-    size_t special_offset = static_cast<size_t>(heap_page_id) * page_size +
-                            page_size - sizeof(HeapPageSpecial);
-    corrupt_file(test_db_path(), special_offset, reinterpret_cast<uint8_t *>(&bad_special),
-                 sizeof(HeapPageSpecial));
+    size_t header_offset = static_cast<size_t>(heap_page_id) * page_size;
+    corrupt_file(test_db_path(), header_offset, reinterpret_cast<uint8_t *>(&bad_header),
+                 sizeof(PageHeader));
 
     // Try to insert into the corrupted page
     Database db;

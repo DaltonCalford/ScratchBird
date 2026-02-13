@@ -1,0 +1,814 @@
+{
+  "functions": [
+    {
+      "name": "ABS",
+      "min_args": "1",
+      "max_args": "1",
+      "deterministic": true,
+      "set_params": "setParamsDblDec",
+      "make_result": "makeAbs",
+      "evaluator": "evlAbs",
+      "extra": "NULL"
+    },
+    {
+      "name": "ACOS",
+      "min_args": "1",
+      "max_args": "1",
+      "deterministic": true,
+      "set_params": "setParamsDouble",
+      "make_result": "makeDoubleResult",
+      "evaluator": "evlStdMath",
+      "extra": "(void*) trfAcos"
+    },
+    {
+      "name": "ACOSH",
+      "min_args": "1",
+      "max_args": "1",
+      "deterministic": true,
+      "set_params": "setParamsDouble",
+      "make_result": "makeDoubleResult",
+      "evaluator": "evlStdMath",
+      "extra": "(void*) trfAcosh"
+    },
+    {
+      "name": "ASCII_CHAR",
+      "min_args": "1",
+      "max_args": "1",
+      "deterministic": true,
+      "set_params": "setParamsInteger",
+      "make_result": "makeAsciiChar",
+      "evaluator": "evlAsciiChar",
+      "extra": "NULL"
+    },
+    {
+      "name": "ASCII_VAL",
+      "min_args": "1",
+      "max_args": "1",
+      "deterministic": true,
+      "set_params": "setParamsAsciiVal",
+      "make_result": "makeShortResult",
+      "evaluator": "evlAsciiVal",
+      "extra": "NULL"
+    },
+    {
+      "name": "ASIN",
+      "min_args": "1",
+      "max_args": "1",
+      "deterministic": true,
+      "set_params": "setParamsDouble",
+      "make_result": "makeDoubleResult",
+      "evaluator": "evlStdMath",
+      "extra": "(void*) trfAsin"
+    },
+    {
+      "name": "ASINH",
+      "min_args": "1",
+      "max_args": "1",
+      "deterministic": true,
+      "set_params": "setParamsDouble",
+      "make_result": "makeDoubleResult",
+      "evaluator": "evlStdMath",
+      "extra": "(void*) trfAsinh"
+    },
+    {
+      "name": "ATAN",
+      "min_args": "1",
+      "max_args": "1",
+      "deterministic": true,
+      "set_params": "setParamsDouble",
+      "make_result": "makeDoubleResult",
+      "evaluator": "evlStdMath",
+      "extra": "(void*) trfAtan"
+    },
+    {
+      "name": "ATANH",
+      "min_args": "1",
+      "max_args": "1",
+      "deterministic": true,
+      "set_params": "setParamsDouble",
+      "make_result": "makeDoubleResult",
+      "evaluator": "evlStdMath",
+      "extra": "(void*) trfAtanh"
+    },
+    {
+      "name": "ATAN2",
+      "min_args": "2",
+      "max_args": "2",
+      "deterministic": true,
+      "set_params": "setParamsDouble",
+      "make_result": "makeDoubleResult",
+      "evaluator": "evlAtan2",
+      "extra": "NULL"
+    },
+    {
+      "name": "BASE64_DECODE",
+      "min_args": "1",
+      "max_args": "1",
+      "deterministic": true,
+      "set_params": "NULL",
+      "make_result": "makeDecode64",
+      "evaluator": "evlDecode64",
+      "extra": "NULL"
+    },
+    {
+      "name": "BASE64_ENCODE",
+      "min_args": "1",
+      "max_args": "1",
+      "deterministic": true,
+      "set_params": "NULL",
+      "make_result": "makeEncode64",
+      "evaluator": "evlEncode64",
+      "extra": "NULL"
+    },
+    {
+      "name": "BIN_AND",
+      "min_args": "2",
+      "max_args": "-1",
+      "deterministic": true,
+      "set_params": "setParamsBin",
+      "make_result": "makeBin",
+      "evaluator": "evlBin",
+      "extra": "(void*) funBinAnd"
+    },
+    {
+      "name": "BIN_NOT",
+      "min_args": "1",
+      "max_args": "1",
+      "deterministic": true,
+      "set_params": "setParamsBin",
+      "make_result": "makeBin",
+      "evaluator": "evlBin",
+      "extra": "(void*) funBinNot"
+    },
+    {
+      "name": "BIN_OR",
+      "min_args": "2",
+      "max_args": "-1",
+      "deterministic": true,
+      "set_params": "setParamsBin",
+      "make_result": "makeBin",
+      "evaluator": "evlBin",
+      "extra": "(void*) funBinOr"
+    },
+    {
+      "name": "BIN_SHL",
+      "min_args": "2",
+      "max_args": "2",
+      "deterministic": true,
+      "set_params": "setParamsInteger",
+      "make_result": "makeBinShift",
+      "evaluator": "evlBinShift",
+      "extra": "(void*) funBinShl"
+    },
+    {
+      "name": "BIN_SHR",
+      "min_args": "2",
+      "max_args": "2",
+      "deterministic": true,
+      "set_params": "setParamsInteger",
+      "make_result": "makeBinShift",
+      "evaluator": "evlBinShift",
+      "extra": "(void*) funBinShr"
+    },
+    {
+      "name": "BIN_SHL_ROT",
+      "min_args": "2",
+      "max_args": "2",
+      "deterministic": true,
+      "set_params": "setParamsInteger",
+      "make_result": "makeBinShift",
+      "evaluator": "evlBinShift",
+      "extra": "(void*) funBinShlRot"
+    },
+    {
+      "name": "BIN_SHR_ROT",
+      "min_args": "2",
+      "max_args": "2",
+      "deterministic": true,
+      "set_params": "setParamsInteger",
+      "make_result": "makeBinShift",
+      "evaluator": "evlBinShift",
+      "extra": "(void*) funBinShrRot"
+    },
+    {
+      "name": "BIN_XOR",
+      "min_args": "2",
+      "max_args": "-1",
+      "deterministic": true,
+      "set_params": "setParamsBin",
+      "make_result": "makeBin",
+      "evaluator": "evlBin",
+      "extra": "(void*) funBinXor"
+    },
+    {
+      "name": "BLOB_APPEND",
+      "min_args": "2",
+      "max_args": "-1",
+      "deterministic": true,
+      "set_params": "setParamsBlobAppend",
+      "make_result": "makeBlobAppend",
+      "evaluator": "evlBlobAppend",
+      "extra": "NULL"
+    },
+    {
+      "name": "CEIL",
+      "min_args": "1",
+      "max_args": "1",
+      "deterministic": true,
+      "set_params": "setParamsDblDec",
+      "make_result": "makeCeilFloor",
+      "evaluator": "evlCeil",
+      "extra": "NULL"
+    },
+    {
+      "name": "CEILING",
+      "min_args": "1",
+      "max_args": "1",
+      "deterministic": true,
+      "set_params": "setParamsDblDec",
+      "make_result": "makeCeilFloor",
+      "evaluator": "evlCeil",
+      "extra": "NULL"
+    },
+    {
+      "name": "CHAR_TO_UUID",
+      "min_args": "1",
+      "max_args": "1",
+      "deterministic": true,
+      "set_params": "setParamsCharToUuid",
+      "make_result": "makeUuid",
+      "evaluator": "evlCharToUuid",
+      "extra": "NULL"
+    },
+    {
+      "name": "COMPARE_DECFLOAT",
+      "min_args": "2",
+      "max_args": "2",
+      "deterministic": true,
+      "set_params": "setParamsDecFloat",
+      "make_result": "makeShortResult",
+      "evaluator": "evlCompare",
+      "extra": "(void*) funCmpDec"
+    },
+    {
+      "name": "COS",
+      "min_args": "1",
+      "max_args": "1",
+      "deterministic": true,
+      "set_params": "setParamsDouble",
+      "make_result": "makeDoubleResult",
+      "evaluator": "evlStdMath",
+      "extra": "(void*) trfCos"
+    },
+    {
+      "name": "COSH",
+      "min_args": "1",
+      "max_args": "1",
+      "deterministic": true,
+      "set_params": "setParamsDouble",
+      "make_result": "makeDoubleResult",
+      "evaluator": "evlStdMath",
+      "extra": "(void*) trfCosh"
+    },
+    {
+      "name": "COT",
+      "min_args": "1",
+      "max_args": "1",
+      "deterministic": true,
+      "set_params": "setParamsDouble",
+      "make_result": "makeDoubleResult",
+      "evaluator": "evlStdMath",
+      "extra": "(void*) trfCot"
+    },
+    {
+      "name": "CRYPT_HASH",
+      "min_args": "2",
+      "max_args": "2",
+      "deterministic": true,
+      "set_params": "setParamsHash",
+      "make_result": "makeHash",
+      "evaluator": "evlHash",
+      "extra": "NULL"
+    },
+    {
+      "name": "DATEADD",
+      "min_args": "3",
+      "max_args": "3",
+      "deterministic": true,
+      "set_params": "setParamsDateAdd",
+      "make_result": "makeDateAdd",
+      "evaluator": "evlDateAdd",
+      "extra": "NULL"
+    },
+    {
+      "name": "DATEDIFF",
+      "min_args": "3",
+      "max_args": "3",
+      "deterministic": true,
+      "set_params": "setParamsDateDiff",
+      "make_result": "makeDateDiff",
+      "evaluator": "evlDateDiff",
+      "extra": "NULL"
+    },
+    {
+      "name": "DECRYPT",
+      "min_args": "CRYPT_ARG_MAX",
+      "max_args": "CRYPT_ARG_MAX",
+      "deterministic": true,
+      "set_params": "setParamsEncrypt",
+      "make_result": "makeCrypt",
+      "evaluator": "evlDecrypt",
+      "extra": "NULL"
+    },
+    {
+      "name": "ENCRYPT",
+      "min_args": "CRYPT_ARG_MAX",
+      "max_args": "CRYPT_ARG_MAX",
+      "deterministic": true,
+      "set_params": "setParamsEncrypt",
+      "make_result": "makeCrypt",
+      "evaluator": "evlEncrypt",
+      "extra": "NULL"
+    },
+    {
+      "name": "EXP",
+      "min_args": "1",
+      "max_args": "1",
+      "deterministic": true,
+      "set_params": "setParamsDblDec",
+      "make_result": "makeDblDecResult",
+      "evaluator": "evlExp",
+      "extra": "NULL"
+    },
+    {
+      "name": "FIRST_DAY",
+      "min_args": "2",
+      "max_args": "2",
+      "deterministic": true,
+      "set_params": "setParamsFirstLastDay",
+      "make_result": "makeFirstLastDayResult",
+      "evaluator": "evlFirstLastDay",
+      "extra": "(void*) funFirstDay"
+    },
+    {
+      "name": "FLOOR",
+      "min_args": "1",
+      "max_args": "1",
+      "deterministic": true,
+      "set_params": "setParamsDblDec",
+      "make_result": "makeCeilFloor",
+      "evaluator": "evlFloor",
+      "extra": "NULL"
+    },
+    {
+      "name": "GEN_UUID",
+      "min_args": "0",
+      "max_args": "1",
+      "deterministic": false,
+      "set_params": "NULL",
+      "make_result": "makeUuid",
+      "evaluator": "evlGenUuid",
+      "extra": "NULL"
+    },
+    {
+      "name": "GREATEST",
+      "min_args": "1",
+      "max_args": "-1",
+      "deterministic": true,
+      "set_params": "setParamsFromList",
+      "make_result": "makeFromListResult",
+      "evaluator": "evlMaxMinValue",
+      "extra": "(void*) funMaxValue"
+    },
+    {
+      "name": "HASH",
+      "min_args": "1",
+      "max_args": "2",
+      "deterministic": true,
+      "set_params": "setParamsHash",
+      "make_result": "makeHash",
+      "evaluator": "evlHash",
+      "extra": "NULL"
+    },
+    {
+      "name": "HEX_DECODE",
+      "min_args": "1",
+      "max_args": "1",
+      "deterministic": true,
+      "set_params": "NULL",
+      "make_result": "makeDecodeHex",
+      "evaluator": "evlDecodeHex",
+      "extra": "NULL"
+    },
+    {
+      "name": "HEX_ENCODE",
+      "min_args": "1",
+      "max_args": "1",
+      "deterministic": true,
+      "set_params": "NULL",
+      "make_result": "makeEncodeHex",
+      "evaluator": "evlEncodeHex",
+      "extra": "NULL"
+    },
+    {
+      "name": "LAST_DAY",
+      "min_args": "2",
+      "max_args": "2",
+      "deterministic": true,
+      "set_params": "setParamsFirstLastDay",
+      "make_result": "makeFirstLastDayResult",
+      "evaluator": "evlFirstLastDay",
+      "extra": "(void*) funLastDay"
+    },
+    {
+      "name": "LEAST",
+      "min_args": "1",
+      "max_args": "-1",
+      "deterministic": true,
+      "set_params": "setParamsFromList",
+      "make_result": "makeFromListResult",
+      "evaluator": "evlMaxMinValue",
+      "extra": "(void*) funMinValue"
+    },
+    {
+      "name": "LEFT",
+      "min_args": "2",
+      "max_args": "2",
+      "deterministic": true,
+      "set_params": "setParamsSecondInteger",
+      "make_result": "makeLeftRight",
+      "evaluator": "evlLeft",
+      "extra": "NULL"
+    },
+    {
+      "name": "LN",
+      "min_args": "1",
+      "max_args": "1",
+      "deterministic": true,
+      "set_params": "setParamsDblDec",
+      "make_result": "makeDblDecResult",
+      "evaluator": "evlLnLog10",
+      "extra": "(void*) funLnat"
+    },
+    {
+      "name": "LOG",
+      "min_args": "2",
+      "max_args": "2",
+      "deterministic": true,
+      "set_params": "setParamsDblDec",
+      "make_result": "makeDblDecResult",
+      "evaluator": "evlLog",
+      "extra": "NULL"
+    },
+    {
+      "name": "LOG10",
+      "min_args": "1",
+      "max_args": "1",
+      "deterministic": true,
+      "set_params": "setParamsDblDec",
+      "make_result": "makeDblDecResult",
+      "evaluator": "evlLnLog10",
+      "extra": "(void*) funLog10"
+    },
+    {
+      "name": "LPAD",
+      "min_args": "2",
+      "max_args": "3",
+      "deterministic": true,
+      "set_params": "setParamsSecondInteger",
+      "make_result": "makePad",
+      "evaluator": "evlPad",
+      "extra": "(void*) funLPad"
+    },
+    {
+      "name": "MAKE_DBKEY",
+      "min_args": "2",
+      "max_args": "4",
+      "deterministic": true,
+      "set_params": "setParamsMakeDbkey",
+      "make_result": "makeDbkeyResult",
+      "evaluator": "evlMakeDbkey",
+      "extra": "NULL"
+    },
+    {
+      "name": "MAXVALUE",
+      "min_args": "1",
+      "max_args": "-1",
+      "deterministic": true,
+      "set_params": "setParamsFromList",
+      "make_result": "makeFromListResult",
+      "evaluator": "evlMaxMinValue",
+      "extra": "(void*) funMaxValue"
+    },
+    {
+      "name": "MINVALUE",
+      "min_args": "1",
+      "max_args": "-1",
+      "deterministic": true,
+      "set_params": "setParamsFromList",
+      "make_result": "makeFromListResult",
+      "evaluator": "evlMaxMinValue",
+      "extra": "(void*) funMinValue"
+    },
+    {
+      "name": "MOD",
+      "min_args": "2",
+      "max_args": "2",
+      "deterministic": true,
+      "set_params": "setParamsFromList",
+      "make_result": "makeMod",
+      "evaluator": "evlMod",
+      "extra": "NULL"
+    },
+    {
+      "name": "NORMALIZE_DECFLOAT",
+      "min_args": "1",
+      "max_args": "1",
+      "deterministic": true,
+      "set_params": "setParamsDecFloat",
+      "make_result": "makeDecFloatResult",
+      "evaluator": "evlNormDec",
+      "extra": "NULL"
+    },
+    {
+      "name": "OVERLAY",
+      "min_args": "3",
+      "max_args": "4",
+      "deterministic": true,
+      "set_params": "setParamsOverlay",
+      "make_result": "makeOverlay",
+      "evaluator": "evlOverlay",
+      "extra": "NULL"
+    },
+    {
+      "name": "PI",
+      "min_args": "0",
+      "max_args": "0",
+      "deterministic": true,
+      "set_params": "NULL",
+      "make_result": "makePi",
+      "evaluator": "evlPi",
+      "extra": "NULL"
+    },
+    {
+      "name": "POSITION",
+      "min_args": "2",
+      "max_args": "3",
+      "deterministic": true,
+      "set_params": "setParamsPosition",
+      "make_result": "makeLongResult",
+      "evaluator": "evlPosition",
+      "extra": "NULL"
+    },
+    {
+      "name": "POWER",
+      "min_args": "2",
+      "max_args": "2",
+      "deterministic": true,
+      "set_params": "setParamsDblDec",
+      "make_result": "makeDblDecResult",
+      "evaluator": "evlPower",
+      "extra": "NULL"
+    },
+    {
+      "name": "QUANTIZE",
+      "min_args": "2",
+      "max_args": "2",
+      "deterministic": true,
+      "set_params": "setParamsDecFloat",
+      "make_result": "makeDecFloatResult",
+      "evaluator": "evlQuantize",
+      "extra": "NULL"
+    },
+    {
+      "name": "RAND",
+      "min_args": "0",
+      "max_args": "0",
+      "deterministic": false,
+      "set_params": "NULL",
+      "make_result": "makeDoubleResult",
+      "evaluator": "evlRand",
+      "extra": "NULL"
+    },
+    {
+      "name": "REPLACE",
+      "min_args": "3",
+      "max_args": "3",
+      "deterministic": true,
+      "set_params": "setParamsFromList",
+      "make_result": "makeReplace",
+      "evaluator": "evlReplace",
+      "extra": "NULL"
+    },
+    {
+      "name": "REVERSE",
+      "min_args": "1",
+      "max_args": "1",
+      "deterministic": true,
+      "set_params": "NULL",
+      "make_result": "makeReverse",
+      "evaluator": "evlReverse",
+      "extra": "NULL"
+    },
+    {
+      "name": "RIGHT",
+      "min_args": "2",
+      "max_args": "2",
+      "deterministic": true,
+      "set_params": "setParamsSecondInteger",
+      "make_result": "makeLeftRight",
+      "evaluator": "evlRight",
+      "extra": "NULL"
+    },
+    {
+      "name": "ROUND",
+      "min_args": "1",
+      "max_args": "2",
+      "deterministic": true,
+      "set_params": "setParamsRoundTrunc",
+      "make_result": "makeRound",
+      "evaluator": "evlRound",
+      "extra": "NULL"
+    },
+    {
+      "name": "RPAD",
+      "min_args": "2",
+      "max_args": "3",
+      "deterministic": true,
+      "set_params": "setParamsSecondInteger",
+      "make_result": "makePad",
+      "evaluator": "evlPad",
+      "extra": "(void*) funRPad"
+    },
+    {
+      "name": "RSA_DECRYPT",
+      "min_args": "RSA_CRYPT_ARG_MAX",
+      "max_args": "RSA_CRYPT_ARG_MAX",
+      "deterministic": true,
+      "set_params": "setParamsRsaEncrypt",
+      "make_result": "makeRsaCrypt",
+      "evaluator": "evlRsaDecrypt",
+      "extra": "NULL"
+    },
+    {
+      "name": "RSA_ENCRYPT",
+      "min_args": "RSA_CRYPT_ARG_MAX",
+      "max_args": "RSA_CRYPT_ARG_MAX",
+      "deterministic": true,
+      "set_params": "setParamsRsaEncrypt",
+      "make_result": "makeRsaCrypt",
+      "evaluator": "evlRsaEncrypt",
+      "extra": "NULL"
+    },
+    {
+      "name": "RSA_PRIVATE",
+      "min_args": "1",
+      "max_args": "1",
+      "deterministic": false,
+      "set_params": "setParamsInteger",
+      "make_result": "makeRsaPrivate",
+      "evaluator": "evlRsaPrivate",
+      "extra": "NULL"
+    },
+    {
+      "name": "RSA_PUBLIC",
+      "min_args": "1",
+      "max_args": "1",
+      "deterministic": false,
+      "set_params": "setParamsRsaPublic",
+      "make_result": "makeRsaPublic",
+      "evaluator": "evlRsaPublic",
+      "extra": "NULL"
+    },
+    {
+      "name": "RSA_SIGN_HASH",
+      "min_args": "RSA_SIGN_ARG_MAX",
+      "max_args": "RSA_SIGN_ARG_MAX",
+      "deterministic": true,
+      "set_params": "setParamsRsaSign",
+      "make_result": "makeRsaSign",
+      "evaluator": "evlRsaSign",
+      "extra": "NULL"
+    },
+    {
+      "name": "RSA_VERIFY_HASH",
+      "min_args": "RSA_VERIFY_ARG_MAX",
+      "max_args": "RSA_VERIFY_ARG_MAX",
+      "deterministic": true,
+      "set_params": "setParamsRsaVerify",
+      "make_result": "makeBoolResult",
+      "evaluator": "evlRsaVerify",
+      "extra": "NULL"
+    },
+    {
+      "name": "SIGN",
+      "min_args": "1",
+      "max_args": "1",
+      "deterministic": true,
+      "set_params": "setParamsDblDec",
+      "make_result": "makeShortResult",
+      "evaluator": "evlSign",
+      "extra": "NULL"
+    },
+    {
+      "name": "SIN",
+      "min_args": "1",
+      "max_args": "1",
+      "deterministic": true,
+      "set_params": "setParamsDouble",
+      "make_result": "makeDoubleResult",
+      "evaluator": "evlStdMath",
+      "extra": "(void*) trfSin"
+    },
+    {
+      "name": "SINH",
+      "min_args": "1",
+      "max_args": "1",
+      "deterministic": true,
+      "set_params": "setParamsDouble",
+      "make_result": "makeDoubleResult",
+      "evaluator": "evlStdMath",
+      "extra": "(void*) trfSinh"
+    },
+    {
+      "name": "SQRT",
+      "min_args": "1",
+      "max_args": "1",
+      "deterministic": true,
+      "set_params": "setParamsDblDec",
+      "make_result": "makeDblDecResult",
+      "evaluator": "evlSqrt",
+      "extra": "NULL"
+    },
+    {
+      "name": "TAN",
+      "min_args": "1",
+      "max_args": "1",
+      "deterministic": true,
+      "set_params": "setParamsDouble",
+      "make_result": "makeDoubleResult",
+      "evaluator": "evlStdMath",
+      "extra": "(void*) trfTan"
+    },
+    {
+      "name": "TANH",
+      "min_args": "1",
+      "max_args": "1",
+      "deterministic": true,
+      "set_params": "setParamsDouble",
+      "make_result": "makeDoubleResult",
+      "evaluator": "evlStdMath",
+      "extra": "(void*) trfTanh"
+    },
+    {
+      "name": "TOTALORDER",
+      "min_args": "2",
+      "max_args": "2",
+      "deterministic": true,
+      "set_params": "setParamsDecFloat",
+      "make_result": "makeShortResult",
+      "evaluator": "evlCompare",
+      "extra": "(void*) funTotalOrd"
+    },
+    {
+      "name": "TRUNC",
+      "min_args": "1",
+      "max_args": "2",
+      "deterministic": true,
+      "set_params": "setParamsRoundTrunc",
+      "make_result": "makeTrunc",
+      "evaluator": "evlTrunc",
+      "extra": "NULL"
+    },
+    {
+      "name": "UNICODE_CHAR",
+      "min_args": "1",
+      "max_args": "1",
+      "deterministic": true,
+      "set_params": "setParamsInteger",
+      "make_result": "makeUnicodeChar",
+      "evaluator": "evlUnicodeChar",
+      "extra": "NULL"
+    },
+    {
+      "name": "UNICODE_VAL",
+      "min_args": "1",
+      "max_args": "1",
+      "deterministic": true,
+      "set_params": "setParamsUnicodeVal",
+      "make_result": "makeLongResult",
+      "evaluator": "evlUnicodeVal",
+      "extra": "NULL"
+    },
+    {
+      "name": "UUID_TO_CHAR",
+      "min_args": "1",
+      "max_args": "1",
+      "deterministic": true,
+      "set_params": "setParamsUuidToChar",
+      "make_result": "makeUuidToChar",
+      "evaluator": "evlUuidToChar",
+      "extra": "NULL"
+    }
+  ]
+}

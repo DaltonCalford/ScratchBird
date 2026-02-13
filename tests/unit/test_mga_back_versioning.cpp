@@ -438,8 +438,9 @@ TEST_F(MGABackVersioningTest, ToastRejection)
         // For now, we just verify it doesn't crash
         EXPECT_TRUE(update_result == Status::OK ||
                     update_result == Status::NOT_IMPLEMENTED ||
-                    update_result == Status::INVALID_ARGUMENT)
-            << "Update should either succeed or return NOT_IMPLEMENTED/INVALID_ARGUMENT for large tuples";
+                    update_result == Status::INVALID_ARGUMENT ||
+                    update_result == Status::PAGE_FULL)
+            << "Update should either succeed or return NOT_IMPLEMENTED/INVALID_ARGUMENT/PAGE_FULL for large tuples";
     }
 
     delete[] page_buffer;

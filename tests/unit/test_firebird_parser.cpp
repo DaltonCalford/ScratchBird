@@ -17,7 +17,7 @@
 #include "scratchbird/parser/firebird/firebird_parser.h"
 
 namespace fb = scratchbird::parser::firebird;
-namespace ast = scratchbird::parser::v2;
+namespace ast = scratchbird::parser::v3;
 
 using fb::Parser;
 using fb::SQLDialect;

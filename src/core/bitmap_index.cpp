@@ -29,9 +29,11 @@ namespace scratchbird
     {
         // Constants
         constexpr uint16_t ARRAY_MAX_SIZE = 4096;
-        constexpr uint16_t BITSET_SIZE_BYTES = 8192;
-        constexpr uint16_t BITSET_SIZE_UINT64 = 1024; // 8192 / 8
-        constexpr uint32_t TUPLES_PER_PAGE = 256;
+
+        inline uint32_t bitsetWordCount(uint32_t page_size)
+        {
+            return BitmapSettings::getBitsetElementCount(page_size);
+        }
 
         // ========================================
         // TASK-CRITICAL-2: VersionedBitmapEntry Implementation
@@ -140,6 +142,13 @@ namespace scratchbird
             meta->bmp_header.page_type = static_cast<uint16_t>(PageType::BITMAP_INDEX_META);
             meta->bmp_header.page_size = db->page_size();
             meta->bmp_header.page_id = meta_page_num;
+            meta->bmp_header.generation = 1;
+            meta->bmp_header.checksum = 0;
+            meta->bmp_header.flags = 0;
+            meta->bmp_header.lsn = 0;
+            pageSetLower(meta->bmp_header, sizeof(SBBitmapIndexMetaPage));
+            pageSetUpper(meta->bmp_header, db->page_size());
+            pageSetSpecial(meta->bmp_header, db->page_size());
             std::memcpy(meta->bmp_index_uuid.bytes.data(), index_uuid.bytes.data(), 16);
             meta->bmp_num_distinct_values = 0;
             meta->bmp_total_tuples = 0;
@@ -349,9 +358,17 @@ namespace scratchbird
                 dict_page->bmp_dict_header.page_type = static_cast<uint16_t>(PageType::BITMAP_INDEX_DICT);
                 dict_page->bmp_dict_header.page_size = db_->page_size();
                 dict_page->bmp_dict_header.page_id = page_num;
+                dict_page->bmp_dict_header.generation = 1;
+                dict_page->bmp_dict_header.checksum = 0;
+                dict_page->bmp_dict_header.flags = 0;
+                dict_page->bmp_dict_header.lsn = 0;
+                pageSetLower(dict_page->bmp_dict_header, sizeof(SBBitmapDictionaryPage));
+                pageSetUpper(dict_page->bmp_dict_header, db_->page_size());
+                pageSetSpecial(dict_page->bmp_dict_header, db_->page_size());
                 dict_page->bmp_dict_count = 0;
                 dict_page->bmp_dict_free_offset = sizeof(SBBitmapDictionaryPage);
                 dict_page->bmp_dict_next_page = 0;
+                pageSetLower(dict_page->bmp_dict_header, dict_page->bmp_dict_free_offset);
 
                 unpinIndexPage(page_num, true, ctx);
 
@@ -409,9 +426,17 @@ namespace scratchbird
                 new_dict->bmp_dict_header.page_type = static_cast<uint16_t>(PageType::BITMAP_INDEX_DICT);
                 new_dict->bmp_dict_header.page_size = db_->page_size();
                 new_dict->bmp_dict_header.page_id = new_dict_page;
+                new_dict->bmp_dict_header.generation = 1;
+                new_dict->bmp_dict_header.checksum = 0;
+                new_dict->bmp_dict_header.flags = 0;
+                new_dict->bmp_dict_header.lsn = 0;
+                pageSetLower(new_dict->bmp_dict_header, sizeof(SBBitmapDictionaryPage));
+                pageSetUpper(new_dict->bmp_dict_header, db_->page_size());
+                pageSetSpecial(new_dict->bmp_dict_header, db_->page_size());
                 new_dict->bmp_dict_count = 0;
                 new_dict->bmp_dict_free_offset = sizeof(SBBitmapDictionaryPage);
                 new_dict->bmp_dict_next_page = 0;
+                pageSetLower(new_dict->bmp_dict_header, new_dict->bmp_dict_free_offset);
 
                 // Link current page to new page
                 dict_page->bmp_dict_next_page = new_dict_page;
@@ -451,6 +476,13 @@ namespace scratchbird
             root_page->rbr_header.page_type = static_cast<uint16_t>(PageType::BITMAP_ROARING_ROOT);
             root_page->rbr_header.page_size = db_->page_size();
             root_page->rbr_header.page_id = bitmap_root;
+            root_page->rbr_header.generation = 1;
+            root_page->rbr_header.checksum = 0;
+            root_page->rbr_header.flags = 0;
+            root_page->rbr_header.lsn = 0;
+            pageSetLower(root_page->rbr_header, sizeof(SBRoaringBitmapRootPage));
+            pageSetUpper(root_page->rbr_header, db_->page_size());
+            pageSetSpecial(root_page->rbr_header, db_->page_size());
             root_page->rbr_num_containers = 0;
             root_page->rbr_total_cardinality = 0;
 
@@ -470,6 +502,7 @@ namespace scratchbird
 
             dict_page->bmp_dict_count++;
             dict_page->bmp_dict_free_offset += entry_size;
+            pageSetLower(dict_page->bmp_dict_header, dict_page->bmp_dict_free_offset);
 
             unpinIndexPage(current_page, true, ctx);
 
@@ -716,8 +749,8 @@ namespace scratchbird
                 }
 
                 // Read the item pointer to get tuple offset
-                auto *page_special = reinterpret_cast<HeapPageSpecial *>(page_data + db_->page_size() - sizeof(HeapPageSpecial));
-                uint16_t item_count = page_special->pd_lower / sizeof(struct ItemPointer);
+                auto *page_header = reinterpret_cast<PageHeader *>(page_data);
+                uint16_t item_count = pageLower(*page_header) / sizeof(struct ItemPointer);
 
                 if (item_id >= item_count)
                 {
@@ -725,8 +758,8 @@ namespace scratchbird
                     continue; // Invalid item ID
                 }
 
-                auto *item_pointers = reinterpret_cast<ItemPointer *>(page_data + db_->page_size() - sizeof(HeapPageSpecial) - sizeof(ItemPointer) * (item_id + 1));
-                ItemPointer item = *item_pointers;
+                auto *item_pointers = reinterpret_cast<ItemPointer *>(page_data + sizeof(PageHeader));
+                ItemPointer item = item_pointers[item_id];
 
                 if (item.offset == 0 || item.length == 0)
                 {
@@ -981,8 +1014,8 @@ namespace scratchbird
             // Calculate actual compression ratio
             // Compression ratio = uncompressed size / compressed size
             // For Roaring bitmaps:
-            //   Uncompressed = num_containers * 65536 bits = num_containers * 8192 bytes
-            //   Compressed = actual storage (ARRAY containers use 2 bytes per value, BITSET uses 8192 bytes)
+            //   Uncompressed = num_containers * 65536 bits = num_containers * bitsetByteCount(page_size)
+            //   Compressed = actual storage (ARRAY containers use 2 bytes per value, BITSET uses bitsetByteCount(page_size))
 
             uint64_t total_uncompressed_bytes = 0;
             uint64_t total_compressed_bytes = 0;
@@ -1222,7 +1255,7 @@ namespace scratchbird
                 // Convert to bitset if needed (array too large)
                 if (container->num_values > ARRAY_MAX_SIZE)
                 {
-                    container->bitset_data.resize(BITSET_SIZE_UINT64, 0);
+                    container->bitset_data.resize(bitsetWordCount(db_->page_size()), 0);
                     container->bitset_versions.clear();
 
                     for (const auto& entry : container->array_data_versioned)
@@ -1498,7 +1531,7 @@ namespace scratchbird
                 }
                 else if (container.type == ContainerType::BITSET)
                 {
-                    for (size_t word_idx = 0; word_idx < BITSET_SIZE_UINT64; word_idx++)
+                    for (size_t word_idx = 0; word_idx < bitsetWordCount(db_->page_size()); word_idx++)
                     {
                         uint64_t word = container.bitset_data[word_idx];
                         if (word == 0)
@@ -1733,7 +1766,7 @@ namespace scratchbird
                 if (deduped.size() > ARRAY_MAX_SIZE)
                 {
                     container.type = ContainerType::BITSET;
-                    container.bitset_data.resize(BITSET_SIZE_UINT64, 0);
+                    container.bitset_data.resize(bitsetWordCount(db_->page_size()), 0);
                     for (const auto &entry : deduped)
                     {
                         size_t word_idx = entry.tid_low / 64;
@@ -1893,8 +1926,18 @@ namespace scratchbird
             }
 
             auto *page = reinterpret_cast<SBRoaringContainerPage *>(page_data);
+            page->rcp_header.magic = K_MAGIC_SBRD;
+            page->rcp_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
             page->rcp_header.page_type = static_cast<uint16_t>(PageType::BITMAP_CONTAINER);
             page->rcp_header.page_size = db_->page_size();
+            page->rcp_header.page_id = page_num;
+            page->rcp_header.generation = 1;
+            page->rcp_header.checksum = 0;
+            page->rcp_header.flags = 0;
+            page->rcp_header.lsn = 0;
+            pageSetLower(page->rcp_header, sizeof(SBRoaringContainerPage));
+            pageSetUpper(page->rcp_header, db_->page_size());
+            pageSetSpecial(page->rcp_header, db_->page_size());
             page->rcp_type = container.type;
             page->rcp_num_values = container.num_values;
 
@@ -1938,7 +1981,8 @@ namespace scratchbird
                     if (lhs_cont.key == rhs_cont.key)
                     {
                         Container result_cont;
-                        containerAnd(lhs_cont, rhs_cont, &result_cont);
+                        containerAnd(lhs_cont, rhs_cont, &result_cont,
+                                     bitsetWordCount(lhs.db_->page_size()));
                         if (result_cont.num_values > 0)
                         {
                             result->containers_.push_back(result_cont);
@@ -1967,7 +2011,8 @@ namespace scratchbird
                     if (lhs_cont.key == rhs_cont.key)
                     {
                         Container result_cont;
-                        containerOr(lhs_cont, rhs_cont, &result_cont);
+                        containerOr(lhs_cont, rhs_cont, &result_cont,
+                                    bitsetWordCount(lhs.db_->page_size()));
                         result->containers_.push_back(result_cont);
                         result->cardinality_ += result_cont.num_values;
                         found = true;
@@ -2023,7 +2068,8 @@ namespace scratchbird
             for (const auto &cont : bitmap.containers_)
             {
                 Container result_cont;
-                containerNot(cont, &result_cont);
+                containerNot(cont, &result_cont,
+                             bitsetWordCount(bitmap.db_->page_size()));
                 result->containers_.push_back(result_cont);
                 result->cardinality_ += result_cont.num_values;
             }
@@ -2049,7 +2095,7 @@ namespace scratchbird
                     Container full_cont;
                     full_cont.key = key;
                     full_cont.type = ContainerType::BITSET;
-                    full_cont.bitset_data.resize(BITSET_SIZE_UINT64, 0xFFFFFFFFFFFFFFFFULL);
+                    full_cont.bitset_data.resize(bitsetWordCount(bitmap.db_->page_size()), 0xFFFFFFFFFFFFFFFFULL);
 
                     // For the last container, we may need to mask out values beyond universe_size
                     if (key == max_container_key)
@@ -2069,7 +2115,7 @@ namespace scratchbird
 
                     // Count actual set bits
                     full_cont.num_values = 0;
-                    for (size_t i = 0; i < BITSET_SIZE_UINT64; i++)
+                    for (size_t i = 0; i < bitsetWordCount(bitmap.db_->page_size()); i++)
                     {
                         full_cont.num_values += __builtin_popcountll(full_cont.bitset_data[i]);
                     }
@@ -2082,7 +2128,8 @@ namespace scratchbird
             return result;
         }
 
-        void RoaringBitmap::containerAnd(const Container &lhs, const Container &rhs, Container *result)
+        void RoaringBitmap::containerAnd(const Container &lhs, const Container &rhs,
+                                         Container *result, size_t word_count)
         {
             result->key = lhs.key;
             result->type = ContainerType::ARRAY;
@@ -2115,11 +2162,13 @@ namespace scratchbird
             {
                 // Bitset-bitset intersection
                 result->type = ContainerType::BITSET;
-                result->bitset_data.resize(BITSET_SIZE_UINT64);
+                result->bitset_data.resize(word_count, 0);
 
-                for (size_t i = 0; i < BITSET_SIZE_UINT64; i++)
+                for (size_t i = 0; i < word_count; i++)
                 {
-                    result->bitset_data[i] = lhs.bitset_data[i] & rhs.bitset_data[i];
+                    uint64_t lhs_word = (i < lhs.bitset_data.size()) ? lhs.bitset_data[i] : 0;
+                    uint64_t rhs_word = (i < rhs.bitset_data.size()) ? rhs.bitset_data[i] : 0;
+                    result->bitset_data[i] = lhs_word & rhs_word;
                     result->num_values += __builtin_popcountll(result->bitset_data[i]);
                 }
             }
@@ -2127,10 +2176,10 @@ namespace scratchbird
             {
                 // Mixed types: convert both to bitset for intersection
                 result->type = ContainerType::BITSET;
-                result->bitset_data.resize(BITSET_SIZE_UINT64, 0);
+                result->bitset_data.resize(word_count, 0);
 
                 // Helper to convert container to bitset
-                auto to_bitset = [](const Container &c, std::vector<uint64_t> &bitset)
+                auto to_bitset = [word_count](const Container &c, std::vector<uint64_t> &bitset)
                 {
                     if (c.type == ContainerType::ARRAY)
                     {
@@ -2144,8 +2193,8 @@ namespace scratchbird
                     }
                     else if (c.type == ContainerType::BITSET)
                     {
-                        // Already bitset, copy directly
-                        for (size_t i = 0; i < BITSET_SIZE_UINT64; i++)
+                        size_t count = std::min(word_count, c.bitset_data.size());
+                        for (size_t i = 0; i < count; i++)
                         {
                             bitset[i] = c.bitset_data[i];
                         }
@@ -2153,13 +2202,13 @@ namespace scratchbird
                 };
 
                 // Convert both containers to bitsets
-                std::vector<uint64_t> lhs_bitset(BITSET_SIZE_UINT64, 0);
-                std::vector<uint64_t> rhs_bitset(BITSET_SIZE_UINT64, 0);
+                std::vector<uint64_t> lhs_bitset(word_count, 0);
+                std::vector<uint64_t> rhs_bitset(word_count, 0);
                 to_bitset(lhs, lhs_bitset);
                 to_bitset(rhs, rhs_bitset);
 
                 // Perform AND operation
-                for (size_t i = 0; i < BITSET_SIZE_UINT64; i++)
+                for (size_t i = 0; i < word_count; i++)
                 {
                     result->bitset_data[i] = lhs_bitset[i] & rhs_bitset[i];
                     result->num_values += __builtin_popcountll(result->bitset_data[i]);
@@ -2167,7 +2216,8 @@ namespace scratchbird
             }
         }
 
-        void RoaringBitmap::containerOr(const Container &lhs, const Container &rhs, Container *result)
+        void RoaringBitmap::containerOr(const Container &lhs, const Container &rhs,
+                                        Container *result, size_t word_count)
         {
             result->key = lhs.key;
 
@@ -2175,10 +2225,10 @@ namespace scratchbird
             {
                 // Use bitset for union if either is bitset
                 result->type = ContainerType::BITSET;
-                result->bitset_data.resize(BITSET_SIZE_UINT64, 0);
+                result->bitset_data.resize(word_count, 0);
 
                 // Convert both to bitset and OR
-                auto to_bitset = [](const Container &c, std::vector<uint64_t> &bitset)
+                auto to_bitset = [word_count](const Container &c, std::vector<uint64_t> &bitset)
                 {
                     if (c.type == ContainerType::ARRAY)
                     {
@@ -2192,7 +2242,8 @@ namespace scratchbird
                     }
                     else if (c.type == ContainerType::BITSET)
                     {
-                        for (size_t i = 0; i < BITSET_SIZE_UINT64; i++)
+                        size_t count = std::min(word_count, c.bitset_data.size());
+                        for (size_t i = 0; i < count; i++)
                         {
                             bitset[i] |= c.bitset_data[i];
                         }
@@ -2203,7 +2254,7 @@ namespace scratchbird
                 to_bitset(rhs, result->bitset_data);
 
                 // Count bits
-                for (size_t i = 0; i < BITSET_SIZE_UINT64; i++)
+                for (size_t i = 0; i < word_count; i++)
                 {
                     result->num_values += __builtin_popcountll(result->bitset_data[i]);
                 }
@@ -2231,13 +2282,14 @@ namespace scratchbird
             }
         }
 
-        void RoaringBitmap::containerNot(const Container &container, Container *result)
+        void RoaringBitmap::containerNot(const Container &container,
+                                         Container *result, size_t word_count)
         {
             // NOT operation inverts all bits in a container (0 → 1, 1 → 0)
             // Result is always BITSET type (since complement of sparse set is dense)
             result->key = container.key;
             result->type = ContainerType::BITSET;
-            result->bitset_data.resize(BITSET_SIZE_UINT64, 0xFFFFFFFFFFFFFFFFULL); // Start with all 1s
+            result->bitset_data.resize(word_count, 0xFFFFFFFFFFFFFFFFULL); // Start with all 1s
             result->num_values = 0;
 
             if (container.type == ContainerType::ARRAY)
@@ -2251,7 +2303,7 @@ namespace scratchbird
                 }
 
                 // Count set bits
-                for (size_t i = 0; i < BITSET_SIZE_UINT64; i++)
+                for (size_t i = 0; i < word_count; i++)
                 {
                     result->num_values += __builtin_popcountll(result->bitset_data[i]);
                 }
@@ -2259,9 +2311,10 @@ namespace scratchbird
             else if (container.type == ContainerType::BITSET)
             {
                 // For BITSET containers, simple bitwise NOT
-                for (size_t i = 0; i < BITSET_SIZE_UINT64; i++)
+                for (size_t i = 0; i < word_count; i++)
                 {
-                    result->bitset_data[i] = ~container.bitset_data[i];
+                    uint64_t value = (i < container.bitset_data.size()) ? container.bitset_data[i] : 0;
+                    result->bitset_data[i] = ~value;
                     result->num_values += __builtin_popcountll(result->bitset_data[i]);
                 }
             }
@@ -2432,7 +2485,7 @@ namespace scratchbird
                     size_t word_idx = value_index_ / 64;
                     size_t bit_idx = value_index_ % 64;
 
-                    if (word_idx >= BITSET_SIZE_UINT64)
+                    if (word_idx >= bitsetWordCount(bitmap_.db_->page_size()))
                     {
                         container_index_++;
                         value_index_ = 0;

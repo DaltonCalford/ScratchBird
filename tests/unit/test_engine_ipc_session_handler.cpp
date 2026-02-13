@@ -133,6 +133,24 @@ private:
 
 class EngineIPCSessionHandlerTest : public ::testing::Test {
 protected:
+    core::Status attachSession(uint32_t session_id,
+                               const char* application_name,
+                               const char* database_name = "test_db",
+                               const char* user_name = "test_user") {
+        IPCStartupPayload startup{};
+        startup.process_id = 12345;
+        startup.secret_key = 0;
+        startup.feature_flags = 0;
+        std::strncpy(startup.database, database_name, sizeof(startup.database) - 1);
+        std::strncpy(startup.user, user_name, sizeof(startup.user) - 1);
+        std::strncpy(startup.application, application_name, sizeof(startup.application) - 1);
+        startup.database[sizeof(startup.database) - 1] = '\0';
+        startup.user[sizeof(startup.user) - 1] = '\0';
+        startup.application[sizeof(startup.application) - 1] = '\0';
+        core::ErrorContext ctx;
+        return handler_->onAttach(session_id, startup, &ctx);
+    }
+
     void SetUp() override {
         db_file_ = std::make_unique<TestDatabaseFile>("test_ipc_session_handler");
 
@@ -153,17 +171,7 @@ protected:
         handler_ = std::make_unique<TestableEngineIPCSessionHandler>(db_.get());
         
         // Create a test session
-        IPCStartupPayload startup;
-        startup.process_id = 12345;
-        startup.secret_key = 0;
-        startup.feature_flags = 0;
-        std::strncpy(startup.database, "test_db", sizeof(startup.database) - 1);
-        std::strncpy(startup.user, "test_user", sizeof(startup.user) - 1);
-        std::strncpy(startup.application, "test_app", sizeof(startup.application) - 1);
-        startup.database[sizeof(startup.database) - 1] = '\0';
-        startup.user[sizeof(startup.user) - 1] = '\0';
-        startup.application[sizeof(startup.application) - 1] = '\0';
-        status = handler_->onAttach(1, startup, &ctx);
+        status = attachSession(1, "test_app");
         ASSERT_EQ(status, core::Status::OK) << "Failed to attach session: " << ctx.message;
     }
 
@@ -288,6 +296,19 @@ TEST_F(EngineIPCSessionHandlerTest, onSimpleQuery_InvalidSyntax) {
     EXPECT_FALSE(handler_->lastError().empty());
 }
 
+TEST_F(EngineIPCSessionHandlerTest, onSimpleQuery_FirebirdProtocolIsNotRejectedAsUnsupported) {
+    ASSERT_EQ(attachSession(2, "firebird_parser"), core::Status::OK);
+    handler_->reset();
+
+    core::ErrorContext ctx;
+    auto status = handler_->onSimpleQuery(2, "INVALID SQL", &ctx);
+    EXPECT_EQ(status, core::Status::OK);
+    EXPECT_NE(handler_->lastSqlState(), "0A000");
+    EXPECT_EQ(handler_->lastError().find("not yet supported"), std::string::npos);
+
+    handler_->onDetach(2, &ctx);
+}
+
 TEST_F(EngineIPCSessionHandlerTest, onSimpleQuery_SelectEmptyResult) {
     // Setup
     {
@@ -321,6 +342,19 @@ TEST_F(EngineIPCSessionHandlerTest, onParse_InvalidSQL) {
     auto status = handler_->onParse(1, "bad_stmt", "INVALID SQL", &ctx);
     EXPECT_EQ(status, core::Status::OK);  // Handler returns OK after sending error
     EXPECT_FALSE(handler_->lastError().empty());
+}
+
+TEST_F(EngineIPCSessionHandlerTest, onParse_NativeProtocolCompilesInsteadOfUnsupported) {
+    ASSERT_EQ(attachSession(3, "native_parser_v3"), core::Status::OK);
+    handler_->reset();
+
+    core::ErrorContext ctx;
+    auto status = handler_->onParse(3, "native_stmt", "SELECT 1", &ctx);
+    EXPECT_EQ(status, core::Status::OK);
+    EXPECT_TRUE(handler_->parseCompleteCalled());
+    EXPECT_NE(handler_->lastSqlState(), "0A000");
+
+    handler_->onDetach(3, &ctx);
 }
 
 TEST_F(EngineIPCSessionHandlerTest, onParse_Bind_Execute_FullLifecycle) {

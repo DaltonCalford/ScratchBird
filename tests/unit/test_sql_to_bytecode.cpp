@@ -11,7 +11,7 @@
 
 #include "scratchbird/core/database.h"
 #include "scratchbird/sblr/executor.h"
-#include "scratchbird/sblr/query_compiler_v2.h"
+#include "scratchbird/sblr/query_compiler_v3.h"
 #include "test_helpers.h"
 
 #include <memory>
@@ -27,7 +27,7 @@ class SQLToBytecodeTest : public ::testing::Test
 protected:
     std::unique_ptr<Database> db_;
     std::unique_ptr<Executor> executor_;
-    std::unique_ptr<QueryCompilerV2> compiler_;
+    std::unique_ptr<QueryCompilerV3> compiler_;
     std::unique_ptr<TestDatabaseFile> db_file_;
     ID schema_id_;
 
@@ -41,7 +41,7 @@ protected:
         db_ = std::make_unique<Database>();
         ASSERT_EQ(db_->open(db_file_->path(), &ctx), Status::OK) << ctx.message;
 
-        compiler_ = std::make_unique<QueryCompilerV2>(db_.get());
+        compiler_ = std::make_unique<QueryCompilerV3>(db_.get());
         executor_ = std::make_unique<Executor>(db_.get());
 
         createTables();
@@ -82,9 +82,12 @@ protected:
         ASSERT_TRUE(result.success()) << "Compile failed for: " << sql;
 
         const auto& bytecode = result.bytecode();
-        EXPECT_GT(bytecode.size(), 3u);
-        EXPECT_EQ(bytecode.front(), static_cast<uint8_t>(Opcode::VERSION));
-        EXPECT_EQ(bytecode.back(), static_cast<uint8_t>(Opcode::END));
+        EXPECT_GT(bytecode.size(), 8u);
+        scratchbird::sblr::v3::Container container;
+        std::string err;
+        ASSERT_TRUE(scratchbird::testing::decodeV3Container(bytecode, container, &err))
+            << "V3 container decode failed: " << err;
+        EXPECT_EQ(container.header.version_major, 3u);
     }
 };
 
@@ -125,9 +128,12 @@ TEST_F(SQLToBytecodeTest, CompleteExample)
     auto create_result = compiler_->compile(create_sql);
     ASSERT_TRUE(create_result.success()) << "Compile failed for: " << create_sql;
     const auto& create_bytecode = create_result.bytecode();
-    EXPECT_GT(create_bytecode.size(), 3u);
-    EXPECT_EQ(create_bytecode.front(), static_cast<uint8_t>(Opcode::VERSION));
-    EXPECT_EQ(create_bytecode.back(), static_cast<uint8_t>(Opcode::END));
+    EXPECT_GT(create_bytecode.size(), 8u);
+    scratchbird::sblr::v3::Container container;
+    std::string err;
+    ASSERT_TRUE(scratchbird::testing::decodeV3Container(create_bytecode, container, &err))
+        << "V3 container decode failed: " << err;
+    EXPECT_EQ(container.header.version_major, 3u);
 
     auto exec_result = executor_->execute(create_bytecode);
     ASSERT_TRUE(exec_result.success()) << "Execution failed for: " << create_sql

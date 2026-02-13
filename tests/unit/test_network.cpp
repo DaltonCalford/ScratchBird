@@ -566,8 +566,8 @@ TEST_F(NetworkTest, ConnectionStateTransitions) {
     EXPECT_EQ(conn.getState(), ConnectionState::NEW);
 
     // State transitions
-    conn.setState(ConnectionState::PROTOCOL_DETECTION);
-    EXPECT_EQ(conn.getState(), ConnectionState::PROTOCOL_DETECTION);
+    conn.setState(ConnectionState::SSL_HANDSHAKE);
+    EXPECT_EQ(conn.getState(), ConnectionState::SSL_HANDSHAKE);
 
     conn.setState(ConnectionState::AUTHENTICATING);
     EXPECT_EQ(conn.getState(), ConnectionState::AUTHENTICATING);

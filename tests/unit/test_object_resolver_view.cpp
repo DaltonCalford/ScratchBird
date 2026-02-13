@@ -14,7 +14,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/sblr/executor.h"
-#include "scratchbird/sblr/query_compiler_v2.h"
+#include "scratchbird/sblr/query_compiler_v3.h"
 #include "unit/test_user_helpers.h"
 
 #include <chrono>
@@ -101,7 +101,7 @@ protected:
         core::ConnectionContext::setCurrent(conn_.get());
         conn_->setCurrentSchemaId(test_schema_id_);
 
-        compiler_ = std::make_unique<sblr::QueryCompilerV2>(&db_);
+        compiler_ = std::make_unique<sblr::QueryCompilerV3>(&db_);
         compiler_->setCurrentSchema(test_schema_id_);
 
         executor_ = std::make_unique<sblr::Executor>(&db_);
@@ -209,7 +209,7 @@ protected:
     core::CatalogManager* catalog_ = nullptr;
     core::ID test_schema_id_;
     std::unique_ptr<core::ConnectionContext> conn_;
-    std::unique_ptr<sblr::QueryCompilerV2> compiler_;
+    std::unique_ptr<sblr::QueryCompilerV3> compiler_;
     std::unique_ptr<sblr::Executor> executor_;
 };
 

@@ -12,7 +12,7 @@
  */
 
 #include <gtest/gtest.h>
-#include "scratchbird/sblr/query_compiler_v2.h"
+#include "scratchbird/sblr/query_compiler_v3.h"
 #include "scratchbird/sblr/executor.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
@@ -59,7 +59,7 @@ protected:
 
         EnsureUser(catalog_, "test_user");
 
-        compiler_ = std::make_unique<QueryCompilerV2>(&db_);
+        compiler_ = std::make_unique<QueryCompilerV3>(&db_);
         executor_ = std::make_unique<Executor>(&db_);
 
         status = db_.connect(connection_ctx_, &ctx);
@@ -97,7 +97,7 @@ protected:
     Database db_;
     CatalogManager* catalog_ = nullptr;
     ID public_schema_id_;
-    std::unique_ptr<QueryCompilerV2> compiler_;
+    std::unique_ptr<QueryCompilerV3> compiler_;
     std::unique_ptr<Executor> executor_;
     std::unique_ptr<ConnectionContext> connection_ctx_;
 };

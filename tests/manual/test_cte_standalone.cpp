@@ -21,7 +21,7 @@
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/proc_array.h"
 
-#include "scratchbird/sblr/query_compiler_v2.h"
+#include "scratchbird/sblr/query_compiler_v3.h"
 #include "scratchbird/sblr/executor.h"
 
 using namespace scratchbird;
@@ -33,7 +33,7 @@ private:
     std::string test_db_path_;
     std::unique_ptr<core::Database> db_;
     std::unique_ptr<core::ConnectionContext> conn_ctx_;
-    std::unique_ptr<QueryCompilerV2> compiler_;
+    std::unique_ptr<QueryCompilerV3> compiler_;
     std::unique_ptr<Executor> executor_;
     core::ID schema_id_{};
     uint32_t proc_id_ = 0;
@@ -89,7 +89,7 @@ public:
         }
         schema_id_ = schema.schema_id;
 
-        compiler_ = std::make_unique<QueryCompilerV2>(db_.get());
+        compiler_ = std::make_unique<QueryCompilerV3>(db_.get());
         compiler_->setCurrentSchema(schema_id_);
 
         executor_ = std::make_unique<Executor>(db_.get());

@@ -145,11 +145,25 @@ TEST_F(CharsetCatalogTest, ListCharsets)
 {
     ErrorContext ctx;
 
+    auto make_charset = [](uint16_t id, const std::string& name, const std::string& desc,
+                           uint8_t min_b, uint8_t max_b, uint8_t var_width,
+                           uint32_t default_collation) {
+        CatalogManager::CharsetInfo cs;
+        cs.charset_id = id;
+        cs.name = name;
+        cs.description = desc;
+        cs.min_bytes = min_b;
+        cs.max_bytes = max_b;
+        cs.variable_width = var_width;
+        cs.default_collation_id = default_collation;
+        return cs;
+    };
+
     // Create multiple charsets
     std::vector<CatalogManager::CharsetInfo> test_charsets = {
-        {static_cast<uint16_t>(CharacterSet::ASCII), "ascii", "7-bit ASCII", 1, 1, 0, 0, 1, 0, 0},
-        {static_cast<uint16_t>(CharacterSet::UTF8), "utf8", "UTF-8 Unicode", 1, 4, 1, 0, 100, 0, 0},
-        {static_cast<uint16_t>(CharacterSet::LATIN1), "latin1", "ISO-8859-1", 1, 1, 0, 0, 10, 0, 0}
+        make_charset(static_cast<uint16_t>(CharacterSet::ASCII), "ascii", "7-bit ASCII", 1, 1, 0, 1),
+        make_charset(static_cast<uint16_t>(CharacterSet::UTF8), "utf8", "UTF-8 Unicode", 1, 4, 1, 100),
+        make_charset(static_cast<uint16_t>(CharacterSet::LATIN1), "latin1", "ISO-8859-1", 1, 1, 0, 10)
     };
 
     for (const auto& cs : test_charsets)
@@ -464,10 +478,24 @@ TEST_F(CharsetCatalogTest, CharsetManagerLoadFromCatalog)
 {
     ErrorContext ctx;
 
+    auto make_charset = [](uint16_t id, const std::string& name, const std::string& desc,
+                           uint8_t min_b, uint8_t max_b, uint8_t var_width,
+                           uint32_t default_collation) {
+        CatalogManager::CharsetInfo cs;
+        cs.charset_id = id;
+        cs.name = name;
+        cs.description = desc;
+        cs.min_bytes = min_b;
+        cs.max_bytes = max_b;
+        cs.variable_width = var_width;
+        cs.default_collation_id = default_collation;
+        return cs;
+    };
+
     // Create charsets in catalog
     std::vector<CatalogManager::CharsetInfo> test_charsets = {
-        {static_cast<uint16_t>(CharacterSet::UTF8), "utf8", "UTF-8 Unicode", 1, 4, 1, 0, 100, 0, 0},
-        {static_cast<uint16_t>(CharacterSet::LATIN1), "latin1", "ISO-8859-1", 1, 1, 0, 0, 10, 0, 0}
+        make_charset(static_cast<uint16_t>(CharacterSet::UTF8), "utf8", "UTF-8 Unicode", 1, 4, 1, 100),
+        make_charset(static_cast<uint16_t>(CharacterSet::LATIN1), "latin1", "ISO-8859-1", 1, 1, 0, 10)
     };
 
     for (const auto& cs : test_charsets)

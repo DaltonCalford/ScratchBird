@@ -129,14 +129,12 @@ TEST_F(HeapPageTest, PageInitialization)
     EXPECT_EQ(header->page_type, PAGE_TYPE_HEAP);
     EXPECT_EQ(header->page_size, page_size_);
     EXPECT_EQ(header->page_id, page_id);
-    EXPECT_EQ(header->item_count, 0);
+    EXPECT_EQ(page.getItemCount(), 0);
 
     // Verify special area
-    HeapPageSpecial *special =
-        reinterpret_cast<HeapPageSpecial *>(page_buffer_ + page_size_ - sizeof(HeapPageSpecial));
-    EXPECT_EQ(special->pd_lower, sizeof(PageHeader));
-    EXPECT_EQ(special->pd_upper, page_size_ - sizeof(HeapPageSpecial));
-    EXPECT_EQ(special->pd_special, page_size_ - sizeof(HeapPageSpecial));
+    EXPECT_EQ(pageLower(*header), sizeof(PageHeader));
+    EXPECT_EQ(pageUpper(*header), page_size_ - sizeof(HeapPageSpecial));
+    EXPECT_EQ(pageSpecial(*header), page_size_ - sizeof(HeapPageSpecial));
 }
 
 // Test: Tuple insertion and retrieval
@@ -199,6 +197,9 @@ TEST_F(HeapPageTest, FreeSpaceCalculation)
     uint32_t initial_free_space = page.getFreeSpace();
     uint32_t expected_free = page_size_ - sizeof(PageHeader) - sizeof(HeapPageSpecial);
     EXPECT_EQ(initial_free_space, expected_free);
+    auto *page_hdr_before = reinterpret_cast<PageHeader *>(page_buffer_);
+    uint16_t lower_before = pageLower(*page_hdr_before);
+    uint16_t upper_before = pageUpper(*page_hdr_before);
 
     // Insert a tuple and verify free space decreases
     // Create buffer with header + 100 bytes body
@@ -209,9 +210,20 @@ TEST_F(HeapPageTest, FreeSpaceCalculation)
               Status::OK);
 
     uint32_t after_insert_free = page.getFreeSpace();
-    // Space used includes ItemPointer + total tuple size (header + body)
-    uint32_t space_used = sizeof(ItemPointer) + sizeof(TupleHeader) + body_size;
+    auto *page_hdr_after = reinterpret_cast<PageHeader *>(page_buffer_);
+    uint16_t lower_after = pageLower(*page_hdr_after);
+    uint16_t upper_after = pageUpper(*page_hdr_after);
+
+    // HeapPage aligns tuple offsets to 8-byte boundaries.
+    uint32_t tuple_size = static_cast<uint32_t>(tuple_data.size());
+    uint32_t raw_tuple_offset = upper_before - tuple_size;
+    uint32_t aligned_tuple_offset = (raw_tuple_offset / 8) * 8;
+    uint32_t alignment_padding = raw_tuple_offset - aligned_tuple_offset;
+    uint32_t space_used = sizeof(ItemPointer) + tuple_size + alignment_padding;
+
     EXPECT_EQ(after_insert_free, initial_free_space - space_used);
+    EXPECT_EQ(lower_after - lower_before, sizeof(ItemPointer));
+    EXPECT_EQ(upper_before - upper_after, tuple_size + alignment_padding);
 }
 
 // Test: Deleted tuple handling
@@ -279,9 +291,7 @@ TEST_F(HeapPageTest, PageValidation)
 
     // Restore page type, corrupt special area
     header->page_type = PAGE_TYPE_HEAP;
-    HeapPageSpecial *special =
-        reinterpret_cast<HeapPageSpecial *>(page_buffer_ + page_size_ - sizeof(HeapPageSpecial));
-    special->pd_lower = page_size_; // Invalid - beyond page
+    pageSetLower(*header, page_size_); // Invalid - beyond page
 
     EXPECT_NE(page.validate(&ctx), Status::OK) << "Should detect invalid special area";
 }

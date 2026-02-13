@@ -215,6 +215,10 @@ namespace scratchbird
             void setConnectionContext(core::ConnectionContext *conn_ctx)
             {
                 conn_ctx_ = conn_ctx;
+                if (conn_ctx_ && current_schema_set_)
+                {
+                    conn_ctx_->setCurrentSchemaId(current_schema_id_);
+                }
             }
 
             // Optional COPY STDIN/STDOUT streams (defaults to std::cin/std::cout when unset).
@@ -227,8 +231,24 @@ namespace scratchbird
 
             // Set current schema for DDL operations (Firebird emulation support)
             // If not set, defaults to root schema
-            void setCurrentSchema(const core::ID& schema_id) { current_schema_id_ = schema_id; current_schema_set_ = true; }
-            void clearCurrentSchema() { current_schema_id_ = core::ID(); current_schema_set_ = false; }
+            void setCurrentSchema(const core::ID& schema_id)
+            {
+                current_schema_id_ = schema_id;
+                current_schema_set_ = true;
+                if (conn_ctx_)
+                {
+                    conn_ctx_->setCurrentSchemaId(schema_id);
+                }
+            }
+            void clearCurrentSchema()
+            {
+                current_schema_id_ = core::ID();
+                current_schema_set_ = false;
+                if (conn_ctx_)
+                {
+                    conn_ctx_->setCurrentSchemaId(core::ID());
+                }
+            }
             bool hasCurrentSchema() const { return current_schema_set_; }
             const core::ID& getCurrentSchema() const { return current_schema_id_; }
 
@@ -784,10 +804,21 @@ namespace scratchbird
             // Trigger execution helpers (Wave 2)
             // ===== PSQL - Stored Procedures and Functions (Phase 2 Task 10.2, Phase 4) =====
 
+            // Variable metadata for PSQL execution
+            struct VariableEntry
+            {
+                Value value;
+                bool is_constant = false;
+                bool has_type = false;
+                core::TypeInfo type_info{};
+                core::ID domain_id{};
+                bool nullable = true;
+            };
+
             // Variable stack frame for PSQL execution
             struct VariableFrame
             {
-                std::unordered_map<std::string, Value> variables;
+                std::unordered_map<std::string, VariableEntry> variables;
                 VariableFrame* parent;  // For nested blocks
 
                 VariableFrame() : parent(nullptr) {}
@@ -804,9 +835,13 @@ namespace scratchbird
                 void pushFrame();
                 void popFrame();
                 void declareVariable(const std::string& name, const Value& value);
+                void declareVariable(const std::string& name, const VariableEntry& entry);
                 Value& getVariable(const std::string& name);
                 void setVariable(const std::string& name, const Value& value);
                 bool hasVariable(const std::string& name) const;
+                bool hasVariableInCurrentFrame(const std::string& name) const;
+                VariableEntry* findVariableEntry(const std::string& name);
+                const VariableEntry* findVariableEntry(const std::string& name) const;
 
             private:
                 std::vector<std::unique_ptr<VariableFrame>> frames_;
@@ -836,6 +871,14 @@ namespace scratchbird
                 ExceptionFrame(size_t start, size_t end) : try_start_pc(start), try_end_pc(end) {}
             };
 
+            // Exception info for V3 PSQL execution
+            struct PsqlExceptionInfo
+            {
+                std::string sqlstate;
+                std::string name;
+                std::string message;
+            };
+
             // Cursor state for PSQL cursors
             struct CursorState
             {
@@ -854,6 +897,8 @@ namespace scratchbird
 
             // PSQL execution state
             std::unique_ptr<VariableStack> variable_stack_;
+            bool has_psql_exception_ = false;
+            PsqlExceptionInfo psql_exception_{};
             std::vector<LoopState> loop_stack_;
             std::vector<ExceptionFrame> exception_stack_;
             std::unordered_map<std::string, CursorState> cursors_;  // Active cursors

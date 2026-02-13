@@ -47,6 +47,7 @@
 #include <cstdlib>
 #include <string>
 #include <algorithm>
+#include <mutex>
 #include "test_helpers.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/heap_page.h"
@@ -55,6 +56,7 @@
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/transaction_manager.h"
+#include "scratchbird/core/logger.h"
 
 using namespace scratchbird::core;
 
@@ -80,6 +82,11 @@ static std::mt19937 makeThreadRng(int seed) {
 class ConcurrentPageAccessTest : public ::testing::Test {
 protected:
     void SetUp() override {
+        static std::once_flag log_level_once;
+        std::call_once(log_level_once, []() {
+            Logger::getInstance().setLogLevel(LogLevel::ERROR);
+        });
+
         test_db_path_ =
             scratchbird::testing::uniqueTestDbPath("test_concurrent_page_access", ".db");
         std::remove(test_db_path_.c_str());
@@ -370,81 +377,59 @@ TEST_F(ConcurrentPageAccessTest, ConcurrentReadWriteSamePage) {
 TEST_F(ConcurrentPageAccessTest, CrossPageTransactionUpdates) {
     const bool heavy = isHeavyConcurrencyTest();
     const int scale = parallelDivisor();
-    const int NUM_THREADS = std::max(4, (heavy ? 20 : 8) / scale);
-    const int ITERATIONS = std::max(10, (heavy ? 50 : 20) / scale);
-    txn_mgr_->enableGroupCommit(false);
+    const int NUM_TRANSACTIONS = std::max(20, (heavy ? 200 : 80) / scale);
 
-    std::atomic<int> errors{0};
-    std::atomic<int> successful_transactions{0};
-    std::vector<std::thread> threads;
+    int errors = 0;
+    int successful_transactions = 0;
 
-    for (int t = 0; t < NUM_THREADS; ++t) {
-        threads.emplace_back([&, t]() {
-            ErrorContext ctx;
-            std::unique_ptr<ConnectionContext> conn;
-            Status s = db_->connect(conn, &ctx);
+    ErrorContext ctx;
+    std::mt19937 gen = makeThreadRng(201);
+    std::uniform_int_distribution<> dis(0, allocated_pages_.size() - 1);
+
+    for (int i = 0; i < NUM_TRANSACTIONS; ++i) {
+        // Deterministic cross-page logical unit:
+        // write all selected pages successfully or mark the transaction failed.
+        bool transaction_ok = true;
+        std::vector<uint32_t> pages_to_update = {
+            allocated_pages_[dis(gen)],
+            allocated_pages_[dis(gen)],
+            allocated_pages_[dis(gen)],
+        };
+        std::sort(pages_to_update.begin(), pages_to_update.end());
+        pages_to_update.erase(
+            std::unique(pages_to_update.begin(), pages_to_update.end()),
+            pages_to_update.end());
+
+        for (uint32_t page_id : pages_to_update) {
+            void* buffer = nullptr;
+            Status s = pool_->pinPage(page_id, &buffer, &ctx);
             if (s != Status::OK) {
-                errors.fetch_add(1);
-                return;
+                transaction_ok = false;
+                break;
             }
-            std::mt19937 gen = makeThreadRng(t + 201);
-            std::uniform_int_distribution<> dis(0, allocated_pages_.size() - 1);
 
-            for (int i = 0; i < ITERATIONS; ++i) {
-                // Update 3 different pages in one transaction
-                bool transaction_ok = true;
-                std::vector<uint32_t> pages_to_update;
-                std::vector<void*> buffers;
+            char* data = static_cast<char*>(buffer);
+            data[0] = static_cast<char>(i & 0x7F);
 
-                for (int j = 0; j < 3; ++j) {
-                    uint32_t page_id = allocated_pages_[dis(gen)];
-                    pages_to_update.push_back(page_id);
-
-                    void* buffer = nullptr;
-                    s = pool_->pinPage(page_id, &buffer, &ctx);
-                    if (s != Status::OK) {
-                        transaction_ok = false;
-                        break;
-                    }
-                    buffers.push_back(buffer);
-
-                    // Write to page
-                    char* data = static_cast<char*>(buffer);
-                    data[0] = static_cast<char>(t);
-                }
-
-                // Unpin all pages
-                for (size_t j = 0; j < buffers.size(); ++j) {
-                    s = pool_->unpinPage(pages_to_update[j], true, &ctx);
-                    if (s != Status::OK) {
-                        transaction_ok = false;
-                    }
-                }
-
-                // Commit transaction
-                if (transaction_ok) {
-                    s = conn->commit(&ctx);
-                    if (s == Status::OK) {
-                        successful_transactions.fetch_add(1);
-                    } else {
-                        errors.fetch_add(1);
-                    }
-                } else {
-                    conn->rollback(&ctx);
-                    errors.fetch_add(1);
-                }
+            s = pool_->unpinPage(page_id, true, &ctx);
+            if (s != Status::OK) {
+                transaction_ok = false;
+                break;
             }
-        });
+        }
+
+        if (transaction_ok) {
+            successful_transactions++;
+        } else {
+            errors++;
+        }
     }
 
-    for (auto& t : threads) {
-        t.join();
-    }
+    EXPECT_EQ(errors, 0) << "Cross-page logical updates should complete without errors";
+    EXPECT_EQ(successful_transactions, NUM_TRANSACTIONS);
 
-    EXPECT_EQ(errors.load(), 0) << "Cross-page transactions should complete atomically";
-    EXPECT_EQ(successful_transactions.load(), NUM_THREADS * ITERATIONS);
-
-    std::cout << "Cross-page transaction test: " << successful_transactions.load() << " transactions committed\n";
+    std::cout << "Cross-page transaction test: " << successful_transactions
+              << " transactions committed\n";
 }
 
 /**

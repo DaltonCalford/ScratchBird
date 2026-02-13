@@ -1,0 +1,70 @@
+{
+  "kinds": {
+    "Tagged": {
+      "tag_bytes": 1,
+      "length_bytes": 1,
+      "data_bytes": "length"
+    },
+    "WideTagged": {
+      "tag_bytes": 1,
+      "length_bytes": 4,
+      "data_bytes": "length"
+    },
+    "UnTagged": {
+      "tag_bytes": 0,
+      "length_bytes": 1,
+      "data_bytes": "length"
+    },
+    "WideUnTagged": {
+      "tag_bytes": 0,
+      "length_bytes": 4,
+      "data_bytes": "length"
+    },
+    "Tpb": {
+      "tag_bytes": 1,
+      "length_bytes": 0,
+      "data_bytes": 0,
+      "exceptions": "lock_read/lock_write/lock_timeout/at_snapshot_number/lock_table_schema use Tagged"
+    },
+    "SpbAttach": {
+      "tag_bytes": 1,
+      "length_bytes": 1,
+      "data_bytes": "length or special per tag"
+    },
+    "SpbStart": {
+      "tag_bytes": 1,
+      "length_bytes": "depends on action",
+      "data_bytes": "depends on tag"
+    },
+    "SpbSendItems": {
+      "tag_bytes": 1,
+      "length_bytes": 2,
+      "data_bytes": "length"
+    },
+    "SpbReceiveItems": {
+      "tag_bytes": 1,
+      "length_bytes": 0,
+      "data_bytes": 0
+    },
+    "SpbResponse": {
+      "tag_bytes": 1,
+      "length_bytes": "depends on tag",
+      "data_bytes": "depends on tag"
+    },
+    "InfoResponse": {
+      "tag_bytes": 1,
+      "length_bytes": 2,
+      "data_bytes": "length",
+      "terminators": [
+        "isc_info_end",
+        "isc_info_truncated",
+        "isc_info_flag_end"
+      ]
+    },
+    "InfoItems": {
+      "tag_bytes": 1,
+      "length_bytes": 0,
+      "data_bytes": 0
+    }
+  }
+}

@@ -467,8 +467,8 @@ namespace scratchbird::core
         uint32_t key_version;
         uint64_t created_at;
         uint64_t rotated_at;
-        uint32_t encrypted_key_oid;
-        uint32_t key_salt_oid;
+        ID encrypted_key_oid;
+        ID key_salt_oid;
         uint32_t reserved;
 
         EncryptionKeyRecord()
@@ -479,8 +479,8 @@ namespace scratchbird::core
               key_version(0),
               created_at(0),
               rotated_at(0),
-              encrypted_key_oid(0),
-              key_salt_oid(0),
+              encrypted_key_oid(),
+              key_salt_oid(),
               reserved(0)
         {
         }
@@ -1172,8 +1172,8 @@ namespace scratchbird::core
         }
 
         uint64_t xmin = ConnectionContext::getCurrentTransactionId();
-        uint32_t wrapped_oid = 0;
-        uint32_t salt_oid = 0;
+        ID wrapped_oid{};
+        ID salt_oid{};
         status = catalog->storeStringInToast(wrapped_blob, xmin, wrapped_oid, ctx);
         if (status != Status::OK)
         {
@@ -1259,8 +1259,8 @@ namespace scratchbird::core
         }
 
         uint64_t xmin = ConnectionContext::getCurrentTransactionId();
-        uint32_t wrapped_oid = 0;
-        uint32_t salt_oid = 0;
+        ID wrapped_oid{};
+        ID salt_oid{};
         status = catalog->storeStringInToast(wrapped_blob, xmin, wrapped_oid, ctx);
         if (status != Status::OK)
         {

@@ -49,10 +49,10 @@ namespace scratchbird::optimizer
     struct MCVEntry
     {
         uint8_t value_data[256];  // Serialized value (TOAST ref if larger)
-        uint32_t value_oid;       // TOAST reference for large values (0 if inline)
+        ID value_oid;             // TOAST reference for large values (UUID v7, zero if inline)
         float frequency;          // Fraction of rows with this value (0.0-1.0)
 
-        MCVEntry() : value_oid(0), frequency(0.0f)
+        MCVEntry() : value_oid(), frequency(0.0f)
         {
             std::memset(value_data, 0, sizeof(value_data));
         }
@@ -69,12 +69,12 @@ namespace scratchbird::optimizer
     {
         uint8_t lower_bound[256];  // Lower bound value (serialized)
         uint8_t upper_bound[256];  // Upper bound value (serialized)
-        uint32_t lower_oid;        // TOAST reference for large lower bound (0 if inline)
-        uint32_t upper_oid;        // TOAST reference for large upper bound (0 if inline)
+        ID lower_oid;              // TOAST reference for large lower bound (UUID v7, zero if inline)
+        ID upper_oid;              // TOAST reference for large upper bound (UUID v7, zero if inline)
         uint64_t row_count;        // Number of rows in this bucket (equal-width)
         float frequency;           // Fraction of rows in this bucket (equal-height)
 
-        HistogramBucket() : lower_oid(0), upper_oid(0), row_count(0), frequency(0.0f)
+        HistogramBucket() : lower_oid(), upper_oid(), row_count(0), frequency(0.0f)
         {
             std::memset(lower_bound, 0, sizeof(lower_bound));
             std::memset(upper_bound, 0, sizeof(upper_bound));

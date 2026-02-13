@@ -23,6 +23,7 @@
 #include <memory>
 #include <optional>
 #include <unordered_map>
+#include <unordered_set>
 #include <mutex>
 
 namespace scratchbird::core
@@ -370,6 +371,9 @@ struct ColumnScanIterator
     // Cached decompressed segment data (to avoid repeated decompression)
     ColumnSegment cached_segment;
     bool segment_cached;
+
+    // Completed segment pages to detect malformed cyclic chains
+    std::unordered_set<uint32_t> completed_segment_pages;
 
     ColumnScanIterator()
         : current_segment_page(0), offset_in_segment(0),

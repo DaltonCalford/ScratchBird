@@ -12,8 +12,8 @@
 /**
  * Firebird SQL Parser
  *
- * Parser for Firebird 5.0 SQL syntax. Produces AST v2 nodes that can be
- * processed by the shared SemanticAnalyzerV2 and BytecodeGeneratorV2.
+ * Parser for Firebird 5.0 SQL syntax. Produces AST v3 nodes that can be
+ * processed by the V3 emitter and SBLR v3 container pipeline.
  *
  * Key Firebird-specific syntax:
  * - FIRST/SKIP instead of LIMIT/OFFSET
@@ -28,14 +28,14 @@
  */
 
 #include "scratchbird/parser/firebird/firebird_lexer.h"
-#include "scratchbird/parser/ast_v2.h"
+#include "scratchbird/parser/ast_v3.h"
 #include <memory>
 #include <vector>
 #include <functional>
 
 namespace scratchbird::parser::firebird {
 
-using namespace scratchbird::parser::v2;
+using namespace scratchbird::parser::v3;
 
 /**
  * Parser error information
@@ -88,7 +88,7 @@ struct ParseResult {
 /**
  * Firebird SQL Parser
  *
- * Parses Firebird SQL syntax and produces AST v2 nodes.
+ * Parses Firebird SQL syntax and produces AST v3 nodes.
  */
 class Parser {
 public:
@@ -119,8 +119,8 @@ public:
     /**
      * String pool for AST nodes
      */
-    v2::StringPool& stringPool() { return string_pool_; }
-    const v2::StringPool& stringPool() const { return string_pool_; }
+    v3::StringPool& stringPool() { return string_pool_; }
+    const v3::StringPool& stringPool() const { return string_pool_; }
 
     /**
      * Error reporting
@@ -142,7 +142,7 @@ private:
     bool has_lookahead_ = false;
 
     // String pool for AST (separate from lexer's pool)
-    v2::StringPool string_pool_;
+    v3::StringPool string_pool_;
 
     // Error reporting
     ParserErrorReporter* error_reporter_ = nullptr;
@@ -164,8 +164,8 @@ private:
     void error(const std::string& message, const std::string& hint = "");
     void synchronize();
 
-    // Convert Firebird StringPool ID to v2 StringPool ID
-    v2::StringPool::StringId internFromLexer(StringPool::StringId lexer_id);
+    // Convert Firebird StringPool ID to v3 StringPool ID
+    v3::StringPool::StringId internFromLexer(StringPool::StringId lexer_id);
 
     // Get text from current token
     std::string_view currentText();
@@ -361,7 +361,7 @@ private:
     bool matchIdentifierText(const char* keyword);
 
     // Parse an identifier (or non-reserved keyword used as identifier)
-    v2::StringPool::StringId parseIdentifier();
+    v3::StringPool::StringId parseIdentifier();
 
     // Capture raw SQL body text for procedures/functions/triggers
     std::string captureStatementBody();
@@ -374,18 +374,18 @@ private:
 
 private:
     // DDL implementation helpers
-    v2::CreateTableStmt* parseCreateTableImpl(bool or_replace, bool temporary, bool global_temp);
-    v2::CreateIndexStmt* parseCreateIndexImpl(bool unique, bool descending);
-    v2::CreateViewStmt* parseCreateViewImpl(bool or_replace);
-    v2::CreateSequenceStmt* parseCreateSequenceImpl();
-    v2::AlterTableStmt* parseAlterTableImpl();
+    v3::CreateTableStmt* parseCreateTableImpl(bool or_replace, bool temporary, bool global_temp);
+    v3::CreateIndexStmt* parseCreateIndexImpl(bool unique, bool descending);
+    v3::CreateViewStmt* parseCreateViewImpl(bool or_replace);
+    v3::CreateSequenceStmt* parseCreateSequenceImpl();
+    v3::AlterTableStmt* parseAlterTableImpl();
     Statement* parseAlterDomainImpl();
     Statement* parseAlterIndexImpl();
-    Statement* parseAlterRenameMoveImpl(v2::DdlObjectType object_type);
-    v2::DropTableStmt* parseDropTableImpl(bool if_exists);
-    v2::DropIndexStmt* parseDropIndexImpl(bool if_exists);
-    v2::DropViewStmt* parseDropViewImpl(bool if_exists);
-    v2::DropDomainStmt* parseDropDomainImpl(bool if_exists);
+    Statement* parseAlterRenameMoveImpl(v3::DdlObjectType object_type);
+    v3::DropTableStmt* parseDropTableImpl(bool if_exists);
+    v3::DropIndexStmt* parseDropIndexImpl(bool if_exists);
+    v3::DropViewStmt* parseDropViewImpl(bool if_exists);
+    v3::DropDomainStmt* parseDropDomainImpl(bool if_exists);
     Statement* parseDropSequenceImpl(bool if_exists);
     Statement* parseDropFunctionImpl(bool if_exists);
     Statement* parseDropProcedureImpl(bool if_exists);

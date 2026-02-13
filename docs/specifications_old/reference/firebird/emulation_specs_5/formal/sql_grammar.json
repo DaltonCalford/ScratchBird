@@ -1,0 +1,1024 @@
+{
+  "tokens": [
+    "%token <metaNamePtr> ACTIVE",
+    "%token <metaNamePtr> ADD",
+    "%token <metaNamePtr> AFTER",
+    "%token <metaNamePtr> ALL",
+    "%token <metaNamePtr> ALTER",
+    "%token <metaNamePtr> AND",
+    "%token <metaNamePtr> ANY",
+    "%token <metaNamePtr> AS",
+    "%token <metaNamePtr> ASC",
+    "%token <metaNamePtr> AT",
+    "%token <metaNamePtr> AVG",
+    "%token <metaNamePtr> AUTO",
+    "%token <metaNamePtr> BEFORE",
+    "%token <metaNamePtr> BEGIN",
+    "%token <metaNamePtr> BETWEEN",
+    "%token <metaNamePtr> BLOB",
+    "%token <metaNamePtr> BY",
+    "%token <metaNamePtr> CAST",
+    "%token <metaNamePtr> CHARACTER",
+    "%token <metaNamePtr> CHECK",
+    "%token <metaNamePtr> COLLATE",
+    "%token <metaNamePtr> COMMIT",
+    "%token <metaNamePtr> COMMITTED",
+    "%token <metaNamePtr> COMPUTED",
+    "%token <metaNamePtr> CONCATENATE",
+    "%token <metaNamePtr> CONDITIONAL",
+    "%token <metaNamePtr> CONSTRAINT",
+    "%token <metaNamePtr> CONTAINING",
+    "%token <metaNamePtr> COUNT",
+    "%token <metaNamePtr> CREATE",
+    "%token <metaNamePtr> CSTRING",
+    "%token <metaNamePtr> CURRENT",
+    "%token <metaNamePtr> CURSOR",
+    "%token <metaNamePtr> DATABASE",
+    "%token <metaNamePtr> DATE",
+    "%token <metaNamePtr> DB_KEY",
+    "%token <metaNamePtr> DECIMAL",
+    "%token <metaNamePtr> DECLARE",
+    "%token <metaNamePtr> DEFAULT",
+    "%token <metaNamePtr> DELETE",
+    "%token <metaNamePtr> DESC",
+    "%token <metaNamePtr> DISTINCT",
+    "%token <metaNamePtr> DO",
+    "%token <metaNamePtr> DOMAIN",
+    "%token <metaNamePtr> DROP",
+    "%token <metaNamePtr> ELSE",
+    "%token <metaNamePtr> END",
+    "%token <metaNamePtr> ENTRY_POINT",
+    "%token <metaNamePtr> ESCAPE",
+    "%token <metaNamePtr> EXCEPTION",
+    "%token <metaNamePtr> EXECUTE",
+    "%token <metaNamePtr> EXISTS",
+    "%token <metaNamePtr> EXIT",
+    "%token <metaNamePtr> EXTERNAL",
+    "%token <metaNamePtr> FILTER",
+    "%token <metaNamePtr> FOR",
+    "%token <metaNamePtr> FOREIGN",
+    "%token <metaNamePtr> FROM",
+    "%token <metaNamePtr> FULL",
+    "%token <metaNamePtr> FUNCTION",
+    "%token <metaNamePtr> GDSCODE",
+    "%token <metaNamePtr> GEQ",
+    "%token <metaNamePtr> GENERATOR",
+    "%token <metaNamePtr> GEN_ID",
+    "%token <metaNamePtr> GRANT",
+    "%token <metaNamePtr> GROUP",
+    "%token <metaNamePtr> HAVING",
+    "%token <metaNamePtr> IF",
+    "%token <metaNamePtr> IN",
+    "%token <metaNamePtr> INACTIVE",
+    "%token <metaNamePtr> INNER",
+    "%token <metaNamePtr> INPUT_TYPE",
+    "%token <metaNamePtr> INDEX",
+    "%token <metaNamePtr> INSERT",
+    "%token <metaNamePtr> INTEGER",
+    "%token <metaNamePtr> INTO",
+    "%token <metaNamePtr> IS",
+    "%token <metaNamePtr> ISOLATION",
+    "%token <metaNamePtr> JOIN",
+    "%token <metaNamePtr> KEY",
+    "%token <metaNamePtr> CHAR",
+    "%token <metaNamePtr> DEC",
+    "%token <metaNamePtr> DOUBLE",
+    "%token <metaNamePtr> FILE",
+    "%token <metaNamePtr> FLOAT",
+    "%token <metaNamePtr> INT",
+    "%token <metaNamePtr> LONG",
+    "%token <metaNamePtr> NULL",
+    "%token <metaNamePtr> NUMERIC",
+    "%token <metaNamePtr> UPPER",
+    "%token <metaNamePtr> VALUE",
+    "%token <metaNamePtr> LENGTH",
+    "%token <metaNamePtr> LEFT",
+    "%token <metaNamePtr> LEQ",
+    "%token <metaNamePtr> LEVEL",
+    "%token <metaNamePtr> LIKE",
+    "%token <metaNamePtr> MANUAL",
+    "%token <metaNamePtr> MAXIMUM",
+    "%token <metaNamePtr> MERGE",
+    "%token <metaNamePtr> MINIMUM",
+    "%token <metaNamePtr> MODULE_NAME",
+    "%token <metaNamePtr> NAMES",
+    "%token <metaNamePtr> NATIONAL",
+    "%token <metaNamePtr> NATURAL",
+    "%token <metaNamePtr> NCHAR",
+    "%token <metaNamePtr> NEQ",
+    "%token <metaNamePtr> NO",
+    "%token <metaNamePtr> NOT",
+    "%token <metaNamePtr> NOT_GTR",
+    "%token <metaNamePtr> NOT_LSS",
+    "%token <metaNamePtr> OF",
+    "%token <metaNamePtr> ON",
+    "%token <metaNamePtr> ONLY",
+    "%token <metaNamePtr> OPTION",
+    "%token <metaNamePtr> OR",
+    "%token <metaNamePtr> ORDER",
+    "%token <metaNamePtr> OUTER",
+    "%token <metaNamePtr> OUTPUT_TYPE",
+    "%token <metaNamePtr> OVERFLOW",
+    "%token <metaNamePtr> PAGE",
+    "%token <metaNamePtr> PAGES",
+    "%token <metaNamePtr> PAGE_SIZE",
+    "%token <metaNamePtr> PARAMETER",
+    "%token <metaNamePtr> PASSWORD",
+    "%token <metaNamePtr> PLAN",
+    "%token <metaNamePtr> POSITION",
+    "%token <metaNamePtr> POST_EVENT",
+    "%token <metaNamePtr> PRECISION",
+    "%token <metaNamePtr> PRIMARY",
+    "%token <metaNamePtr> PRIVILEGES",
+    "%token <metaNamePtr> PROCEDURE",
+    "%token <metaNamePtr> PROTECTED",
+    "%token <metaNamePtr> READ",
+    "%token <metaNamePtr> REAL",
+    "%token <metaNamePtr> REFERENCES",
+    "%token <metaNamePtr> RESERVING",
+    "%token <metaNamePtr> RETAIN",
+    "%token <metaNamePtr> RETURNING_VALUES",
+    "%token <metaNamePtr> RETURNS",
+    "%token <metaNamePtr> REVOKE",
+    "%token <metaNamePtr> RIGHT",
+    "%token <metaNamePtr> ROLLBACK",
+    "%token <metaNamePtr> SEGMENT",
+    "%token <metaNamePtr> SELECT",
+    "%token <metaNamePtr> SET",
+    "%token <metaNamePtr> SHADOW",
+    "%token <metaNamePtr> SHARED",
+    "%token <metaNamePtr> SINGULAR",
+    "%token <metaNamePtr> SIZE",
+    "%token <metaNamePtr> SMALLINT",
+    "%token <metaNamePtr> SNAPSHOT",
+    "%token <metaNamePtr> SOME",
+    "%token <metaNamePtr> SORT",
+    "%token <metaNamePtr> SQLCODE",
+    "%token <metaNamePtr> STABILITY",
+    "%token <metaNamePtr> STARTING",
+    "%token <metaNamePtr> STATISTICS",
+    "%token <metaNamePtr> SUB_TYPE",
+    "%token <metaNamePtr> SUSPEND",
+    "%token <metaNamePtr> SUM",
+    "%token <metaNamePtr> TABLE",
+    "%token <metaNamePtr> THEN",
+    "%token <metaNamePtr> TO",
+    "%token <metaNamePtr> TRANSACTION",
+    "%token <metaNamePtr> TRIGGER",
+    "%token <metaNamePtr> UNCOMMITTED",
+    "%token <metaNamePtr> UNION",
+    "%token <metaNamePtr> UNIQUE",
+    "%token <metaNamePtr> UPDATE",
+    "%token <metaNamePtr> USER",
+    "%token <metaNamePtr> VALUES",
+    "%token <metaNamePtr> VARCHAR",
+    "%token <metaNamePtr> VARIABLE",
+    "%token <metaNamePtr> VARYING",
+    "%token <metaNamePtr> VERSION",
+    "%token <metaNamePtr> VIEW",
+    "%token <metaNamePtr> WAIT",
+    "%token <metaNamePtr> WHEN",
+    "%token <metaNamePtr> WHERE",
+    "%token <metaNamePtr> WHILE",
+    "%token <metaNamePtr> WITH",
+    "%token <metaNamePtr> WORK",
+    "%token <metaNamePtr> WRITE",
+    "%token <stringPtr> FLOAT_NUMBER DECIMAL_NUMBER",
+    "%token <lim64ptr> LIMIT64_NUMBER LIMIT64_INT NUM128",
+    "%token <metaNamePtr> SYMBOL",
+    "%token <int32Val> NUMBER32BIT",
+    "%token <intlStringPtr> STRING",
+    "%token <metaNamePtr> INTRODUCER",
+    "%token <metaNamePtr> ACTION",
+    "%token <metaNamePtr> ADMIN",
+    "%token <metaNamePtr> BLOBID",
+    "%token <metaNamePtr> CASCADE",
+    "%token <metaNamePtr> FREE_IT\t\t\t// ISC SQL extension",
+    "%token <metaNamePtr> RESTRICT",
+    "%token <metaNamePtr> ROLE",
+    "%token <metaNamePtr> TEMP",
+    "%token <metaNamePtr> COLUMN",
+    "%token <metaNamePtr> TYPE",
+    "%token <metaNamePtr> EXTRACT",
+    "%token <metaNamePtr> YEAR",
+    "%token <metaNamePtr> MONTH",
+    "%token <metaNamePtr> DAY",
+    "%token <metaNamePtr> HOUR",
+    "%token <metaNamePtr> MINUTE",
+    "%token <metaNamePtr> SECOND",
+    "%token <metaNamePtr> WEEKDAY\t\t\t// ISC SQL extension",
+    "%token <metaNamePtr> YEARDAY\t\t\t// ISC SQL extension",
+    "%token <metaNamePtr> TIME",
+    "%token <metaNamePtr> TIMESTAMP",
+    "%token <metaNamePtr> CURRENT_DATE",
+    "%token <metaNamePtr> CURRENT_TIME",
+    "%token <metaNamePtr> CURRENT_TIMESTAMP",
+    "%token <scaledNumber> NUMBER64BIT SCALEDINT",
+    "%token <metaNamePtr> CURRENT_USER",
+    "%token <metaNamePtr> CURRENT_ROLE",
+    "%token <metaNamePtr> BREAK",
+    "%token <metaNamePtr> SUBSTRING",
+    "%token <metaNamePtr> RECREATE",
+    "%token <metaNamePtr> DESCRIPTOR",
+    "%token <metaNamePtr> FIRST",
+    "%token <metaNamePtr> SKIP",
+    "%token <metaNamePtr> CURRENT_CONNECTION",
+    "%token <metaNamePtr> CURRENT_TRANSACTION",
+    "%token <metaNamePtr> BIGINT",
+    "%token <metaNamePtr> CASE",
+    "%token <metaNamePtr> NULLIF",
+    "%token <metaNamePtr> COALESCE",
+    "%token <metaNamePtr> USING",
+    "%token <metaNamePtr> NULLS",
+    "%token <metaNamePtr> LAST",
+    "%token <metaNamePtr> ROW_COUNT",
+    "%token <metaNamePtr> LOCK",
+    "%token <metaNamePtr> SAVEPOINT",
+    "%token <metaNamePtr> RELEASE",
+    "%token <metaNamePtr> STATEMENT",
+    "%token <metaNamePtr> LEAVE",
+    "%token <metaNamePtr> INSERTING",
+    "%token <metaNamePtr> UPDATING",
+    "%token <metaNamePtr> DELETING",
+    "%token <metaNamePtr> BACKUP",
+    "%token <metaNamePtr> DIFFERENCE",
+    "%token <metaNamePtr> OPEN",
+    "%token <metaNamePtr> CLOSE",
+    "%token <metaNamePtr> FETCH",
+    "%token <metaNamePtr> ROWS",
+    "%token <metaNamePtr> BLOCK",
+    "%token <metaNamePtr> IIF",
+    "%token <metaNamePtr> SCALAR_ARRAY",
+    "%token <metaNamePtr> CROSS",
+    "%token <metaNamePtr> NEXT",
+    "%token <metaNamePtr> SEQUENCE",
+    "%token <metaNamePtr> RESTART",
+    "%token <metaNamePtr> BOTH",
+    "%token <metaNamePtr> COLLATION",
+    "%token <metaNamePtr> COMMENT",
+    "%token <metaNamePtr> BIT_LENGTH",
+    "%token <metaNamePtr> CHAR_LENGTH",
+    "%token <metaNamePtr> CHARACTER_LENGTH",
+    "%token <metaNamePtr> LEADING",
+    "%token <metaNamePtr> LOWER",
+    "%token <metaNamePtr> OCTET_LENGTH",
+    "%token <metaNamePtr> TRAILING",
+    "%token <metaNamePtr> TRIM",
+    "%token <metaNamePtr> RETURNING",
+    "%token <metaNamePtr> IGNORE",
+    "%token <metaNamePtr> LIMBO",
+    "%token <metaNamePtr> UNDO",
+    "%token <metaNamePtr> REQUESTS",
+    "%token <metaNamePtr> TIMEOUT",
+    "%token <metaNamePtr> ABS",
+    "%token <metaNamePtr> ACCENT",
+    "%token <metaNamePtr> ACOS",
+    "%token <metaNamePtr> ALWAYS",
+    "%token <metaNamePtr> ASCII_CHAR",
+    "%token <metaNamePtr> ASCII_VAL",
+    "%token <metaNamePtr> ASIN",
+    "%token <metaNamePtr> ATAN",
+    "%token <metaNamePtr> ATAN2",
+    "%token <metaNamePtr> BIN_AND",
+    "%token <metaNamePtr> BIN_OR",
+    "%token <metaNamePtr> BIN_SHL",
+    "%token <metaNamePtr> BIN_SHR",
+    "%token <metaNamePtr> BIN_XOR",
+    "%token <metaNamePtr> CEIL",
+    "%token <metaNamePtr> CONNECT",
+    "%token <metaNamePtr> COS",
+    "%token <metaNamePtr> COSH",
+    "%token <metaNamePtr> COT",
+    "%token <metaNamePtr> DATEADD",
+    "%token <metaNamePtr> DATEDIFF",
+    "%token <metaNamePtr> DECODE",
+    "%token <metaNamePtr> DISCONNECT",
+    "%token <metaNamePtr> EXP",
+    "%token <metaNamePtr> FLOOR",
+    "%token <metaNamePtr> GEN_UUID",
+    "%token <metaNamePtr> GENERATED",
+    "%token <metaNamePtr> GLOBAL",
+    "%token <metaNamePtr> HASH",
+    "%token <metaNamePtr> INSENSITIVE",
+    "%token <metaNamePtr> LIST",
+    "%token <metaNamePtr> LN",
+    "%token <metaNamePtr> LOG",
+    "%token <metaNamePtr> LOG10",
+    "%token <metaNamePtr> LPAD",
+    "%token <metaNamePtr> MATCHED",
+    "%token <metaNamePtr> MATCHING",
+    "%token <metaNamePtr> MAXVALUE",
+    "%token <metaNamePtr> MILLISECOND",
+    "%token <metaNamePtr> MINVALUE",
+    "%token <metaNamePtr> MOD",
+    "%token <metaNamePtr> OVERLAY",
+    "%token <metaNamePtr> PAD",
+    "%token <metaNamePtr> PI",
+    "%token <metaNamePtr> PLACING",
+    "%token <metaNamePtr> POWER",
+    "%token <metaNamePtr> PRESERVE",
+    "%token <metaNamePtr> RAND",
+    "%token <metaNamePtr> RECURSIVE",
+    "%token <metaNamePtr> REPLACE",
+    "%token <metaNamePtr> REVERSE",
+    "%token <metaNamePtr> ROUND",
+    "%token <metaNamePtr> RPAD",
+    "%token <metaNamePtr> SENSITIVE",
+    "%token <metaNamePtr> SIGN",
+    "%token <metaNamePtr> SIN",
+    "%token <metaNamePtr> SINH",
+    "%token <metaNamePtr> SPACE",
+    "%token <metaNamePtr> SQRT",
+    "%token <metaNamePtr> START",
+    "%token <metaNamePtr> TAN",
+    "%token <metaNamePtr> TANH",
+    "%token <metaNamePtr> TEMPORARY",
+    "%token <metaNamePtr> TRUNC",
+    "%token <metaNamePtr> WEEK",
+    "%token <metaNamePtr> AUTONOMOUS",
+    "%token <metaNamePtr> CHAR_TO_UUID",
+    "%token <metaNamePtr> FIRSTNAME",
+    "%token <metaNamePtr> GRANTED",
+    "%token <metaNamePtr> LASTNAME",
+    "%token <metaNamePtr> MIDDLENAME",
+    "%token <metaNamePtr> MAPPING",
+    "%token <metaNamePtr> OS_NAME",
+    "%token <metaNamePtr> SIMILAR",
+    "%token <metaNamePtr> UUID_TO_CHAR",
+    "%token <metaNamePtr> CALLER",
+    "%token <metaNamePtr> COMMON",
+    "%token <metaNamePtr> DATA",
+    "%token <metaNamePtr> SOURCE",
+    "%token <metaNamePtr> TWO_PHASE",
+    "%token <metaNamePtr> BIND_PARAM",
+    "%token <metaNamePtr> BIN_NOT",
+    "%token <metaNamePtr> BODY",
+    "%token <metaNamePtr> CONTINUE",
+    "%token <metaNamePtr> DDL",
+    "%token <metaNamePtr> DECRYPT",
+    "%token <metaNamePtr> ENCRYPT",
+    "%token <metaNamePtr> ENGINE",
+    "%token <metaNamePtr> NAME",
+    "%token <metaNamePtr> OVER",
+    "%token <metaNamePtr> PACKAGE",
+    "%token <metaNamePtr> PARTITION",
+    "%token <metaNamePtr> RDB_GET_CONTEXT",
+    "%token <metaNamePtr> RDB_SET_CONTEXT",
+    "%token <metaNamePtr> SCROLL",
+    "%token <metaNamePtr> PRIOR",
+    "%token <metaNamePtr> ABSOLUTE",
+    "%token <metaNamePtr> RELATIVE",
+    "%token <metaNamePtr> ACOSH",
+    "%token <metaNamePtr> ASINH",
+    "%token <metaNamePtr> ATANH",
+    "%token <metaNamePtr> RETURN",
+    "%token <metaNamePtr> DETERMINISTIC",
+    "%token <metaNamePtr> IDENTITY",
+    "%token <metaNamePtr> DENSE_RANK",
+    "%token <metaNamePtr> FIRST_VALUE",
+    "%token <metaNamePtr> NTH_VALUE",
+    "%token <metaNamePtr> LAST_VALUE",
+    "%token <metaNamePtr> LAG",
+    "%token <metaNamePtr> LEAD",
+    "%token <metaNamePtr> RANK",
+    "%token <metaNamePtr> ROW_NUMBER",
+    "%token <metaNamePtr> SQLSTATE",
+    "%token <metaNamePtr> BOOLEAN",
+    "%token <metaNamePtr> FALSE",
+    "%token <metaNamePtr> TRUE",
+    "%token <metaNamePtr> UNKNOWN",
+    "%token <metaNamePtr> USAGE",
+    "%token <metaNamePtr> RDB_RECORD_VERSION",
+    "%token <metaNamePtr> LINGER",
+    "%token <metaNamePtr> TAGS",
+    "%token <metaNamePtr> PLUGIN",
+    "%token <metaNamePtr> SERVERWIDE",
+    "%token <metaNamePtr> INCREMENT",
+    "%token <metaNamePtr> TRUSTED",
+    "%token <metaNamePtr> ROW",
+    "%token <metaNamePtr> OFFSET",
+    "%token <metaNamePtr> STDDEV_SAMP",
+    "%token <metaNamePtr> STDDEV_POP",
+    "%token <metaNamePtr> VAR_SAMP",
+    "%token <metaNamePtr> VAR_POP",
+    "%token <metaNamePtr> COVAR_SAMP",
+    "%token <metaNamePtr> COVAR_POP",
+    "%token <metaNamePtr> CORR",
+    "%token <metaNamePtr> REGR_AVGX",
+    "%token <metaNamePtr> REGR_AVGY",
+    "%token <metaNamePtr> REGR_COUNT",
+    "%token <metaNamePtr> REGR_INTERCEPT",
+    "%token <metaNamePtr> REGR_R2",
+    "%token <metaNamePtr> REGR_SLOPE",
+    "%token <metaNamePtr> REGR_SXX",
+    "%token <metaNamePtr> REGR_SXY",
+    "%token <metaNamePtr> REGR_SYY",
+    "%token <metaNamePtr> BASE64_DECODE",
+    "%token <metaNamePtr> BASE64_ENCODE",
+    "%token <metaNamePtr> BINARY",
+    "%token <metaNamePtr> BIND",
+    "%token <metaNamePtr> COMPARE_DECFLOAT",
+    "%token <metaNamePtr> CONSISTENCY",
+    "%token <metaNamePtr> COUNTER",
+    "%token <metaNamePtr> CRYPT_HASH",
+    "%token <metaNamePtr> CTR_BIG_ENDIAN",
+    "%token <metaNamePtr> CTR_LENGTH",
+    "%token <metaNamePtr> CTR_LITTLE_ENDIAN",
+    "%token <metaNamePtr> CUME_DIST",
+    "%token <metaNamePtr> DECFLOAT",
+    "%token <metaNamePtr> DEFINER",
+    "%token <metaNamePtr> DISABLE",
+    "%token <metaNamePtr> ENABLE",
+    "%token <metaNamePtr> EXCESS",
+    "%token <metaNamePtr> EXCLUDE",
+    "%token <metaNamePtr> EXTENDED",
+    "%token <metaNamePtr> FIRST_DAY",
+    "%token <metaNamePtr> FOLLOWING",
+    "%token <metaNamePtr> HEX_DECODE",
+    "%token <metaNamePtr> HEX_ENCODE",
+    "%token <metaNamePtr> IDLE",
+    "%token <metaNamePtr> INCLUDE",
+    "%token <metaNamePtr> INT128",
+    "%token <metaNamePtr> INVOKER",
+    "%token <metaNamePtr> IV",
+    "%token <metaNamePtr> LAST_DAY",
+    "%token <metaNamePtr> LATERAL",
+    "%token <metaNamePtr> LEGACY",
+    "%token <metaNamePtr> LOCAL",
+    "%token <metaNamePtr> LOCALTIME",
+    "%token <metaNamePtr> LOCALTIMESTAMP",
+    "%token <metaNamePtr> LPARAM",
+    "%token <metaNamePtr> MAKE_DBKEY",
+    "%token <metaNamePtr> MESSAGE",
+    "%token <metaNamePtr> MODE",
+    "%token <metaNamePtr> NATIVE",
+    "%token <metaNamePtr> NORMALIZE_DECFLOAT",
+    "%token <metaNamePtr> NTILE",
+    "%token <metaNamePtr> NUMBER",
+    "%token <metaNamePtr> OTHERS",
+    "%token <metaNamePtr> OVERRIDING",
+    "%token <metaNamePtr> PERCENT_RANK",
+    "%token <metaNamePtr> PRECEDING",
+    "%token <metaNamePtr> PRIVILEGE",
+    "%token <metaNamePtr> PUBLICATION",
+    "%token <metaNamePtr> QUANTIZE",
+    "%token <metaNamePtr> RANGE",
+    "%token <metaNamePtr> RESETTING",
+    "%token <metaNamePtr> RDB_ERROR",
+    "%token <metaNamePtr> RDB_GET_TRANSACTION_CN",
+    "%token <metaNamePtr> RDB_ROLE_IN_USE",
+    "%token <metaNamePtr> RDB_SYSTEM_PRIVILEGE",
+    "%token <metaNamePtr> RESET",
+    "%token <metaNamePtr> RSA_DECRYPT",
+    "%token <metaNamePtr> RSA_ENCRYPT",
+    "%token <metaNamePtr> RSA_PRIVATE",
+    "%token <metaNamePtr> RSA_PUBLIC",
+    "%token <metaNamePtr> RSA_SIGN_HASH",
+    "%token <metaNamePtr> RSA_VERIFY_HASH",
+    "%token <metaNamePtr> SALT_LENGTH",
+    "%token <metaNamePtr> SECURITY",
+    "%token <metaNamePtr> SESSION",
+    "%token <metaNamePtr> SIGNATURE",
+    "%token <metaNamePtr> SQL",
+    "%token <metaNamePtr> SYSTEM",
+    "%token <metaNamePtr> TIES",
+    "%token <metaNamePtr> TIMEZONE_HOUR",
+    "%token <metaNamePtr> TIMEZONE_MINUTE",
+    "%token <metaNamePtr> TOTALORDER",
+    "%token <metaNamePtr> TRAPS",
+    "%token <metaNamePtr> UNBOUNDED",
+    "%token <metaNamePtr> VARBINARY",
+    "%token <metaNamePtr> WINDOW",
+    "%token <metaNamePtr> WITHOUT",
+    "%token <metaNamePtr> ZONE",
+    "%token <metaNamePtr> CONNECTIONS",
+    "%token <metaNamePtr> POOL",
+    "%token <metaNamePtr> LIFETIME",
+    "%token <metaNamePtr> CLEAR",
+    "%token <metaNamePtr> OLDEST",
+    "%token <metaNamePtr> DEBUG",
+    "%token <metaNamePtr> PKCS_1_5",
+    "%token <metaNamePtr> BLOB_APPEND",
+    "%token <metaNamePtr> LOCKED",
+    "%token <metaNamePtr> OPTIMIZE",
+    "%token <metaNamePtr> QUARTER",
+    "%token <metaNamePtr> TARGET",
+    "%token <metaNamePtr> TIMEZONE_NAME",
+    "%token <metaNamePtr> UNICODE_CHAR",
+    "%token <metaNamePtr> UNICODE_VAL",
+    "%token <metaNamePtr> OWNER",
+    "%token <metaNamePtr> ANY_VALUE",
+    "%token <metaNamePtr> BIN_AND_AGG",
+    "%token <metaNamePtr> BIN_OR_AGG",
+    "%token <metaNamePtr> BIN_XOR_AGG",
+    "%token <metaNamePtr> BTRIM",
+    "%token <metaNamePtr> CALL",
+    "%token <metaNamePtr> CURRENT_SCHEMA",
+    "%token <metaNamePtr> DOWNTO",
+    "%token <metaNamePtr> ERROR",
+    "%token <metaNamePtr> FORMAT",
+    "%token <metaNamePtr> GENERATE_SERIES",
+    "%token <metaNamePtr> GREATEST",
+    "%token <metaNamePtr> LEAST",
+    "%token <metaNamePtr> LISTAGG",
+    "%token <metaNamePtr> LTRIM",
+    "%token <metaNamePtr> NAMED_ARG_ASSIGN",
+    "%token <metaNamePtr> RTRIM",
+    "%token <metaNamePtr> SCHEMA",
+    "%token <metaNamePtr> SEARCH_PATH",
+    "%token <metaNamePtr> TRUNCATE",
+    "%token <metaNamePtr> UNLIST",
+    "%token <metaNamePtr> WITHIN"
+  ],
+  "productions": [
+    {
+      "lhs": "Arg",
+      "rhs": [
+        ":Gds(isc_sqlerr) << Arg::Num(-104) <<"
+      ]
+    },
+    {
+      "lhs": "Arg",
+      "rhs": [
+        ":Gds(isc_arith_except) <<"
+      ]
+    },
+    {
+      "lhs": "Arg",
+      "rhs": [
+        ":Gds(isc_numeric_out_of_range));",
+        "}",
+        "$$ = signedNumber"
+      ]
+    },
+    {
+      "lhs": "RelationNode",
+      "rhs": [
+        ":AddColumnClause* clause = $<addColumnClause>$ =",
+        "newNode<RelationNode::AddColumnClause>()"
+      ]
+    },
+    {
+      "lhs": "RelationNode",
+      "rhs": [
+        ":AddColumnClause* clause = $<addColumnClause>$ =",
+        "newNode<RelationNode::AddColumnClause>()"
+      ]
+    },
+    {
+      "lhs": "RelationNode",
+      "rhs": [
+        ":AddColumnClause* clause = newNode<RelationNode::AddColumnClause>();",
+        "clause->field = $2"
+      ]
+    },
+    {
+      "lhs": "RelationNode",
+      "rhs": [
+        ":AddColumnClause* clause = newNode<RelationNode::AddColumnClause>();",
+        "clause->field = newNode<dsql_fld>()"
+      ]
+    },
+    {
+      "lhs": "RelationNode",
+      "rhs": [
+        ":AddConstraintClause& constraint = $addColumnClause->constraints.add();",
+        "constraint.constraintType = RelationNode::AddConstraintClause::CTYPE_NOT_NULL"
+      ]
+    },
+    {
+      "lhs": "RelationNode",
+      "rhs": [
+        ":AddConstraintClause& constraint = $addColumnClause->constraints.add();",
+        "constraint.constraintType = RelationNode::AddConstraintClause::CTYPE_CHECK"
+      ]
+    },
+    {
+      "lhs": "RelationNode",
+      "rhs": [
+        ":AddConstraintClause& constraint = $addColumnClause->constraints.add();",
+        "constraint.constraintType = RelationNode::AddConstraintClause::CTYPE_FK"
+      ]
+    },
+    {
+      "lhs": "RelationNode",
+      "rhs": [
+        ":AddConstraintClause& constraint = $addColumnClause->constraints.add();",
+        "constraint.constraintType = RelationNode::AddConstraintClause::CTYPE_UNIQUE"
+      ]
+    },
+    {
+      "lhs": "RelationNode",
+      "rhs": [
+        ":AddConstraintClause& constraint = $addColumnClause->constraints.add();",
+        "constraint.constraintType = RelationNode::AddConstraintClause::CTYPE_PK"
+      ]
+    },
+    {
+      "lhs": "RelationNode",
+      "rhs": [
+        ":AddConstraintClause& constraint = *newNode<RelationNode::AddConstraintClause>();",
+        "constraint.constraintType = RelationNode::AddConstraintClause::CTYPE_UNIQUE"
+      ]
+    },
+    {
+      "lhs": "RelationNode",
+      "rhs": [
+        ":AddConstraintClause& constraint = *newNode<RelationNode::AddConstraintClause>();",
+        "constraint.constraintType = RelationNode::AddConstraintClause::CTYPE_PK"
+      ]
+    },
+    {
+      "lhs": "RelationNode",
+      "rhs": [
+        ":AddConstraintClause& constraint = *newNode<RelationNode::AddConstraintClause>();",
+        "constraint.constraintType = RelationNode::AddConstraintClause::CTYPE_FK"
+      ]
+    },
+    {
+      "lhs": "RelationNode",
+      "rhs": [
+        ":AddConstraintClause* constraint = newNode<RelationNode::AddConstraintClause>();",
+        "constraint->constraintType = RelationNode::AddConstraintClause::CTYPE_CHECK"
+      ]
+    },
+    {
+      "lhs": "RelationNode",
+      "rhs": [
+        ":IndexConstraintClause* clause = $$ =",
+        "newNode<RelationNode::IndexConstraintClause>()"
+      ]
+    },
+    {
+      "lhs": "DeclareCursorNode",
+      "rhs": [
+        ":CUR_TYPE_EXPLICIT);",
+        "node->dsqlScroll = $2"
+      ]
+    },
+    {
+      "lhs": "RelationNode",
+      "rhs": [
+        ":DropColumnClause* clause = newNode<RelationNode::DropColumnClause>();",
+        "clause->silent = $3"
+      ]
+    },
+    {
+      "lhs": "RelationNode",
+      "rhs": [
+        ":DropConstraintClause* clause = newNode<RelationNode::DropConstraintClause>();",
+        "clause->silent = $3"
+      ]
+    },
+    {
+      "lhs": "RelationNode",
+      "rhs": [
+        ":AlterColPosClause* clause = newNode<RelationNode::AlterColPosClause>();",
+        "clause->name = *$2"
+      ]
+    },
+    {
+      "lhs": "RelationNode",
+      "rhs": [
+        ":AlterColNameClause* clause = newNode<RelationNode::AlterColNameClause>();",
+        "clause->fromName = *$2"
+      ]
+    },
+    {
+      "lhs": "RelationNode",
+      "rhs": [
+        ":AlterColNullClause* clause = newNode<RelationNode::AlterColNullClause>();",
+        "clause->name = *$2"
+      ]
+    },
+    {
+      "lhs": "RelationNode",
+      "rhs": [
+        ":AlterColNullClause* clause = newNode<RelationNode::AlterColNullClause>();",
+        "clause->name = *$2"
+      ]
+    },
+    {
+      "lhs": "RelationNode",
+      "rhs": [
+        ":AlterColTypeClause* clause = newNode<RelationNode::AlterColTypeClause>();",
+        "clause->field = $4"
+      ]
+    },
+    {
+      "lhs": "RelationNode",
+      "rhs": [
+        ":AlterColTypeClause* clause = newNode<RelationNode::AlterColTypeClause>();",
+        "clause->field = $4"
+      ]
+    },
+    {
+      "lhs": "RelationNode",
+      "rhs": [
+        ":AlterColTypeClause* clause = newNode<RelationNode::AlterColTypeClause>();",
+        "clause->field = newNode<dsql_fld>()"
+      ]
+    },
+    {
+      "lhs": "RelationNode",
+      "rhs": [
+        ":AlterColTypeClause* clause = newNode<RelationNode::AlterColTypeClause>();",
+        "clause->field = newNode<dsql_fld>()"
+      ]
+    },
+    {
+      "lhs": "RelationNode",
+      "rhs": [
+        ":AlterColTypeClause* clause = newNode<RelationNode::AlterColTypeClause>();",
+        "clause->field = newNode<dsql_fld>()"
+      ]
+    },
+    {
+      "lhs": "RelationNode",
+      "rhs": [
+        ":AlterColTypeClause* clause = newNode<RelationNode::AlterColTypeClause>();",
+        "clause->field = newNode<dsql_fld>()"
+      ]
+    },
+    {
+      "lhs": "RelationNode",
+      "rhs": [
+        ":AlterColTypeClause* clause = newNode<RelationNode::AlterColTypeClause>();",
+        "clause->field = newNode<dsql_fld>()"
+      ]
+    },
+    {
+      "lhs": "RelationNode",
+      "rhs": [
+        ":Clause* clause =",
+        "newNode<RelationNode::Clause>(RelationNode::Clause::TYPE_ALTER_SQL_SECURITY)"
+      ]
+    },
+    {
+      "lhs": "RelationNode",
+      "rhs": [
+        ":Clause* clause =",
+        "newNode<RelationNode::Clause>(RelationNode::Clause::TYPE_ALTER_SQL_SECURITY)"
+      ]
+    },
+    {
+      "lhs": "RelationNode",
+      "rhs": [
+        ":Clause* clause =",
+        "newNode<RelationNode::Clause>(RelationNode::Clause::TYPE_ALTER_SQL_SECURITY)"
+      ]
+    },
+    {
+      "lhs": "RelationNode",
+      "rhs": [
+        ":Clause* clause =",
+        "newNode<RelationNode::Clause>(RelationNode::Clause::TYPE_ALTER_PUBLICATION)"
+      ]
+    },
+    {
+      "lhs": "RelationNode",
+      "rhs": [
+        ":Clause* clause =",
+        "newNode<RelationNode::Clause>(RelationNode::Clause::TYPE_ALTER_PUBLICATION)"
+      ]
+    },
+    {
+      "lhs": "Arg",
+      "rhs": [
+        ":Gds(isc_sql_dialect_datatype_unsupport) << Arg::Num(client_dialect) <<"
+      ]
+    },
+    {
+      "lhs": "Arg",
+      "rhs": [
+        ":Str(\"BIGINT\"));",
+        "}",
+        "if (db_dialect < SQL_DIALECT_V6_TRANSITION)",
+        "{",
+        "ERRD_post (Arg::Gds(isc_sqlerr) << Arg::Num(-104) <<"
+      ]
+    },
+    {
+      "lhs": "Arg",
+      "rhs": [
+        ":Gds(isc_sql_db_dialect_dtype_unsupport) << Arg::Num(db_dialect) <<"
+      ]
+    },
+    {
+      "lhs": "Arg",
+      "rhs": [
+        ":Str(\"BIGINT\"));",
+        "}",
+        "$$->dtype = dtype_int64"
+      ]
+    },
+    {
+      "lhs": "Arg",
+      "rhs": [
+        ":Gds(isc_ddl_not_allowed_by_db_sql_dial) << Arg::Num(db_dialect));",
+        "}",
+        "if (client_dialect <= SQL_DIALECT_V5)",
+        "{",
+        "$$->dtype = dtype_double"
+      ]
+    },
+    {
+      "lhs": "Arg",
+      "rhs": [
+        ":Gds(isc_ddl_not_allowed_by_db_sql_dial) << Arg::Num(db_dialect));",
+        "}",
+        "if (client_dialect <= SQL_DIALECT_V5)",
+        "{",
+        "$$->dtype = dtype_double"
+      ]
+    },
+    {
+      "lhs": "PlanNode",
+      "rhs": [
+        ":AccessItem& item = $accessType->items.add();",
+        "item.indexName = *$1"
+      ]
+    },
+    {
+      "lhs": "PlanNode",
+      "rhs": [
+        ":AccessItem& item = $accessType->items.add();",
+        "item.indexName = *$3"
+      ]
+    },
+    {
+      "lhs": "ComparativeBoolNode",
+      "rhs": [
+        ":DFLAG_ANSI_ANY, $3);",
+        "}",
+        "value NOT IN in_predicate_value",
+        "{",
+        "const auto node = newNode<ComparativeBoolNode>(blr_eql, $1,"
+      ]
+    },
+    {
+      "lhs": "ComparativeBoolNode",
+      "rhs": [
+        ":DFLAG_ANSI_ANY, $4);",
+        "$$ = newNode<NotBoolNode>(node)"
+      ]
+    },
+    {
+      "lhs": "Arg",
+      "rhs": [
+        ":Gds(isc_sql_dialect_datatype_unsupport) << Arg::Num(client_dialect) <<"
+      ]
+    },
+    {
+      "lhs": "Arg",
+      "rhs": [
+        ":Str(\"DATE\"));",
+        "}",
+        "if (db_dialect < SQL_DIALECT_V6_TRANSITION)",
+        "{",
+        "ERRD_post(Arg::Gds(isc_sqlerr) << Arg::Num(-104) <<"
+      ]
+    },
+    {
+      "lhs": "Arg",
+      "rhs": [
+        ":Gds(isc_sql_db_dialect_dtype_unsupport) << Arg::Num(db_dialect) <<"
+      ]
+    },
+    {
+      "lhs": "Arg",
+      "rhs": [
+        ":Str(\"DATE\"));",
+        "}",
+        "$$ = newNode<CurrentDateNode>()"
+      ]
+    },
+    {
+      "lhs": "Arg",
+      "rhs": [
+        ":Gds(isc_sql_dialect_datatype_unsupport) << Arg::Num(client_dialect) <<"
+      ]
+    },
+    {
+      "lhs": "Arg",
+      "rhs": [
+        ":Str(\"TIME\"));",
+        "}",
+        "if (db_dialect < SQL_DIALECT_V6_TRANSITION)",
+        "{",
+        "ERRD_post(Arg::Gds(isc_sqlerr) << Arg::Num(-104) <<"
+      ]
+    },
+    {
+      "lhs": "Arg",
+      "rhs": [
+        ":Gds(isc_sql_db_dialect_dtype_unsupport) << Arg::Num(db_dialect) <<"
+      ]
+    },
+    {
+      "lhs": "Arg",
+      "rhs": [
+        ":Str(\"TIME\"));",
+        "}",
+        "$$ = newNode<LocalTimeNode>($2)"
+      ]
+    },
+    {
+      "lhs": "Arg",
+      "rhs": [
+        ":Gds(isc_sql_dialect_datatype_unsupport) << Arg::Num(client_dialect) <<"
+      ]
+    },
+    {
+      "lhs": "Arg",
+      "rhs": [
+        ":Str(\"TIME\"));",
+        "}",
+        "if (db_dialect < SQL_DIALECT_V6_TRANSITION)",
+        "{",
+        "ERRD_post(Arg::Gds(isc_sqlerr) << Arg::Num(-104) <<"
+      ]
+    },
+    {
+      "lhs": "Arg",
+      "rhs": [
+        ":Gds(isc_sql_db_dialect_dtype_unsupport) << Arg::Num(db_dialect) <<"
+      ]
+    },
+    {
+      "lhs": "Arg",
+      "rhs": [
+        ":Str(\"TIME\"));",
+        "}",
+        "$$ = newNode<CurrentTimeNode>($2)"
+      ]
+    },
+    {
+      "lhs": "Arg",
+      "rhs": [
+        ":Gds(isc_sql_dialect_datatype_unsupport) << Arg::Num(client_dialect) <<"
+      ]
+    },
+    {
+      "lhs": "Arg",
+      "rhs": [
+        ":Str(\"DATE\"));",
+        "}",
+        "if (db_dialect < SQL_DIALECT_V6_TRANSITION)",
+        "{",
+        "ERRD_post(Arg::Gds(isc_sqlerr) << Arg::Num(-104) <<"
+      ]
+    },
+    {
+      "lhs": "Arg",
+      "rhs": [
+        ":Gds(isc_sql_db_dialect_dtype_unsupport) << Arg::Num(db_dialect) <<"
+      ]
+    },
+    {
+      "lhs": "Arg",
+      "rhs": [
+        ":Str(\"DATE\"));",
+        "}",
+        "$$ = MAKE_constant($2->getString().c_str(), CONSTANT_DATE)"
+      ]
+    },
+    {
+      "lhs": "Arg",
+      "rhs": [
+        ":Gds(isc_sql_dialect_datatype_unsupport) << Arg::Num(client_dialect) <<"
+      ]
+    },
+    {
+      "lhs": "Arg",
+      "rhs": [
+        ":Str(\"TIME\"));",
+        "}",
+        "if (db_dialect < SQL_DIALECT_V6_TRANSITION)",
+        "{",
+        "ERRD_post(Arg::Gds(isc_sqlerr) << Arg::Num(-104) <<"
+      ]
+    },
+    {
+      "lhs": "Arg",
+      "rhs": [
+        ":Gds(isc_sql_db_dialect_dtype_unsupport) << Arg::Num(db_dialect) <<"
+      ]
+    },
+    {
+      "lhs": "Arg",
+      "rhs": [
+        ":Str(\"TIME\"));",
+        "}",
+        "$$ = MAKE_constant($2->getString().c_str(), CONSTANT_TIME)"
+      ]
+    },
+    {
+      "lhs": "Arg",
+      "rhs": [
+        ":Warning(isc_dtype_renamed));",
+        "$$->dtype = dtype_timestamp"
+      ]
+    }
+  ]
+}

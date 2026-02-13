@@ -42,7 +42,7 @@ namespace scratchbird
         // Meta Page - Page 0 of GIN index
         struct SBGinIndexMetaPage
         {
-            PageHeader hip_header;           // Standard page header (64 bytes)
+            PageHeader hip_header;           // Standard page header (80 bytes)
             uint8_t gin_index_uuid[16];      // Index UUID bytes (16 bytes)
             uint64_t gin_keys_btree_root;    // Root page of Keys B-Tree (8 bytes)
             uint64_t gin_pending_list_head;  // Head of pending list pages (8 bytes)
@@ -73,7 +73,7 @@ namespace scratchbird
         // Pending List Page - Stores pending entries
         struct SBGinPendingListPage
         {
-            PageHeader gpp_header;                       // Standard page header (64 bytes)
+            PageHeader gpp_header;                       // Standard page header (80 bytes)
             uint64_t gpp_next_page;                      // Next page in chain (0 if last) (8 bytes)
             uint16_t gpp_entry_count;                    // Number of entries (2 bytes)
             uint8_t gpp_reserved[54];                    // Reserved for alignment (54 bytes)
@@ -109,7 +109,7 @@ namespace scratchbird
         // For large lists, we use a B-Tree of TIDs instead
         struct SBGinPostingListPage
         {
-            PageHeader gpl_header;                          // Standard page header (64 bytes)
+            PageHeader gpl_header;                          // Standard page header (80 bytes)
             uint16_t gpl_entry_count;                       // Number of TIDs (2 bytes)
             uint8_t gpl_is_tree;                            // 0 = list, 1 = tree root pointer (1 byte)
             uint8_t gpl_is_compressed;                      // 1 = compressed, 0 = uncompressed (1 byte)
@@ -149,7 +149,7 @@ namespace scratchbird
         // Posting Tree Internal Node
         struct SBGinPostingTreeInternal
         {
-            PageHeader gpt_header;                              // Standard page header (64 bytes)
+            PageHeader gpt_header;                              // Standard page header (80 bytes)
             uint16_t gpt_entry_count;                           // Number of entries (2 bytes)
             uint16_t gpt_is_leaf;                               // 0 for internal nodes (2 bytes)
             uint8_t gpt_reserved[24];                           // Reserved for alignment (24 bytes)
@@ -159,7 +159,7 @@ namespace scratchbird
         // Posting Tree Leaf Node
         struct SBGinPostingTreeLeaf
         {
-            PageHeader gpt_header;                      // Standard page header (64 bytes)
+            PageHeader gpt_header;                      // Standard page header (80 bytes)
             uint16_t gpt_entry_count;                   // Number of TIDs (2 bytes)
             uint16_t gpt_is_leaf;                       // 1 for leaf nodes (2 bytes)
             uint64_t gpt_next_leaf;                     // Next leaf page for range scans (8 bytes)
@@ -326,21 +326,23 @@ namespace scratchbird
         // Entry Tree Leaf Page
         struct SBGinEntryTreeLeaf
         {
-            PageHeader get_header;           // Standard page header (64 bytes)
+            PageHeader get_header;           // Standard page header (80 bytes)
             uint16_t get_entry_count;        // Number of entries (2 bytes)
             uint16_t get_is_leaf;            // 1 for leaf nodes (2 bytes)
             uint16_t get_free_space;         // Free space in data area (2 bytes)
             uint16_t get_data_end;           // End of data area (offset from page start) (2 bytes)
             uint8_t get_reserved[12];        // Reserved (12 bytes)
             uint16_t get_offsets[500];       // Offset array (1000 bytes, max 500 entries)
-            // Data area starts at offset 1084, grows upward
+            // Data area starts at sizeof(SBGinEntryTreeLeaf), grows upward
             // Keys and values stored here
         } __attribute__((packed));
 
-        static_assert(sizeof(SBGinEntryTreeLeaf) <= 8192, "Entry tree leaf must fit in 8KB");
+        static_assert(sizeof(SBGinEntryTreeLeaf) <= 8192,
+                      "Entry tree leaf must fit in minimum page size (8KB)");
 
-        // Maximum entries per entry tree leaf (approximate, depends on key sizes)
-        constexpr uint16_t MAX_ENTRY_TREE_LEAF_ENTRIES = 500;
+        // Maximum entries per entry tree leaf (upper bound from offset array capacity)
+        constexpr uint16_t MAX_ENTRY_TREE_LEAF_ENTRIES =
+            static_cast<uint16_t>(sizeof(SBGinEntryTreeLeaf::get_offsets) / sizeof(uint16_t));
 
         // Entry Tree Internal Entry - stored in data area
         struct GinEntryTreeInternalEntry
@@ -353,7 +355,7 @@ namespace scratchbird
         // Entry Tree Internal Page
         struct SBGinEntryTreeInternal
         {
-            PageHeader get_header;           // Standard page header (64 bytes)
+            PageHeader get_header;           // Standard page header (80 bytes)
             uint16_t get_entry_count;        // Number of entries (2 bytes)
             uint16_t get_is_leaf;            // 0 for internal nodes (2 bytes)
             uint16_t get_free_space;         // Free space in data area (2 bytes)
@@ -361,13 +363,15 @@ namespace scratchbird
             uint32_t get_rightmost_child;    // Rightmost child page (4 bytes)
             uint8_t get_reserved[8];         // Reserved (8 bytes)
             uint16_t get_offsets[500];       // Offset array (1000 bytes)
-            // Data area starts at offset 1084, grows upward
+            // Data area starts at sizeof(SBGinEntryTreeInternal), grows upward
         } __attribute__((packed));
 
-        static_assert(sizeof(SBGinEntryTreeInternal) <= 8192, "Entry tree internal must fit in 8KB");
+        static_assert(sizeof(SBGinEntryTreeInternal) <= 8192,
+                      "Entry tree internal must fit in minimum page size (8KB)");
 
-        // Maximum entries per entry tree internal (approximate)
-        constexpr uint16_t MAX_ENTRY_TREE_INTERNAL_ENTRIES = 500;
+        // Maximum entries per entry tree internal (upper bound from offset array capacity)
+        constexpr uint16_t MAX_ENTRY_TREE_INTERNAL_ENTRIES =
+            static_cast<uint16_t>(sizeof(SBGinEntryTreeInternal::get_offsets) / sizeof(uint16_t));
 
         // ===== GIN Index Class =====
 

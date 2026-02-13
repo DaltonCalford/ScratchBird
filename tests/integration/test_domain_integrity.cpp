@@ -15,7 +15,7 @@
 #include "scratchbird/core/uuidv7.h"
 #include "scratchbird/sblr/executor.h"
 #include "scratchbird/sblr/opcodes.h"
-#include "scratchbird/sblr/query_compiler_v2.h"
+#include "scratchbird/sblr/query_compiler_v3.h"
 #include <chrono>
 #include <filesystem>
 #include <sstream>
@@ -153,7 +153,7 @@ protected:
         ASSERT_EQ(status, Status::OK) << ctx.message;
         schema_id_ = schema_info.schema_id;
 
-        compiler_ = std::make_unique<QueryCompilerV2>(&db_);
+        compiler_ = std::make_unique<QueryCompilerV3>(&db_);
         compiler_->setCurrentSchema(schema_id_);
         executor_ = std::make_unique<Executor>(&db_);
         executor_->setCurrentSchema(schema_id_);
@@ -275,7 +275,7 @@ protected:
     ID custom_norm_domain_id_;
     ID normalization_table_id_;
     ID custom_norm_table_id_;
-    std::unique_ptr<QueryCompilerV2> compiler_;
+    std::unique_ptr<QueryCompilerV3> compiler_;
     std::unique_ptr<Executor> executor_;
     std::unique_ptr<ConnectionContext> connection_ctx_;
 };

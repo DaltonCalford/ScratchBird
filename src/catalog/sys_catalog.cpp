@@ -147,7 +147,7 @@ bool loadTableMetadata(core::CatalogManager* catalog,
                        json& metadata_out,
                        core::ErrorContext* ctx) {
     metadata_out = json::object();
-    if (!catalog || table_info.storage_params_oid == 0) {
+    if (!catalog || isZeroId(table_info.storage_params_oid)) {
         return false;
     }
     std::string params;
@@ -357,9 +357,9 @@ const SysCatalogHandler::ColumnDefs* SysCatalogHandler::getTableDefinition(
         {"schema_id", DataType::UUID, false},
         {"schema_name", DataType::TEXT, false},
         {"owner_id", DataType::UUID, true},
-        {"default_tablespace_id", DataType::INT32, true},
-        {"default_charset", DataType::INT32, true},
-        {"default_collation_id", DataType::INT32, true},
+        {"default_tablespace_id", DataType::UUID, true},
+        {"default_charset", DataType::UUID, true},
+        {"default_collation_id", DataType::UINT32, true},
         {"is_valid", DataType::BOOLEAN, true}
     };
 
@@ -369,7 +369,7 @@ const SysCatalogHandler::ColumnDefs* SysCatalogHandler::getTableDefinition(
         {"table_name", DataType::TEXT, false},
         {"table_type", DataType::TEXT, true},
         {"owner_id", DataType::UUID, true},
-        {"tablespace_id", DataType::INT32, true},
+        {"tablespace_id", DataType::UUID, true},
         {"row_count", DataType::INT64, true},
         {"has_toast", DataType::BOOLEAN, true},
         {"toast_table_id", DataType::UUID, true},
@@ -384,14 +384,14 @@ const SysCatalogHandler::ColumnDefs* SysCatalogHandler::getTableDefinition(
         {"column_id", DataType::UUID, false},
         {"table_id", DataType::UUID, false},
         {"column_name", DataType::TEXT, false},
-        {"data_type_id", DataType::INT32, true},
+        {"data_type_id", DataType::UINT16, true},
         {"data_type_name", DataType::TEXT, true},
         {"ordinal_position", DataType::INT32, true},
         {"is_nullable", DataType::BOOLEAN, true},
         {"default_value", DataType::TEXT, true},
         {"domain_id", DataType::UUID, true},
-        {"collation_id", DataType::INT32, true},
-        {"charset_id", DataType::INT32, true},
+        {"collation_id", DataType::UINT32, true},
+        {"charset_id", DataType::UUID, true},
         {"is_identity", DataType::BOOLEAN, true},
         {"is_generated", DataType::BOOLEAN, true},
         {"generation_expression", DataType::TEXT, true},
@@ -409,7 +409,7 @@ const SysCatalogHandler::ColumnDefs* SysCatalogHandler::getTableDefinition(
         {"expression_sql", DataType::TEXT, true},
         {"predicate_sql", DataType::TEXT, true},
         {"state", DataType::TEXT, true},
-        {"tablespace_id", DataType::INT32, true},
+        {"tablespace_id", DataType::UUID, true},
         {"is_valid", DataType::BOOLEAN, true}
     };
 
@@ -456,7 +456,7 @@ const SysCatalogHandler::ColumnDefs* SysCatalogHandler::getTableDefinition(
     };
 
     static const ColumnDefs kTypesColumns = {
-        {"type_id", DataType::INT32, false},
+        {"type_id", DataType::UINT32, false},
         {"type_name", DataType::TEXT, false},
         {"is_builtin", DataType::BOOLEAN, true}
     };
@@ -466,10 +466,10 @@ const SysCatalogHandler::ColumnDefs* SysCatalogHandler::getTableDefinition(
         {"schema_id", DataType::UUID, false},
         {"domain_name", DataType::TEXT, false},
         {"domain_type", DataType::TEXT, true},
-        {"base_type_id", DataType::INT32, true},
+        {"base_type_id", DataType::UINT16, true},
         {"base_type_name", DataType::TEXT, true},
-        {"precision", DataType::INT32, true},
-        {"scale", DataType::INT32, true},
+        {"precision", DataType::UINT32, true},
+        {"scale", DataType::UINT32, true},
         {"is_nullable", DataType::BOOLEAN, true},
         {"default_value", DataType::TEXT, true},
         {"parent_domain_id", DataType::UUID, true},
@@ -937,14 +937,8 @@ Status SysCatalogHandler::querySchemas(VirtualResultSet& results, ErrorContext* 
             {"schema_name", textValueOrNull(schema.full_path.empty() ? schema.schema_name : schema.full_path,
                                             DataType::TEXT)},
             {"owner_id", uuidValueOrNull(schema.owner_id)},
-            {"default_tablespace_id", schema.default_tablespace_id == 0
-                                          ? core::TypedValue::makeNull(DataType::INT32)
-                                          : core::TypedValue::makeInt32(
-                                                static_cast<int32_t>(schema.default_tablespace_id))},
-            {"default_charset", schema.default_charset == 0
-                                     ? core::TypedValue::makeNull(DataType::INT32)
-                                     : core::TypedValue::makeInt32(
-                                           static_cast<int32_t>(schema.default_charset))},
+            {"default_tablespace_id", uuidValueOrNull(schema.default_tablespace_uuid)},
+            {"default_charset", uuidValueOrNull(schema.default_charset_uuid)},
             {"default_collation_id", schema.default_collation_id == 0
                                         ? core::TypedValue::makeNull(DataType::INT32)
                                         : core::TypedValue::makeInt32(
@@ -1008,10 +1002,7 @@ Status SysCatalogHandler::queryTables(VirtualResultSet& results, ErrorContext* c
                 {"table_name", textValueOrNull(table.table_name, DataType::TEXT)},
                 {"table_type", textValueOrNull(tableTypeToString(table.table_type), DataType::TEXT)},
                 {"owner_id", uuidValueOrNull(table.owner_id)},
-                {"tablespace_id", table.tablespace_id == 0
-                                     ? core::TypedValue::makeNull(DataType::INT32)
-                                     : core::TypedValue::makeInt32(
-                                           static_cast<int32_t>(table.tablespace_id))},
+                {"tablespace_id", uuidValueOrNull(table.tablespace_uuid)},
                 {"row_count", core::TypedValue::makeInt64(static_cast<int64_t>(table.row_count))},
                 {"has_toast", core::TypedValue::makeBoolean(table.has_toast)},
                 {"toast_table_id", uuidValueOrNull(table.toast_table_id)},
@@ -1050,11 +1041,11 @@ Status SysCatalogHandler::queryColumns(VirtualResultSet& results, ErrorContext* 
             }
             for (const auto& col : columns) {
                 std::string default_value = col.default_value;
-                if (default_value.empty() && col.default_value_oid != 0) {
+                if (default_value.empty() && !isZeroId(col.default_value_oid)) {
                     catalog_manager_->loadStringFromToast(col.default_value_oid, 0, default_value, ctx);
                 }
                 std::string generation_expr = col.generation_expression;
-                if (generation_expr.empty() && col.generation_expr_oid != 0) {
+                if (generation_expr.empty() && !isZeroId(col.generation_expr_oid)) {
                     catalog_manager_->loadStringFromToast(col.generation_expr_oid, 0, generation_expr, ctx);
                 }
 
@@ -1075,10 +1066,7 @@ Status SysCatalogHandler::queryColumns(VirtualResultSet& results, ErrorContext* 
                                          ? core::TypedValue::makeNull(DataType::INT32)
                                          : core::TypedValue::makeInt32(
                                                static_cast<int32_t>(col.collation_id))},
-                    {"charset_id", col.charset == 0
-                                      ? core::TypedValue::makeNull(DataType::INT32)
-                                      : core::TypedValue::makeInt32(
-                                            static_cast<int32_t>(col.charset))},
+                    {"charset_id", uuidValueOrNull(col.charset_uuid)},
                     {"is_identity", core::TypedValue::makeBoolean(col.is_identity)},
                     {"is_generated", core::TypedValue::makeBoolean(col.is_generated)},
                     {"generation_expression", textValueOrNull(generation_expr, DataType::TEXT)},
@@ -1129,10 +1117,7 @@ Status SysCatalogHandler::queryIndexes(VirtualResultSet& results, ErrorContext* 
                     {"expression_sql", textValueOrNull(expression_sql, DataType::TEXT)},
                     {"predicate_sql", textValueOrNull(index.predicate_string, DataType::TEXT)},
                     {"state", textValueOrNull(indexStateToString(index.state), DataType::TEXT)},
-                    {"tablespace_id", index.tablespace_id == 0
-                                         ? core::TypedValue::makeNull(DataType::INT32)
-                                         : core::TypedValue::makeInt32(
-                                               static_cast<int32_t>(index.tablespace_id))},
+                    {"tablespace_id", uuidValueOrNull(index.tablespace_uuid)},
                     {"is_valid", core::TypedValue::makeBoolean(true)}
                 };
                 results.rows.push_back(std::move(row));
@@ -1231,7 +1216,7 @@ Status SysCatalogHandler::queryConstraints(VirtualResultSet& results, ErrorConte
             }
             for (const auto& constraint : constraints) {
                 std::string check_expression = constraint.check_expression;
-                if (check_expression.empty() && constraint.check_expr_oid != 0) {
+                if (check_expression.empty() && !isZeroId(constraint.check_expr_oid)) {
                     catalog_manager_->loadStringFromToast(constraint.check_expr_oid, 0,
                                                           check_expression, ctx);
                 }

@@ -27,6 +27,7 @@
  */
 
 #include "pg_lexer.h"
+#include "scratchbird/parser/ast_v3.h"
 #include <scratchbird/sblr/opcodes.h>
 #include <scratchbird/core/types.h>
 #include <vector>
@@ -54,7 +55,7 @@ struct ParseError {
 };
 
 /**
- * Compilation/parse result containing bytecode or errors
+ * Parse result containing AST or errors
  */
 class ParseResult {
 public:
@@ -70,14 +71,22 @@ public:
 
     const std::vector<uint8_t>& bytecode() const { return bytecode_; }
     std::vector<uint8_t>& bytecode() { return bytecode_; }
+    void setBytecode(std::vector<uint8_t> bc) { bytecode_ = std::move(bc); }
 
-    void setBytecode(std::vector<uint8_t> bc) {
-        bytecode_ = std::move(bc);
-    }
+    parser::v3::Statement* statement() const { return statement_; }
+    parser::v3::ASTArena* arena() const { return arena_.get(); }
+    parser::v3::StringPool& stringPool() { return string_pool_; }
+    const parser::v3::StringPool& stringPool() const { return string_pool_; }
+
+    void setStatement(parser::v3::Statement* stmt) { statement_ = stmt; }
+    void setArena(std::unique_ptr<parser::v3::ASTArena> arena) { arena_ = std::move(arena); }
 
 private:
     std::vector<ParseError> errors_;
     std::vector<uint8_t> bytecode_;
+    parser::v3::Statement* statement_ = nullptr;
+    std::unique_ptr<parser::v3::ASTArena> arena_;
+    parser::v3::StringPool string_pool_;
 };
 
 /**
@@ -238,10 +247,10 @@ public:
     std::vector<ParseResult> parseAll();
 
     /**
-     * Get the lexer's string pool.
+     * Get the parser's string pool.
      */
-    StringPool& stringPool() { return lexer_.stringPool(); }
-    const StringPool& stringPool() const { return lexer_.stringPool(); }
+    parser::v3::StringPool& stringPool() { return string_pool_; }
+    const parser::v3::StringPool& stringPool() const { return string_pool_; }
 
 private:
     Lexer lexer_;
@@ -255,6 +264,10 @@ private:
     bool pending_or_replace_ = false;
     bool pending_create_temp_ = false;
     bool pending_create_unlogged_ = false;
+
+    std::unique_ptr<parser::v3::ASTArena> arena_;
+    parser::v3::StringPool string_pool_;
+    parser::v3::Statement* statement_ = nullptr;
 
     // Token management
     void advance();
@@ -282,15 +295,50 @@ private:
     void emitUUID(const core::ID& uuid);
     void emitDebugSpan(const SourceSpan& span);
     void emitTypeDefinition(const PgDataType& type);
+    sblr::Opcode typeToOpcode(PgDataType::Kind kind);
     bool resolveDomainId(const std::string& type_name, core::ID& domain_id_out);
 
     // Statement parsing
-    void parseStatementInternal();
-    void parseSelectStmt();
-    void parseInsertStmt();
-    void parseUpdateStmt();
-    void parseDeleteStmt();
-    void parseMergeStmt();
+    parser::v3::Statement* parseStatementInternal();
+    parser::v3::SelectStmt* parseSelectStmt();
+    parser::v3::InsertStmt* parseInsertStmt();
+    parser::v3::UpdateStmt* parseUpdateStmt();
+    parser::v3::DeleteStmt* parseDeleteStmt();
+    parser::v3::MergeStmt* parseMergeStmt();
+    parser::v3::Statement* parseCreateStmtV3();
+    parser::v3::CreateTableStmt* parseCreateTableV3(bool or_replace,
+                                                    bool is_temp,
+                                                    bool is_unlogged);
+    parser::v3::CreateIndexStmt* parseCreateIndexV3(bool unique);
+    parser::v3::CreateViewStmt* parseCreateViewV3(bool materialized,
+                                                  bool or_replace,
+                                                  bool temporary);
+    parser::v3::CreateSequenceStmt* parseCreateSequenceV3(bool or_replace,
+                                                          bool temporary);
+    parser::v3::CreateFunctionStmt* parseCreateFunctionV3(bool or_replace);
+    parser::v3::CreateProcedureStmt* parseCreateProcedureV3(bool or_replace);
+    parser::v3::CreateTriggerStmt* parseCreateTriggerV3(bool or_replace);
+    parser::v3::CreateTypeStmt* parseCreateTypeV3();
+    parser::v3::CreateDomainStmt* parseCreateDomainV3();
+    parser::v3::TypeName parseTypeNameV3();
+    parser::v3::ColumnDef* parseColumnDefV3();
+    parser::v3::TableConstraint* parseTableConstraintV3();
+    parser::v3::Statement* parseAlterStmtV3();
+    parser::v3::Statement* parseDropStmtV3();
+    parser::v3::TruncateTableStmt* parseTruncateStmtV3();
+    parser::v3::Statement* parseSetStmtV3();
+    parser::v3::Statement* parseShowStmtV3();
+    parser::v3::Statement* parseBeginStmtV3();
+    parser::v3::Statement* parsePrepareStmtV3();
+    parser::v3::Statement* parseCommitStmtV3();
+    parser::v3::Statement* parseRollbackStmtV3();
+    parser::v3::Statement* parseSavepointStmtV3();
+    parser::v3::Statement* parseReleaseStmtV3();
+    parser::v3::Statement* parseGrantStmtV3();
+    parser::v3::Statement* parseRevokeStmtV3();
+    parser::v3::Statement* parseAnalyzeStmtV3();
+    parser::v3::Statement* parseExplainStmtV3();
+    parser::v3::Statement* parseCopyStmtV3();
     void parseCreateStmt();
     void parseAlterStmt();
     void parseDropStmt();
@@ -342,7 +390,7 @@ private:
         };
         Kind kind = Kind::Expression;
         std::string column_name;
-        std::vector<uint8_t> expr_bytecode;
+        parser::v3::Expression* expr = nullptr;
         std::string alias;
     };
 
@@ -362,48 +410,62 @@ private:
     void parseForClause();
     void parseOnConflictClause();
     void parseReturningClause();
-    void parseWithClause();
+    parser::v3::WithClause* parseWithClause();
 
-    // Expression parsing (generates bytecode)
-    void parseExpression();
+    // Expression parsing (builds AST)
+    parser::v3::Expression* parseExpression();
     std::string parseExpressionText();
-    void parseOrExpr();
-    void parseAndExpr();
-    void parseNotExpr();
-    void parseComparisonExpr();
-    void parseIsExpr();
-    void parseInExpr();
-    void parseBetweenExpr();
-    void parseLikeExpr();
-    void parseBitwiseOrExpr();
-    void parseBitwiseXorExpr();
-    void parseBitwiseAndExpr();
-    void parseShiftExpr();
-    void parseAdditiveExpr();
-    void parseMultiplicativeExpr();
-    void parseUnaryExpr();
-    void parsePostfixExpr();
-    void parsePostfixTail();
-    void parsePrimaryExpr();
-    void parseFunctionCall(const std::string& name);
-    void parseCaseExpr();
-    void parseCastExpr();
-    void parseExtractExpr();
-    void parseAlterElementExpr();
-    sblr::ExtractField parseElementSelector(uint8_t& arg_count);
-    void parseArrayConstructor();
-    void parseSubquery();
-    void parseTypeCast();  // For :: operator
-
-    // Type conversion helpers
-    sblr::Opcode typeToOpcode(PgDataType::Kind kind);
+    parser::v3::Expression* parseOrExpr();
+    parser::v3::Expression* parseAndExpr();
+    parser::v3::Expression* parseNotExpr();
+    parser::v3::Expression* parseComparisonExpr();
+    parser::v3::Expression* parseIsExpr();
+    parser::v3::Expression* parseInExpr();
+    parser::v3::Expression* parseBetweenExpr();
+    parser::v3::Expression* parseLikeExpr();
+    parser::v3::Expression* parseBitwiseOrExpr();
+    parser::v3::Expression* parseBitwiseXorExpr();
+    parser::v3::Expression* parseBitwiseAndExpr();
+    parser::v3::Expression* parseShiftExpr();
+    parser::v3::Expression* parseAdditiveExpr();
+    parser::v3::Expression* parseMultiplicativeExpr();
+    parser::v3::Expression* parseUnaryExpr();
+    parser::v3::Expression* parsePostfixExpr();
+    parser::v3::Expression* parsePostfixTail(parser::v3::Expression* base);
+    parser::v3::Expression* parsePrimaryExpr();
+    parser::v3::Expression* parseFunctionCall(const std::string& name);
+    parser::v3::Expression* parseCaseExpr();
+    parser::v3::Expression* parseCastExpr();
+    parser::v3::Expression* parseExtractExpr();
+    parser::v3::Expression* parseAlterElementExpr();
+    parser::v3::ElementSelector parseElementSelector();
+    parser::v3::Expression* parseArrayConstructor();
+    parser::v3::SelectStmt* parseSubquery();
+    parser::v3::Expression* parseTypeCast(parser::v3::Expression* base);  // For :: operator
 
     // Identifier helpers
     std::string parseIdentifier();
+    parser::v3::StringPool::StringId parseIdentifierId();
     std::string parseQualifiedName();
     void resolveTableName(std::string& schema, std::string& table);
-    std::vector<uint8_t> captureExpressionBytecode();
+    parser::v3::ASTArena* arena() { return arena_.get(); }
     bool isNonReservedKeyword(TokenType type) const;
+
+    parser::v3::StringPool::StringId internFromLexer(uint32_t lexer_id);
+    std::vector<uint8_t> captureExpressionBytecode();
+
+    parser::v3::Expression* makeBinary(parser::v3::BinaryOp op,
+                                       parser::v3::Expression* left,
+                                       parser::v3::Expression* right);
+    parser::v3::Expression* makeUnary(parser::v3::UnaryOp op,
+                                      parser::v3::Expression* operand);
+    parser::v3::Expression* makeLiteralInt(int64_t value);
+    parser::v3::Expression* makeLiteralFloat(double value);
+    parser::v3::Expression* makeLiteralString(const std::string& value);
+    parser::v3::Expression* makeLiteralBool(bool value);
+    parser::v3::Expression* makeLiteralNull();
+    parser::v3::Expression* makeColumnRef(const std::vector<std::string>& parts);
+
 };
 
 } // namespace scratchbird::parser::postgresql

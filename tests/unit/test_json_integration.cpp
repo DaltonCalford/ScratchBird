@@ -9,7 +9,7 @@
  */
 #include <gtest/gtest.h>
 #include "scratchbird/sblr/executor.h"
-#include "scratchbird/sblr/query_compiler_v2.h"
+#include "scratchbird/sblr/query_compiler_v3.h"
 
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/storage_engine.h"
@@ -26,7 +26,7 @@ class JSONIntegrationTest : public ::testing::Test
 protected:
     std::unique_ptr<core::Database> db_;
     std::unique_ptr<Executor> executor_;
-    std::unique_ptr<QueryCompilerV2> compiler_;
+    std::unique_ptr<QueryCompilerV3> compiler_;
     std::unique_ptr<TestDatabaseFile> db_file_;
 
     void SetUp() override
@@ -42,7 +42,7 @@ protected:
         ASSERT_EQ(status, core::Status::OK) << ctx.message;
 
         executor_ = std::make_unique<Executor>(db_.get());
-        compiler_ = std::make_unique<QueryCompilerV2>(db_.get());
+        compiler_ = std::make_unique<QueryCompilerV3>(db_.get());
     }
 
     void TearDown() override

@@ -1,0 +1,86 @@
+#!/usr/bin/env python3
+import argparse
+import json
+import os
+import subprocess
+import sys
+
+
+def emit(status, code, summary, details=None):
+    if os.environ.get("SB_CI") == "1":
+        payload = {
+            "status": status,
+            "code": code,
+            "summary": summary,
+            "details": details or [],
+        }
+        print(json.dumps(payload))
+    else:
+        print(summary)
+        if details:
+            for line in details:
+                print(line)
+
+
+def run(cmd):
+    return subprocess.run(cmd, check=False)
+
+
+def main():
+    parser = argparse.ArgumentParser(prog="sb_test")
+    parser.add_argument("--suite", default="all", choices=["unit", "integration", "all"])
+    parser.add_argument("--dialect", default="all",
+                        choices=["scratchbird", "postgres", "mysql", "firebird", "all"])
+    parser.add_argument("--filter", default="")
+    args = parser.parse_args()
+
+    build_dir = os.environ.get("SB_BUILD_DIR", "build")
+    if not os.path.isdir(build_dir):
+        emit("fail", 4, f"Build directory not found: {build_dir}")
+        return 4
+
+    ctest_cmd = ["ctest", "--test-dir", build_dir, "--output-on-failure"]
+
+    suite_exclude = ""
+    suite_include = ""
+    if args.suite == "integration":
+        suite_include = "(Integration|Client|WireProtocol|IPC|COPY_1GB)"
+    elif args.suite == "unit":
+        suite_exclude = "(Integration|Client|WireProtocol|IPC|COPY_1GB|TSAN|Stress)"
+
+    dialect_include = ""
+    if args.dialect == "postgres":
+        dialect_include = "(Postgres|PSQL|PG)"
+    elif args.dialect == "mysql":
+        dialect_include = "(MySQL)"
+    elif args.dialect == "firebird":
+        dialect_include = "(Firebird)"
+    elif args.dialect == "scratchbird":
+        dialect_include = "(ScratchBird|Scratchbird|SB_)"
+
+    regex_parts = []
+    if args.filter:
+        regex_parts.append(f"({args.filter})")
+    if suite_include:
+        regex_parts.append(suite_include)
+    if dialect_include:
+        regex_parts.append(dialect_include)
+
+    if regex_parts:
+        combined = ".*" + ".*".join([f"(?=.*{p})" for p in regex_parts]) + ".*"
+        ctest_cmd += ["-R", combined]
+
+    if suite_exclude:
+        ctest_cmd += ["-E", suite_exclude]
+
+    proc = run(ctest_cmd)
+    if proc.returncode != 0:
+        emit("fail", 4, "Tests failed", [" ".join(ctest_cmd)])
+        return 4
+
+    emit("ok", 0, "Tests passed")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

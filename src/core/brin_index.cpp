@@ -1257,12 +1257,10 @@ Status BrinIndex::split_page(uint64_t page_num, ErrorContext *ctx)
     new_page->brin_header.checksum = 0;
     new_page->brin_header.lsn = 0;
     new_page->brin_header.flags = 0;
-    std::memcpy(new_page->brin_header.database_uuid, db_->uuid().bytes.data(), 16);
     new_page->brin_header.generation = 0;
-    new_page->brin_header.free_space = 0;
-    new_page->brin_header.item_count = 0;
-    new_page->brin_header.free_offset = 0;
-    new_page->brin_header.special_size = 0;
+    pageSetLower(new_page->brin_header, sizeof(SBBrinPage));
+    pageSetUpper(new_page->brin_header, db_->page_size());
+    pageSetSpecial(new_page->brin_header, db_->page_size());
 
     // Initialize BRIN metadata
     std::memcpy(new_page->brin_index_uuid.bytes.data(), index_info_.idx_uuid.bytes.data(), 16);

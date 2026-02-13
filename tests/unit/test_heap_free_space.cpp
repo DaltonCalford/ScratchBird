@@ -110,6 +110,9 @@ TEST_F(HeapFreeSpaceTest, InitialFreeSpaceCalculation)
 TEST_F(HeapFreeSpaceTest, FreeSpaceDecreaseAfterInsert)
 {
     uint32_t initial_free_space = heap_page_->getFreeSpace();
+    auto *page_hdr_before = reinterpret_cast<PageHeader *>(page_buffer_);
+    uint16_t lower_before = pageLower(*page_hdr_before);
+    uint16_t upper_before = pageUpper(*page_hdr_before);
 
     // Create a small tuple
     uint32_t tuple_size = sizeof(TupleHeader) + 100;
@@ -129,9 +132,15 @@ TEST_F(HeapFreeSpaceTest, FreeSpaceDecreaseAfterInsert)
 
     // Get free space after insertion
     uint32_t free_space_after = heap_page_->getFreeSpace();
+    auto *page_hdr_after = reinterpret_cast<PageHeader *>(page_buffer_);
+    uint16_t lower_after = pageLower(*page_hdr_after);
+    uint16_t upper_after = pageUpper(*page_hdr_after);
 
-    // Free space should have decreased by: tuple_size + sizeof(ItemPointer)
-    uint32_t expected_decrease = tuple_size + sizeof(ItemPointer);
+    // Tuple storage is aligned down to 8-byte boundary in HeapPage::insertTuple.
+    uint32_t raw_tuple_offset = upper_before - tuple_size;
+    uint32_t aligned_tuple_offset = (raw_tuple_offset / 8) * 8;
+    uint32_t alignment_padding = raw_tuple_offset - aligned_tuple_offset;
+    uint32_t expected_decrease = tuple_size + sizeof(ItemPointer) + alignment_padding;
     uint32_t actual_decrease = initial_free_space - free_space_after;
 
     EXPECT_EQ(actual_decrease, expected_decrease)
@@ -140,8 +149,14 @@ TEST_F(HeapFreeSpaceTest, FreeSpaceDecreaseAfterInsert)
         << "  After: " << free_space_after << "\n"
         << "  Tuple size: " << tuple_size << "\n"
         << "  ItemPointer size: " << sizeof(ItemPointer) << "\n"
+        << "  Alignment padding: " << alignment_padding << "\n"
         << "  Expected decrease: " << expected_decrease << "\n"
         << "  Actual decrease: " << actual_decrease;
+
+    EXPECT_EQ(lower_after - lower_before, sizeof(ItemPointer))
+        << "Expected exactly one new item pointer slot";
+    EXPECT_EQ(upper_before - upper_after, tuple_size + alignment_padding)
+        << "Tuple region growth should equal tuple size plus alignment padding";
 }
 
 /**
@@ -179,13 +194,11 @@ TEST_F(HeapFreeSpaceTest, FillPageToCapacity)
 
     // Verify page boundaries are sane
     auto *page_hdr = reinterpret_cast<PageHeader *>(page_buffer_);
-    auto *special = reinterpret_cast<HeapPageSpecial *>(
-        page_buffer_ + kPageSize - sizeof(HeapPageSpecial));
 
-    EXPECT_GE(special->pd_upper, special->pd_lower)
+    EXPECT_GE(pageUpper(*page_hdr), pageLower(*page_hdr))
         << "Page corruption detected: pd_upper < pd_lower";
 
-    uint32_t remaining_space = special->pd_upper - special->pd_lower;
+    uint32_t remaining_space = pageUpper(*page_hdr) - pageLower(*page_hdr);
 
     // Should have less than (tuple_size + ItemPointer) remaining
     EXPECT_LT(remaining_space, tuple_size + sizeof(ItemPointer))

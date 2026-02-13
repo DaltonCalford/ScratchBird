@@ -27,7 +27,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/catalog_manager.h"
 
-#include "scratchbird/sblr/query_compiler_v2.h"
+#include "scratchbird/sblr/query_compiler_v3.h"
 #include "scratchbird/sblr/executor.h"
 #include "test_helpers.h"
 #include <memory>
@@ -40,14 +40,14 @@ class SecurityPhase2Test : public ::testing::Test
 {
 protected:
     std::unique_ptr<Database> db;
-    std::unique_ptr<QueryCompilerV2> compiler_;
+    std::unique_ptr<QueryCompilerV3> compiler_;
     std::unique_ptr<Executor> executor_;
     std::unique_ptr<scratchbird::testing::TestDatabaseFile> db_file_;
     core::ID schema_id_;
 
     void SetUp() override
     {
-        GTEST_SKIP() << "Parser V2 DCL support pending";
+        GTEST_SKIP() << "Parser V3 DCL support pending";
 
         db_file_ = std::make_unique<scratchbird::testing::TestDatabaseFile>("test_security_phase2");
 
@@ -64,7 +64,7 @@ protected:
             << "Failed to get PUBLIC schema: " << ctx.message;
         schema_id_ = schema.schema_id;
 
-        compiler_ = std::make_unique<QueryCompilerV2>(db.get());
+        compiler_ = std::make_unique<QueryCompilerV3>(db.get());
         compiler_->setCurrentSchema(schema_id_);
         executor_ = std::make_unique<Executor>(db.get());
         executor_->setCurrentSchema(schema_id_);

@@ -243,12 +243,10 @@ Status SPGiSTIndex::initialize(ErrorContext* ctx)
     root->spgist_header.checksum = 0;
     root->spgist_header.lsn = 0;
     root->spgist_header.flags = 0;
-    std::memcpy(root->spgist_header.database_uuid, db_->uuid().bytes.data(), 16);
     root->spgist_header.generation = 0;
-    root->spgist_header.free_space = 0;
-    root->spgist_header.item_count = 0;
-    root->spgist_header.free_offset = 0;
-    root->spgist_header.special_size = 0;
+    pageSetLower(root->spgist_header, sizeof(SBSPGiSTPage));
+    pageSetUpper(root->spgist_header, db_->page_size());
+    pageSetSpecial(root->spgist_header, db_->page_size());
 
     root->spgist_index_uuid = index_uuid_;
     root->spgist_table_uuid = table_uuid_;
@@ -424,12 +422,10 @@ Status SPGiSTIndex::insertRecursive(uint64_t page_num,
                 new_page->spgist_header.checksum = 0;
                 new_page->spgist_header.lsn = 0;
                 new_page->spgist_header.flags = 0;
-                std::memcpy(new_page->spgist_header.database_uuid, db_->uuid().bytes.data(), 16);
                 new_page->spgist_header.generation = 0;
-                new_page->spgist_header.free_space = db_->page_size() - sizeof(SBSPGiSTPage);
-                new_page->spgist_header.item_count = 0;
-                new_page->spgist_header.free_offset = 0;
-                new_page->spgist_header.special_size = 0;
+                pageSetLower(new_page->spgist_header, sizeof(SBSPGiSTPage));
+                pageSetUpper(new_page->spgist_header, db_->page_size());
+                pageSetSpecial(new_page->spgist_header, db_->page_size());
 
                 // Initialize SP-GiST specific fields
                 std::memcpy(new_page->spgist_index_uuid.bytes.data(), index_uuid_.bytes.data(), 16);
@@ -548,12 +544,10 @@ Status SPGiSTIndex::insertRecursive(uint64_t page_num,
                     new_child->spgist_header.checksum = 0;
                     new_child->spgist_header.lsn = 0;
                     new_child->spgist_header.flags = 0;
-                    std::memcpy(new_child->spgist_header.database_uuid, db_->uuid().bytes.data(), 16);
                     new_child->spgist_header.generation = 0;
-                    new_child->spgist_header.free_space = db_->page_size() - sizeof(SBSPGiSTPage);
-                    new_child->spgist_header.item_count = 0;
-                    new_child->spgist_header.free_offset = 0;
-                    new_child->spgist_header.special_size = 0;
+                    pageSetLower(new_child->spgist_header, sizeof(SBSPGiSTPage));
+                    pageSetUpper(new_child->spgist_header, db_->page_size());
+                    pageSetSpecial(new_child->spgist_header, db_->page_size());
 
                     // Initialize SP-GiST fields
                     std::memcpy(new_child->spgist_index_uuid.bytes.data(), index_uuid_.bytes.data(), 16);
@@ -832,7 +826,9 @@ Status SPGiSTIndex::splitNode(uint64_t page_num, ErrorContext* ctx)
         child_page_ptrs[i]->spgist_header.checksum = 0;
         child_page_ptrs[i]->spgist_header.lsn = 0;
         child_page_ptrs[i]->spgist_header.flags = 0;
-        std::memcpy(child_page_ptrs[i]->spgist_header.database_uuid, db_->uuid().bytes.data(), 16);
+        pageSetLower(child_page_ptrs[i]->spgist_header, sizeof(SBSPGiSTPage));
+        pageSetUpper(child_page_ptrs[i]->spgist_header, db_->page_size());
+        pageSetSpecial(child_page_ptrs[i]->spgist_header, db_->page_size());
 
         child_page_ptrs[i]->spgist_index_uuid = index_uuid_;
         child_page_ptrs[i]->spgist_table_uuid = table_uuid_;
@@ -886,7 +882,9 @@ Status SPGiSTIndex::splitNode(uint64_t page_num, ErrorContext* ctx)
     page->spgist_header.checksum = 0;
     page->spgist_header.lsn = 0;
     page->spgist_header.flags = 0;
-    std::memcpy(page->spgist_header.database_uuid, db_->uuid().bytes.data(), 16);
+    pageSetLower(page->spgist_header, sizeof(SBSPGiSTPage));
+    pageSetUpper(page->spgist_header, db_->page_size());
+    pageSetSpecial(page->spgist_header, db_->page_size());
 
     page->spgist_index_uuid = index_uuid_;
     page->spgist_table_uuid = table_uuid_;

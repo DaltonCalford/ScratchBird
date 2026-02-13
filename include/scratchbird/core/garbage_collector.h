@@ -157,12 +157,12 @@ namespace scratchbird::core
         // Phase 4: TOAST Garbage Collection
         // Detect orphaned TOAST chunks (referenced by no heap tuples)
         Status detectOrphanedToastChunks(const ID& toast_table_id,
-                                         std::unordered_set<uint32_t>* orphaned_value_ids,
+                                         std::unordered_set<ID, IDHash>* orphaned_value_ids,
                                          ErrorContext* ctx = nullptr);
 
         // Clean orphaned TOAST chunks
         Status cleanOrphanedToastChunks(const ID& toast_table_id,
-                                        const std::unordered_set<uint32_t>& orphaned_value_ids,
+                                        const std::unordered_set<ID, IDHash>& orphaned_value_ids,
                                         uint64_t* chunks_deleted,
                                         ErrorContext* ctx = nullptr);
 

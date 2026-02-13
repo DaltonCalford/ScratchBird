@@ -1,0 +1,957 @@
+{
+  "states": [
+    "DISCONNECTED",
+    "CONNECTING",
+    "AUTHENTICATING",
+    "READY_NO_DB",
+    "ATTACHED",
+    "TRANSACTION_ACTIVE",
+    "STATEMENT_ALLOCATED",
+    "STATEMENT_PREPARED",
+    "EXECUTING",
+    "FETCHING",
+    "SERVICE_ATTACHED",
+    "ASYNC_CHANNEL",
+    "DETACHED",
+    "BROKEN"
+  ],
+  "transitions": [
+    {
+      "op": "op_connect",
+      "from": "DISCONNECTED",
+      "to": "CONNECTING",
+      "requires": [],
+      "response": [
+        "op_accept",
+        "op_accept_data",
+        "op_reject"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_cont_auth",
+      "from": "CONNECTING",
+      "to": "AUTHENTICATING",
+      "requires": [],
+      "response": [
+        "op_accept_data",
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_trusted_auth",
+      "from": "CONNECTING",
+      "to": "AUTHENTICATING",
+      "requires": [],
+      "response": [
+        "op_accept_data",
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_accept",
+      "from": "CONNECTING",
+      "to": "READY_NO_DB",
+      "requires": [],
+      "response": [],
+      "notes": ""
+    },
+    {
+      "op": "op_accept_data",
+      "from": "CONNECTING",
+      "to": "READY_NO_DB",
+      "requires": [],
+      "response": [],
+      "notes": ""
+    },
+    {
+      "op": "op_cond_accept",
+      "from": "CONNECTING",
+      "to": "AUTHENTICATING",
+      "requires": [],
+      "response": [],
+      "notes": ""
+    },
+    {
+      "op": "op_attach",
+      "from": "READY_NO_DB",
+      "to": "ATTACHED",
+      "requires": [],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_create",
+      "from": "READY_NO_DB",
+      "to": "ATTACHED",
+      "requires": [],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_detach",
+      "from": "ATTACHED",
+      "to": "READY_NO_DB",
+      "requires": [
+        "attachment"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_drop_database",
+      "from": "ATTACHED",
+      "to": "READY_NO_DB",
+      "requires": [
+        "attachment"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_service_attach",
+      "from": "READY_NO_DB",
+      "to": "SERVICE_ATTACHED",
+      "requires": [],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_service_start",
+      "from": "SERVICE_ATTACHED",
+      "to": "SERVICE_ATTACHED",
+      "requires": [
+        "service"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_service_info",
+      "from": "SERVICE_ATTACHED",
+      "to": "SERVICE_ATTACHED",
+      "requires": [
+        "service"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_service_detach",
+      "from": "SERVICE_ATTACHED",
+      "to": "READY_NO_DB",
+      "requires": [
+        "service"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_transaction",
+      "from": "ATTACHED",
+      "to": "TRANSACTION_ACTIVE",
+      "requires": [
+        "attachment"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_reconnect",
+      "from": "ATTACHED",
+      "to": "TRANSACTION_ACTIVE",
+      "requires": [
+        "attachment"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_commit",
+      "from": "TRANSACTION_ACTIVE",
+      "to": "ATTACHED",
+      "requires": [
+        "transaction"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_rollback",
+      "from": "TRANSACTION_ACTIVE",
+      "to": "ATTACHED",
+      "requires": [
+        "transaction"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_commit_retaining",
+      "from": "TRANSACTION_ACTIVE",
+      "to": "TRANSACTION_ACTIVE",
+      "requires": [
+        "transaction"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_rollback_retaining",
+      "from": "TRANSACTION_ACTIVE",
+      "to": "TRANSACTION_ACTIVE",
+      "requires": [
+        "transaction"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_prepare",
+      "from": "TRANSACTION_ACTIVE",
+      "to": "TRANSACTION_ACTIVE",
+      "requires": [
+        "transaction"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_prepare2",
+      "from": "TRANSACTION_ACTIVE",
+      "to": "TRANSACTION_ACTIVE",
+      "requires": [
+        "transaction"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_allocate_statement",
+      "from": "ATTACHED",
+      "to": "STATEMENT_ALLOCATED",
+      "requires": [
+        "attachment"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_prepare_statement",
+      "from": "STATEMENT_ALLOCATED",
+      "to": "STATEMENT_PREPARED",
+      "requires": [
+        "statement"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_exec_immediate",
+      "from": "ATTACHED",
+      "to": "EXECUTING",
+      "requires": [
+        "attachment",
+        "transaction?"
+      ],
+      "response": [
+        "op_sql_response",
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_exec_immediate2",
+      "from": "ATTACHED",
+      "to": "EXECUTING",
+      "requires": [
+        "attachment",
+        "transaction?"
+      ],
+      "response": [
+        "op_sql_response",
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_execute",
+      "from": "STATEMENT_PREPARED",
+      "to": "EXECUTING",
+      "requires": [
+        "statement",
+        "transaction?"
+      ],
+      "response": [
+        "op_sql_response",
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_execute2",
+      "from": "STATEMENT_PREPARED",
+      "to": "EXECUTING",
+      "requires": [
+        "statement",
+        "transaction?"
+      ],
+      "response": [
+        "op_sql_response",
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_fetch",
+      "from": "EXECUTING",
+      "to": "FETCHING",
+      "requires": [
+        "statement"
+      ],
+      "response": [
+        "op_fetch_response",
+        "op_inline_blob?"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_fetch_scroll",
+      "from": "EXECUTING",
+      "to": "FETCHING",
+      "requires": [
+        "statement"
+      ],
+      "response": [
+        "op_fetch_response",
+        "op_inline_blob?"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_free_statement",
+      "from": "STATEMENT_ALLOCATED",
+      "to": "ATTACHED",
+      "requires": [
+        "statement"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_free_statement",
+      "from": "STATEMENT_PREPARED",
+      "to": "ATTACHED",
+      "requires": [
+        "statement"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_compile",
+      "from": "ATTACHED",
+      "to": "ATTACHED",
+      "requires": [
+        "attachment"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_start",
+      "from": "TRANSACTION_ACTIVE",
+      "to": "EXECUTING",
+      "requires": [
+        "request",
+        "transaction"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_start_and_receive",
+      "from": "TRANSACTION_ACTIVE",
+      "to": "EXECUTING",
+      "requires": [
+        "request",
+        "transaction"
+      ],
+      "response": [
+        "op_response",
+        "op_response_piggyback"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_start_and_send",
+      "from": "TRANSACTION_ACTIVE",
+      "to": "EXECUTING",
+      "requires": [
+        "request",
+        "transaction"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_start_send_and_receive",
+      "from": "TRANSACTION_ACTIVE",
+      "to": "EXECUTING",
+      "requires": [
+        "request",
+        "transaction"
+      ],
+      "response": [
+        "op_response",
+        "op_response_piggyback"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_send",
+      "from": "EXECUTING",
+      "to": "EXECUTING",
+      "requires": [
+        "request",
+        "transaction"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_receive",
+      "from": "EXECUTING",
+      "to": "EXECUTING",
+      "requires": [
+        "request",
+        "transaction"
+      ],
+      "response": [
+        "op_response",
+        "op_response_piggyback"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_release",
+      "from": "EXECUTING",
+      "to": "ATTACHED",
+      "requires": [
+        "request"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_create_blob",
+      "from": "TRANSACTION_ACTIVE",
+      "to": "TRANSACTION_ACTIVE",
+      "requires": [
+        "transaction"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_open_blob",
+      "from": "TRANSACTION_ACTIVE",
+      "to": "TRANSACTION_ACTIVE",
+      "requires": [
+        "transaction"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_create_blob2",
+      "from": "TRANSACTION_ACTIVE",
+      "to": "TRANSACTION_ACTIVE",
+      "requires": [
+        "transaction"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_open_blob2",
+      "from": "TRANSACTION_ACTIVE",
+      "to": "TRANSACTION_ACTIVE",
+      "requires": [
+        "transaction"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_get_segment",
+      "from": "TRANSACTION_ACTIVE",
+      "to": "TRANSACTION_ACTIVE",
+      "requires": [
+        "blob"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_put_segment",
+      "from": "TRANSACTION_ACTIVE",
+      "to": "TRANSACTION_ACTIVE",
+      "requires": [
+        "blob"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_batch_segments",
+      "from": "TRANSACTION_ACTIVE",
+      "to": "TRANSACTION_ACTIVE",
+      "requires": [
+        "blob"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_seek_blob",
+      "from": "TRANSACTION_ACTIVE",
+      "to": "TRANSACTION_ACTIVE",
+      "requires": [
+        "blob"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_cancel_blob",
+      "from": "TRANSACTION_ACTIVE",
+      "to": "TRANSACTION_ACTIVE",
+      "requires": [
+        "blob"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_close_blob",
+      "from": "TRANSACTION_ACTIVE",
+      "to": "TRANSACTION_ACTIVE",
+      "requires": [
+        "blob"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_get_slice",
+      "from": "TRANSACTION_ACTIVE",
+      "to": "TRANSACTION_ACTIVE",
+      "requires": [
+        "transaction"
+      ],
+      "response": [
+        "op_slice",
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_put_slice",
+      "from": "TRANSACTION_ACTIVE",
+      "to": "TRANSACTION_ACTIVE",
+      "requires": [
+        "transaction"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_connect_request",
+      "from": "ATTACHED",
+      "to": "ASYNC_CHANNEL",
+      "requires": [
+        "attachment"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_aux_connect",
+      "from": "ASYNC_CHANNEL",
+      "to": "ASYNC_CHANNEL",
+      "requires": [],
+      "response": [],
+      "notes": ""
+    },
+    {
+      "op": "op_que_events",
+      "from": "ATTACHED",
+      "to": "ATTACHED",
+      "requires": [
+        "attachment"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_event",
+      "from": "ASYNC_CHANNEL",
+      "to": "ASYNC_CHANNEL",
+      "requires": [],
+      "response": [],
+      "notes": ""
+    },
+    {
+      "op": "op_cancel_events",
+      "from": "ATTACHED",
+      "to": "ATTACHED",
+      "requires": [
+        "attachment"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_info_database",
+      "from": "ATTACHED",
+      "to": "ATTACHED",
+      "requires": [
+        "attachment"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_info_transaction",
+      "from": "TRANSACTION_ACTIVE",
+      "to": "TRANSACTION_ACTIVE",
+      "requires": [
+        "transaction"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_info_request",
+      "from": "EXECUTING",
+      "to": "EXECUTING",
+      "requires": [
+        "request"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_info_blob",
+      "from": "TRANSACTION_ACTIVE",
+      "to": "TRANSACTION_ACTIVE",
+      "requires": [
+        "blob"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_info_sql",
+      "from": "ATTACHED",
+      "to": "ATTACHED",
+      "requires": [
+        "statement"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_info_cursor",
+      "from": "FETCHING",
+      "to": "FETCHING",
+      "requires": [
+        "statement"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_info_batch",
+      "from": "ATTACHED",
+      "to": "ATTACHED",
+      "requires": [
+        "batch"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_batch_create",
+      "from": "STATEMENT_PREPARED",
+      "to": "STATEMENT_PREPARED",
+      "requires": [
+        "statement"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_batch_msg",
+      "from": "STATEMENT_PREPARED",
+      "to": "STATEMENT_PREPARED",
+      "requires": [
+        "statement"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_batch_exec",
+      "from": "STATEMENT_PREPARED",
+      "to": "STATEMENT_PREPARED",
+      "requires": [
+        "statement",
+        "transaction"
+      ],
+      "response": [
+        "op_response",
+        "op_batch_cs"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_batch_rls",
+      "from": "STATEMENT_PREPARED",
+      "to": "STATEMENT_PREPARED",
+      "requires": [
+        "statement"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_batch_cancel",
+      "from": "STATEMENT_PREPARED",
+      "to": "STATEMENT_PREPARED",
+      "requires": [
+        "statement"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_batch_sync",
+      "from": "STATEMENT_PREPARED",
+      "to": "STATEMENT_PREPARED",
+      "requires": [
+        "statement"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_batch_blob_stream",
+      "from": "STATEMENT_PREPARED",
+      "to": "STATEMENT_PREPARED",
+      "requires": [
+        "statement"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_batch_regblob",
+      "from": "STATEMENT_PREPARED",
+      "to": "STATEMENT_PREPARED",
+      "requires": [
+        "statement"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_batch_set_bpb",
+      "from": "STATEMENT_PREPARED",
+      "to": "STATEMENT_PREPARED",
+      "requires": [
+        "statement"
+      ],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_dummy",
+      "from": "ATTACHED",
+      "to": "ATTACHED",
+      "requires": [],
+      "response": [
+        "op_dummy"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_ping",
+      "from": "ATTACHED",
+      "to": "ATTACHED",
+      "requires": [],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_cancel",
+      "from": "ATTACHED",
+      "to": "ATTACHED",
+      "requires": [],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_crypt",
+      "from": "CONNECTING",
+      "to": "CONNECTING",
+      "requires": [],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_crypt_key_callback",
+      "from": "CONNECTING",
+      "to": "CONNECTING",
+      "requires": [],
+      "response": [
+        "op_response"
+      ],
+      "notes": ""
+    },
+    {
+      "op": "op_disconnect",
+      "from": "ATTACHED",
+      "to": "DISCONNECTED",
+      "requires": [],
+      "response": [],
+      "notes": ""
+    },
+    {
+      "op": "op_exit",
+      "from": "ATTACHED",
+      "to": "DISCONNECTED",
+      "requires": [],
+      "response": [],
+      "notes": ""
+    }
+  ],
+  "notes": "State machine derived from server dispatch in src/remote/server/server.cpp and protocol definitions."
+}

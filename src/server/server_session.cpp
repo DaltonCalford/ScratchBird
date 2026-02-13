@@ -16,9 +16,7 @@
 #include "scratchbird/server/server_session.h"
 #include "scratchbird/sblr/executor.h"
 #include "scratchbird/sblr/bytecode_validator.h"
-#include "scratchbird/sblr/query_compiler_v2.h"
 #include "scratchbird/parser/v3_compiler.h"
-#include "scratchbird/sblr/v3_container.h"
 #include "scratchbird/sblr/firebird_query_compiler.h"
 #include "scratchbird/sblr/postgresql_query_compiler.h"
 #include "scratchbird/sblr/mysql_query_compiler.h"
@@ -1067,36 +1065,6 @@ core::Status ServerSession::executeQuery(const std::string& sql, core::ErrorCont
             error_msg = compile_result.error.empty() ? "Compilation error" : compile_result.error;
         } else {
             bytecode = compile_result.bytecode;
-            // Embed V2 bytecode for transitional V3 DML execution.
-            sblr::QueryCompilerV2 v2_compiler(database_);
-            auto v2_result = v2_compiler.compile(sql);
-            if (v2_result.success()) {
-                scratchbird::sblr::v3::Container container;
-                std::string err;
-                if (scratchbird::sblr::v3::decodeContainer(bytecode.data(),
-                                                           bytecode.size(),
-                                                           container,
-                                                           err)) {
-                    const auto& v2_bytes = v2_result.bytecode();
-                    std::vector<uint8_t> debug;
-                    debug.reserve(8 + v2_bytes.size());
-                    debug.push_back('S');
-                    debug.push_back('B');
-                    debug.push_back('V');
-                    debug.push_back('2');
-                    uint32_t len = static_cast<uint32_t>(v2_bytes.size());
-                    debug.push_back(static_cast<uint8_t>(len & 0xFF));
-                    debug.push_back(static_cast<uint8_t>((len >> 8) & 0xFF));
-                    debug.push_back(static_cast<uint8_t>((len >> 16) & 0xFF));
-                    debug.push_back(static_cast<uint8_t>((len >> 24) & 0xFF));
-                    debug.insert(debug.end(), v2_bytes.begin(), v2_bytes.end());
-                    container.debug_info = std::move(debug);
-                    std::vector<uint8_t> reencoded;
-                    if (scratchbird::sblr::v3::encodeContainer(container, reencoded, err)) {
-                        bytecode = std::move(reencoded);
-                    }
-                }
-            }
         }
     }
 

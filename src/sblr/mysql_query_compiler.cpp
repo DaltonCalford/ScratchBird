@@ -8,6 +8,9 @@
  * https://www.firebirdsql.org/en/initial-developer-s-public-license-version-1-0/
  */
 #include "scratchbird/sblr/mysql_query_compiler.h"
+#include "scratchbird/parser/v3_emitter.h"
+#include "scratchbird/sblr/v3_container.h"
+#include "scratchbird/sblr/v3_codec.h"
 
 namespace scratchbird {
 namespace sblr {
@@ -33,7 +36,7 @@ MySQLCompilationResult MySQLQueryCompiler::compileInternal(const std::string& sq
 
     auto total_start = std::chrono::steady_clock::now();
 
-    // Parsing + bytecode generation is handled by the MySQL parser itself
+    // Parse to V3 AST, then emit canonical V3 container bytecode.
     auto parse_start = std::chrono::steady_clock::now();
     mysql::Parser parser(sql, db_, default_schema_);
     parser.setCompatibilityMode(compat_mode_);
@@ -52,11 +55,31 @@ MySQLCompilationResult MySQLQueryCompiler::compileInternal(const std::string& sq
         return result;
     }
 
-    result.setBytecode(parse_result.bytecode());
+    if (parse_result.statement() != nullptr) {
+        parser::v3::V3Emitter emitter(parse_result.stringPool());
+        sblr::v3::Container container;
+        std::string emit_err;
+        if (!emitter.emitStatementToContainer(parse_result.statement(), container, emit_err)) {
+            result.addError("V3 emit failed: " + emit_err);
+            return result;
+        }
+        container.metadata.module_name = "mysql_emulation";
+
+        std::vector<uint8_t> encoded;
+        std::string encode_err;
+        if (!sblr::v3::encodeContainer(container, encoded, encode_err)) {
+            result.addError("V3 container encode failed: " + encode_err);
+            return result;
+        }
+        result.setBytecode(std::move(encoded));
+    } else {
+        result.addError("V3 AST not available for MySQL statement");
+        return result;
+    }
     for (const auto& warn : parse_result.warnings()) {
         result.addWarning(warn);
     }
-    stats.bytecode_size = parse_result.bytecode().size();
+    stats.bytecode_size = result.bytecode().size();
 
     auto total_end = std::chrono::steady_clock::now();
     stats.total_time = std::chrono::duration_cast<std::chrono::microseconds>(

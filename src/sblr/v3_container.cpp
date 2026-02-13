@@ -261,11 +261,13 @@ bool encodeContainer(const Container& container, std::vector<uint8_t>& out, std:
     size_t container_size = header_size + body.size();
 
     // patch header bytes
-    header_bytes[12] = static_cast<uint8_t>(header_size & 0xFF);
-    header_bytes[13] = static_cast<uint8_t>((header_size >> 8) & 0xFF);
+    constexpr size_t kHeaderSizeOffset = 4 + (2 * 5); // magic + 5x u16 fields before header_size
+    constexpr size_t kContainerSizeOffset = kHeaderSizeOffset + 2;
+    header_bytes[kHeaderSizeOffset] = static_cast<uint8_t>(header_size & 0xFF);
+    header_bytes[kHeaderSizeOffset + 1] = static_cast<uint8_t>((header_size >> 8) & 0xFF);
     uint64_t cs = static_cast<uint64_t>(container_size);
     for (int i = 0; i < 8; ++i) {
-        header_bytes[14 + i] = static_cast<uint8_t>((cs >> (i * 8)) & 0xFF);
+        header_bytes[kContainerSizeOffset + i] = static_cast<uint8_t>((cs >> (i * 8)) & 0xFF);
     }
 
     // patch section offsets
@@ -288,6 +290,7 @@ bool encodeContainer(const Container& container, std::vector<uint8_t>& out, std:
 bool decodeContainer(const uint8_t* data, size_t size, Container& out, std::string& err) {
     if (size < 4) { err = "container too small"; return false; }
     if (std::memcmp(data, "SBL3", 4) != 0) { err = "bad magic"; return false; }
+    std::memcpy(out.header.magic, "SBL3", 4);
     size_t off = 4;
     if (!readLE16(data, size, off, out.header.version_major) ||
         !readLE16(data, size, off, out.header.version_minor) ||

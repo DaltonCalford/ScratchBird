@@ -142,7 +142,7 @@ with OUT_CPP.open("w") as f:
         for fname, ftype in fields:
             kind, ref = map_type(ftype)
             f.write(f"        FieldDef{{\"{fname}\", FieldType::{kind}, \"{ref}\"}},\n")
-        f.write("    }}}},\n")
+        f.write("    }}},\n")
     f.write("};\n\n")
     f.write("const SchemaDef* lookupSchemaGenerated(std::string_view name) {\n")
     f.write("    auto it = kSchemas.find(std::string(name));\n")

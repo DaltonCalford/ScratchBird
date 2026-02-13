@@ -99,8 +99,18 @@ Status RTree::create(Database* db,
     std::memset(rtree_page, 0, sizeof(SBRTreePage));
 
     // Set page header
+    rtree_page->rtree_header.magic = K_MAGIC_SBRD;
+    rtree_page->rtree_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
     rtree_page->rtree_header.page_type = PAGE_TYPE_RTREE_NODE;
     rtree_page->rtree_header.page_size = db->page_size();
+    rtree_page->rtree_header.page_id = root_page;
+    rtree_page->rtree_header.generation = 1;
+    rtree_page->rtree_header.checksum = 0;
+    rtree_page->rtree_header.flags = 0;
+    rtree_page->rtree_header.lsn = 0;
+    pageSetLower(rtree_page->rtree_header, sizeof(SBRTreePage));
+    pageSetUpper(rtree_page->rtree_header, db->page_size());
+    pageSetSpecial(rtree_page->rtree_header, db->page_size());
 
     // Set R-tree metadata
     std::memcpy(&rtree_page->rtree_index_uuid, &index_uuid, sizeof(ID));

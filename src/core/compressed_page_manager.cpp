@@ -211,32 +211,36 @@ namespace scratchbird::core
         }
 
         // Check page type - some types compress better than others
-        switch (header->page_type)
+        if (header->page_type == PAGE_TYPE_DATABASE_HEADER ||
+            header->page_type == PAGE_TYPE_SYSTEM_CATALOG ||
+            header->page_type == PAGE_TYPE_FREE_SPACE_MAP ||
+            header->page_type == PAGE_TYPE_TRANSACTION_MAP)
         {
-            case PAGE_TYPE_DATABASE_HEADER:
-            case PAGE_TYPE_SYSTEM_CATALOG:
-            case PAGE_TYPE_FREE_SPACE_MAP:
-            case PAGE_TYPE_TRANSACTION_MAP:
-                // System pages typically don't compress well
-                return false;
-
-            case PAGE_TYPE_HEAP:
-                // Heap pages often compress well
-                return header->free_space < page_size_ * 0.5; // Compress if more than 50% full
-
-            case PAGE_TYPE_BTREE_LEAF:
-                // B-tree leaf pages may compress well depending on data
-                return true;
-
-            case PAGE_TYPE_BTREE_INTERNAL:
-            case PAGE_TYPE_BTREE_META:
-                // B-tree internal/meta pages are usually small, not worth compressing
-                return false;
-
-            default:
-                // Unknown page type, try to compress
-                return true;
+            // System pages typically don't compress well
+            return false;
         }
+
+        if (header->page_type == PAGE_TYPE_HEAP)
+        {
+            // Heap pages often compress well
+            return (pageUpper(*header) - pageLower(*header)) < page_size_ * 0.5; // Compress if more than 50% full
+        }
+
+        if (header->page_type == PAGE_TYPE_BTREE_INTERNAL ||
+            header->page_type == PAGE_TYPE_BTREE_META)
+        {
+            // B-tree internal/meta pages are usually small, not worth compressing
+            return false;
+        }
+
+        if (header->page_type == PAGE_TYPE_BTREE_LEAF)
+        {
+            // B-tree leaf pages may compress well depending on data
+            return true;
+        }
+
+        // Unknown page type, try to compress
+        return true;
     }
 
 } // namespace scratchbird::core

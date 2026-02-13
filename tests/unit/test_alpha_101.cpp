@@ -12,6 +12,7 @@
 #include <sys/stat.h>
 #include <fstream>
 #include "scratchbird/core/database.h"
+#include "scratchbird/core/config.h"
 #include "scratchbird/core/ondisk.h"
 #include "scratchbird/core/uuidv7.h"
 #include "test_helpers.h"
@@ -165,7 +166,9 @@ TEST_F(Alpha101Test, SystemCatalogInitialization)
     ASSERT_EQ(header->magic, 0x53425244);
     ASSERT_EQ(header->page_type, PAGE_TYPE_SYSTEM_CATALOG);
     ASSERT_EQ(header->page_id, 1);
-    ASSERT_EQ(header->item_count, 8); // 8 base schemas
+    auto entry_count = static_cast<uint32_t>(
+        (pageLower(*header) - sizeof(PageHeader)) / sizeof(SystemCatalogEntry));
+    ASSERT_EQ(entry_count, static_cast<uint32_t>(config::NUM_BASE_SCHEMAS));
     ASSERT_TRUE(validatePageChecksum(buffer, 16384));
 
     // Check catalog entries
@@ -207,15 +210,15 @@ TEST_F(Alpha101Test, UUIDv7Generation)
     file.read(reinterpret_cast<char *>(buffer), 16384);
     file.close();
 
-    PageHeader *header = reinterpret_cast<PageHeader *>(buffer);
+    DatabaseHeader *header = reinterpret_cast<DatabaseHeader *>(buffer);
 
     // Check UUID version bits (version 7)
     // Byte 6 should have 0x70 in high nibble
-    ASSERT_EQ((header->database_uuid[6] & 0xF0), 0x70);
+    ASSERT_EQ((header->database_uuid.bytes[6] & 0xF0), 0x70);
 
     // Check variant bits
     // Byte 8 should have 0x80 or higher in high nibble
-    ASSERT_GE((header->database_uuid[8] & 0xC0), 0x80);
+    ASSERT_GE((header->database_uuid.bytes[8] & 0xC0), 0x80);
 }
 
 // Test error paths

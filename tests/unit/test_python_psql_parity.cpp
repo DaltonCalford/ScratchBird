@@ -12,7 +12,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/sblr/executor.h"
-#include "scratchbird/sblr/query_compiler_v2.h"
+#include "scratchbird/sblr/query_compiler_v3.h"
 #include "test_helpers.h"
 
 #include <memory>
@@ -23,7 +23,7 @@ using scratchbird::core::ErrorContext;
 using scratchbird::core::Status;
 using scratchbird::sblr::Executor;
 using scratchbird::sblr::ExecutionResult;
-using scratchbird::sblr::QueryCompilerV2;
+using scratchbird::sblr::QueryCompilerV3;
 using scratchbird::testing::TestDatabaseFile;
 
 class PythonPSQLParityTest : public ::testing::Test
@@ -31,7 +31,7 @@ class PythonPSQLParityTest : public ::testing::Test
 protected:
     std::unique_ptr<Database> db_;
     std::unique_ptr<Executor> executor_;
-    std::unique_ptr<QueryCompilerV2> compiler_;
+    std::unique_ptr<QueryCompilerV3> compiler_;
     std::unique_ptr<TestDatabaseFile> db_file_;
 
     void SetUp() override
@@ -45,7 +45,7 @@ protected:
         ASSERT_EQ(db_->open(db_file_->path(), &ctx), Status::OK) << ctx.message;
 
         executor_ = std::make_unique<Executor>(db_.get());
-        compiler_ = std::make_unique<QueryCompilerV2>(db_.get());
+        compiler_ = std::make_unique<QueryCompilerV3>(db_.get());
     }
 
     void TearDown() override

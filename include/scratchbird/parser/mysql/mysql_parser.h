@@ -13,8 +13,8 @@
  * MySQL Parser
  *
  * Recursive-descent parser for MySQL 8.0 SQL dialect.
- * Unlike the ScratchBird V2 parser which produces AST nodes,
- * this parser generates SBLR bytecode directly for execution.
+ * This parser is dedicated to MySQL emulation and generates SBLR bytecode
+ * for execution against the ScratchBird engine.
  *
  * Schema: Databases are emulated as schemas at:
  *   /remote/emulated/mysql/localhost/{database}/
@@ -28,6 +28,8 @@
  */
 
 #include "mysql_lexer.h"
+#include "scratchbird/parser/ast_v3.h"
+#include "scratchbird/parser/schema_path_v3.h"
 #include <scratchbird/sblr/opcodes.h>
 #include <vector>
 #include <string>
@@ -79,10 +81,28 @@ public:
         bytecode_ = std::move(bc);
     }
 
+    parser::v3::Statement* statement() const { return statement_; }
+    parser::v3::ASTArena* arena() const { return arena_.get(); }
+    parser::v3::StringPool& stringPool() { return string_pool_; }
+    const parser::v3::StringPool& stringPool() const { return string_pool_; }
+
+    void setStatement(parser::v3::Statement* stmt,
+                      std::unique_ptr<parser::v3::ASTArena> arena) {
+        statement_ = stmt;
+        arena_ = std::move(arena);
+    }
+
+    void setStringPool(parser::v3::StringPool pool) {
+        string_pool_ = std::move(pool);
+    }
+
 private:
     std::vector<ParseError> errors_;
     std::vector<std::string> warnings_;
     std::vector<uint8_t> bytecode_;
+    parser::v3::Statement* statement_ = nullptr;
+    std::unique_ptr<parser::v3::ASTArena> arena_;
+    parser::v3::StringPool string_pool_;
 };
 
 enum class MySQLCompatMode : uint8_t {
@@ -337,6 +357,11 @@ public:
     StringPool& stringPool() { return lexer_.stringPool(); }
     const StringPool& stringPool() const { return lexer_.stringPool(); }
 
+    parser::v3::StringPool& v3StringPool() { return v3_string_pool_; }
+    const parser::v3::StringPool& v3StringPool() const { return v3_string_pool_; }
+
+    parser::v3::ASTArena* arena() { return arena_.get(); }
+
     void setCompatibilityMode(MySQLCompatMode mode) { compat_mode_ = mode; }
     MySQLCompatMode compatibilityMode() const { return compat_mode_; }
 
@@ -404,6 +429,10 @@ private:
     // C4: Named windows from WINDOW clause
     std::unordered_map<std::string, NamedWindowDef> named_windows_;
 
+    std::unique_ptr<parser::v3::ASTArena> arena_;
+    parser::v3::StringPool v3_string_pool_;
+    parser::v3::Statement* statement_ = nullptr;
+
     // Token management
     void advance();
     bool check(TokenType type) const;
@@ -433,6 +462,24 @@ private:
 
     // Statement parsing
     void parseStatementInternal();
+    parser::v3::Statement* parseStatementInternalV3();
+    parser::v3::Statement* parseCreateStmtV3();
+    parser::v3::CreateTableStmt* parseCreateTableV3(bool temporary);
+    parser::v3::InsertStmt* parseInsertStmtV3();
+    parser::v3::UpdateStmt* parseUpdateStmtV3();
+    parser::v3::DeleteStmt* parseDeleteStmtV3();
+    parser::v3::Statement* parseDropStmtV3();
+    parser::v3::Statement* parseAlterStmtV3();
+    parser::v3::Statement* parseRenameStmtV3(bool rename_consumed = false);
+    parser::v3::Statement* parseTruncateStmtV3();
+    parser::v3::Statement* parseGrantStmtV3();
+    parser::v3::Statement* parseRevokeStmtV3();
+    parser::v3::Statement* parseExplainStmtV3();
+    parser::v3::Statement* parseDescribeStmtV3();
+    parser::v3::TypeName parseTypeNameV3();
+    parser::v3::ColumnDef* parseColumnDefV3();
+    parser::v3::TableConstraint* parseTableConstraintV3();
+    parser::v3::StringPool::StringId parseIdentifierId();
     void parseSelectStmt();
     void parseInsertStmt();
     void parseUpdateStmt();
@@ -526,6 +573,28 @@ private:
     void parseAlterElementExpr();
     sblr::ExtractField parseElementSelector(uint8_t& arg_count);
     void parseSubquery();
+
+    // V3 AST expression parsing (minimal literal/identifier support)
+    parser::v3::Expression* parseExpressionV3();
+    parser::v3::LiteralExpr* parseLiteralExprV3();
+    parser::v3::Expression* parseOrExprV3();
+    parser::v3::Expression* parseAndExprV3();
+    parser::v3::Expression* parseComparisonExprV3();
+    parser::v3::Expression* parseBitwiseExprV3();
+    parser::v3::Expression* parseAdditiveExprV3();
+    parser::v3::Expression* parseMultiplicativeExprV3();
+    parser::v3::Expression* parseUnaryExprV3();
+    parser::v3::Expression* parsePrimaryExprV3();
+    parser::v3::Expression* parseMatchAgainstExprV3();
+    parser::v3::WindowSpec* parseWindowSpecV3();
+    parser::v3::Statement* parseTransactionStmtV3();
+    parser::v3::Statement* parseSetStmtV3();
+    parser::v3::Statement* parseShowStmtV3();
+    parser::v3::SelectStmt* parseSelectStmtV3();
+    parser::v3::SelectItem* parseSelectItemV3();
+    void parseSelectListV3(parser::v3::SelectStmt* stmt);
+    parser::v3::TableRefNode* parseTableRefV3();
+    parser::v3::OrderByItem* parseOrderByItemV3();
 
     // Table reference parsing
     std::unique_ptr<TableRef> parseTableRef();

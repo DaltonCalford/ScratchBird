@@ -13,7 +13,7 @@
  * PostgreSQL Parser Token Types
  *
  * Token types for the PostgreSQL 16 emulation parser.
- * This is SEPARATE from the ScratchBird V2 parser tokens.
+ * This is SEPARATE from the native ScratchBird parser tokens.
  *
  * PostgreSQL has ~130 keywords with ~96 reserved.
  * Unlike MySQL's ~262 reserved keywords, PostgreSQL is more permissive

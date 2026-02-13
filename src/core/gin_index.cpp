@@ -561,6 +561,13 @@ namespace scratchbird
             meta->hip_header.page_type = static_cast<uint16_t>(PageType::GIN_INDEX_META);
             meta->hip_header.page_size = db->page_size();
             meta->hip_header.page_id = meta_page;
+            meta->hip_header.generation = 1;
+            meta->hip_header.checksum = 0;
+            meta->hip_header.flags = 0;
+            meta->hip_header.lsn = 0;
+            pageSetLower(meta->hip_header, sizeof(SBGinIndexMetaPage));
+            pageSetUpper(meta->hip_header, db->page_size());
+            pageSetSpecial(meta->hip_header, db->page_size());
 
             // Initialize meta data
             std::memcpy(meta->gin_index_uuid, index_uuid.bytes.data(), 16);
@@ -820,6 +827,13 @@ namespace scratchbird
                 pending->gpp_header.page_type = static_cast<uint16_t>(PageType::GIN_PENDING_LIST);
                 pending->gpp_header.page_size = db_->page_size();
                 pending->gpp_header.page_id = pending_page;
+                pending->gpp_header.generation = 1;
+                pending->gpp_header.checksum = 0;
+                pending->gpp_header.flags = 0;
+                pending->gpp_header.lsn = 0;
+                pageSetLower(pending->gpp_header, sizeof(SBGinPendingListPage));
+                pageSetUpper(pending->gpp_header, db_->page_size());
+                pageSetSpecial(pending->gpp_header, db_->page_size());
                 pending->gpp_next_page = 0;
                 pending->gpp_entry_count = 0;
 
@@ -874,6 +888,13 @@ namespace scratchbird
                 new_pending->gpp_header.page_type = static_cast<uint16_t>(PageType::GIN_PENDING_LIST);
                 new_pending->gpp_header.page_size = db_->page_size();
                 new_pending->gpp_header.page_id = new_pending_page;
+                new_pending->gpp_header.generation = 1;
+                new_pending->gpp_header.checksum = 0;
+                new_pending->gpp_header.flags = 0;
+                new_pending->gpp_header.lsn = 0;
+                pageSetLower(new_pending->gpp_header, sizeof(SBGinPendingListPage));
+                pageSetUpper(new_pending->gpp_header, db_->page_size());
+                pageSetSpecial(new_pending->gpp_header, db_->page_size());
                 new_pending->gpp_next_page = 0;
                 new_pending->gpp_entry_count = 0;
 
@@ -1352,6 +1373,13 @@ namespace scratchbird
             list_page->gpl_header.page_type = static_cast<uint16_t>(PageType::GIN_POSTING_LIST);
             list_page->gpl_header.page_size = db_->page_size();
             list_page->gpl_header.page_id = new_posting_page;
+            list_page->gpl_header.generation = 1;
+            list_page->gpl_header.checksum = 0;
+            list_page->gpl_header.flags = 0;
+            list_page->gpl_header.lsn = 0;
+            pageSetLower(list_page->gpl_header, sizeof(SBGinPostingListPage));
+            pageSetUpper(list_page->gpl_header, db_->page_size());
+            pageSetSpecial(list_page->gpl_header, db_->page_size());
             list_page->gpl_entry_count = 0;
             list_page->gpl_is_tree = 0;
             list_page->gpl_is_compressed = 0;
@@ -1558,6 +1586,13 @@ namespace scratchbird
             leaf->gpt_header.page_type = static_cast<uint16_t>(PageType::GIN_POSTING_TREE);
             leaf->gpt_header.page_size = db_->page_size();
             leaf->gpt_header.page_id = leaf_page;
+            leaf->gpt_header.generation = 1;
+            leaf->gpt_header.checksum = 0;
+            leaf->gpt_header.flags = 0;
+            leaf->gpt_header.lsn = 0;
+            pageSetLower(leaf->gpt_header, sizeof(SBGinPostingTreeLeaf));
+            pageSetUpper(leaf->gpt_header, db_->page_size());
+            pageSetSpecial(leaf->gpt_header, db_->page_size());
             leaf->gpt_is_leaf = 1;
             leaf->gpt_next_leaf = 0;
             leaf->gpt_entry_count = tid_count;
@@ -1718,6 +1753,13 @@ namespace scratchbird
                 root->gpt_header.page_type = static_cast<uint16_t>(PageType::GIN_POSTING_TREE);
                 root->gpt_header.page_size = db_->page_size();
                 root->gpt_header.page_id = new_root;
+                root->gpt_header.generation = 1;
+                root->gpt_header.checksum = 0;
+                root->gpt_header.flags = 0;
+                root->gpt_header.lsn = 0;
+                pageSetLower(root->gpt_header, sizeof(SBGinPostingTreeInternal));
+                pageSetUpper(root->gpt_header, db_->page_size());
+                pageSetSpecial(root->gpt_header, db_->page_size());
                 root->gpt_is_leaf = 0;
                 root->gpt_entry_count = 2;
 
@@ -1845,6 +1887,13 @@ namespace scratchbird
             sibling->gpt_header.page_type = static_cast<uint16_t>(PageType::GIN_POSTING_TREE);
             sibling->gpt_header.page_size = db_->page_size();
             sibling->gpt_header.page_id = new_sibling;
+            sibling->gpt_header.generation = 1;
+            sibling->gpt_header.checksum = 0;
+            sibling->gpt_header.flags = 0;
+            sibling->gpt_header.lsn = 0;
+            pageSetLower(sibling->gpt_header, sizeof(SBGinPostingTreeInternal));
+            pageSetUpper(sibling->gpt_header, db_->page_size());
+            pageSetSpecial(sibling->gpt_header, db_->page_size());
             sibling->gpt_is_leaf = 1;
 
             // Split point: move second half to sibling
@@ -2095,6 +2144,13 @@ namespace scratchbird
             sibling->gpt_header.page_type = static_cast<uint16_t>(PageType::GIN_POSTING_TREE);
             sibling->gpt_header.page_size = db_->page_size();
             sibling->gpt_header.page_id = new_sibling;
+            sibling->gpt_header.generation = 1;
+            sibling->gpt_header.checksum = 0;
+            sibling->gpt_header.flags = 0;
+            sibling->gpt_header.lsn = 0;
+            pageSetLower(sibling->gpt_header, sizeof(SBGinPostingTreeInternal));
+            pageSetUpper(sibling->gpt_header, db_->page_size());
+            pageSetSpecial(sibling->gpt_header, db_->page_size());
             sibling->gpt_is_leaf = 0;
 
             // Split point
@@ -2405,6 +2461,13 @@ namespace scratchbird
                 leaf->get_header.page_type = static_cast<uint16_t>(PageType::GIN_INDEX_META);
                 leaf->get_header.page_size = db_->page_size();
                 leaf->get_header.page_id = root_page;
+                leaf->get_header.generation = 1;
+                leaf->get_header.checksum = 0;
+                leaf->get_header.flags = 0;
+                leaf->get_header.lsn = 0;
+                pageSetLower(leaf->get_header, sizeof(SBGinEntryTreeLeaf));
+                pageSetUpper(leaf->get_header, db_->page_size());
+                pageSetSpecial(leaf->get_header, db_->page_size());
                 leaf->get_is_leaf = 1;
                 leaf->get_entry_count = 0;
                 leaf->get_free_space = db_->page_size() - sizeof(SBGinEntryTreeLeaf); // Data area size
@@ -2700,6 +2763,13 @@ namespace scratchbird
             sibling->get_header.page_type = static_cast<uint16_t>(PageType::GIN_INDEX_META);
             sibling->get_header.page_size = db_->page_size();
             sibling->get_header.page_id = new_sibling;
+            sibling->get_header.generation = 1;
+            sibling->get_header.checksum = 0;
+            sibling->get_header.flags = 0;
+            sibling->get_header.lsn = 0;
+            pageSetLower(sibling->get_header, sizeof(SBGinEntryTreeInternal));
+            pageSetUpper(sibling->get_header, db_->page_size());
+            pageSetSpecial(sibling->get_header, db_->page_size());
             sibling->get_is_leaf = 1;
             sibling->get_entry_count = 0;
             sibling->get_free_space = db_->page_size() - sizeof(SBGinEntryTreeLeaf);
@@ -2738,7 +2808,9 @@ namespace scratchbird
             // Update original leaf
             leaf->get_entry_count = split_point;
             // Recalculate free space
-            leaf->get_free_space = leaf->get_data_end - (1084 + leaf->get_entry_count * sizeof(uint16_t));
+            leaf->get_free_space = leaf->get_data_end -
+                (static_cast<uint32_t>(sizeof(SBGinEntryTreeLeaf)) +
+                 leaf->get_entry_count * sizeof(uint16_t));
 
             // Separator key is the first key of sibling
             uint16_t sep_offset = sibling->get_offsets[0];
@@ -2783,6 +2855,13 @@ namespace scratchbird
             root->get_header.page_type = static_cast<uint16_t>(PageType::GIN_INDEX_META);
             root->get_header.page_size = db_->page_size();
             root->get_header.page_id = new_root;
+            root->get_header.generation = 1;
+            root->get_header.checksum = 0;
+            root->get_header.flags = 0;
+            root->get_header.lsn = 0;
+            pageSetLower(root->get_header, sizeof(SBGinEntryTreeInternal));
+            pageSetUpper(root->get_header, db_->page_size());
+            pageSetSpecial(root->get_header, db_->page_size());
             root->get_is_leaf = 0;
             root->get_entry_count = 1;
             root->get_free_space = db_->page_size() - sizeof(SBGinEntryTreeInternal);
@@ -3124,11 +3203,7 @@ namespace scratchbird
 
                 // Check if item_id is valid
                 // We need to calculate how many items are on the page
-                // This requires reading the HeapPageSpecial at the end of the page
-                auto *special = reinterpret_cast<struct HeapPageSpecial *>(
-                    page_data + db_->page_size() - sizeof(struct HeapPageSpecial));
-
-                uint16_t item_count = special->pd_lower / sizeof(struct ItemPointer);
+                uint16_t item_count = pageLower(*page_header) / sizeof(struct ItemPointer);
 
                 if (item_id >= item_count)
                 {

@@ -17,6 +17,16 @@ jobs:
       - uses: actions/checkout@v3
         with:
           submodules: recursive
+      - name: Guard V2 Includes
+        run: |
+          if rg -n "#include\\s+\\\"scratchbird/.*(parser_v2|ast_v2|lexer_v2|semantic_analyzer_v2|bytecode_generator_v2|query_compiler_v2)\\\"" src include; then
+            echo "V2 include detected; V3-only policy enforced."
+            exit 1
+          fi
+          if rg -n "parser::v2" src include; then
+            echo "parser::v2 usage detected; V3-only policy enforced."
+            exit 1
+          fi
       - name: Install Dependencies
         run: |
           sudo apt-get update
@@ -33,6 +43,16 @@ jobs:
       - uses: actions/checkout@v3
         with:
           submodules: recursive
+      - name: Guard V2 Includes
+        run: |
+          if rg -n "#include\\s+\\\"scratchbird/.*(parser_v2|ast_v2|lexer_v2|semantic_analyzer_v2|bytecode_generator_v2|query_compiler_v2)\\\"" src include; then
+            echo "V2 include detected; V3-only policy enforced."
+            exit 1
+          fi
+          if rg -n "parser::v2" src include; then
+            echo "parser::v2 usage detected; V3-only policy enforced."
+            exit 1
+          fi
       - name: Install Dependencies
         run: |
           sudo apt-get update
@@ -51,6 +71,16 @@ jobs:
       - uses: actions/checkout@v3
         with:
           submodules: recursive
+      - name: Guard V2 Includes
+        run: |
+          if rg -n "#include\\s+\\\"scratchbird/.*(parser_v2|ast_v2|lexer_v2|semantic_analyzer_v2|bytecode_generator_v2|query_compiler_v2)\\\"" src include; then
+            echo "V2 include detected; V3-only policy enforced."
+            exit 1
+          fi
+          if rg -n "parser::v2" src include; then
+            echo "parser::v2 usage detected; V3-only policy enforced."
+            exit 1
+          fi
       - name: Install Dependencies
         run: |
           sudo apt-get update

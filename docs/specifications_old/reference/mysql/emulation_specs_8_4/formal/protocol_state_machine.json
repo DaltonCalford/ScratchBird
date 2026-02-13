@@ -1,0 +1,77 @@
+{
+  "states": [
+    "DISCONNECTED",
+    "HANDSHAKE_SENT",
+    "SSL_NEGOTIATION",
+    "AUTHENTICATING",
+    "READY",
+    "IN_QUERY",
+    "IN_PREPARE",
+    "IN_EXECUTE",
+    "IN_FETCH",
+    "CLOSING"
+  ],
+  "transitions": [
+    {
+      "event": "connection_open",
+      "from": "DISCONNECTED",
+      "to": "HANDSHAKE_SENT"
+    },
+    {
+      "event": "client_handshake",
+      "from": "HANDSHAKE_SENT",
+      "to": "AUTHENTICATING"
+    },
+    {
+      "event": "ssl_request",
+      "from": "HANDSHAKE_SENT",
+      "to": "SSL_NEGOTIATION"
+    },
+    {
+      "event": "auth_ok",
+      "from": "AUTHENTICATING",
+      "to": "READY"
+    },
+    {
+      "event": "auth_fail",
+      "from": "AUTHENTICATING",
+      "to": "CLOSING"
+    },
+    {
+      "event": "COM_QUERY",
+      "from": "READY",
+      "to": "IN_QUERY"
+    },
+    {
+      "event": "COM_STMT_PREPARE",
+      "from": "READY",
+      "to": "IN_PREPARE"
+    },
+    {
+      "event": "COM_STMT_EXECUTE",
+      "from": "READY",
+      "to": "IN_EXECUTE"
+    },
+    {
+      "event": "COM_STMT_FETCH",
+      "from": "IN_EXECUTE",
+      "to": "IN_FETCH"
+    },
+    {
+      "event": "resultset_done",
+      "from": "IN_QUERY",
+      "to": "READY"
+    },
+    {
+      "event": "resultset_done",
+      "from": "IN_EXECUTE",
+      "to": "READY"
+    },
+    {
+      "event": "COM_QUIT",
+      "from": "READY",
+      "to": "CLOSING"
+    }
+  ],
+  "note": "State machine per classic protocol; detailed per-command state in sql/protocol_classic.*"
+}

@@ -1,0 +1,6512 @@
+{
+  "tokens": [
+    "%token <str>\tIDENT UIDENT FCONST SCONST USCONST BCONST XCONST Op",
+    "%token <ival>\tICONST PARAM",
+    "%token\t\t\tTYPECAST DOT_DOT COLON_EQUALS EQUALS_GREATER",
+    "%token\t\t\tLESS_EQUALS GREATER_EQUALS NOT_EQUALS",
+    "%token <keyword> ABORT_P ABSENT ABSOLUTE_P ACCESS ACTION ADD_P ADMIN AFTER",
+    "%token\t\tFORMAT_LA NOT_LA NULLS_LA WITH_LA WITHOUT_LA",
+    "%token\t\tMODE_TYPE_NAME",
+    "%token\t\tMODE_PLPGSQL_EXPR",
+    "%token\t\tMODE_PLPGSQL_ASSIGN1",
+    "%token\t\tMODE_PLPGSQL_ASSIGN2",
+    "%token\t\tMODE_PLPGSQL_ASSIGN3"
+  ],
+  "productions": [
+    {
+      "lhs": "parse_toplevel",
+      "rhs": [
+        "stmtmulti",
+        "{",
+        "pg_yyget_extra(yyscanner)->parsetree = $1"
+      ]
+    },
+    {
+      "lhs": "stmtmulti",
+      "rhs": [
+        "stmtmulti ';' toplevel_stmt",
+        "{",
+        "if ($1 != NIL)",
+        "{",
+        "updateRawStmtEnd(llast_node(RawStmt, $1), @2)"
+      ]
+    },
+    {
+      "lhs": "toplevel_stmt",
+      "rhs": [
+        "stmt",
+        "TransactionStmtLegacy"
+      ]
+    },
+    {
+      "lhs": "stmt",
+      "rhs": [
+        "AlterEventTrigStmt",
+        "AlterCollationStmt",
+        "AlterDatabaseStmt",
+        "AlterDatabaseSetStmt",
+        "AlterDefaultPrivilegesStmt",
+        "AlterDomainStmt",
+        "AlterEnumStmt",
+        "AlterExtensionStmt",
+        "AlterExtensionContentsStmt",
+        "AlterFdwStmt",
+        "AlterForeignServerStmt",
+        "AlterFunctionStmt",
+        "AlterGroupStmt",
+        "AlterObjectDependsStmt",
+        "AlterObjectSchemaStmt",
+        "AlterOwnerStmt",
+        "AlterOperatorStmt",
+        "AlterTypeStmt",
+        "AlterPolicyStmt",
+        "AlterSeqStmt",
+        "AlterSystemStmt",
+        "AlterTableStmt",
+        "AlterTblSpcStmt",
+        "AlterCompositeTypeStmt",
+        "AlterPublicationStmt",
+        "AlterRoleSetStmt",
+        "AlterRoleStmt",
+        "AlterSubscriptionStmt",
+        "AlterStatsStmt",
+        "AlterTSConfigurationStmt",
+        "AlterTSDictionaryStmt",
+        "AlterUserMappingStmt",
+        "AnalyzeStmt",
+        "CallStmt",
+        "CheckPointStmt",
+        "ClosePortalStmt",
+        "ClusterStmt",
+        "CommentStmt",
+        "ConstraintsSetStmt",
+        "CopyStmt",
+        "CreateAmStmt",
+        "CreateAsStmt",
+        "CreateAssertionStmt",
+        "CreateCastStmt",
+        "CreateConversionStmt",
+        "CreateDomainStmt",
+        "CreateExtensionStmt",
+        "CreateFdwStmt",
+        "CreateForeignServerStmt",
+        "CreateForeignTableStmt",
+        "CreateFunctionStmt",
+        "CreateGroupStmt",
+        "CreateMatViewStmt",
+        "CreateOpClassStmt",
+        "CreateOpFamilyStmt",
+        "CreatePublicationStmt",
+        "AlterOpFamilyStmt",
+        "CreatePolicyStmt",
+        "CreatePLangStmt",
+        "CreateSchemaStmt",
+        "CreateSeqStmt",
+        "CreateStmt",
+        "CreateSubscriptionStmt",
+        "CreateStatsStmt",
+        "CreateTableSpaceStmt",
+        "CreateTransformStmt",
+        "CreateTrigStmt",
+        "CreateEventTrigStmt",
+        "CreateRoleStmt",
+        "CreateUserStmt",
+        "CreateUserMappingStmt",
+        "CreatedbStmt",
+        "DeallocateStmt",
+        "DeclareCursorStmt",
+        "DefineStmt",
+        "DeleteStmt",
+        "DiscardStmt",
+        "DoStmt",
+        "DropCastStmt",
+        "DropOpClassStmt",
+        "DropOpFamilyStmt",
+        "DropOwnedStmt",
+        "DropStmt",
+        "DropSubscriptionStmt",
+        "DropTableSpaceStmt",
+        "DropTransformStmt",
+        "DropRoleStmt",
+        "DropUserMappingStmt",
+        "DropdbStmt",
+        "ExecuteStmt",
+        "ExplainStmt",
+        "FetchStmt",
+        "GrantStmt",
+        "GrantRoleStmt",
+        "ImportForeignSchemaStmt",
+        "IndexStmt",
+        "InsertStmt",
+        "ListenStmt",
+        "RefreshMatViewStmt",
+        "LoadStmt",
+        "LockStmt",
+        "MergeStmt",
+        "NotifyStmt",
+        "PrepareStmt",
+        "ReassignOwnedStmt",
+        "ReindexStmt",
+        "RemoveAggrStmt",
+        "RemoveFuncStmt",
+        "RemoveOperStmt",
+        "RenameStmt",
+        "RevokeStmt",
+        "RevokeRoleStmt",
+        "RuleStmt",
+        "SecLabelStmt",
+        "SelectStmt",
+        "TransactionStmt",
+        "TruncateStmt",
+        "UnlistenStmt",
+        "UpdateStmt",
+        "VacuumStmt",
+        "VariableResetStmt",
+        "VariableSetStmt",
+        "VariableShowStmt",
+        "ViewStmt",
+        "",
+        "{ $$ = NULL"
+      ]
+    },
+    {
+      "lhs": "opt_single_name",
+      "rhs": [
+        "ColId\t\t\t\t\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "opt_qualified_name",
+      "rhs": [
+        "any_name\t\t\t\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "opt_concurrently",
+      "rhs": [
+        "CONCURRENTLY\t\t\t\t\t{ $$ = true"
+      ]
+    },
+    {
+      "lhs": "opt_drop_behavior",
+      "rhs": [
+        "CASCADE\t\t\t\t\t\t\t{ $$ = DROP_CASCADE"
+      ]
+    },
+    {
+      "lhs": "CallStmt",
+      "rhs": [
+        "CALL func_application",
+        "{",
+        "CallStmt   *n = makeNode(CallStmt)"
+      ]
+    },
+    {
+      "lhs": "CreateRoleStmt",
+      "rhs": [
+        "CREATE ROLE RoleId opt_with OptRoleList",
+        "{",
+        "CreateRoleStmt *n = makeNode(CreateRoleStmt)"
+      ]
+    },
+    {
+      "lhs": "opt_with",
+      "rhs": [
+        "WITH",
+        "WITH_LA",
+        ""
+      ]
+    },
+    {
+      "lhs": "OptRoleList",
+      "rhs": [
+        "OptRoleList CreateOptRoleElem\t\t\t{ $$ = lappend($1, $2)"
+      ]
+    },
+    {
+      "lhs": "AlterOptRoleList",
+      "rhs": [
+        "AlterOptRoleList AlterOptRoleElem\t\t{ $$ = lappend($1, $2)"
+      ]
+    },
+    {
+      "lhs": "AlterOptRoleElem",
+      "rhs": [
+        "PASSWORD Sconst",
+        "{",
+        "$$ = makeDefElem(\"password\",",
+        "(Node *) makeString($2), @1)"
+      ]
+    },
+    {
+      "lhs": "CreateOptRoleElem",
+      "rhs": [
+        "AlterOptRoleElem\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "CreateUserStmt",
+      "rhs": [
+        "CREATE USER RoleId opt_with OptRoleList",
+        "{",
+        "CreateRoleStmt *n = makeNode(CreateRoleStmt)"
+      ]
+    },
+    {
+      "lhs": "AlterRoleStmt",
+      "rhs": [
+        "ALTER ROLE RoleSpec opt_with AlterOptRoleList",
+        "{",
+        "AlterRoleStmt *n = makeNode(AlterRoleStmt)"
+      ]
+    },
+    {
+      "lhs": "opt_in_database",
+      "rhs": [
+        "{ $$ = NULL"
+      ]
+    },
+    {
+      "lhs": "AlterRoleSetStmt",
+      "rhs": [
+        "ALTER ROLE RoleSpec opt_in_database SetResetClause",
+        "{",
+        "AlterRoleSetStmt *n = makeNode(AlterRoleSetStmt)"
+      ]
+    },
+    {
+      "lhs": "DropRoleStmt",
+      "rhs": [
+        "DROP ROLE role_list",
+        "{",
+        "DropRoleStmt *n = makeNode(DropRoleStmt)"
+      ]
+    },
+    {
+      "lhs": "CreateGroupStmt",
+      "rhs": [
+        "CREATE GROUP_P RoleId opt_with OptRoleList",
+        "{",
+        "CreateRoleStmt *n = makeNode(CreateRoleStmt)"
+      ]
+    },
+    {
+      "lhs": "AlterGroupStmt",
+      "rhs": [
+        "ALTER GROUP_P RoleSpec add_drop USER role_list",
+        "{",
+        "AlterRoleStmt *n = makeNode(AlterRoleStmt)"
+      ]
+    },
+    {
+      "lhs": "add_drop",
+      "rhs": [
+        "ADD_P\t\t\t\t\t\t\t\t\t{ $$ = +1; }",
+        "DROP\t\t\t\t\t\t\t\t\t{ $$ = -1; }"
+      ]
+    },
+    {
+      "lhs": "CreateSchemaStmt",
+      "rhs": [
+        "CREATE SCHEMA opt_single_name AUTHORIZATION RoleSpec OptSchemaEltList",
+        "{",
+        "CreateSchemaStmt *n = makeNode(CreateSchemaStmt)"
+      ]
+    },
+    {
+      "lhs": "OptSchemaEltList",
+      "rhs": [
+        "OptSchemaEltList schema_stmt",
+        "{",
+        "$$ = lappend($1, $2)"
+      ]
+    },
+    {
+      "lhs": "schema_stmt",
+      "rhs": [
+        "CreateStmt",
+        "IndexStmt",
+        "CreateSeqStmt",
+        "CreateTrigStmt",
+        "GrantStmt",
+        "ViewStmt"
+      ]
+    },
+    {
+      "lhs": "VariableSetStmt",
+      "rhs": [
+        "SET set_rest",
+        "{",
+        "VariableSetStmt *n = $2"
+      ]
+    },
+    {
+      "lhs": "set_rest",
+      "rhs": [
+        "TRANSACTION transaction_mode_list",
+        "{",
+        "VariableSetStmt *n = makeNode(VariableSetStmt)"
+      ]
+    },
+    {
+      "lhs": "generic_set",
+      "rhs": [
+        "var_name TO var_list",
+        "{",
+        "VariableSetStmt *n = makeNode(VariableSetStmt)"
+      ]
+    },
+    {
+      "lhs": "set_rest_more",
+      "rhs": [
+        "generic_set\t\t\t\t\t\t\t{$$ = $1"
+      ]
+    },
+    {
+      "lhs": "var_name",
+      "rhs": [
+        "ColId\t\t\t\t\t\t\t\t{ $$ = $1; }",
+        "var_name '.' ColId",
+        "{ $$ = psprintf(\"%s.%s\", $1, $3)"
+      ]
+    },
+    {
+      "lhs": "var_list",
+      "rhs": [
+        "var_value\t\t\t\t\t\t\t\t{ $$ = list_make1($1); }",
+        "var_list ',' var_value\t\t\t\t{ $$ = lappend($1, $3); }"
+      ]
+    },
+    {
+      "lhs": "var_value",
+      "rhs": [
+        "opt_boolean_or_string",
+        "{ $$ = makeStringConst($1, @1)"
+      ]
+    },
+    {
+      "lhs": "iso_level",
+      "rhs": [
+        "READ UNCOMMITTED\t\t\t\t\t\t{ $$ = \"read uncommitted\"; }",
+        "READ COMMITTED\t\t\t\t\t\t{ $$ = \"read committed\"; }",
+        "REPEATABLE READ\t\t\t\t\t\t{ $$ = \"repeatable read\"; }",
+        "SERIALIZABLE\t\t\t\t\t\t\t{ $$ = \"serializable\"; }"
+      ]
+    },
+    {
+      "lhs": "opt_boolean_or_string",
+      "rhs": [
+        "TRUE_P\t\t\t\t\t\t\t\t\t{ $$ = \"true\""
+      ]
+    },
+    {
+      "lhs": "zone_value",
+      "rhs": [
+        "Sconst",
+        "{",
+        "$$ = makeStringConst($1, @1)"
+      ]
+    },
+    {
+      "lhs": "opt_encoding",
+      "rhs": [
+        "Sconst\t\t\t\t\t\t\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "NonReservedWord_or_Sconst",
+      "rhs": [
+        "NonReservedWord\t\t\t\t\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "VariableResetStmt",
+      "rhs": [
+        "RESET reset_rest\t\t\t\t\t\t{ $$ = (Node *) $2"
+      ]
+    },
+    {
+      "lhs": "reset_rest",
+      "rhs": [
+        "generic_reset\t\t\t\t\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "generic_reset",
+      "rhs": [
+        "var_name",
+        "{",
+        "VariableSetStmt *n = makeNode(VariableSetStmt)"
+      ]
+    },
+    {
+      "lhs": "SetResetClause",
+      "rhs": [
+        "SET set_rest\t\t\t\t\t{ $$ = $2"
+      ]
+    },
+    {
+      "lhs": "FunctionSetResetClause",
+      "rhs": [
+        "SET set_rest_more\t\t\t\t{ $$ = $2"
+      ]
+    },
+    {
+      "lhs": "VariableShowStmt",
+      "rhs": [
+        "SHOW var_name",
+        "{",
+        "VariableShowStmt *n = makeNode(VariableShowStmt)"
+      ]
+    },
+    {
+      "lhs": "ConstraintsSetStmt",
+      "rhs": [
+        "SET CONSTRAINTS constraints_set_list constraints_set_mode",
+        "{",
+        "ConstraintsSetStmt *n = makeNode(ConstraintsSetStmt)"
+      ]
+    },
+    {
+      "lhs": "constraints_set_list",
+      "rhs": [
+        "ALL\t\t\t\t\t\t\t\t\t\t{ $$ = NIL"
+      ]
+    },
+    {
+      "lhs": "constraints_set_mode",
+      "rhs": [
+        "DEFERRED\t\t\t\t\t\t\t\t{ $$ = true"
+      ]
+    },
+    {
+      "lhs": "CheckPointStmt",
+      "rhs": [
+        "CHECKPOINT",
+        "{",
+        "CheckPointStmt *n = makeNode(CheckPointStmt)"
+      ]
+    },
+    {
+      "lhs": "DiscardStmt",
+      "rhs": [
+        "DISCARD ALL",
+        "{",
+        "DiscardStmt *n = makeNode(DiscardStmt)"
+      ]
+    },
+    {
+      "lhs": "AlterTableStmt",
+      "rhs": [
+        "ALTER TABLE relation_expr alter_table_cmds",
+        "{",
+        "AlterTableStmt *n = makeNode(AlterTableStmt)"
+      ]
+    },
+    {
+      "lhs": "alter_table_cmds",
+      "rhs": [
+        "alter_table_cmd\t\t\t\t\t\t\t{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "partition_cmd",
+      "rhs": [
+        "ATTACH PARTITION qualified_name PartitionBoundSpec",
+        "{",
+        "AlterTableCmd *n = makeNode(AlterTableCmd)"
+      ]
+    },
+    {
+      "lhs": "index_partition_cmd",
+      "rhs": [
+        "ATTACH PARTITION qualified_name",
+        "{",
+        "AlterTableCmd *n = makeNode(AlterTableCmd)"
+      ]
+    },
+    {
+      "lhs": "alter_table_cmd",
+      "rhs": [
+        "ADD_P columnDef",
+        "{",
+        "AlterTableCmd *n = makeNode(AlterTableCmd)"
+      ]
+    },
+    {
+      "lhs": "alter_column_default",
+      "rhs": [
+        "SET DEFAULT a_expr\t\t\t{ $$ = $3"
+      ]
+    },
+    {
+      "lhs": "opt_collate_clause",
+      "rhs": [
+        "COLLATE any_name",
+        "{",
+        "CollateClause *n = makeNode(CollateClause)"
+      ]
+    },
+    {
+      "lhs": "alter_using",
+      "rhs": [
+        "USING a_expr\t\t\t\t{ $$ = $2"
+      ]
+    },
+    {
+      "lhs": "replica_identity",
+      "rhs": [
+        "NOTHING",
+        "{",
+        "ReplicaIdentityStmt *n = makeNode(ReplicaIdentityStmt)"
+      ]
+    },
+    {
+      "lhs": "reloptions",
+      "rhs": [
+        "'(' reloption_list ')'\t\t\t\t\t{ $$ = $2"
+      ]
+    },
+    {
+      "lhs": "opt_reloptions",
+      "rhs": [
+        "WITH reloptions\t\t\t\t\t{ $$ = $2; }",
+        "{ $$ = NIL; }"
+      ]
+    },
+    {
+      "lhs": "reloption_list",
+      "rhs": [
+        "reloption_elem\t\t\t\t\t\t\t{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "reloption_elem",
+      "rhs": [
+        "ColLabel '=' def_arg",
+        "{",
+        "$$ = makeDefElem($1, (Node *) $3, @1)"
+      ]
+    },
+    {
+      "lhs": "alter_identity_column_option_list",
+      "rhs": [
+        "alter_identity_column_option",
+        "{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "alter_identity_column_option",
+      "rhs": [
+        "RESTART",
+        "{",
+        "$$ = makeDefElem(\"restart\", NULL, @1)"
+      ]
+    },
+    {
+      "lhs": "set_statistics_value",
+      "rhs": [
+        "SignedIconst\t\t\t\t\t{ $$ = (Node *) makeInteger($1)"
+      ]
+    },
+    {
+      "lhs": "set_access_method_name",
+      "rhs": [
+        "ColId\t\t\t\t\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "PartitionBoundSpec",
+      "rhs": [
+        "FOR VALUES WITH '(' hash_partbound ')'",
+        "{",
+        "ListCell   *lc"
+      ]
+    },
+    {
+      "lhs": "hash_partbound_elem",
+      "rhs": [
+        "NonReservedWord Iconst",
+        "{",
+        "$$ = makeDefElem($1, (Node *) makeInteger($2), @1)"
+      ]
+    },
+    {
+      "lhs": "hash_partbound",
+      "rhs": [
+        "hash_partbound_elem",
+        "{",
+        "$$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "AlterCompositeTypeStmt",
+      "rhs": [
+        "ALTER TYPE_P any_name alter_type_cmds",
+        "{",
+        "AlterTableStmt *n = makeNode(AlterTableStmt)"
+      ]
+    },
+    {
+      "lhs": "alter_type_cmds",
+      "rhs": [
+        "alter_type_cmd\t\t\t\t\t\t\t{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "alter_type_cmd",
+      "rhs": [
+        "ADD_P ATTRIBUTE TableFuncElement opt_drop_behavior",
+        "{",
+        "AlterTableCmd *n = makeNode(AlterTableCmd)"
+      ]
+    },
+    {
+      "lhs": "ClosePortalStmt",
+      "rhs": [
+        "CLOSE cursor_name",
+        "{",
+        "ClosePortalStmt *n = makeNode(ClosePortalStmt)"
+      ]
+    },
+    {
+      "lhs": "CopyStmt",
+      "rhs": [
+        "COPY opt_binary qualified_name opt_column_list",
+        "copy_from opt_program copy_file_name copy_delimiter opt_with",
+        "copy_options where_clause",
+        "{",
+        "CopyStmt *n = makeNode(CopyStmt)"
+      ]
+    },
+    {
+      "lhs": "copy_from",
+      "rhs": [
+        "FROM\t\t\t\t\t\t\t\t\t{ $$ = true"
+      ]
+    },
+    {
+      "lhs": "opt_program",
+      "rhs": [
+        "PROGRAM\t\t\t\t\t\t\t\t\t{ $$ = true"
+      ]
+    },
+    {
+      "lhs": "copy_file_name",
+      "rhs": [
+        "Sconst\t\t\t\t\t\t\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "copy_options",
+      "rhs": [
+        "copy_opt_list\t\t\t\t\t\t\t{ $$ = $1; }",
+        "'(' copy_generic_opt_list ')'\t\t\t{ $$ = $2; }"
+      ]
+    },
+    {
+      "lhs": "copy_opt_list",
+      "rhs": [
+        "copy_opt_list copy_opt_item\t\t\t\t{ $$ = lappend($1, $2)"
+      ]
+    },
+    {
+      "lhs": "copy_opt_item",
+      "rhs": [
+        "BINARY",
+        "{",
+        "$$ = makeDefElem(\"format\", (Node *) makeString(\"binary\"), @1)"
+      ]
+    },
+    {
+      "lhs": "opt_binary",
+      "rhs": [
+        "BINARY",
+        "{",
+        "$$ = makeDefElem(\"format\", (Node *) makeString(\"binary\"), @1)"
+      ]
+    },
+    {
+      "lhs": "copy_delimiter",
+      "rhs": [
+        "opt_using DELIMITERS Sconst",
+        "{",
+        "$$ = makeDefElem(\"delimiter\", (Node *) makeString($3), @2)"
+      ]
+    },
+    {
+      "lhs": "opt_using",
+      "rhs": [
+        "USING",
+        ""
+      ]
+    },
+    {
+      "lhs": "copy_generic_opt_list",
+      "rhs": [
+        "copy_generic_opt_elem",
+        "{",
+        "$$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "copy_generic_opt_elem",
+      "rhs": [
+        "ColLabel copy_generic_opt_arg",
+        "{",
+        "$$ = makeDefElem($1, $2, @1)"
+      ]
+    },
+    {
+      "lhs": "copy_generic_opt_arg",
+      "rhs": [
+        "opt_boolean_or_string\t\t\t{ $$ = (Node *) makeString($1)"
+      ]
+    },
+    {
+      "lhs": "copy_generic_opt_arg_list",
+      "rhs": [
+        "copy_generic_opt_arg_list_item",
+        "{",
+        "$$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "copy_generic_opt_arg_list_item",
+      "rhs": [
+        "opt_boolean_or_string\t{ $$ = (Node *) makeString($1)"
+      ]
+    },
+    {
+      "lhs": "CreateStmt",
+      "rhs": [
+        "CREATE OptTemp TABLE qualified_name '(' OptTableElementList ')'",
+        "OptInherit OptPartitionSpec table_access_method_clause OptWith",
+        "OnCommitOption OptTableSpace",
+        "{",
+        "CreateStmt *n = makeNode(CreateStmt)"
+      ]
+    },
+    {
+      "lhs": "OptTemp",
+      "rhs": [
+        "TEMPORARY\t\t\t\t\t{ $$ = RELPERSISTENCE_TEMP; }",
+        "TEMP\t\t\t\t\t\t{ $$ = RELPERSISTENCE_TEMP; }",
+        "LOCAL TEMPORARY\t\t\t{ $$ = RELPERSISTENCE_TEMP; }",
+        "LOCAL TEMP\t\t\t\t{ $$ = RELPERSISTENCE_TEMP; }",
+        "GLOBAL TEMPORARY",
+        "{",
+        "ereport(WARNING,",
+        "(errmsg(\"GLOBAL is deprecated in temporary table creation\"),",
+        "parser_errposition(@1)))"
+      ]
+    },
+    {
+      "lhs": "OptTableElementList",
+      "rhs": [
+        "TableElementList\t\t\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "OptTypedTableElementList",
+      "rhs": [
+        "'(' TypedTableElementList ')'\t\t{ $$ = $2"
+      ]
+    },
+    {
+      "lhs": "TableElementList",
+      "rhs": [
+        "TableElement",
+        "{",
+        "$$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "TypedTableElementList",
+      "rhs": [
+        "TypedTableElement",
+        "{",
+        "$$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "TableElement",
+      "rhs": [
+        "columnDef\t\t\t\t\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "TypedTableElement",
+      "rhs": [
+        "columnOptions\t\t\t\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "columnDef",
+      "rhs": [
+        "ColId Typename opt_column_storage opt_column_compression create_generic_options ColQualList",
+        "{",
+        "ColumnDef *n = makeNode(ColumnDef)"
+      ]
+    },
+    {
+      "lhs": "columnOptions",
+      "rhs": [
+        "ColId ColQualList",
+        "{",
+        "ColumnDef *n = makeNode(ColumnDef)"
+      ]
+    },
+    {
+      "lhs": "column_compression",
+      "rhs": [
+        "COMPRESSION ColId\t\t\t\t\t\t{ $$ = $2"
+      ]
+    },
+    {
+      "lhs": "opt_column_compression",
+      "rhs": [
+        "column_compression\t\t\t\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "column_storage",
+      "rhs": [
+        "STORAGE ColId\t\t\t\t\t\t\t{ $$ = $2"
+      ]
+    },
+    {
+      "lhs": "opt_column_storage",
+      "rhs": [
+        "column_storage\t\t\t\t\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "ColQualList",
+      "rhs": [
+        "ColQualList ColConstraint\t\t\t\t{ $$ = lappend($1, $2)"
+      ]
+    },
+    {
+      "lhs": "ColConstraint",
+      "rhs": [
+        "CONSTRAINT name ColConstraintElem",
+        "{",
+        "Constraint *n = castNode(Constraint, $3)"
+      ]
+    },
+    {
+      "lhs": "ColConstraintElem",
+      "rhs": [
+        "NOT NULL_P opt_no_inherit",
+        "{",
+        "Constraint *n = makeNode(Constraint)"
+      ]
+    },
+    {
+      "lhs": "opt_unique_null_treatment",
+      "rhs": [
+        "NULLS_P DISTINCT\t\t{ $$ = true"
+      ]
+    },
+    {
+      "lhs": "generated_when",
+      "rhs": [
+        "ALWAYS\t\t\t{ $$ = ATTRIBUTE_IDENTITY_ALWAYS"
+      ]
+    },
+    {
+      "lhs": "opt_virtual_or_stored",
+      "rhs": [
+        "STORED\t\t\t{ $$ = ATTRIBUTE_GENERATED_STORED"
+      ]
+    },
+    {
+      "lhs": "ConstraintAttr",
+      "rhs": [
+        "DEFERRABLE",
+        "{",
+        "Constraint *n = makeNode(Constraint)"
+      ]
+    },
+    {
+      "lhs": "TableLikeClause",
+      "rhs": [
+        "LIKE qualified_name TableLikeOptionList",
+        "{",
+        "TableLikeClause *n = makeNode(TableLikeClause)"
+      ]
+    },
+    {
+      "lhs": "TableLikeOptionList",
+      "rhs": [
+        "TableLikeOptionList INCLUDING TableLikeOption\t{ $$ = $1 | $3"
+      ]
+    },
+    {
+      "lhs": "TableLikeOption",
+      "rhs": [
+        "COMMENTS\t\t\t{ $$ = CREATE_TABLE_LIKE_COMMENTS"
+      ]
+    },
+    {
+      "lhs": "TableConstraint",
+      "rhs": [
+        "CONSTRAINT name ConstraintElem",
+        "{",
+        "Constraint *n = castNode(Constraint, $3)"
+      ]
+    },
+    {
+      "lhs": "ConstraintElem",
+      "rhs": [
+        "CHECK '(' a_expr ')' ConstraintAttributeSpec",
+        "{",
+        "Constraint *n = makeNode(Constraint)"
+      ]
+    },
+    {
+      "lhs": "DomainConstraint",
+      "rhs": [
+        "CONSTRAINT name DomainConstraintElem",
+        "{",
+        "Constraint *n = castNode(Constraint, $3)"
+      ]
+    },
+    {
+      "lhs": "DomainConstraintElem",
+      "rhs": [
+        "CHECK '(' a_expr ')' ConstraintAttributeSpec",
+        "{",
+        "Constraint *n = makeNode(Constraint)"
+      ]
+    },
+    {
+      "lhs": "opt_no_inherit",
+      "rhs": [
+        "NO INHERIT\t\t\t\t\t\t\t{  $$ = true; }",
+        "{  $$ = false; }"
+      ]
+    },
+    {
+      "lhs": "opt_without_overlaps",
+      "rhs": [
+        "WITHOUT OVERLAPS\t\t\t\t\t\t{ $$ = true"
+      ]
+    },
+    {
+      "lhs": "opt_column_list",
+      "rhs": [
+        "'(' columnList ')'\t\t\t\t\t\t{ $$ = $2"
+      ]
+    },
+    {
+      "lhs": "columnList",
+      "rhs": [
+        "columnElem\t\t\t\t\t\t\t\t{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "optionalPeriodName",
+      "rhs": [
+        "',' PERIOD columnElem { $$ = $3"
+      ]
+    },
+    {
+      "lhs": "opt_column_and_period_list",
+      "rhs": [
+        "'(' columnList optionalPeriodName ')'\t\t\t{ $$ = list_make2($2, $3)"
+      ]
+    },
+    {
+      "lhs": "columnElem",
+      "rhs": [
+        "ColId",
+        "{",
+        "$$ = (Node *) makeString($1)"
+      ]
+    },
+    {
+      "lhs": "opt_c_include",
+      "rhs": [
+        "INCLUDE '(' columnList ')'\t\t\t{ $$ = $3; }",
+        "{ $$ = NIL; }"
+      ]
+    },
+    {
+      "lhs": "key_match",
+      "rhs": [
+        "MATCH FULL",
+        "{",
+        "$$ = FKCONSTR_MATCH_FULL"
+      ]
+    },
+    {
+      "lhs": "ExclusionConstraintList",
+      "rhs": [
+        "ExclusionConstraintElem\t\t\t\t\t{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "ExclusionConstraintElem",
+      "rhs": [
+        "index_elem WITH any_operator",
+        "{",
+        "$$ = list_make2($1, $3)"
+      ]
+    },
+    {
+      "lhs": "OptWhereClause",
+      "rhs": [
+        "WHERE '(' a_expr ')'\t\t\t\t\t{ $$ = $3"
+      ]
+    },
+    {
+      "lhs": "key_actions",
+      "rhs": [
+        "key_update",
+        "{",
+        "KeyActions *n = palloc(sizeof(KeyActions))"
+      ]
+    },
+    {
+      "lhs": "key_update",
+      "rhs": [
+        "ON UPDATE key_action",
+        "{",
+        "if (($3)->cols)",
+        "ereport(ERROR,",
+        "(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),",
+        "errmsg(\"a column list with %s is only supported for ON DELETE actions\",",
+        "($3)->action == FKCONSTR_ACTION_SETNULL ? \"SET NULL\" : \"SET DEFAULT\"),",
+        "parser_errposition(@1)))"
+      ]
+    },
+    {
+      "lhs": "key_delete",
+      "rhs": [
+        "ON DELETE_P key_action",
+        "{",
+        "$$ = $3"
+      ]
+    },
+    {
+      "lhs": "key_action",
+      "rhs": [
+        "NO ACTION",
+        "{",
+        "KeyAction *n = palloc(sizeof(KeyAction))"
+      ]
+    },
+    {
+      "lhs": "OptInherit",
+      "rhs": [
+        "INHERITS '(' qualified_name_list ')'\t{ $$ = $3; }",
+        "{ $$ = NIL; }"
+      ]
+    },
+    {
+      "lhs": "OptPartitionSpec",
+      "rhs": [
+        "PartitionSpec\t{ $$ = $1; }",
+        "{ $$ = NULL; }"
+      ]
+    },
+    {
+      "lhs": "PartitionSpec",
+      "rhs": [
+        "PARTITION BY ColId '(' part_params ')'",
+        "{",
+        "PartitionSpec *n = makeNode(PartitionSpec)"
+      ]
+    },
+    {
+      "lhs": "part_params",
+      "rhs": [
+        "part_elem\t\t\t\t\t\t{ $$ = list_make1($1); }",
+        "part_params ',' part_elem\t\t\t{ $$ = lappend($1, $3); }"
+      ]
+    },
+    {
+      "lhs": "part_elem",
+      "rhs": [
+        "ColId opt_collate opt_qualified_name",
+        "{",
+        "PartitionElem *n = makeNode(PartitionElem)"
+      ]
+    },
+    {
+      "lhs": "table_access_method_clause",
+      "rhs": [
+        "USING name\t\t\t\t\t\t\t{ $$ = $2"
+      ]
+    },
+    {
+      "lhs": "OptWith",
+      "rhs": [
+        "WITH reloptions\t\t\t\t{ $$ = $2"
+      ]
+    },
+    {
+      "lhs": "OnCommitOption",
+      "rhs": [
+        "ON COMMIT DROP\t\t\t\t{ $$ = ONCOMMIT_DROP; }",
+        "ON COMMIT DELETE_P ROWS\t\t{ $$ = ONCOMMIT_DELETE_ROWS; }",
+        "ON COMMIT PRESERVE ROWS\t\t{ $$ = ONCOMMIT_PRESERVE_ROWS; }",
+        "{ $$ = ONCOMMIT_NOOP; }"
+      ]
+    },
+    {
+      "lhs": "OptTableSpace",
+      "rhs": [
+        "TABLESPACE name\t\t\t\t\t{ $$ = $2; }",
+        "{ $$ = NULL; }"
+      ]
+    },
+    {
+      "lhs": "OptConsTableSpace",
+      "rhs": [
+        "USING INDEX TABLESPACE name\t{ $$ = $4; }",
+        "{ $$ = NULL; }"
+      ]
+    },
+    {
+      "lhs": "ExistingIndex",
+      "rhs": [
+        "USING INDEX name\t\t\t\t\t{ $$ = $3; }"
+      ]
+    },
+    {
+      "lhs": "CreateStatsStmt",
+      "rhs": [
+        "CREATE STATISTICS opt_qualified_name",
+        "opt_name_list ON stats_params FROM from_list",
+        "{",
+        "CreateStatsStmt *n = makeNode(CreateStatsStmt)"
+      ]
+    },
+    {
+      "lhs": "stats_params",
+      "rhs": [
+        "stats_param\t\t\t\t\t\t\t{ $$ = list_make1($1); }",
+        "stats_params ',' stats_param\t\t\t{ $$ = lappend($1, $3); }"
+      ]
+    },
+    {
+      "lhs": "stats_param",
+      "rhs": [
+        "ColId",
+        "{",
+        "$$ = makeNode(StatsElem)"
+      ]
+    },
+    {
+      "lhs": "AlterStatsStmt",
+      "rhs": [
+        "ALTER STATISTICS any_name SET STATISTICS set_statistics_value",
+        "{",
+        "AlterStatsStmt *n = makeNode(AlterStatsStmt)"
+      ]
+    },
+    {
+      "lhs": "CreateAsStmt",
+      "rhs": [
+        "CREATE OptTemp TABLE create_as_target AS SelectStmt opt_with_data",
+        "{",
+        "CreateTableAsStmt *ctas = makeNode(CreateTableAsStmt)"
+      ]
+    },
+    {
+      "lhs": "create_as_target",
+      "rhs": [
+        "qualified_name opt_column_list table_access_method_clause",
+        "OptWith OnCommitOption OptTableSpace",
+        "{",
+        "$$ = makeNode(IntoClause)"
+      ]
+    },
+    {
+      "lhs": "opt_with_data",
+      "rhs": [
+        "WITH DATA_P\t\t\t\t\t\t\t\t{ $$ = true"
+      ]
+    },
+    {
+      "lhs": "CreateMatViewStmt",
+      "rhs": [
+        "CREATE OptNoLog MATERIALIZED VIEW create_mv_target AS SelectStmt opt_with_data",
+        "{",
+        "CreateTableAsStmt *ctas = makeNode(CreateTableAsStmt)"
+      ]
+    },
+    {
+      "lhs": "create_mv_target",
+      "rhs": [
+        "qualified_name opt_column_list table_access_method_clause opt_reloptions OptTableSpace",
+        "{",
+        "$$ = makeNode(IntoClause)"
+      ]
+    },
+    {
+      "lhs": "OptNoLog",
+      "rhs": [
+        "UNLOGGED\t\t\t\t\t{ $$ = RELPERSISTENCE_UNLOGGED; }",
+        "{ $$ = RELPERSISTENCE_PERMANENT; }"
+      ]
+    },
+    {
+      "lhs": "RefreshMatViewStmt",
+      "rhs": [
+        "REFRESH MATERIALIZED VIEW opt_concurrently qualified_name opt_with_data",
+        "{",
+        "RefreshMatViewStmt *n = makeNode(RefreshMatViewStmt)"
+      ]
+    },
+    {
+      "lhs": "CreateSeqStmt",
+      "rhs": [
+        "CREATE OptTemp SEQUENCE qualified_name OptSeqOptList",
+        "{",
+        "CreateSeqStmt *n = makeNode(CreateSeqStmt)"
+      ]
+    },
+    {
+      "lhs": "AlterSeqStmt",
+      "rhs": [
+        "ALTER SEQUENCE qualified_name SeqOptList",
+        "{",
+        "AlterSeqStmt *n = makeNode(AlterSeqStmt)"
+      ]
+    },
+    {
+      "lhs": "OptSeqOptList",
+      "rhs": [
+        "SeqOptList\t\t\t\t\t\t\t{ $$ = $1; }",
+        "{ $$ = NIL; }"
+      ]
+    },
+    {
+      "lhs": "OptParenthesizedSeqOptList",
+      "rhs": [
+        "'(' SeqOptList ')'\t\t{ $$ = $2; }",
+        "{ $$ = NIL; }"
+      ]
+    },
+    {
+      "lhs": "SeqOptList",
+      "rhs": [
+        "SeqOptElem\t\t\t\t\t\t\t\t{ $$ = list_make1($1); }",
+        "SeqOptList SeqOptElem\t\t\t\t\t{ $$ = lappend($1, $2); }"
+      ]
+    },
+    {
+      "lhs": "SeqOptElem",
+      "rhs": [
+        "AS SimpleTypename",
+        "{",
+        "$$ = makeDefElem(\"as\", (Node *) $2, @1)"
+      ]
+    },
+    {
+      "lhs": "opt_by",
+      "rhs": [
+        "BY",
+        ""
+      ]
+    },
+    {
+      "lhs": "NumericOnly",
+      "rhs": [
+        "FCONST\t\t\t\t\t\t\t\t{ $$ = (Node *) makeFloat($1)"
+      ]
+    },
+    {
+      "lhs": "NumericOnly_list",
+      "rhs": [
+        "NumericOnly\t\t\t\t\t\t{ $$ = list_make1($1); }",
+        "NumericOnly_list ',' NumericOnly\t{ $$ = lappend($1, $3); }"
+      ]
+    },
+    {
+      "lhs": "CreatePLangStmt",
+      "rhs": [
+        "CREATE opt_or_replace opt_trusted opt_procedural LANGUAGE name",
+        "{",
+        "/*",
+        "* We now interpret parameterless CREATE LANGUAGE as",
+        "* CREATE EXTENSION.  \"OR REPLACE\" is silently translated",
+        "* to \"IF NOT EXISTS\", which isn't quite the same, but",
+        "* seems more useful than throwing an error.  We just",
+        "* ignore TRUSTED, as the previous code would have too.",
+        "*/",
+        "CreateExtensionStmt *n = makeNode(CreateExtensionStmt)"
+      ]
+    },
+    {
+      "lhs": "opt_trusted",
+      "rhs": [
+        "TRUSTED\t\t\t\t\t\t\t\t\t{ $$ = true"
+      ]
+    },
+    {
+      "lhs": "handler_name",
+      "rhs": [
+        "name\t\t\t\t\t\t{ $$ = list_make1(makeString($1))"
+      ]
+    },
+    {
+      "lhs": "opt_inline_handler",
+      "rhs": [
+        "INLINE_P handler_name\t\t\t\t\t{ $$ = $2"
+      ]
+    },
+    {
+      "lhs": "validator_clause",
+      "rhs": [
+        "VALIDATOR handler_name\t\t\t\t\t{ $$ = $2"
+      ]
+    },
+    {
+      "lhs": "opt_validator",
+      "rhs": [
+        "validator_clause\t\t\t\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "opt_procedural",
+      "rhs": [
+        "PROCEDURAL",
+        ""
+      ]
+    },
+    {
+      "lhs": "CreateTableSpaceStmt",
+      "rhs": [
+        "CREATE TABLESPACE name OptTableSpaceOwner LOCATION Sconst opt_reloptions",
+        "{",
+        "CreateTableSpaceStmt *n = makeNode(CreateTableSpaceStmt)"
+      ]
+    },
+    {
+      "lhs": "OptTableSpaceOwner",
+      "rhs": [
+        "OWNER RoleSpec\t\t{ $$ = $2; }",
+        "{ $$ = NULL; }"
+      ]
+    },
+    {
+      "lhs": "DropTableSpaceStmt",
+      "rhs": [
+        "DROP TABLESPACE name",
+        "{",
+        "DropTableSpaceStmt *n = makeNode(DropTableSpaceStmt)"
+      ]
+    },
+    {
+      "lhs": "CreateExtensionStmt",
+      "rhs": [
+        "CREATE EXTENSION name opt_with create_extension_opt_list",
+        "{",
+        "CreateExtensionStmt *n = makeNode(CreateExtensionStmt)"
+      ]
+    },
+    {
+      "lhs": "create_extension_opt_list",
+      "rhs": [
+        "create_extension_opt_list create_extension_opt_item",
+        "{ $$ = lappend($1, $2)"
+      ]
+    },
+    {
+      "lhs": "create_extension_opt_item",
+      "rhs": [
+        "SCHEMA name",
+        "{",
+        "$$ = makeDefElem(\"schema\", (Node *) makeString($2), @1)"
+      ]
+    },
+    {
+      "lhs": "AlterExtensionStmt",
+      "rhs": [
+        "ALTER EXTENSION name UPDATE alter_extension_opt_list",
+        "{",
+        "AlterExtensionStmt *n = makeNode(AlterExtensionStmt)"
+      ]
+    },
+    {
+      "lhs": "alter_extension_opt_list",
+      "rhs": [
+        "alter_extension_opt_list alter_extension_opt_item",
+        "{ $$ = lappend($1, $2)"
+      ]
+    },
+    {
+      "lhs": "alter_extension_opt_item",
+      "rhs": [
+        "TO NonReservedWord_or_Sconst",
+        "{",
+        "$$ = makeDefElem(\"new_version\", (Node *) makeString($2), @1)"
+      ]
+    },
+    {
+      "lhs": "AlterExtensionContentsStmt",
+      "rhs": [
+        "ALTER EXTENSION name add_drop object_type_name name",
+        "{",
+        "AlterExtensionContentsStmt *n = makeNode(AlterExtensionContentsStmt)"
+      ]
+    },
+    {
+      "lhs": "CreateFdwStmt",
+      "rhs": [
+        "CREATE FOREIGN DATA_P WRAPPER name opt_fdw_options create_generic_options",
+        "{",
+        "CreateFdwStmt *n = makeNode(CreateFdwStmt)"
+      ]
+    },
+    {
+      "lhs": "fdw_option",
+      "rhs": [
+        "HANDLER handler_name\t\t\t\t{ $$ = makeDefElem(\"handler\", (Node *) $2, @1)"
+      ]
+    },
+    {
+      "lhs": "fdw_options",
+      "rhs": [
+        "fdw_option\t\t\t\t\t\t\t{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "opt_fdw_options",
+      "rhs": [
+        "fdw_options\t\t\t\t\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "AlterFdwStmt",
+      "rhs": [
+        "ALTER FOREIGN DATA_P WRAPPER name opt_fdw_options alter_generic_options",
+        "{",
+        "AlterFdwStmt *n = makeNode(AlterFdwStmt)"
+      ]
+    },
+    {
+      "lhs": "create_generic_options",
+      "rhs": [
+        "OPTIONS '(' generic_option_list ')'\t\t\t{ $$ = $3"
+      ]
+    },
+    {
+      "lhs": "generic_option_list",
+      "rhs": [
+        "generic_option_elem",
+        "{",
+        "$$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "alter_generic_options",
+      "rhs": [
+        "OPTIONS\t'(' alter_generic_option_list ')'\t\t{ $$ = $3"
+      ]
+    },
+    {
+      "lhs": "alter_generic_option_list",
+      "rhs": [
+        "alter_generic_option_elem",
+        "{",
+        "$$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "alter_generic_option_elem",
+      "rhs": [
+        "generic_option_elem",
+        "{",
+        "$$ = $1"
+      ]
+    },
+    {
+      "lhs": "generic_option_elem",
+      "rhs": [
+        "generic_option_name generic_option_arg",
+        "{",
+        "$$ = makeDefElem($1, $2, @1)"
+      ]
+    },
+    {
+      "lhs": "generic_option_name",
+      "rhs": [
+        "ColLabel\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "generic_option_arg",
+      "rhs": [
+        "Sconst\t\t\t\t{ $$ = (Node *) makeString($1)"
+      ]
+    },
+    {
+      "lhs": "CreateForeignServerStmt",
+      "rhs": [
+        "CREATE SERVER name opt_type opt_foreign_server_version",
+        "FOREIGN DATA_P WRAPPER name create_generic_options",
+        "{",
+        "CreateForeignServerStmt *n = makeNode(CreateForeignServerStmt)"
+      ]
+    },
+    {
+      "lhs": "opt_type",
+      "rhs": [
+        "TYPE_P Sconst\t\t\t{ $$ = $2"
+      ]
+    },
+    {
+      "lhs": "foreign_server_version",
+      "rhs": [
+        "VERSION_P Sconst\t\t{ $$ = $2"
+      ]
+    },
+    {
+      "lhs": "opt_foreign_server_version",
+      "rhs": [
+        "foreign_server_version\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "AlterForeignServerStmt",
+      "rhs": [
+        "ALTER SERVER name foreign_server_version alter_generic_options",
+        "{",
+        "AlterForeignServerStmt *n = makeNode(AlterForeignServerStmt)"
+      ]
+    },
+    {
+      "lhs": "CreateForeignTableStmt",
+      "rhs": [
+        "CREATE FOREIGN TABLE qualified_name",
+        "'(' OptTableElementList ')'",
+        "OptInherit SERVER name create_generic_options",
+        "{",
+        "CreateForeignTableStmt *n = makeNode(CreateForeignTableStmt)"
+      ]
+    },
+    {
+      "lhs": "ImportForeignSchemaStmt",
+      "rhs": [
+        "IMPORT_P FOREIGN SCHEMA name import_qualification",
+        "FROM SERVER name INTO name create_generic_options",
+        "{",
+        "ImportForeignSchemaStmt *n = makeNode(ImportForeignSchemaStmt)"
+      ]
+    },
+    {
+      "lhs": "import_qualification_type",
+      "rhs": [
+        "LIMIT TO\t\t\t\t{ $$ = FDW_IMPORT_SCHEMA_LIMIT_TO"
+      ]
+    },
+    {
+      "lhs": "import_qualification",
+      "rhs": [
+        "import_qualification_type '(' relation_expr_list ')'",
+        "{",
+        "ImportQual *n = (ImportQual *) palloc(sizeof(ImportQual))"
+      ]
+    },
+    {
+      "lhs": "CreateUserMappingStmt",
+      "rhs": [
+        "CREATE USER MAPPING FOR auth_ident SERVER name create_generic_options",
+        "{",
+        "CreateUserMappingStmt *n = makeNode(CreateUserMappingStmt)"
+      ]
+    },
+    {
+      "lhs": "auth_ident",
+      "rhs": [
+        "RoleSpec\t\t\t{ $$ = $1; }",
+        "USER\t\t\t\t{ $$ = makeRoleSpec(ROLESPEC_CURRENT_USER, @1); }"
+      ]
+    },
+    {
+      "lhs": "DropUserMappingStmt",
+      "rhs": [
+        "DROP USER MAPPING FOR auth_ident SERVER name",
+        "{",
+        "DropUserMappingStmt *n = makeNode(DropUserMappingStmt)"
+      ]
+    },
+    {
+      "lhs": "AlterUserMappingStmt",
+      "rhs": [
+        "ALTER USER MAPPING FOR auth_ident SERVER name alter_generic_options",
+        "{",
+        "AlterUserMappingStmt *n = makeNode(AlterUserMappingStmt)"
+      ]
+    },
+    {
+      "lhs": "CreatePolicyStmt",
+      "rhs": [
+        "CREATE POLICY name ON qualified_name RowSecurityDefaultPermissive",
+        "RowSecurityDefaultForCmd RowSecurityDefaultToRole",
+        "RowSecurityOptionalExpr RowSecurityOptionalWithCheck",
+        "{",
+        "CreatePolicyStmt *n = makeNode(CreatePolicyStmt)"
+      ]
+    },
+    {
+      "lhs": "AlterPolicyStmt",
+      "rhs": [
+        "ALTER POLICY name ON qualified_name RowSecurityOptionalToRole",
+        "RowSecurityOptionalExpr RowSecurityOptionalWithCheck",
+        "{",
+        "AlterPolicyStmt *n = makeNode(AlterPolicyStmt)"
+      ]
+    },
+    {
+      "lhs": "RowSecurityOptionalExpr",
+      "rhs": [
+        "USING '(' a_expr ')'\t{ $$ = $3"
+      ]
+    },
+    {
+      "lhs": "RowSecurityOptionalWithCheck",
+      "rhs": [
+        "WITH CHECK '(' a_expr ')'\t\t{ $$ = $4"
+      ]
+    },
+    {
+      "lhs": "RowSecurityDefaultToRole",
+      "rhs": [
+        "TO role_list\t\t\t{ $$ = $2"
+      ]
+    },
+    {
+      "lhs": "RowSecurityOptionalToRole",
+      "rhs": [
+        "TO role_list\t\t\t{ $$ = $2"
+      ]
+    },
+    {
+      "lhs": "RowSecurityDefaultPermissive",
+      "rhs": [
+        "AS IDENT",
+        "{",
+        "if (strcmp($2, \"permissive\") == 0)",
+        "$$ = true"
+      ]
+    },
+    {
+      "lhs": "RowSecurityDefaultForCmd",
+      "rhs": [
+        "FOR row_security_cmd\t{ $$ = $2"
+      ]
+    },
+    {
+      "lhs": "row_security_cmd",
+      "rhs": [
+        "ALL\t\t\t\t{ $$ = \"all\""
+      ]
+    },
+    {
+      "lhs": "CreateAmStmt",
+      "rhs": [
+        "CREATE ACCESS METHOD name TYPE_P am_type HANDLER handler_name",
+        "{",
+        "CreateAmStmt *n = makeNode(CreateAmStmt)"
+      ]
+    },
+    {
+      "lhs": "am_type",
+      "rhs": [
+        "INDEX\t\t\t{ $$ = AMTYPE_INDEX"
+      ]
+    },
+    {
+      "lhs": "CreateTrigStmt",
+      "rhs": [
+        "CREATE opt_or_replace TRIGGER name TriggerActionTime TriggerEvents ON",
+        "qualified_name TriggerReferencing TriggerForSpec TriggerWhen",
+        "EXECUTE FUNCTION_or_PROCEDURE func_name '(' TriggerFuncArgs ')'",
+        "{",
+        "CreateTrigStmt *n = makeNode(CreateTrigStmt)"
+      ]
+    },
+    {
+      "lhs": "TriggerActionTime",
+      "rhs": [
+        "BEFORE\t\t\t\t\t\t\t\t{ $$ = TRIGGER_TYPE_BEFORE"
+      ]
+    },
+    {
+      "lhs": "TriggerEvents",
+      "rhs": [
+        "TriggerOneEvent",
+        "{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "TriggerOneEvent",
+      "rhs": [
+        "INSERT",
+        "{ $$ = list_make2(makeInteger(TRIGGER_TYPE_INSERT), NIL)"
+      ]
+    },
+    {
+      "lhs": "TriggerReferencing",
+      "rhs": [
+        "REFERENCING TriggerTransitions\t\t\t{ $$ = $2"
+      ]
+    },
+    {
+      "lhs": "TriggerTransitions",
+      "rhs": [
+        "TriggerTransition\t\t\t\t\t\t{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "TriggerTransition",
+      "rhs": [
+        "TransitionOldOrNew TransitionRowOrTable opt_as TransitionRelName",
+        "{",
+        "TriggerTransition *n = makeNode(TriggerTransition)"
+      ]
+    },
+    {
+      "lhs": "TransitionOldOrNew",
+      "rhs": [
+        "NEW\t\t\t\t\t\t\t\t\t\t{ $$ = true"
+      ]
+    },
+    {
+      "lhs": "TransitionRowOrTable",
+      "rhs": [
+        "TABLE\t\t\t\t\t\t\t\t\t{ $$ = true"
+      ]
+    },
+    {
+      "lhs": "TransitionRelName",
+      "rhs": [
+        "ColId\t\t\t\t\t\t\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "TriggerForSpec",
+      "rhs": [
+        "FOR TriggerForOptEach TriggerForType",
+        "{",
+        "$$ = $3"
+      ]
+    },
+    {
+      "lhs": "TriggerForOptEach",
+      "rhs": [
+        "EACH",
+        ""
+      ]
+    },
+    {
+      "lhs": "TriggerForType",
+      "rhs": [
+        "ROW\t\t\t\t\t\t\t\t\t\t{ $$ = true"
+      ]
+    },
+    {
+      "lhs": "TriggerWhen",
+      "rhs": [
+        "WHEN '(' a_expr ')'\t\t\t\t\t\t{ $$ = $3"
+      ]
+    },
+    {
+      "lhs": "FUNCTION_or_PROCEDURE",
+      "rhs": [
+        "FUNCTION",
+        "PROCEDURE"
+      ]
+    },
+    {
+      "lhs": "TriggerFuncArgs",
+      "rhs": [
+        "TriggerFuncArg\t\t\t\t\t\t\t{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "TriggerFuncArg",
+      "rhs": [
+        "Iconst",
+        "{",
+        "$$ = (Node *) makeString(psprintf(\"%d\", $1))"
+      ]
+    },
+    {
+      "lhs": "OptConstrFromTable",
+      "rhs": [
+        "FROM qualified_name\t\t\t\t\t\t{ $$ = $2"
+      ]
+    },
+    {
+      "lhs": "ConstraintAttributeSpec",
+      "rhs": [
+        "{ $$ = 0"
+      ]
+    },
+    {
+      "lhs": "ConstraintAttributeElem",
+      "rhs": [
+        "NOT DEFERRABLE\t\t\t\t\t{ $$ = CAS_NOT_DEFERRABLE"
+      ]
+    },
+    {
+      "lhs": "CreateEventTrigStmt",
+      "rhs": [
+        "CREATE EVENT TRIGGER name ON ColLabel",
+        "EXECUTE FUNCTION_or_PROCEDURE func_name '(' ')'",
+        "{",
+        "CreateEventTrigStmt *n = makeNode(CreateEventTrigStmt)"
+      ]
+    },
+    {
+      "lhs": "event_trigger_when_list",
+      "rhs": [
+        "event_trigger_when_item",
+        "{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "event_trigger_when_item",
+      "rhs": [
+        "ColId IN_P '(' event_trigger_value_list ')'",
+        "{ $$ = makeDefElem($1, (Node *) $4, @1)"
+      ]
+    },
+    {
+      "lhs": "event_trigger_value_list",
+      "rhs": [
+        "SCONST",
+        "{ $$ = list_make1(makeString($1))"
+      ]
+    },
+    {
+      "lhs": "AlterEventTrigStmt",
+      "rhs": [
+        "ALTER EVENT TRIGGER name enable_trigger",
+        "{",
+        "AlterEventTrigStmt *n = makeNode(AlterEventTrigStmt)"
+      ]
+    },
+    {
+      "lhs": "enable_trigger",
+      "rhs": [
+        "ENABLE_P\t\t\t\t\t{ $$ = TRIGGER_FIRES_ON_ORIGIN"
+      ]
+    },
+    {
+      "lhs": "CreateAssertionStmt",
+      "rhs": [
+        "CREATE ASSERTION any_name CHECK '(' a_expr ')' ConstraintAttributeSpec",
+        "{",
+        "ereport(ERROR,",
+        "(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),",
+        "errmsg(\"CREATE ASSERTION is not yet implemented\"),",
+        "parser_errposition(@1)))"
+      ]
+    },
+    {
+      "lhs": "DefineStmt",
+      "rhs": [
+        "CREATE opt_or_replace AGGREGATE func_name aggr_args definition",
+        "{",
+        "DefineStmt *n = makeNode(DefineStmt)"
+      ]
+    },
+    {
+      "lhs": "definition",
+      "rhs": [
+        "'(' def_list ')'\t\t\t\t\t\t{ $$ = $2; }"
+      ]
+    },
+    {
+      "lhs": "def_list",
+      "rhs": [
+        "def_elem\t\t\t\t\t\t\t\t{ $$ = list_make1($1); }",
+        "def_list ',' def_elem\t\t\t\t\t{ $$ = lappend($1, $3); }"
+      ]
+    },
+    {
+      "lhs": "def_elem",
+      "rhs": [
+        "ColLabel '=' def_arg",
+        "{",
+        "$$ = makeDefElem($1, (Node *) $3, @1)"
+      ]
+    },
+    {
+      "lhs": "def_arg",
+      "rhs": [
+        "func_type\t\t\t\t\t\t{ $$ = (Node *) $1; }",
+        "reserved_keyword\t\t\t\t{ $$ = (Node *) makeString(pstrdup($1)); }",
+        "qual_all_Op\t\t\t\t\t{ $$ = (Node *) $1; }",
+        "NumericOnly\t\t\t\t\t{ $$ = (Node *) $1; }",
+        "Sconst\t\t\t\t\t\t{ $$ = (Node *) makeString($1); }",
+        "NONE\t\t\t\t\t\t\t{ $$ = (Node *) makeString(pstrdup($1)); }"
+      ]
+    },
+    {
+      "lhs": "old_aggr_definition",
+      "rhs": [
+        "'(' old_aggr_list ')'\t\t\t{ $$ = $2; }"
+      ]
+    },
+    {
+      "lhs": "old_aggr_list",
+      "rhs": [
+        "old_aggr_elem\t\t\t\t\t\t{ $$ = list_make1($1); }",
+        "old_aggr_list ',' old_aggr_elem\t\t{ $$ = lappend($1, $3); }"
+      ]
+    },
+    {
+      "lhs": "old_aggr_elem",
+      "rhs": [
+        "IDENT '=' def_arg",
+        "{",
+        "$$ = makeDefElem($1, (Node *) $3, @1)"
+      ]
+    },
+    {
+      "lhs": "opt_enum_val_list",
+      "rhs": [
+        "enum_val_list\t\t\t\t\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "enum_val_list",
+      "rhs": [
+        "Sconst",
+        "{ $$ = list_make1(makeString($1))"
+      ]
+    },
+    {
+      "lhs": "AlterEnumStmt",
+      "rhs": [
+        "ALTER TYPE_P any_name ADD_P VALUE_P opt_if_not_exists Sconst",
+        "{",
+        "AlterEnumStmt *n = makeNode(AlterEnumStmt)"
+      ]
+    },
+    {
+      "lhs": "opt_if_not_exists",
+      "rhs": [
+        "IF_P NOT EXISTS              { $$ = true; }",
+        "{ $$ = false; }"
+      ]
+    },
+    {
+      "lhs": "CreateOpClassStmt",
+      "rhs": [
+        "CREATE OPERATOR CLASS any_name opt_default FOR TYPE_P Typename",
+        "USING name opt_opfamily AS opclass_item_list",
+        "{",
+        "CreateOpClassStmt *n = makeNode(CreateOpClassStmt)"
+      ]
+    },
+    {
+      "lhs": "opclass_item_list",
+      "rhs": [
+        "opclass_item\t\t\t\t\t\t\t{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "opclass_item",
+      "rhs": [
+        "OPERATOR Iconst any_operator opclass_purpose",
+        "{",
+        "CreateOpClassItem *n = makeNode(CreateOpClassItem)"
+      ]
+    },
+    {
+      "lhs": "opt_default",
+      "rhs": [
+        "DEFAULT\t\t\t\t\t\t{ $$ = true; }",
+        "{ $$ = false; }"
+      ]
+    },
+    {
+      "lhs": "opt_opfamily",
+      "rhs": [
+        "FAMILY any_name\t\t\t\t{ $$ = $2; }",
+        "{ $$ = NIL; }"
+      ]
+    },
+    {
+      "lhs": "opclass_purpose",
+      "rhs": [
+        "FOR SEARCH\t\t\t\t\t{ $$ = NIL; }",
+        "FOR ORDER BY any_name\t\t\t{ $$ = $4; }",
+        "{ $$ = NIL; }"
+      ]
+    },
+    {
+      "lhs": "CreateOpFamilyStmt",
+      "rhs": [
+        "CREATE OPERATOR FAMILY any_name USING name",
+        "{",
+        "CreateOpFamilyStmt *n = makeNode(CreateOpFamilyStmt)"
+      ]
+    },
+    {
+      "lhs": "AlterOpFamilyStmt",
+      "rhs": [
+        "ALTER OPERATOR FAMILY any_name USING name ADD_P opclass_item_list",
+        "{",
+        "AlterOpFamilyStmt *n = makeNode(AlterOpFamilyStmt)"
+      ]
+    },
+    {
+      "lhs": "opclass_drop_list",
+      "rhs": [
+        "opclass_drop\t\t\t\t\t\t\t{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "opclass_drop",
+      "rhs": [
+        "OPERATOR Iconst '(' type_list ')'",
+        "{",
+        "CreateOpClassItem *n = makeNode(CreateOpClassItem)"
+      ]
+    },
+    {
+      "lhs": "DropOpClassStmt",
+      "rhs": [
+        "DROP OPERATOR CLASS any_name USING name opt_drop_behavior",
+        "{",
+        "DropStmt *n = makeNode(DropStmt)"
+      ]
+    },
+    {
+      "lhs": "DropOpFamilyStmt",
+      "rhs": [
+        "DROP OPERATOR FAMILY any_name USING name opt_drop_behavior",
+        "{",
+        "DropStmt *n = makeNode(DropStmt)"
+      ]
+    },
+    {
+      "lhs": "DropOwnedStmt",
+      "rhs": [
+        "DROP OWNED BY role_list opt_drop_behavior",
+        "{",
+        "DropOwnedStmt *n = makeNode(DropOwnedStmt)"
+      ]
+    },
+    {
+      "lhs": "ReassignOwnedStmt",
+      "rhs": [
+        "REASSIGN OWNED BY role_list TO RoleSpec",
+        "{",
+        "ReassignOwnedStmt *n = makeNode(ReassignOwnedStmt)"
+      ]
+    },
+    {
+      "lhs": "DropStmt",
+      "rhs": [
+        "DROP object_type_any_name IF_P EXISTS any_name_list opt_drop_behavior",
+        "{",
+        "DropStmt *n = makeNode(DropStmt)"
+      ]
+    },
+    {
+      "lhs": "object_type_any_name",
+      "rhs": [
+        "TABLE\t\t\t\t\t\t\t\t\t{ $$ = OBJECT_TABLE"
+      ]
+    },
+    {
+      "lhs": "object_type_name",
+      "rhs": [
+        "drop_type_name\t\t\t\t\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "drop_type_name",
+      "rhs": [
+        "ACCESS METHOD\t\t\t\t\t\t\t{ $$ = OBJECT_ACCESS_METHOD"
+      ]
+    },
+    {
+      "lhs": "object_type_name_on_any_name",
+      "rhs": [
+        "POLICY\t\t\t\t\t\t\t\t\t{ $$ = OBJECT_POLICY"
+      ]
+    },
+    {
+      "lhs": "any_name_list",
+      "rhs": [
+        "any_name\t\t\t\t\t\t\t\t{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "any_name",
+      "rhs": [
+        "ColId\t\t\t\t\t\t{ $$ = list_make1(makeString($1)); }",
+        "ColId attrs\t\t\t\t{ $$ = lcons(makeString($1), $2); }"
+      ]
+    },
+    {
+      "lhs": "attrs",
+      "rhs": [
+        "'.' attr_name",
+        "{ $$ = list_make1(makeString($2))"
+      ]
+    },
+    {
+      "lhs": "type_name_list",
+      "rhs": [
+        "Typename\t\t\t\t\t\t\t\t{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "TruncateStmt",
+      "rhs": [
+        "TRUNCATE opt_table relation_expr_list opt_restart_seqs opt_drop_behavior",
+        "{",
+        "TruncateStmt *n = makeNode(TruncateStmt)"
+      ]
+    },
+    {
+      "lhs": "opt_restart_seqs",
+      "rhs": [
+        "CONTINUE_P IDENTITY_P\t\t{ $$ = false"
+      ]
+    },
+    {
+      "lhs": "CommentStmt",
+      "rhs": [
+        "COMMENT ON object_type_any_name any_name IS comment_text",
+        "{",
+        "CommentStmt *n = makeNode(CommentStmt)"
+      ]
+    },
+    {
+      "lhs": "comment_text",
+      "rhs": [
+        "Sconst\t\t\t\t\t\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "SecLabelStmt",
+      "rhs": [
+        "SECURITY LABEL opt_provider ON object_type_any_name any_name",
+        "IS security_label",
+        "{",
+        "SecLabelStmt *n = makeNode(SecLabelStmt)"
+      ]
+    },
+    {
+      "lhs": "opt_provider",
+      "rhs": [
+        "FOR NonReservedWord_or_Sconst\t{ $$ = $2; }",
+        "{ $$ = NULL; }"
+      ]
+    },
+    {
+      "lhs": "security_label",
+      "rhs": [
+        "Sconst\t\t\t\t{ $$ = $1; }",
+        "NULL_P\t\t\t{ $$ = NULL; }"
+      ]
+    },
+    {
+      "lhs": "FetchStmt",
+      "rhs": [
+        "FETCH fetch_args",
+        "{",
+        "FetchStmt *n = (FetchStmt *) $2"
+      ]
+    },
+    {
+      "lhs": "fetch_args",
+      "rhs": [
+        "cursor_name",
+        "{",
+        "FetchStmt *n = makeNode(FetchStmt)"
+      ]
+    },
+    {
+      "lhs": "from_in",
+      "rhs": [
+        "FROM",
+        "IN_P"
+      ]
+    },
+    {
+      "lhs": "opt_from_in",
+      "rhs": [
+        "from_in",
+        ""
+      ]
+    },
+    {
+      "lhs": "GrantStmt",
+      "rhs": [
+        "GRANT privileges ON privilege_target TO grantee_list",
+        "opt_grant_grant_option opt_granted_by",
+        "{",
+        "GrantStmt *n = makeNode(GrantStmt)"
+      ]
+    },
+    {
+      "lhs": "RevokeStmt",
+      "rhs": [
+        "REVOKE privileges ON privilege_target",
+        "FROM grantee_list opt_granted_by opt_drop_behavior",
+        "{",
+        "GrantStmt *n = makeNode(GrantStmt)"
+      ]
+    },
+    {
+      "lhs": "privileges",
+      "rhs": [
+        "privilege_list",
+        "{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "privilege_list",
+      "rhs": [
+        "privilege\t\t\t\t\t\t\t{ $$ = list_make1($1); }",
+        "privilege_list ',' privilege\t\t\t{ $$ = lappend($1, $3); }"
+      ]
+    },
+    {
+      "lhs": "privilege",
+      "rhs": [
+        "SELECT opt_column_list",
+        "{",
+        "AccessPriv *n = makeNode(AccessPriv)"
+      ]
+    },
+    {
+      "lhs": "parameter_name_list",
+      "rhs": [
+        "parameter_name",
+        "{",
+        "$$ = list_make1(makeString($1))"
+      ]
+    },
+    {
+      "lhs": "parameter_name",
+      "rhs": [
+        "ColId",
+        "{",
+        "$$ = $1"
+      ]
+    },
+    {
+      "lhs": "privilege_target",
+      "rhs": [
+        "qualified_name_list",
+        "{",
+        "PrivTarget *n = (PrivTarget *) palloc(sizeof(PrivTarget))"
+      ]
+    },
+    {
+      "lhs": "grantee_list",
+      "rhs": [
+        "grantee\t\t\t\t\t\t\t\t\t{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "grantee",
+      "rhs": [
+        "RoleSpec\t\t\t\t\t\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "opt_grant_grant_option",
+      "rhs": [
+        "WITH GRANT OPTION { $$ = true"
+      ]
+    },
+    {
+      "lhs": "GrantRoleStmt",
+      "rhs": [
+        "GRANT privilege_list TO role_list opt_granted_by",
+        "{",
+        "GrantRoleStmt *n = makeNode(GrantRoleStmt)"
+      ]
+    },
+    {
+      "lhs": "RevokeRoleStmt",
+      "rhs": [
+        "REVOKE privilege_list FROM role_list opt_granted_by opt_drop_behavior",
+        "{",
+        "GrantRoleStmt *n = makeNode(GrantRoleStmt)"
+      ]
+    },
+    {
+      "lhs": "grant_role_opt_list",
+      "rhs": [
+        "grant_role_opt_list ',' grant_role_opt\t{ $$ = lappend($1, $3)"
+      ]
+    },
+    {
+      "lhs": "grant_role_opt",
+      "rhs": [
+        "ColLabel grant_role_opt_value",
+        "{",
+        "$$ = makeDefElem(pstrdup($1), $2, @1)"
+      ]
+    },
+    {
+      "lhs": "grant_role_opt_value",
+      "rhs": [
+        "OPTION\t\t\t{ $$ = (Node *) makeBoolean(true)"
+      ]
+    },
+    {
+      "lhs": "opt_granted_by",
+      "rhs": [
+        "GRANTED BY RoleSpec\t\t\t\t\t\t{ $$ = $3; }",
+        "{ $$ = NULL; }"
+      ]
+    },
+    {
+      "lhs": "AlterDefaultPrivilegesStmt",
+      "rhs": [
+        "ALTER DEFAULT PRIVILEGES DefACLOptionList DefACLAction",
+        "{",
+        "AlterDefaultPrivilegesStmt *n = makeNode(AlterDefaultPrivilegesStmt)"
+      ]
+    },
+    {
+      "lhs": "DefACLOptionList",
+      "rhs": [
+        "DefACLOptionList DefACLOption\t\t\t{ $$ = lappend($1, $2)"
+      ]
+    },
+    {
+      "lhs": "DefACLOption",
+      "rhs": [
+        "IN_P SCHEMA name_list",
+        "{",
+        "$$ = makeDefElem(\"schemas\", (Node *) $3, @1)"
+      ]
+    },
+    {
+      "lhs": "DefACLAction",
+      "rhs": [
+        "GRANT privileges ON defacl_privilege_target TO grantee_list",
+        "opt_grant_grant_option",
+        "{",
+        "GrantStmt *n = makeNode(GrantStmt)"
+      ]
+    },
+    {
+      "lhs": "defacl_privilege_target",
+      "rhs": [
+        "TABLES\t\t\t{ $$ = OBJECT_TABLE"
+      ]
+    },
+    {
+      "lhs": "IndexStmt",
+      "rhs": [
+        "CREATE opt_unique INDEX opt_concurrently opt_single_name",
+        "ON relation_expr access_method_clause '(' index_params ')'",
+        "opt_include opt_unique_null_treatment opt_reloptions OptTableSpace where_clause",
+        "{",
+        "IndexStmt *n = makeNode(IndexStmt)"
+      ]
+    },
+    {
+      "lhs": "opt_unique",
+      "rhs": [
+        "UNIQUE\t\t\t\t\t\t\t\t\t{ $$ = true"
+      ]
+    },
+    {
+      "lhs": "access_method_clause",
+      "rhs": [
+        "USING name\t\t\t\t\t\t\t\t{ $$ = $2"
+      ]
+    },
+    {
+      "lhs": "index_params",
+      "rhs": [
+        "index_elem\t\t\t\t\t\t\t{ $$ = list_make1($1); }",
+        "index_params ',' index_elem\t\t\t{ $$ = lappend($1, $3); }"
+      ]
+    },
+    {
+      "lhs": "index_elem_options",
+      "rhs": [
+        "opt_collate opt_qualified_name opt_asc_desc opt_nulls_order",
+        "{",
+        "$$ = makeNode(IndexElem)"
+      ]
+    },
+    {
+      "lhs": "index_elem",
+      "rhs": [
+        "ColId index_elem_options",
+        "{",
+        "$$ = $2"
+      ]
+    },
+    {
+      "lhs": "opt_include",
+      "rhs": [
+        "INCLUDE '(' index_including_params ')'\t\t\t{ $$ = $3; }",
+        "{ $$ = NIL; }"
+      ]
+    },
+    {
+      "lhs": "index_including_params",
+      "rhs": [
+        "index_elem\t\t\t\t\t\t{ $$ = list_make1($1); }",
+        "index_including_params ',' index_elem\t\t{ $$ = lappend($1, $3); }"
+      ]
+    },
+    {
+      "lhs": "opt_collate",
+      "rhs": [
+        "COLLATE any_name\t\t\t\t\t\t{ $$ = $2; }",
+        "{ $$ = NIL; }"
+      ]
+    },
+    {
+      "lhs": "opt_asc_desc",
+      "rhs": [
+        "ASC\t\t\t\t\t\t\t{ $$ = SORTBY_ASC; }",
+        "DESC\t\t\t\t\t\t\t{ $$ = SORTBY_DESC; }",
+        "{ $$ = SORTBY_DEFAULT; }"
+      ]
+    },
+    {
+      "lhs": "opt_nulls_order",
+      "rhs": [
+        "NULLS_LA FIRST_P\t\t\t{ $$ = SORTBY_NULLS_FIRST; }",
+        "NULLS_LA LAST_P\t\t\t\t{ $$ = SORTBY_NULLS_LAST; }",
+        "{ $$ = SORTBY_NULLS_DEFAULT; }"
+      ]
+    },
+    {
+      "lhs": "CreateFunctionStmt",
+      "rhs": [
+        "CREATE opt_or_replace FUNCTION func_name func_args_with_defaults",
+        "RETURNS func_return opt_createfunc_opt_list opt_routine_body",
+        "{",
+        "CreateFunctionStmt *n = makeNode(CreateFunctionStmt)"
+      ]
+    },
+    {
+      "lhs": "opt_or_replace",
+      "rhs": [
+        "OR REPLACE\t\t\t\t\t\t\t\t{ $$ = true"
+      ]
+    },
+    {
+      "lhs": "func_args",
+      "rhs": [
+        "'(' func_args_list ')'\t\t\t\t\t{ $$ = $2; }",
+        "'(' ')'\t\t\t\t\t\t\t\t{ $$ = NIL; }"
+      ]
+    },
+    {
+      "lhs": "func_args_list",
+      "rhs": [
+        "func_arg\t\t\t\t\t\t\t\t{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "function_with_argtypes_list",
+      "rhs": [
+        "function_with_argtypes\t\t\t\t\t{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "function_with_argtypes",
+      "rhs": [
+        "func_name func_args",
+        "{",
+        "ObjectWithArgs *n = makeNode(ObjectWithArgs)"
+      ]
+    },
+    {
+      "lhs": "func_args_with_defaults",
+      "rhs": [
+        "'(' func_args_with_defaults_list ')'\t\t{ $$ = $2"
+      ]
+    },
+    {
+      "lhs": "func_args_with_defaults_list",
+      "rhs": [
+        "func_arg_with_default\t\t\t\t\t\t{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "func_arg",
+      "rhs": [
+        "arg_class param_name func_type",
+        "{",
+        "FunctionParameter *n = makeNode(FunctionParameter)"
+      ]
+    },
+    {
+      "lhs": "arg_class",
+      "rhs": [
+        "IN_P\t\t\t\t\t\t\t\t{ $$ = FUNC_PARAM_IN; }",
+        "OUT_P\t\t\t\t\t\t\t\t{ $$ = FUNC_PARAM_OUT; }",
+        "INOUT\t\t\t\t\t\t\t\t{ $$ = FUNC_PARAM_INOUT; }",
+        "IN_P OUT_P\t\t\t\t\t\t{ $$ = FUNC_PARAM_INOUT; }",
+        "VARIADIC\t\t\t\t\t\t\t{ $$ = FUNC_PARAM_VARIADIC; }"
+      ]
+    },
+    {
+      "lhs": "param_name",
+      "rhs": [
+        "type_function_name"
+      ]
+    },
+    {
+      "lhs": "func_return",
+      "rhs": [
+        "func_type",
+        "{",
+        "/* We can catch over-specified results here if we want to,",
+        "* but for now better to silently swallow typmod, etc.",
+        "* - thomas 2000-03-22",
+        "*/",
+        "$$ = $1"
+      ]
+    },
+    {
+      "lhs": "func_type",
+      "rhs": [
+        "Typename\t\t\t\t\t\t\t\t{ $$ = $1; }",
+        "type_function_name attrs '%' TYPE_P",
+        "{",
+        "$$ = makeTypeNameFromNameList(lcons(makeString($1), $2))"
+      ]
+    },
+    {
+      "lhs": "func_arg_with_default",
+      "rhs": [
+        "func_arg",
+        "{",
+        "$$ = $1"
+      ]
+    },
+    {
+      "lhs": "aggr_arg",
+      "rhs": [
+        "func_arg",
+        "{",
+        "if (!($1->mode == FUNC_PARAM_DEFAULT ||",
+        "$1->mode == FUNC_PARAM_IN ||",
+        "$1->mode == FUNC_PARAM_VARIADIC))",
+        "ereport(ERROR,",
+        "(errcode(ERRCODE_FEATURE_NOT_SUPPORTED),",
+        "errmsg(\"aggregates cannot have output arguments\"),",
+        "parser_errposition(@1)))"
+      ]
+    },
+    {
+      "lhs": "aggr_args",
+      "rhs": [
+        "'(' '*' ')'",
+        "{",
+        "$$ = list_make2(NIL, makeInteger(-1))"
+      ]
+    },
+    {
+      "lhs": "aggr_args_list",
+      "rhs": [
+        "aggr_arg\t\t\t\t\t\t\t\t{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "aggregate_with_argtypes",
+      "rhs": [
+        "func_name aggr_args",
+        "{",
+        "ObjectWithArgs *n = makeNode(ObjectWithArgs)"
+      ]
+    },
+    {
+      "lhs": "aggregate_with_argtypes_list",
+      "rhs": [
+        "aggregate_with_argtypes\t\t\t\t\t{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "opt_createfunc_opt_list",
+      "rhs": [
+        "createfunc_opt_list",
+        "{ $$ = NIL; }"
+      ]
+    },
+    {
+      "lhs": "createfunc_opt_list",
+      "rhs": [
+        "createfunc_opt_item\t\t\t\t\t\t{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "common_func_opt_item",
+      "rhs": [
+        "CALLED ON NULL_P INPUT_P",
+        "{",
+        "$$ = makeDefElem(\"strict\", (Node *) makeBoolean(false), @1)"
+      ]
+    },
+    {
+      "lhs": "createfunc_opt_item",
+      "rhs": [
+        "AS func_as",
+        "{",
+        "$$ = makeDefElem(\"as\", (Node *) $2, @1)"
+      ]
+    },
+    {
+      "lhs": "func_as",
+      "rhs": [
+        "Sconst\t\t\t\t\t\t{ $$ = list_make1(makeString($1)); }",
+        "Sconst ',' Sconst",
+        "{",
+        "$$ = list_make2(makeString($1), makeString($3))"
+      ]
+    },
+    {
+      "lhs": "ReturnStmt",
+      "rhs": [
+        "RETURN a_expr",
+        "{",
+        "ReturnStmt *r = makeNode(ReturnStmt)"
+      ]
+    },
+    {
+      "lhs": "opt_routine_body",
+      "rhs": [
+        "ReturnStmt",
+        "{",
+        "$$ = $1"
+      ]
+    },
+    {
+      "lhs": "routine_body_stmt_list",
+      "rhs": [
+        "routine_body_stmt_list routine_body_stmt '"
+      ]
+    },
+    {
+      "lhs": "routine_body_stmt",
+      "rhs": [
+        "stmt",
+        "ReturnStmt"
+      ]
+    },
+    {
+      "lhs": "transform_type_list",
+      "rhs": [
+        "FOR TYPE_P Typename { $$ = list_make1($3)"
+      ]
+    },
+    {
+      "lhs": "opt_definition",
+      "rhs": [
+        "WITH definition\t\t\t\t\t\t\t{ $$ = $2"
+      ]
+    },
+    {
+      "lhs": "table_func_column",
+      "rhs": [
+        "param_name func_type",
+        "{",
+        "FunctionParameter *n = makeNode(FunctionParameter)"
+      ]
+    },
+    {
+      "lhs": "table_func_column_list",
+      "rhs": [
+        "table_func_column",
+        "{",
+        "$$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "AlterFunctionStmt",
+      "rhs": [
+        "ALTER FUNCTION function_with_argtypes alterfunc_opt_list opt_restrict",
+        "{",
+        "AlterFunctionStmt *n = makeNode(AlterFunctionStmt)"
+      ]
+    },
+    {
+      "lhs": "alterfunc_opt_list",
+      "rhs": [
+        "common_func_opt_item\t\t\t\t\t{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "opt_restrict",
+      "rhs": [
+        "RESTRICT",
+        ""
+      ]
+    },
+    {
+      "lhs": "RemoveFuncStmt",
+      "rhs": [
+        "DROP FUNCTION function_with_argtypes_list opt_drop_behavior",
+        "{",
+        "DropStmt *n = makeNode(DropStmt)"
+      ]
+    },
+    {
+      "lhs": "RemoveAggrStmt",
+      "rhs": [
+        "DROP AGGREGATE aggregate_with_argtypes_list opt_drop_behavior",
+        "{",
+        "DropStmt *n = makeNode(DropStmt)"
+      ]
+    },
+    {
+      "lhs": "RemoveOperStmt",
+      "rhs": [
+        "DROP OPERATOR operator_with_argtypes_list opt_drop_behavior",
+        "{",
+        "DropStmt *n = makeNode(DropStmt)"
+      ]
+    },
+    {
+      "lhs": "oper_argtypes",
+      "rhs": [
+        "'(' Typename ')'",
+        "{",
+        "ereport(ERROR,",
+        "(errcode(ERRCODE_SYNTAX_ERROR),",
+        "errmsg(\"missing argument\"),",
+        "errhint(\"Use NONE to denote the missing argument of a unary operator.\"),",
+        "parser_errposition(@3)))"
+      ]
+    },
+    {
+      "lhs": "any_operator",
+      "rhs": [
+        "all_Op",
+        "{ $$ = list_make1(makeString($1))"
+      ]
+    },
+    {
+      "lhs": "operator_with_argtypes_list",
+      "rhs": [
+        "operator_with_argtypes\t\t\t\t\t{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "operator_with_argtypes",
+      "rhs": [
+        "any_operator oper_argtypes",
+        "{",
+        "ObjectWithArgs *n = makeNode(ObjectWithArgs)"
+      ]
+    },
+    {
+      "lhs": "DoStmt",
+      "rhs": [
+        "DO dostmt_opt_list",
+        "{",
+        "DoStmt *n = makeNode(DoStmt)"
+      ]
+    },
+    {
+      "lhs": "dostmt_opt_list",
+      "rhs": [
+        "dostmt_opt_item\t\t\t\t\t\t{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "dostmt_opt_item",
+      "rhs": [
+        "Sconst",
+        "{",
+        "$$ = makeDefElem(\"as\", (Node *) makeString($1), @1)"
+      ]
+    },
+    {
+      "lhs": "CreateCastStmt",
+      "rhs": [
+        "CREATE CAST '(' Typename AS Typename ')'",
+        "WITH FUNCTION function_with_argtypes cast_context",
+        "{",
+        "CreateCastStmt *n = makeNode(CreateCastStmt)"
+      ]
+    },
+    {
+      "lhs": "cast_context",
+      "rhs": [
+        "AS IMPLICIT_P\t\t\t\t\t{ $$ = COERCION_IMPLICIT; }",
+        "AS ASSIGNMENT\t\t\t\t\t\t\t{ $$ = COERCION_ASSIGNMENT; }",
+        "{ $$ = COERCION_EXPLICIT; }"
+      ]
+    },
+    {
+      "lhs": "DropCastStmt",
+      "rhs": [
+        "DROP CAST opt_if_exists '(' Typename AS Typename ')' opt_drop_behavior",
+        "{",
+        "DropStmt *n = makeNode(DropStmt)"
+      ]
+    },
+    {
+      "lhs": "opt_if_exists",
+      "rhs": [
+        "IF_P EXISTS\t\t\t\t\t\t{ $$ = true; }",
+        "{ $$ = false; }"
+      ]
+    },
+    {
+      "lhs": "CreateTransformStmt",
+      "rhs": [
+        "CREATE opt_or_replace TRANSFORM FOR Typename LANGUAGE name '(' transform_element_list ')'",
+        "{",
+        "CreateTransformStmt *n = makeNode(CreateTransformStmt)"
+      ]
+    },
+    {
+      "lhs": "transform_element_list",
+      "rhs": [
+        "FROM SQL_P WITH FUNCTION function_with_argtypes ',' TO SQL_P WITH FUNCTION function_with_argtypes",
+        "{",
+        "$$ = list_make2($5, $11)"
+      ]
+    },
+    {
+      "lhs": "DropTransformStmt",
+      "rhs": [
+        "DROP TRANSFORM opt_if_exists FOR Typename LANGUAGE name opt_drop_behavior",
+        "{",
+        "DropStmt *n = makeNode(DropStmt)"
+      ]
+    },
+    {
+      "lhs": "ReindexStmt",
+      "rhs": [
+        "REINDEX opt_reindex_option_list reindex_target_relation opt_concurrently qualified_name",
+        "{",
+        "ReindexStmt *n = makeNode(ReindexStmt)"
+      ]
+    },
+    {
+      "lhs": "reindex_target_relation",
+      "rhs": [
+        "INDEX\t\t\t\t\t{ $$ = REINDEX_OBJECT_INDEX"
+      ]
+    },
+    {
+      "lhs": "reindex_target_all",
+      "rhs": [
+        "SYSTEM_P\t\t\t\t{ $$ = REINDEX_OBJECT_SYSTEM"
+      ]
+    },
+    {
+      "lhs": "opt_reindex_option_list",
+      "rhs": [
+        "'(' utility_option_list ')'\t\t\t\t{ $$ = $2"
+      ]
+    },
+    {
+      "lhs": "AlterTblSpcStmt",
+      "rhs": [
+        "ALTER TABLESPACE name SET reloptions",
+        "{",
+        "AlterTableSpaceOptionsStmt *n =",
+        "makeNode(AlterTableSpaceOptionsStmt)"
+      ]
+    },
+    {
+      "lhs": "RenameStmt",
+      "rhs": [
+        "ALTER AGGREGATE aggregate_with_argtypes RENAME TO name",
+        "{",
+        "RenameStmt *n = makeNode(RenameStmt)"
+      ]
+    },
+    {
+      "lhs": "opt_column",
+      "rhs": [
+        "COLUMN",
+        ""
+      ]
+    },
+    {
+      "lhs": "opt_set_data",
+      "rhs": [
+        "SET DATA_P\t\t\t\t\t\t\t{ $$ = 1; }",
+        "{ $$ = 0; }"
+      ]
+    },
+    {
+      "lhs": "AlterObjectDependsStmt",
+      "rhs": [
+        "ALTER FUNCTION function_with_argtypes opt_no DEPENDS ON EXTENSION name",
+        "{",
+        "AlterObjectDependsStmt *n = makeNode(AlterObjectDependsStmt)"
+      ]
+    },
+    {
+      "lhs": "opt_no",
+      "rhs": [
+        "NO\t\t\t\t{ $$ = true; }",
+        "{ $$ = false;\t}"
+      ]
+    },
+    {
+      "lhs": "AlterObjectSchemaStmt",
+      "rhs": [
+        "ALTER AGGREGATE aggregate_with_argtypes SET SCHEMA name",
+        "{",
+        "AlterObjectSchemaStmt *n = makeNode(AlterObjectSchemaStmt)"
+      ]
+    },
+    {
+      "lhs": "AlterOperatorStmt",
+      "rhs": [
+        "ALTER OPERATOR operator_with_argtypes SET '(' operator_def_list ')'",
+        "{",
+        "AlterOperatorStmt *n = makeNode(AlterOperatorStmt)"
+      ]
+    },
+    {
+      "lhs": "operator_def_list",
+      "rhs": [
+        "operator_def_elem\t\t\t\t\t\t\t\t{ $$ = list_make1($1); }",
+        "operator_def_list ',' operator_def_elem\t\t\t\t{ $$ = lappend($1, $3); }"
+      ]
+    },
+    {
+      "lhs": "operator_def_elem",
+      "rhs": [
+        "ColLabel '=' NONE",
+        "{ $$ = makeDefElem($1, NULL, @1)"
+      ]
+    },
+    {
+      "lhs": "operator_def_arg",
+      "rhs": [
+        "func_type\t\t\t\t\t\t{ $$ = (Node *) $1"
+      ]
+    },
+    {
+      "lhs": "AlterTypeStmt",
+      "rhs": [
+        "ALTER TYPE_P any_name SET '(' operator_def_list ')'",
+        "{",
+        "AlterTypeStmt *n = makeNode(AlterTypeStmt)"
+      ]
+    },
+    {
+      "lhs": "AlterOwnerStmt",
+      "rhs": [
+        "ALTER AGGREGATE aggregate_with_argtypes OWNER TO RoleSpec",
+        "{",
+        "AlterOwnerStmt *n = makeNode(AlterOwnerStmt)"
+      ]
+    },
+    {
+      "lhs": "CreatePublicationStmt",
+      "rhs": [
+        "CREATE PUBLICATION name opt_definition",
+        "{",
+        "CreatePublicationStmt *n = makeNode(CreatePublicationStmt)"
+      ]
+    },
+    {
+      "lhs": "PublicationObjSpec",
+      "rhs": [
+        "TABLE relation_expr opt_column_list OptWhereClause",
+        "{",
+        "$$ = makeNode(PublicationObjSpec)"
+      ]
+    },
+    {
+      "lhs": "pub_obj_list",
+      "rhs": [
+        "PublicationObjSpec",
+        "{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "AlterPublicationStmt",
+      "rhs": [
+        "ALTER PUBLICATION name SET definition",
+        "{",
+        "AlterPublicationStmt *n = makeNode(AlterPublicationStmt)"
+      ]
+    },
+    {
+      "lhs": "CreateSubscriptionStmt",
+      "rhs": [
+        "CREATE SUBSCRIPTION name CONNECTION Sconst PUBLICATION name_list opt_definition",
+        "{",
+        "CreateSubscriptionStmt *n =",
+        "makeNode(CreateSubscriptionStmt)"
+      ]
+    },
+    {
+      "lhs": "AlterSubscriptionStmt",
+      "rhs": [
+        "ALTER SUBSCRIPTION name SET definition",
+        "{",
+        "AlterSubscriptionStmt *n =",
+        "makeNode(AlterSubscriptionStmt)"
+      ]
+    },
+    {
+      "lhs": "DropSubscriptionStmt",
+      "rhs": [
+        "DROP SUBSCRIPTION name opt_drop_behavior",
+        "{",
+        "DropSubscriptionStmt *n = makeNode(DropSubscriptionStmt)"
+      ]
+    },
+    {
+      "lhs": "RuleStmt",
+      "rhs": [
+        "CREATE opt_or_replace RULE name AS",
+        "ON event TO qualified_name where_clause",
+        "DO opt_instead RuleActionList",
+        "{",
+        "RuleStmt   *n = makeNode(RuleStmt)"
+      ]
+    },
+    {
+      "lhs": "RuleActionList",
+      "rhs": [
+        "NOTHING\t\t\t\t\t\t\t\t\t{ $$ = NIL"
+      ]
+    },
+    {
+      "lhs": "RuleActionMulti",
+      "rhs": [
+        "RuleActionMulti '"
+      ]
+    },
+    {
+      "lhs": "RuleActionStmt",
+      "rhs": [
+        "SelectStmt",
+        "InsertStmt",
+        "UpdateStmt",
+        "DeleteStmt",
+        "NotifyStmt"
+      ]
+    },
+    {
+      "lhs": "RuleActionStmtOrEmpty",
+      "rhs": [
+        "RuleActionStmt\t\t\t\t\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "event",
+      "rhs": [
+        "SELECT\t\t\t\t\t\t\t\t\t{ $$ = CMD_SELECT; }",
+        "UPDATE\t\t\t\t\t\t\t\t{ $$ = CMD_UPDATE; }",
+        "DELETE_P\t\t\t\t\t\t\t\t{ $$ = CMD_DELETE; }",
+        "INSERT\t\t\t\t\t\t\t\t{ $$ = CMD_INSERT; }"
+      ]
+    },
+    {
+      "lhs": "opt_instead",
+      "rhs": [
+        "INSTEAD\t\t\t\t\t\t\t\t\t{ $$ = true"
+      ]
+    },
+    {
+      "lhs": "NotifyStmt",
+      "rhs": [
+        "NOTIFY ColId notify_payload",
+        "{",
+        "NotifyStmt *n = makeNode(NotifyStmt)"
+      ]
+    },
+    {
+      "lhs": "notify_payload",
+      "rhs": [
+        "',' Sconst\t\t\t\t\t\t\t{ $$ = $2"
+      ]
+    },
+    {
+      "lhs": "ListenStmt",
+      "rhs": [
+        "LISTEN ColId",
+        "{",
+        "ListenStmt *n = makeNode(ListenStmt)"
+      ]
+    },
+    {
+      "lhs": "UnlistenStmt",
+      "rhs": [
+        "UNLISTEN ColId",
+        "{",
+        "UnlistenStmt *n = makeNode(UnlistenStmt)"
+      ]
+    },
+    {
+      "lhs": "TransactionStmt",
+      "rhs": [
+        "ABORT_P opt_transaction opt_transaction_chain",
+        "{",
+        "TransactionStmt *n = makeNode(TransactionStmt)"
+      ]
+    },
+    {
+      "lhs": "TransactionStmtLegacy",
+      "rhs": [
+        "BEGIN_P opt_transaction transaction_mode_list_or_empty",
+        "{",
+        "TransactionStmt *n = makeNode(TransactionStmt)"
+      ]
+    },
+    {
+      "lhs": "opt_transaction",
+      "rhs": [
+        "WORK",
+        "TRANSACTION",
+        ""
+      ]
+    },
+    {
+      "lhs": "transaction_mode_item",
+      "rhs": [
+        "ISOLATION LEVEL iso_level",
+        "{ $$ = makeDefElem(\"transaction_isolation\",",
+        "makeStringConst($3, @3), @1)"
+      ]
+    },
+    {
+      "lhs": "transaction_mode_list",
+      "rhs": [
+        "transaction_mode_item",
+        "{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "transaction_mode_list_or_empty",
+      "rhs": [
+        "transaction_mode_list",
+        "",
+        "{ $$ = NIL"
+      ]
+    },
+    {
+      "lhs": "opt_transaction_chain",
+      "rhs": [
+        "AND CHAIN\t\t{ $$ = true"
+      ]
+    },
+    {
+      "lhs": "ViewStmt",
+      "rhs": [
+        "CREATE OptTemp VIEW qualified_name opt_column_list opt_reloptions",
+        "AS SelectStmt opt_check_option",
+        "{",
+        "ViewStmt   *n = makeNode(ViewStmt)"
+      ]
+    },
+    {
+      "lhs": "opt_check_option",
+      "rhs": [
+        "WITH CHECK OPTION\t\t\t\t{ $$ = CASCADED_CHECK_OPTION"
+      ]
+    },
+    {
+      "lhs": "LoadStmt",
+      "rhs": [
+        "LOAD file_name",
+        "{",
+        "LoadStmt   *n = makeNode(LoadStmt)"
+      ]
+    },
+    {
+      "lhs": "CreatedbStmt",
+      "rhs": [
+        "CREATE DATABASE name opt_with createdb_opt_list",
+        "{",
+        "CreatedbStmt *n = makeNode(CreatedbStmt)"
+      ]
+    },
+    {
+      "lhs": "createdb_opt_list",
+      "rhs": [
+        "createdb_opt_items\t\t\t\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "createdb_opt_items",
+      "rhs": [
+        "createdb_opt_item\t\t\t\t\t\t{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "createdb_opt_item",
+      "rhs": [
+        "createdb_opt_name opt_equal NumericOnly",
+        "{",
+        "$$ = makeDefElem($1, $3, @1)"
+      ]
+    },
+    {
+      "lhs": "createdb_opt_name",
+      "rhs": [
+        "IDENT\t\t\t\t\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "opt_equal",
+      "rhs": [
+        "'='",
+        ""
+      ]
+    },
+    {
+      "lhs": "AlterDatabaseStmt",
+      "rhs": [
+        "ALTER DATABASE name WITH createdb_opt_list",
+        "{",
+        "AlterDatabaseStmt *n = makeNode(AlterDatabaseStmt)"
+      ]
+    },
+    {
+      "lhs": "AlterDatabaseSetStmt",
+      "rhs": [
+        "ALTER DATABASE name SetResetClause",
+        "{",
+        "AlterDatabaseSetStmt *n = makeNode(AlterDatabaseSetStmt)"
+      ]
+    },
+    {
+      "lhs": "DropdbStmt",
+      "rhs": [
+        "DROP DATABASE name",
+        "{",
+        "DropdbStmt *n = makeNode(DropdbStmt)"
+      ]
+    },
+    {
+      "lhs": "drop_option_list",
+      "rhs": [
+        "drop_option",
+        "{",
+        "$$ = list_make1((Node *) $1)"
+      ]
+    },
+    {
+      "lhs": "drop_option",
+      "rhs": [
+        "FORCE",
+        "{",
+        "$$ = makeDefElem(\"force\", NULL, @1)"
+      ]
+    },
+    {
+      "lhs": "AlterCollationStmt",
+      "rhs": [
+        "ALTER COLLATION any_name REFRESH VERSION_P",
+        "{",
+        "AlterCollationStmt *n = makeNode(AlterCollationStmt)"
+      ]
+    },
+    {
+      "lhs": "AlterSystemStmt",
+      "rhs": [
+        "ALTER SYSTEM_P SET generic_set",
+        "{",
+        "AlterSystemStmt *n = makeNode(AlterSystemStmt)"
+      ]
+    },
+    {
+      "lhs": "CreateDomainStmt",
+      "rhs": [
+        "CREATE DOMAIN_P any_name opt_as Typename ColQualList",
+        "{",
+        "CreateDomainStmt *n = makeNode(CreateDomainStmt)"
+      ]
+    },
+    {
+      "lhs": "AlterDomainStmt",
+      "rhs": [
+        "ALTER DOMAIN_P any_name alter_column_default",
+        "{",
+        "AlterDomainStmt *n = makeNode(AlterDomainStmt)"
+      ]
+    },
+    {
+      "lhs": "opt_as",
+      "rhs": [
+        "AS",
+        ""
+      ]
+    },
+    {
+      "lhs": "AlterTSDictionaryStmt",
+      "rhs": [
+        "ALTER TEXT_P SEARCH DICTIONARY any_name definition",
+        "{",
+        "AlterTSDictionaryStmt *n = makeNode(AlterTSDictionaryStmt)"
+      ]
+    },
+    {
+      "lhs": "AlterTSConfigurationStmt",
+      "rhs": [
+        "ALTER TEXT_P SEARCH CONFIGURATION any_name ADD_P MAPPING FOR name_list any_with any_name_list",
+        "{",
+        "AlterTSConfigurationStmt *n = makeNode(AlterTSConfigurationStmt)"
+      ]
+    },
+    {
+      "lhs": "any_with",
+      "rhs": [
+        "WITH",
+        "WITH_LA"
+      ]
+    },
+    {
+      "lhs": "CreateConversionStmt",
+      "rhs": [
+        "CREATE opt_default CONVERSION_P any_name FOR Sconst",
+        "TO Sconst FROM any_name",
+        "{",
+        "CreateConversionStmt *n = makeNode(CreateConversionStmt)"
+      ]
+    },
+    {
+      "lhs": "ClusterStmt",
+      "rhs": [
+        "CLUSTER '(' utility_option_list ')' qualified_name cluster_index_specification",
+        "{",
+        "ClusterStmt *n = makeNode(ClusterStmt)"
+      ]
+    },
+    {
+      "lhs": "cluster_index_specification",
+      "rhs": [
+        "USING name\t\t\t\t{ $$ = $2"
+      ]
+    },
+    {
+      "lhs": "VacuumStmt",
+      "rhs": [
+        "VACUUM opt_full opt_freeze opt_verbose opt_analyze opt_vacuum_relation_list",
+        "{",
+        "VacuumStmt *n = makeNode(VacuumStmt)"
+      ]
+    },
+    {
+      "lhs": "AnalyzeStmt",
+      "rhs": [
+        "analyze_keyword opt_verbose opt_vacuum_relation_list",
+        "{",
+        "VacuumStmt *n = makeNode(VacuumStmt)"
+      ]
+    },
+    {
+      "lhs": "utility_option_list",
+      "rhs": [
+        "utility_option_elem",
+        "{",
+        "$$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "analyze_keyword",
+      "rhs": [
+        "ANALYZE",
+        "ANALYSE"
+      ]
+    },
+    {
+      "lhs": "utility_option_elem",
+      "rhs": [
+        "utility_option_name utility_option_arg",
+        "{",
+        "$$ = makeDefElem($1, $2, @1)"
+      ]
+    },
+    {
+      "lhs": "utility_option_name",
+      "rhs": [
+        "NonReservedWord\t\t\t\t\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "utility_option_arg",
+      "rhs": [
+        "opt_boolean_or_string\t\t\t\t\t{ $$ = (Node *) makeString($1)"
+      ]
+    },
+    {
+      "lhs": "opt_analyze",
+      "rhs": [
+        "analyze_keyword\t\t\t\t\t\t\t{ $$ = true"
+      ]
+    },
+    {
+      "lhs": "opt_verbose",
+      "rhs": [
+        "VERBOSE\t\t\t\t\t\t\t\t\t{ $$ = true"
+      ]
+    },
+    {
+      "lhs": "opt_full",
+      "rhs": [
+        "FULL\t\t\t\t\t\t\t\t\t{ $$ = true; }",
+        "{ $$ = false; }"
+      ]
+    },
+    {
+      "lhs": "opt_freeze",
+      "rhs": [
+        "FREEZE\t\t\t\t\t\t\t\t\t{ $$ = true; }",
+        "{ $$ = false; }"
+      ]
+    },
+    {
+      "lhs": "opt_name_list",
+      "rhs": [
+        "'(' name_list ')'\t\t\t\t\t\t{ $$ = $2"
+      ]
+    },
+    {
+      "lhs": "vacuum_relation",
+      "rhs": [
+        "relation_expr opt_name_list",
+        "{",
+        "$$ = (Node *) makeVacuumRelation($1, InvalidOid, $2)"
+      ]
+    },
+    {
+      "lhs": "vacuum_relation_list",
+      "rhs": [
+        "vacuum_relation",
+        "{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "opt_vacuum_relation_list",
+      "rhs": [
+        "vacuum_relation_list\t\t\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "ExplainStmt",
+      "rhs": [
+        "EXPLAIN ExplainableStmt",
+        "{",
+        "ExplainStmt *n = makeNode(ExplainStmt)"
+      ]
+    },
+    {
+      "lhs": "ExplainableStmt",
+      "rhs": [
+        "SelectStmt",
+        "InsertStmt",
+        "UpdateStmt",
+        "DeleteStmt",
+        "MergeStmt",
+        "DeclareCursorStmt",
+        "CreateAsStmt",
+        "CreateMatViewStmt",
+        "RefreshMatViewStmt",
+        "ExecuteStmt"
+      ]
+    },
+    {
+      "lhs": "PrepareStmt",
+      "rhs": [
+        "PREPARE name prep_type_clause AS PreparableStmt",
+        "{",
+        "PrepareStmt *n = makeNode(PrepareStmt)"
+      ]
+    },
+    {
+      "lhs": "prep_type_clause",
+      "rhs": [
+        "'(' type_list ')'\t\t\t{ $$ = $2; }",
+        "{ $$ = NIL; }"
+      ]
+    },
+    {
+      "lhs": "PreparableStmt",
+      "rhs": [
+        "SelectStmt",
+        "InsertStmt",
+        "UpdateStmt",
+        "DeleteStmt",
+        "MergeStmt"
+      ]
+    },
+    {
+      "lhs": "ExecuteStmt",
+      "rhs": [
+        "EXECUTE name execute_param_clause",
+        "{",
+        "ExecuteStmt *n = makeNode(ExecuteStmt)"
+      ]
+    },
+    {
+      "lhs": "execute_param_clause",
+      "rhs": [
+        "'(' expr_list ')'\t\t\t\t{ $$ = $2; }",
+        "{ $$ = NIL; }"
+      ]
+    },
+    {
+      "lhs": "DeallocateStmt",
+      "rhs": [
+        "DEALLOCATE name",
+        "{",
+        "DeallocateStmt *n = makeNode(DeallocateStmt)"
+      ]
+    },
+    {
+      "lhs": "InsertStmt",
+      "rhs": [
+        "opt_with_clause INSERT INTO insert_target insert_rest",
+        "opt_on_conflict returning_clause",
+        "{",
+        "$5->relation = $4"
+      ]
+    },
+    {
+      "lhs": "insert_target",
+      "rhs": [
+        "qualified_name",
+        "{",
+        "$$ = $1"
+      ]
+    },
+    {
+      "lhs": "insert_rest",
+      "rhs": [
+        "SelectStmt",
+        "{",
+        "$$ = makeNode(InsertStmt)"
+      ]
+    },
+    {
+      "lhs": "override_kind",
+      "rhs": [
+        "USER\t\t{ $$ = OVERRIDING_USER_VALUE"
+      ]
+    },
+    {
+      "lhs": "insert_column_list",
+      "rhs": [
+        "insert_column_item",
+        "{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "insert_column_item",
+      "rhs": [
+        "ColId opt_indirection",
+        "{",
+        "$$ = makeNode(ResTarget)"
+      ]
+    },
+    {
+      "lhs": "opt_on_conflict",
+      "rhs": [
+        "ON CONFLICT opt_conf_expr DO UPDATE SET set_clause_list\twhere_clause",
+        "{",
+        "$$ = makeNode(OnConflictClause)"
+      ]
+    },
+    {
+      "lhs": "opt_conf_expr",
+      "rhs": [
+        "'(' index_params ')' where_clause",
+        "{",
+        "$$ = makeNode(InferClause)"
+      ]
+    },
+    {
+      "lhs": "returning_clause",
+      "rhs": [
+        "RETURNING returning_with_clause target_list",
+        "{",
+        "ReturningClause *n = makeNode(ReturningClause)"
+      ]
+    },
+    {
+      "lhs": "returning_with_clause",
+      "rhs": [
+        "WITH '(' returning_options ')'\t\t{ $$ = $3"
+      ]
+    },
+    {
+      "lhs": "returning_options",
+      "rhs": [
+        "returning_option\t\t\t\t\t\t\t{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "returning_option",
+      "rhs": [
+        "returning_option_kind AS ColId",
+        "{",
+        "ReturningOption *n = makeNode(ReturningOption)"
+      ]
+    },
+    {
+      "lhs": "returning_option_kind",
+      "rhs": [
+        "OLD\t\t\t{ $$ = RETURNING_OPTION_OLD"
+      ]
+    },
+    {
+      "lhs": "DeleteStmt",
+      "rhs": [
+        "opt_with_clause DELETE_P FROM relation_expr_opt_alias",
+        "using_clause where_or_current_clause returning_clause",
+        "{",
+        "DeleteStmt *n = makeNode(DeleteStmt)"
+      ]
+    },
+    {
+      "lhs": "using_clause",
+      "rhs": [
+        "USING from_list\t\t\t\t\t\t{ $$ = $2"
+      ]
+    },
+    {
+      "lhs": "LockStmt",
+      "rhs": [
+        "LOCK_P opt_table relation_expr_list opt_lock opt_nowait",
+        "{",
+        "LockStmt   *n = makeNode(LockStmt)"
+      ]
+    },
+    {
+      "lhs": "opt_lock",
+      "rhs": [
+        "IN_P lock_type MODE\t\t\t\t{ $$ = $2; }",
+        "{ $$ = AccessExclusiveLock; }"
+      ]
+    },
+    {
+      "lhs": "lock_type",
+      "rhs": [
+        "ACCESS SHARE\t\t\t\t\t{ $$ = AccessShareLock; }",
+        "ROW SHARE\t\t\t\t\t\t{ $$ = RowShareLock; }",
+        "ROW EXCLUSIVE\t\t\t\t\t{ $$ = RowExclusiveLock; }",
+        "SHARE UPDATE EXCLUSIVE\t\t{ $$ = ShareUpdateExclusiveLock; }",
+        "SHARE\t\t\t\t\t\t\t{ $$ = ShareLock; }",
+        "SHARE ROW EXCLUSIVE\t\t\t{ $$ = ShareRowExclusiveLock; }",
+        "EXCLUSIVE\t\t\t\t\t\t{ $$ = ExclusiveLock; }",
+        "ACCESS EXCLUSIVE\t\t\t\t{ $$ = AccessExclusiveLock; }"
+      ]
+    },
+    {
+      "lhs": "opt_nowait",
+      "rhs": [
+        "NOWAIT\t\t\t\t\t\t\t{ $$ = true; }",
+        "{ $$ = false; }"
+      ]
+    },
+    {
+      "lhs": "opt_nowait_or_skip",
+      "rhs": [
+        "NOWAIT\t\t\t\t\t\t\t{ $$ = LockWaitError"
+      ]
+    },
+    {
+      "lhs": "UpdateStmt",
+      "rhs": [
+        "opt_with_clause UPDATE relation_expr_opt_alias",
+        "SET set_clause_list",
+        "from_clause",
+        "where_or_current_clause",
+        "returning_clause",
+        "{",
+        "UpdateStmt *n = makeNode(UpdateStmt)"
+      ]
+    },
+    {
+      "lhs": "set_clause_list",
+      "rhs": [
+        "set_clause\t\t\t\t\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "set_clause",
+      "rhs": [
+        "set_target '=' a_expr",
+        "{",
+        "$1->val = (Node *) $3"
+      ]
+    },
+    {
+      "lhs": "set_target",
+      "rhs": [
+        "ColId opt_indirection",
+        "{",
+        "$$ = makeNode(ResTarget)"
+      ]
+    },
+    {
+      "lhs": "set_target_list",
+      "rhs": [
+        "set_target\t\t\t\t\t\t\t\t{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "MergeStmt",
+      "rhs": [
+        "opt_with_clause MERGE INTO relation_expr_opt_alias",
+        "USING table_ref",
+        "ON a_expr",
+        "merge_when_list",
+        "returning_clause",
+        "{",
+        "MergeStmt  *m = makeNode(MergeStmt)"
+      ]
+    },
+    {
+      "lhs": "merge_when_list",
+      "rhs": [
+        "merge_when_clause\t\t\t\t\t\t{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "merge_when_clause",
+      "rhs": [
+        "merge_when_tgt_matched opt_merge_when_condition THEN merge_update",
+        "{",
+        "$4->matchKind = $1"
+      ]
+    },
+    {
+      "lhs": "merge_when_tgt_matched",
+      "rhs": [
+        "WHEN MATCHED\t\t\t\t\t{ $$ = MERGE_WHEN_MATCHED"
+      ]
+    },
+    {
+      "lhs": "merge_when_tgt_not_matched",
+      "rhs": [
+        "WHEN NOT MATCHED\t\t\t\t{ $$ = MERGE_WHEN_NOT_MATCHED_BY_TARGET"
+      ]
+    },
+    {
+      "lhs": "opt_merge_when_condition",
+      "rhs": [
+        "AND a_expr\t\t\t\t{ $$ = $2"
+      ]
+    },
+    {
+      "lhs": "merge_update",
+      "rhs": [
+        "UPDATE SET set_clause_list",
+        "{",
+        "MergeWhenClause *n = makeNode(MergeWhenClause)"
+      ]
+    },
+    {
+      "lhs": "merge_delete",
+      "rhs": [
+        "DELETE_P",
+        "{",
+        "MergeWhenClause *n = makeNode(MergeWhenClause)"
+      ]
+    },
+    {
+      "lhs": "merge_insert",
+      "rhs": [
+        "INSERT merge_values_clause",
+        "{",
+        "MergeWhenClause *n = makeNode(MergeWhenClause)"
+      ]
+    },
+    {
+      "lhs": "merge_values_clause",
+      "rhs": [
+        "VALUES '(' expr_list ')'",
+        "{",
+        "$$ = $3"
+      ]
+    },
+    {
+      "lhs": "DeclareCursorStmt",
+      "rhs": [
+        "DECLARE cursor_name cursor_options CURSOR opt_hold FOR SelectStmt",
+        "{",
+        "DeclareCursorStmt *n = makeNode(DeclareCursorStmt)"
+      ]
+    },
+    {
+      "lhs": "cursor_name",
+      "rhs": [
+        "name\t\t\t\t\t\t{ $$ = $1; }"
+      ]
+    },
+    {
+      "lhs": "cursor_options",
+      "rhs": [
+        "{ $$ = 0; }",
+        "cursor_options NO SCROLL\t\t{ $$ = $1 | CURSOR_OPT_NO_SCROLL; }",
+        "cursor_options SCROLL\t\t\t{ $$ = $1 | CURSOR_OPT_SCROLL; }",
+        "cursor_options BINARY\t\t\t{ $$ = $1 | CURSOR_OPT_BINARY; }",
+        "cursor_options ASENSITIVE\t\t{ $$ = $1 | CURSOR_OPT_ASENSITIVE; }",
+        "cursor_options INSENSITIVE\t{ $$ = $1 | CURSOR_OPT_INSENSITIVE; }"
+      ]
+    },
+    {
+      "lhs": "opt_hold",
+      "rhs": [
+        "{ $$ = 0; }",
+        "WITH HOLD\t\t\t\t\t\t{ $$ = CURSOR_OPT_HOLD; }",
+        "WITHOUT HOLD\t\t\t\t\t{ $$ = 0; }"
+      ]
+    },
+    {
+      "lhs": "SelectStmt",
+      "rhs": [
+        "select_no_parens\t\t\t%prec UMINUS",
+        "select_with_parens\t\t%prec UMINUS"
+      ]
+    },
+    {
+      "lhs": "select_with_parens",
+      "rhs": [
+        "'(' select_no_parens ')'\t\t\t\t{ $$ = $2"
+      ]
+    },
+    {
+      "lhs": "select_no_parens",
+      "rhs": [
+        "simple_select\t\t\t\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "select_clause",
+      "rhs": [
+        "simple_select\t\t\t\t\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "simple_select",
+      "rhs": [
+        "SELECT opt_all_clause opt_target_list",
+        "into_clause from_clause where_clause",
+        "group_clause having_clause window_clause",
+        "{",
+        "SelectStmt *n = makeNode(SelectStmt)"
+      ]
+    },
+    {
+      "lhs": "with_clause",
+      "rhs": [
+        "WITH cte_list",
+        "{",
+        "$$ = makeNode(WithClause)"
+      ]
+    },
+    {
+      "lhs": "cte_list",
+      "rhs": [
+        "common_table_expr\t\t\t\t\t\t{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "common_table_expr",
+      "rhs": [
+        "name opt_name_list AS opt_materialized '(' PreparableStmt ')' opt_search_clause opt_cycle_clause",
+        "{",
+        "CommonTableExpr *n = makeNode(CommonTableExpr)"
+      ]
+    },
+    {
+      "lhs": "opt_materialized",
+      "rhs": [
+        "MATERIALIZED\t\t\t\t\t\t\t{ $$ = CTEMaterializeAlways"
+      ]
+    },
+    {
+      "lhs": "opt_search_clause",
+      "rhs": [
+        "SEARCH DEPTH FIRST_P BY columnList SET ColId",
+        "{",
+        "CTESearchClause *n = makeNode(CTESearchClause)"
+      ]
+    },
+    {
+      "lhs": "opt_cycle_clause",
+      "rhs": [
+        "CYCLE columnList SET ColId TO AexprConst DEFAULT AexprConst USING ColId",
+        "{",
+        "CTECycleClause *n = makeNode(CTECycleClause)"
+      ]
+    },
+    {
+      "lhs": "opt_with_clause",
+      "rhs": [
+        "with_clause\t\t\t\t\t\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "into_clause",
+      "rhs": [
+        "INTO OptTempTableName",
+        "{",
+        "$$ = makeNode(IntoClause)"
+      ]
+    },
+    {
+      "lhs": "OptTempTableName",
+      "rhs": [
+        "TEMPORARY opt_table qualified_name",
+        "{",
+        "$$ = $3"
+      ]
+    },
+    {
+      "lhs": "opt_table",
+      "rhs": [
+        "TABLE",
+        ""
+      ]
+    },
+    {
+      "lhs": "set_quantifier",
+      "rhs": [
+        "ALL\t\t\t\t\t\t\t\t\t\t{ $$ = SET_QUANTIFIER_ALL"
+      ]
+    },
+    {
+      "lhs": "distinct_clause",
+      "rhs": [
+        "DISTINCT\t\t\t\t\t\t\t\t{ $$ = list_make1(NIL)"
+      ]
+    },
+    {
+      "lhs": "opt_all_clause",
+      "rhs": [
+        "ALL",
+        ""
+      ]
+    },
+    {
+      "lhs": "opt_distinct_clause",
+      "rhs": [
+        "distinct_clause\t\t\t\t\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "opt_sort_clause",
+      "rhs": [
+        "sort_clause\t\t\t\t\t\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "sort_clause",
+      "rhs": [
+        "ORDER BY sortby_list\t\t\t\t\t{ $$ = $3"
+      ]
+    },
+    {
+      "lhs": "sortby_list",
+      "rhs": [
+        "sortby\t\t\t\t\t\t\t\t\t{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "sortby",
+      "rhs": [
+        "a_expr USING qual_all_Op opt_nulls_order",
+        "{",
+        "$$ = makeNode(SortBy)"
+      ]
+    },
+    {
+      "lhs": "select_limit",
+      "rhs": [
+        "limit_clause offset_clause",
+        "{",
+        "$$ = $1"
+      ]
+    },
+    {
+      "lhs": "opt_select_limit",
+      "rhs": [
+        "select_limit\t\t\t\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "limit_clause",
+      "rhs": [
+        "LIMIT select_limit_value",
+        "{",
+        "SelectLimit *n = (SelectLimit *) palloc(sizeof(SelectLimit))"
+      ]
+    },
+    {
+      "lhs": "offset_clause",
+      "rhs": [
+        "OFFSET select_offset_value",
+        "{ $$ = $2"
+      ]
+    },
+    {
+      "lhs": "select_limit_value",
+      "rhs": [
+        "a_expr\t\t\t\t\t\t\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "select_offset_value",
+      "rhs": [
+        "a_expr\t\t\t\t\t\t\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "select_fetch_first_value",
+      "rhs": [
+        "c_expr\t\t\t\t\t\t\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "I_or_F_const",
+      "rhs": [
+        "Iconst\t\t\t\t\t\t\t\t\t{ $$ = makeIntConst($1,@1)"
+      ]
+    },
+    {
+      "lhs": "row_or_rows",
+      "rhs": [
+        "ROW\t\t\t\t\t\t\t\t\t{ $$ = 0; }",
+        "ROWS\t\t\t\t\t\t\t\t\t{ $$ = 0; }"
+      ]
+    },
+    {
+      "lhs": "first_or_next",
+      "rhs": [
+        "FIRST_P\t\t\t\t\t\t\t\t{ $$ = 0; }",
+        "NEXT\t\t\t\t\t\t\t\t\t{ $$ = 0; }"
+      ]
+    },
+    {
+      "lhs": "group_clause",
+      "rhs": [
+        "GROUP_P BY set_quantifier group_by_list",
+        "{",
+        "GroupClause *n = (GroupClause *) palloc(sizeof(GroupClause))"
+      ]
+    },
+    {
+      "lhs": "group_by_list",
+      "rhs": [
+        "group_by_item\t\t\t\t\t\t\t{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "group_by_item",
+      "rhs": [
+        "a_expr\t\t\t\t\t\t\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "empty_grouping_set",
+      "rhs": [
+        "'(' ')'",
+        "{",
+        "$$ = (Node *) makeGroupingSet(GROUPING_SET_EMPTY, NIL, @1)"
+      ]
+    },
+    {
+      "lhs": "rollup_clause",
+      "rhs": [
+        "ROLLUP '(' expr_list ')'",
+        "{",
+        "$$ = (Node *) makeGroupingSet(GROUPING_SET_ROLLUP, $3, @1)"
+      ]
+    },
+    {
+      "lhs": "cube_clause",
+      "rhs": [
+        "CUBE '(' expr_list ')'",
+        "{",
+        "$$ = (Node *) makeGroupingSet(GROUPING_SET_CUBE, $3, @1)"
+      ]
+    },
+    {
+      "lhs": "grouping_sets_clause",
+      "rhs": [
+        "GROUPING SETS '(' group_by_list ')'",
+        "{",
+        "$$ = (Node *) makeGroupingSet(GROUPING_SET_SETS, $4, @1)"
+      ]
+    },
+    {
+      "lhs": "having_clause",
+      "rhs": [
+        "HAVING a_expr\t\t\t\t\t\t\t{ $$ = $2"
+      ]
+    },
+    {
+      "lhs": "for_locking_clause",
+      "rhs": [
+        "for_locking_items\t\t\t\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "opt_for_locking_clause",
+      "rhs": [
+        "for_locking_clause\t\t\t\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "for_locking_items",
+      "rhs": [
+        "for_locking_item\t\t\t\t\t\t{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "for_locking_item",
+      "rhs": [
+        "for_locking_strength locked_rels_list opt_nowait_or_skip",
+        "{",
+        "LockingClause *n = makeNode(LockingClause)"
+      ]
+    },
+    {
+      "lhs": "for_locking_strength",
+      "rhs": [
+        "FOR UPDATE\t\t\t\t\t\t\t{ $$ = LCS_FORUPDATE"
+      ]
+    },
+    {
+      "lhs": "locked_rels_list",
+      "rhs": [
+        "OF qualified_name_list\t\t\t\t\t{ $$ = $2"
+      ]
+    },
+    {
+      "lhs": "values_clause",
+      "rhs": [
+        "VALUES '(' expr_list ')'",
+        "{",
+        "SelectStmt *n = makeNode(SelectStmt)"
+      ]
+    },
+    {
+      "lhs": "from_clause",
+      "rhs": [
+        "FROM from_list\t\t\t\t\t\t\t{ $$ = $2"
+      ]
+    },
+    {
+      "lhs": "from_list",
+      "rhs": [
+        "table_ref\t\t\t\t\t\t\t\t{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "table_ref",
+      "rhs": [
+        "relation_expr opt_alias_clause",
+        "{",
+        "$1->alias = $2"
+      ]
+    },
+    {
+      "lhs": "joined_table",
+      "rhs": [
+        "'(' joined_table ')'",
+        "{",
+        "$$ = $2"
+      ]
+    },
+    {
+      "lhs": "alias_clause",
+      "rhs": [
+        "AS ColId '(' name_list ')'",
+        "{",
+        "$$ = makeNode(Alias)"
+      ]
+    },
+    {
+      "lhs": "opt_alias_clause",
+      "rhs": [
+        "alias_clause\t\t\t\t\t\t{ $$ = $1; }",
+        "{ $$ = NULL; }"
+      ]
+    },
+    {
+      "lhs": "opt_alias_clause_for_join_using",
+      "rhs": [
+        "AS ColId",
+        "{",
+        "$$ = makeNode(Alias)"
+      ]
+    },
+    {
+      "lhs": "func_alias_clause",
+      "rhs": [
+        "alias_clause",
+        "{",
+        "$$ = list_make2($1, NIL)"
+      ]
+    },
+    {
+      "lhs": "join_type",
+      "rhs": [
+        "FULL opt_outer\t\t\t\t\t\t\t{ $$ = JOIN_FULL; }",
+        "LEFT opt_outer\t\t\t\t\t\t{ $$ = JOIN_LEFT; }",
+        "RIGHT opt_outer\t\t\t\t\t\t{ $$ = JOIN_RIGHT; }",
+        "INNER_P\t\t\t\t\t\t\t\t{ $$ = JOIN_INNER; }"
+      ]
+    },
+    {
+      "lhs": "opt_outer",
+      "rhs": [
+        "OUTER_P",
+        ""
+      ]
+    },
+    {
+      "lhs": "join_qual",
+      "rhs": [
+        "USING '(' name_list ')' opt_alias_clause_for_join_using",
+        "{",
+        "$$ = (Node *) list_make2($3, $5)"
+      ]
+    },
+    {
+      "lhs": "relation_expr",
+      "rhs": [
+        "qualified_name",
+        "{",
+        "$$ = $1"
+      ]
+    },
+    {
+      "lhs": "extended_relation_expr",
+      "rhs": [
+        "qualified_name '*'",
+        "{",
+        "$$ = $1"
+      ]
+    },
+    {
+      "lhs": "relation_expr_list",
+      "rhs": [
+        "relation_expr\t\t\t\t\t\t\t{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "relation_expr_opt_alias",
+      "rhs": [
+        "relation_expr\t\t\t\t\t%prec UMINUS",
+        "{",
+        "$$ = $1"
+      ]
+    },
+    {
+      "lhs": "tablesample_clause",
+      "rhs": [
+        "TABLESAMPLE func_name '(' expr_list ')' opt_repeatable_clause",
+        "{",
+        "RangeTableSample *n = makeNode(RangeTableSample)"
+      ]
+    },
+    {
+      "lhs": "opt_repeatable_clause",
+      "rhs": [
+        "REPEATABLE '(' a_expr ')'\t{ $$ = (Node *) $3"
+      ]
+    },
+    {
+      "lhs": "func_table",
+      "rhs": [
+        "func_expr_windowless opt_ordinality",
+        "{",
+        "RangeFunction *n = makeNode(RangeFunction)"
+      ]
+    },
+    {
+      "lhs": "rowsfrom_item",
+      "rhs": [
+        "func_expr_windowless opt_col_def_list",
+        "{ $$ = list_make2($1, $2)"
+      ]
+    },
+    {
+      "lhs": "rowsfrom_list",
+      "rhs": [
+        "rowsfrom_item\t\t\t\t\t\t{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "opt_col_def_list",
+      "rhs": [
+        "AS '(' TableFuncElementList ')'\t{ $$ = $3; }",
+        "{ $$ = NIL; }"
+      ]
+    },
+    {
+      "lhs": "opt_ordinality",
+      "rhs": [
+        "WITH_LA ORDINALITY\t\t\t\t\t{ $$ = true; }",
+        "{ $$ = false; }"
+      ]
+    },
+    {
+      "lhs": "where_clause",
+      "rhs": [
+        "WHERE a_expr\t\t\t\t\t\t\t{ $$ = $2"
+      ]
+    },
+    {
+      "lhs": "where_or_current_clause",
+      "rhs": [
+        "WHERE a_expr\t\t\t\t\t\t\t{ $$ = $2"
+      ]
+    },
+    {
+      "lhs": "OptTableFuncElementList",
+      "rhs": [
+        "TableFuncElementList\t\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "TableFuncElementList",
+      "rhs": [
+        "TableFuncElement",
+        "{",
+        "$$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "TableFuncElement",
+      "rhs": [
+        "ColId Typename opt_collate_clause",
+        "{",
+        "ColumnDef *n = makeNode(ColumnDef)"
+      ]
+    },
+    {
+      "lhs": "xmltable",
+      "rhs": [
+        "XMLTABLE '(' c_expr xmlexists_argument COLUMNS xmltable_column_list ')'",
+        "{",
+        "RangeTableFunc *n = makeNode(RangeTableFunc)"
+      ]
+    },
+    {
+      "lhs": "xmltable_column_list",
+      "rhs": [
+        "xmltable_column_el\t\t\t\t\t{ $$ = list_make1($1); }",
+        "xmltable_column_list ',' xmltable_column_el\t{ $$ = lappend($1, $3); }"
+      ]
+    },
+    {
+      "lhs": "xmltable_column_el",
+      "rhs": [
+        "ColId Typename",
+        "{",
+        "RangeTableFuncCol *fc = makeNode(RangeTableFuncCol)"
+      ]
+    },
+    {
+      "lhs": "xmltable_column_option_list",
+      "rhs": [
+        "xmltable_column_option_el",
+        "{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "xmltable_column_option_el",
+      "rhs": [
+        "IDENT b_expr",
+        "{",
+        "if (strcmp($1, \"__pg__is_not_null\") == 0)",
+        "ereport(ERROR,",
+        "(errcode(ERRCODE_SYNTAX_ERROR),",
+        "errmsg(\"option name \\\"%s\\\" cannot be used in XMLTABLE\", $1),",
+        "parser_errposition(@1)))"
+      ]
+    },
+    {
+      "lhs": "xml_namespace_list",
+      "rhs": [
+        "xml_namespace_el",
+        "{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "xml_namespace_el",
+      "rhs": [
+        "b_expr AS ColLabel",
+        "{",
+        "$$ = makeNode(ResTarget)"
+      ]
+    },
+    {
+      "lhs": "json_table",
+      "rhs": [
+        "JSON_TABLE '('",
+        "json_value_expr ',' a_expr json_table_path_name_opt",
+        "json_passing_clause_opt",
+        "COLUMNS '(' json_table_column_definition_list ')'",
+        "json_on_error_clause_opt",
+        "')'",
+        "{",
+        "JsonTable *n = makeNode(JsonTable)"
+      ]
+    },
+    {
+      "lhs": "json_table_path_name_opt",
+      "rhs": [
+        "AS name\t\t\t{ $$ = $2"
+      ]
+    },
+    {
+      "lhs": "json_table_column_definition_list",
+      "rhs": [
+        "json_table_column_definition",
+        "{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "json_table_column_definition",
+      "rhs": [
+        "ColId FOR ORDINALITY",
+        "{",
+        "JsonTableColumn *n = makeNode(JsonTableColumn)"
+      ]
+    },
+    {
+      "lhs": "path_opt",
+      "rhs": [
+        "PATH",
+        ""
+      ]
+    },
+    {
+      "lhs": "json_table_column_path_clause_opt",
+      "rhs": [
+        "PATH Sconst",
+        "{ $$ = (Node *) makeJsonTablePathSpec($2, NULL, @2, -1)"
+      ]
+    },
+    {
+      "lhs": "Typename",
+      "rhs": [
+        "SimpleTypename opt_array_bounds",
+        "{",
+        "$$ = $1"
+      ]
+    },
+    {
+      "lhs": "opt_array_bounds",
+      "rhs": [
+        "opt_array_bounds '[' ']'",
+        "{  $$ = lappend($1, makeInteger(-1))"
+      ]
+    },
+    {
+      "lhs": "SimpleTypename",
+      "rhs": [
+        "GenericType\t\t\t\t\t\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "ConstTypename",
+      "rhs": [
+        "Numeric\t\t\t\t\t\t\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "GenericType",
+      "rhs": [
+        "type_function_name opt_type_modifiers",
+        "{",
+        "$$ = makeTypeName($1)"
+      ]
+    },
+    {
+      "lhs": "opt_type_modifiers",
+      "rhs": [
+        "'(' expr_list ')'\t\t\t\t{ $$ = $2; }",
+        "{ $$ = NIL; }"
+      ]
+    },
+    {
+      "lhs": "Numeric",
+      "rhs": [
+        "INT_P",
+        "{",
+        "$$ = SystemTypeName(\"int4\")"
+      ]
+    },
+    {
+      "lhs": "opt_float",
+      "rhs": [
+        "'(' Iconst ')'",
+        "{",
+        "/*",
+        "* Check FLOAT() precision limits assuming IEEE floating",
+        "* types - thomas 1997-09-18",
+        "*/",
+        "if ($2 < 1)",
+        "ereport(ERROR,",
+        "(errcode(ERRCODE_INVALID_PARAMETER_VALUE),",
+        "errmsg(\"precision for type float must be at least 1 bit\"),",
+        "parser_errposition(@2)))"
+      ]
+    },
+    {
+      "lhs": "Bit",
+      "rhs": [
+        "BitWithLength",
+        "{",
+        "$$ = $1"
+      ]
+    },
+    {
+      "lhs": "ConstBit",
+      "rhs": [
+        "BitWithLength",
+        "{",
+        "$$ = $1"
+      ]
+    },
+    {
+      "lhs": "BitWithLength",
+      "rhs": [
+        "BIT opt_varying '(' expr_list ')'",
+        "{",
+        "char *typname"
+      ]
+    },
+    {
+      "lhs": "BitWithoutLength",
+      "rhs": [
+        "BIT opt_varying",
+        "{",
+        "if ($2)",
+        "{",
+        "$$ = SystemTypeName(\"varbit\")"
+      ]
+    },
+    {
+      "lhs": "Character",
+      "rhs": [
+        "CharacterWithLength",
+        "{",
+        "$$ = $1"
+      ]
+    },
+    {
+      "lhs": "ConstCharacter",
+      "rhs": [
+        "CharacterWithLength",
+        "{",
+        "$$ = $1"
+      ]
+    },
+    {
+      "lhs": "CharacterWithLength",
+      "rhs": [
+        "character '(' Iconst ')'",
+        "{",
+        "$$ = SystemTypeName($1)"
+      ]
+    },
+    {
+      "lhs": "CharacterWithoutLength",
+      "rhs": [
+        "character",
+        "{",
+        "$$ = SystemTypeName($1)"
+      ]
+    },
+    {
+      "lhs": "character",
+      "rhs": [
+        "CHARACTER opt_varying",
+        "{ $$ = $2 ? \"varchar\": \"bpchar\""
+      ]
+    },
+    {
+      "lhs": "opt_varying",
+      "rhs": [
+        "VARYING\t\t\t\t\t\t\t\t\t{ $$ = true"
+      ]
+    },
+    {
+      "lhs": "ConstDatetime",
+      "rhs": [
+        "TIMESTAMP '(' Iconst ')' opt_timezone",
+        "{",
+        "if ($5)",
+        "$$ = SystemTypeName(\"timestamptz\")"
+      ]
+    },
+    {
+      "lhs": "ConstInterval",
+      "rhs": [
+        "INTERVAL",
+        "{",
+        "$$ = SystemTypeName(\"interval\")"
+      ]
+    },
+    {
+      "lhs": "opt_timezone",
+      "rhs": [
+        "WITH_LA TIME ZONE\t\t\t\t\t\t{ $$ = true"
+      ]
+    },
+    {
+      "lhs": "opt_interval",
+      "rhs": [
+        "YEAR_P",
+        "{ $$ = list_make1(makeIntConst(INTERVAL_MASK(YEAR), @1))"
+      ]
+    },
+    {
+      "lhs": "interval_second",
+      "rhs": [
+        "SECOND_P",
+        "{",
+        "$$ = list_make1(makeIntConst(INTERVAL_MASK(SECOND), @1))"
+      ]
+    },
+    {
+      "lhs": "JsonType",
+      "rhs": [
+        "JSON",
+        "{",
+        "$$ = SystemTypeName(\"json\")"
+      ]
+    },
+    {
+      "lhs": "a_expr",
+      "rhs": [
+        "c_expr\t\t\t\t\t\t\t\t\t{ $$ = $1; }",
+        "a_expr TYPECAST Typename",
+        "{ $$ = makeTypeCast($1, $3, @2)"
+      ]
+    },
+    {
+      "lhs": "b_expr",
+      "rhs": [
+        "c_expr",
+        "{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "c_expr",
+      "rhs": [
+        "columnref\t\t\t\t\t\t\t\t{ $$ = $1; }",
+        "AexprConst\t\t\t\t\t\t\t{ $$ = $1; }",
+        "PARAM opt_indirection",
+        "{",
+        "ParamRef   *p = makeNode(ParamRef)"
+      ]
+    },
+    {
+      "lhs": "func_application",
+      "rhs": [
+        "func_name '(' ')'",
+        "{",
+        "$$ = (Node *) makeFuncCall($1, NIL,",
+        "COERCE_EXPLICIT_CALL,",
+        "@1)"
+      ]
+    },
+    {
+      "lhs": "func_expr",
+      "rhs": [
+        "func_application within_group_clause filter_clause over_clause",
+        "{",
+        "FuncCall   *n = (FuncCall *) $1"
+      ]
+    },
+    {
+      "lhs": "func_expr_windowless",
+      "rhs": [
+        "func_application\t\t\t\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "func_expr_common_subexpr",
+      "rhs": [
+        "COLLATION FOR '(' a_expr ')'",
+        "{",
+        "$$ = (Node *) makeFuncCall(SystemFuncName(\"pg_collation_for\"),",
+        "list_make1($4),",
+        "COERCE_SQL_SYNTAX,",
+        "@1)"
+      ]
+    },
+    {
+      "lhs": "xml_root_version",
+      "rhs": [
+        "VERSION_P a_expr",
+        "{ $$ = $2"
+      ]
+    },
+    {
+      "lhs": "opt_xml_root_standalone",
+      "rhs": [
+        "',' STANDALONE_P YES_P",
+        "{ $$ = makeIntConst(XML_STANDALONE_YES, -1)"
+      ]
+    },
+    {
+      "lhs": "xml_attributes",
+      "rhs": [
+        "XMLATTRIBUTES '(' xml_attribute_list ')'\t{ $$ = $3; }"
+      ]
+    },
+    {
+      "lhs": "xml_attribute_list",
+      "rhs": [
+        "xml_attribute_el\t\t\t\t\t{ $$ = list_make1($1); }",
+        "xml_attribute_list ',' xml_attribute_el\t{ $$ = lappend($1, $3); }"
+      ]
+    },
+    {
+      "lhs": "xml_attribute_el",
+      "rhs": [
+        "a_expr AS ColLabel",
+        "{",
+        "$$ = makeNode(ResTarget)"
+      ]
+    },
+    {
+      "lhs": "document_or_content",
+      "rhs": [
+        "DOCUMENT_P\t\t\t\t\t\t{ $$ = XMLOPTION_DOCUMENT; }",
+        "CONTENT_P\t\t\t\t\t\t\t\t{ $$ = XMLOPTION_CONTENT; }"
+      ]
+    },
+    {
+      "lhs": "xml_indent_option",
+      "rhs": [
+        "INDENT\t\t\t\t\t\t\t{ $$ = true; }",
+        "NO INDENT\t\t\t\t\t\t\t\t{ $$ = false; }",
+        "{ $$ = false; }"
+      ]
+    },
+    {
+      "lhs": "xml_whitespace_option",
+      "rhs": [
+        "PRESERVE WHITESPACE_P\t\t{ $$ = true; }",
+        "STRIP_P WHITESPACE_P\t\t\t\t\t{ $$ = false; }",
+        "{ $$ = false; }"
+      ]
+    },
+    {
+      "lhs": "xmlexists_argument",
+      "rhs": [
+        "PASSING c_expr",
+        "{",
+        "$$ = $2"
+      ]
+    },
+    {
+      "lhs": "xml_passing_mech",
+      "rhs": [
+        "BY REF_P",
+        "BY VALUE_P"
+      ]
+    },
+    {
+      "lhs": "within_group_clause",
+      "rhs": [
+        "WITHIN GROUP_P '(' sort_clause ')'\t\t{ $$ = $4"
+      ]
+    },
+    {
+      "lhs": "filter_clause",
+      "rhs": [
+        "FILTER '(' WHERE a_expr ')'\t\t\t\t{ $$ = $4"
+      ]
+    },
+    {
+      "lhs": "window_clause",
+      "rhs": [
+        "WINDOW window_definition_list\t\t\t{ $$ = $2"
+      ]
+    },
+    {
+      "lhs": "window_definition_list",
+      "rhs": [
+        "window_definition\t\t\t\t\t\t{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "window_definition",
+      "rhs": [
+        "ColId AS window_specification",
+        "{",
+        "WindowDef  *n = $3"
+      ]
+    },
+    {
+      "lhs": "over_clause",
+      "rhs": [
+        "OVER window_specification",
+        "{ $$ = $2"
+      ]
+    },
+    {
+      "lhs": "window_specification",
+      "rhs": [
+        "'(' opt_existing_window_name opt_partition_clause",
+        "opt_sort_clause opt_frame_clause ')'",
+        "{",
+        "WindowDef  *n = makeNode(WindowDef)"
+      ]
+    },
+    {
+      "lhs": "opt_existing_window_name",
+      "rhs": [
+        "ColId\t\t\t\t\t\t{ $$ = $1; }",
+        "%prec Op\t\t{ $$ = NULL; }"
+      ]
+    },
+    {
+      "lhs": "opt_partition_clause",
+      "rhs": [
+        "PARTITION BY expr_list\t\t{ $$ = $3; }",
+        "{ $$ = NIL; }"
+      ]
+    },
+    {
+      "lhs": "opt_frame_clause",
+      "rhs": [
+        "RANGE frame_extent opt_window_exclusion_clause",
+        "{",
+        "WindowDef  *n = $2"
+      ]
+    },
+    {
+      "lhs": "frame_extent",
+      "rhs": [
+        "frame_bound",
+        "{",
+        "WindowDef  *n = $1"
+      ]
+    },
+    {
+      "lhs": "frame_bound",
+      "rhs": [
+        "UNBOUNDED PRECEDING",
+        "{",
+        "WindowDef  *n = makeNode(WindowDef)"
+      ]
+    },
+    {
+      "lhs": "opt_window_exclusion_clause",
+      "rhs": [
+        "EXCLUDE CURRENT_P ROW\t{ $$ = FRAMEOPTION_EXCLUDE_CURRENT_ROW"
+      ]
+    },
+    {
+      "lhs": "row",
+      "rhs": [
+        "ROW '(' expr_list ')'\t\t\t\t\t{ $$ = $3; }",
+        "ROW '(' ')'\t\t\t\t\t\t\t{ $$ = NIL; }",
+        "'(' expr_list ',' a_expr ')'\t\t\t{ $$ = lappend($2, $4); }"
+      ]
+    },
+    {
+      "lhs": "explicit_row",
+      "rhs": [
+        "ROW '(' expr_list ')'\t\t\t\t{ $$ = $3; }",
+        "ROW '(' ')'\t\t\t\t\t\t\t{ $$ = NIL; }"
+      ]
+    },
+    {
+      "lhs": "implicit_row",
+      "rhs": [
+        "'(' expr_list ',' a_expr ')'\t\t{ $$ = lappend($2, $4); }"
+      ]
+    },
+    {
+      "lhs": "sub_type",
+      "rhs": [
+        "ANY\t\t\t\t\t\t\t\t\t\t{ $$ = ANY_SUBLINK; }",
+        "SOME\t\t\t\t\t\t\t\t\t{ $$ = ANY_SUBLINK; }",
+        "ALL\t\t\t\t\t\t\t\t\t{ $$ = ALL_SUBLINK; }"
+      ]
+    },
+    {
+      "lhs": "all_Op",
+      "rhs": [
+        "Op\t\t\t\t\t\t\t\t\t\t{ $$ = $1; }",
+        "MathOp\t\t\t\t\t\t\t\t{ $$ = $1; }"
+      ]
+    },
+    {
+      "lhs": "MathOp",
+      "rhs": [
+        "'+'\t\t\t\t\t\t\t\t\t{ $$ = \"+\"; }",
+        "'-'\t\t\t\t\t\t\t\t\t{ $$ = \"-\"; }",
+        "'*'\t\t\t\t\t\t\t\t\t{ $$ = \"*\"; }",
+        "'/'\t\t\t\t\t\t\t\t\t{ $$ = \"/\"; }",
+        "'%'\t\t\t\t\t\t\t\t\t{ $$ = \"%\"; }",
+        "'^'\t\t\t\t\t\t\t\t\t{ $$ = \"^\"; }",
+        "'<'\t\t\t\t\t\t\t\t\t{ $$ = \"<\"; }",
+        "'>'\t\t\t\t\t\t\t\t\t{ $$ = \">\"; }",
+        "'='\t\t\t\t\t\t\t\t\t{ $$ = \"=\"; }",
+        "LESS_EQUALS\t\t\t\t\t\t\t{ $$ = \"<=\"; }",
+        "GREATER_EQUALS\t\t\t\t\t\t{ $$ = \">=\"; }",
+        "NOT_EQUALS\t\t\t\t\t\t\t{ $$ = \"<>\"; }"
+      ]
+    },
+    {
+      "lhs": "qual_Op",
+      "rhs": [
+        "Op",
+        "{ $$ = list_make1(makeString($1))"
+      ]
+    },
+    {
+      "lhs": "qual_all_Op",
+      "rhs": [
+        "all_Op",
+        "{ $$ = list_make1(makeString($1))"
+      ]
+    },
+    {
+      "lhs": "subquery_Op",
+      "rhs": [
+        "all_Op",
+        "{ $$ = list_make1(makeString($1))"
+      ]
+    },
+    {
+      "lhs": "expr_list",
+      "rhs": [
+        "a_expr",
+        "{",
+        "$$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "func_arg_list",
+      "rhs": [
+        "func_arg_expr",
+        "{",
+        "$$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "func_arg_expr",
+      "rhs": [
+        "a_expr",
+        "{",
+        "$$ = $1"
+      ]
+    },
+    {
+      "lhs": "func_arg_list_opt",
+      "rhs": [
+        "func_arg_list\t\t\t\t\t{ $$ = $1; }",
+        "{ $$ = NIL; }"
+      ]
+    },
+    {
+      "lhs": "type_list",
+      "rhs": [
+        "Typename\t\t\t\t\t\t\t\t{ $$ = list_make1($1); }",
+        "type_list ',' Typename\t\t\t\t{ $$ = lappend($1, $3); }"
+      ]
+    },
+    {
+      "lhs": "array_expr",
+      "rhs": [
+        "'[' expr_list ']'",
+        "{",
+        "$$ = makeAArrayExpr($2, @1, @3)"
+      ]
+    },
+    {
+      "lhs": "array_expr_list",
+      "rhs": [
+        "array_expr\t\t\t\t\t\t\t{ $$ = list_make1($1); }",
+        "array_expr_list ',' array_expr\t\t{ $$ = lappend($1, $3); }"
+      ]
+    },
+    {
+      "lhs": "extract_list",
+      "rhs": [
+        "extract_arg FROM a_expr",
+        "{",
+        "$$ = list_make2(makeStringConst($1, @1), $3)"
+      ]
+    },
+    {
+      "lhs": "extract_arg",
+      "rhs": [
+        "IDENT\t\t\t\t\t\t\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "unicode_normal_form",
+      "rhs": [
+        "NFC\t\t\t\t\t\t\t\t\t\t{ $$ = \"NFC\""
+      ]
+    },
+    {
+      "lhs": "overlay_list",
+      "rhs": [
+        "a_expr PLACING a_expr FROM a_expr FOR a_expr",
+        "{",
+        "$$ = list_make4($1, $3, $5, $7)"
+      ]
+    },
+    {
+      "lhs": "position_list",
+      "rhs": [
+        "b_expr IN_P b_expr\t\t\t\t\t\t{ $$ = list_make2($3, $1)"
+      ]
+    },
+    {
+      "lhs": "substr_list",
+      "rhs": [
+        "a_expr FROM a_expr FOR a_expr",
+        "{",
+        "$$ = list_make3($1, $3, $5)"
+      ]
+    },
+    {
+      "lhs": "trim_list",
+      "rhs": [
+        "a_expr FROM expr_list\t\t\t\t\t{ $$ = lappend($3, $1); }",
+        "FROM expr_list\t\t\t\t\t\t{ $$ = $2; }",
+        "expr_list\t\t\t\t\t\t\t\t{ $$ = $1; }"
+      ]
+    },
+    {
+      "lhs": "case_expr",
+      "rhs": [
+        "CASE case_arg when_clause_list case_default END_P",
+        "{",
+        "CaseExpr   *c = makeNode(CaseExpr)"
+      ]
+    },
+    {
+      "lhs": "when_clause_list",
+      "rhs": [
+        "when_clause\t\t\t\t\t\t\t\t{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "when_clause",
+      "rhs": [
+        "WHEN a_expr THEN a_expr",
+        "{",
+        "CaseWhen   *w = makeNode(CaseWhen)"
+      ]
+    },
+    {
+      "lhs": "case_default",
+      "rhs": [
+        "ELSE a_expr\t\t\t\t\t\t\t\t{ $$ = $2"
+      ]
+    },
+    {
+      "lhs": "case_arg",
+      "rhs": [
+        "a_expr\t\t\t\t\t\t\t\t\t{ $$ = $1; }",
+        "{ $$ = NULL; }"
+      ]
+    },
+    {
+      "lhs": "columnref",
+      "rhs": [
+        "ColId",
+        "{",
+        "$$ = makeColumnRef($1, NIL, @1, yyscanner)"
+      ]
+    },
+    {
+      "lhs": "indirection_el",
+      "rhs": [
+        "'.' attr_name",
+        "{",
+        "$$ = (Node *) makeString($2)"
+      ]
+    },
+    {
+      "lhs": "opt_slice_bound",
+      "rhs": [
+        "a_expr\t\t\t\t\t\t\t\t\t{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "indirection",
+      "rhs": [
+        "indirection_el\t\t\t\t\t\t\t{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "opt_indirection",
+      "rhs": [
+        "{ $$ = NIL"
+      ]
+    },
+    {
+      "lhs": "opt_asymmetric",
+      "rhs": [
+        "ASYMMETRIC",
+        ""
+      ]
+    },
+    {
+      "lhs": "json_passing_clause_opt",
+      "rhs": [
+        "PASSING json_arguments\t\t\t\t\t{ $$ = $2"
+      ]
+    },
+    {
+      "lhs": "json_arguments",
+      "rhs": [
+        "json_argument\t\t\t\t\t\t\t{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "json_argument",
+      "rhs": [
+        "json_value_expr AS ColLabel",
+        "{",
+        "JsonArgument *n = makeNode(JsonArgument)"
+      ]
+    },
+    {
+      "lhs": "json_wrapper_behavior",
+      "rhs": [
+        "WITHOUT WRAPPER\t\t\t\t\t{ $$ = JSW_NONE"
+      ]
+    },
+    {
+      "lhs": "json_behavior",
+      "rhs": [
+        "DEFAULT a_expr",
+        "{ $$ = (Node *) makeJsonBehavior(JSON_BEHAVIOR_DEFAULT, $2, @1)"
+      ]
+    },
+    {
+      "lhs": "json_behavior_type",
+      "rhs": [
+        "ERROR_P\t\t{ $$ = JSON_BEHAVIOR_ERROR"
+      ]
+    },
+    {
+      "lhs": "json_behavior_clause_opt",
+      "rhs": [
+        "json_behavior ON EMPTY_P",
+        "{ $$ = list_make2($1, NULL)"
+      ]
+    },
+    {
+      "lhs": "json_on_error_clause_opt",
+      "rhs": [
+        "json_behavior ON ERROR_P",
+        "{ $$ = $1"
+      ]
+    },
+    {
+      "lhs": "json_value_expr",
+      "rhs": [
+        "a_expr json_format_clause_opt",
+        "{",
+        "$$ = (Node *) makeJsonValueExpr((Expr *) $1, NULL,",
+        "castNode(JsonFormat, $2))"
+      ]
+    },
+    {
+      "lhs": "json_format_clause",
+      "rhs": [
+        "FORMAT_LA JSON ENCODING name",
+        "{",
+        "int\t\tencoding"
+      ]
+    },
+    {
+      "lhs": "json_format_clause_opt",
+      "rhs": [
+        "json_format_clause",
+        "{",
+        "$$ = $1"
+      ]
+    },
+    {
+      "lhs": "json_quotes_clause_opt",
+      "rhs": [
+        "KEEP QUOTES ON SCALAR STRING_P\t\t{ $$ = JS_QUOTES_KEEP"
+      ]
+    },
+    {
+      "lhs": "json_returning_clause_opt",
+      "rhs": [
+        "RETURNING Typename json_format_clause_opt",
+        "{",
+        "JsonOutput *n = makeNode(JsonOutput)"
+      ]
+    },
+    {
+      "lhs": "json_predicate_type_constraint",
+      "rhs": [
+        "JSON\t\t\t\t\t%prec UNBOUNDED\t{ $$ = JS_TYPE_ANY"
+      ]
+    },
+    {
+      "lhs": "json_key_uniqueness_constraint_opt",
+      "rhs": [
+        "WITH UNIQUE KEYS\t\t\t\t\t\t\t{ $$ = true"
+      ]
+    },
+    {
+      "lhs": "json_name_and_value_list",
+      "rhs": [
+        "json_name_and_value",
+        "{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "json_name_and_value",
+      "rhs": [
+        "/* Supporting this syntax seems to require major surgery",
+        "KEY c_expr VALUE_P json_value_expr",
+        "{ $$ = makeJsonKeyValue($2, $4)"
+      ]
+    },
+    {
+      "lhs": "json_object_constructor_null_clause_opt",
+      "rhs": [
+        "NULL_P ON NULL_P\t\t\t\t\t{ $$ = false"
+      ]
+    },
+    {
+      "lhs": "json_array_constructor_null_clause_opt",
+      "rhs": [
+        "NULL_P ON NULL_P\t\t\t\t\t\t{ $$ = false"
+      ]
+    },
+    {
+      "lhs": "json_value_expr_list",
+      "rhs": [
+        "json_value_expr\t\t\t\t\t\t\t\t{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "json_aggregate_func",
+      "rhs": [
+        "JSON_OBJECTAGG '('",
+        "json_name_and_value",
+        "json_object_constructor_null_clause_opt",
+        "json_key_uniqueness_constraint_opt",
+        "json_returning_clause_opt",
+        "')'",
+        "{",
+        "JsonObjectAgg *n = makeNode(JsonObjectAgg)"
+      ]
+    },
+    {
+      "lhs": "json_array_aggregate_order_by_clause_opt",
+      "rhs": [
+        "ORDER BY sortby_list\t\t\t\t\t{ $$ = $3"
+      ]
+    },
+    {
+      "lhs": "opt_target_list",
+      "rhs": [
+        "target_list\t\t\t\t\t\t{ $$ = $1; }",
+        "{ $$ = NIL; }"
+      ]
+    },
+    {
+      "lhs": "target_list",
+      "rhs": [
+        "target_el\t\t\t\t\t\t\t\t{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "target_el",
+      "rhs": [
+        "a_expr AS ColLabel",
+        "{",
+        "$$ = makeNode(ResTarget)"
+      ]
+    },
+    {
+      "lhs": "qualified_name_list",
+      "rhs": [
+        "qualified_name\t\t\t\t\t\t\t{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "qualified_name",
+      "rhs": [
+        "ColId",
+        "{",
+        "$$ = makeRangeVar(NULL, $1, @1)"
+      ]
+    },
+    {
+      "lhs": "name_list",
+      "rhs": [
+        "name",
+        "{ $$ = list_make1(makeString($1))"
+      ]
+    },
+    {
+      "lhs": "name",
+      "rhs": [
+        "ColId\t\t\t\t\t\t\t\t\t{ $$ = $1; };"
+      ]
+    },
+    {
+      "lhs": "attr_name",
+      "rhs": [
+        "ColLabel\t\t\t\t\t\t\t\t{ $$ = $1; };"
+      ]
+    },
+    {
+      "lhs": "file_name",
+      "rhs": [
+        "Sconst\t\t\t\t\t\t\t\t\t{ $$ = $1; };",
+        "/*",
+        "* The production for a qualified func_name has to exactly match the",
+        "* production for a qualified columnref, because we cannot tell which we",
+        "* are parsing until we see what comes after it ('(' or Sconst for a func_name,",
+        "* anything else for a columnref).  Therefore we allow 'indirection' which",
+        "* may contain subscripts, and reject that case in the C code.  (If we",
+        "* ever implement SQL99-like methods, such syntax may actually become legal!)",
+        "*/"
+      ]
+    },
+    {
+      "lhs": "func_name",
+      "rhs": [
+        "type_function_name",
+        "{ $$ = list_make1(makeString($1))"
+      ]
+    },
+    {
+      "lhs": "AexprConst",
+      "rhs": [
+        "Iconst",
+        "{",
+        "$$ = makeIntConst($1, @1)"
+      ]
+    },
+    {
+      "lhs": "Iconst",
+      "rhs": [
+        "ICONST\t\t\t\t\t\t\t\t\t{ $$ = $1; };"
+      ]
+    },
+    {
+      "lhs": "Sconst",
+      "rhs": [
+        "SCONST\t\t\t\t\t\t\t\t\t{ $$ = $1; };"
+      ]
+    },
+    {
+      "lhs": "SignedIconst",
+      "rhs": [
+        "Iconst\t\t\t\t\t\t\t\t{ $$ = $1; }",
+        "'+' Iconst\t\t\t\t\t\t\t{ $$ = + $2; }",
+        "'-' Iconst\t\t\t\t\t\t\t{ $$ = - $2; }"
+      ]
+    },
+    {
+      "lhs": "RoleId",
+      "rhs": [
+        "RoleSpec",
+        "{",
+        "RoleSpec   *spc = (RoleSpec *) $1"
+      ]
+    },
+    {
+      "lhs": "RoleSpec",
+      "rhs": [
+        "NonReservedWord",
+        "{",
+        "/*",
+        "* \"public\" and \"none\" are not keywords, but they must",
+        "* be treated specially here.",
+        "*/",
+        "RoleSpec   *n"
+      ]
+    },
+    {
+      "lhs": "role_list",
+      "rhs": [
+        "RoleSpec",
+        "{ $$ = list_make1($1)"
+      ]
+    },
+    {
+      "lhs": "PLpgSQL_Expr",
+      "rhs": [
+        "opt_distinct_clause opt_target_list",
+        "from_clause where_clause",
+        "group_clause having_clause window_clause",
+        "opt_sort_clause opt_select_limit opt_for_locking_clause",
+        "{",
+        "SelectStmt *n = makeNode(SelectStmt)"
+      ]
+    },
+    {
+      "lhs": "PLAssignStmt",
+      "rhs": [
+        "plassign_target opt_indirection plassign_equals PLpgSQL_Expr",
+        "{",
+        "PLAssignStmt *n = makeNode(PLAssignStmt)"
+      ]
+    },
+    {
+      "lhs": "plassign_target",
+      "rhs": [
+        "ColId\t\t\t\t\t\t\t{ $$ = $1; }",
+        "PARAM\t\t\t\t\t\t\t\t{ $$ = psprintf(\"$%d\", $1); }"
+      ]
+    },
+    {
+      "lhs": "plassign_equals",
+      "rhs": [
+        "COLON_EQUALS",
+        "'='"
+      ]
+    },
+    {
+      "lhs": "ColId",
+      "rhs": [
+        "IDENT\t\t\t\t\t\t\t\t\t{ $$ = $1; }",
+        "unreserved_keyword\t\t\t\t\t{ $$ = pstrdup($1); }",
+        "col_name_keyword\t\t\t\t\t\t{ $$ = pstrdup($1); }"
+      ]
+    },
+    {
+      "lhs": "type_function_name",
+      "rhs": [
+        "IDENT\t\t\t\t\t\t\t{ $$ = $1; }",
+        "unreserved_keyword\t\t\t\t\t{ $$ = pstrdup($1); }",
+        "type_func_name_keyword\t\t\t\t{ $$ = pstrdup($1); }"
+      ]
+    },
+    {
+      "lhs": "NonReservedWord",
+      "rhs": [
+        "IDENT\t\t\t\t\t\t\t{ $$ = $1; }",
+        "unreserved_keyword\t\t\t\t\t{ $$ = pstrdup($1); }",
+        "col_name_keyword\t\t\t\t\t\t{ $$ = pstrdup($1); }",
+        "type_func_name_keyword\t\t\t\t{ $$ = pstrdup($1); }"
+      ]
+    },
+    {
+      "lhs": "ColLabel",
+      "rhs": [
+        "IDENT\t\t\t\t\t\t\t\t\t{ $$ = $1; }",
+        "unreserved_keyword\t\t\t\t\t{ $$ = pstrdup($1); }",
+        "col_name_keyword\t\t\t\t\t\t{ $$ = pstrdup($1); }",
+        "type_func_name_keyword\t\t\t\t{ $$ = pstrdup($1); }",
+        "reserved_keyword\t\t\t\t\t\t{ $$ = pstrdup($1); }"
+      ]
+    },
+    {
+      "lhs": "BareColLabel",
+      "rhs": [
+        "IDENT\t\t\t\t\t\t\t\t{ $$ = $1; }",
+        "bare_label_keyword\t\t\t\t\t{ $$ = pstrdup($1); }"
+      ]
+    },
+    {
+      "lhs": "unreserved_keyword",
+      "rhs": [
+        "ABORT_P",
+        "ABSENT",
+        "ABSOLUTE_P",
+        "ACCESS",
+        "ACTION",
+        "ADD_P",
+        "ADMIN",
+        "AFTER",
+        "AGGREGATE",
+        "ALSO",
+        "ALTER",
+        "ALWAYS",
+        "ASENSITIVE",
+        "ASSERTION",
+        "ASSIGNMENT",
+        "AT",
+        "ATOMIC",
+        "ATTACH",
+        "ATTRIBUTE",
+        "BACKWARD",
+        "BEFORE",
+        "BEGIN_P",
+        "BREADTH",
+        "BY",
+        "CACHE",
+        "CALL",
+        "CALLED",
+        "CASCADE",
+        "CASCADED",
+        "CATALOG_P",
+        "CHAIN",
+        "CHARACTERISTICS",
+        "CHECKPOINT",
+        "CLASS",
+        "CLOSE",
+        "CLUSTER",
+        "COLUMNS",
+        "COMMENT",
+        "COMMENTS",
+        "COMMIT",
+        "COMMITTED",
+        "COMPRESSION",
+        "CONDITIONAL",
+        "CONFIGURATION",
+        "CONFLICT",
+        "CONNECTION",
+        "CONSTRAINTS",
+        "CONTENT_P",
+        "CONTINUE_P",
+        "CONVERSION_P",
+        "COPY",
+        "COST",
+        "CSV",
+        "CUBE",
+        "CURRENT_P",
+        "CURSOR",
+        "CYCLE",
+        "DATA_P",
+        "DATABASE",
+        "DAY_P",
+        "DEALLOCATE",
+        "DECLARE",
+        "DEFAULTS",
+        "DEFERRED",
+        "DEFINER",
+        "DELETE_P",
+        "DELIMITER",
+        "DELIMITERS",
+        "DEPENDS",
+        "DEPTH",
+        "DETACH",
+        "DICTIONARY",
+        "DISABLE_P",
+        "DISCARD",
+        "DOCUMENT_P",
+        "DOMAIN_P",
+        "DOUBLE_P",
+        "DROP",
+        "EACH",
+        "EMPTY_P",
+        "ENABLE_P",
+        "ENCODING",
+        "ENCRYPTED",
+        "ENFORCED",
+        "ENUM_P",
+        "ERROR_P",
+        "ESCAPE",
+        "EVENT",
+        "EXCLUDE",
+        "EXCLUDING",
+        "EXCLUSIVE",
+        "EXECUTE",
+        "EXPLAIN",
+        "EXPRESSION",
+        "EXTENSION",
+        "EXTERNAL",
+        "FAMILY",
+        "FILTER",
+        "FINALIZE",
+        "FIRST_P",
+        "FOLLOWING",
+        "FORCE",
+        "FORMAT",
+        "FORWARD",
+        "FUNCTION",
+        "FUNCTIONS",
+        "GENERATED",
+        "GLOBAL",
+        "GRANTED",
+        "GROUPS",
+        "HANDLER",
+        "HEADER_P",
+        "HOLD",
+        "HOUR_P",
+        "IDENTITY_P",
+        "IF_P",
+        "IMMEDIATE",
+        "IMMUTABLE",
+        "IMPLICIT_P",
+        "IMPORT_P",
+        "INCLUDE",
+        "INCLUDING",
+        "INCREMENT",
+        "INDENT",
+        "INDEX",
+        "INDEXES",
+        "INHERIT",
+        "INHERITS",
+        "INLINE_P",
+        "INPUT_P",
+        "INSENSITIVE",
+        "INSERT",
+        "INSTEAD",
+        "INVOKER",
+        "ISOLATION",
+        "KEEP",
+        "KEY",
+        "KEYS",
+        "LABEL",
+        "LANGUAGE",
+        "LARGE_P",
+        "LAST_P",
+        "LEAKPROOF",
+        "LEVEL",
+        "LISTEN",
+        "LOAD",
+        "LOCAL",
+        "LOCATION",
+        "LOCK_P",
+        "LOCKED",
+        "LOGGED",
+        "MAPPING",
+        "MATCH",
+        "MATCHED",
+        "MATERIALIZED",
+        "MAXVALUE",
+        "MERGE",
+        "METHOD",
+        "MINUTE_P",
+        "MINVALUE",
+        "MODE",
+        "MONTH_P",
+        "MOVE",
+        "NAME_P",
+        "NAMES",
+        "NESTED",
+        "NEW",
+        "NEXT",
+        "NFC",
+        "NFD",
+        "NFKC",
+        "NFKD",
+        "NO",
+        "NORMALIZED",
+        "NOTHING",
+        "NOTIFY",
+        "NOWAIT",
+        "NULLS_P",
+        "OBJECT_P",
+        "OBJECTS_P",
+        "OF",
+        "OFF",
+        "OIDS",
+        "OLD",
+        "OMIT",
+        "OPERATOR",
+        "OPTION",
+        "OPTIONS",
+        "ORDINALITY",
+        "OTHERS",
+        "OVER",
+        "OVERRIDING",
+        "OWNED",
+        "OWNER",
+        "PARALLEL",
+        "PARAMETER",
+        "PARSER",
+        "PARTIAL",
+        "PARTITION",
+        "PASSING",
+        "PASSWORD",
+        "PATH",
+        "PERIOD",
+        "PLAN",
+        "PLANS",
+        "POLICY",
+        "PRECEDING",
+        "PREPARE",
+        "PREPARED",
+        "PRESERVE",
+        "PRIOR",
+        "PRIVILEGES",
+        "PROCEDURAL",
+        "PROCEDURE",
+        "PROCEDURES",
+        "PROGRAM",
+        "PUBLICATION",
+        "QUOTE",
+        "QUOTES",
+        "RANGE",
+        "READ",
+        "REASSIGN",
+        "RECURSIVE",
+        "REF_P",
+        "REFERENCING",
+        "REFRESH",
+        "REINDEX",
+        "RELATIVE_P",
+        "RELEASE",
+        "RENAME",
+        "REPEATABLE",
+        "REPLACE",
+        "REPLICA",
+        "RESET",
+        "RESTART",
+        "RESTRICT",
+        "RETURN",
+        "RETURNS",
+        "REVOKE",
+        "ROLE",
+        "ROLLBACK",
+        "ROLLUP",
+        "ROUTINE",
+        "ROUTINES",
+        "ROWS",
+        "RULE",
+        "SAVEPOINT",
+        "SCALAR",
+        "SCHEMA",
+        "SCHEMAS",
+        "SCROLL",
+        "SEARCH",
+        "SECOND_P",
+        "SECURITY",
+        "SEQUENCE",
+        "SEQUENCES",
+        "SERIALIZABLE",
+        "SERVER",
+        "SESSION",
+        "SET",
+        "SETS",
+        "SHARE",
+        "SHOW",
+        "SIMPLE",
+        "SKIP",
+        "SNAPSHOT",
+        "SOURCE",
+        "SQL_P",
+        "STABLE",
+        "STANDALONE_P",
+        "START",
+        "STATEMENT",
+        "STATISTICS",
+        "STDIN",
+        "STDOUT",
+        "STORAGE",
+        "STORED",
+        "STRICT_P",
+        "STRING_P",
+        "STRIP_P",
+        "SUBSCRIPTION",
+        "SUPPORT",
+        "SYSID",
+        "SYSTEM_P",
+        "TABLES",
+        "TABLESPACE",
+        "TARGET",
+        "TEMP",
+        "TEMPLATE",
+        "TEMPORARY",
+        "TEXT_P",
+        "TIES",
+        "TRANSACTION",
+        "TRANSFORM",
+        "TRIGGER",
+        "TRUNCATE",
+        "TRUSTED",
+        "TYPE_P",
+        "TYPES_P",
+        "UESCAPE",
+        "UNBOUNDED",
+        "UNCOMMITTED",
+        "UNCONDITIONAL",
+        "UNENCRYPTED",
+        "UNKNOWN",
+        "UNLISTEN",
+        "UNLOGGED",
+        "UNTIL",
+        "UPDATE",
+        "VACUUM",
+        "VALID",
+        "VALIDATE",
+        "VALIDATOR",
+        "VALUE_P",
+        "VARYING",
+        "VERSION_P",
+        "VIEW",
+        "VIEWS",
+        "VIRTUAL",
+        "VOLATILE",
+        "WHITESPACE_P",
+        "WITHIN",
+        "WITHOUT",
+        "WORK",
+        "WRAPPER",
+        "WRITE",
+        "XML_P",
+        "YEAR_P",
+        "YES_P",
+        "ZONE"
+      ]
+    },
+    {
+      "lhs": "col_name_keyword",
+      "rhs": [
+        "BETWEEN",
+        "BIGINT",
+        "BIT",
+        "BOOLEAN_P",
+        "CHAR_P",
+        "CHARACTER",
+        "COALESCE",
+        "DEC",
+        "DECIMAL_P",
+        "EXISTS",
+        "EXTRACT",
+        "FLOAT_P",
+        "GREATEST",
+        "GROUPING",
+        "INOUT",
+        "INT_P",
+        "INTEGER",
+        "INTERVAL",
+        "JSON",
+        "JSON_ARRAY",
+        "JSON_ARRAYAGG",
+        "JSON_EXISTS",
+        "JSON_OBJECT",
+        "JSON_OBJECTAGG",
+        "JSON_QUERY",
+        "JSON_SCALAR",
+        "JSON_SERIALIZE",
+        "JSON_TABLE",
+        "JSON_VALUE",
+        "LEAST",
+        "MERGE_ACTION",
+        "NATIONAL",
+        "NCHAR",
+        "NONE",
+        "NORMALIZE",
+        "NULLIF",
+        "NUMERIC",
+        "OUT_P",
+        "OVERLAY",
+        "POSITION",
+        "PRECISION",
+        "REAL",
+        "ROW",
+        "SETOF",
+        "SMALLINT",
+        "SUBSTRING",
+        "TIME",
+        "TIMESTAMP",
+        "TREAT",
+        "TRIM",
+        "VALUES",
+        "VARCHAR",
+        "XMLATTRIBUTES",
+        "XMLCONCAT",
+        "XMLELEMENT",
+        "XMLEXISTS",
+        "XMLFOREST",
+        "XMLNAMESPACES",
+        "XMLPARSE",
+        "XMLPI",
+        "XMLROOT",
+        "XMLSERIALIZE",
+        "XMLTABLE"
+      ]
+    },
+    {
+      "lhs": "type_func_name_keyword",
+      "rhs": [
+        "AUTHORIZATION",
+        "BINARY",
+        "COLLATION",
+        "CONCURRENTLY",
+        "CROSS",
+        "CURRENT_SCHEMA",
+        "FREEZE",
+        "FULL",
+        "ILIKE",
+        "INNER_P",
+        "IS",
+        "ISNULL",
+        "JOIN",
+        "LEFT",
+        "LIKE",
+        "NATURAL",
+        "NOTNULL",
+        "OUTER_P",
+        "OVERLAPS",
+        "RIGHT",
+        "SIMILAR",
+        "TABLESAMPLE",
+        "VERBOSE"
+      ]
+    },
+    {
+      "lhs": "reserved_keyword",
+      "rhs": [
+        "ALL",
+        "ANALYSE",
+        "ANALYZE",
+        "AND",
+        "ANY",
+        "ARRAY",
+        "AS",
+        "ASC",
+        "ASYMMETRIC",
+        "BOTH",
+        "CASE",
+        "CAST",
+        "CHECK",
+        "COLLATE",
+        "COLUMN",
+        "CONSTRAINT",
+        "CREATE",
+        "CURRENT_CATALOG",
+        "CURRENT_DATE",
+        "CURRENT_ROLE",
+        "CURRENT_TIME",
+        "CURRENT_TIMESTAMP",
+        "CURRENT_USER",
+        "DEFAULT",
+        "DEFERRABLE",
+        "DESC",
+        "DISTINCT",
+        "DO",
+        "ELSE",
+        "END_P",
+        "EXCEPT",
+        "FALSE_P",
+        "FETCH",
+        "FOR",
+        "FOREIGN",
+        "FROM",
+        "GRANT",
+        "GROUP_P",
+        "HAVING",
+        "IN_P",
+        "INITIALLY",
+        "INTERSECT",
+        "INTO",
+        "LATERAL_P",
+        "LEADING",
+        "LIMIT",
+        "LOCALTIME",
+        "LOCALTIMESTAMP",
+        "NOT",
+        "NULL_P",
+        "OFFSET",
+        "ON",
+        "ONLY",
+        "OR",
+        "ORDER",
+        "PLACING",
+        "PRIMARY",
+        "REFERENCES",
+        "RETURNING",
+        "SELECT",
+        "SESSION_USER",
+        "SOME",
+        "SYMMETRIC",
+        "SYSTEM_USER",
+        "TABLE",
+        "THEN",
+        "TO",
+        "TRAILING",
+        "TRUE_P",
+        "UNION",
+        "UNIQUE",
+        "USER",
+        "USING",
+        "VARIADIC",
+        "WHEN",
+        "WHERE",
+        "WINDOW",
+        "WITH"
+      ]
+    },
+    {
+      "lhs": "bare_label_keyword",
+      "rhs": [
+        "ABORT_P",
+        "ABSENT",
+        "ABSOLUTE_P",
+        "ACCESS",
+        "ACTION",
+        "ADD_P",
+        "ADMIN",
+        "AFTER",
+        "AGGREGATE",
+        "ALL",
+        "ALSO",
+        "ALTER",
+        "ALWAYS",
+        "ANALYSE",
+        "ANALYZE",
+        "AND",
+        "ANY",
+        "ASC",
+        "ASENSITIVE",
+        "ASSERTION",
+        "ASSIGNMENT",
+        "ASYMMETRIC",
+        "AT",
+        "ATOMIC",
+        "ATTACH",
+        "ATTRIBUTE",
+        "AUTHORIZATION",
+        "BACKWARD",
+        "BEFORE",
+        "BEGIN_P",
+        "BETWEEN",
+        "BIGINT",
+        "BINARY",
+        "BIT",
+        "BOOLEAN_P",
+        "BOTH",
+        "BREADTH",
+        "BY",
+        "CACHE",
+        "CALL",
+        "CALLED",
+        "CASCADE",
+        "CASCADED",
+        "CASE",
+        "CAST",
+        "CATALOG_P",
+        "CHAIN",
+        "CHARACTERISTICS",
+        "CHECK",
+        "CHECKPOINT",
+        "CLASS",
+        "CLOSE",
+        "CLUSTER",
+        "COALESCE",
+        "COLLATE",
+        "COLLATION",
+        "COLUMN",
+        "COLUMNS",
+        "COMMENT",
+        "COMMENTS",
+        "COMMIT",
+        "COMMITTED",
+        "COMPRESSION",
+        "CONCURRENTLY",
+        "CONDITIONAL",
+        "CONFIGURATION",
+        "CONFLICT",
+        "CONNECTION",
+        "CONSTRAINT",
+        "CONSTRAINTS",
+        "CONTENT_P",
+        "CONTINUE_P",
+        "CONVERSION_P",
+        "COPY",
+        "COST",
+        "CROSS",
+        "CSV",
+        "CUBE",
+        "CURRENT_P",
+        "CURRENT_CATALOG",
+        "CURRENT_DATE",
+        "CURRENT_ROLE",
+        "CURRENT_SCHEMA",
+        "CURRENT_TIME",
+        "CURRENT_TIMESTAMP",
+        "CURRENT_USER",
+        "CURSOR",
+        "CYCLE",
+        "DATA_P",
+        "DATABASE",
+        "DEALLOCATE",
+        "DEC",
+        "DECIMAL_P",
+        "DECLARE",
+        "DEFAULT",
+        "DEFAULTS",
+        "DEFERRABLE",
+        "DEFERRED",
+        "DEFINER",
+        "DELETE_P",
+        "DELIMITER",
+        "DELIMITERS",
+        "DEPENDS",
+        "DEPTH",
+        "DESC",
+        "DETACH",
+        "DICTIONARY",
+        "DISABLE_P",
+        "DISCARD",
+        "DISTINCT",
+        "DO",
+        "DOCUMENT_P",
+        "DOMAIN_P",
+        "DOUBLE_P",
+        "DROP",
+        "EACH",
+        "ELSE",
+        "EMPTY_P",
+        "ENABLE_P",
+        "ENCODING",
+        "ENCRYPTED",
+        "END_P",
+        "ENFORCED",
+        "ENUM_P",
+        "ERROR_P",
+        "ESCAPE",
+        "EVENT",
+        "EXCLUDE",
+        "EXCLUDING",
+        "EXCLUSIVE",
+        "EXECUTE",
+        "EXISTS",
+        "EXPLAIN",
+        "EXPRESSION",
+        "EXTENSION",
+        "EXTERNAL",
+        "EXTRACT",
+        "FALSE_P",
+        "FAMILY",
+        "FINALIZE",
+        "FIRST_P",
+        "FLOAT_P",
+        "FOLLOWING",
+        "FORCE",
+        "FOREIGN",
+        "FORMAT",
+        "FORWARD",
+        "FREEZE",
+        "FULL",
+        "FUNCTION",
+        "FUNCTIONS",
+        "GENERATED",
+        "GLOBAL",
+        "GRANTED",
+        "GREATEST",
+        "GROUPING",
+        "GROUPS",
+        "HANDLER",
+        "HEADER_P",
+        "HOLD",
+        "IDENTITY_P",
+        "IF_P",
+        "ILIKE",
+        "IMMEDIATE",
+        "IMMUTABLE",
+        "IMPLICIT_P",
+        "IMPORT_P",
+        "IN_P",
+        "INCLUDE",
+        "INCLUDING",
+        "INCREMENT",
+        "INDENT",
+        "INDEX",
+        "INDEXES",
+        "INHERIT",
+        "INHERITS",
+        "INITIALLY",
+        "INLINE_P",
+        "INNER_P",
+        "INOUT",
+        "INPUT_P",
+        "INSENSITIVE",
+        "INSERT",
+        "INSTEAD",
+        "INT_P",
+        "INTEGER",
+        "INTERVAL",
+        "INVOKER",
+        "IS",
+        "ISOLATION",
+        "JOIN",
+        "JSON",
+        "JSON_ARRAY",
+        "JSON_ARRAYAGG",
+        "JSON_EXISTS",
+        "JSON_OBJECT",
+        "JSON_OBJECTAGG",
+        "JSON_QUERY",
+        "JSON_SCALAR",
+        "JSON_SERIALIZE",
+        "JSON_TABLE",
+        "JSON_VALUE",
+        "KEEP",
+        "KEY",
+        "KEYS",
+        "LABEL",
+        "LANGUAGE",
+        "LARGE_P",
+        "LAST_P",
+        "LATERAL_P",
+        "LEADING",
+        "LEAKPROOF",
+        "LEAST",
+        "LEFT",
+        "LEVEL",
+        "LIKE",
+        "LISTEN",
+        "LOAD",
+        "LOCAL",
+        "LOCALTIME",
+        "LOCALTIMESTAMP",
+        "LOCATION",
+        "LOCK_P",
+        "LOCKED",
+        "LOGGED",
+        "MAPPING",
+        "MATCH",
+        "MATCHED",
+        "MATERIALIZED",
+        "MAXVALUE",
+        "MERGE",
+        "MERGE_ACTION",
+        "METHOD",
+        "MINVALUE",
+        "MODE",
+        "MOVE",
+        "NAME_P",
+        "NAMES",
+        "NATIONAL",
+        "NATURAL",
+        "NCHAR",
+        "NESTED",
+        "NEW",
+        "NEXT",
+        "NFC",
+        "NFD",
+        "NFKC",
+        "NFKD",
+        "NO",
+        "NONE",
+        "NORMALIZE",
+        "NORMALIZED",
+        "NOT",
+        "NOTHING",
+        "NOTIFY",
+        "NOWAIT",
+        "NULL_P",
+        "NULLIF",
+        "NULLS_P",
+        "NUMERIC",
+        "OBJECT_P",
+        "OBJECTS_P",
+        "OF",
+        "OFF",
+        "OIDS",
+        "OLD",
+        "OMIT",
+        "ONLY",
+        "OPERATOR",
+        "OPTION",
+        "OPTIONS",
+        "OR",
+        "ORDINALITY",
+        "OTHERS",
+        "OUT_P",
+        "OUTER_P",
+        "OVERLAY",
+        "OVERRIDING",
+        "OWNED",
+        "OWNER",
+        "PARALLEL",
+        "PARAMETER",
+        "PARSER",
+        "PARTIAL",
+        "PARTITION",
+        "PASSING",
+        "PASSWORD",
+        "PATH",
+        "PERIOD",
+        "PLACING",
+        "PLAN",
+        "PLANS",
+        "POLICY",
+        "POSITION",
+        "PRECEDING",
+        "PREPARE",
+        "PREPARED",
+        "PRESERVE",
+        "PRIMARY",
+        "PRIOR",
+        "PRIVILEGES",
+        "PROCEDURAL",
+        "PROCEDURE",
+        "PROCEDURES",
+        "PROGRAM",
+        "PUBLICATION",
+        "QUOTE",
+        "QUOTES",
+        "RANGE",
+        "READ",
+        "REAL",
+        "REASSIGN",
+        "RECURSIVE",
+        "REF_P",
+        "REFERENCES",
+        "REFERENCING",
+        "REFRESH",
+        "REINDEX",
+        "RELATIVE_P",
+        "RELEASE",
+        "RENAME",
+        "REPEATABLE",
+        "REPLACE",
+        "REPLICA",
+        "RESET",
+        "RESTART",
+        "RESTRICT",
+        "RETURN",
+        "RETURNS",
+        "REVOKE",
+        "RIGHT",
+        "ROLE",
+        "ROLLBACK",
+        "ROLLUP",
+        "ROUTINE",
+        "ROUTINES",
+        "ROW",
+        "ROWS",
+        "RULE",
+        "SAVEPOINT",
+        "SCALAR",
+        "SCHEMA",
+        "SCHEMAS",
+        "SCROLL",
+        "SEARCH",
+        "SECURITY",
+        "SELECT",
+        "SEQUENCE",
+        "SEQUENCES",
+        "SERIALIZABLE",
+        "SERVER",
+        "SESSION",
+        "SESSION_USER",
+        "SET",
+        "SETOF",
+        "SETS",
+        "SHARE",
+        "SHOW",
+        "SIMILAR",
+        "SIMPLE",
+        "SKIP",
+        "SMALLINT",
+        "SNAPSHOT",
+        "SOME",
+        "SOURCE",
+        "SQL_P",
+        "STABLE",
+        "STANDALONE_P",
+        "START",
+        "STATEMENT",
+        "STATISTICS",
+        "STDIN",
+        "STDOUT",
+        "STORAGE",
+        "STORED",
+        "STRICT_P",
+        "STRING_P",
+        "STRIP_P",
+        "SUBSCRIPTION",
+        "SUBSTRING",
+        "SUPPORT",
+        "SYMMETRIC",
+        "SYSID",
+        "SYSTEM_P",
+        "SYSTEM_USER",
+        "TABLE",
+        "TABLES",
+        "TABLESAMPLE",
+        "TABLESPACE",
+        "TARGET",
+        "TEMP",
+        "TEMPLATE",
+        "TEMPORARY",
+        "TEXT_P",
+        "THEN",
+        "TIES",
+        "TIME",
+        "TIMESTAMP",
+        "TRAILING",
+        "TRANSACTION",
+        "TRANSFORM",
+        "TREAT",
+        "TRIGGER",
+        "TRIM",
+        "TRUE_P",
+        "TRUNCATE",
+        "TRUSTED",
+        "TYPE_P",
+        "TYPES_P",
+        "UESCAPE",
+        "UNBOUNDED",
+        "UNCOMMITTED",
+        "UNCONDITIONAL",
+        "UNENCRYPTED",
+        "UNIQUE",
+        "UNKNOWN",
+        "UNLISTEN",
+        "UNLOGGED",
+        "UNTIL",
+        "UPDATE",
+        "USER",
+        "USING",
+        "VACUUM",
+        "VALID",
+        "VALIDATE",
+        "VALIDATOR",
+        "VALUE_P",
+        "VALUES",
+        "VARCHAR",
+        "VARIADIC",
+        "VERBOSE",
+        "VERSION_P",
+        "VIEW",
+        "VIEWS",
+        "VIRTUAL",
+        "VOLATILE",
+        "WHEN",
+        "WHITESPACE_P",
+        "WORK",
+        "WRAPPER",
+        "WRITE",
+        "XML_P",
+        "XMLATTRIBUTES",
+        "XMLCONCAT",
+        "XMLELEMENT",
+        "XMLEXISTS",
+        "XMLFOREST",
+        "XMLNAMESPACES",
+        "XMLPARSE",
+        "XMLPI",
+        "XMLROOT",
+        "XMLSERIALIZE",
+        "XMLTABLE",
+        "YES_P",
+        "ZONE"
+      ]
+    }
+  ]
+}
