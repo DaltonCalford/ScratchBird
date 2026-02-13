@@ -169,6 +169,7 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_postgresql_parser_agent\.cpp$") 
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_schema_introspection\.cpp$")  # API mismatch
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_unix_socket_channel\.cpp$")  # API mismatch
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_type_mapping\.cpp$")  # Link error
+list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_fdw_protocol_adapter_factory\.cpp$")  # Standalone FDW target
 
 # Test executable
 add_executable(scratchbird_tests ${TEST_SOURCES})
@@ -1934,6 +1935,30 @@ target_link_libraries(test_sblr_type_opcodes
 gtest_discover_tests(test_sblr_type_opcodes
     TEST_PREFIX "SBLR."
     PROPERTIES LABELS "unit;sblr;type;opcode;bytecode"
+    PROPERTIES TIMEOUT 60
+)
+
+# ============================================================================
+# FDW Protocol Adapter Factory Tests
+# ============================================================================
+
+add_executable(test_fdw_protocol_adapter_factory
+    unit/test_fdw_protocol_adapter_factory.cpp
+)
+
+target_include_directories(test_fdw_protocol_adapter_factory PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+target_link_libraries(test_fdw_protocol_adapter_factory
+    PRIVATE
+    scratchbird_fdw
+    scratchbird_core
+    GTest::gtest
+    GTest::gtest_main
+)
+
+gtest_discover_tests(test_fdw_protocol_adapter_factory
+    TEST_PREFIX "FDW."
+    PROPERTIES LABELS "unit;fdw;factory"
     PROPERTIES TIMEOUT 60
 )
 

@@ -15,6 +15,9 @@
  */
 
 #include "scratchbird/fdw/protocol_adapter.h"
+#include "scratchbird/fdw/postgresql_adapter.h"
+#include "scratchbird/fdw/mysql_adapter.h"
+#include "scratchbird/fdw/firebird_adapter.h"
 
 namespace scratchbird {
 namespace fdw {
@@ -64,33 +67,19 @@ void ProtocolAdapterBase::recordBytesReceived(uint64_t bytes) {
 // ProtocolAdapterFactory Implementation
 // =============================================================================
 
-// Forward declarations for adapter types
-class PostgreSQLAdapter;
-class MySQLAdapter;
-class FirebirdAdapter;
-
 std::unique_ptr<IProtocolAdapter> ProtocolAdapterFactory::create(RemoteDatabaseType type) {
     switch (type) {
         case RemoteDatabaseType::POSTGRESQL:
-            // PostgreSQL adapter will be implemented in postgresql_adapter.cpp
-            return nullptr;  // TODO: return std::make_unique<PostgreSQLAdapter>();
+            return std::make_unique<PostgreSQLAdapter>();
 
         case RemoteDatabaseType::MYSQL:
-            // MySQL adapter will be implemented in mysql_adapter.cpp
-            return nullptr;  // TODO: return std::make_unique<MySQLAdapter>();
+            return std::make_unique<MySQLAdapter>();
 
         case RemoteDatabaseType::FIREBIRD:
-            // Firebird adapter will be implemented in firebird_adapter.cpp
-            return nullptr;  // TODO: return std::make_unique<FirebirdAdapter>();
+            return std::make_unique<FirebirdAdapter>();
 
         case RemoteDatabaseType::MSSQL:
-            // MSSQL adapter will use TDS protocol
-            return nullptr;  // TODO
-
         case RemoteDatabaseType::SCRATCHBIRD:
-            // ScratchBird adapter uses native protocol
-            return nullptr;  // TODO
-
         case RemoteDatabaseType::ORACLE:
         case RemoteDatabaseType::SQLITE:
         case RemoteDatabaseType::ODBC:
@@ -108,8 +97,6 @@ bool ProtocolAdapterFactory::isSupported(RemoteDatabaseType type) {
         case RemoteDatabaseType::POSTGRESQL:
         case RemoteDatabaseType::MYSQL:
         case RemoteDatabaseType::FIREBIRD:
-        case RemoteDatabaseType::MSSQL:
-        case RemoteDatabaseType::SCRATCHBIRD:
             return true;
         default:
             return false;
@@ -120,9 +107,7 @@ std::vector<RemoteDatabaseType> ProtocolAdapterFactory::supportedTypes() {
     return {
         RemoteDatabaseType::POSTGRESQL,
         RemoteDatabaseType::MYSQL,
-        RemoteDatabaseType::FIREBIRD,
-        RemoteDatabaseType::MSSQL,
-        RemoteDatabaseType::SCRATCHBIRD
+        RemoteDatabaseType::FIREBIRD
     };
 }
 
