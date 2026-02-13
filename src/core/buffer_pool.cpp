@@ -127,17 +127,17 @@ namespace scratchbird::core
         // Stop background writer first (before acquiring mutex to avoid deadlock)
         stopBackgroundWriter();
 
-        std::lock_guard<std::mutex> lock(mutex_);
-
         // Flush all dirty pages
         Status status = flushAll(ctx);
 
-        // Memory is freed automatically by unique_ptr
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            // Memory is freed automatically by unique_ptr
+            // Clear data structures
+            lru_list_.clear();
+        }
 
-        // Clear data structures
-        lru_list_.clear();
-
-        // P2-1: Clear all page table partitions
+        // Clear page table partitions without nesting partition locks under mutex_.
         for (size_t i = 0; i < NUM_PAGE_TABLE_PARTITIONS; ++i)
         {
             std::lock_guard<std::mutex> partition_lock(page_table_partitions_[i].mutex);
@@ -537,21 +537,27 @@ namespace scratchbird::core
     // P2-1: Updated to use partitioned page table locks
     auto BufferPool::flushPageGlobal(GPID gpid, ErrorContext *ctx) -> Status
     {
-        // P2-1: Only need partition lock for flush (no global lock needed)
+        // Lookup under partition lock, then release before frame content lock.
         size_t partition_idx = getPartitionIndex(gpid);
         auto& partition = page_table_partitions_[partition_idx];
+        uint32_t frame_index = 0;
 
-        std::lock_guard<std::mutex> partition_lock(partition.mutex);
-
-        // Find the page in buffer pool
-        auto it = partition.table.find(gpid);
-        if (it == partition.table.end())
         {
-            // Page not in buffer pool, nothing to flush
-            return Status::OK;
+            std::lock_guard<std::mutex> partition_lock(partition.mutex);
+            auto it = partition.table.find(gpid);
+            if (it == partition.table.end())
+            {
+                // Page not in buffer pool, nothing to flush
+                return Status::OK;
+            }
+            frame_index = it->second;
         }
 
-        uint32_t frame_index = it->second;
+        // Frame may have been reassigned after partition unlock; validate again before flushing.
+        if (frame_index >= frames_.size() || frames_[frame_index].gpid != gpid)
+        {
+            return Status::OK;
+        }
 
         // Check if dirty
         if (!frames_[frame_index].is_dirty.load(std::memory_order_acquire))
@@ -573,6 +579,14 @@ namespace scratchbird::core
             return Status::OK;
         }
 
+        // Re-validate after content lock acquisition.
+        if (frames_[frame_index].gpid != gpid ||
+            !frames_[frame_index].is_dirty.load(std::memory_order_acquire) ||
+            frames_[frame_index].pin_count.load(std::memory_order_relaxed) > 0)
+        {
+            return Status::OK;
+        }
+
         // Write to disk
         Status status = writePageToDisk(gpid, frames_[frame_index].data.get(), ctx);
         if (status == Status::OK)
@@ -588,35 +602,35 @@ namespace scratchbird::core
 
     auto BufferPool::flushAll(ErrorContext *ctx) -> Status
     {
-        // Note: caller must hold lock or this must be called from a method that holds lock
-
         for (uint32_t i = 0; i < config_.pool_size; i++)
         {
-            // PHASE 1, TASK 1.2.3: Changed page_id to gpid
-            if (frames_[i].gpid != INVALID_GPID &&
-                frames_[i].is_dirty.load(std::memory_order_acquire))
+            std::unique_lock<std::mutex> content_lock(*frames_[i].content_mutex,
+                                                      std::try_to_lock);
+            if (!content_lock.owns_lock())
             {
-                if (frames_[i].pin_count.load(std::memory_order_relaxed) > 0)
-                {
-                    continue;
-                }
-                std::unique_lock<std::mutex> content_lock(*frames_[i].content_mutex,
-                                                          std::try_to_lock);
-                if (!content_lock.owns_lock())
-                {
-                    continue;
-                }
-
-                Status status = writePageToDisk(frames_[i].gpid, frames_[i].data.get(), ctx);
-                if (status != Status::OK)
-                {
-                    return status;
-                }
-                // P2-2: Decrement dirty counter when transitioning from dirty to clean
-                tryClearFrameDirty(i);
-                // MEDIUM-1 FIX: Use relaxed atomic increment for stats
-                stats_.flushes.fetch_add(1, std::memory_order_relaxed);
+                continue;
             }
+
+            // PHASE 1, TASK 1.2.3: Changed page_id to gpid
+            if (frames_[i].gpid == INVALID_GPID ||
+                !frames_[i].is_dirty.load(std::memory_order_acquire))
+            {
+                continue;
+            }
+            if (frames_[i].pin_count.load(std::memory_order_relaxed) > 0)
+            {
+                continue;
+            }
+
+            Status status = writePageToDisk(frames_[i].gpid, frames_[i].data.get(), ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+            // P2-2: Decrement dirty counter when transitioning from dirty to clean
+            tryClearFrameDirty(i);
+            // MEDIUM-1 FIX: Use relaxed atomic increment for stats
+            stats_.flushes.fetch_add(1, std::memory_order_relaxed);
         }
 
         return Status::OK;
@@ -1461,40 +1475,41 @@ namespace scratchbird::core
         uint32_t pages_written = 0;
         uint32_t pages_to_write = 0;
 
-        // Acquire mutex for the entire flushing cycle
-        std::lock_guard<std::mutex> lock(mutex_);
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
 
-        // Calculate current dirty ratio
-        double dirty_ratio = calculateDirtyRatio();
+            // Calculate current dirty ratio
+            double dirty_ratio = calculateDirtyRatio();
 
-        // Determine how many pages to write based on dirty ratio (adaptive algorithm)
-        if (dirty_ratio >= config_.dirty_ratio_checkpoint)
-        {
-            // EMERGENCY: Checkpoint threshold exceeded
-            // Write maximum pages to prevent checkpoint storm
-            pages_to_write = config_.bgwriter_max_pages;
-        }
-        else if (dirty_ratio >= config_.dirty_ratio_high)
-        {
-            // AGGRESSIVE: High threshold exceeded
-            // Write 75% of maximum pages
-            pages_to_write = static_cast<uint32_t>(config_.bgwriter_max_pages * 0.75);
-        }
-        else if (dirty_ratio >= config_.dirty_ratio_low)
-        {
-            // GENTLE: Low threshold exceeded
-            // Write scaled based on how far above low threshold
-            // Scale linearly from 25% to 75% of max_pages
-            double scale = (dirty_ratio - config_.dirty_ratio_low) /
-                           (config_.dirty_ratio_high - config_.dirty_ratio_low);
-            pages_to_write = static_cast<uint32_t>(config_.bgwriter_max_pages * (0.25 + scale * 0.50));
-        }
-        else
-        {
-            // Below low threshold - no flushing needed
-            // MEDIUM-1 FIX: Use relaxed atomic increment for stats
-            stats_.bgwriter_runs.fetch_add(1, std::memory_order_relaxed);
-            return;
+            // Determine how many pages to write based on dirty ratio (adaptive algorithm)
+            if (dirty_ratio >= config_.dirty_ratio_checkpoint)
+            {
+                // EMERGENCY: Checkpoint threshold exceeded
+                // Write maximum pages to prevent checkpoint storm
+                pages_to_write = config_.bgwriter_max_pages;
+            }
+            else if (dirty_ratio >= config_.dirty_ratio_high)
+            {
+                // AGGRESSIVE: High threshold exceeded
+                // Write 75% of maximum pages
+                pages_to_write = static_cast<uint32_t>(config_.bgwriter_max_pages * 0.75);
+            }
+            else if (dirty_ratio >= config_.dirty_ratio_low)
+            {
+                // GENTLE: Low threshold exceeded
+                // Write scaled based on how far above low threshold
+                // Scale linearly from 25% to 75% of max_pages
+                double scale = (dirty_ratio - config_.dirty_ratio_low) /
+                               (config_.dirty_ratio_high - config_.dirty_ratio_low);
+                pages_to_write = static_cast<uint32_t>(config_.bgwriter_max_pages * (0.25 + scale * 0.50));
+            }
+            else
+            {
+                // Below low threshold - no flushing needed
+                // MEDIUM-1 FIX: Use relaxed atomic increment for stats
+                stats_.bgwriter_runs.fetch_add(1, std::memory_order_relaxed);
+                return;
+            }
         }
 
         // Ensure we write at least 1 page if dirty ratio triggered flushing
@@ -1509,6 +1524,12 @@ namespace scratchbird::core
         for (uint32_t i = 0; i < config_.pool_size && pages_written < pages_to_write; i++)
         {
             Frame &frame = frames_[i];
+
+            std::unique_lock<std::mutex> content_lock(*frame.content_mutex, std::try_to_lock);
+            if (!content_lock.owns_lock())
+            {
+                continue;
+            }
 
             // Skip non-dirty pages
             if (!frame.is_dirty.load(std::memory_order_acquire))
@@ -1536,13 +1557,6 @@ namespace scratchbird::core
             if (frame.usage_count.load(std::memory_order_relaxed) > 2 && pages_written < pages_to_write / 2)
             {
                 // Skip hot pages in first half of writes (only flush cold pages)
-                continue;
-            }
-
-            // Prevent concurrent readers/writers from touching frame data while flushing.
-            std::unique_lock<std::mutex> content_lock(*frame.content_mutex, std::try_to_lock);
-            if (!content_lock.owns_lock())
-            {
                 continue;
             }
 
