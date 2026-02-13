@@ -15,6 +15,7 @@
 #include <vector>
 #include <string>
 #include <algorithm>
+#include <random>
 
 using namespace scratchbird::core;
 
@@ -137,7 +138,8 @@ TEST_F(GinPostingTreeTest, PostingTreeSortedOrder)
     }
 
     // Shuffle TIDs
-    std::random_shuffle(inserted_tids.begin(), inserted_tids.end());
+    std::mt19937 rng(42);
+    std::shuffle(inserted_tids.begin(), inserted_tids.end(), rng);
 
     // Insert in shuffled order
     for (const TID &tid : inserted_tids)

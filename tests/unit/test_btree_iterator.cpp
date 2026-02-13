@@ -33,6 +33,7 @@
 #include <filesystem>
 #include <vector>
 #include <algorithm>
+#include <random>
 #include <iostream>
 
 using namespace scratchbird::core;
@@ -248,7 +249,8 @@ TEST_F(BTreeIteratorTest, FullScanMultiplePages)
         keys.push_back(i);
     }
     // Shuffle to force tree growth
-    std::random_shuffle(keys.begin(), keys.end());
+    std::mt19937 rng(42);
+    std::shuffle(keys.begin(), keys.end(), rng);
     insertKeys(keys);
 
     // Full scan
