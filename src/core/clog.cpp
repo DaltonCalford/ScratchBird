@@ -119,6 +119,13 @@ namespace scratchbird::core
             return pin_status;
         }
 
+        Status lock_status = buffer_pool_->lockPage(page_id, ctx);
+        if (lock_status != Status::OK)
+        {
+            buffer_pool_->unpinPage(page_id, false, ctx);
+            return lock_status;
+        }
+
         auto *page_data = static_cast<uint8_t *>(page_buffer);
         auto *header = reinterpret_cast<ClogPageHeader *>(page_data);
 
@@ -127,6 +134,8 @@ namespace scratchbird::core
 
         // Set the 2-bit status
         setStatusBits(status_data, offset, status);
+
+        buffer_pool_->unlockPage(page_id, ctx);
 
         // Unpin with dirty flag
         buffer_pool_->unpinPage(page_id, true, ctx);
@@ -155,6 +164,13 @@ namespace scratchbird::core
             return Status::NOT_FOUND;
         }
 
+        Status lock_status = buffer_pool_->lockPage(page_id, ctx);
+        if (lock_status != Status::OK)
+        {
+            buffer_pool_->unpinPage(page_id, false, ctx);
+            return lock_status;
+        }
+
         auto *page_data = static_cast<uint8_t *>(page_buffer);
 
         // Status data starts after header
@@ -167,6 +183,8 @@ namespace scratchbird::core
         {
             *status_out = clog_status;
         }
+
+        buffer_pool_->unlockPage(page_id, ctx);
 
         // Unpin page
         buffer_pool_->unpinPage(page_id, false, ctx);
@@ -263,6 +281,13 @@ namespace scratchbird::core
             return status;
         }
 
+        Status lock_status = buffer_pool_->lockPage(page_id, ctx);
+        if (lock_status != Status::OK)
+        {
+            buffer_pool_->unpinPage(page_id, false, ctx);
+            return lock_status;
+        }
+
         auto *page_data = static_cast<uint8_t *>(page_buffer);
 
         // Initialize page to zeros (all statuses = IN_PROGRESS)
@@ -277,12 +302,10 @@ namespace scratchbird::core
         header->page_header.page_id = page_id;
         header->page_header.lsn = 0;
         header->page_header.flags = 0;
-        memcpy(header->page_header.database_uuid, db_->uuid().bytes.data(), 16);
         header->page_header.generation = 1;
-        header->page_header.free_space = 0;
-        header->page_header.item_count = 0;
-        header->page_header.free_offset = sizeof(ClogPageHeader);
-        header->page_header.special_size = 0;
+        pageSetLower(header->page_header, sizeof(ClogPageHeader));
+        pageSetUpper(header->page_header, db_->page_size());
+        pageSetSpecial(header->page_header, db_->page_size());
 
         header->base_xid = base_xid;
         header->next_clog_page = 0;
@@ -290,6 +313,8 @@ namespace scratchbird::core
 
         // Calculate checksum
         header->page_header.checksum = calculatePageChecksum(page_data, db_->page_size());
+
+        buffer_pool_->unlockPage(page_id, ctx);
 
         // Unpin with dirty flag
         buffer_pool_->unpinPage(page_id, true, ctx);

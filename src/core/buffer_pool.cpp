@@ -95,7 +95,7 @@ namespace scratchbird::core
             frames_[i].gpid = INVALID_GPID;
             // CRITICAL FIX (CRITICAL-1): Use atomic store for thread-safe write
             frames_[i].pin_count.store(0, std::memory_order_relaxed);
-            frames_[i].is_dirty = false;
+            frames_[i].is_dirty.store(false, std::memory_order_relaxed);
 
             // Add to LRU list (all frames start as free)
             lru_list_.push_back(i);
@@ -166,7 +166,7 @@ namespace scratchbird::core
         }
 
         std::setvbuf(stats_debug_fp_, nullptr, _IOLBF, 0);
-        stats_debug_enabled_ = true;
+        stats_debug_enabled_.store(true, std::memory_order_release);
         stats_debug_seq_ = 0;
         std::fprintf(stats_debug_fp_, "seq,ts_us,tid,event,ctx,gpid,tablespace,page,hits,misses\n");
         return true;
@@ -175,7 +175,7 @@ namespace scratchbird::core
     void BufferPool::disableStatsDebug()
     {
         std::lock_guard<std::mutex> lock(stats_debug_mutex_);
-        stats_debug_enabled_ = false;
+        stats_debug_enabled_.store(false, std::memory_order_release);
         if (stats_debug_fp_)
         {
             std::fclose(stats_debug_fp_);
@@ -185,7 +185,7 @@ namespace scratchbird::core
 
     void BufferPool::logStatsEvent(const char *event, GPID gpid)
     {
-        if (!stats_debug_enabled_)
+        if (!stats_debug_enabled_.load(std::memory_order_acquire))
         {
             return;
         }
@@ -273,7 +273,7 @@ namespace scratchbird::core
                     }
                     frames_[i].gpid = INVALID_GPID;
                     frames_[i].pin_count.store(0, std::memory_order_relaxed);
-                    frames_[i].is_dirty = false;
+                    frames_[i].is_dirty.store(false, std::memory_order_relaxed);
                     frames_[i].usage_count.store(0, std::memory_order_relaxed);
                     lru_list_.push_back(i);
                 }
@@ -323,10 +323,6 @@ namespace scratchbird::core
                 // MEDIUM-1 FIX: Use relaxed atomic increment for stats
                 stats_.hits.fetch_add(1, std::memory_order_relaxed);
                 logStatsEvent("HIT", gpid);
-                if (metrics_ && metrics_->buffer_pool_hits_total)
-                {
-                    metrics_->buffer_pool_hits_total->inc();
-                }
                 if (metrics_ && metrics_->buffer_pool_hits_total)
                 {
                     metrics_->buffer_pool_hits_total->inc();
@@ -452,7 +448,7 @@ namespace scratchbird::core
         // Initialize frame metadata before publishing mapping to avoid lost pin_count on cache hits.
         frames_[frame_index].gpid = gpid;
         frames_[frame_index].pin_count.store(1, std::memory_order_relaxed);
-        frames_[frame_index].is_dirty = false;
+        frames_[frame_index].is_dirty.store(false, std::memory_order_relaxed);
 
         // Clock Sweep: Initialize usage count for newly loaded page
         frames_[frame_index].usage_count.store(1, std::memory_order_relaxed);
@@ -515,11 +511,8 @@ namespace scratchbird::core
 
         // Update dirty flag
         // P2-2: Update atomic dirty page counter when transitioning to dirty
-        if (is_dirty && !frames_[frame_index].is_dirty)
+        if (is_dirty && tryMarkFrameDirty(frame_index))
         {
-            frames_[frame_index].is_dirty = true;
-            dirty_page_count_.fetch_add(1, std::memory_order_relaxed);
-            updateDirtyTelemetry();
             if (auto* conn_ctx = ConnectionContext::getCurrent())
             {
                 conn_ctx->recordPageMark();
@@ -561,7 +554,7 @@ namespace scratchbird::core
         uint32_t frame_index = it->second;
 
         // Check if dirty
-        if (!frames_[frame_index].is_dirty)
+        if (!frames_[frame_index].is_dirty.load(std::memory_order_acquire))
         {
             // Not dirty, nothing to flush
             return Status::OK;
@@ -585,9 +578,7 @@ namespace scratchbird::core
         if (status == Status::OK)
         {
             // P2-2: Decrement dirty counter when transitioning from dirty to clean
-            frames_[frame_index].is_dirty = false;
-            dirty_page_count_.fetch_sub(1, std::memory_order_relaxed);
-            updateDirtyTelemetry();
+            tryClearFrameDirty(frame_index);
             // MEDIUM-1 FIX: Use relaxed atomic increment for stats
             stats_.flushes.fetch_add(1, std::memory_order_relaxed);
         }
@@ -602,7 +593,8 @@ namespace scratchbird::core
         for (uint32_t i = 0; i < config_.pool_size; i++)
         {
             // PHASE 1, TASK 1.2.3: Changed page_id to gpid
-            if (frames_[i].gpid != INVALID_GPID && frames_[i].is_dirty)
+            if (frames_[i].gpid != INVALID_GPID &&
+                frames_[i].is_dirty.load(std::memory_order_acquire))
             {
                 if (frames_[i].pin_count.load(std::memory_order_relaxed) > 0)
                 {
@@ -621,9 +613,7 @@ namespace scratchbird::core
                     return status;
                 }
                 // P2-2: Decrement dirty counter when transitioning from dirty to clean
-                frames_[i].is_dirty = false;
-                dirty_page_count_.fetch_sub(1, std::memory_order_relaxed);
-                updateDirtyTelemetry();
+                tryClearFrameDirty(i);
                 // MEDIUM-1 FIX: Use relaxed atomic increment for stats
                 stats_.flushes.fetch_add(1, std::memory_order_relaxed);
             }
@@ -718,7 +708,8 @@ namespace scratchbird::core
         for (uint32_t i = 0; i < config_.pool_size; i++)
         {
             // Skip invalid or clean frames
-            if (frames_[i].gpid == INVALID_GPID || !frames_[i].is_dirty)
+            if (frames_[i].gpid == INVALID_GPID ||
+                !frames_[i].is_dirty.load(std::memory_order_acquire))
             {
                 continue;
             }
@@ -740,9 +731,7 @@ namespace scratchbird::core
                 }
 
                 // P2-2: Decrement dirty counter when transitioning from dirty to clean
-                frames_[i].is_dirty = false;
-                dirty_page_count_.fetch_sub(1, std::memory_order_relaxed);
-                updateDirtyTelemetry();
+                tryClearFrameDirty(i);
                 stats_.flushes.fetch_add(1, std::memory_order_relaxed);
                 flushed_count++;
             }
@@ -869,7 +858,7 @@ namespace scratchbird::core
 
         if (frame.gpid == INVALID_GPID)
         {
-            frame.is_dirty = false;
+            frame.is_dirty.store(false, std::memory_order_relaxed);
             frame.pin_count.store(0, std::memory_order_relaxed);
             frame.usage_count.store(0, std::memory_order_relaxed);
             return Status::OK;
@@ -891,15 +880,14 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
-        if (frame.is_dirty)
+        if (frame.is_dirty.load(std::memory_order_acquire))
         {
             Status status = writePageToDisk(frame.gpid, frame.data.get(), ctx);
             if (status != Status::OK)
             {
                 return status;
             }
-            dirty_page_count_.fetch_sub(1, std::memory_order_relaxed);
-            updateDirtyTelemetry();
+            tryClearFrameDirty(frame_index);
             stats_.flushes.fetch_add(1, std::memory_order_relaxed);
             stats_.evictions_dirty.fetch_add(1, std::memory_order_relaxed);
         }
@@ -910,7 +898,7 @@ namespace scratchbird::core
 
         partition.table.erase(page_table_it);
         frame.gpid = INVALID_GPID;
-        frame.is_dirty = false;
+        frame.is_dirty.store(false, std::memory_order_relaxed);
         frame.pin_count.store(0, std::memory_order_relaxed);
         frame.usage_count.store(0, std::memory_order_relaxed);
         stats_.evictions.fetch_add(1, std::memory_order_relaxed);
@@ -993,7 +981,7 @@ namespace scratchbird::core
                 {
                     // Found victim! This page hasn't been accessed recently
                     // Prefer clean pages for faster eviction (READ ONLY optimization)
-                    if (!frame.is_dirty)
+                    if (!frame.is_dirty.load(std::memory_order_acquire))
                     {
                         // Clean page - evict immediately
                         candidate_frame = current_hand;
@@ -1106,7 +1094,7 @@ namespace scratchbird::core
             evicted_frame = candidate_frame;
 
             // Track whether this is a clean or dirty eviction
-            bool was_dirty = frames_[evicted_frame].is_dirty;
+            bool was_dirty = frames_[evicted_frame].is_dirty.load(std::memory_order_acquire);
 
             // If dirty, flush first
             if (was_dirty)
@@ -1118,8 +1106,7 @@ namespace scratchbird::core
                     return status;
                 }
                 // P2-2: Decrement dirty counter since page is being flushed during eviction
-                dirty_page_count_.fetch_sub(1, std::memory_order_relaxed);
-                updateDirtyTelemetry();
+                tryClearFrameDirty(evicted_frame);
                 // MEDIUM-1 FIX: Use relaxed atomic increment for stats
                 stats_.flushes.fetch_add(1, std::memory_order_relaxed);
                 stats_.evictions_dirty.fetch_add(1, std::memory_order_relaxed);
@@ -1136,7 +1123,7 @@ namespace scratchbird::core
             // Reset frame (including Clock Sweep usage_count)
             // PHASE 1, TASK 1.2.3: Changed page_id to gpid
             frames_[evicted_frame].gpid = INVALID_GPID;
-            frames_[evicted_frame].is_dirty = false;
+            frames_[evicted_frame].is_dirty.store(false, std::memory_order_relaxed);
             frames_[evicted_frame].pin_count.store(0, std::memory_order_relaxed);
             // CRITICAL FIX (CRITICAL-1): Use atomic store for thread-safe write
             frames_[evicted_frame].usage_count.store(0, std::memory_order_relaxed); // Reset usage count for next page
@@ -1294,6 +1281,34 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    bool BufferPool::tryMarkFrameDirty(uint32_t frame_index)
+    {
+        bool expected = false;
+        if (frames_[frame_index].is_dirty.compare_exchange_strong(expected, true,
+                                                                  std::memory_order_acq_rel,
+                                                                  std::memory_order_acquire))
+        {
+            dirty_page_count_.fetch_add(1, std::memory_order_relaxed);
+            updateDirtyTelemetry();
+            return true;
+        }
+        return false;
+    }
+
+    bool BufferPool::tryClearFrameDirty(uint32_t frame_index)
+    {
+        bool expected = true;
+        if (frames_[frame_index].is_dirty.compare_exchange_strong(expected, false,
+                                                                  std::memory_order_acq_rel,
+                                                                  std::memory_order_acquire))
+        {
+            dirty_page_count_.fetch_sub(1, std::memory_order_relaxed);
+            updateDirtyTelemetry();
+            return true;
+        }
+        return false;
+    }
+
     // PHASE 1, TASK 1.2.3: LEGACY API - Convert page_id to GPID and call markDirtyGlobal
     auto BufferPool::markDirty(uint32_t page_id, ErrorContext *ctx) -> Status
     {
@@ -1322,11 +1337,8 @@ namespace scratchbird::core
         uint32_t frame_index = it->second;
 
         // P2-2: Update atomic dirty page counter when transitioning to dirty
-        if (!frames_[frame_index].is_dirty)
+        if (tryMarkFrameDirty(frame_index))
         {
-            frames_[frame_index].is_dirty = true;
-            dirty_page_count_.fetch_add(1, std::memory_order_relaxed);
-            updateDirtyTelemetry();
             if (auto* conn_ctx = ConnectionContext::getCurrent())
             {
                 conn_ctx->recordPageMark();
@@ -1375,7 +1387,10 @@ namespace scratchbird::core
         // CRITICAL: This method is called while holding mutex_ in initialize()
         // Do NOT acquire mutex_ here to avoid deadlock
 
-        bgwriter_shutdown_.store(false, std::memory_order_release);
+        {
+            std::lock_guard<std::mutex> lock(bgwriter_mutex_);
+            bgwriter_shutdown_ = false;
+        }
         bgwriter_thread_ = std::make_unique<std::thread>(&BufferPool::backgroundWriterMain, this);
         uint64_t tid = std::hash<std::thread::id>{}(bgwriter_thread_->get_id());
         LOG_INFO(GENERAL, "Background writer thread started (tid=%lu)",
@@ -1384,12 +1399,10 @@ namespace scratchbird::core
 
     void BufferPool::stopBackgroundWriter()
     {
-        // Signal shutdown (no mutex needed - atomic operation)
-        bgwriter_shutdown_.store(true, std::memory_order_release);
-
-        // Wake up background writer if sleeping
+        // Signal shutdown under bgwriter coordination lock.
         {
             std::lock_guard<std::mutex> lock(bgwriter_mutex_);
+            bgwriter_shutdown_ = true;
             bgwriter_cv_.notify_one();
         }
 
@@ -1407,20 +1420,22 @@ namespace scratchbird::core
 
         ErrorContext ctx;
 
-        while (!bgwriter_shutdown_.load(std::memory_order_acquire))
+        while (true)
         {
             // Sleep for configured delay (using condition variable for interruptible sleep)
             {
                 std::unique_lock<std::mutex> lock(bgwriter_mutex_);
+                if (bgwriter_shutdown_)
+                {
+                    break;
+                }
                 bgwriter_cv_.wait_for(lock,
                                        std::chrono::milliseconds(config_.bgwriter_delay_ms),
-                                       [this] { return bgwriter_shutdown_.load(std::memory_order_acquire); });
-            }
-
-            // Check shutdown again after waking up
-            if (bgwriter_shutdown_.load(std::memory_order_acquire))
-            {
-                break;
+                                       [this] { return bgwriter_shutdown_; });
+                if (bgwriter_shutdown_)
+                {
+                    break;
+                }
             }
 
             // Perform one cycle of adaptive flushing
@@ -1496,7 +1511,7 @@ namespace scratchbird::core
             Frame &frame = frames_[i];
 
             // Skip non-dirty pages
-            if (!frame.is_dirty)
+            if (!frame.is_dirty.load(std::memory_order_acquire))
             {
                 continue;
             }
@@ -1524,15 +1539,20 @@ namespace scratchbird::core
                 continue;
             }
 
+            // Prevent concurrent readers/writers from touching frame data while flushing.
+            std::unique_lock<std::mutex> content_lock(*frame.content_mutex, std::try_to_lock);
+            if (!content_lock.owns_lock())
+            {
+                continue;
+            }
+
             // Flush this dirty page
             // PHASE 1, TASK 1.2.3: Changed page_id to gpid
             Status status = writePageToDisk(frame.gpid, frame.data.get(), ctx);
             if (status == Status::OK)
             {
                 // P2-2: Decrement dirty counter when transitioning from dirty to clean
-                frame.is_dirty = false;
-                dirty_page_count_.fetch_sub(1, std::memory_order_relaxed);
-                updateDirtyTelemetry();
+                tryClearFrameDirty(i);
                 pages_written++;
                 // MEDIUM-1 FIX: Use relaxed atomic increment for stats
                 stats_.bgwriter_pages_written.fetch_add(1, std::memory_order_relaxed);
