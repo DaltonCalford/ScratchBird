@@ -380,12 +380,13 @@ namespace scratchbird::core
         mutable std::unordered_map<uint64_t, uint32_t> tip_location_cache_;
         static constexpr uint32_t MAX_TIP_LOCATION_CACHE_SIZE = 1000; // Limit cache size
         mutable std::mutex tip_cache_mutex_; // Protects tip_location_cache_ only
+        mutable std::mutex tip_io_mutex_; // Serialize TIP page mutation paths
 
         mutable std::mutex mutex_; // Thread safety for future
 
         // Group commit infrastructure
         std::mutex group_commit_mutex_;                  // Protects group commit queue
-        std::vector<CommitWaiter *> commit_queue_;       // Queue of waiting commits
+        std::vector<CommitWaiter*> commit_queue_;       // Queue of waiting commits (thread-owned waiters)
         bool group_commit_in_progress_{false};           // True if leader is processing
         std::atomic<bool> group_commit_enabled_{true};   // Configuration flag
         uint64_t group_commit_timeout_us_{10000};        // Wait up to 10ms for batch (configurable)
@@ -449,7 +450,8 @@ namespace scratchbird::core
 
         // LOCKING: Acquires group_commit_mutex_ internally to collect waiters.
         //          Does NOT hold mutex_ (called after mutex_ released in commit/rollback).
-        auto performGroupCommit(CommitWaiter *leader_waiter, ErrorContext *ctx) -> Status;
+        auto performGroupCommit(CommitWaiter* leader_waiter,
+                                ErrorContext *ctx) -> Status;
 
         // ===========================================================================================
         // LRU CACHE MANAGEMENT (PRIVATE HELPERS)

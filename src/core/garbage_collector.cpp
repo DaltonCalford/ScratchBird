@@ -451,8 +451,41 @@ namespace scratchbird::core
             return 0;
         }
 
-        // Use HeapPage for garbage collection
+        // Reject pages with a mismatched runtime page size before interpreting heap layout.
+        if (page_header->page_size != db_->page_size())
+        {
+            LOG_WARNING(VACUUM,
+                        "Skipping page %u for GC due to page-size mismatch (header=%u, db=%u)",
+                        page_id, page_header->page_size, db_->page_size());
+            db_->buffer_pool()->unpinPage(page_id, false, ctx);
+            if (space_reclaimed_out != nullptr)
+            {
+                *space_reclaimed_out = 0;
+            }
+            return 0;
+        }
+
+        // Use HeapPage for garbage collection.
         HeapPage heap_page(reinterpret_cast<uint8_t *>(page_buffer), page_header->page_size);
+
+        // Validate heap page boundaries/item pointers before pruning; skip corrupt/incompatible pages.
+        Status validate_status = heap_page.validate(ctx);
+        if (validate_status != Status::OK)
+        {
+            LOG_WARNING(VACUUM,
+                        "Skipping page %u for GC due to invalid heap-page layout: %d",
+                        page_id, static_cast<int>(validate_status));
+            db_->buffer_pool()->unpinPage(page_id, false, ctx);
+            if (space_reclaimed_out != nullptr)
+            {
+                *space_reclaimed_out = 0;
+            }
+            {
+                std::lock_guard<std::mutex> lock(dirty_pages_mutex_);
+                dirty_pages_.erase(page_id);
+            }
+            return 0;
+        }
 
         uint32_t tuples_pruned = 0;
         uint32_t space_reclaimed = 0;
@@ -470,6 +503,21 @@ namespace scratchbird::core
 
         // Prune garbage tuples and defragment page
         Status prune_status = heap_page.prunePage(oit, &tuples_pruned, &space_reclaimed, ctx);
+        if (prune_status != Status::OK)
+        {
+            LOG_WARNING(VACUUM, "Failed to prune page %u during GC: %d", page_id,
+                        static_cast<int>(prune_status));
+            db_->buffer_pool()->unpinPage(page_id, false, ctx);
+            if (space_reclaimed_out != nullptr)
+            {
+                *space_reclaimed_out = 0;
+            }
+            {
+                std::lock_guard<std::mutex> lock(dirty_pages_mutex_);
+                dirty_pages_.erase(page_id);
+            }
+            return 0;
+        }
 
         bool page_modified = (tuples_pruned > 0);
 
@@ -480,8 +528,9 @@ namespace scratchbird::core
                      tuples_pruned, space_reclaimed, oit);
         }
 
-        ID table_id;
-        std::memcpy(table_id.bytes.data(), page_header->table_id, sizeof(page_header->table_id));
+        const auto *special = reinterpret_cast<const HeapPageSpecial *>(
+            reinterpret_cast<const uint8_t *>(page_buffer) + page_header->page_size - sizeof(HeapPageSpecial));
+        ID table_id = special ? special->table_id : ID{};
 
         // Unpin page (mark as dirty if we modified it)
         db_->buffer_pool()->unpinPage(page_id, page_modified, ctx);
@@ -1154,7 +1203,7 @@ namespace scratchbird::core
 
     Status GarbageCollector::detectOrphanedToastChunks(
         const ID& toast_table_id,
-        std::unordered_set<uint32_t>* orphaned_value_ids,
+        std::unordered_set<ID, IDHash>* orphaned_value_ids,
         ErrorContext* ctx)
     {
         // Phase 4 Task 4.1: TOAST Orphan Detection
@@ -1246,7 +1295,7 @@ namespace scratchbird::core
         }
 
         // Step 1: Collect referenced TOAST value IDs from heap tuples
-        std::unordered_set<uint32_t> referenced_value_ids;
+        std::unordered_set<ID, IDHash> referenced_value_ids;
 
         // Scan parent table's heap pages
         auto* storage = db_->storage_engine();
@@ -1407,7 +1456,7 @@ namespace scratchbird::core
         }
 
         // Step 2: Scan TOAST table for all value IDs
-        std::unordered_set<uint32_t> toast_value_ids;
+        std::unordered_set<ID, IDHash> toast_value_ids;
 
         auto toast_scan = storage->createScanAll(toast_table_id, ctx);
         if (!toast_scan)
@@ -1420,25 +1469,25 @@ namespace scratchbird::core
         while (toast_scan->next(&toast_tuple, ctx) == Status::OK)
         {
             // Parse TOAST chunk to extract value_id
-            // Format: [TupleHeader][chunk_id:4][chunk_seq:4][chunk_data_len:4][data...]
+            // Format: [TupleHeader][chunk_id:16][chunk_seq:4][chunk_data_len:4][data...]
             const uint8_t* chunk_data = toast_tuple.data;
             uint32_t chunk_size = toast_tuple.data_size;
 
-            if (chunk_size < sizeof(TupleHeader) + sizeof(uint32_t))
+            if (chunk_size < sizeof(TupleHeader) + sizeof(ID))
             {
                 continue; // Malformed chunk
             }
 
             // Skip TupleHeader, read chunk_id (value_id)
             size_t chunk_id_offset = sizeof(TupleHeader);
-            uint32_t value_id;
-            std::memcpy(&value_id, chunk_data + chunk_id_offset, sizeof(uint32_t));
+            ID value_id{};
+            std::memcpy(value_id.bytes.data(), chunk_data + chunk_id_offset, value_id.bytes.size());
 
             toast_value_ids.insert(value_id);
         }
 
         // Step 3: Find orphans (in TOAST but not referenced)
-        for (uint32_t value_id : toast_value_ids)
+        for (const auto& value_id : toast_value_ids)
         {
             if (referenced_value_ids.find(value_id) == referenced_value_ids.end())
             {
@@ -1455,7 +1504,7 @@ namespace scratchbird::core
 
     Status GarbageCollector::cleanOrphanedToastChunks(
         const ID& toast_table_id,
-        const std::unordered_set<uint32_t>& orphaned_value_ids,
+        const std::unordered_set<ID, IDHash>& orphaned_value_ids,
         uint64_t* chunks_deleted,
         ErrorContext* ctx)
     {
@@ -1502,15 +1551,15 @@ namespace scratchbird::core
             const uint8_t* chunk_data = toast_tuple.data;
             uint32_t chunk_size = toast_tuple.data_size;
 
-            if (chunk_size < sizeof(TupleHeader) + sizeof(uint32_t))
+            if (chunk_size < sizeof(TupleHeader) + sizeof(ID))
             {
                 continue;
             }
 
             // Extract value_id (chunk_id)
             size_t chunk_id_offset = sizeof(TupleHeader);
-            uint32_t value_id;
-            std::memcpy(&value_id, chunk_data + chunk_id_offset, sizeof(uint32_t));
+            ID value_id{};
+            std::memcpy(value_id.bytes.data(), chunk_data + chunk_id_offset, value_id.bytes.size());
 
             // Check if this value_id is orphaned
             if (orphaned_value_ids.find(value_id) != orphaned_value_ids.end())

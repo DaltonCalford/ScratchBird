@@ -28,7 +28,9 @@
  * 4. Cache access patterns (LRU cache eviction under contention)
  *
  * Execution:
- *   From build/: valgrind --tool=helgrind ./tests/helgrind_races
+ *   From build/: valgrind --tool=helgrind \
+ *     --suppressions=../tests/helgrind/helgrind_external.supp \
+ *     ./tests/helgrind_races
  *   Expected: No errors, proper lock ordering detected
  *
  * Note: Helgrind tests run slower than TSAN (~10-100x slower)
@@ -371,4 +373,6 @@ TEST_F(HelgrindRaceTest, MixedWorkloadNoRaces) {
 }
 
 // Note: main() is provided by GTest::gtest_main (linked in CMakeLists.txt)
-// Run with: valgrind --tool=helgrind ./tests/helgrind_races
+// Run with: valgrind --tool=helgrind
+//   --suppressions=../tests/helgrind/helgrind_external.supp
+//   ./tests/helgrind_races

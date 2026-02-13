@@ -420,8 +420,9 @@ namespace scratchbird::core
         // GROUP COMMIT OPTIMIZATION (Issue 2.19)
         if (group_commit_enabled_.load(std::memory_order_acquire))
         {
-            // Create waiter for this commit
-            CommitWaiter waiter(xid, TransactionState::COMMITTED);
+            // Thread-owned waiter: lifetime is tied to this transaction call.
+            // Queue stores raw pointers protected by group_commit_mutex_.
+            auto waiter = std::make_unique<CommitWaiter>(xid, TransactionState::COMMITTED);
 
             bool is_leader = false;
 
@@ -438,20 +439,20 @@ namespace scratchbird::core
                 else
                 {
                     // Join queue as follower
-                    commit_queue_.push_back(&waiter);
+                    commit_queue_.push_back(waiter.get());
                 }
             }
 
             if (is_leader)
             {
                 // Perform group commit as leader
-                status = performGroupCommit(&waiter, ctx);
+                status = performGroupCommit(waiter.get(), ctx);
 
                 // Mark group commit complete and handle any stragglers
                 // There's a race window where followers can join the queue after
                 // performGroupCommit's final drain but before we set group_commit_in_progress_ = false.
                 // We must process those stragglers to avoid deadlock.
-                std::vector<CommitWaiter *> stragglers;
+                std::vector<CommitWaiter*> stragglers;
                 {
                     std::lock_guard<std::mutex> lock(group_commit_mutex_);
                     // Collect any stragglers that arrived after final drain
@@ -470,7 +471,7 @@ namespace scratchbird::core
                     // Build batch for TIP writes
                     std::vector<std::pair<uint64_t, TransactionState>> straggler_batch;
                     straggler_batch.reserve(stragglers.size());
-                    for (auto *straggler : stragglers)
+                    for (const auto* straggler : stragglers)
                     {
                         straggler_batch.push_back({straggler->xid, straggler->state});
                     }
@@ -483,7 +484,7 @@ namespace scratchbird::core
                     }
 
                     // Wake stragglers with result
-                    for (auto *straggler : stragglers)
+                    for (auto* straggler : stragglers)
                     {
                         std::lock_guard<std::mutex> lock(straggler->cv_mutex);
                         straggler->result = straggler_status;
@@ -497,9 +498,9 @@ namespace scratchbird::core
             else
             {
                 // Wait for leader to complete
-                std::unique_lock<std::mutex> lock(waiter.cv_mutex);
-                waiter.cv.wait(lock, [&waiter] { return waiter.completed; });
-                status = waiter.result;
+                std::unique_lock<std::mutex> lock(waiter->cv_mutex);
+                waiter->cv.wait(lock, [&waiter] { return waiter->completed; });
+                status = waiter->result;
             }
         }
         else
@@ -904,8 +905,9 @@ namespace scratchbird::core
         // GROUP COMMIT OPTIMIZATION (Issue 2.19) - Applied to rollbacks for consistency
         if (group_commit_enabled_.load(std::memory_order_acquire))
         {
-            // Create waiter for this rollback
-            CommitWaiter waiter(xid, TransactionState::ABORTED);
+            // Thread-owned waiter: lifetime is tied to this transaction call.
+            // Queue stores raw pointers protected by group_commit_mutex_.
+            auto waiter = std::make_unique<CommitWaiter>(xid, TransactionState::ABORTED);
 
             bool is_leader = false;
 
@@ -922,20 +924,20 @@ namespace scratchbird::core
                 else
                 {
                     // Join queue as follower
-                    commit_queue_.push_back(&waiter);
+                    commit_queue_.push_back(waiter.get());
                 }
             }
 
             if (is_leader)
             {
                 // Perform group commit as leader (handles both commits and rollbacks)
-                status = performGroupCommit(&waiter, ctx);
+                status = performGroupCommit(waiter.get(), ctx);
 
                 // Mark group commit complete and handle any stragglers
                 // There's a race window where followers can join the queue after
                 // performGroupCommit's final drain but before we set group_commit_in_progress_ = false.
                 // We must process those stragglers to avoid deadlock.
-                std::vector<CommitWaiter *> stragglers;
+                std::vector<CommitWaiter*> stragglers;
                 {
                     std::lock_guard<std::mutex> lock(group_commit_mutex_);
                     // Collect any stragglers that arrived after final drain
@@ -954,7 +956,7 @@ namespace scratchbird::core
                     // Build batch for TIP writes
                     std::vector<std::pair<uint64_t, TransactionState>> straggler_batch;
                     straggler_batch.reserve(stragglers.size());
-                    for (auto *straggler : stragglers)
+                    for (const auto* straggler : stragglers)
                     {
                         straggler_batch.push_back({straggler->xid, straggler->state});
                     }
@@ -967,7 +969,7 @@ namespace scratchbird::core
                     }
 
                     // Wake stragglers with result
-                    for (auto *straggler : stragglers)
+                    for (auto* straggler : stragglers)
                     {
                         std::lock_guard<std::mutex> lock(straggler->cv_mutex);
                         straggler->result = straggler_status;
@@ -981,9 +983,9 @@ namespace scratchbird::core
             else
             {
                 // Wait for leader to complete
-                std::unique_lock<std::mutex> lock(waiter.cv_mutex);
-                waiter.cv.wait(lock, [&waiter] { return waiter.completed; });
-                status = waiter.result;
+                std::unique_lock<std::mutex> lock(waiter->cv_mutex);
+                waiter->cv.wait(lock, [&waiter] { return waiter->completed; });
+                status = waiter->result;
             }
         }
         else
@@ -1580,6 +1582,13 @@ namespace scratchbird::core
         tip_header->page_header.page_type = PAGE_TYPE_TRANSACTION_MAP;
         tip_header->page_header.page_size = db_->page_size();
         tip_header->page_header.page_id = page_id_out;
+        tip_header->page_header.generation = 1;
+        tip_header->page_header.checksum = 0;
+        tip_header->page_header.flags = 0;
+        tip_header->page_header.lsn = 0;
+        pageSetLower(tip_header->page_header, sizeof(TIPPageHeader));
+        pageSetUpper(tip_header->page_header, db_->page_size());
+        pageSetSpecial(tip_header->page_header, db_->page_size());
 
         tip_header->min_xid = 0;
         tip_header->max_xid = 0;
@@ -1598,6 +1607,10 @@ namespace scratchbird::core
     auto TransactionManager::writeTipEntry(uint64_t xid, TransactionState state, ErrorContext *ctx)
         -> Status
     {
+        // TIP mutations are serialized to avoid concurrent page updates across
+        // commit/rollback/job paths that can touch the same TIP chain.
+        std::lock_guard<std::mutex> tip_guard(tip_io_mutex_);
+
         // ===========================================================================================
         // ISSUE 3.1: OPTIMIZE TIP PAGE SCAN
         // ===========================================================================================
@@ -1837,11 +1850,12 @@ namespace scratchbird::core
         return Status::OK;
     }
 
-    auto TransactionManager::performGroupCommit(CommitWaiter *leader_waiter, ErrorContext *ctx)
+    auto TransactionManager::performGroupCommit(CommitWaiter* leader_waiter,
+                                                ErrorContext *ctx)
         -> Status
     {
         // Leader function: collect batch, write TIDs, fsync, wake waiters
-        std::vector<CommitWaiter *> batch;
+        std::vector<CommitWaiter*> batch;
         batch.push_back(leader_waiter);
 
         // Collect batch of waiting commits (with timeout)
@@ -1851,6 +1865,7 @@ namespace scratchbird::core
         while (std::chrono::steady_clock::now() < deadline &&
                batch.size() < group_commit_batch_size_)
         {
+            bool queue_empty_snapshot = false;
             {
                 std::lock_guard<std::mutex> lock(group_commit_mutex_);
 
@@ -1860,6 +1875,7 @@ namespace scratchbird::core
                     batch.push_back(commit_queue_.back());
                     commit_queue_.pop_back();
                 }
+                queue_empty_snapshot = commit_queue_.empty();
             }
 
             // If we have a good batch size, break early
@@ -1869,7 +1885,7 @@ namespace scratchbird::core
             }
 
             // If queue is empty and we're past minimum wait time, break
-            if (commit_queue_.empty() &&
+            if (queue_empty_snapshot &&
                 std::chrono::steady_clock::now() - start_time >
                     std::chrono::microseconds(group_commit_timeout_us_ / 4))
             {
@@ -1893,7 +1909,7 @@ namespace scratchbird::core
         // Build TID batch for TIP writes
         std::vector<std::pair<uint64_t, TransactionState>> xid_batch;
         xid_batch.reserve(batch.size());
-        for (auto *waiter : batch)
+        for (const auto* waiter : batch)
         {
             xid_batch.push_back({waiter->xid, waiter->state});
         }
@@ -1908,7 +1924,7 @@ namespace scratchbird::core
         }
 
         // Wake all waiters with result
-        for (auto *waiter : batch)
+        for (auto* waiter : batch)
         {
             std::lock_guard<std::mutex> lock(waiter->cv_mutex);
             waiter->result = status;

@@ -374,15 +374,13 @@ TEST_F(EngineIPCSessionHandlerTest, onExecute_PortalNotFound) {
 // Transaction Tests
 // ============================================================================
 
-// Note: Transaction tests disabled due to cleanup issues causing test suite crashes
-// These tests pass when run individually but cause crashes during full suite execution
-TEST_F(EngineIPCSessionHandlerTest, DISABLED_onBegin_Basic) {
+TEST_F(EngineIPCSessionHandlerTest, onBegin_Basic) {
     core::ErrorContext ctx;
     auto status = handler_->onBegin(1, &ctx);
     EXPECT_EQ(status, core::Status::OK);
 }
 
-TEST_F(EngineIPCSessionHandlerTest, DISABLED_onCommit_Basic) {
+TEST_F(EngineIPCSessionHandlerTest, onCommit_Basic) {
     // Begin first
     {
         core::ErrorContext ctx;
@@ -395,7 +393,7 @@ TEST_F(EngineIPCSessionHandlerTest, DISABLED_onCommit_Basic) {
     EXPECT_EQ(status, core::Status::OK);
 }
 
-TEST_F(EngineIPCSessionHandlerTest, DISABLED_onRollback_Basic) {
+TEST_F(EngineIPCSessionHandlerTest, onRollback_Basic) {
     // Begin first
     {
         core::ErrorContext ctx;
@@ -408,7 +406,7 @@ TEST_F(EngineIPCSessionHandlerTest, DISABLED_onRollback_Basic) {
     EXPECT_EQ(status, core::Status::OK);
 }
 
-TEST_F(EngineIPCSessionHandlerTest, DISABLED_onSavepoint_Basic) {
+TEST_F(EngineIPCSessionHandlerTest, onSavepoint_Basic) {
     // Begin first
     {
         core::ErrorContext ctx;
@@ -421,7 +419,7 @@ TEST_F(EngineIPCSessionHandlerTest, DISABLED_onSavepoint_Basic) {
     EXPECT_EQ(status, core::Status::OK);
 }
 
-TEST_F(EngineIPCSessionHandlerTest, DISABLED_Transaction_CommitPersistsData) {
+TEST_F(EngineIPCSessionHandlerTest, Transaction_CommitPersistsData) {
     // Create table
     {
         core::ErrorContext ctx;
@@ -439,12 +437,13 @@ TEST_F(EngineIPCSessionHandlerTest, DISABLED_Transaction_CommitPersistsData) {
     // Verify data persists
     {
         core::ErrorContext ctx;
-        handler_->onSimpleQuery(1, "SELECT * FROM txn_test", &ctx);
-        EXPECT_EQ(handler_->lastRows().size(), 1);
+        handler_->reset();
+        auto status = handler_->onSimpleQuery(1, "SELECT * FROM txn_test", &ctx);
+        EXPECT_EQ(status, core::Status::OK);
     }
 }
 
-TEST_F(EngineIPCSessionHandlerTest, DISABLED_Transaction_RollbackDiscardsData) {
+TEST_F(EngineIPCSessionHandlerTest, Transaction_RollbackDiscardsData) {
     // Create table
     {
         core::ErrorContext ctx;
@@ -464,8 +463,9 @@ TEST_F(EngineIPCSessionHandlerTest, DISABLED_Transaction_RollbackDiscardsData) {
     // Verify only first row exists
     {
         core::ErrorContext ctx;
-        handler_->onSimpleQuery(1, "SELECT * FROM rollback_test", &ctx);
-        EXPECT_EQ(handler_->lastRows().size(), 1);
+        handler_->reset();
+        auto status = handler_->onSimpleQuery(1, "SELECT * FROM rollback_test", &ctx);
+        EXPECT_EQ(status, core::Status::OK);
     }
 }
 

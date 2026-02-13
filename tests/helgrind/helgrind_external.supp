@@ -1,0 +1,13 @@
+# External teardown noise from libp11-kit observed under Helgrind on Ubuntu.
+# Not ScratchBird code paths.
+{
+   p11kit_mutex_destroy_on_dl_fini
+   Helgrind:Misc
+   obj:/usr/libexec/valgrind/vgpreload_helgrind-amd64-linux.so
+   obj:/usr/lib/x86_64-linux-gnu/libp11-kit.so.0.3.1
+   fun:_dl_call_fini
+   fun:_dl_fini
+   fun:__run_exit_handlers
+   fun:exit
+   fun:(below main)
+}

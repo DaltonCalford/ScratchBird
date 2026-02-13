@@ -491,8 +491,9 @@ namespace scratchbird::core
     Status Database::applySchedulerConfig(ErrorContext *ctx)
     {
         std::lock_guard<std::mutex> lock(scheduler_mutex_);
+        // Default disabled to keep database lifecycle deterministic unless explicitly enabled.
         bool scheduler_enabled =
-            Config::getInstance().getBool("scheduler", "enabled", true);
+            Config::getInstance().getBool("scheduler", "enabled", false);
         if (!scheduler_enabled)
         {
             if (job_scheduler_)
@@ -616,13 +617,7 @@ namespace scratchbird::core
         // Initialize ProcArray if not already done
         if (header_)
         {
-            uint32_t max_backends = header_->max_backends;
-            if (max_backends == 0)
-            {
-                max_backends = config::DEFAULT_MAX_BACKENDS;
-            }
-
-            Status s = initializeProcArray(max_backends, ctx);
+            Status s = initializeProcArray(config::DEFAULT_MAX_BACKENDS, ctx);
             if (s != Status::OK)
             {
                 SET_ERROR_CONTEXT(ctx, s, "Failed to initialize ProcArray");
@@ -903,14 +898,13 @@ namespace scratchbird::core
         catalog_header->page_id = 1;
         catalog_header->flags = 0;
         catalog_header->lsn = 0;
-        memcpy(catalog_header->database_uuid, db_uuid.bytes.data(), 16);
         catalog_header->generation = 1;
-        catalog_header->free_space =
-            page_size - sizeof(PageHeader) - sizeof(SystemCatalogEntry) * config::NUM_BASE_SCHEMAS;
-        catalog_header->item_count = config::NUM_BASE_SCHEMAS; // 8 base schemas
-        catalog_header->free_offset =
-            sizeof(PageHeader) + sizeof(SystemCatalogEntry) * config::NUM_BASE_SCHEMAS;
-        catalog_header->special_size = 0;
+        setDatabaseUuid(*catalog_header, db_uuid);
+        setTableId(*catalog_header, ID{});
+        catalog_header->item_count = 0;
+        pageSetLower(*catalog_header, sizeof(PageHeader) + sizeof(SystemCatalogEntry) * config::NUM_BASE_SCHEMAS);
+        pageSetUpper(*catalog_header, page_size);
+        pageSetSpecial(*catalog_header, page_size);
 
         // Add system catalog entries for base schemas
         auto *entries = reinterpret_cast<SystemCatalogEntry *>(page_buffer + sizeof(PageHeader));
@@ -971,8 +965,10 @@ namespace scratchbird::core
         fsm_header->page_id = 2;
         fsm_header->flags = 0;
         fsm_header->lsn = 0;
-        memcpy(fsm_header->database_uuid, db_uuid.bytes.data(), 16);
         fsm_header->generation = 1;
+        setDatabaseUuid(*fsm_header, db_uuid);
+        setTableId(*fsm_header, ID{});
+        fsm_header->item_count = 0;
 
         // Initialize FSM data
         struct
@@ -989,10 +985,9 @@ namespace scratchbird::core
         fsm_data->bitmap[0] = 0x07; // First 3 bits set (pages 0,1,2 allocated)
 
         // Update header fields
-        fsm_header->free_space = page_size - sizeof(PageHeader) - sizeof(uint32_t) * 3 - 1;
-        fsm_header->item_count = 1;
-        fsm_header->free_offset = sizeof(PageHeader) + sizeof(uint32_t) * 3 + 1;
-        fsm_header->special_size = 0;
+        pageSetLower(*fsm_header, sizeof(PageHeader) + sizeof(uint32_t) * 3 + 1);
+        pageSetUpper(*fsm_header, page_size);
+        pageSetSpecial(*fsm_header, page_size);
 
         // Calculate checksum for FSM page
         fsm_header->checksum = calculatePageChecksum(page_buffer, page_size);
@@ -1025,14 +1020,16 @@ namespace scratchbird::core
 
         // Generate and set database UUID
         ID db_uuid = generateUuidV7();
-        memcpy(header->page_header.database_uuid, db_uuid.bytes.data(), 16);
+        header->database_uuid = db_uuid;
+        setDatabaseUuid(header->page_header, db_uuid);
+        setTableId(header->page_header, ID{});
 
         // Set MVCC fields
         header->page_header.generation = 1;
-        header->page_header.free_space = page_size - sizeof(DatabaseHeader);
         header->page_header.item_count = 0;
-        header->page_header.free_offset = sizeof(DatabaseHeader);
-        header->page_header.special_size = 0;
+        pageSetLower(header->page_header, sizeof(DatabaseHeader));
+        pageSetUpper(header->page_header, page_size);
+        pageSetSpecial(header->page_header, page_size);
 
         // Initialize database identification with actual filename
         // EXCEPTION SAFETY (ERROR-CRITICAL-2 Priority 3): Protect string operations
@@ -1071,7 +1068,6 @@ namespace scratchbird::core
         // Initialize file layout
         header->total_pages = 2; // Start with header and catalog pages
         header->free_pages = 0;
-        header->next_page_id = 2;
         header->system_catalog_page = 1;
 
         // Initialize transaction info
@@ -1166,8 +1162,7 @@ namespace scratchbird::core
         }
 
         auto *header = reinterpret_cast<DatabaseHeader *>(page_buffer.get());
-        ID db_uuid;
-        memcpy(db_uuid.bytes.data(), header->page_header.database_uuid, 16);
+        ID db_uuid = header->database_uuid;
         uint64_t micros = header->creation_time;
 
         status = create_catalog_page(fd, page_size, page_buffer.get(), db_uuid, micros, ctx);
@@ -1253,8 +1248,8 @@ namespace scratchbird::core
         }
 
         // Read header to determine page size
-        uint8_t temp_header[64];
-        ssize_t bytes_read = ::read(fd_, temp_header, 64);
+        uint8_t temp_header[sizeof(PageHeader)];
+        ssize_t bytes_read = ::read(fd_, temp_header, sizeof(temp_header));
         if (bytes_read < 0)
         {
             ::close(fd_);
@@ -1262,7 +1257,7 @@ namespace scratchbird::core
             SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to read database header");
             return Status::IO_ERROR;
         }
-        if (bytes_read < 64)
+        if (bytes_read < static_cast<ssize_t>(sizeof(PageHeader)))
         {
             ::close(fd_);
             fd_ = -1;
@@ -1325,7 +1320,7 @@ namespace scratchbird::core
         }
 
         // Store database UUID
-        memcpy(db_uuid_.bytes.data(), header_->page_header.database_uuid, 16);
+        db_uuid_ = header_->database_uuid;
         // Per-process instance identifier (used to invalidate stale dormant records on restart).
         server_instance_id_ = generateUuidV7();
         path_ = canonical_path;
@@ -1649,6 +1644,12 @@ namespace scratchbird::core
                 close();
                 return status;
             }
+            status = domain_manager_->ensureSystemDomains(ctx);
+            if (status != Status::OK)
+            {
+                close();
+                return status;
+            }
         }
 
         // Initialize encryption key manager
@@ -1860,8 +1861,8 @@ namespace scratchbird::core
         if (header->page_id != page_id)
         {
             char msg[256];
-            snprintf(msg, sizeof(msg), "Page ID mismatch: expected %u, got %u", page_id,
-                     header->page_id);
+            snprintf(msg, sizeof(msg), "Page ID mismatch: expected %u, got %lu", page_id,
+                     static_cast<unsigned long>(header->page_id));
             SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, msg);
             return Status::PAGE_CORRUPT;
         }
@@ -2197,27 +2198,40 @@ namespace scratchbird::core
 
     auto Database::initializeProcArray(uint32_t max_backends, ErrorContext *ctx) -> Status
     {
+        std::lock_guard<std::mutex> init_lock(proc_array_init_mutex_);
+
         if (!is_open())
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Database not open");
             return Status::INVALID_ARGUMENT;
         }
 
+        if (!header_)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Database header not loaded");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        uint32_t requested_max = header_->max_backends ? header_->max_backends : max_backends;
+        if (requested_max == 0)
+        {
+            requested_max = config::DEFAULT_MAX_BACKENDS;
+        }
+
         if (header_->proc_array_initialized)
         {
-            uint32_t requested_max = header_->max_backends ? header_->max_backends : max_backends;
             return ProcArrayManager::initialize(this, requested_max, ctx);
         }
 
         // Initialize ProcArray
-        Status status = ProcArrayManager::initialize(this, max_backends, ctx);
+        Status status = ProcArrayManager::initialize(this, requested_max, ctx);
         if (status != Status::OK)
         {
             return status;
         }
 
         // Update database header
-        header_->max_backends = max_backends;
+        header_->max_backends = requested_max;
         header_->proc_array_initialized = 1;
 
         // Persist header changes
@@ -2230,7 +2244,7 @@ namespace scratchbird::core
         }
 
         auto *db_header = static_cast<DatabaseHeader *>(header_buffer);
-        db_header->max_backends = max_backends;
+        db_header->max_backends = requested_max;
         db_header->proc_array_initialized = 1;
         db_header->page_header.checksum =
             calculatePageChecksum(reinterpret_cast<uint8_t *>(db_header), page_size_);
@@ -2242,6 +2256,13 @@ namespace scratchbird::core
 
     auto Database::shutdownProcArray(ErrorContext *ctx) -> Status
     {
+        std::lock_guard<std::mutex> init_lock(proc_array_init_mutex_);
+
+        if (!header_)
+        {
+            return Status::OK;
+        }
+
         if (!header_->proc_array_initialized)
         {
             return Status::OK;
@@ -2282,7 +2303,7 @@ namespace scratchbird::core
         // Atomically allocate a new page ID by incrementing next_page_id
         // NOTE: This is a simple sequential allocation strategy
         // Future enhancements: free list, page recycling, etc.
-        uint32_t new_page_id = header_->next_page_id;
+        uint32_t new_page_id = static_cast<uint32_t>(header_->next_page_id);
 
         // Check for overflow (page_id is uint32_t, max 4 billion pages)
         if (new_page_id == UINT32_MAX)
@@ -2311,7 +2332,6 @@ namespace scratchbird::core
             }
 
             auto *db_header = static_cast<DatabaseHeader *>(header_buffer);
-            db_header->next_page_id = header_->next_page_id;
             db_header->total_pages = header_->total_pages;
             db_header->page_header.checksum =
                 calculatePageChecksum(reinterpret_cast<uint8_t *>(db_header), page_size_);

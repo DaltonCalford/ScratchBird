@@ -78,15 +78,16 @@ namespace scratchbird
 #pragma pack(push, 1)
         struct DatabaseHeader
         {
-            PageHeader page_header; // Standard 64-byte header
+            PageHeader page_header; // Standard 80-byte header
 
-            // Database identification (64 bytes)
+            // Database identification (80 bytes)
             char db_name[32];           // Database name (null-terminated)
+            UuidV7Bytes database_uuid;  // Database UUID v7
             uint32_t db_version;        // ScratchBird version that created DB
             uint32_t db_compat_version; // Minimum version that can read DB
             uint64_t creation_time;     // Unix timestamp (microseconds)
             uint64_t last_checkpoint;   // Last checkpoint timestamp
-            uint64_t reserved1[2];      // Reserved for future use
+            uint64_t reserved1;         // Reserved for future use
 
             // Configuration (32 bytes)
             uint32_t block_size;      // Must match page_header.page_size
@@ -595,6 +596,7 @@ namespace scratchbird
                 long_transaction_monitor_;                     // Long transaction monitor (owned)
             std::unique_ptr<JobScheduler> job_scheduler_;     // Scheduler job runner (owned)
             mutable std::mutex scheduler_mutex_;
+            std::mutex proc_array_init_mutex_;
 
             // Optimizer runtime components (Phase 1, Task 1.3)
             std::unique_ptr<optimizer::StatisticsManager> statistics_manager_; // Statistics manager (owned)
