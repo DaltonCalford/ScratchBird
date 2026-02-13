@@ -9696,81 +9696,86 @@ std::string makeUDRModuleNameKey(const std::string& name) {
                                                 ErrorContext *ctx) -> Status
     {
         BufferPool *bp = db_->buffer_pool();
-        void *page_buffer;
-        Status status = bp->pinPage(page_id, &page_buffer, ctx);
-        if (status != Status::OK)
+        uint32_t current_page_id = page_id;
+
+        // Search/insert across the full overflow chain.
+        while (current_page_id != 0)
         {
-            SET_ERROR_CONTEXT(ctx, status, "Failed to pin catalog heap page");
-            return status;
-        }
-
-        status = bp->lockPage(page_id, ctx);
-        if (status != Status::OK)
-        {
-            bp->unpinPage(page_id, false, ctx);
-            SET_ERROR_CONTEXT(ctx, status, "Failed to lock catalog heap page");
-            return status;
-        }
-
-        auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
-        uint32_t offset = sizeof(CatalogHeapPage);
-        bool found = false;
-
-        // ===== PHASE 1: Search for existing record (MGA UPDATE) =====
-        for (uint32_t i = 0; i < heap->record_count; i++)
-        {
-            auto *record =
-                reinterpret_cast<RecordType *>(reinterpret_cast<uint8_t *>(page_buffer) + offset);
-
-            if (record->is_valid && matcher(*record))
+            void *page_buffer = nullptr;
+            Status status = bp->pinPage(current_page_id, &page_buffer, ctx);
+            if (status != Status::OK)
             {
-                // ✅ FOUND: Update IN-PLACE (Firebird MGA)
-                // This is the key fix - we modify the existing record, not append
-                memcpy(record, &new_record, sizeof(RecordType));
-                found = true;
+                SET_ERROR_CONTEXT(ctx, status, "Failed to pin catalog heap page");
+                return status;
+            }
 
-                // Mark page dirty and increment generation
+            status = bp->lockPage(current_page_id, ctx);
+            if (status != Status::OK)
+            {
+                bp->unpinPage(current_page_id, false, ctx);
+                SET_ERROR_CONTEXT(ctx, status, "Failed to lock catalog heap page");
+                return status;
+            }
+
+            auto *heap = reinterpret_cast<CatalogHeapPage *>(page_buffer);
+            uint32_t offset = sizeof(CatalogHeapPage);
+
+            // PHASE 1: update in-place if record already exists on this page.
+            for (uint32_t i = 0; i < heap->record_count; i++)
+            {
+                auto *record = reinterpret_cast<RecordType *>(
+                    reinterpret_cast<uint8_t *>(page_buffer) + offset);
+
+                if (record->is_valid && matcher(*record))
+                {
+                    memcpy(record, &new_record, sizeof(RecordType));
+                    heap->header.generation++;
+
+                    Status unlock_status = bp->unlockPage(current_page_id, ctx);
+                    Status unpin_status = bp->unpinPage(current_page_id, true, ctx);
+                    return (unlock_status != Status::OK) ? unlock_status : unpin_status;
+                }
+
+                offset += sizeof(RecordType);
+            }
+
+            const bool has_space =
+                (heap->free_offset + sizeof(RecordType) <= db_->page_size());
+            const uint32_t next_page = heap->next_page;
+
+            // PHASE 2: append into the current tail page when space is available.
+            if (next_page == 0 && has_space)
+            {
+                auto *dest_record = reinterpret_cast<RecordType *>(
+                    reinterpret_cast<uint8_t *>(page_buffer) + heap->free_offset);
+                memcpy(dest_record, &new_record, sizeof(RecordType));
+
+                heap->record_count++;
+                heap->free_offset += sizeof(RecordType);
+                pageSetLower(heap->header, heap->free_offset);
                 heap->header.generation++;
 
-                // Unpin and return success
-                bp->unlockPage(page_id, ctx);
-                return bp->unpinPage(page_id, true, ctx);
+                Status unlock_status = bp->unlockPage(current_page_id, ctx);
+                Status unpin_status = bp->unpinPage(current_page_id, true, ctx);
+                return (unlock_status != Status::OK) ? unlock_status : unpin_status;
             }
 
-            offset += sizeof(RecordType);
-        }
-
-        // ===== PHASE 2: Record not found, append new one (INSERT) =====
-        if (!found)
-        {
-            // Check if we have space for new record
-            if (heap->free_offset + sizeof(RecordType) > db_->page_size())
+            Status unlock_status = bp->unlockPage(current_page_id, ctx);
+            Status unpin_status = bp->unpinPage(current_page_id, false, ctx);
+            if (unlock_status != Status::OK)
             {
-                bp->unlockPage(page_id, ctx);
-                bp->unpinPage(page_id, false, ctx);
-                SET_ERROR_CONTEXT(ctx, Status::PAGE_FULL, "Catalog heap page full");
-                return Status::PAGE_FULL;
+                return unlock_status;
+            }
+            if (unpin_status != Status::OK)
+            {
+                return unpin_status;
             }
 
-            // Append new record (INSERT case)
-            auto *dest_record = reinterpret_cast<RecordType *>(
-                reinterpret_cast<uint8_t *>(page_buffer) + heap->free_offset);
-            memcpy(dest_record, &new_record, sizeof(RecordType));
-
-            // Update heap metadata
-            heap->record_count++;
-            heap->free_offset += sizeof(RecordType);
-            pageSetLower(heap->header, heap->free_offset);
-            heap->header.generation++;
-
-            bp->unlockPage(page_id, ctx);
-            return bp->unpinPage(page_id, true, ctx);
+            current_page_id = next_page;
         }
 
-        // Should never reach here
-        bp->unlockPage(page_id, ctx);
-        bp->unpinPage(page_id, false, ctx);
-        return Status::OK;
+        // Chain exhausted and full: allocate/link overflow page and append there.
+        return writeRecordToHeapPage(page_id, new_record, ctx);
     }
 
     // ============================================================================
@@ -11470,22 +11475,73 @@ std::string makeUDRModuleNameKey(const std::string& name) {
         memset(&rec, 0, sizeof(rec));
 
         rec.charset_id = cs_info.charset_uuid;
+
+        // Charset ID 0 is valid (ASCII). Resolve ID and name aliases before deciding insert/update.
+        uint16_t alias_id = cs_info.charset_id;
+        bool has_alias_id = (cs_info.charset_id != 0);
+        if (!has_alias_id)
+        {
+            uint16_t builtin_id = 0;
+            if (resolveBuiltinCharsetIdLocal(cs_info.name, builtin_id))
+            {
+                alias_id = builtin_id;
+                has_alias_id = true;
+            }
+        }
+
+        if (isZeroUuidLocal(rec.charset_id) && has_alias_id)
+        {
+            auto alias_it = charset_id_to_uuid_.find(alias_id);
+            if (alias_it != charset_id_to_uuid_.end())
+            {
+                rec.charset_id = alias_it->second;
+            }
+        }
+
         if (isZeroUuidLocal(rec.charset_id))
         {
-            if (cs_info.charset_id != 0)
+            auto normalize = [](std::string_view value) -> std::string
             {
-                rec.charset_id = resolveCharsetUuid(cs_info.charset_id);
+                std::string out;
+                out.reserve(value.size());
+                for (char c : value)
+                {
+                    if (std::isalnum(static_cast<unsigned char>(c)))
+                    {
+                        out.push_back(
+                            static_cast<char>(std::tolower(static_cast<unsigned char>(c))));
+                    }
+                }
+                return out;
+            };
+
+            const std::string needle = normalize(cs_info.name);
+            auto name_predicate = [&needle, &normalize](const CharsetRecord &existing)
+            {
+                return existing.is_valid && normalize(existing.name) == needle;
+            };
+            auto found = findRecordInHeapPage<CharsetRecord>(charsets_table_page_, name_predicate, ctx);
+            if (found.status == Status::OK)
+            {
+                rec.charset_id = found.record.charset_id;
             }
-            else
+            else if (found.status != Status::NOT_FOUND)
             {
-                rec.charset_id = generateUuidV7();
+                return found.status;
             }
         }
-        if (cs_info.charset_id != 0)
+
+        if (isZeroUuidLocal(rec.charset_id))
         {
-            charset_id_to_uuid_[cs_info.charset_id] = rec.charset_id;
-            charset_uuid_to_id_[rec.charset_id] = cs_info.charset_id;
+            rec.charset_id = generateUuidV7();
         }
+
+        if (has_alias_id)
+        {
+            charset_id_to_uuid_[alias_id] = rec.charset_id;
+            charset_uuid_to_id_[rec.charset_id] = alias_id;
+        }
+
         strncpy(rec.name, cs_info.name.c_str(), sizeof(rec.name) - 1);
         strncpy(rec.description, cs_info.description.c_str(), sizeof(rec.description) - 1);
         rec.min_bytes = cs_info.min_bytes;
