@@ -26,10 +26,17 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <unistd.h>
+#include <array>
+#include <cctype>
 #include <cstring>
 #include <sstream>
 #include <iomanip>
 #include <chrono>
+#include <random>
+
+#ifdef HAVE_OPENSSL
+#include <openssl/md5.h>
+#endif
 
 namespace scratchbird {
 namespace ipc {
@@ -160,11 +167,143 @@ static bool verifyPassword(const std::string& username, const std::string& passw
     return false;
 }
 
-static std::string md5Hash(const std::string& input) {
-    // Simple MD5 implementation for auth
-    // In production, use OpenSSL EVP_MD5
-    (void)input;
-    return "d41d8cd98f00b204e9800998ecf8427e";  // Placeholder
+static std::string toLowerASCII(std::string value) {
+    for (auto& ch : value) {
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    return value;
+}
+
+static bool constantTimeEquals(const std::string& lhs, const std::string& rhs) {
+    if (lhs.size() != rhs.size()) {
+        return false;
+    }
+    unsigned char diff = 0;
+    for (size_t i = 0; i < lhs.size(); ++i) {
+        diff |= static_cast<unsigned char>(lhs[i] ^ rhs[i]);
+    }
+    return diff == 0;
+}
+
+static const UserCredential* findUserCredential(const std::string& username) {
+    for (const auto& user : USER_DB) {
+        if (user.username == username) {
+            return &user;
+        }
+    }
+    return nullptr;
+}
+
+static bool parseHexNibble(char ch, uint8_t& out) {
+    if (ch >= '0' && ch <= '9') {
+        out = static_cast<uint8_t>(ch - '0');
+        return true;
+    }
+    if (ch >= 'a' && ch <= 'f') {
+        out = static_cast<uint8_t>(10 + (ch - 'a'));
+        return true;
+    }
+    if (ch >= 'A' && ch <= 'F') {
+        out = static_cast<uint8_t>(10 + (ch - 'A'));
+        return true;
+    }
+    return false;
+}
+
+static std::string getAuthMethod(const ParserAgentConfig& config) {
+    auto it = config.options.find("auth_method");
+    if (it == config.options.end() || it->second.empty()) {
+        return "password";
+    }
+    return toLowerASCII(it->second);
+}
+
+static std::array<uint8_t, 4> getMD5Salt(const ParserAgentConfig& config) {
+    std::array<uint8_t, 4> salt{{0, 0, 0, 0}};
+
+    auto it = config.options.find("auth_md5_salt_hex");
+    if (it != config.options.end() && it->second.size() == 8) {
+        bool valid = true;
+        for (size_t i = 0; i < 4; ++i) {
+            uint8_t hi = 0;
+            uint8_t lo = 0;
+            valid = valid && parseHexNibble(it->second[i * 2], hi);
+            valid = valid && parseHexNibble(it->second[i * 2 + 1], lo);
+            salt[i] = static_cast<uint8_t>((hi << 4) | lo);
+        }
+        if (valid) {
+            return salt;
+        }
+    }
+
+    std::random_device rd;
+    for (auto& b : salt) {
+        b = static_cast<uint8_t>(rd() & 0xFF);
+    }
+    return salt;
+}
+
+static std::string computePostgreSQLMD5Response(const std::string& password,
+                                                const std::string& username,
+                                                const std::array<uint8_t, 4>& salt) {
+#ifdef HAVE_OPENSSL
+    std::string first_input = password + username;
+    unsigned char first_hash[MD5_DIGEST_LENGTH];
+    MD5(reinterpret_cast<const unsigned char*>(first_input.data()),
+        first_input.size(), first_hash);
+
+    std::ostringstream first_hex;
+    for (int i = 0; i < MD5_DIGEST_LENGTH; ++i) {
+        first_hex << std::hex << std::setw(2) << std::setfill('0')
+                  << static_cast<int>(first_hash[i]);
+    }
+
+    std::string second_input = first_hex.str()
+        + std::string(reinterpret_cast<const char*>(salt.data()), salt.size());
+    unsigned char second_hash[MD5_DIGEST_LENGTH];
+    MD5(reinterpret_cast<const unsigned char*>(second_input.data()),
+        second_input.size(), second_hash);
+
+    std::ostringstream out;
+    out << "md5";
+    for (int i = 0; i < MD5_DIGEST_LENGTH; ++i) {
+        out << std::hex << std::setw(2) << std::setfill('0')
+            << static_cast<int>(second_hash[i]);
+    }
+    return out.str();
+#else
+    (void)password;
+    (void)username;
+    (void)salt;
+    return {};
+#endif
+}
+
+static bool verifyMD5Response(const std::string& username,
+                              const std::string& provided_response,
+                              const std::array<uint8_t, 4>& salt) {
+    if (provided_response.size() != 35 ||
+        provided_response.rfind("md5", 0) != 0) {
+        return false;
+    }
+    for (size_t i = 3; i < provided_response.size(); ++i) {
+        if (!std::isxdigit(static_cast<unsigned char>(provided_response[i]))) {
+            return false;
+        }
+    }
+
+    const auto* credential = findUserCredential(username);
+    if (!credential) {
+        return false;
+    }
+
+    std::string expected = computePostgreSQLMD5Response(
+        credential->password, credential->username, salt);
+    if (expected.empty()) {
+        return false;
+    }
+
+    return constantTimeEquals(toLowerASCII(provided_response), expected);
 }
 
 // ============================================================================
@@ -301,9 +440,8 @@ core::Status PostgreSQLParserAgent::handleStartupPhase(PGClientState& state, cor
 }
 
 core::Status PostgreSQLParserAgent::authenticate(PGClientState& state, core::ErrorContext* ctx) {
-    // Check auth method from config - NEVER use trust for inet connections
-    // TODO: Read from configuration file
-    std::string auth_method = "password";  // Require password authentication
+    // Check auth method from parser configuration - NEVER use trust for inet connections.
+    std::string auth_method = getAuthMethod(config_);
     
     if (auth_method == "trust") {
         // TRUST IS INSECURE - only allowed for IPC/embedded
@@ -311,10 +449,15 @@ core::Status PostgreSQLParserAgent::authenticate(PGClientState& state, core::Err
         sendErrorResponse(state, "28000", "Trust authentication not allowed for network connections");
         return core::Status::PERMISSION_DENIED;
     } else if (auth_method == "md5") {
+#ifndef HAVE_OPENSSL
+        sendErrorResponse(state, "0A000", "MD5 authentication requires OpenSSL support");
+        return core::Status::NOT_SUPPORTED;
+#else
         // MD5 password authentication - verify credentials
-        // Generate random salt
-        std::string salt = "randomsalt";  // TODO: Use proper random salt
-        sendAuthenticationMD5(state, salt);
+        auto salt = getMD5Salt(config_);
+        sendAuthenticationMD5(state,
+                              std::string(reinterpret_cast<const char*>(salt.data()),
+                                          salt.size()));
         
         // Read password response
         std::vector<uint8_t> password_msg;
@@ -324,7 +467,7 @@ core::Status PostgreSQLParserAgent::authenticate(PGClientState& state, core::Err
         }
         
         // Parse MD5 password response (type 'p' + 4-byte length + "md5" + 32 hex chars)
-        if (password_msg.size() < 40) {
+        if (password_msg.size() < 40 || password_msg[0] != 'p') {
             sendErrorResponse(state, "28000", "Invalid MD5 password message");
             return core::Status::INVALID_ARGUMENT;
         }
@@ -335,15 +478,14 @@ core::Status PostgreSQLParserAgent::authenticate(PGClientState& state, core::Err
             provided_hash += static_cast<char>(password_msg[i]);
         }
         
-        // Verify: expected = md5(password + username) with salt
-        // For now, accept any non-empty hash (TODO: implement proper MD5 verification)
-        if (provided_hash.empty() || provided_hash.length() < 3) {
+        if (!verifyMD5Response(state.username, provided_hash, salt)) {
             sendErrorResponse(state, "28P01", "Invalid username or password");
             return core::Status::PERMISSION_DENIED;
         }
         
         sendAuthenticationOk(state);
         return core::Status::OK;
+#endif
     } else if (auth_method == "password") {
         // Cleartext password authentication - verify credentials
         sendAuthenticationCleartext(state);
@@ -356,7 +498,7 @@ core::Status PostgreSQLParserAgent::authenticate(PGClientState& state, core::Err
         }
         
         // Parse password message (type 'p' + 4-byte length + null-terminated password)
-        if (password_msg.size() < 5) {
+        if (password_msg.size() < 5 || password_msg[0] != 'p') {
             sendErrorResponse(state, "28000", "Invalid password message");
             return core::Status::INVALID_ARGUMENT;
         }
@@ -380,6 +522,7 @@ core::Status PostgreSQLParserAgent::authenticate(PGClientState& state, core::Err
         return handleSASLAuth(state, ctx);
     }
     
+    sendErrorResponse(state, "0A000", "Unsupported authentication method: " + auth_method);
     return core::Status::NOT_SUPPORTED;
 }
 
@@ -1048,8 +1191,9 @@ void PostgreSQLParserAgent::sendAuthenticationMD5(PGClientState& state, const st
     writeUint32(msg.data() + msg.size(), pg::AUTH_MD5_PASSWORD);
     msg.resize(msg.size() + 4);
     
-    // Salt (4 bytes)
-    msg.insert(msg.end(), salt.begin(), salt.begin() + 4);
+    std::array<uint8_t, 4> salt_bytes{{0, 0, 0, 0}};
+    std::memcpy(salt_bytes.data(), salt.data(), std::min<size_t>(salt.size(), salt_bytes.size()));
+    msg.insert(msg.end(), salt_bytes.begin(), salt_bytes.end());
     
     send(state.client_fd, msg.data(), msg.size(), 0);
 }
