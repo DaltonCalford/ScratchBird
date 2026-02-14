@@ -1,9 +1,8 @@
 # Build artifacts
-/build/
-/build-*/
+/build*/
 CMakeFiles/
 CMakeCache.txt
-cmake-build-*/
+/cmake-build*/
 compile_commands.json
 Makefile
 cmake_install.cmake
@@ -31,6 +30,8 @@ test_*_db[0-9]*
 *.db-journal
 *.db-wal
 *.db-shm
+/test_sstable*.sst
+/test_gin_phase*_db*
 
 # Test executables in root (should be in build/)
 # Ignore test executables but not test source files

@@ -15,6 +15,7 @@
 
 #include <gtest/gtest.h>
 #include "scratchbird/core/lsm_tree_index.h"
+#include "test_helpers.h"
 #include <iostream>
 #include <cstdio>
 #include <fstream>
@@ -22,6 +23,7 @@
 #include <set>
 
 using namespace scratchbird::core;
+using scratchbird::testing::uniqueTestShortPath;
 
 namespace {
 
@@ -62,7 +64,7 @@ void testWriteSmallSSTable()
 {
     std::cout << "\n=== Test 1: Write SSTable with 100 entries ===\n";
 
-    std::string file_path = "test_sstable_small.sst";
+    std::string file_path = uniqueTestShortPath("test_sstable_small", ".sst");
     std::remove(file_path.c_str());
 
     SSTableWriter writer(file_path);
@@ -124,7 +126,7 @@ void testWriteLargeSSTable()
 {
     std::cout << "\n=== Test 2: Write SSTable with 10,000 entries ===\n";
 
-    std::string file_path = "test_sstable_large.sst";
+    std::string file_path = uniqueTestShortPath("test_sstable_large", ".sst");
     std::remove(file_path.c_str());
 
     SSTableWriter writer(file_path, 4096); // 4KB blocks
@@ -182,7 +184,7 @@ void testBloomFilterInclusion()
 {
     std::cout << "\n=== Test 3: Bloom Filter Inclusion ===\n";
 
-    std::string file_path = "test_sstable_bloom.sst";
+    std::string file_path = uniqueTestShortPath("test_sstable_bloom", ".sst");
     std::remove(file_path.c_str());
 
     SSTableWriter writer(file_path);
@@ -235,7 +237,7 @@ void testEntriesSortedOrder()
 {
     std::cout << "\n=== Test 4: Entries Written in Sorted Order ===\n";
 
-    std::string file_path = "test_sstable_sorted.sst";
+    std::string file_path = uniqueTestShortPath("test_sstable_sorted", ".sst");
     std::remove(file_path.c_str());
 
     SSTableWriter writer(file_path);
@@ -276,7 +278,7 @@ void testMGAFieldsPreserved()
 {
     std::cout << "\n=== Test 5: MGA Fields Preserved ===\n";
 
-    std::string file_path = "test_sstable_mga.sst";
+    std::string file_path = uniqueTestShortPath("test_sstable_mga", ".sst");
     std::remove(file_path.c_str());
 
     SSTableWriter writer(file_path);
@@ -327,7 +329,7 @@ void testWriteTombstones()
 {
     std::cout << "\n=== Test 6: Write Tombstones (DELETE entries) ===\n";
 
-    std::string file_path = "test_sstable_tombstones.sst";
+    std::string file_path = uniqueTestShortPath("test_sstable_tombstones", ".sst");
     std::remove(file_path.c_str());
 
     SSTableWriter writer(file_path);
@@ -381,7 +383,7 @@ void testWriteEmptySSTable()
 {
     std::cout << "\n=== Test 7: Write Empty SSTable ===\n";
 
-    std::string file_path = "test_sstable_empty.sst";
+    std::string file_path = uniqueTestShortPath("test_sstable_empty", ".sst");
     std::remove(file_path.c_str());
 
     SSTableWriter writer(file_path);

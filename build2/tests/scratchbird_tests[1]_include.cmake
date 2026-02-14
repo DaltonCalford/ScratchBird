@@ -1,5 +1,0 @@
-if(EXISTS "/home/user/ScratchBird/build2/tests/scratchbird_tests[1]_tests.cmake")
-  include("/home/user/ScratchBird/build2/tests/scratchbird_tests[1]_tests.cmake")
-else()
-  add_test(scratchbird_tests_NOT_BUILT scratchbird_tests_NOT_BUILT)
-endif()

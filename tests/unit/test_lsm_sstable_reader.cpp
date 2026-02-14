@@ -92,7 +92,7 @@ void testOpenSSTable()
 {
     std::cout << "\n=== Test 1: Open SSTable and Read Metadata ===\n";
 
-    std::string file_path = "test_sstable_reader_open.sst";
+    std::string file_path = uniqueTestShortPath("test_sstable_reader_open", ".sst");
     std::remove(file_path.c_str());
 
     // Create SSTable with 10 entries
@@ -169,7 +169,7 @@ void testPointQuery()
     ASSERT_TRUE(status == Status::OK);
 
     // Create SSTable
-    std::string file_path = "test_sstable_reader_point.sst";
+    std::string file_path = uniqueTestShortPath("test_sstable_reader_point", ".sst");
     std::remove(file_path.c_str());
 
     std::vector<std::pair<std::string, std::string>> entries = {
@@ -276,7 +276,7 @@ void testRangeScan()
     ASSERT_TRUE(status == Status::OK);
 
     // Create SSTable with sorted keys
-    std::string file_path = "test_sstable_reader_scan.sst";
+    std::string file_path = uniqueTestShortPath("test_sstable_reader_scan", ".sst");
     std::remove(file_path.c_str());
 
     std::vector<std::pair<std::string, std::string>> entries = {
@@ -392,7 +392,7 @@ void testBloomFilterOptimization()
     ASSERT_TRUE(status == Status::OK);
 
     // Create SSTable with specific keys
-    std::string file_path = "test_sstable_reader_bloom.sst";
+    std::string file_path = uniqueTestShortPath("test_sstable_reader_bloom", ".sst");
     std::remove(file_path.c_str());
 
     std::vector<std::pair<std::string, std::string>> entries = {
@@ -489,7 +489,7 @@ void testWriteReadRoundtrip()
     ASSERT_TRUE(status == Status::OK);
 
     // Create SSTable with 1000 entries
-    std::string file_path = "test_sstable_reader_roundtrip.sst";
+    std::string file_path = uniqueTestShortPath("test_sstable_reader_roundtrip", ".sst");
     std::remove(file_path.c_str());
 
     std::vector<std::pair<std::string, std::string>> entries;
