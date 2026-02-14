@@ -1251,7 +1251,7 @@ Status BrinIndex::split_page(uint64_t page_num, ErrorContext *ctx)
     // Initialize new page header (manual initialization)
     new_page->brin_header.magic = K_MAGIC_SBRD;
     new_page->brin_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1);
-    new_page->brin_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_BRIN);
+    new_page->brin_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_BRIN_DATA);
     new_page->brin_header.page_size = db_->page_size();
     new_page->brin_header.page_id = new_page_num;
     new_page->brin_header.checksum = 0;

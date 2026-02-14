@@ -160,6 +160,16 @@ namespace scratchbird::sblr
             return result;
         }
 
+        int32_t normalizedDisplayOffsetSeconds(const core::TypedValue& value)
+        {
+            int32_t offset = value.getTimezoneOffsetSeconds();
+            if (offset == core::TypedValue::kNoDisplayOffsetSeconds)
+            {
+                return 0;
+            }
+            return offset;
+        }
+
         void splitLocalTime(int64_t local_micros, int32_t &hour, int32_t &minute,
                             int32_t &second, int32_t &micro)
         {
@@ -873,7 +883,7 @@ namespace scratchbird::sblr
 
         if (source_type == core::DataType::DATE)
         {
-            int32_t offset_seconds = source.getTimezoneOffsetSeconds();
+            int32_t offset_seconds = normalizedDisplayOffsetSeconds(source);
             int64_t local_days = localDaysFromDate(source.getDate(), offset_seconds);
             switch (field)
             {
@@ -950,7 +960,7 @@ namespace scratchbird::sblr
 
         if (source_type == core::DataType::TIME)
         {
-            int32_t offset_seconds = source.getTimezoneOffsetSeconds();
+            int32_t offset_seconds = normalizedDisplayOffsetSeconds(source);
             int64_t local_micros = normalizeTimeOfDay(source.getTime() +
                                                       static_cast<int64_t>(offset_seconds) *
                                                           kMicrosPerSecond);
@@ -1016,7 +1026,7 @@ namespace scratchbird::sblr
 
         if (source_type == core::DataType::TIMESTAMP)
         {
-            int32_t offset_seconds = source.getTimezoneOffsetSeconds();
+            int32_t offset_seconds = normalizedDisplayOffsetSeconds(source);
             int64_t local_micros = source.getTimestamp() +
                                    static_cast<int64_t>(offset_seconds) * kMicrosPerSecond;
             int64_t local_seconds = floorDiv(local_micros, kMicrosPerSecond);
@@ -1213,8 +1223,8 @@ namespace scratchbird::sblr
                     auto timestamp = core::TypeExtractor::extractUUIDTimestamp(uuid, nullptr);
                     if (!timestamp.has_value())
                     {
-                        if (error) *error = "UUID timestamp extraction failed";
-                        return false;
+                        *out = core::TypedValue::makeNull();
+                        return true;
                     }
                     *out = core::TypedValue::makeInt64(*timestamp);
                     return true;
@@ -3192,7 +3202,7 @@ namespace scratchbird::sblr
         if (source_type == core::DataType::DATE || source_type == core::DataType::TIME ||
             source_type == core::DataType::TIMESTAMP)
         {
-            int32_t offset_seconds = source.getTimezoneOffsetSeconds();
+            int32_t offset_seconds = normalizedDisplayOffsetSeconds(source);
             if (field == ExtractField::TIMEZONE || field == ExtractField::TZ_OFFSET ||
                 field == ExtractField::TIMEZONE_HOUR || field == ExtractField::TIMEZONE_MINUTE)
             {
@@ -3240,7 +3250,8 @@ namespace scratchbird::sblr
 
                 if (source_type == core::DataType::DATE)
                 {
-                    int64_t local_days = localDaysFromDate(source.getDate(), source.getTimezoneOffsetSeconds());
+                    int64_t local_days = localDaysFromDate(source.getDate(),
+                                                           normalizedDisplayOffsetSeconds(source));
                     int32_t year = core::TypeExtractor::extractYear(local_days);
                     int32_t month = core::TypeExtractor::extractMonth(local_days);
                     int32_t day = core::TypeExtractor::extractDay(local_days);
@@ -3255,7 +3266,7 @@ namespace scratchbird::sblr
                 int64_t utc_micros = source_type == core::DataType::TIME ? source.getTime()
                                                                          : source.getTimestamp();
                 int64_t local_micros = utc_micros +
-                                       static_cast<int64_t>(source.getTimezoneOffsetSeconds()) *
+                                       static_cast<int64_t>(normalizedDisplayOffsetSeconds(source)) *
                                            kMicrosPerSecond;
                 if (source_type == core::DataType::TIME)
                 {

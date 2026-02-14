@@ -140,9 +140,9 @@ TEST_F(MGABackVersioningTest, BasicUpdate)
     EXPECT_EQ(extractTupleData(original_data, original_size), "Original Data V1");
 
     // Update tuple (Phase 2: updateTuple with back versioning)
-    auto tuple_v2 = createTestTuple(200, 0, INVALID_GPID, 0, "Updated Data V2");
+    auto tuple_second = createTestTuple(200, 0, INVALID_GPID, 0, "Updated Data VersionTwo");
     uint16_t new_item_id;
-    ASSERT_EQ(heap_page.updateTuple(item_id, tuple_v2.data(), tuple_v2.size(), 100, 200, &new_item_id, &ctx),
+    ASSERT_EQ(heap_page.updateTuple(item_id, tuple_second.data(), tuple_second.size(), 100, 200, &new_item_id, &ctx),
               Status::OK);
     EXPECT_EQ(new_item_id, item_id) << "Item ID should remain unchanged (same-page update)";
 
@@ -150,7 +150,7 @@ TEST_F(MGABackVersioningTest, BasicUpdate)
     const uint8_t *new_data;
     uint32_t new_size;
     ASSERT_EQ(heap_page.getTuple(item_id, &new_data, &new_size, &ctx), Status::OK);
-    EXPECT_EQ(extractTupleData(new_data, new_size), "Updated Data V2");
+    EXPECT_EQ(extractTupleData(new_data, new_size), "Updated Data VersionTwo");
 
     // Verify: New version has back_version_gpid/slot pointing to old version
     const TupleHeader *new_hdr = reinterpret_cast<const TupleHeader *>(new_data);
@@ -179,7 +179,7 @@ TEST_F(MGABackVersioningTest, BasicUpdate)
  *
  * Verify that multiple updates create a proper version chain:
  * - Insert tuple
- * - Update 3 times (V1 → V2 → V3 → V4)
+ * - Update 3 times (V1 → VersionTwo → V3 → V4)
  * - Verify:
  *   ✅ Item pointer always points to newest version
  *   ✅ Each version links backward to previous (N2O chain)
@@ -204,12 +204,12 @@ TEST_F(MGABackVersioningTest, VersionChainTraversal)
     ASSERT_EQ(heap_page.insertTuple(tuple_v1.data(), tuple_v1.size(), 100, &item_id, &ctx),
               Status::OK);
 
-    // Update to V2
-    auto tuple_v2 = createTestTuple(200, 0, INVALID_GPID, 0, "Version 2");
-    uint16_t item_id_v2;
-    ASSERT_EQ(heap_page.updateTuple(item_id, tuple_v2.data(), tuple_v2.size(), 100, 200, &item_id_v2, &ctx),
+    // Update to VersionTwo
+    auto tuple_second = createTestTuple(200, 0, INVALID_GPID, 0, "Version 2");
+    uint16_t item_id_second;
+    ASSERT_EQ(heap_page.updateTuple(item_id, tuple_second.data(), tuple_second.size(), 100, 200, &item_id_second, &ctx),
               Status::OK);
-    EXPECT_EQ(item_id_v2, item_id);
+    EXPECT_EQ(item_id_second, item_id);
 
     // Update to V3
     auto tuple_v3 = createTestTuple(300, 0, INVALID_GPID, 0, "Version 3");
@@ -231,7 +231,7 @@ TEST_F(MGABackVersioningTest, VersionChainTraversal)
     ASSERT_EQ(heap_page.getTuple(item_id, &current_data, &current_size, &ctx), Status::OK);
     EXPECT_EQ(extractTupleData(current_data, current_size), "Version 4");
 
-    // Traverse N2O chain: V4 → V3 → V2 → V1
+    // Traverse N2O chain: V4 → V3 → VersionTwo → V1
     std::vector<std::string> expected_chain = {"Version 4", "Version 3", "Version 2", "Version 1"};
     std::vector<std::string> actual_chain;
 
@@ -272,11 +272,11 @@ TEST_F(MGABackVersioningTest, VersionChainTraversal)
  *
  * Verify that findVisibleVersion() correctly traverses back versions:
  * - Insert tuple (xmin=100)
- * - Update to V2 (xmin=200)
+ * - Update to VersionTwo (xmin=200)
  * - Update to V3 (xmin=300)
  * - Test visibility with different current XIDs:
  *   ✅ XID 350 sees V3 (newest)
- *   ✅ XID 250 sees V2 (middle version)
+ *   ✅ XID 250 sees VersionTwo (middle version)
  *   ✅ XID 150 sees V1 (oldest)
  *   ✅ XID 50 sees nothing (before xmin=100)
  */
@@ -298,10 +298,10 @@ TEST_F(MGABackVersioningTest, MVCCVisibilityAcrossVersions)
     ASSERT_EQ(heap_page.insertTuple(tuple_v1.data(), tuple_v1.size(), 100, &item_id, &ctx),
               Status::OK);
 
-    // Update to V2 (xmin=200)
-    auto tuple_v2 = createTestTuple(200, 0, INVALID_GPID, 0, "Version 2 @ XID 200");
-    uint16_t item_id_v2;
-    ASSERT_EQ(heap_page.updateTuple(item_id, tuple_v2.data(), tuple_v2.size(), 100, 200, &item_id_v2, &ctx),
+    // Update to VersionTwo (xmin=200)
+    auto tuple_second = createTestTuple(200, 0, INVALID_GPID, 0, "Version 2 @ XID 200");
+    uint16_t item_id_second;
+    ASSERT_EQ(heap_page.updateTuple(item_id, tuple_second.data(), tuple_second.size(), 100, 200, &item_id_second, &ctx),
               Status::OK);
 
     // Update to V3 (xmin=300)
@@ -361,27 +361,27 @@ TEST_F(MGABackVersioningTest, CycleDetection)
     ASSERT_EQ(heap_page.insertTuple(tuple_v1.data(), tuple_v1.size(), 100, &item_id, &ctx),
               Status::OK);
 
-    // Update to V2
-    auto tuple_v2 = createTestTuple(200, 0, INVALID_GPID, 0, "Version 2");
-    uint16_t item_id_v2;
-    ASSERT_EQ(heap_page.updateTuple(item_id, tuple_v2.data(), tuple_v2.size(), 100, 200, &item_id_v2, &ctx),
+    // Update to VersionTwo
+    auto tuple_second = createTestTuple(200, 0, INVALID_GPID, 0, "Version 2");
+    uint16_t item_id_second;
+    ASSERT_EQ(heap_page.updateTuple(item_id, tuple_second.data(), tuple_second.size(), 100, 200, &item_id_second, &ctx),
               Status::OK);
 
-    // Corrupt the chain: Make V1 point back to V2 (creating cycle V2 → V1 → V2)
-    const uint8_t *v2_data;
-    uint32_t v2_size;
-    ASSERT_EQ(heap_page.getTuple(item_id, &v2_data, &v2_size, &ctx), Status::OK);
+    // Corrupt the chain: Make V1 point back to VersionTwo (creating cycle VersionTwo → V1 → VersionTwo)
+    const uint8_t *second_data;
+    uint32_t second_size;
+    ASSERT_EQ(heap_page.getTuple(item_id, &second_data, &second_size, &ctx), Status::OK);
 
-    const TupleHeader *v2_hdr = reinterpret_cast<const TupleHeader *>(v2_data);
-    uint32_t v1_offset = static_cast<uint32_t>(v2_hdr->back_version_slot);
+    const TupleHeader *second_hdr = reinterpret_cast<const TupleHeader *>(second_data);
+    uint32_t v1_offset = static_cast<uint32_t>(second_hdr->back_version_slot);
 
-    // Corrupt V1 to point back to V2's offset
-    uint32_t v2_offset = static_cast<uint32_t>(
-        reinterpret_cast<const uint8_t *>(v2_data) - page_buffer);
+    // Corrupt V1 to point back to VersionTwo's offset
+    uint32_t second_offset = static_cast<uint32_t>(
+        reinterpret_cast<const uint8_t *>(second_data) - page_buffer);
 
     TupleHeader *v1_hdr = reinterpret_cast<TupleHeader *>(page_buffer + v1_offset);
-    v1_hdr->back_version_gpid = v2_hdr->back_version_gpid;
-    v1_hdr->back_version_slot = static_cast<uint16_t>(v2_offset);
+    v1_hdr->back_version_gpid = second_hdr->back_version_gpid;
+    v1_hdr->back_version_slot = static_cast<uint16_t>(second_offset);
 
     // Try to find visible version - should detect cycle
     const uint8_t *visible_data;
@@ -428,10 +428,10 @@ TEST_F(MGABackVersioningTest, ToastRejection)
     // If insert succeeds, try to update it
     if (insert_result == Status::OK)
     {
-        auto large_tuple_v2 = createTestTuple(200, 0, INVALID_GPID, 0, large_data);
+        auto large_tuple_second = createTestTuple(200, 0, INVALID_GPID, 0, large_data);
         uint16_t new_item_id;
-        Status update_result = heap_page.updateTuple(item_id, large_tuple_v2.data(),
-                                                      large_tuple_v2.size(), 100, 200, &new_item_id, &ctx);
+        Status update_result = heap_page.updateTuple(item_id, large_tuple_second.data(),
+                                                      large_tuple_second.size(), 100, 200, &new_item_id, &ctx);
 
         // Alpha limitation: should reject TOAST updates
         // (In production this would compress or use TOAST storage)

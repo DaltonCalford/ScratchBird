@@ -68,7 +68,7 @@ namespace scratchbird::core
                 return Status::OK;
             }
 
-            if (version == TABLESPACE_HEADER_VERSION_V2)
+            if (version == TABLESPACE_HEADER_VERSION_CURRENT)
             {
                 std::memcpy(header_out, buffer, sizeof(*header_out));
                 return Status::OK;
@@ -123,8 +123,8 @@ namespace scratchbird::core
     auto PageManager::initialize(ErrorContext *ctx) -> Status
     {
         std::lock_guard<std::mutex> lock(mutex_);
-        // For a new database, we start with header (0), catalog (1), and FSM (2)
-        total_pages_ = 3;
+        // Canonical bootstrap map reserves pages 0..5.
+        total_pages_ = BOOTSTRAP_FIXED_PAGE_COUNT;
         free_pages_ = 0;
 
         // Calculate bitmap size needed
@@ -142,10 +142,11 @@ namespace scratchbird::core
             return Status::OOM;
         }
 
-        // Mark first 3 pages as allocated
-        setBit(0, true); // Header
-        setBit(1, true); // System catalog
-        setBit(2, true); // FSM itself
+        // Mark fixed bootstrap pages as allocated.
+        for (uint32_t page_id = 0; page_id < BOOTSTRAP_FIXED_PAGE_COUNT; ++page_id)
+        {
+            setBit(page_id, true);
+        }
 
         // Write FSM page
         return flush(ctx);
@@ -173,7 +174,7 @@ namespace scratchbird::core
         auto *fsm = reinterpret_cast<FSMPage *>(buffer.get());
 
         // Validate page type
-        if (fsm->header.page_type != PAGE_TYPE_FREE_SPACE_MAP)
+        if (fsm->header.page_type != PAGE_TYPE_FSM_ROOT)
         {
             SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Invalid FSM page type");
             return Status::PAGE_CORRUPT;
@@ -299,8 +300,8 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
-        // Don't allow freeing system pages
-        if (page_id <= 2)
+        // Don't allow freeing fixed bootstrap pages.
+        if (page_id < BOOTSTRAP_FIXED_PAGE_COUNT)
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Cannot free system pages");
             return Status::INVALID_ARGUMENT;
@@ -358,8 +359,18 @@ namespace scratchbird::core
 
         // Overflow protection BEFORE any writes (Issue 1.7 fix)
         constexpr uint64_t kMaxPages = std::numeric_limits<uint32_t>::max();
+        // Guard against pathological single-call growth requests. The current
+        // extension path initializes each new page, so unbounded requests can
+        // stall for minutes/hours before failing at lower layers.
+        constexpr uint64_t kMaxPagesPerExtendCall = 1000000ULL;
         uint64_t current_pages = static_cast<uint64_t>(total_pages_);
         uint64_t requested_pages = static_cast<uint64_t>(num_pages);
+        if (requested_pages > kMaxPagesPerExtendCall)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::OOM,
+                              "Requested extension exceeds per-call addressable growth limit.");
+            return Status::OOM;
+        }
         if (requested_pages > (kMaxPages - current_pages))
         {
             SET_ERROR_CONTEXT(ctx, Status::OOM, "Database extension would exceed addressable space.");
@@ -405,7 +416,7 @@ namespace scratchbird::core
             header->flags = 0;
             header->lsn = 0;
             setDatabaseUuid(*header, db_->uuid());
-            setTableId(*header, ID{});
+            setObjectUuid(*header, ID{});
             header->item_count = 0;
             pageSetLower(*header, sizeof(PageHeader));
             pageSetUpper(*header, page_size_);
@@ -516,15 +527,15 @@ namespace scratchbird::core
         // Initialize page header
         fsm->header.magic = K_MAGIC_SBRD;
         fsm->header.version = 1;
-        fsm->header.page_type = PAGE_TYPE_FREE_SPACE_MAP;
+        fsm->header.page_type = PAGE_TYPE_FSM_ROOT;
         fsm->header.page_size = page_size_;
         fsm->header.page_id = FSM_PAGE_ID;
         fsm->header.generation = 1;
         fsm->header.checksum = 0;
-        fsm->header.flags = 0;
+        fsm->header.flags = PAGE_FLAG_CHECKSUM_VALID;
         fsm->header.lsn = 0;
         setDatabaseUuid(fsm->header, db_->uuid());
-        setTableId(fsm->header, ID{});
+        setObjectUuid(fsm->header, ID{});
         fsm->header.item_count = 0;
 
         // FSM metadata
@@ -593,10 +604,11 @@ namespace scratchbird::core
             bitmap_[i] = 0;
         }
 
-        // Mark system pages as allocated (always)
-        setBit(0, true);  // Header page
-        setBit(1, true);  // System catalog
-        setBit(2, true);  // FSM itself
+        // Mark fixed bootstrap pages as allocated (always).
+        for (uint32_t page_id = 0; page_id < BOOTSTRAP_FIXED_PAGE_COUNT; ++page_id)
+        {
+            setBit(page_id, true);
+        }
 
         // Scan all pages to determine actual allocation state
         auto buffer = std::make_unique<uint8_t[]>(page_size_);
@@ -606,11 +618,11 @@ namespace scratchbird::core
             return Status::OOM;
         }
 
-        uint32_t allocated_count = 3;  // System pages
+        uint32_t allocated_count = BOOTSTRAP_FIXED_PAGE_COUNT;
         uint32_t empty_pages = 0;
         uint32_t corrupt_pages = 0;
 
-        for (uint32_t page_id = 3; page_id < total_pages_; page_id++)
+        for (uint32_t page_id = BOOTSTRAP_FIXED_PAGE_COUNT; page_id < total_pages_; page_id++)
         {
             Status status = db_->read_page(page_id, buffer.get(), ctx);
 
@@ -1073,7 +1085,7 @@ namespace scratchbird::core
 
         // Initialize PageHeader portion
         header->page_header.magic = K_MAGIC_SBRD;
-        header->page_header.version = TABLESPACE_HEADER_VERSION_V2;
+        header->page_header.version = TABLESPACE_HEADER_VERSION_CURRENT;
         header->page_header.page_type = PAGE_TYPE_DATABASE_HEADER; // Tablespace header uses same type
         header->page_header.page_size = page_size_;
         header->page_header.page_id = 0;
@@ -1082,7 +1094,7 @@ namespace scratchbird::core
         header->page_header.flags = 0;
         header->page_header.lsn = 0;
         setDatabaseUuid(header->page_header, db_->uuid());
-        setTableId(header->page_header, ID{});
+        setObjectUuid(header->page_header, ID{});
         header->page_header.item_count = 0;
         pageSetLower(header->page_header, sizeof(TablespaceHeader));
         pageSetUpper(header->page_header, page_size_);
@@ -1143,7 +1155,7 @@ namespace scratchbird::core
 
         fsm_header->magic = K_MAGIC_SBRD;
         fsm_header->version = 1;
-        fsm_header->page_type = PAGE_TYPE_FREE_SPACE_MAP;
+        fsm_header->page_type = PAGE_TYPE_FSM_ROOT;
         fsm_header->page_size = page_size_;
         fsm_header->page_id = 1;
         fsm_header->flags = 0;
@@ -1415,11 +1427,11 @@ namespace scratchbird::core
 
         // Parse FSM page
         auto *fsm_header = reinterpret_cast<PageHeader *>(fsm_buffer.get());
-        if (fsm_header->page_type != PAGE_TYPE_FREE_SPACE_MAP)
+        if (fsm_header->page_type != PAGE_TYPE_FSM_ROOT)
         {
             ::close(fd);
             SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
-                             ("Invalid FSM page type: expected PAGE_TYPE_FREE_SPACE_MAP, got " +
+                             ("Invalid FSM page type: expected PAGE_TYPE_FSM_ROOT, got " +
                               std::to_string(fsm_header->page_type)).c_str());
             return Status::PAGE_CORRUPT;
         }
@@ -1518,7 +1530,7 @@ namespace scratchbird::core
                 auto *fsm_header = reinterpret_cast<PageHeader *>(fsm_buffer.get());
                 fsm_header->magic = K_MAGIC_SBRD;
                 fsm_header->version = 1;
-                fsm_header->page_type = PAGE_TYPE_FREE_SPACE_MAP;
+                fsm_header->page_type = PAGE_TYPE_FSM_ROOT;
                 fsm_header->page_size = page_size_;
                 fsm_header->page_id = 1; // FSM is always page 1
                 fsm_header->flags = 0;
@@ -1942,7 +1954,7 @@ namespace scratchbird::core
                 header->max_size_mb = *max_size_mb;
             }
         }
-        else if (page_header->version == TABLESPACE_HEADER_VERSION_V2)
+        else if (page_header->version == TABLESPACE_HEADER_VERSION_CURRENT)
         {
             auto *header = reinterpret_cast<TablespaceHeader *>(header_buffer.get());
 

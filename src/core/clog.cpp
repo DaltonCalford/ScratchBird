@@ -297,7 +297,7 @@ namespace scratchbird::core
         auto *header = reinterpret_cast<ClogPageHeader *>(page_data);
         header->page_header.magic = K_MAGIC_SBRD;
         header->page_header.version = 1;
-        header->page_header.page_type = PAGE_TYPE_CLOG;
+        header->page_header.page_type = PAGE_TYPE_TRANSACTION_MAP;
         header->page_header.page_size = db_->page_size();
         header->page_header.page_id = page_id;
         header->page_header.lsn = 0;

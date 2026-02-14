@@ -228,9 +228,22 @@ TEST_F(ColumnstorePersistenceTest, GenerationSelectionOneCorrupted)
     status = db_->buffer_pool()->pinPageGlobal(meta_gpid_a, &meta_buffer, nullptr);
     ASSERT_EQ(status, Status::OK);
 
-    // Read peer_page_id from meta page header (offset 16)
+    struct ColumnstoreMetaHeader
+    {
+        uint32_t magic;
+        uint16_t version;
+        uint16_t reserved;
+        uint64_t generation;
+        uint32_t segment_count;
+        uint32_t peer_page_id;
+        uint32_t checksum;
+    };
+
+    // Read peer_page_id from the canonical metadata header field offset.
     uint32_t peer_page_id = 0;
-    memcpy(&peer_page_id, static_cast<uint8_t*>(meta_buffer) + 16, sizeof(uint32_t));
+    memcpy(&peer_page_id,
+           static_cast<uint8_t*>(meta_buffer) + offsetof(ColumnstoreMetaHeader, peer_page_id),
+           sizeof(uint32_t));
 
     db_->buffer_pool()->unpinPageGlobal(meta_gpid_a, false, nullptr);
     EXPECT_GT(peer_page_id, 0) << "Peer page should be allocated";

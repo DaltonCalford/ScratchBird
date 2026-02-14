@@ -905,3 +905,91 @@ TEST_F(TypeConversionTest, Varchar_ToMoney_Invalid) {
     EXPECT_EQ(status, Status::OK);
     EXPECT_EQ(money_val.toInt64(), 0);
 }
+
+// ===== Deterministic Scalar Error Code Tests =====
+
+TEST_F(TypeConversionTest, ScalarError_InvalidTextToInt_IsDeterministic) {
+    auto varchar_val = TypedValue::makeVarchar("abc123");
+    TypedValue int_val;
+    Status status = convertValue(varchar_val, DataType::INT32, int_val, ctx);
+    EXPECT_EQ(status, Status::INVALID_TEXT_REPRESENTATION);
+    EXPECT_EQ(ctx.code, Status::INVALID_TEXT_REPRESENTATION);
+}
+
+TEST_F(TypeConversionTest, ScalarError_UnsignedRejectsNegativeText_IsDeterministic) {
+    auto varchar_val = TypedValue::makeVarchar("-1");
+    TypedValue uint_val;
+    Status status = convertValue(varchar_val, DataType::UINT32, uint_val, ctx);
+    EXPECT_EQ(status, Status::INVALID_TEXT_REPRESENTATION);
+    EXPECT_EQ(ctx.code, Status::INVALID_TEXT_REPRESENTATION);
+}
+
+TEST_F(TypeConversionTest, ScalarError_IntOverflow_IsDeterministic) {
+    auto varchar_val = TypedValue::makeVarchar("9223372036854775808");
+    TypedValue int_val;
+    Status status = convertValue(varchar_val, DataType::INT64, int_val, ctx);
+    EXPECT_EQ(status, Status::NUMERIC_VALUE_OUT_OF_RANGE);
+    EXPECT_EQ(ctx.code, Status::NUMERIC_VALUE_OUT_OF_RANGE);
+}
+
+TEST_F(TypeConversionTest, ScalarError_InvalidUuidText_IsDeterministic) {
+    auto varchar_val = TypedValue::makeVarchar("invalid-uuid");
+    TypedValue uuid_val;
+    Status status = convertValue(varchar_val, DataType::UUID, uuid_val, ctx);
+    EXPECT_EQ(status, Status::INVALID_TEXT_REPRESENTATION);
+    EXPECT_EQ(ctx.code, Status::INVALID_TEXT_REPRESENTATION);
+}
+
+TEST_F(TypeConversionTest, ScalarError_InvalidBooleanText_IsDeterministic) {
+    auto varchar_val = TypedValue::makeVarchar("not_bool");
+    TypedValue bool_val;
+    Status status = convertValue(varchar_val, DataType::BOOLEAN, bool_val, ctx);
+    EXPECT_EQ(status, Status::INVALID_TEXT_REPRESENTATION);
+    EXPECT_EQ(ctx.code, Status::INVALID_TEXT_REPRESENTATION);
+}
+
+TEST_F(TypeConversionTest, ScalarError_InvalidHexToBinary_IsDeterministic) {
+    auto varchar_val = TypedValue::makeVarchar("zz");
+    TypedValue binary_val;
+    Status status = convertValue(varchar_val, DataType::BINARY, binary_val, ctx);
+    EXPECT_EQ(status, Status::INVALID_TEXT_REPRESENTATION);
+    EXPECT_EQ(ctx.code, Status::INVALID_TEXT_REPRESENTATION);
+}
+
+TEST_F(TypeConversionTest, ScalarError_CharLengthOverflow_IsDeterministic) {
+    auto varchar_val = TypedValue::makeVarchar("toolong");
+    TypedValue char_val;
+    TypeInfo target(DataType::CHAR);
+    target.precision = 3;
+    Status status = varchar_val.convertTo(target, char_val, CastFormat::DEFAULT, &ctx);
+    EXPECT_EQ(status, Status::STRING_DATA_RIGHT_TRUNCATION);
+    EXPECT_EQ(ctx.code, Status::STRING_DATA_RIGHT_TRUNCATION);
+}
+
+TEST_F(TypeConversionTest, CastMatrix_BooleanToUUID_IsDatatypeMismatch) {
+    auto bool_val = TypedValue::makeBoolean(true);
+    TypedValue uuid_val;
+    Status status = convertValue(bool_val, DataType::UUID, uuid_val, ctx);
+    EXPECT_EQ(status, Status::DATATYPE_MISMATCH);
+    EXPECT_EQ(ctx.code, Status::DATATYPE_MISMATCH);
+}
+
+TEST_F(TypeConversionTest, CastMatrix_UUIDToInt32_IsDatatypeMismatch) {
+    std::vector<uint8_t> uuid = {
+        0x01, 0x23, 0x45, 0x67, 0x89, 0xAB, 0xCD, 0xEF,
+        0xFE, 0xDC, 0xBA, 0x98, 0x76, 0x54, 0x32, 0x10
+    };
+    auto uuid_val = TypedValue::makeUUID(uuid);
+    TypedValue int_val;
+    Status status = convertValue(uuid_val, DataType::INT32, int_val, ctx);
+    EXPECT_EQ(status, Status::DATATYPE_MISMATCH);
+    EXPECT_EQ(ctx.code, Status::DATATYPE_MISMATCH);
+}
+
+TEST_F(TypeConversionTest, CastMatrix_BinaryToTimestamp_IsDatatypeMismatch) {
+    auto binary_val = TypedValue::makeBinary({0x01, 0x02, 0x03});
+    TypedValue ts_val;
+    Status status = convertValue(binary_val, DataType::TIMESTAMP, ts_val, ctx);
+    EXPECT_EQ(status, Status::DATATYPE_MISMATCH);
+    EXPECT_EQ(ctx.code, Status::DATATYPE_MISMATCH);
+}

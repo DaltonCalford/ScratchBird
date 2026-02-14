@@ -128,12 +128,12 @@ TEST_F(PayloadEncodingTest, UInt8) {
 
     msg.resetReadOffset();
 
-    uint8_t v1, v2, v3;
+    uint8_t v1, value_two, v3;
     EXPECT_TRUE(msg.readUInt8(v1));
-    EXPECT_TRUE(msg.readUInt8(v2));
+    EXPECT_TRUE(msg.readUInt8(value_two));
     EXPECT_TRUE(msg.readUInt8(v3));
     EXPECT_EQ(v1, 0u);
-    EXPECT_EQ(v2, 127u);
+    EXPECT_EQ(value_two, 127u);
     EXPECT_EQ(v3, 255u);
 }
 
@@ -145,12 +145,12 @@ TEST_F(PayloadEncodingTest, UInt16) {
 
     msg.resetReadOffset();
 
-    uint16_t v1, v2, v3;
+    uint16_t v1, value_two, v3;
     EXPECT_TRUE(msg.readUInt16(v1));
-    EXPECT_TRUE(msg.readUInt16(v2));
+    EXPECT_TRUE(msg.readUInt16(value_two));
     EXPECT_TRUE(msg.readUInt16(v3));
     EXPECT_EQ(v1, 0u);
-    EXPECT_EQ(v2, 0x1234u);
+    EXPECT_EQ(value_two, 0x1234u);
     EXPECT_EQ(v3, 0xFFFFu);
 }
 
@@ -162,12 +162,12 @@ TEST_F(PayloadEncodingTest, UInt32) {
 
     msg.resetReadOffset();
 
-    uint32_t v1, v2, v3;
+    uint32_t v1, value_two, v3;
     EXPECT_TRUE(msg.readUInt32(v1));
-    EXPECT_TRUE(msg.readUInt32(v2));
+    EXPECT_TRUE(msg.readUInt32(value_two));
     EXPECT_TRUE(msg.readUInt32(v3));
     EXPECT_EQ(v1, 0u);
-    EXPECT_EQ(v2, 0x12345678u);
+    EXPECT_EQ(value_two, 0x12345678u);
     EXPECT_EQ(v3, 0xFFFFFFFFu);
 }
 
@@ -179,12 +179,12 @@ TEST_F(PayloadEncodingTest, UInt64) {
 
     msg.resetReadOffset();
 
-    uint64_t v1, v2, v3;
+    uint64_t v1, value_two, v3;
     EXPECT_TRUE(msg.readUInt64(v1));
-    EXPECT_TRUE(msg.readUInt64(v2));
+    EXPECT_TRUE(msg.readUInt64(value_two));
     EXPECT_TRUE(msg.readUInt64(v3));
     EXPECT_EQ(v1, 0u);
-    EXPECT_EQ(v2, 0x123456789ABCDEF0ULL);
+    EXPECT_EQ(value_two, 0x123456789ABCDEF0ULL);
     EXPECT_EQ(v3, 0xFFFFFFFFFFFFFFFFULL);
 }
 
@@ -196,12 +196,12 @@ TEST_F(PayloadEncodingTest, Int32Negative) {
 
     msg.resetReadOffset();
 
-    int32_t v1, v2, v3;
+    int32_t v1, value_two, v3;
     EXPECT_TRUE(msg.readInt32(v1));
-    EXPECT_TRUE(msg.readInt32(v2));
+    EXPECT_TRUE(msg.readInt32(value_two));
     EXPECT_TRUE(msg.readInt32(v3));
     EXPECT_EQ(v1, -1);
-    EXPECT_EQ(v2, -2147483648);
+    EXPECT_EQ(value_two, -2147483648);
     EXPECT_EQ(v3, 2147483647);
 }
 
@@ -213,12 +213,12 @@ TEST_F(PayloadEncodingTest, Float) {
 
     msg.resetReadOffset();
 
-    float v1, v2, v3;
+    float v1, value_two, v3;
     EXPECT_TRUE(msg.readFloat(v1));
-    EXPECT_TRUE(msg.readFloat(v2));
+    EXPECT_TRUE(msg.readFloat(value_two));
     EXPECT_TRUE(msg.readFloat(v3));
     EXPECT_FLOAT_EQ(v1, 0.0f);
-    EXPECT_FLOAT_EQ(v2, 3.14159f);
+    EXPECT_FLOAT_EQ(value_two, 3.14159f);
     EXPECT_FLOAT_EQ(v3, -123.456f);
 }
 
@@ -230,12 +230,12 @@ TEST_F(PayloadEncodingTest, Double) {
 
     msg.resetReadOffset();
 
-    double v1, v2, v3;
+    double v1, value_two, v3;
     EXPECT_TRUE(msg.readDouble(v1));
-    EXPECT_TRUE(msg.readDouble(v2));
+    EXPECT_TRUE(msg.readDouble(value_two));
     EXPECT_TRUE(msg.readDouble(v3));
     EXPECT_DOUBLE_EQ(v1, 0.0);
-    EXPECT_DOUBLE_EQ(v2, 3.141592653589793);
+    EXPECT_DOUBLE_EQ(value_two, 3.141592653589793);
     EXPECT_DOUBLE_EQ(v3, -123.456789012345);
 }
 
@@ -289,9 +289,9 @@ TEST_F(PayloadEncodingTest, ReadBeyondEnd) {
     msg.resetReadOffset();
 
     uint8_t v1;
-    uint16_t v2;
+    uint16_t value_two;
     EXPECT_TRUE(msg.readUInt8(v1));
-    EXPECT_FALSE(msg.readUInt16(v2));  // Not enough data
+    EXPECT_FALSE(msg.readUInt16(value_two));  // Not enough data
 }
 
 // ============================================================================

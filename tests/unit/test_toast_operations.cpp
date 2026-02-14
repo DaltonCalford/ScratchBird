@@ -245,13 +245,17 @@ TEST_F(ToastOperationsTest, ToastPointerStructure)
     ToastPointer pointer;
     memset(&pointer, 0, sizeof(pointer));
 
-    // Set fields
-    pointer.va_header = 0x01; // TOAST marker
-    pointer.va_tag = 0;
+    // Set canonical fields
+    pointer.lob_uuid = generateUuidV7();
+    pointer.total_len = 4096;
+    pointer.chunk_size = 1024;
+    pointer.compression = 0;
+    pointer.flags = 0;
 
-    // Verify structure has expected fields
-    EXPECT_GT(sizeof(ToastPointer), 2)
-        << "ToastPointer should contain header, tag, and data";
+    EXPECT_EQ(sizeof(ToastPointer), 32u)
+        << "ToastPointer must match canonical 32-byte format";
+    EXPECT_TRUE(ToastManager::isToastPointer(reinterpret_cast<const uint8_t *>(&pointer),
+                                             sizeof(pointer)));
 }
 
 /**

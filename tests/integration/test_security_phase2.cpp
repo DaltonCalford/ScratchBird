@@ -309,13 +309,13 @@ TEST_F(SecurityPhase2Test, ComplexPrivilegeScenario)
 
     // Create users, roles, and table
     ASSERT_TRUE(executeSQL("CREATE USER dev1 WITH PASSWORD 'pass'", &error));
-    ASSERT_TRUE(executeSQL("CREATE USER dev2 WITH PASSWORD 'pass'", &error));
+    ASSERT_TRUE(executeSQL("CREATE USER dev_second WITH PASSWORD 'pass'", &error));
     ASSERT_TRUE(executeSQL("CREATE ROLE developers", &error));
     ASSERT_TRUE(executeSQL("CREATE TABLE projects (id INT, name VARCHAR(100))", &error));
 
     // Grant role to users
     ASSERT_TRUE(executeSQL("GRANT developers TO dev1", &error));
-    ASSERT_TRUE(executeSQL("GRANT developers TO dev2", &error));
+    ASSERT_TRUE(executeSQL("GRANT developers TO dev_second", &error));
 
     // Grant privileges to role
     EXPECT_TRUE(executeSQL("GRANT SELECT, INSERT ON TABLE projects TO ROLE developers", &error))

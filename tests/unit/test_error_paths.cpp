@@ -46,6 +46,7 @@ TEST(ErrorPaths, CorruptedMagic)
     h->version = 1;
     h->page_type = PAGE_TYPE_DATABASE_HEADER;
     h->page_size = ps;
+    h->flags = PAGE_FLAG_CHECKSUM_VALID;
     h->checksum = calculatePageChecksum(page.data(), ps);
     // validate_page_checksum passes but magic check should fail in higher-level code (future)
     EXPECT_TRUE(validatePageChecksum(page.data(), ps));
@@ -60,6 +61,7 @@ TEST(ErrorPaths, ChecksumMismatch)
     h->version = 1;
     h->page_type = PAGE_TYPE_DATABASE_HEADER;
     h->page_size = ps;
+    h->flags = PAGE_FLAG_CHECKSUM_VALID;
     h->checksum = calculatePageChecksum(page.data(), ps);
     // Tamper to break checksum
     page[100] ^= 0xFF;

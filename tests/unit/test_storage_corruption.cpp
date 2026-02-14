@@ -185,6 +185,18 @@ TEST_F(StorageCorruptionTest, CorruptPageChecksum)
         db.close();
     }
 
+    // Ensure checksum validation is enforced for this page.
+    uint32_t page_flags = 0;
+    read_file_bytes(test_db_path(),
+                    heap_page_id * page_size + offsetof(PageHeader, flags),
+                    reinterpret_cast<uint8_t *>(&page_flags),
+                    sizeof(page_flags));
+    page_flags |= PAGE_FLAG_CHECKSUM_VALID;
+    corrupt_file(test_db_path(),
+                 heap_page_id * page_size + offsetof(PageHeader, flags),
+                 reinterpret_cast<const uint8_t *>(&page_flags),
+                 sizeof(page_flags));
+
     // Read current checksum and corrupt it
     uint8_t checksum_bytes[4];
     read_file_bytes(test_db_path(), heap_page_id * page_size + 0x0C,
@@ -206,7 +218,8 @@ TEST_F(StorageCorruptionTest, CorruptPageChecksum)
 
     // Should detect checksum mismatch
     EXPECT_TRUE(status == Status::PAGE_CORRUPT || status == Status::CHECKSUM_MISMATCH)
-        << "Should detect checksum corruption";
+        << "Should detect checksum corruption; status=" << static_cast<uint32_t>(status)
+        << " ctx=" << ctx.message;
     (void)ctx;
 
     delete[] buffer;

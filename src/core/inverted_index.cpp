@@ -680,7 +680,7 @@ Status InvertedIndex::appendDocStats(uint32_t segment_id,
         auto* page = reinterpret_cast<SBDocumentStatsPage*>(page_data);
         page->docstats_header.magic = K_MAGIC_SBRD;
         page->docstats_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
-        page->docstats_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_INVERTED_DOCSTATS);
+        page->docstats_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_INVERTED_META);
         page->docstats_header.page_size = page_size;
         page->docstats_header.page_id = static_cast<uint32_t>(getPageNumber(page_gpid));
         page->docstats_header.generation = 1;
@@ -749,7 +749,7 @@ Status InvertedIndex::appendDocStats(uint32_t segment_id,
     auto* new_page_ptr = reinterpret_cast<SBDocumentStatsPage*>(new_data);
     new_page_ptr->docstats_header.magic = K_MAGIC_SBRD;
     new_page_ptr->docstats_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
-    new_page_ptr->docstats_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_INVERTED_DOCSTATS);
+    new_page_ptr->docstats_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_INVERTED_META);
     new_page_ptr->docstats_header.page_size = page_size;
     new_page_ptr->docstats_header.page_id = static_cast<uint32_t>(getPageNumber(new_page));
     new_page_ptr->docstats_header.generation = 1;
@@ -984,7 +984,7 @@ Status InvertedIndex::createSegment(uint32_t* segment_id_out, GPID* seg_gpid_out
     auto* seg = reinterpret_cast<SBInvertedIndexSegmentMeta*>(seg_data);
     seg->seg_header.magic = K_MAGIC_SBRD;
     seg->seg_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
-    seg->seg_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_INVERTED_SEGMENT_META);
+    seg->seg_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_INVERTED_DICT);
     seg->seg_header.page_size = page_size;
     seg->seg_header.page_id = static_cast<uint32_t>(getPageNumber(seg_meta_gpid));
     seg->seg_header.generation = 1;
@@ -1753,7 +1753,7 @@ Status InvertedIndex::writePostingList(uint32_t segment_id,
         auto* page = reinterpret_cast<SBPostingListPage*>(page_data);
         page->post_header.magic = K_MAGIC_SBRD;
         page->post_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
-        page->post_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_INVERTED_POSTING);
+        page->post_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_INVERTED_POSTINGS);
         page->post_header.page_size = page_size;
         page->post_header.page_id = static_cast<uint32_t>(getPageNumber(posting_gpid));
         page->post_header.generation = 1;
@@ -1846,7 +1846,7 @@ Status InvertedIndex::writePostingList(uint32_t segment_id,
             auto* new_page_ptr = reinterpret_cast<SBPostingListPage*>(new_data);
             new_page_ptr->post_header.magic = K_MAGIC_SBRD;
             new_page_ptr->post_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
-            new_page_ptr->post_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_INVERTED_POSTING);
+            new_page_ptr->post_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_INVERTED_POSTINGS);
             new_page_ptr->post_header.page_size = page_size;
             new_page_ptr->post_header.page_id = static_cast<uint32_t>(getPageNumber(new_page));
             new_page_ptr->post_header.generation = 1;
@@ -2096,7 +2096,7 @@ Status InvertedIndex::writePostingListWithPositions(uint32_t segment_id,
         auto* page = reinterpret_cast<SBPostingListPage*>(page_data);
         page->post_header.magic = K_MAGIC_SBRD;
         page->post_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
-        page->post_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_INVERTED_POSTING);
+        page->post_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_INVERTED_POSTINGS);
         page->post_header.page_size = page_size;
         page->post_header.page_id = static_cast<uint32_t>(getPageNumber(posting_gpid));
         page->post_header.generation = 1;
@@ -2189,7 +2189,7 @@ Status InvertedIndex::writePostingListWithPositions(uint32_t segment_id,
             auto* new_page_ptr = reinterpret_cast<SBPostingListPage*>(new_data);
             new_page_ptr->post_header.magic = K_MAGIC_SBRD;
             new_page_ptr->post_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
-            new_page_ptr->post_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_INVERTED_POSTING);
+            new_page_ptr->post_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_INVERTED_POSTINGS);
             new_page_ptr->post_header.page_size = page_size;
             new_page_ptr->post_header.page_id = static_cast<uint32_t>(getPageNumber(new_page));
             new_page_ptr->post_header.generation = 1;
@@ -2809,7 +2809,7 @@ Status InvertedIndex::create(Database* db,
     auto* seg = reinterpret_cast<SBInvertedIndexSegmentMeta*>(seg_data);
     seg->seg_header.magic = K_MAGIC_SBRD;
     seg->seg_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
-    seg->seg_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_INVERTED_SEGMENT_META);
+    seg->seg_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_INVERTED_DICT);
     seg->seg_header.page_size = page_size;
     seg->seg_header.page_id = static_cast<uint32_t>(getPageNumber(seg_meta_gpid));
     seg->seg_header.generation = 1;

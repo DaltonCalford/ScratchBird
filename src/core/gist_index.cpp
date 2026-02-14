@@ -312,7 +312,7 @@ Status GiSTIndex::initialize(ErrorContext* ctx)
     // Initialize page header fields
     root->gist_header.magic = K_MAGIC_SBRD;
     root->gist_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1);
-    root->gist_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_GIST);
+    root->gist_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_GIST_INTERNAL);
     root->gist_header.page_size = db_->page_size();
     root->gist_header.page_id = root_page_;
     root->gist_header.checksum = 0;
@@ -384,7 +384,7 @@ Status GiSTIndex::insert(const GiSTPredicate& predicate,
         // Initialize page header
         new_root->gist_header.magic = K_MAGIC_SBRD;
         new_root->gist_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1);
-        new_root->gist_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_GIST);
+        new_root->gist_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_GIST_INTERNAL);
         new_root->gist_header.page_size = db_->page_size();
         new_root->gist_header.page_id = root_page_;
         new_root->gist_header.checksum = 0;
@@ -1526,7 +1526,7 @@ Status GiSTIndex::allocatePage(uint64_t* page_num, ErrorContext* ctx)
     SBGiSTPage* gist_page = reinterpret_cast<SBGiSTPage*>(page_buffer);
     gist_page->gist_header.magic = K_MAGIC_SBRD;
     gist_page->gist_header.version = 1;
-    gist_page->gist_header.page_type = PAGE_TYPE_GIST;
+    gist_page->gist_header.page_type = PAGE_TYPE_GIST_INTERNAL;
     gist_page->gist_header.page_size = db_->page_size();
     gist_page->gist_header.page_id = *page_num;
     gist_page->gist_header.generation = 1;

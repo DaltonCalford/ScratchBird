@@ -135,6 +135,7 @@ static const std::unordered_map<std::string, std::string> kExprBinary = {
     {"SBLR3_EXPR_LE", "SCHEMA_EXPR_BINARY"},
     {"SBLR3_EXPR_GT", "SCHEMA_EXPR_BINARY"},
     {"SBLR3_EXPR_GE", "SCHEMA_EXPR_BINARY"},
+    {"SBLR3_NULL_SAFE_EQ", "SCHEMA_EXPR_BINARY"},
     {"SBLR3_EXPR_AND", "SCHEMA_EXPR_BINARY"},
     {"SBLR3_EXPR_OR", "SCHEMA_EXPR_BINARY"},
     {"SBLR3_BIT_AND", "SCHEMA_EXPR_BINARY"},

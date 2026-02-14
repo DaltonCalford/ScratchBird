@@ -187,10 +187,10 @@ TEST(EnumDomainTest, Comprehensive) {
     {
         std::vector<EnumValue> values;
         EnumValue v1; v1.label = "RED"; v1.position = 1;
-        EnumValue v2; v2.label = "GREEN"; v2.position = 2;
+        EnumValue value_two; value_two.label = "GREEN"; value_two.position = 2;
         EnumValue v3; v3.label = "RED"; v3.position = 3;  // Duplicate!
         values.push_back(v1);
-        values.push_back(v2);
+        values.push_back(value_two);
         values.push_back(v3);
 
         ID dup_domain_id;
@@ -217,9 +217,9 @@ TEST(EnumDomainTest, Comprehensive) {
     {
         std::vector<EnumValue> values;
         EnumValue v1; v1.label = "FIRST"; v1.position = 1;
-        EnumValue v2; v2.label = "SECOND"; v2.position = 3;  // Position not sequential!
+        EnumValue value_two; value_two.label = "SECOND"; value_two.position = 3;  // Position not sequential!
         values.push_back(v1);
-        values.push_back(v2);
+        values.push_back(value_two);
 
         ID invalid_domain_id;
         status = dm->createEnumDomain(schema_id, "InvalidOrder", values, invalid_domain_id, &ctx);

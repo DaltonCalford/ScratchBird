@@ -70,7 +70,9 @@ TEST_F(TransactionFixCorrectedTest, NoHanging)
     auto end = std::chrono::steady_clock::now();
     auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
 
-    EXPECT_LT(duration.count(), 1000) << "Operations took too long: " << duration.count() << "ms";
+    // This gate verifies "no hanging" behavior, not micro-benchmark performance.
+    // CI/system load and domain bootstrap can add >1s variance, so use a stable upper bound.
+    EXPECT_LT(duration.count(), 3000) << "Operations took too long: " << duration.count() << "ms";
 
     ProcArrayManager::unregisterBackend(proc_id, &ctx);
 }

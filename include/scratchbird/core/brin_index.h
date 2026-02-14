@@ -410,10 +410,10 @@ namespace scratchbird
 
             /**
              * Compare two values based on data type
-             * Returns: -1 if v1 < v2, 0 if equal, 1 if v1 > v2
+             * Returns: -1 if v1 < second_value, 0 if equal, 1 if v1 > second_value
              */
             int compare_values(const uint8_t *v1, uint16_t v1_len,
-                               const uint8_t *v2, uint16_t v2_len) const;
+                               const uint8_t *second_value, uint16_t second_len) const;
 
             /**
              * Check if range summary is visible to current transaction

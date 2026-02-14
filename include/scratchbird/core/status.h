@@ -65,8 +65,12 @@ namespace scratchbird::core
         STRING_DATA_RIGHT_TRUNCATION = 4010,
         DATETIME_FIELD_OVERFLOW = 4011,
         INVALID_DATETIME_FORMAT = 4012,
+        // Canonical alias used by datatype specifications.
+        DATETIME_VALUE_OUT_OF_RANGE = INVALID_DATETIME_FORMAT,
         INVALID_TEXT_REPRESENTATION = 4013,
         NULL_VALUE_NOT_ALLOWED = 4014,
+        // Canonical alias used by datatype specifications.
+        INVALID_PARAMETER_VALUE = INVALID_ARGUMENT,
 
         // ====================================================================
         // Constraint Violations (4100-4199)

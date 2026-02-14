@@ -2911,7 +2911,7 @@ Status ColumnstoreIndex::createSegment(const ID &column_uuid,
         // Step 5: Initialize page header (for all pages)
         page->cs_header.magic = K_MAGIC_SBRD;
         page->cs_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1);
-        page->cs_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_COLUMNSTORE);
+        page->cs_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_COLUMNSTORE_SEGMENT);
         page->cs_header.page_size = PAGE_SIZE;
         page->cs_header.page_id = current_page;
         page->cs_header.checksum = 0;
@@ -3400,7 +3400,7 @@ Status ColumnstoreIndex::createMetadataPage(Database *db,
     // Initialize header
     meta_page->cs_header.magic = K_MAGIC_SBRD;
     meta_page->cs_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1);
-    meta_page->cs_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_COLUMNSTORE);
+    meta_page->cs_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_COLUMNSTORE_META);
     meta_page->cs_header.page_size = db->page_size();
     meta_page->cs_header.page_id = metadata_page;
     meta_page->cs_header.generation = 1;
@@ -3494,7 +3494,7 @@ Status ColumnstoreIndex::readMetadataPage(uint32_t metadata_page, ErrorContext *
     auto *meta_page = static_cast<SBColumnstoreMetadataPage *>(page_buffer);
 
     // Verify page type
-    if (meta_page->cs_header.page_type != static_cast<uint16_t>(PageType::PAGE_TYPE_COLUMNSTORE))
+    if (meta_page->cs_header.page_type != static_cast<uint16_t>(PageType::PAGE_TYPE_COLUMNSTORE_META))
     {
     unpinIndexPage(metadata_page, false, ctx);
         SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,

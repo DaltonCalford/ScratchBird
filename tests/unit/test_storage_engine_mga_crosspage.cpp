@@ -140,9 +140,9 @@ TEST_F(StorageEngineMGATest, CrossPageUpdatePreservesTID)
     TID original_tid(original_gpid, original_item_id);
 
     // Step 2: Update with LARGER data
-    // TOAST threshold for 8KB pages = page_size/32 = 256 bytes
-    // Use 180 bytes payload - large enough to test update but under TOAST threshold
-    auto larger_data = makeTestTuple(180, 0xBB);
+    // TOAST threshold for 8KB pages = page_size/32 = 256 bytes.
+    // Keep payload under threshold after the current TupleHeader size.
+    auto larger_data = makeTestTuple(150, 0xBB);
     uint32_t new_page_id;
     uint16_t new_item_id;
 
@@ -276,7 +276,7 @@ TEST_F(StorageEngineMGATest, MultipleUpdatesCreateBackwardChain)
     TID original_tid(makeGPID(PRIMARY_TABLESPACE_ID, static_cast<uint64_t>(page_id)), item_id);
 
     // Update 1: Larger data (under TOAST threshold of 256 bytes for 8KB pages)
-    auto data2 = makeTestTuple(180, 0x22);
+    auto data2 = makeTestTuple(150, 0x22);
     uint32_t page_id2;
     uint16_t item_id2;
 
@@ -290,7 +290,7 @@ TEST_F(StorageEngineMGATest, MultipleUpdatesCreateBackwardChain)
     EXPECT_EQ(item_id, item_id2);
 
     // Update 2: Another update (still under TOAST threshold of 256 bytes)
-    auto data3 = makeTestTuple(190, 0x33);
+    auto data3 = makeTestTuple(160, 0x33);
     uint32_t page_id3;
     uint16_t item_id3;
 

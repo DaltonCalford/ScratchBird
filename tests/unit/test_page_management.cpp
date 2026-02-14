@@ -62,12 +62,12 @@ TEST_F(PageManagementTest, FSMPageCreation)
 
     // Read FSM page directly
     uint8_t buffer[16384];
-    ASSERT_EQ(db.read_page(2, buffer, &ctx), Status::OK);
+    ASSERT_EQ(db.read_page(BOOTSTRAP_PAGE_FSM_ROOT, buffer, &ctx), Status::OK);
 
     PageHeader *header = reinterpret_cast<PageHeader *>(buffer);
     EXPECT_EQ(header->magic, 0x53425244); // 'SBRD'
-    EXPECT_EQ(header->page_type, PAGE_TYPE_FREE_SPACE_MAP);
-    EXPECT_EQ(header->page_id, 2);
+    EXPECT_EQ(header->page_type, PAGE_TYPE_FSM_ROOT);
+    EXPECT_EQ(header->page_id, BOOTSTRAP_PAGE_FSM_ROOT);
 }
 
 // Page allocation test - updated for expanded catalog

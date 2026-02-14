@@ -185,7 +185,7 @@ TEST_F(ExtendedPageSizesAgentCReviewTest, StructureAlignment)
     ASSERT_EQ(sizeof(HeapPageSpecial), expected_special_size)
         << "HeapPageSpecial size should match packed field sizes";
     ASSERT_EQ(sizeof(PageHeader), 80) << "PageHeader size check";
-    ASSERT_EQ(sizeof(TupleHeader), 60) << "TupleHeader size check";
+    ASSERT_EQ(sizeof(TupleHeader), 88) << "TupleHeader size check";
 
     // Verify field offsets using offsetof
     ASSERT_EQ(offsetof(ItemPointer, offset), 0);

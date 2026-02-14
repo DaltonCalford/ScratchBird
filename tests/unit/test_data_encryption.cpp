@@ -164,10 +164,10 @@ TEST(DataEncryptionTest, GenerateIVLength)
     DataEncryption::generateIV(iv);
     EXPECT_EQ(iv.size(), 12u);
 
-    std::vector<uint8_t> iv2;
-    DataEncryption::generateIV(iv2);
-    EXPECT_EQ(iv2.size(), 12u);
-    EXPECT_NE(iv, iv2);
+    std::vector<uint8_t> iv_second;
+    DataEncryption::generateIV(iv_second);
+    EXPECT_EQ(iv_second.size(), 12u);
+    EXPECT_NE(iv, iv_second);
 }
 
 TEST(DataEncryptionTest, PerformanceSmallValues)

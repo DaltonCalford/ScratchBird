@@ -412,6 +412,12 @@ protected:
 private:
     void updateTransactionStatus(const std::string& sql, bool has_error);
     void bootstrapInformationSchema(core::ErrorContext* ctx);
+    core::Status executeRemoteNativeSQL(const std::string& sql,
+                                        client::ResultSet* results,
+                                        core::ErrorContext* ctx);
+    core::Status executeRemoteDialectSQL(const std::string& sql,
+                                         client::ResultSet* results,
+                                         core::ErrorContext* ctx);
     // Prepared statement helpers
     uint16_t countParameters(const std::string& query) const;
     std::string escapeLiteral(const std::string& value) const;

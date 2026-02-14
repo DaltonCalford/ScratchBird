@@ -44,7 +44,7 @@ protected:
     std::string ts_path_;
 };
 
-TEST_F(TablespaceHeaderTest, WritesHeaderV2WithLongName)
+TEST_F(TablespaceHeaderTest, WritesHeaderCurrentWithLongName)
 {
     ASSERT_EQ(Database::create(db_path_, 8192), Status::OK);
 
@@ -71,7 +71,7 @@ TEST_F(TablespaceHeaderTest, WritesHeaderV2WithLongName)
     ASSERT_EQ(bytes, static_cast<ssize_t>(buffer.size()));
 
     const auto *header = reinterpret_cast<const TablespaceHeader *>(buffer.data());
-    EXPECT_EQ(header->page_header.version, TABLESPACE_HEADER_VERSION_V2);
+    EXPECT_EQ(header->page_header.version, TABLESPACE_HEADER_VERSION_CURRENT);
     EXPECT_EQ(std::string(header->tablespace_name), long_name);
 }
 

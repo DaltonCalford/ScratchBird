@@ -367,7 +367,7 @@ TEST_F(ToastTIPVisibilityTest, DeletedByCommittedTxn_ChunkInvisible)
     }
 
     ASSERT_EQ(status, Status::OK);
-    ID value_id = toast_ptr.va_valueid;
+    ID value_id = toast_ptr.lob_uuid;
     commitTxn(conn_ctx_.get(), &ctx);
 
     // T2: Delete chunk
@@ -438,7 +438,7 @@ TEST_F(ToastTIPVisibilityTest, DeletedByAbortedTxn_ChunkVisible)
     }
 
     ASSERT_EQ(status, Status::OK);
-    ID value_id = toast_ptr.va_valueid;
+    ID value_id = toast_ptr.lob_uuid;
     commitTxn(conn_ctx_.get(), &ctx);
 
     // T2: Delete chunk but ABORT
@@ -511,7 +511,7 @@ TEST_F(ToastTIPVisibilityTest, DeletedByActiveTxn_ChunkVisibleToOthers)
     }
 
     ASSERT_EQ(status, Status::OK);
-    ID value_id = toast_ptr.va_valueid;
+    ID value_id = toast_ptr.lob_uuid;
     commitTxn(conn_ctx_.get(), &ctx);
 
     // T2: Delete chunk but DON'T commit

@@ -470,6 +470,7 @@ const char* binaryOpToString(BinaryOp op) {
         case BinaryOp::LE: return "<=";
         case BinaryOp::GT: return ">";
         case BinaryOp::GE: return ">=";
+        case BinaryOp::NULL_SAFE_EQ: return "<=>";
         case BinaryOp::AND: return "AND";
         case BinaryOp::OR: return "OR";
         case BinaryOp::CONCAT: return "||";
@@ -479,7 +480,7 @@ const char* binaryOpToString(BinaryOp op) {
         case BinaryOp::REGEX_NOT_MATCH_CI: return "!~*";
         case BinaryOp::BIT_AND: return "&";
         case BinaryOp::BIT_OR: return "|";
-        case BinaryOp::BIT_XOR: return "#";
+        case BinaryOp::BIT_XOR: return "^";
         case BinaryOp::SHIFT_LEFT: return "<<";
         case BinaryOp::SHIFT_RIGHT: return ">>";
         case BinaryOp::JSON_EXTRACT: return "->";

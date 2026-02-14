@@ -32,7 +32,7 @@ static void fill_page(std::vector<uint8_t> &page, uint32_t page_size, uint32_t p
     header->page_size = page_size;
     header->lsn = 0;
     header->page_id = page_id;
-    header->flags = 0;
+    header->flags = PAGE_FLAG_CHECKSUM_VALID;
     header->generation = 1;
     pageSetLower(*header, sizeof(PageHeader));
     pageSetUpper(*header, page_size);

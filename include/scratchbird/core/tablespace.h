@@ -95,7 +95,7 @@ struct TablespaceHeaderV1
 #pragma pack(pop)
 
 constexpr uint16_t TABLESPACE_HEADER_VERSION_V1 = 1;
-constexpr uint16_t TABLESPACE_HEADER_VERSION_V2 = 2;
+constexpr uint16_t TABLESPACE_HEADER_VERSION_CURRENT = 2;
 
 #pragma pack(push, 1)
 struct TablespaceHeader

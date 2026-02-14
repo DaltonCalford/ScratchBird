@@ -28,7 +28,7 @@ namespace scratchbird::core
     /**
      * Page Manager - Handles page allocation and free space tracking
      *
-     * The Free Space Map (FSM) is stored on page 2 and uses a bitmap
+     * The primary Free Space Map (FSM) is stored on bootstrap page 3 and uses a bitmap
      * to track allocated/free pages. Each bit represents one page:
      * 0 = free, 1 = allocated
      */
@@ -381,7 +381,7 @@ namespace scratchbird::core
             uint8_t bitmap[];       // Variable length bitmap
         };
 
-        static constexpr uint32_t FSM_PAGE_ID = 2; // FSM is always page 2
+        static constexpr uint32_t FSM_PAGE_ID = BOOTSTRAP_PAGE_FSM_ROOT; // Canonical bootstrap FSM root
     };
 
 } // namespace scratchbird::core

@@ -10,6 +10,7 @@
 #pragma once
 
 #include <cstdint>
+#include <limits>
 #include <string>
 #include <vector>
 #include <memory>
@@ -46,6 +47,10 @@ namespace scratchbird::core
         friend class GlobalUniquenessIndex;
 
     public:
+        // Sentinel for "no display offset stored" temporal values.
+        static constexpr int32_t kNoDisplayOffsetSeconds =
+            std::numeric_limits<int32_t>::min();
+
         // Constructors
         TypedValue();  // NULL value
         explicit TypedValue(DataType type);  // NULL value of specific type
@@ -112,9 +117,15 @@ namespace scratchbird::core
         static TypedValue makeTSQuery(const std::shared_ptr<TSQuery>& value);
 
         // Factory methods for temporal types
-        static TypedValue makeDate(int64_t days_since_epoch, int32_t offset_seconds = 0);
-        static TypedValue makeTime(int64_t microseconds, int32_t offset_seconds = 0);
-        static TypedValue makeTimestamp(int64_t microseconds_since_epoch, int32_t offset_seconds = 0);
+        static TypedValue makeDate(
+            int64_t days_since_epoch,
+            int32_t offset_seconds = kNoDisplayOffsetSeconds);
+        static TypedValue makeTime(
+            int64_t microseconds,
+            int32_t offset_seconds = kNoDisplayOffsetSeconds);
+        static TypedValue makeTimestamp(
+            int64_t microseconds_since_epoch,
+            int32_t offset_seconds = kNoDisplayOffsetSeconds);
         static TypedValue makeBoolean(bool value) { return makeBool(value); } // Alias
 
         // Factory methods for other types
@@ -374,7 +385,7 @@ namespace scratchbird::core
         uint8_t decimal_scale_ = 0;
 
         // Temporal timezone offset (seconds)
-        int32_t timezone_offset_seconds_ = 0;
+        int32_t timezone_offset_seconds_ = kNoDisplayOffsetSeconds;
         uint32_t bit_length_ = 0;
 
         // Storage for spatial types (heap-allocated for complex types)

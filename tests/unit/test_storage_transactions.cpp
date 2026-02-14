@@ -164,12 +164,12 @@ TEST_F(StorageTransactionTest, UpdateCreatesBackVersion)
     ASSERT_EQ(conn_ctx_->commit(&ctx), Status::OK) << ctx.message;
 
     uint64_t xid_update = conn_ctx_->getCurrentXid();
-    auto tuple_v2 = makeTuple(1, 20);
+    auto tuple_second = makeTuple(1, 20);
 
     uint32_t updated_page_id = 0;
     uint16_t updated_item_id = 0;
     ASSERT_EQ(storage_->updateTuple(table_id_, page_id, item_id,
-                                    tuple_v2.data(), tuple_v2.size(),
+                                    tuple_second.data(), tuple_second.size(),
                                     &updated_page_id, &updated_item_id, &ctx),
               Status::OK) << ctx.message;
 

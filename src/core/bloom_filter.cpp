@@ -196,7 +196,7 @@ Status BloomFilter::create(Database *db,
     std::memset(meta, 0, sizeof(SBBloomFilterMetaPage));
     meta->bf_header.magic = K_MAGIC_SBRD;
     meta->bf_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
-    meta->bf_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_BLOOM_FILTER_META);
+    meta->bf_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_BLOOM_META);
     meta->bf_header.page_size = page_size;
     meta->bf_header.page_id = static_cast<uint32_t>(getPageNumber(meta_gpid));
     meta->bf_header.generation = 1;
@@ -237,7 +237,7 @@ Status BloomFilter::create(Database *db,
         std::memset(page_data, 0, page_size);
         data_page->bf_header.magic = K_MAGIC_SBRD;
         data_page->bf_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
-        data_page->bf_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_BLOOM_FILTER_DATA);
+        data_page->bf_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_BLOOM_RANGE);
         data_page->bf_header.page_size = page_size;
         data_page->bf_header.page_id = static_cast<uint32_t>(getPageNumber(data_pages[i]));
         data_page->bf_header.generation = 1;

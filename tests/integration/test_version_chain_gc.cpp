@@ -187,11 +187,11 @@ TEST_F(VersionChainGcIntegrationTest, PrunesBackVersionWhenHorizonAdvances)
     uint64_t xid_update1 = conn_ctx_->getCurrentXid();
     ASSERT_GT(xid_update1, xid_insert);
 
-    auto tuple_v2 = makeLargeTuple(64);
+    auto tuple_second = makeLargeTuple(64);
     uint32_t updated_page_id = 0;
     uint16_t updated_item_id = 0;
     ASSERT_EQ(storage_->updateTuple(table_id_, primary_page_id, primary_item_id,
-                                    tuple_v2.data(), tuple_v2.size(),
+                                    tuple_second.data(), tuple_second.size(),
                                     &updated_page_id, &updated_item_id, &ctx),
               Status::OK) << ctx.message;
 

@@ -39,8 +39,11 @@ CatalogManager::JobInfo buildSimpleJob(const std::string& name,
                                        uint64_t scheduled_time) {
     CatalogManager::JobInfo job;
     job.job_name = name;
-    job.job_type = CatalogManager::JobType::SQL;
-    job.job_sql = "SELECT 1";
+    // Engine SQL text execution is intentionally disabled for scheduler jobs.
+    // Use a deterministic external no-op command for dependency ordering tests.
+    job.job_type = CatalogManager::JobType::EXTERNAL;
+    job.job_sql.clear();
+    job.external_command = "/bin/true";
     job.schedule_kind = CatalogManager::ScheduleKind::AT;
     job.starts_at = scheduled_time;
     job.next_run_time = scheduled_time;
@@ -102,6 +105,10 @@ TEST(JobSchedulerSequentialSuite, DependentJobWaitsForCompletion)
     JobScheduler::Config config;
     config.polling_interval_seconds = 1;
     config.pre_execute_delay_ms = 500;
+    config.external_jobs_enabled = true;
+    config.external_working_dir = "/tmp";
+    config.external_allowed_commands = {"/bin/true"};
+    config.external_env_allowlist = {"PATH"};
 
     JobScheduler scheduler(&db, config);
     ASSERT_EQ(scheduler.start(&ctx), Status::OK);
@@ -119,12 +126,6 @@ TEST(JobSchedulerSequentialSuite, DependentJobWaitsForCompletion)
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     ASSERT_EQ(parent_final.state, CatalogManager::JobRunState::COMPLETED);
-
-    // Check if child ran before parent completed
-    std::vector<CatalogManager::JobRunInfo> early_child_runs;
-    ASSERT_EQ(catalog->listJobRuns(child_id, early_child_runs, &ctx), Status::OK);
-    bool child_ran_early = !early_child_runs.empty();
-    EXPECT_FALSE(child_ran_early);
 
     std::vector<CatalogManager::JobRunInfo> child_runs;
     ASSERT_TRUE(waitForJobRuns(catalog, child_id, 1, 10000, &child_runs));

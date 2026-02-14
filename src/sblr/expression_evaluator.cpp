@@ -592,6 +592,53 @@ namespace scratchbird::sblr
                 throw std::runtime_error("Invalid regular expression");
             }
         }
+
+        enum class ThreeValuedTruth : uint8_t {
+            FALSE_VALUE = 0,
+            TRUE_VALUE = 1,
+            UNKNOWN_VALUE = 2,
+        };
+
+        static ThreeValuedTruth toThreeValuedTruth(const TypedValue& value) {
+            if (value.isNull()) {
+                return ThreeValuedTruth::UNKNOWN_VALUE;
+            }
+            if (value.type() == core::DataType::BOOLEAN) {
+                return value.getBoolean() ? ThreeValuedTruth::TRUE_VALUE
+                                          : ThreeValuedTruth::FALSE_VALUE;
+            }
+            return ThreeValuedTruth::TRUE_VALUE;
+        }
+
+        static TypedValue evaluateThreeValuedAnd(const TypedValue& left,
+                                                 const TypedValue& right) {
+            const ThreeValuedTruth left_truth = toThreeValuedTruth(left);
+            const ThreeValuedTruth right_truth = toThreeValuedTruth(right);
+            if (left_truth == ThreeValuedTruth::FALSE_VALUE ||
+                right_truth == ThreeValuedTruth::FALSE_VALUE) {
+                return TypedValue::makeBoolean(false);
+            }
+            if (left_truth == ThreeValuedTruth::UNKNOWN_VALUE ||
+                right_truth == ThreeValuedTruth::UNKNOWN_VALUE) {
+                return TypedValue::makeNull(core::DataType::BOOLEAN);
+            }
+            return TypedValue::makeBoolean(true);
+        }
+
+        static TypedValue evaluateThreeValuedOr(const TypedValue& left,
+                                                const TypedValue& right) {
+            const ThreeValuedTruth left_truth = toThreeValuedTruth(left);
+            const ThreeValuedTruth right_truth = toThreeValuedTruth(right);
+            if (left_truth == ThreeValuedTruth::TRUE_VALUE ||
+                right_truth == ThreeValuedTruth::TRUE_VALUE) {
+                return TypedValue::makeBoolean(true);
+            }
+            if (left_truth == ThreeValuedTruth::UNKNOWN_VALUE ||
+                right_truth == ThreeValuedTruth::UNKNOWN_VALUE) {
+                return TypedValue::makeNull(core::DataType::BOOLEAN);
+            }
+            return TypedValue::makeBoolean(false);
+        }
     }
 
     TypedValue ExpressionEvaluator::evaluateBinaryOp(const BinaryOpExpr *expr,
@@ -600,13 +647,21 @@ namespace scratchbird::sblr
         TypedValue left = evaluate(expr->left(), row);
         TypedValue right = evaluate(expr->right(), row);
 
+        using core::BinaryOp;
+        if (expr->op() == BinaryOp::AND)
+        {
+            return evaluateThreeValuedAnd(left, right);
+        }
+        if (expr->op() == BinaryOp::OR)
+        {
+            return evaluateThreeValuedOr(left, right);
+        }
+
         // Handle NULL propagation for most operators
         if (left.isNull() || right.isNull())
         {
             return TypedValue::makeNull();
         }
-
-        using core::BinaryOp;
 
         const bool use_integer128 = isIntegerType(left.type()) && isIntegerType(right.type()) &&
                                     (left.type() == core::DataType::INT128 ||
@@ -792,10 +847,10 @@ namespace scratchbird::sblr
 
         // Logical
         case BinaryOp::AND:
-            return TypedValue::makeBoolean(isTruthy(left) && isTruthy(right));
+            return evaluateThreeValuedAnd(left, right);
 
         case BinaryOp::OR:
-            return TypedValue::makeBoolean(isTruthy(left) || isTruthy(right));
+            return evaluateThreeValuedOr(left, right);
 
         // String
         case BinaryOp::LIKE:

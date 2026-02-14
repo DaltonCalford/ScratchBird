@@ -24,7 +24,11 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <limits>
+#include <sstream>
+#include <string_view>
 #include <unordered_set>
+#include <openssl/sha.h>
 
 namespace scratchbird::core
 {
@@ -43,166 +47,454 @@ namespace scratchbird::core
             DataType base_type;
             uint32_t precision;
             uint32_t scale;
+            const char* param_string = "";
+            const char* fixed_uuid_literal = "";
         };
 
-        const SystemDomainDef kSystemDomains[] = {
-            {"SBDB$UUID_V7", DataType::UUID, 0, 0},
-            {"SBDB$NAME", DataType::VARCHAR, 128, 0},
-            {"SBDB$NAME_64", DataType::VARCHAR, 64, 0},
-            {"SBDB$NAME_256", DataType::VARCHAR, 256, 0},
-            {"SBDB$NAME_512", DataType::VARCHAR, 512, 0},
-            {"SBDB$NAME_1024", DataType::VARCHAR, 1024, 0},
-            {"SBDB$BOOL", DataType::BOOLEAN, 0, 0},
-            {"SBDB$BIT", DataType::BIT, 0, 0},
-            {"SBDB$U8", DataType::UINT8, 0, 0},
-            {"SBDB$U16", DataType::UINT16, 0, 0},
-            {"SBDB$U32", DataType::UINT32, 0, 0},
-            {"SBDB$U64", DataType::UINT64, 0, 0},
-            {"SBDB$U128", DataType::UINT128, 0, 0},
-            {"SBDB$I8", DataType::INT8, 0, 0},
-            {"SBDB$I16", DataType::INT16, 0, 0},
-            {"SBDB$I32", DataType::INT32, 0, 0},
-            {"SBDB$I64", DataType::INT64, 0, 0},
-            {"SBDB$I128", DataType::INT128, 0, 0},
-            {"SBDB$F32", DataType::FLOAT32, 0, 0},
-            {"SBDB$F64", DataType::FLOAT64, 0, 0},
-            {"SBDB$DECIMAL", DataType::DECIMAL, 0, 0},
-            {"SBDB$MONEY", DataType::MONEY, 0, 0},
-            {"SBDB$DECFLOAT16", DataType::DECFLOAT16, 0, 0},
-            {"SBDB$DECFLOAT34", DataType::DECFLOAT34, 0, 0},
-            {"SBDB$TIME_US", DataType::UINT64, 0, 0},
-            {"SBDB$DATE", DataType::DATE, 0, 0},
-            {"SBDB$TIME", DataType::TIME, 0, 0},
-            {"SBDB$TIMESTAMP", DataType::TIMESTAMP, 0, 0},
-            {"SBDB$TIMESTAMPTZ", DataType::TIMESTAMP_WITH_ZONE, 0, 0},
-            {"SBDB$TIME_TZ", DataType::TIME_WITH_ZONE, 0, 0},
-            {"SBDB$INTERVAL", DataType::INTERVAL, 0, 0},
-            {"SBDB$YEAR", DataType::YEAR, 0, 0},
-            {"SBDB$SQLSTATE", DataType::CHAR, 5, 0},
-            {"SBDB$HASH256", DataType::BINARY, 32, 0},
-            {"SBDB$BINARY", DataType::BINARY, 0, 0},
-            {"SBDB$VARBINARY", DataType::VARBINARY, 0, 0},
-            {"SBDB$BLOB", DataType::BLOB, 0, 0},
-            {"SBDB$BYTEA", DataType::BYTEA, 0, 0},
-            {"SBDB$TEXT", DataType::TEXT, 0, 0},
-            {"SBDB$JSON", DataType::JSON, 0, 0},
-            {"SBDB$JSONB", DataType::JSONB, 0, 0},
-            {"SBDB$XML", DataType::XML, 0, 0},
-            {"SBDB$VECTOR", DataType::VECTOR, 0, 0},
-            {"SBDB$POINT", DataType::POINT, 0, 0},
-            {"SBDB$LINESTRING", DataType::LINESTRING, 0, 0},
-            {"SBDB$POLYGON", DataType::POLYGON, 0, 0},
-            {"SBDB$MULTIPOINT", DataType::MULTIPOINT, 0, 0},
-            {"SBDB$MULTILINESTRING", DataType::MULTILINESTRING, 0, 0},
-            {"SBDB$MULTIPOLYGON", DataType::MULTIPOLYGON, 0, 0},
-            {"SBDB$GEOMETRYCOLLECTION", DataType::GEOMETRYCOLLECTION, 0, 0},
-            {"SBDB$GEOMETRY", DataType::GEOMETRY, 0, 0},
-            {"SBDB$INET", DataType::INET, 0, 0},
-            {"SBDB$CIDR", DataType::CIDR, 0, 0},
-            {"SBDB$MACADDR", DataType::MACADDR, 0, 0},
-            {"SBDB$MACADDR8", DataType::MACADDR8, 0, 0},
-            {"SBDB$TSVECTOR", DataType::TSVECTOR, 0, 0},
-            {"SBDB$TSQUERY", DataType::TSQUERY, 0, 0},
-            {"SBDB$RANGE_INT4", DataType::INT4RANGE, 0, 0},
-            {"SBDB$RANGE_INT8", DataType::INT8RANGE, 0, 0},
-            {"SBDB$RANGE_NUM", DataType::NUMRANGE, 0, 0},
-            {"SBDB$RANGE_TS", DataType::TSRANGE, 0, 0},
-            {"SBDB$RANGE_TSTZ", DataType::TSTZRANGE, 0, 0},
-            {"SBDB$RANGE_DATE", DataType::DATERANGE, 0, 0},
-            {"SBDB$ARRAY", DataType::ARRAY, 0, 0},
-            {"SBDB$COMPOSITE", DataType::COMPOSITE, 0, 0},
-            {"SBDB$DOMAIN", DataType::DOMAIN, 0, 0},
-            {"SBDB$ROW", DataType::ROW, 0, 0},
-            {"SBDB$ENUM", DataType::ENUM, 0, 0},
-            {"SBDB$SET", DataType::SET, 0, 0},
-            {"SBDB$VARIANT", DataType::VARIANT, 0, 0},
-            {"SBDB$PAGE_ID", DataType::UINT32, 0, 0},
-            {"SBDB$LOB_REF", DataType::UUID, 0, 0},
-            {"SBDB$OBJTYPE", DataType::UINT8, 0, 0},
-            {"SBDB$SCHEMA_TYPE", DataType::UINT8, 0, 0},
-            {"SBDB$INDEX_TYPE", DataType::UINT8, 0, 0},
-            {"SBDB$TABLE_TYPE", DataType::UINT8, 0, 0},
-            {"SBDB$POLICY_TYPE", DataType::UINT8, 0, 0},
-            {"SBDB$SECURITY_FLAGS", DataType::UINT32, 0, 0},
-            {"SBDB$PERMISSIONS_MASK", DataType::UINT32, 0, 0}
+        const SystemDomainDef kLegacySystemDomains[] = {
+            {"[sb_dom]UUID_V7", DataType::UUID, 0, 0},
+            {"[sb_dom]NAME", DataType::VARCHAR, 128, 0},
+            {"[sb_dom]NAME_64", DataType::VARCHAR, 64, 0},
+            {"[sb_dom]NAME_256", DataType::VARCHAR, 256, 0},
+            {"[sb_dom]NAME_512", DataType::VARCHAR, 512, 0},
+            {"[sb_dom]NAME_1024", DataType::VARCHAR, 1024, 0},
+            {"[sb_dom]BOOL", DataType::BOOLEAN, 0, 0},
+            {"[sb_dom]BIT", DataType::BIT, 0, 0},
+            {"[sb_dom]U8", DataType::UINT8, 0, 0},
+            {"[sb_dom]U16", DataType::UINT16, 0, 0},
+            {"[sb_dom]U32", DataType::UINT32, 0, 0},
+            {"[sb_dom]U64", DataType::UINT64, 0, 0},
+            {"[sb_dom]U128", DataType::UINT128, 0, 0},
+            {"[sb_dom]I8", DataType::INT8, 0, 0},
+            {"[sb_dom]I16", DataType::INT16, 0, 0},
+            {"[sb_dom]I32", DataType::INT32, 0, 0},
+            {"[sb_dom]I64", DataType::INT64, 0, 0},
+            {"[sb_dom]I128", DataType::INT128, 0, 0},
+            {"[sb_dom]F32", DataType::FLOAT32, 0, 0},
+            {"[sb_dom]F64", DataType::FLOAT64, 0, 0},
+            {"[sb_dom]DECIMAL", DataType::DECIMAL, 0, 0},
+            {"[sb_dom]MONEY", DataType::MONEY, 0, 0},
+            {"[sb_dom]DECFLOAT16", DataType::DECFLOAT16, 0, 0},
+            {"[sb_dom]DECFLOAT34", DataType::DECFLOAT34, 0, 0},
+            {"[sb_dom]TIME_US", DataType::UINT64, 0, 0},
+            {"[sb_dom]DATE", DataType::DATE, 0, 0},
+            {"[sb_dom]TIME", DataType::TIME, 0, 0},
+            {"[sb_dom]TIMESTAMP", DataType::TIMESTAMP, 0, 0},
+            {"[sb_dom]TIMESTAMPTZ", DataType::TIMESTAMP_WITH_ZONE, 0, 0},
+            {"[sb_dom]TIME_TZ", DataType::TIME_WITH_ZONE, 0, 0},
+            {"[sb_dom]INTERVAL", DataType::INTERVAL, 0, 0},
+            {"[sb_dom]YEAR", DataType::YEAR, 0, 0},
+            {"[sb_dom]SQLSTATE", DataType::CHAR, 5, 0},
+            {"[sb_dom]HASH256", DataType::BINARY, 32, 0},
+            {"[sb_dom]BINARY", DataType::BINARY, 0, 0},
+            {"[sb_dom]VARBINARY", DataType::VARBINARY, 0, 0},
+            {"[sb_dom]BLOB", DataType::BLOB, 0, 0},
+            {"[sb_dom]BYTEA", DataType::BYTEA, 0, 0},
+            {"[sb_dom]TEXT", DataType::TEXT, 0, 0},
+            {"[sb_dom]JSON", DataType::JSON, 0, 0},
+            {"[sb_dom]JSONB", DataType::JSONB, 0, 0},
+            {"[sb_dom]XML", DataType::XML, 0, 0},
+            {"[sb_dom]VECTOR", DataType::VECTOR, 0, 0},
+            {"[sb_dom]POINT", DataType::POINT, 0, 0},
+            {"[sb_dom]LINESTRING", DataType::LINESTRING, 0, 0},
+            {"[sb_dom]POLYGON", DataType::POLYGON, 0, 0},
+            {"[sb_dom]MULTIPOINT", DataType::MULTIPOINT, 0, 0},
+            {"[sb_dom]MULTILINESTRING", DataType::MULTILINESTRING, 0, 0},
+            {"[sb_dom]MULTIPOLYGON", DataType::MULTIPOLYGON, 0, 0},
+            {"[sb_dom]GEOMETRYCOLLECTION", DataType::GEOMETRYCOLLECTION, 0, 0},
+            {"[sb_dom]GEOMETRY", DataType::GEOMETRY, 0, 0},
+            {"[sb_dom]INET", DataType::INET, 0, 0},
+            {"[sb_dom]CIDR", DataType::CIDR, 0, 0},
+            {"[sb_dom]MACADDR", DataType::MACADDR, 0, 0},
+            {"[sb_dom]MACADDR8", DataType::MACADDR8, 0, 0},
+            {"[sb_dom]TSVECTOR", DataType::TSVECTOR, 0, 0},
+            {"[sb_dom]TSQUERY", DataType::TSQUERY, 0, 0},
+            {"[sb_dom]RANGE_INT4", DataType::INT4RANGE, 0, 0},
+            {"[sb_dom]RANGE_INT8", DataType::INT8RANGE, 0, 0},
+            {"[sb_dom]RANGE_NUM", DataType::NUMRANGE, 0, 0},
+            {"[sb_dom]RANGE_TS", DataType::TSRANGE, 0, 0},
+            {"[sb_dom]RANGE_TSTZ", DataType::TSTZRANGE, 0, 0},
+            {"[sb_dom]RANGE_DATE", DataType::DATERANGE, 0, 0},
+            {"[sb_dom]ARRAY", DataType::ARRAY, 0, 0},
+            {"[sb_dom]COMPOSITE", DataType::COMPOSITE, 0, 0},
+            {"[sb_dom]DOMAIN", DataType::DOMAIN, 0, 0},
+            {"[sb_dom]ROW", DataType::ROW, 0, 0},
+            {"[sb_dom]ENUM", DataType::ENUM, 0, 0},
+            {"[sb_dom]SET", DataType::SET, 0, 0},
+            {"[sb_dom]VARIANT", DataType::VARIANT, 0, 0},
+            {"[sb_dom]PAGE_ID", DataType::UINT32, 0, 0},
+            {"[sb_dom]LOB_REF", DataType::UUID, 0, 0},
+            {"[sb_dom]OBJTYPE", DataType::UINT8, 0, 0},
+            {"[sb_dom]SCHEMA_TYPE", DataType::UINT8, 0, 0},
+            {"[sb_dom]INDEX_TYPE", DataType::UINT8, 0, 0},
+            {"[sb_dom]TABLE_TYPE", DataType::UINT8, 0, 0},
+            {"[sb_dom]POLICY_TYPE", DataType::UINT8, 0, 0},
+            {"[sb_dom]SECURITY_FLAGS", DataType::UINT32, 0, 0},
+            {"[sb_dom]PERMISSIONS_MASK", DataType::UINT32, 0, 0}
+        };
+
+        // Authoritative fixed registry imported from:
+        // local_work/docs/specifications/15_Complex_Types/SYSTEM_DOMAIN_UUID_REGISTRY.md
+        const SystemDomainDef kCanonicalSystemDomains[] = {
+#include "scratchbird/core/system_domain_registry_rows.inc"
         };
 
         const char* const kSystemKeyDomains[] = {
-            "SBDB$KEY_SCHEMA",
-            "SBDB$KEY_TABLE",
-            "SBDB$KEY_COLUMN",
-            "SBDB$KEY_INDEX",
-            "SBDB$KEY_CONSTRAINT",
-            "SBDB$KEY_SEQUENCE",
-            "SBDB$KEY_VIEW",
-            "SBDB$KEY_TRIGGER",
-            "SBDB$KEY_PERMISSION",
-            "SBDB$KEY_OBJECT",
-            "SBDB$KEY_STATISTICS",
-            "SBDB$KEY_STATISTIC",
-            "SBDB$KEY_COLLATION",
-            "SBDB$KEY_TIMEZONE",
-            "SBDB$KEY_CHARSET",
-            "SBDB$KEY_COLLATION_DEF",
-            "SBDB$KEY_DEPENDENCY",
-            "SBDB$KEY_COMMENT",
-            "SBDB$KEY_OBJECT_DEF",
-            "SBDB$KEY_ATTACHMENT",
-            "SBDB$KEY_JOB",
-            "SBDB$KEY_JOB_RUN",
-            "SBDB$KEY_JOB_DEPENDENCY",
-            "SBDB$KEY_JOB_SECRET",
-            "SBDB$KEY_NODE",
-            "SBDB$KEY_SHARD",
-            "SBDB$KEY_USER",
-            "SBDB$KEY_PRINCIPAL",
-            "SBDB$KEY_ROLE",
-            "SBDB$KEY_GROUP",
-            "SBDB$KEY_ROLE_MEMBER",
-            "SBDB$KEY_GROUP_MEMBER",
-            "SBDB$KEY_GROUP_MAPPING",
-            "SBDB$KEY_MEMBERSHIP",
-            "SBDB$KEY_MAPPING",
-            "SBDB$KEY_PROCEDURE",
-            "SBDB$KEY_PROC_PARAM",
-            "SBDB$KEY_DOMAIN",
-            "SBDB$KEY_UDR",
-            "SBDB$KEY_EXCEPTION",
-            "SBDB$KEY_PACKAGE",
-            "SBDB$KEY_EMULATION_TYPE",
-            "SBDB$KEY_EMULATION_SERVER",
-            "SBDB$KEY_EMULATED_DB",
-            "SBDB$KEY_TABLESPACE",
-            "SBDB$KEY_TABLESPACE_FILE",
-            "SBDB$KEY_EXTENSION",
-            "SBDB$KEY_FOREIGN_KEY",
-            "SBDB$KEY_SYNONYM",
-            "SBDB$KEY_FOREIGN_SERVER",
-            "SBDB$KEY_FOREIGN_TABLE",
-            "SBDB$KEY_USER_MAPPING",
-            "SBDB$KEY_SERVER",
-            "SBDB$KEY_SERVER_INSTANCE",
-            "SBDB$KEY_SERVER_REGISTRY",
-            "SBDB$KEY_UDR_ENGINE",
-            "SBDB$KEY_UDR_MODULE",
-            "SBDB$KEY_MIGRATION",
-            "SBDB$KEY_MIGRATION_HISTORY",
-            "SBDB$KEY_DORMANT_TXN",
-            "SBDB$KEY_PREPARED_TXN",
-            "SBDB$KEY_TXN",
-            "SBDB$KEY_STATEMENT",
-            "SBDB$KEY_LOCK",
-            "SBDB$KEY_DATABASE",
-            "SBDB$KEY_RELATION",
-            "SBDB$KEY_ENCRYPTION_KEY",
-            "SBDB$KEY_AUTHKEY",
-            "SBDB$KEY_SESSION",
-            "SBDB$KEY_AUDIT_LOG",
-            "SBDB$KEY_SECURITY_POLICY_EPOCH",
-            "SBDB$KEY_POLICY",
-            "SBDB$KEY_COLUMN_PERMISSION",
-            "SBDB$KEY_OBJECT_PERMISSION"
+            "[sb_dom]KEY_SCHEMA",
+            "[sb_dom]KEY_TABLE",
+            "[sb_dom]KEY_COLUMN",
+            "[sb_dom]KEY_INDEX",
+            "[sb_dom]KEY_CONSTRAINT",
+            "[sb_dom]KEY_SEQUENCE",
+            "[sb_dom]KEY_VIEW",
+            "[sb_dom]KEY_TRIGGER",
+            "[sb_dom]KEY_PERMISSION",
+            "[sb_dom]KEY_OBJECT",
+            "[sb_dom]KEY_STATISTICS",
+            "[sb_dom]KEY_STATISTIC",
+            "[sb_dom]KEY_COLLATION",
+            "[sb_dom]KEY_TIMEZONE",
+            "[sb_dom]KEY_CHARSET",
+            "[sb_dom]KEY_COLLATION_DEF",
+            "[sb_dom]KEY_DEPENDENCY",
+            "[sb_dom]KEY_COMMENT",
+            "[sb_dom]KEY_OBJECT_DEF",
+            "[sb_dom]KEY_ATTACHMENT",
+            "[sb_dom]KEY_JOB",
+            "[sb_dom]KEY_JOB_RUN",
+            "[sb_dom]KEY_JOB_DEPENDENCY",
+            "[sb_dom]KEY_JOB_SECRET",
+            "[sb_dom]KEY_NODE",
+            "[sb_dom]KEY_SHARD",
+            "[sb_dom]KEY_USER",
+            "[sb_dom]KEY_PRINCIPAL",
+            "[sb_dom]KEY_ROLE",
+            "[sb_dom]KEY_GROUP",
+            "[sb_dom]KEY_ROLE_MEMBER",
+            "[sb_dom]KEY_GROUP_MEMBER",
+            "[sb_dom]KEY_GROUP_MAPPING",
+            "[sb_dom]KEY_MEMBERSHIP",
+            "[sb_dom]KEY_MAPPING",
+            "[sb_dom]KEY_PROCEDURE",
+            "[sb_dom]KEY_PROC_PARAM",
+            "[sb_dom]KEY_DOMAIN",
+            "[sb_dom]KEY_UDR",
+            "[sb_dom]KEY_EXCEPTION",
+            "[sb_dom]KEY_PACKAGE",
+            "[sb_dom]KEY_EMULATION_TYPE",
+            "[sb_dom]KEY_EMULATION_SERVER",
+            "[sb_dom]KEY_EMULATED_DB",
+            "[sb_dom]KEY_TABLESPACE",
+            "[sb_dom]KEY_TABLESPACE_FILE",
+            "[sb_dom]KEY_EXTENSION",
+            "[sb_dom]KEY_FOREIGN_KEY",
+            "[sb_dom]KEY_SYNONYM",
+            "[sb_dom]KEY_FOREIGN_SERVER",
+            "[sb_dom]KEY_FOREIGN_TABLE",
+            "[sb_dom]KEY_USER_MAPPING",
+            "[sb_dom]KEY_SERVER",
+            "[sb_dom]KEY_SERVER_INSTANCE",
+            "[sb_dom]KEY_SERVER_REGISTRY",
+            "[sb_dom]KEY_UDR_ENGINE",
+            "[sb_dom]KEY_UDR_MODULE",
+            "[sb_dom]KEY_MIGRATION",
+            "[sb_dom]KEY_MIGRATION_HISTORY",
+            "[sb_dom]KEY_DORMANT_TXN",
+            "[sb_dom]KEY_PREPARED_TXN",
+            "[sb_dom]KEY_TXN",
+            "[sb_dom]KEY_STATEMENT",
+            "[sb_dom]KEY_LOCK",
+            "[sb_dom]KEY_DATABASE",
+            "[sb_dom]KEY_RELATION",
+            "[sb_dom]KEY_ENCRYPTION_KEY",
+            "[sb_dom]KEY_AUTHKEY",
+            "[sb_dom]KEY_SESSION",
+            "[sb_dom]KEY_AUDIT_LOG",
+            "[sb_dom]KEY_SECURITY_POLICY_EPOCH",
+            "[sb_dom]KEY_POLICY",
+            "[sb_dom]KEY_COLUMN_PERMISSION",
+            "[sb_dom]KEY_OBJECT_PERMISSION"
         };
+
+        auto hexNibble(char c) -> int
+        {
+            if (c >= '0' && c <= '9')
+            {
+                return c - '0';
+            }
+            if (c >= 'a' && c <= 'f')
+            {
+                return 10 + (c - 'a');
+            }
+            if (c >= 'A' && c <= 'F')
+            {
+                return 10 + (c - 'A');
+            }
+            return -1;
+        }
+
+        auto parseUuidLiteral(const std::string& literal, ID& out) -> bool
+        {
+            if (literal.size() != 36)
+            {
+                return false;
+            }
+            static constexpr std::array<size_t, 4> kDashPos{8, 13, 18, 23};
+            for (size_t dash : kDashPos)
+            {
+                if (literal[dash] != '-')
+                {
+                    return false;
+                }
+            }
+
+            size_t out_idx = 0;
+            for (size_t i = 0; i < literal.size();)
+            {
+                if (literal[i] == '-')
+                {
+                    ++i;
+                    continue;
+                }
+                if (i + 1 >= literal.size() || out_idx >= out.bytes.size())
+                {
+                    return false;
+                }
+                const int hi = hexNibble(literal[i]);
+                const int lo = hexNibble(literal[i + 1]);
+                if (hi < 0 || lo < 0)
+                {
+                    return false;
+                }
+                out.bytes[out_idx++] = static_cast<uint8_t>((hi << 4) | lo);
+                i += 2;
+            }
+            return out_idx == out.bytes.size();
+        }
+
+        auto systemDomainNamespaceUuid() -> const ID&
+        {
+            static const ID kNamespace = [] {
+                ID id{};
+                const bool ok = parseUuidLiteral("e82f373b-99fa-4e85-a135-dfee52b58edb", id);
+                if (!ok)
+                {
+                    return ID{};
+                }
+                return id;
+            }();
+            return kNamespace;
+        }
+
+        auto uuidV5(const ID& ns_uuid, const std::string& name) -> ID
+        {
+            unsigned char hash[SHA_DIGEST_LENGTH];
+            SHA_CTX sha_ctx;
+            SHA1_Init(&sha_ctx);
+            SHA1_Update(&sha_ctx, ns_uuid.bytes.data(), ns_uuid.bytes.size());
+            SHA1_Update(&sha_ctx, reinterpret_cast<const unsigned char*>(name.data()), name.size());
+            SHA1_Final(hash, &sha_ctx);
+
+            ID out{};
+            for (size_t i = 0; i < out.bytes.size(); ++i)
+            {
+                out.bytes[i] = hash[i];
+            }
+
+            // RFC 4122 version/variant bits.
+            out.bytes[6] = static_cast<uint8_t>((out.bytes[6] & 0x0F) | 0x50);
+            out.bytes[8] = static_cast<uint8_t>((out.bytes[8] & 0x3F) | 0x80);
+            return out;
+        }
+
+        auto systemDomainOriginForName(const std::string& domain_name) -> const char*
+        {
+            const std::string upper = IdentifierUtils::toUpper(domain_name);
+            if (upper.rfind("[SB_PG_DOM]", 0) == 0)
+            {
+                return "postgresql";
+            }
+            if (upper.rfind("[SB_MY_DOM]", 0) == 0)
+            {
+                return "mysql";
+            }
+            if (upper.rfind("[SB_FB_DOM]", 0) == 0)
+            {
+                return "firebird";
+            }
+            if (upper.rfind("[SB_CAS_DOM]", 0) == 0)
+            {
+                return "cassandra";
+            }
+            if (upper.rfind("[SB_MIL_DOM]", 0) == 0)
+            {
+                return "milvus";
+            }
+            if (upper.rfind("[SB_MONGO_DOM]", 0) == 0)
+            {
+                return "mongodb";
+            }
+            if (upper.rfind("[SB_NEO4J_DOM]", 0) == 0)
+            {
+                return "neo4j";
+            }
+            if (upper.rfind("[SB_REDIS_DOM]", 0) == 0)
+            {
+                return "redis";
+            }
+            return "native";
+        }
+
+        auto splitDomainParams(const char* param_string)
+            -> std::vector<std::pair<std::string, std::string>>
+        {
+            std::vector<std::pair<std::string, std::string>> params;
+            if (!param_string || param_string[0] == '\0')
+            {
+                return params;
+            }
+
+            std::string input(param_string);
+            size_t start = 0;
+            while (start < input.size())
+            {
+                const size_t end = input.find(';', start);
+                const std::string token = input.substr(start, end == std::string::npos
+                                                                  ? std::string::npos
+                                                                  : end - start);
+                const size_t eq = token.find('=');
+                if (eq != std::string::npos && eq > 0 && eq + 1 < token.size())
+                {
+                    params.emplace_back(token.substr(0, eq), token.substr(eq + 1));
+                }
+                if (end == std::string::npos)
+                {
+                    break;
+                }
+                start = end + 1;
+            }
+            return params;
+        }
+
+        auto parseUint32Param(const std::string& value, uint32_t& out) -> bool
+        {
+            if (value.empty())
+            {
+                return false;
+            }
+            for (char c : value)
+            {
+                if (!std::isdigit(static_cast<unsigned char>(c)))
+                {
+                    return false;
+                }
+            }
+            try
+            {
+                const unsigned long long parsed = std::stoull(value);
+                if (parsed > std::numeric_limits<uint32_t>::max())
+                {
+                    return false;
+                }
+                out = static_cast<uint32_t>(parsed);
+                return true;
+            }
+            catch (...)
+            {
+                return false;
+            }
+        }
+
+        auto resolveDomainPrecisionScale(const SystemDomainDef& def,
+                                         uint32_t& precision,
+                                         uint32_t& scale) -> void
+        {
+            precision = def.precision;
+            scale = def.scale;
+
+            const auto params = splitDomainParams(def.param_string);
+            for (const auto& [key, value] : params)
+            {
+                uint32_t parsed = 0;
+                if (key == "length_chars" || key == "length_bytes" ||
+                    key == "bit_length" || key == "precision")
+                {
+                    if (parseUint32Param(value, parsed))
+                    {
+                        precision = parsed;
+                    }
+                    continue;
+                }
+                if (key == "scale" && parseUint32Param(value, parsed))
+                {
+                    scale = parsed;
+                }
+            }
+        }
+
+        auto canonicalSystemDomainKey(const std::string& domain_name,
+                                      DataType base_type,
+                                      const char* param_string,
+                                      uint32_t precision,
+                                      uint32_t scale) -> std::string
+        {
+            std::ostringstream oss;
+            oss << "domain|" << systemDomainOriginForName(domain_name) << "|"
+                << domain_name << "|base_type=" << TypeSystem::getTypeName(base_type);
+
+            auto params = splitDomainParams(param_string);
+            if (params.empty())
+            {
+                if (precision != 0)
+                {
+                    params.emplace_back("precision", std::to_string(precision));
+                }
+                if (scale != 0)
+                {
+                    params.emplace_back("scale", std::to_string(scale));
+                }
+            }
+
+            std::sort(params.begin(), params.end(),
+                      [](const auto& lhs, const auto& rhs) { return lhs.first < rhs.first; });
+            for (const auto& [key, value] : params)
+            {
+                oss << ';' << key << '=' << value;
+            }
+            return oss.str();
+        }
+
+        auto deterministicSystemDomainId(const std::string& domain_name,
+                                         DataType base_type,
+                                         uint32_t precision,
+                                         uint32_t scale) -> ID
+        {
+            return uuidV5(systemDomainNamespaceUuid(),
+                          canonicalSystemDomainKey(domain_name, base_type, "", precision, scale));
+        }
+
+        auto deterministicSystemDomainId(const SystemDomainDef& def,
+                                         ErrorContext* ctx) -> ID
+        {
+            if (def.fixed_uuid_literal && def.fixed_uuid_literal[0] != '\0')
+            {
+                ID parsed{};
+                if (!parseUuidLiteral(def.fixed_uuid_literal, parsed))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                      "Invalid fixed system domain UUID literal");
+                    return ID{};
+                }
+                return parsed;
+            }
+
+            uint32_t precision = 0;
+            uint32_t scale = 0;
+            resolveDomainPrecisionScale(def, precision, scale);
+            return uuidV5(systemDomainNamespaceUuid(),
+                          canonicalSystemDomainKey(def.name, def.base_type, def.param_string,
+                                                   precision, scale));
+        }
 
         std::string defaultDialectTagForCreate() {
             auto* conn_ctx = ConnectionContext::getCurrent();
@@ -210,6 +502,101 @@ namespace scratchbird::core
                 return conn_ctx->dialect_tag();
             }
             return "scratchbird";
+        }
+
+        auto normalizeEngineTag(std::string tag) -> std::string
+        {
+            tag = IdentifierUtils::toUpper(tag);
+            if (tag.empty() || tag == "SCRATCHBIRD" || tag == "NATIVE")
+            {
+                return "NATIVE";
+            }
+            if (tag == "POSTGRES")
+            {
+                return "POSTGRESQL";
+            }
+            if (tag == "MONGO")
+            {
+                return "MONGODB";
+            }
+            return tag;
+        }
+
+        auto isSystemDomainName(const std::string& domain_name) -> bool
+        {
+            const std::string upper = IdentifierUtils::toUpper(domain_name);
+            return upper.rfind("[SB_", 0) == 0;
+        }
+
+        auto validateDomainCreateName(const std::unordered_map<ID, DomainInfo>& domain_cache,
+                                      const ID& schema_id,
+                                      const std::string& domain_name,
+                                      bool allow_system_reserved_name,
+                                      ErrorContext* ctx) -> Status
+        {
+            if (domain_name.empty())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Domain name cannot be empty");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            if (!allow_system_reserved_name && isSystemDomainName(domain_name))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "Reserved system domain name requires system installation context");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            for (const auto& [existing_id, existing] : domain_cache)
+            {
+                (void)existing_id;
+                if (existing.schema_id != schema_id)
+                {
+                    continue;
+                }
+                if (IdentifierUtils::namesMatch(domain_name, false,
+                                                existing.domain_name, false))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Domain name already exists");
+                    return Status::FILE_EXISTS;
+                }
+            }
+
+            return Status::OK;
+        }
+
+        auto resolveDomainCreateId(const std::unordered_map<ID, DomainInfo>& domain_cache,
+                                   const std::optional<ID>& fixed_domain_id,
+                                   ID& domain_id_out,
+                                   ErrorContext* ctx) -> Status
+        {
+            if (fixed_domain_id.has_value())
+            {
+                domain_id_out = fixed_domain_id.value();
+            }
+            else
+            {
+                domain_id_out = generateUuidV7();
+            }
+
+            if (isZeroUuidLocal(domain_id_out))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Domain ID cannot be zero UUID");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            if (domain_cache.find(domain_id_out) != domain_cache.end())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Domain ID already exists");
+                return Status::FILE_EXISTS;
+            }
+
+            return Status::OK;
+        }
+
+        auto systemDomainOriginTag(const std::string& domain_name) -> std::string
+        {
+            return normalizeEngineTag(systemDomainOriginForName(domain_name));
         }
 
         bool isDomainTypeCompatible(DataType value_type, DataType domain_type)
@@ -1608,8 +1995,17 @@ namespace scratchbird::core
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
-        // Generate new domain ID
-        domain_id = generateUuidV7();
+        Status status = validateDomainCreateName(domain_cache_, schema_id, domain_name,
+                                                 options.allow_system_reserved_name, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = resolveDomainCreateId(domain_cache_, options.fixed_domain_id, domain_id, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
 
         // Create domain info
         DomainInfo info;
@@ -1635,7 +2031,7 @@ namespace scratchbird::core
         }
 
         // Write to catalog
-        Status status = writeDomainRecord(info, ctx);
+        status = writeDomainRecord(info, ctx);
         if (status != Status::OK)
         {
             SET_ERROR_CONTEXT(ctx, status, "Failed to write domain record");
@@ -1732,6 +2128,89 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    auto DomainManager::listDomainsVisible(const ID& schema_id,
+                                           const DomainListOptions& options,
+                                           std::vector<DomainInfo>& domains,
+                                           ErrorContext* ctx) -> Status
+    {
+        std::unordered_set<std::string> enabled_origins;
+        enabled_origins.insert("NATIVE");
+
+        if (options.enforce_emulation_profiles)
+        {
+            CatalogManager* catalog = db_ ? db_->catalog_manager() : nullptr;
+            if (catalog)
+            {
+                std::vector<CatalogManager::EmulationTypeInfo> emulation_types;
+                Status status = catalog->listEmulationTypes(emulation_types, ctx);
+                if (status != Status::OK && status != Status::NOT_FOUND)
+                {
+                    return status;
+                }
+                if (status == Status::OK)
+                {
+                    for (const auto& emulation : emulation_types)
+                    {
+                        enabled_origins.insert(normalizeEngineTag(emulation.emulation_name));
+                    }
+                }
+            }
+        }
+
+        std::string active_dialect = options.dialect_tag;
+        if (active_dialect.empty())
+        {
+            if (const auto* conn_ctx = ConnectionContext::getCurrent())
+            {
+                active_dialect = conn_ctx->dialect_tag();
+            }
+        }
+        active_dialect = normalizeEngineTag(active_dialect);
+
+        std::lock_guard<std::mutex> lock(mutex_);
+
+        domains.clear();
+        for (const auto& [id, info] : domain_cache_)
+        {
+            (void)id;
+            if (!isZeroUuidLocal(schema_id) && info.schema_id != schema_id)
+            {
+                continue;
+            }
+
+            const bool system_domain = isSystemDomainName(info.domain_name);
+            if (!system_domain)
+            {
+                domains.push_back(info);
+                continue;
+            }
+
+            if (!options.include_system)
+            {
+                continue;
+            }
+
+            const std::string origin = systemDomainOriginTag(info.domain_name);
+            if (options.enforce_emulation_profiles &&
+                origin != "NATIVE" &&
+                enabled_origins.find(origin) == enabled_origins.end())
+            {
+                continue;
+            }
+
+            if (active_dialect != "NATIVE" &&
+                origin != "NATIVE" &&
+                origin != active_dialect)
+            {
+                continue;
+            }
+
+            domains.push_back(info);
+        }
+
+        return Status::OK;
+    }
+
     auto DomainManager::ensureSystemDomains(ErrorContext* ctx) -> Status
     {
         CatalogManager* catalog = db_ ? db_->catalog_manager() : nullptr;
@@ -1765,24 +2244,68 @@ namespace scratchbird::core
             return Status::NOT_FOUND;
         }
 
-        auto ensure_domain = [&](const SystemDomainDef& def) -> Status {
+        auto ensure_domain = [&](const SystemDomainDef& def,
+                                 bool strict_uuid_match) -> Status {
+            ErrorContext local_ctx;
+            const ID expected_id = deterministicSystemDomainId(def, &local_ctx);
+            if (isZeroUuidLocal(expected_id))
+            {
+                if (ctx && local_ctx.code != Status::OK)
+                {
+                    SET_ERROR_CONTEXT(ctx, local_ctx.code, local_ctx.message.c_str());
+                }
+                return local_ctx.code == Status::OK ? Status::INVALID_ARGUMENT : local_ctx.code;
+            }
+
+            uint32_t precision = 0;
+            uint32_t scale = 0;
+            resolveDomainPrecisionScale(def, precision, scale);
             DomainInfo existing;
             if (getDomain(sys_schema_id, def.name, existing, nullptr) == Status::OK)
             {
+                if (existing.domain_id != expected_id)
+                {
+                    if (strict_uuid_match)
+                    {
+                        std::ostringstream msg;
+                        msg << "Canonical system domain UUID mismatch for " << def.name
+                            << ": found " << existing.domain_id.toString()
+                            << ", expected " << expected_id.toString();
+                        const std::string msg_str = msg.str();
+                        SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, msg_str.c_str());
+                        return Status::DATA_CORRUPTED;
+                    }
+                    LOG_WARNING(CATALOG,
+                                "Legacy system domain '%s' has non-canonical UUID %s (expected %s)",
+                                def.name,
+                                existing.domain_id.toString().c_str(),
+                                expected_id.toString().c_str());
+                }
                 return Status::OK;
             }
             DomainCreateOptions options;
             options.nullable = true;
-            options.dialect_tag = "SBDB";
+            options.dialect_tag = systemDomainOriginForName(def.name);
+            options.fixed_domain_id = expected_id;
+            options.allow_system_reserved_name = true;
             ID domain_id;
             return createBasicDomain(sys_schema_id, def.name,
-                                     def.base_type, def.precision, def.scale,
+                                     def.base_type, precision, scale,
                                      options, domain_id, ctx);
         };
 
-        for (const auto& def : kSystemDomains)
+        for (const auto& def : kCanonicalSystemDomains)
         {
-            status = ensure_domain(def);
+            status = ensure_domain(def, true);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+        }
+
+        for (const auto& def : kLegacySystemDomains)
+        {
+            status = ensure_domain(def, false);
             if (status != Status::OK)
             {
                 return status;
@@ -1790,17 +2313,34 @@ namespace scratchbird::core
         }
 
         DomainInfo uuid_domain;
-        status = getDomain(sys_schema_id, "SBDB$UUID_V7", uuid_domain, ctx);
+        status = getDomain(sys_schema_id, "[sb_dom]uuid_v7_internal", uuid_domain, nullptr);
         if (status != Status::OK)
         {
+            status = getDomain(sys_schema_id, "[sb_dom]UUID_V7", uuid_domain, ctx);
+        }
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status,
+                              "Canonical UUID root system domain not found during bootstrap");
             return status;
         }
 
         for (const char* name : kSystemKeyDomains)
         {
+            const ID expected_id =
+                deterministicSystemDomainId(name, DataType::UUID, 0, 0);
             DomainInfo existing;
             if (getDomain(sys_schema_id, name, existing, nullptr) == Status::OK)
             {
+                if (existing.domain_id != expected_id)
+                {
+                    LOG_WARNING(CATALOG,
+                                "System key domain '%s' has non-canonical UUID %s (expected %s); "
+                                "keeping existing ID for compatibility",
+                                name,
+                                existing.domain_id.toString().c_str(),
+                                expected_id.toString().c_str());
+                }
                 if (isZeroUuidLocal(existing.parent_domain_id))
                 {
                     auto parent_status = setParentDomain(existing.domain_id,
@@ -1815,7 +2355,9 @@ namespace scratchbird::core
 
             DomainCreateOptions options;
             options.nullable = true;
-            options.dialect_tag = "SBDB";
+            options.dialect_tag = "scratchbird";
+            options.fixed_domain_id = expected_id;
+            options.allow_system_reserved_name = true;
             ID domain_id;
             status = createBasicDomain(sys_schema_id, name,
                                        DataType::UUID, 0, 0,
@@ -1898,6 +2440,13 @@ namespace scratchbird::core
         if (validation != Status::OK)
         {
             return validation;
+        }
+
+        if (isSystemDomainName(new_name))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Reserved system domain names are not valid rename targets");
+            return Status::INVALID_ARGUMENT;
         }
 
         auto it = domain_cache_.find(domain_id);
@@ -2210,6 +2759,25 @@ namespace scratchbird::core
         }
 
         return validate_scalar(value);
+    }
+
+    auto DomainManager::validateCollectionMutation(const ID& domain_id,
+                                                   CollectionMutationKind mutation,
+                                                   ErrorContext* ctx) -> Status
+    {
+        if (domain_id == ID{})
+        {
+            return Status::OK;
+        }
+
+        DomainInfo domain;
+        Status status = getDomain(domain_id, domain, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        return DomainValidation::validateCollectionMutation(domain, mutation, ctx);
     }
 
     auto DomainManager::applyNormalization(const ID& domain_id,
@@ -2703,6 +3271,13 @@ namespace scratchbird::core
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
+        Status status = validateDomainCreateName(domain_cache_, schema_id, domain_name,
+                                                 options.allow_system_reserved_name, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
         // Validate fields
         if (fields.empty())
         {
@@ -2722,8 +3297,11 @@ namespace scratchbird::core
             field_names.insert(field.name);
         }
 
-        // Generate new domain ID
-        domain_id = generateUuidV7();
+        status = resolveDomainCreateId(domain_cache_, options.fixed_domain_id, domain_id, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
 
         // Create domain info
         DomainInfo info;
@@ -2748,7 +3326,7 @@ namespace scratchbird::core
         }
 
         // Write to catalog
-        Status status = writeDomainRecord(info, ctx);
+        status = writeDomainRecord(info, ctx);
         if (status != Status::OK)
         {
             SET_ERROR_CONTEXT(ctx, status, "Failed to write RECORD domain record");
@@ -2868,6 +3446,13 @@ namespace scratchbird::core
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
+        Status status = validateDomainCreateName(domain_cache_, schema_id, domain_name,
+                                                 options.allow_system_reserved_name, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
         // Validate enum values
         if (values.empty())
         {
@@ -2899,8 +3484,11 @@ namespace scratchbird::core
             }
         }
 
-        // Generate new domain ID
-        domain_id = generateUuidV7();
+        status = resolveDomainCreateId(domain_cache_, options.fixed_domain_id, domain_id, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
 
         // Create domain info
         DomainInfo info;
@@ -2925,7 +3513,7 @@ namespace scratchbird::core
         }
 
         // Write to catalog
-        Status status = writeDomainRecord(info, ctx);
+        status = writeDomainRecord(info, ctx);
         if (status != Status::OK)
         {
             SET_ERROR_CONTEXT(ctx, status, "Failed to write ENUM domain record");
@@ -3155,6 +3743,13 @@ namespace scratchbird::core
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
+        Status status = validateDomainCreateName(domain_cache_, schema_id, domain_name,
+                                                 options.allow_system_reserved_name, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
         // Validate element type
         if (element_type.type == DataType::UNKNOWN && element_type.domain_id == ID{})
         {
@@ -3162,8 +3757,11 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
-        // Generate new domain ID
-        domain_id = generateUuidV7();
+        status = resolveDomainCreateId(domain_cache_, options.fixed_domain_id, domain_id, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
 
         // Create domain info
         DomainInfo info;
@@ -3188,7 +3786,7 @@ namespace scratchbird::core
         }
 
         // Write to catalog
-        Status status = writeDomainRecord(info, ctx);
+        status = writeDomainRecord(info, ctx);
         if (status != Status::OK)
         {
             SET_ERROR_CONTEXT(ctx, status, "Failed to write SET domain record");
@@ -3489,6 +4087,13 @@ namespace scratchbird::core
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
+        Status status = validateDomainCreateName(domain_cache_, schema_id, domain_name,
+                                                 options.allow_system_reserved_name, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
         // Validate allowed types
         if (allowed_types.empty())
         {
@@ -3523,8 +4128,11 @@ namespace scratchbird::core
             type_set.insert(key);
         }
 
-        // Generate new domain ID
-        domain_id = generateUuidV7();
+        status = resolveDomainCreateId(domain_cache_, options.fixed_domain_id, domain_id, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
 
         // Create domain info
         DomainInfo info;
@@ -3549,7 +4157,7 @@ namespace scratchbird::core
         }
 
         // Write to catalog
-        Status status = writeDomainRecord(info, ctx);
+        status = writeDomainRecord(info, ctx);
         if (status != Status::OK)
         {
             SET_ERROR_CONTEXT(ctx, status, "Failed to write VARIANT domain record");
@@ -3597,13 +4205,24 @@ namespace scratchbird::core
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
+        Status status = validateDomainCreateName(domain_cache_, schema_id, domain_name,
+                                                 options.allow_system_reserved_name, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
         if (range_info.subtype.type == DataType::UNKNOWN && range_info.subtype.domain_id == ID{})
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "RANGE subtype is required");
             return Status::INVALID_ARGUMENT;
         }
 
-        domain_id = generateUuidV7();
+        status = resolveDomainCreateId(domain_cache_, options.fixed_domain_id, domain_id, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
 
         DomainInfo info;
         info.domain_id = domain_id;
@@ -3626,7 +4245,7 @@ namespace scratchbird::core
             info.dialect_tag = defaultDialectTagForCreate();
         }
 
-        Status status = writeDomainRecord(info, ctx);
+        status = writeDomainRecord(info, ctx);
         if (status != Status::OK)
         {
             SET_ERROR_CONTEXT(ctx, status, "Failed to write RANGE domain record");
@@ -3649,13 +4268,24 @@ namespace scratchbird::core
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
+        Status status = validateDomainCreateName(domain_cache_, schema_id, domain_name,
+                                                 options.allow_system_reserved_name, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
         if (base_info.input_function.empty() || base_info.output_function.empty())
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "BASE type requires INPUT and OUTPUT functions");
             return Status::INVALID_ARGUMENT;
         }
 
-        domain_id = generateUuidV7();
+        status = resolveDomainCreateId(domain_cache_, options.fixed_domain_id, domain_id, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
 
         DomainInfo info;
         info.domain_id = domain_id;
@@ -3678,7 +4308,7 @@ namespace scratchbird::core
             info.dialect_tag = defaultDialectTagForCreate();
         }
 
-        Status status = writeDomainRecord(info, ctx);
+        status = writeDomainRecord(info, ctx);
         if (status != Status::OK)
         {
             SET_ERROR_CONTEXT(ctx, status, "Failed to write BASE domain record");
@@ -3700,7 +4330,17 @@ namespace scratchbird::core
     {
         std::lock_guard<std::mutex> lock(mutex_);
 
-        domain_id = generateUuidV7();
+        Status status = validateDomainCreateName(domain_cache_, schema_id, domain_name,
+                                                 options.allow_system_reserved_name, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        status = resolveDomainCreateId(domain_cache_, options.fixed_domain_id, domain_id, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
 
         DomainInfo info;
         info.domain_id = domain_id;
@@ -3723,7 +4363,7 @@ namespace scratchbird::core
             info.dialect_tag = defaultDialectTagForCreate();
         }
 
-        Status status = writeDomainRecord(info, ctx);
+        status = writeDomainRecord(info, ctx);
         if (status != Status::OK)
         {
             SET_ERROR_CONTEXT(ctx, status, "Failed to write SHELL domain record");

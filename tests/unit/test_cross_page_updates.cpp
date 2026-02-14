@@ -358,28 +358,28 @@ TEST_F(CrossPageUpdateTest, MultipleUpdatesCreateChain)
 
     // First cross-page update
     auto tuple2 = createCrossPageUpdateTuple(page_id_v1, item_id_v1, 0x22, &ctx);
-    uint32_t page_id_v2;
-    uint16_t item_id_v2;
+    uint32_t page_id_second;
+    uint16_t item_id_second;
     status = storage_engine_->updateTuple(test_table_id_, page_id_v1, item_id_v1,
                                           tuple2.data(), tuple2.size(),
-                                          &page_id_v2, &item_id_v2, &ctx);
+                                          &page_id_second, &item_id_second, &ctx);
     ASSERT_EQ(status, Status::OK) << "First cross-page update failed: " << ctx.message;
-    EXPECT_EQ(page_id_v2, page_id_v1) << "MGA should preserve page_id";
-    EXPECT_EQ(item_id_v2, item_id_v1) << "MGA should preserve item_id";
+    EXPECT_EQ(page_id_second, page_id_v1) << "MGA should preserve page_id";
+    EXPECT_EQ(item_id_second, item_id_v1) << "MGA should preserve item_id";
 
     // Fill second page
-    fillPageAlmostFull(page_id_v2, &ctx);
+    fillPageAlmostFull(page_id_second, &ctx);
 
     // Second cross-page update
-    auto tuple3 = createCrossPageUpdateTuple(page_id_v2, item_id_v2, 0x33, &ctx);
+    auto tuple3 = createCrossPageUpdateTuple(page_id_second, item_id_second, 0x33, &ctx);
     uint32_t page_id_v3;
     uint16_t item_id_v3;
-    status = storage_engine_->updateTuple(test_table_id_, page_id_v2, item_id_v2,
+    status = storage_engine_->updateTuple(test_table_id_, page_id_second, item_id_second,
                                           tuple3.data(), tuple3.size(),
                                           &page_id_v3, &item_id_v3, &ctx);
     ASSERT_EQ(status, Status::OK) << "Second cross-page update failed: " << ctx.message;
-    EXPECT_EQ(page_id_v3, page_id_v2) << "MGA should preserve page_id";
-    EXPECT_EQ(item_id_v3, item_id_v2) << "MGA should preserve item_id";
+    EXPECT_EQ(page_id_v3, page_id_second) << "MGA should preserve page_id";
+    EXPECT_EQ(item_id_v3, item_id_second) << "MGA should preserve item_id";
 
     // Verify latest tuple payload is visible at stable TID.
     Tuple latest_tuple;

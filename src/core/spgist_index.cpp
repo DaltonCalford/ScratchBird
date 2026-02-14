@@ -237,7 +237,7 @@ Status SPGiSTIndex::initialize(ErrorContext* ctx)
     // Manual page header initialization (no initPageHeader() function exists)
     root->spgist_header.magic = K_MAGIC_SBRD;
     root->spgist_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1);
-    root->spgist_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_SPGIST);
+    root->spgist_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_SPGIST_LEAF);
     root->spgist_header.page_size = db_->page_size();
     root->spgist_header.page_id = static_cast<uint32_t>(root_page_);
     root->spgist_header.checksum = 0;
@@ -416,7 +416,7 @@ Status SPGiSTIndex::insertRecursive(uint64_t page_num,
                 // Manual PageHeader initialization
                 new_page->spgist_header.magic = K_MAGIC_SBRD;
                 new_page->spgist_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1);
-                new_page->spgist_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_SPGIST);
+                new_page->spgist_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_SPGIST_LEAF);
                 new_page->spgist_header.page_size = db_->page_size();
                 new_page->spgist_header.page_id = static_cast<uint32_t>(new_leaf_page);
                 new_page->spgist_header.checksum = 0;
@@ -538,7 +538,7 @@ Status SPGiSTIndex::insertRecursive(uint64_t page_num,
                     // Manual PageHeader initialization
                     new_child->spgist_header.magic = K_MAGIC_SBRD;
                     new_child->spgist_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1);
-                    new_child->spgist_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_SPGIST);
+                    new_child->spgist_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_SPGIST_LEAF);
                     new_child->spgist_header.page_size = db_->page_size();
                     new_child->spgist_header.page_id = static_cast<uint32_t>(new_page_num);
                     new_child->spgist_header.checksum = 0;
@@ -820,7 +820,7 @@ Status SPGiSTIndex::splitNode(uint64_t page_num, ErrorContext* ctx)
 
         child_page_ptrs[i]->spgist_header.magic = K_MAGIC_SBRD;
         child_page_ptrs[i]->spgist_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1);
-        child_page_ptrs[i]->spgist_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_SPGIST);
+        child_page_ptrs[i]->spgist_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_SPGIST_LEAF);
         child_page_ptrs[i]->spgist_header.page_size = db_->page_size();
         child_page_ptrs[i]->spgist_header.page_id = static_cast<uint32_t>(child_pages[i]);
         child_page_ptrs[i]->spgist_header.checksum = 0;
@@ -876,7 +876,7 @@ Status SPGiSTIndex::splitNode(uint64_t page_num, ErrorContext* ctx)
     // Re-initialize page header
     page->spgist_header.magic = K_MAGIC_SBRD;
     page->spgist_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1);
-    page->spgist_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_SPGIST);
+    page->spgist_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_SPGIST_INNER);
     page->spgist_header.page_size = db_->page_size();
     page->spgist_header.page_id = static_cast<uint32_t>(page_num);
     page->spgist_header.checksum = 0;

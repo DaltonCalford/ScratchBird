@@ -20,6 +20,7 @@
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/types.h"
 #include "scratchbird/core/telemetry.h"
+#include "scratchbird/parser/v3_compiler.h"
 #include "scratchbird/sblr/postgresql_query_compiler.h"
 #include "scratchbird/server/ipc_server.h"
 #include "scratchbird/client/connection.h"
@@ -151,7 +152,12 @@ core::Status PostgresqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
         std::string schema_name = "remote.emulation.postgresql.localhost.databases." + db_name;
         std::string set_path = "SET search_path TO '" + escapeLiteral(schema_name) + "'";
         client::ResultSet rs;
-        auto set_status = client_->executeQuery(set_path, &rs, ctx);
+        parser::v3::Compiler compiler;
+        auto compile_result = compiler.compile(set_path);
+        core::Status set_status = core::Status::INVALID_ARGUMENT;
+        if (compile_result.ok) {
+            set_status = client_->executeBytecode(compile_result.bytecode, set_path, &rs, ctx);
+        }
         if (set_status == core::Status::OK) {
             search_path_set_ = true;
         }

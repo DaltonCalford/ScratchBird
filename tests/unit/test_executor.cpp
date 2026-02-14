@@ -325,3 +325,193 @@ TEST_F(ExecutorTest, MixedDataTypes) {
     EXPECT_NEAR(rs->getValue(0, 2).toDouble(), 3.14159, 0.00001);
     EXPECT_EQ(rs->getValue(0, 3).toString(), "Test String");
 }
+
+TEST_F(ExecutorTest, ImplicitTextNumericComparisonInWhere) {
+    ASSERT_TRUE(executeSQL("CREATE TABLE coercion_cmp (i INTEGER)").success());
+    ASSERT_TRUE(executeSQL("INSERT INTO coercion_cmp (i) VALUES (1)").success());
+    ASSERT_TRUE(executeSQL("INSERT INTO coercion_cmp (i) VALUES (2)").success());
+
+    auto result = executeSQL("SELECT i FROM coercion_cmp WHERE i = '2'");
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+
+    auto* rs = result.resultSet();
+    ASSERT_EQ(rs->rowCount(), 1u);
+    EXPECT_EQ(rs->getValue(0, 0).toInt64(), 2);
+}
+
+TEST_F(ExecutorTest, ImplicitTextNumericComparisonRejectsInvalidText) {
+    ASSERT_TRUE(executeSQL("CREATE TABLE coercion_cmp_err (i INTEGER)").success());
+    ASSERT_TRUE(executeSQL("INSERT INTO coercion_cmp_err (i) VALUES (1)").success());
+
+    auto result = executeSQL("SELECT i FROM coercion_cmp_err WHERE i = 'abc'");
+    EXPECT_FALSE(result.success());
+    EXPECT_NE(result.error().find("Invalid text representation"), std::string::npos);
+}
+
+TEST_F(ExecutorTest, ImplicitTextNumericArithmeticInInsert) {
+    ASSERT_TRUE(executeSQL("CREATE TABLE coercion_math (v DOUBLE)").success());
+
+    auto ok_insert = executeSQL("INSERT INTO coercion_math (v) VALUES (2 + '3')");
+    ASSERT_TRUE(ok_insert.success()) << ok_insert.error();
+
+    auto bad_insert = executeSQL("INSERT INTO coercion_math (v) VALUES ('abc' + 1)");
+    EXPECT_FALSE(bad_insert.success());
+    EXPECT_NE(bad_insert.error().find("Invalid text representation"), std::string::npos);
+}
+
+TEST_F(ExecutorTest, ThreeValuedBooleanOperatorsFollowSqlSemantics) {
+    auto result = executeSQL(
+        "SELECT "
+        "TRUE AND NULL AS and_true_null, "
+        "FALSE AND NULL AS and_false_null, "
+        "TRUE OR NULL AS or_true_null, "
+        "FALSE OR NULL AS or_false_null, "
+        "NOT NULL AS not_null_value");
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+
+    auto* rs = result.resultSet();
+    ASSERT_EQ(rs->rowCount(), 1u);
+    ASSERT_EQ(rs->columnCount(), 5u);
+
+    EXPECT_TRUE(rs->getValue(0, 0).isNull());
+    ASSERT_FALSE(rs->getValue(0, 1).isNull());
+    EXPECT_FALSE(rs->getValue(0, 1).toBoolean());
+    ASSERT_FALSE(rs->getValue(0, 2).isNull());
+    EXPECT_TRUE(rs->getValue(0, 2).toBoolean());
+    EXPECT_TRUE(rs->getValue(0, 3).isNull());
+    EXPECT_TRUE(rs->getValue(0, 4).isNull());
+}
+
+TEST_F(ExecutorTest, IsDistinctFromUsesNullSafeEquality) {
+    auto result = executeSQL(
+        "SELECT "
+        "NULL IS DISTINCT FROM NULL AS d1, "
+        "1 IS DISTINCT FROM NULL AS d2, "
+        "NULL IS NOT DISTINCT FROM NULL AS d3, "
+        "1 IS NOT DISTINCT FROM NULL AS d4, "
+        "'2' IS NOT DISTINCT FROM 2 AS d5");
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+
+    auto* rs = result.resultSet();
+    ASSERT_EQ(rs->rowCount(), 1u);
+    ASSERT_EQ(rs->columnCount(), 5u);
+
+    ASSERT_FALSE(rs->getValue(0, 0).isNull());
+    EXPECT_FALSE(rs->getValue(0, 0).toBoolean());
+    ASSERT_FALSE(rs->getValue(0, 1).isNull());
+    EXPECT_TRUE(rs->getValue(0, 1).toBoolean());
+    ASSERT_FALSE(rs->getValue(0, 2).isNull());
+    EXPECT_TRUE(rs->getValue(0, 2).toBoolean());
+    ASSERT_FALSE(rs->getValue(0, 3).isNull());
+    EXPECT_FALSE(rs->getValue(0, 3).toBoolean());
+    ASSERT_FALSE(rs->getValue(0, 4).isNull());
+    EXPECT_TRUE(rs->getValue(0, 4).toBoolean());
+}
+
+TEST_F(ExecutorTest, IsTrueAndIsFalseTreatNullAsFalseForPositivePredicate) {
+    auto result = executeSQL(
+        "SELECT "
+        "NULL IS TRUE AS t1, "
+        "NULL IS NOT TRUE AS t2, "
+        "NULL IS FALSE AS t3, "
+        "NULL IS NOT FALSE AS t4");
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+
+    auto* rs = result.resultSet();
+    ASSERT_EQ(rs->rowCount(), 1u);
+    ASSERT_EQ(rs->columnCount(), 4u);
+
+    ASSERT_FALSE(rs->getValue(0, 0).isNull());
+    EXPECT_FALSE(rs->getValue(0, 0).toBoolean());
+    ASSERT_FALSE(rs->getValue(0, 1).isNull());
+    EXPECT_TRUE(rs->getValue(0, 1).toBoolean());
+    ASSERT_FALSE(rs->getValue(0, 2).isNull());
+    EXPECT_FALSE(rs->getValue(0, 2).toBoolean());
+    ASSERT_FALSE(rs->getValue(0, 3).isNull());
+    EXPECT_TRUE(rs->getValue(0, 3).toBoolean());
+}
+
+TEST_F(ExecutorTest, IsUnknownFollowsNullPredicateSemantics) {
+    auto result = executeSQL(
+        "SELECT "
+        "NULL IS UNKNOWN AS u1, "
+        "NULL IS NOT UNKNOWN AS u2, "
+        "TRUE IS UNKNOWN AS u3, "
+        "TRUE IS NOT UNKNOWN AS u4");
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+
+    auto* rs = result.resultSet();
+    ASSERT_EQ(rs->rowCount(), 1u);
+    ASSERT_EQ(rs->columnCount(), 4u);
+
+    ASSERT_FALSE(rs->getValue(0, 0).isNull());
+    EXPECT_TRUE(rs->getValue(0, 0).toBoolean());
+    ASSERT_FALSE(rs->getValue(0, 1).isNull());
+    EXPECT_FALSE(rs->getValue(0, 1).toBoolean());
+    ASSERT_FALSE(rs->getValue(0, 2).isNull());
+    EXPECT_FALSE(rs->getValue(0, 2).toBoolean());
+    ASSERT_FALSE(rs->getValue(0, 3).isNull());
+    EXPECT_TRUE(rs->getValue(0, 3).toBoolean());
+}
+
+TEST_F(ExecutorTest, BitXorOperatorAndPrecedence) {
+    auto result = executeSQL(
+        "SELECT "
+        "5 ^ 3 AS xor_value, "
+        "1 | 2 ^ 3 & 7 AS precedence_value");
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+
+    auto* rs = result.resultSet();
+    ASSERT_EQ(rs->rowCount(), 1u);
+    ASSERT_EQ(rs->columnCount(), 2u);
+    EXPECT_EQ(rs->getValue(0, 0).toInt64(), 6);
+    EXPECT_EQ(rs->getValue(0, 1).toInt64(), 1);
+}
+
+TEST_F(ExecutorTest, TemporalArithmeticWithImplicitTextCoercion) {
+    auto result = executeSQL(
+        "SELECT "
+        "'2024-01-01 00:00:00' + CAST('interval 1 day' AS INTERVAL) AS shifted");
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+
+    auto* rs = result.resultSet();
+    ASSERT_EQ(rs->rowCount(), 1u);
+    ASSERT_EQ(rs->columnCount(), 1u);
+    EXPECT_FALSE(rs->getValue(0, 0).isNull());
+    EXPECT_NE(rs->getValue(0, 0).toString().find("2024"), std::string::npos);
+}
+
+TEST_F(ExecutorTest, OperatorStrictModeDisablesImplicitCasts) {
+    auto prewarm_temporal = executeSQL(
+        "SELECT '2024-01-01 00:00:00' + CAST('interval 1 day' AS INTERVAL) AS strict_temporal");
+    ASSERT_TRUE(prewarm_temporal.success()) << prewarm_temporal.error();
+
+    auto set_on = executeSQL("SET operator.strict_mode = TRUE");
+    ASSERT_TRUE(set_on.success()) << set_on.error();
+
+    auto strict_numeric = executeSQL("SELECT 2 + '3' AS strict_numeric");
+    EXPECT_FALSE(strict_numeric.success());
+    EXPECT_NE(strict_numeric.error().find("Implicit casts disabled"), std::string::npos);
+
+    auto strict_temporal = executeSQL(
+        "SELECT '2024-01-01 00:00:00' + CAST('interval 1 day' AS INTERVAL) AS strict_temporal");
+    EXPECT_FALSE(strict_temporal.success());
+    EXPECT_NE(strict_temporal.error().find("Implicit casts disabled"), std::string::npos);
+
+    auto set_off = executeSQL("SET operator.strict_mode = FALSE");
+    ASSERT_TRUE(set_off.success()) << set_off.error();
+
+    auto relaxed = executeSQL("SELECT 2 + '3' AS relaxed_numeric");
+    ASSERT_TRUE(relaxed.success()) << relaxed.error();
+    ASSERT_TRUE(relaxed.hasResultSet());
+    auto* rs = relaxed.resultSet();
+    ASSERT_EQ(rs->rowCount(), 1u);
+    EXPECT_DOUBLE_EQ(rs->getValue(0, 0).toDouble(), 5.0);
+}

@@ -638,6 +638,14 @@ namespace scratchbird
                                               ErrorContext *ctx);
             static Status create_fsm_page(int fd, uint32_t page_size, uint8_t *page_buffer,
                                           const ID &db_uuid, ErrorContext *ctx);
+            static Status create_system_state_page(int fd, uint32_t page_size, uint8_t *page_buffer,
+                                                   const ID &db_uuid, ErrorContext *ctx);
+            static Status create_tx_map_root_page(int fd, uint32_t page_size, uint8_t *page_buffer,
+                                                  const ID &db_uuid, ErrorContext *ctx);
+            static Status create_reserved_bootstrap_page(int fd, uint32_t page_size,
+                                                         uint8_t *page_buffer, const ID &db_uuid,
+                                                         ErrorContext *ctx);
+            Status validate_bootstrap_page_map(ErrorContext *ctx) const;
             static Status validate_db_path(const std::string &path, std::string &canonical_path,
                                            ErrorContext *ctx);
         };

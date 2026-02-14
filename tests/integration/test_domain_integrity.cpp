@@ -16,6 +16,7 @@
 #include "scratchbird/sblr/executor.h"
 #include "scratchbird/sblr/opcodes.h"
 #include "scratchbird/sblr/query_compiler_v3.h"
+#include "test_helpers.h"
 #include <chrono>
 #include <filesystem>
 #include <sstream>
@@ -24,6 +25,7 @@
 
 using namespace scratchbird::core;
 using namespace scratchbird::sblr;
+using scratchbird::testing::uniqueTestDbPath;
 
 namespace
 {
@@ -118,12 +120,7 @@ namespace
 
     std::string generateUniqueDbPath()
     {
-        std::ostringstream oss;
-        oss << "/tmp/test_domain_integrity_"
-            << std::this_thread::get_id() << "_"
-            << std::chrono::steady_clock::now().time_since_epoch().count()
-            << ".sbdb";
-        return oss.str();
+        return uniqueTestDbPath("test_domain_integrity", ".sbdb");
     }
 }
 

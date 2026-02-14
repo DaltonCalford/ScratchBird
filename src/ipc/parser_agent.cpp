@@ -314,8 +314,6 @@ core::Status ParserAgent::sendToEngine(uint32_t client_id, const IPCMessage& msg
 core::Status ParserAgent::receiveFromEngine(uint32_t client_id, IPCMessage& msg,
                                            core::ErrorContext* ctx,
                                            uint32_t timeout_ms) {
-    (void)timeout_ms; // TODO: Add timeout support to IPCChannel::receive
-    
     // Get client connection
     std::shared_lock<std::shared_mutex> lock(connections_mutex_);
     auto it = connections_.find(client_id);
@@ -336,7 +334,10 @@ core::Status ParserAgent::receiveFromEngine(uint32_t client_id, IPCMessage& msg,
         return core::Status::NOT_FOUND;
     }
     
-    // Use IPCChannel API directly
+    // Honor timeout when requested, otherwise use blocking receive.
+    if (timeout_ms > 0) {
+        return client->ipc_channel->tryReceive(msg, timeout_ms, ctx);
+    }
     return client->ipc_channel->receive(msg, ctx);
 }
 

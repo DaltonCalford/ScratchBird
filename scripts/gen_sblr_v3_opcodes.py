@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import re
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -8,6 +9,16 @@ OUT_H = ROOT / "include/scratchbird/sblr/v3_opcodes.generated.h"
 OUT_CPP = ROOT / "src/sblr/v3_opcodes.generated.cpp"
 
 row_re = re.compile(r"\|\s*(0x[0-9A-Fa-f]+)\s*\|\s*(SBLR3_[A-Z0-9_]+)\s*\|")
+
+if not MAPPING.exists():
+    print("error: missing legacy opcode mapping source:", file=sys.stderr)
+    print(f"  {MAPPING}", file=sys.stderr)
+    print("numeric transport opcode generation requires legacy mapping input.", file=sys.stderr)
+    print(
+        "for canonical section-22 mappings, run scripts/gen_sblr_v3_canonical_feature_map.py",
+        file=sys.stderr,
+    )
+    sys.exit(2)
 
 opcodes = []
 for line in MAPPING.read_text().splitlines():

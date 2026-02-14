@@ -320,6 +320,116 @@ std::string jobRunStateToString(core::CatalogManager::JobRunState state) {
     }
 }
 
+std::string remoteConnectorStateToString(core::CatalogManager::RemoteConnectorState state) {
+    switch (state) {
+        case core::CatalogManager::RemoteConnectorState::DISABLED: return "DISABLED";
+        case core::CatalogManager::RemoteConnectorState::PROBING: return "PROBING";
+        case core::CatalogManager::RemoteConnectorState::READY: return "READY";
+        case core::CatalogManager::RemoteConnectorState::DEGRADED: return "DEGRADED";
+        case core::CatalogManager::RemoteConnectorState::FAILED: return "FAILED";
+        default: return "UNKNOWN";
+    }
+}
+
+std::string replicationDirectionToString(core::CatalogManager::ReplicationDirection direction) {
+    switch (direction) {
+        case core::CatalogManager::ReplicationDirection::ONE_WAY: return "ONE_WAY";
+        case core::CatalogManager::ReplicationDirection::BIDIRECTIONAL: return "BIDIRECTIONAL";
+        default: return "UNKNOWN";
+    }
+}
+
+std::string replicationChannelStateToString(core::CatalogManager::ReplicationChannelState state) {
+    switch (state) {
+        case core::CatalogManager::ReplicationChannelState::INIT: return "INIT";
+        case core::CatalogManager::ReplicationChannelState::SNAPSHOT: return "SNAPSHOT";
+        case core::CatalogManager::ReplicationChannelState::CATCHUP: return "CATCHUP";
+        case core::CatalogManager::ReplicationChannelState::STREAMING: return "STREAMING";
+        case core::CatalogManager::ReplicationChannelState::PAUSED: return "PAUSED";
+        case core::CatalogManager::ReplicationChannelState::DEGRADED: return "DEGRADED";
+        case core::CatalogManager::ReplicationChannelState::FENCED: return "FENCED";
+        case core::CatalogManager::ReplicationChannelState::STOPPED: return "STOPPED";
+        case core::CatalogManager::ReplicationChannelState::FAILED: return "FAILED";
+        default: return "UNKNOWN";
+    }
+}
+
+std::string replicationConflictKindToString(core::CatalogManager::ReplicationConflictKind kind) {
+    switch (kind) {
+        case core::CatalogManager::ReplicationConflictKind::UPDATE_UPDATE: return "UPDATE_UPDATE";
+        case core::CatalogManager::ReplicationConflictKind::DELETE_UPDATE: return "DELETE_UPDATE";
+        case core::CatalogManager::ReplicationConflictKind::UNIQUE_CONSTRAINT: return "UNIQUE_CONSTRAINT";
+        case core::CatalogManager::ReplicationConflictKind::DDL_DML: return "DDL_DML";
+        case core::CatalogManager::ReplicationConflictKind::DDL_DDL: return "DDL_DDL";
+        case core::CatalogManager::ReplicationConflictKind::TYPE_MISMATCH: return "TYPE_MISMATCH";
+        default: return "UNKNOWN";
+    }
+}
+
+std::string replicationResolutionStateToString(
+    core::CatalogManager::ReplicationResolutionState state) {
+    switch (state) {
+        case core::CatalogManager::ReplicationResolutionState::OPEN: return "OPEN";
+        case core::CatalogManager::ReplicationResolutionState::AUTO_RESOLVED: return "AUTO_RESOLVED";
+        case core::CatalogManager::ReplicationResolutionState::MANUAL_PENDING: return "MANUAL_PENDING";
+        case core::CatalogManager::ReplicationResolutionState::MANUAL_RESOLVED: return "MANUAL_RESOLVED";
+        case core::CatalogManager::ReplicationResolutionState::IGNORED: return "IGNORED";
+        default: return "UNKNOWN";
+    }
+}
+
+std::string replicationCursorStateToString(core::CatalogManager::ReplicationCursorState state) {
+    switch (state) {
+        case core::CatalogManager::ReplicationCursorState::ACTIVE: return "ACTIVE";
+        case core::CatalogManager::ReplicationCursorState::STALLED: return "STALLED";
+        case core::CatalogManager::ReplicationCursorState::ERROR: return "ERROR";
+        case core::CatalogManager::ReplicationCursorState::CLOSED: return "CLOSED";
+        default: return "UNKNOWN";
+    }
+}
+
+std::string shardStateToString(core::CatalogManager::ShardState state) {
+    switch (state) {
+        case core::CatalogManager::ShardState::CREATING: return "CREATING";
+        case core::CatalogManager::ShardState::ONLINE: return "ONLINE";
+        case core::CatalogManager::ShardState::REBALANCING: return "REBALANCING";
+        case core::CatalogManager::ShardState::DRAINING: return "DRAINING";
+        case core::CatalogManager::ShardState::OFFLINE: return "OFFLINE";
+        default: return "UNKNOWN";
+    }
+}
+
+std::string shardKindToString(core::CatalogManager::ShardKind kind) {
+    switch (kind) {
+        case core::CatalogManager::ShardKind::ROW: return "ROW";
+        case core::CatalogManager::ShardKind::COLUMN: return "COLUMN";
+        case core::CatalogManager::ShardKind::VECTOR: return "VECTOR";
+        case core::CatalogManager::ShardKind::DOCUMENT: return "DOCUMENT";
+        default: return "UNKNOWN";
+    }
+}
+
+std::string shardMigrationStateToString(core::CatalogManager::ShardMigrationState state) {
+    switch (state) {
+        case core::CatalogManager::ShardMigrationState::PLANNED: return "PLANNED";
+        case core::CatalogManager::ShardMigrationState::RUNNING: return "RUNNING";
+        case core::CatalogManager::ShardMigrationState::PAUSED: return "PAUSED";
+        case core::CatalogManager::ShardMigrationState::COMPLETED: return "COMPLETED";
+        case core::CatalogManager::ShardMigrationState::FAILED: return "FAILED";
+        default: return "UNKNOWN";
+    }
+}
+
+std::string throttleStateToString(core::CatalogManager::ThrottleState state) {
+    switch (state) {
+        case core::CatalogManager::ThrottleState::NONE: return "NONE";
+        case core::CatalogManager::ThrottleState::LOW: return "LOW";
+        case core::CatalogManager::ThrottleState::MEDIUM: return "MEDIUM";
+        case core::CatalogManager::ThrottleState::HIGH: return "HIGH";
+        default: return "UNKNOWN";
+    }
+}
+
 }  // namespace
 
 void SysCatalogHandler::initializeTableNames() {
@@ -347,7 +457,16 @@ void SysCatalogHandler::initializeTableNames() {
         "jobs",
         "job_runs",
         "job_dependencies",
-        "performance"
+        "performance",
+        "migration_status",
+        "migration_audit_summary",
+        "replication_channel_status",
+        "replication_conflict_queue",
+        "replication_cursor_status",
+        "shard_status",
+        "shard_migrations",
+        "plugin",
+        "prepared_statement"
     };
 }
 
@@ -700,6 +819,132 @@ const SysCatalogHandler::ColumnDefs* SysCatalogHandler::getTableDefinition(
         {"page_marks", DataType::INT64, true}
     };
 
+    static const ColumnDefs kMigrationStatusColumns = {
+        {"connector_id", DataType::UUID, false},
+        {"connector_name", DataType::TEXT, false},
+        {"engine_name", DataType::TEXT, false},
+        {"state", DataType::TEXT, false},
+        {"failure_count", DataType::INT32, false},
+        {"last_probe_time", DataType::INT64, true},
+        {"last_ready_time", DataType::INT64, true},
+        {"open_error_count", DataType::INT64, false},
+        {"snapshot_count", DataType::INT64, false},
+        {"metadata_object_count", DataType::INT64, false},
+        {"metadata_column_count", DataType::INT64, false}
+    };
+
+    static const ColumnDefs kMigrationAuditSummaryColumns = {
+        {"connector_id", DataType::UUID, false},
+        {"connector_name", DataType::TEXT, false},
+        {"request_count", DataType::INT64, false},
+        {"success_count", DataType::INT64, false},
+        {"failed_count", DataType::INT64, false},
+        {"avg_latency_ms", DataType::INT64, false},
+        {"bytes_in_total", DataType::INT64, false},
+        {"bytes_out_total", DataType::INT64, false},
+        {"last_activity_time", DataType::INT64, true},
+        {"open_error_count", DataType::INT64, false}
+    };
+
+    static const ColumnDefs kReplicationChannelStatusColumns = {
+        {"channel_id", DataType::UUID, false},
+        {"channel_name", DataType::TEXT, false},
+        {"direction", DataType::TEXT, false},
+        {"state", DataType::TEXT, false},
+        {"mode_version", DataType::INT64, false},
+        {"lag_ms", DataType::INT64, false},
+        {"open_conflict_count", DataType::INT64, false},
+        {"open_error_count", DataType::INT64, false},
+        {"active_cursor_count", DataType::INT64, false},
+        {"last_applied_commit_seq", DataType::INT64, false},
+        {"last_applied_time", DataType::INT64, true}
+    };
+
+    static const ColumnDefs kReplicationConflictQueueColumns = {
+        {"conflict_id", DataType::UUID, false},
+        {"channel_id", DataType::UUID, false},
+        {"channel_name", DataType::TEXT, false},
+        {"batch_id", DataType::UUID, false},
+        {"conflict_kind", DataType::TEXT, false},
+        {"source_commit_seq", DataType::INT64, false},
+        {"resolution_state", DataType::TEXT, false},
+        {"source_payload", DataType::TEXT, true},
+        {"target_payload", DataType::TEXT, true},
+        {"resolved_time", DataType::INT64, true}
+    };
+
+    static const ColumnDefs kReplicationCursorStatusColumns = {
+        {"cursor_id", DataType::UUID, false},
+        {"channel_id", DataType::UUID, false},
+        {"channel_name", DataType::TEXT, false},
+        {"member_id", DataType::UUID, false},
+        {"cursor_name", DataType::TEXT, false},
+        {"cursor_state", DataType::TEXT, false},
+        {"source_commit_seq", DataType::INT64, false},
+        {"applied_commit_seq", DataType::INT64, false},
+        {"lag_ms", DataType::INT64, false},
+        {"heartbeat_time", DataType::INT64, true},
+        {"last_error_id", DataType::UUID, true}
+    };
+
+    static const ColumnDefs kShardStatusColumns = {
+        {"shard_id", DataType::UUID, false},
+        {"shard_name", DataType::TEXT, false},
+        {"cluster_id", DataType::UUID, false},
+        {"state", DataType::TEXT, false},
+        {"kind", DataType::TEXT, false},
+        {"policy_id", DataType::UUID, false},
+        {"replica_count", DataType::INT64, false},
+        {"online_replica_count", DataType::INT64, false},
+        {"migration_in_progress", DataType::BOOLEAN, false}
+    };
+
+    static const ColumnDefs kShardMigrationsColumns = {
+        {"migration_id", DataType::UUID, false},
+        {"shard_id", DataType::UUID, false},
+        {"shard_name", DataType::TEXT, false},
+        {"source_node_id", DataType::UUID, false},
+        {"target_node_id", DataType::UUID, false},
+        {"state", DataType::TEXT, false},
+        {"bytes_total", DataType::INT64, false},
+        {"bytes_copied", DataType::INT64, false},
+        {"rows_total", DataType::INT64, false},
+        {"rows_copied", DataType::INT64, false},
+        {"throttle_state", DataType::TEXT, false},
+        {"progress_pct", DataType::FLOAT64, false},
+        {"started_time", DataType::INT64, false},
+        {"updated_time", DataType::INT64, false},
+        {"completed_time", DataType::INT64, true},
+        {"error_code", DataType::TEXT, true},
+        {"error_message", DataType::TEXT, true}
+    };
+
+    static const ColumnDefs kPluginColumns = {
+        {"module_id", DataType::UUID, false},
+        {"module_name", DataType::TEXT, false},
+        {"engine_id", DataType::UUID, false},
+        {"library_path", DataType::TEXT, true},
+        {"checksum", DataType::TEXT, true},
+        {"entry_point", DataType::TEXT, true},
+        {"is_loaded", DataType::BOOLEAN, false},
+        {"is_validated", DataType::BOOLEAN, false},
+        {"loaded_count", DataType::INT64, false},
+        {"last_modified_time", DataType::INT64, false}
+    };
+
+    static const ColumnDefs kPreparedStatementColumns = {
+        {"remote_prepared_id", DataType::UUID, false},
+        {"remote_connector_id", DataType::UUID, false},
+        {"session_id", DataType::UUID, false},
+        {"statement_name", DataType::TEXT, false},
+        {"statement_fingerprint", DataType::INT64, false},
+        {"remote_handle", DataType::TEXT, true},
+        {"created_time", DataType::INT64, false},
+        {"last_used_time", DataType::INT64, false},
+        {"expires_time", DataType::INT64, true},
+        {"is_valid", DataType::BOOLEAN, false}
+    };
+
     if (equalsCaseInsensitive(table_name, "sessions")) {
         return &kSessionsColumns;
     }
@@ -741,6 +986,33 @@ const SysCatalogHandler::ColumnDefs* SysCatalogHandler::getTableDefinition(
     }
     if (equalsCaseInsensitive(table_name, "performance")) {
         return &kPerformanceColumns;
+    }
+    if (equalsCaseInsensitive(table_name, "migration_status")) {
+        return &kMigrationStatusColumns;
+    }
+    if (equalsCaseInsensitive(table_name, "migration_audit_summary")) {
+        return &kMigrationAuditSummaryColumns;
+    }
+    if (equalsCaseInsensitive(table_name, "replication_channel_status")) {
+        return &kReplicationChannelStatusColumns;
+    }
+    if (equalsCaseInsensitive(table_name, "replication_conflict_queue")) {
+        return &kReplicationConflictQueueColumns;
+    }
+    if (equalsCaseInsensitive(table_name, "replication_cursor_status")) {
+        return &kReplicationCursorStatusColumns;
+    }
+    if (equalsCaseInsensitive(table_name, "shard_status")) {
+        return &kShardStatusColumns;
+    }
+    if (equalsCaseInsensitive(table_name, "shard_migrations")) {
+        return &kShardMigrationsColumns;
+    }
+    if (equalsCaseInsensitive(table_name, "plugin")) {
+        return &kPluginColumns;
+    }
+    if (equalsCaseInsensitive(table_name, "prepared_statement")) {
+        return &kPreparedStatementColumns;
     }
 
     return nullptr;
@@ -868,6 +1140,33 @@ Status SysCatalogHandler::queryTable(const std::string& schema_name,
     }
     if (equalsCaseInsensitive(table_name, "performance")) {
         return queryPerformance(results, ctx);
+    }
+    if (equalsCaseInsensitive(table_name, "migration_status")) {
+        return queryMigrationStatus(results, ctx);
+    }
+    if (equalsCaseInsensitive(table_name, "migration_audit_summary")) {
+        return queryMigrationAuditSummary(results, ctx);
+    }
+    if (equalsCaseInsensitive(table_name, "replication_channel_status")) {
+        return queryReplicationChannelStatus(results, ctx);
+    }
+    if (equalsCaseInsensitive(table_name, "replication_conflict_queue")) {
+        return queryReplicationConflictQueue(results, ctx);
+    }
+    if (equalsCaseInsensitive(table_name, "replication_cursor_status")) {
+        return queryReplicationCursorStatus(results, ctx);
+    }
+    if (equalsCaseInsensitive(table_name, "shard_status")) {
+        return queryShardStatus(results, ctx);
+    }
+    if (equalsCaseInsensitive(table_name, "shard_migrations")) {
+        return queryShardMigrations(results, ctx);
+    }
+    if (equalsCaseInsensitive(table_name, "plugin")) {
+        return queryPlugin(results, ctx);
+    }
+    if (equalsCaseInsensitive(table_name, "prepared_statement")) {
+        return queryPreparedStatements(results, ctx);
     }
 
     return Status::OK;
@@ -2532,6 +2831,567 @@ Status SysCatalogHandler::queryServerCapabilities(VirtualResultSet& results, Err
             {"enabled", core::TypedValue::makeBool((capabilities & capability.flag) != 0)}
         };
         results.rows.push_back(std::move(row));
+    }
+
+    return Status::OK;
+}
+
+Status SysCatalogHandler::queryMigrationStatus(VirtualResultSet& results, ErrorContext* ctx) {
+    if (!catalog_manager_) {
+        return Status::OK;
+    }
+
+    std::vector<core::CatalogManager::RemoteConnectorCatalogInfo> connectors;
+    Status status = catalog_manager_->listRemoteConnectorCatalogEntries(connectors, ctx);
+    if (status != Status::OK && status != Status::NOT_FOUND) {
+        return status;
+    }
+
+    for (const auto& connector : connectors) {
+        std::vector<core::CatalogManager::RemoteErrorCatalogInfo> errors;
+        status = catalog_manager_->listRemoteErrorCatalogEntries(connector.remote_connector_id, errors, ctx);
+        if (status != Status::OK && status != Status::NOT_FOUND) {
+            return status;
+        }
+
+        std::vector<core::CatalogManager::RemoteMetadataSnapshotCatalogInfo> snapshots;
+        status = catalog_manager_->listRemoteMetadataSnapshotCatalogEntries(
+            connector.remote_connector_id, snapshots, ctx);
+        if (status != Status::OK && status != Status::NOT_FOUND) {
+            return status;
+        }
+
+        int64_t open_error_count = 0;
+        for (const auto& error : errors) {
+            if (error.is_open) {
+                ++open_error_count;
+            }
+        }
+
+        int64_t metadata_object_count = 0;
+        int64_t metadata_column_count = 0;
+        for (const auto& snapshot : snapshots) {
+            std::vector<core::CatalogManager::RemoteMetadataObjectCatalogInfo> objects;
+            status = catalog_manager_->listRemoteMetadataObjectCatalogEntries(snapshot.snapshot_id, objects, ctx);
+            if (status != Status::OK && status != Status::NOT_FOUND) {
+                return status;
+            }
+            metadata_object_count += static_cast<int64_t>(objects.size());
+
+            for (const auto& object : objects) {
+                std::vector<core::CatalogManager::RemoteMetadataColumnCatalogInfo> columns;
+                status = catalog_manager_->listRemoteMetadataColumnCatalogEntries(
+                    object.remote_object_id, columns, ctx);
+                if (status != Status::OK && status != Status::NOT_FOUND) {
+                    return status;
+                }
+                metadata_column_count += static_cast<int64_t>(columns.size());
+            }
+        }
+
+        VirtualRow row;
+        row.columns = {
+            {"connector_id", uuidValueOrNull(connector.remote_connector_id)},
+            {"connector_name", textValueOrNull(connector.connector_name, DataType::TEXT)},
+            {"engine_name", textValueOrNull(connector.engine_name, DataType::TEXT)},
+            {"state", textValueOrNull(remoteConnectorStateToString(connector.state), DataType::TEXT)},
+            {"failure_count", core::TypedValue::makeInt32(static_cast<int32_t>(connector.failure_count))},
+            {"last_probe_time", connector.has_last_probe_time
+                                    ? core::TypedValue::makeInt64(static_cast<int64_t>(connector.last_probe_time))
+                                    : core::TypedValue::makeNull(DataType::INT64)},
+            {"last_ready_time", connector.has_last_ready_time
+                                    ? core::TypedValue::makeInt64(static_cast<int64_t>(connector.last_ready_time))
+                                    : core::TypedValue::makeNull(DataType::INT64)},
+            {"open_error_count", core::TypedValue::makeInt64(open_error_count)},
+            {"snapshot_count", core::TypedValue::makeInt64(static_cast<int64_t>(snapshots.size()))},
+            {"metadata_object_count", core::TypedValue::makeInt64(metadata_object_count)},
+            {"metadata_column_count", core::TypedValue::makeInt64(metadata_column_count)}
+        };
+        results.rows.push_back(std::move(row));
+    }
+
+    return Status::OK;
+}
+
+Status SysCatalogHandler::queryMigrationAuditSummary(VirtualResultSet& results, ErrorContext* ctx) {
+    if (!catalog_manager_) {
+        return Status::OK;
+    }
+
+    std::vector<core::CatalogManager::RemoteConnectorCatalogInfo> connectors;
+    Status status = catalog_manager_->listRemoteConnectorCatalogEntries(connectors, ctx);
+    if (status != Status::OK && status != Status::NOT_FOUND) {
+        return status;
+    }
+
+    for (const auto& connector : connectors) {
+        std::vector<core::CatalogManager::RemoteExecutionAuditCatalogInfo> audits;
+        status = catalog_manager_->listRemoteExecutionAuditCatalogEntries(
+            connector.remote_connector_id, audits, ctx);
+        if (status != Status::OK && status != Status::NOT_FOUND) {
+            return status;
+        }
+
+        std::vector<core::CatalogManager::RemoteErrorCatalogInfo> errors;
+        status = catalog_manager_->listRemoteErrorCatalogEntries(connector.remote_connector_id, errors, ctx);
+        if (status != Status::OK && status != Status::NOT_FOUND) {
+            return status;
+        }
+
+        int64_t request_count = static_cast<int64_t>(audits.size());
+        int64_t success_count = 0;
+        int64_t failed_count = 0;
+        int64_t total_latency_ms = 0;
+        int64_t bytes_in_total = 0;
+        int64_t bytes_out_total = 0;
+        uint64_t last_activity_time = 0;
+
+        for (const auto& audit : audits) {
+            if (audit.exec_status == core::CatalogManager::RemoteExecStatus::SUCCESS) {
+                ++success_count;
+            } else {
+                ++failed_count;
+            }
+            total_latency_ms += static_cast<int64_t>(audit.latency_ms);
+            bytes_in_total += static_cast<int64_t>(audit.bytes_in);
+            bytes_out_total += static_cast<int64_t>(audit.bytes_out);
+            last_activity_time = std::max(last_activity_time, audit.finished_time);
+        }
+
+        int64_t open_error_count = 0;
+        for (const auto& error : errors) {
+            if (error.is_open) {
+                ++open_error_count;
+            }
+        }
+
+        VirtualRow row;
+        row.columns = {
+            {"connector_id", uuidValueOrNull(connector.remote_connector_id)},
+            {"connector_name", textValueOrNull(connector.connector_name, DataType::TEXT)},
+            {"request_count", core::TypedValue::makeInt64(request_count)},
+            {"success_count", core::TypedValue::makeInt64(success_count)},
+            {"failed_count", core::TypedValue::makeInt64(failed_count)},
+            {"avg_latency_ms", core::TypedValue::makeInt64(
+                                   request_count == 0 ? 0 : total_latency_ms / request_count)},
+            {"bytes_in_total", core::TypedValue::makeInt64(bytes_in_total)},
+            {"bytes_out_total", core::TypedValue::makeInt64(bytes_out_total)},
+            {"last_activity_time", last_activity_time == 0
+                                       ? core::TypedValue::makeNull(DataType::INT64)
+                                       : core::TypedValue::makeInt64(static_cast<int64_t>(last_activity_time))},
+            {"open_error_count", core::TypedValue::makeInt64(open_error_count)}
+        };
+        results.rows.push_back(std::move(row));
+    }
+
+    return Status::OK;
+}
+
+Status SysCatalogHandler::queryReplicationChannelStatus(VirtualResultSet& results, ErrorContext* ctx) {
+    if (!catalog_manager_) {
+        return Status::OK;
+    }
+
+    std::vector<core::CatalogManager::ReplicationChannelCatalogInfo> channels;
+    Status status = catalog_manager_->listReplicationChannelCatalogEntries(channels, ctx);
+    if (status != Status::OK && status != Status::NOT_FOUND) {
+        return status;
+    }
+
+    for (const auto& channel : channels) {
+        std::vector<core::CatalogManager::ReplicationCursorCatalogInfo> cursors;
+        status = catalog_manager_->listReplicationCursorCatalogEntries(
+            channel.replication_channel_id, cursors, ctx);
+        if (status != Status::OK && status != Status::NOT_FOUND) {
+            return status;
+        }
+
+        std::vector<core::CatalogManager::ReplicationConflictCatalogInfo> conflicts;
+        status = catalog_manager_->listReplicationConflictCatalogEntries(
+            channel.replication_channel_id, conflicts, ctx);
+        if (status != Status::OK && status != Status::NOT_FOUND) {
+            return status;
+        }
+
+        std::vector<core::CatalogManager::ReplicationErrorCatalogInfo> errors;
+        status = catalog_manager_->listReplicationErrorCatalogEntries(
+            channel.replication_channel_id, errors, ctx);
+        if (status != Status::OK && status != Status::NOT_FOUND) {
+            return status;
+        }
+
+        int64_t lag_ms = 0;
+        int64_t active_cursor_count = 0;
+        uint64_t last_applied_commit_seq = 0;
+        uint64_t last_applied_time = 0;
+        for (const auto& cursor : cursors) {
+            lag_ms = std::max<int64_t>(lag_ms, static_cast<int64_t>(cursor.lag_ms));
+            if (cursor.cursor_state == core::CatalogManager::ReplicationCursorState::ACTIVE) {
+                ++active_cursor_count;
+            }
+            last_applied_commit_seq = std::max(last_applied_commit_seq, cursor.applied_commit_seq);
+            if (cursor.has_applied_time) {
+                last_applied_time = std::max(last_applied_time, cursor.applied_time);
+            }
+        }
+
+        int64_t open_conflict_count = 0;
+        for (const auto& conflict : conflicts) {
+            if (conflict.resolution_state == core::CatalogManager::ReplicationResolutionState::OPEN ||
+                conflict.resolution_state ==
+                    core::CatalogManager::ReplicationResolutionState::MANUAL_PENDING) {
+                ++open_conflict_count;
+            }
+        }
+
+        int64_t open_error_count = 0;
+        for (const auto& error : errors) {
+            if (error.is_open) {
+                ++open_error_count;
+            }
+        }
+
+        VirtualRow row;
+        row.columns = {
+            {"channel_id", uuidValueOrNull(channel.replication_channel_id)},
+            {"channel_name", textValueOrNull(channel.channel_name, DataType::TEXT)},
+            {"direction", textValueOrNull(replicationDirectionToString(channel.direction), DataType::TEXT)},
+            {"state", textValueOrNull(replicationChannelStateToString(channel.channel_state), DataType::TEXT)},
+            {"mode_version", core::TypedValue::makeInt64(static_cast<int64_t>(channel.mode_version))},
+            {"lag_ms", core::TypedValue::makeInt64(lag_ms)},
+            {"open_conflict_count", core::TypedValue::makeInt64(open_conflict_count)},
+            {"open_error_count", core::TypedValue::makeInt64(open_error_count)},
+            {"active_cursor_count", core::TypedValue::makeInt64(active_cursor_count)},
+            {"last_applied_commit_seq",
+             core::TypedValue::makeInt64(static_cast<int64_t>(last_applied_commit_seq))},
+            {"last_applied_time", last_applied_time == 0
+                                      ? core::TypedValue::makeNull(DataType::INT64)
+                                      : core::TypedValue::makeInt64(static_cast<int64_t>(last_applied_time))}
+        };
+        results.rows.push_back(std::move(row));
+    }
+
+    return Status::OK;
+}
+
+Status SysCatalogHandler::queryReplicationConflictQueue(VirtualResultSet& results, ErrorContext* ctx) {
+    if (!catalog_manager_) {
+        return Status::OK;
+    }
+
+    std::vector<core::CatalogManager::ReplicationChannelCatalogInfo> channels;
+    Status status = catalog_manager_->listReplicationChannelCatalogEntries(channels, ctx);
+    if (status != Status::OK && status != Status::NOT_FOUND) {
+        return status;
+    }
+
+    for (const auto& channel : channels) {
+        std::vector<core::CatalogManager::ReplicationConflictCatalogInfo> conflicts;
+        status = catalog_manager_->listReplicationConflictCatalogEntries(
+            channel.replication_channel_id, conflicts, ctx);
+        if (status != Status::OK && status != Status::NOT_FOUND) {
+            return status;
+        }
+
+        for (const auto& conflict : conflicts) {
+            if (conflict.resolution_state != core::CatalogManager::ReplicationResolutionState::OPEN &&
+                conflict.resolution_state !=
+                    core::CatalogManager::ReplicationResolutionState::MANUAL_PENDING) {
+                continue;
+            }
+
+            VirtualRow row;
+            row.columns = {
+                {"conflict_id", uuidValueOrNull(conflict.replication_conflict_id)},
+                {"channel_id", uuidValueOrNull(conflict.replication_channel_id)},
+                {"channel_name", textValueOrNull(channel.channel_name, DataType::TEXT)},
+                {"batch_id", uuidValueOrNull(conflict.replication_batch_id)},
+                {"conflict_kind",
+                 textValueOrNull(replicationConflictKindToString(conflict.conflict_kind), DataType::TEXT)},
+                {"source_commit_seq",
+                 core::TypedValue::makeInt64(static_cast<int64_t>(conflict.source_commit_seq))},
+                {"resolution_state",
+                 textValueOrNull(replicationResolutionStateToString(conflict.resolution_state), DataType::TEXT)},
+                {"source_payload", textValueOrNull(conflict.source_payload, DataType::TEXT)},
+                {"target_payload", conflict.has_target_payload
+                                       ? textValueOrNull(conflict.target_payload, DataType::TEXT)
+                                       : core::TypedValue::makeNull(DataType::TEXT)},
+                {"resolved_time", conflict.has_resolved_time
+                                      ? core::TypedValue::makeInt64(static_cast<int64_t>(conflict.resolved_time))
+                                      : core::TypedValue::makeNull(DataType::INT64)}
+            };
+            results.rows.push_back(std::move(row));
+        }
+    }
+
+    return Status::OK;
+}
+
+Status SysCatalogHandler::queryReplicationCursorStatus(VirtualResultSet& results, ErrorContext* ctx) {
+    if (!catalog_manager_) {
+        return Status::OK;
+    }
+
+    std::vector<core::CatalogManager::ReplicationChannelCatalogInfo> channels;
+    Status status = catalog_manager_->listReplicationChannelCatalogEntries(channels, ctx);
+    if (status != Status::OK && status != Status::NOT_FOUND) {
+        return status;
+    }
+
+    for (const auto& channel : channels) {
+        std::vector<core::CatalogManager::ReplicationCursorCatalogInfo> cursors;
+        status = catalog_manager_->listReplicationCursorCatalogEntries(
+            channel.replication_channel_id, cursors, ctx);
+        if (status != Status::OK && status != Status::NOT_FOUND) {
+            return status;
+        }
+
+        for (const auto& cursor : cursors) {
+            VirtualRow row;
+            row.columns = {
+                {"cursor_id", uuidValueOrNull(cursor.replication_cursor_id)},
+                {"channel_id", uuidValueOrNull(cursor.replication_channel_id)},
+                {"channel_name", textValueOrNull(channel.channel_name, DataType::TEXT)},
+                {"member_id", uuidValueOrNull(cursor.channel_member_id)},
+                {"cursor_name", textValueOrNull(cursor.cursor_name, DataType::TEXT)},
+                {"cursor_state", textValueOrNull(replicationCursorStateToString(cursor.cursor_state),
+                                                 DataType::TEXT)},
+                {"source_commit_seq",
+                 core::TypedValue::makeInt64(static_cast<int64_t>(cursor.source_commit_seq))},
+                {"applied_commit_seq",
+                 core::TypedValue::makeInt64(static_cast<int64_t>(cursor.applied_commit_seq))},
+                {"lag_ms", core::TypedValue::makeInt64(static_cast<int64_t>(cursor.lag_ms))},
+                {"heartbeat_time", cursor.has_heartbeat_time
+                                       ? core::TypedValue::makeInt64(static_cast<int64_t>(cursor.heartbeat_time))
+                                       : core::TypedValue::makeNull(DataType::INT64)},
+                {"last_error_id", cursor.has_last_error_id
+                                      ? uuidValueOrNull(cursor.last_error_id)
+                                      : core::TypedValue::makeNull(DataType::UUID)}
+            };
+            results.rows.push_back(std::move(row));
+        }
+    }
+
+    return Status::OK;
+}
+
+Status SysCatalogHandler::queryShardStatus(VirtualResultSet& results, ErrorContext* ctx) {
+    if (!catalog_manager_) {
+        return Status::OK;
+    }
+
+    std::vector<core::CatalogManager::ClusterCatalogInfo> clusters;
+    Status status = catalog_manager_->listClusterCatalogEntries(clusters, ctx);
+    if (status != Status::OK && status != Status::NOT_FOUND) {
+        return status;
+    }
+
+    for (const auto& cluster : clusters) {
+        std::vector<core::CatalogManager::ShardCatalogInfo> shards;
+        status = catalog_manager_->listShardCatalogEntries(cluster.cluster_id, shards, ctx);
+        if (status != Status::OK && status != Status::NOT_FOUND) {
+            return status;
+        }
+
+        for (const auto& shard : shards) {
+            std::vector<core::CatalogManager::ShardReplicaCatalogInfo> replicas;
+            status = catalog_manager_->listShardReplicaCatalogEntries(shard.shard_id, replicas, ctx);
+            if (status != Status::OK && status != Status::NOT_FOUND) {
+                return status;
+            }
+
+            std::vector<core::CatalogManager::ShardMigrationCatalogInfo> migrations;
+            status = catalog_manager_->listShardMigrationCatalogEntries(shard.shard_id, migrations, ctx);
+            if (status != Status::OK && status != Status::NOT_FOUND) {
+                return status;
+            }
+
+            int64_t online_replica_count = 0;
+            for (const auto& replica : replicas) {
+                if (replica.replica_state == core::CatalogManager::ReplicaState::ONLINE) {
+                    ++online_replica_count;
+                }
+            }
+
+            bool migration_in_progress = false;
+            for (const auto& migration : migrations) {
+                if (migration.state == core::CatalogManager::ShardMigrationState::PLANNED ||
+                    migration.state == core::CatalogManager::ShardMigrationState::RUNNING ||
+                    migration.state == core::CatalogManager::ShardMigrationState::PAUSED) {
+                    migration_in_progress = true;
+                    break;
+                }
+            }
+
+            VirtualRow row;
+            row.columns = {
+                {"shard_id", uuidValueOrNull(shard.shard_id)},
+                {"shard_name", textValueOrNull(shard.shard_name, DataType::TEXT)},
+                {"cluster_id", uuidValueOrNull(shard.cluster_id)},
+                {"state", textValueOrNull(shardStateToString(shard.shard_state), DataType::TEXT)},
+                {"kind", textValueOrNull(shardKindToString(shard.shard_kind), DataType::TEXT)},
+                {"policy_id", uuidValueOrNull(shard.policy_id)},
+                {"replica_count", core::TypedValue::makeInt64(static_cast<int64_t>(replicas.size()))},
+                {"online_replica_count", core::TypedValue::makeInt64(online_replica_count)},
+                {"migration_in_progress", core::TypedValue::makeBoolean(migration_in_progress)}
+            };
+            results.rows.push_back(std::move(row));
+        }
+    }
+
+    return Status::OK;
+}
+
+Status SysCatalogHandler::queryShardMigrations(VirtualResultSet& results, ErrorContext* ctx) {
+    if (!catalog_manager_) {
+        return Status::OK;
+    }
+
+    std::unordered_map<core::ID, std::string, core::IDHash> shard_names;
+    std::vector<core::CatalogManager::ClusterCatalogInfo> clusters;
+    Status status = catalog_manager_->listClusterCatalogEntries(clusters, ctx);
+    if (status != Status::OK && status != Status::NOT_FOUND) {
+        return status;
+    }
+
+    for (const auto& cluster : clusters) {
+        std::vector<core::CatalogManager::ShardCatalogInfo> shards;
+        status = catalog_manager_->listShardCatalogEntries(cluster.cluster_id, shards, ctx);
+        if (status != Status::OK && status != Status::NOT_FOUND) {
+            return status;
+        }
+        for (const auto& shard : shards) {
+            shard_names.emplace(shard.shard_id, shard.shard_name);
+        }
+    }
+
+    for (const auto& [shard_id, shard_name] : shard_names) {
+        std::vector<core::CatalogManager::ShardMigrationCatalogInfo> migrations;
+        status = catalog_manager_->listShardMigrationCatalogEntries(shard_id, migrations, ctx);
+        if (status != Status::OK && status != Status::NOT_FOUND) {
+            return status;
+        }
+
+        for (const auto& migration : migrations) {
+            double progress_pct = 0.0;
+            if (migration.bytes_total > 0) {
+                progress_pct =
+                    static_cast<double>(migration.bytes_copied) * 100.0 /
+                    static_cast<double>(migration.bytes_total);
+            } else if (migration.rows_total > 0) {
+                progress_pct =
+                    static_cast<double>(migration.rows_copied) * 100.0 /
+                    static_cast<double>(migration.rows_total);
+            }
+
+            VirtualRow row;
+            row.columns = {
+                {"migration_id", uuidValueOrNull(migration.migration_id)},
+                {"shard_id", uuidValueOrNull(migration.shard_id)},
+                {"shard_name", textValueOrNull(shard_name, DataType::TEXT)},
+                {"source_node_id", uuidValueOrNull(migration.source_node_id)},
+                {"target_node_id", uuidValueOrNull(migration.target_node_id)},
+                {"state", textValueOrNull(shardMigrationStateToString(migration.state), DataType::TEXT)},
+                {"bytes_total", core::TypedValue::makeInt64(static_cast<int64_t>(migration.bytes_total))},
+                {"bytes_copied", core::TypedValue::makeInt64(static_cast<int64_t>(migration.bytes_copied))},
+                {"rows_total", core::TypedValue::makeInt64(static_cast<int64_t>(migration.rows_total))},
+                {"rows_copied", core::TypedValue::makeInt64(static_cast<int64_t>(migration.rows_copied))},
+                {"throttle_state",
+                 textValueOrNull(throttleStateToString(migration.throttle_state), DataType::TEXT)},
+                {"progress_pct", core::TypedValue::makeFloat64(progress_pct)},
+                {"started_time", core::TypedValue::makeInt64(static_cast<int64_t>(migration.started_time))},
+                {"updated_time", core::TypedValue::makeInt64(static_cast<int64_t>(migration.updated_time))},
+                {"completed_time", migration.has_completed_time
+                                       ? core::TypedValue::makeInt64(static_cast<int64_t>(
+                                             migration.completed_time))
+                                       : core::TypedValue::makeNull(DataType::INT64)},
+                {"error_code", textValueOrNull(migration.error_code, DataType::TEXT)},
+                {"error_message", textValueOrNull(migration.error_message, DataType::TEXT)}
+            };
+            results.rows.push_back(std::move(row));
+        }
+    }
+
+    return Status::OK;
+}
+
+Status SysCatalogHandler::queryPlugin(VirtualResultSet& results, ErrorContext* ctx) {
+    if (!catalog_manager_) {
+        return Status::OK;
+    }
+
+    std::vector<core::CatalogManager::UDREngineInfo> engines;
+    Status status = catalog_manager_->listUDREngines(engines, ctx);
+    if (status != Status::OK && status != Status::NOT_FOUND) {
+        return status;
+    }
+
+    for (const auto& engine : engines) {
+        std::vector<core::CatalogManager::UDRModuleInfo> modules;
+        status = catalog_manager_->listUDRModules(engine.engine_id, modules, ctx);
+        if (status != Status::OK && status != Status::NOT_FOUND) {
+            return status;
+        }
+        for (const auto& module : modules) {
+            VirtualRow row;
+            row.columns = {
+                {"module_id", uuidValueOrNull(module.module_id)},
+                {"module_name", textValueOrNull(module.module_name, DataType::TEXT)},
+                {"engine_id", uuidValueOrNull(module.engine_id)},
+                {"library_path", textValueOrNull(module.library_path, DataType::TEXT)},
+                {"checksum", textValueOrNull(module.checksum, DataType::TEXT)},
+                {"entry_point", textValueOrNull(module.entry_point, DataType::TEXT)},
+                {"is_loaded", core::TypedValue::makeBoolean(module.is_loaded)},
+                {"is_validated", core::TypedValue::makeBoolean(module.is_validated)},
+                {"loaded_count", core::TypedValue::makeInt64(static_cast<int64_t>(module.loaded_count))},
+                {"last_modified_time",
+                 core::TypedValue::makeInt64(static_cast<int64_t>(module.last_modified_time))}
+            };
+            results.rows.push_back(std::move(row));
+        }
+    }
+
+    return Status::OK;
+}
+
+Status SysCatalogHandler::queryPreparedStatements(VirtualResultSet& results, ErrorContext* ctx) {
+    if (!catalog_manager_) {
+        return Status::OK;
+    }
+
+    std::vector<core::CatalogManager::SessionInfo> sessions;
+    Status status = catalog_manager_->listSessions(sessions, ctx);
+    if (status != Status::OK && status != Status::NOT_FOUND) {
+        return status;
+    }
+
+    for (const auto& session : sessions) {
+        std::vector<core::CatalogManager::RemotePreparedStatementCatalogInfo> prepared_rows;
+        status = catalog_manager_->listRemotePreparedStatementCatalogEntries(
+            session.session_id, prepared_rows, ctx);
+        if (status != Status::OK && status != Status::NOT_FOUND) {
+            return status;
+        }
+        for (const auto& prepared : prepared_rows) {
+            VirtualRow row;
+            row.columns = {
+                {"remote_prepared_id", uuidValueOrNull(prepared.remote_prepared_id)},
+                {"remote_connector_id", uuidValueOrNull(prepared.remote_connector_id)},
+                {"session_id", uuidValueOrNull(prepared.session_id)},
+                {"statement_name", textValueOrNull(prepared.statement_name, DataType::TEXT)},
+                {"statement_fingerprint",
+                 core::TypedValue::makeInt64(static_cast<int64_t>(prepared.statement_fingerprint))},
+                {"remote_handle", textValueOrNull(prepared.remote_handle, DataType::TEXT)},
+                {"created_time", core::TypedValue::makeInt64(static_cast<int64_t>(prepared.created_time))},
+                {"last_used_time", core::TypedValue::makeInt64(static_cast<int64_t>(prepared.last_used_time))},
+                {"expires_time", prepared.has_expires_time
+                                     ? core::TypedValue::makeInt64(static_cast<int64_t>(
+                                           prepared.expires_time))
+                                     : core::TypedValue::makeNull(DataType::INT64)},
+                {"is_valid", core::TypedValue::makeBoolean(prepared.is_valid)}
+            };
+            results.rows.push_back(std::move(row));
+        }
     }
 
     return Status::OK;

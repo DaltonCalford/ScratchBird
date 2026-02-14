@@ -188,7 +188,7 @@ namespace scratchbird::optimizer
             -> double;
 
         /**
-         * estimateIn - Estimate selectivity for IN predicate (col IN (v1, v2, v3))
+         * estimateIn - Estimate selectivity for IN predicate (col IN (v1, value_two, v3))
          *
          * Formula: sum of individual equality selectivities, capped at 1.0
          *
@@ -335,17 +335,17 @@ namespace scratchbird::optimizer
          * compareValues - Compare two byte vectors as column values
          *
          * @param v1 First value
-         * @param v2 Second value
-         * @return -1 if v1 < v2, 0 if equal, 1 if v1 > v2
+         * @param value_two Second value
+         * @return -1 if v1 < value_two, 0 if equal, 1 if v1 > value_two
          */
         auto compareValues(const std::vector<uint8_t> &v1,
-                           const std::vector<uint8_t> &v2) const
+                           const std::vector<uint8_t> &value_two) const
             -> int;
 
         /**
          * valueEquals - Check if two byte vectors are equal
          */
-        auto valueEquals(const uint8_t *v1, const std::vector<uint8_t> &v2) const
+        auto valueEquals(const uint8_t *v1, const std::vector<uint8_t> &value_two) const
             -> bool;
 
         /**

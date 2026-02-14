@@ -133,7 +133,7 @@ Status HnswIndex::create(Database *db,
     // Initialize page header
     root->hnsw_header.magic = K_MAGIC_SBRD;
     root->hnsw_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
-    root->hnsw_header.page_type = PAGE_TYPE_INDEX_HNSW;
+    root->hnsw_header.page_type = PAGE_TYPE_HNSW_META;
     root->hnsw_header.page_size = db->page_size();
     root->hnsw_header.page_id = root_page;
     root->hnsw_header.generation = 1;
@@ -1212,7 +1212,7 @@ Status HnswIndex::create_node(const VectorValue &vector,
         std::memset(new_page_data, 0, db_->page_size());
         new_page->hnsw_header.magic = K_MAGIC_SBRD;
         new_page->hnsw_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
-        new_page->hnsw_header.page_type = PAGE_TYPE_INDEX_HNSW;
+        new_page->hnsw_header.page_type = PAGE_TYPE_HNSW_NODE;
         new_page->hnsw_header.page_size = db_->page_size();
         new_page->hnsw_header.page_id = new_page_num;
         new_page->hnsw_header.generation = 1;

@@ -249,6 +249,26 @@ protected:
         return info.schema_id;
     }
 
+    ID ensureSchemaPath(const std::string& path)
+    {
+        ErrorContext ctx;
+        CatalogManager::SchemaInfo info;
+        auto status = catalog_->getSchema(path, info, &ctx);
+        if (status == Status::OK)
+        {
+            return info.schema_id;
+        }
+        // Some catalog builds currently return INVALID_ARGUMENT with
+        // "Schema not found: <name>" for missing schemas.
+        if (status != Status::NOT_FOUND && status != Status::INVALID_ARGUMENT)
+        {
+            EXPECT_TRUE(status == Status::NOT_FOUND || status == Status::INVALID_ARGUMENT)
+                << ctx.message;
+            return ID{};
+        }
+        return createSchemaPath(path);
+    }
+
     ID createDelimitedSchema(const ID& parent_schema_id, const std::string& name)
     {
         CatalogManager::SchemaInfo schema;
@@ -426,7 +446,7 @@ TEST_F(SchemaPathResolutionTest, AmbiguousSearchPathReturnsError)
 {
     ID user_schema = createSchemaPath("users.alice");
     ID public_schema = schemaIdForPath("public");
-    ID app_schema = schemaIdForPath("app");
+    ID app_schema = ensureSchemaPath("app");
 
     createTable(public_schema, "ambiguous");
     createTable(app_schema, "ambiguous");

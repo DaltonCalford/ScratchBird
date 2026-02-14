@@ -78,6 +78,14 @@ namespace
         return true;
     }
 
+    auto isLikelyUuidV7(const scratchbird::core::ID &id) -> bool
+    {
+        // UUIDv7 version nibble and RFC-4122 variant bits.
+        const uint8_t version = static_cast<uint8_t>((id.bytes[6] >> 4) & 0x0F);
+        const uint8_t variant = static_cast<uint8_t>(id.bytes[8] & 0xC0);
+        return version == 0x07 && variant == 0x80;
+    }
+
     auto resolveToastIndexById(scratchbird::core::Database* db,
                                const scratchbird::core::ID& toast_table_id,
                                scratchbird::core::CatalogManager::IndexInfo& index_info_out,
@@ -349,12 +357,12 @@ namespace scratchbird::core
         // Assign unique value ID (UUID v7)
         ID value_id = generateUuidV7();
 
-        // Initialize pointer
-        pointer_out->va_header = 0x01; // TOAST marker
-        pointer_out->va_tag = static_cast<uint8_t>(strategy);
-        pointer_out->va_rawsize = size;
-        pointer_out->va_valueid = value_id;
-        pointer_out->va_toastrelid = toast_table_id_;
+        // Initialize canonical pointer.
+        pointer_out->lob_uuid = value_id;
+        pointer_out->total_len = size;
+        pointer_out->chunk_size = ToastSettings::getMaxChunkSize(db_->page_size());
+        pointer_out->compression = static_cast<uint16_t>(CompressionType::NONE);
+        pointer_out->flags = 0;
 
         // Handle based on strategy
         switch (strategy)
@@ -367,7 +375,6 @@ namespace scratchbird::core
 
             case ToastStrategy::EXTENDED:
                 // Store out-of-line, uncompressed
-                pointer_out->va_extsize = size;
                 {
                     Status status = writeToastChunks(value_id, data, size, xmin, ctx);
                     if (status != Status::OK)
@@ -395,8 +402,8 @@ namespace scratchbird::core
                 if (status != Status::OK)
                 {
                     // Fall back to uncompressed
-                    pointer_out->va_tag = static_cast<uint8_t>(ToastStrategy::EXTENDED);
-                    pointer_out->va_extsize = size;
+                    pointer_out->compression = static_cast<uint16_t>(CompressionType::NONE);
+                    pointer_out->flags &= ~ToastPointer::TOAST_COMPRESSED;
                 {
                     Status status = writeToastChunks(value_id, data, size, xmin, ctx);
                     if (status != Status::OK)
@@ -410,7 +417,8 @@ namespace scratchbird::core
                 }
             }
 
-                pointer_out->va_extsize = compressed.size();
+                pointer_out->compression = static_cast<uint16_t>(CompressionType::LZ4);
+                pointer_out->flags |= ToastPointer::TOAST_COMPRESSED;
                 return writeToastChunks(value_id, compressed.data(), compressed.size(), xmin, ctx);
             }
 
@@ -431,43 +439,42 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
-        // Verify it's a TOAST pointer
-        if (pointer->va_header != 0x01)
+        // Verify it's a valid canonical TOAST pointer.
+        if (isZeroIdLocal(pointer->lob_uuid))
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Not a TOAST pointer");
             return Status::INVALID_ARGUMENT;
         }
-
-        auto strategy = static_cast<ToastStrategy>(pointer->va_tag);
-
-        switch (strategy)
+        if ((pointer->flags & ~ToastPointer::TOAST_FLAG_MASK) != 0)
         {
-            case ToastStrategy::EXTENDED:
-            {
-                // Read uncompressed chunks
-                data_out->clear();
-                return readToastChunks(pointer->va_valueid, data_out, xmin, ctx);
-            }
-
-            case ToastStrategy::EXTERNAL:
-            {
-                // Read compressed chunks and decompress
-                std::vector<uint8_t> compressed;
-                Status status = readToastChunks(pointer->va_valueid, &compressed, xmin, ctx);
-                if (status != Status::OK)
-                {
-                    return status;
-                }
-
-                return decompressData(compressed.data(), compressed.size(), pointer->va_rawsize,
-                                      data_out, ctx);
-            }
-
-            default:
-                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                                  "Invalid TOAST strategy in pointer");
-                return Status::INVALID_ARGUMENT;
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid TOAST pointer flags");
+            return Status::INVALID_ARGUMENT;
         }
+
+        // Read chunk payload.
+        std::vector<uint8_t> stored_payload;
+        Status status = readToastChunks(pointer->lob_uuid, &stored_payload, xmin, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        const bool is_compressed = (pointer->flags & ToastPointer::TOAST_COMPRESSED) != 0;
+        if (!is_compressed)
+        {
+            data_out->swap(stored_payload);
+            return Status::OK;
+        }
+
+        if (pointer->total_len == 0 || pointer->total_len > UINT32_MAX)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::OUT_OF_RANGE,
+                              "TOAST pointer total_len is invalid for compressed payload");
+            return Status::OUT_OF_RANGE;
+        }
+
+        return decompressData(stored_payload.data(), static_cast<uint32_t>(stored_payload.size()),
+                              static_cast<uint32_t>(pointer->total_len), data_out, ctx);
     }
 
     auto ToastManager::deleteToastValue(const ID &value_id, uint64_t xmax, ErrorContext *ctx)
@@ -641,20 +648,30 @@ namespace scratchbird::core
         {
             return false;
         }
-
-        // Check magic bytes (first 2 bytes of ToastPointer)
-        // ToastPointer format: va_header (1) | va_tag (1) | va_rawsize (4) | va_extsize (4) |
-        //                      va_valueid (16) | va_toastrelid (16)
         const ToastPointer *ptr = reinterpret_cast<const ToastPointer *>(data);
-
-        // Check if va_header indicates external storage
-        // TOAST strategies: PLAIN=0, EXTENDED=1, COMPRESSED=2, EXTERNAL=3
-        uint16_t header = ptr->va_header;
-        ToastStrategy strategy = static_cast<ToastStrategy>(header & 0x03);
-
-        return (strategy == ToastStrategy::EXTENDED ||
-                strategy == ToastStrategy::EXTERNAL ||
-                strategy == ToastStrategy::COMPRESSED);
+        if (isZeroIdLocal(ptr->lob_uuid) || !isLikelyUuidV7(ptr->lob_uuid))
+        {
+            return false;
+        }
+        if (ptr->total_len == 0 || ptr->chunk_size == 0)
+        {
+            return false;
+        }
+        if ((ptr->flags & ~ToastPointer::TOAST_FLAG_MASK) != 0)
+        {
+            return false;
+        }
+        if ((ptr->flags & ToastPointer::TOAST_COMPRESSED) == 0 &&
+            ptr->compression != static_cast<uint16_t>(CompressionType::NONE))
+        {
+            return false;
+        }
+        if ((ptr->flags & ToastPointer::TOAST_COMPRESSED) != 0 &&
+            ptr->compression == static_cast<uint16_t>(CompressionType::NONE))
+        {
+            return false;
+        }
+        return true;
     }
 
     auto ToastManager::detoastIfNeeded(const uint8_t *data, size_t size,

@@ -423,24 +423,24 @@ namespace scratchbird::optimizer
 
     auto SelectivityEstimator::compareValues(
         const std::vector<uint8_t> &v1,
-        const std::vector<uint8_t> &v2) const
+        const std::vector<uint8_t> &value_two) const
         -> int
     {
         // Lexicographic comparison
-        size_t min_len = std::min(v1.size(), v2.size());
+        size_t min_len = std::min(v1.size(), value_two.size());
 
         for (size_t i = 0; i < min_len; i++)
         {
-            if (v1[i] < v2[i])
+            if (v1[i] < value_two[i])
                 return -1;
-            if (v1[i] > v2[i])
+            if (v1[i] > value_two[i])
                 return 1;
         }
 
         // Prefixes are equal, compare lengths
-        if (v1.size() < v2.size())
+        if (v1.size() < value_two.size())
             return -1;
-        if (v1.size() > v2.size())
+        if (v1.size() > value_two.size())
             return 1;
 
         return 0;
@@ -448,16 +448,16 @@ namespace scratchbird::optimizer
 
     auto SelectivityEstimator::valueEquals(
         const uint8_t *v1,
-        const std::vector<uint8_t> &v2) const
+        const std::vector<uint8_t> &value_two) const
         -> bool
     {
-        // Compare up to v2 size (v1 is assumed to be at least as long)
+        // Compare up to value_two size (v1 is assumed to be at least as long)
         // For MCVs, we stored values in fixed 256-byte arrays
-        size_t len = v2.size();
+        size_t len = value_two.size();
         if (len > 256)
             len = 256;
 
-        return std::memcmp(v1, v2.data(), len) == 0;
+        return std::memcmp(v1, value_two.data(), len) == 0;
     }
 
     auto SelectivityEstimator::interpolateBucket(

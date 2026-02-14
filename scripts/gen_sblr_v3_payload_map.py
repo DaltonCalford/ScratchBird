@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import re
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -8,6 +9,16 @@ OUT_CPP = ROOT / "src/sblr/v3_payload_map.generated.cpp"
 
 map_re = re.compile(r"->\s*`(SCHEMA_[A-Z0-9_]+)`")
 opcode_re = re.compile(r"`(SBLR3_[A-Z0-9_]+)`")
+
+if not SPEC.exists():
+    print("error: missing legacy payload-map source:", file=sys.stderr)
+    print(f"  {SPEC}", file=sys.stderr)
+    print("legacy payload map regeneration is unavailable without this source.", file=sys.stderr)
+    print(
+        "for authoritative section-22 canonical rows, run scripts/gen_sblr_v3_canonical_feature_map.py",
+        file=sys.stderr,
+    )
+    sys.exit(2)
 
 mappings = []
 for line in SPEC.read_text().splitlines():

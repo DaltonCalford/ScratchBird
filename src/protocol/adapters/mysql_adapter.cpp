@@ -19,6 +19,7 @@
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/telemetry.h"
+#include "scratchbird/parser/v3_compiler.h"
 #include "scratchbird/sblr/mysql_query_compiler.h"
 #include "scratchbird/server/ipc_server.h"
 #include "scratchbird/client/connection.h"
@@ -453,7 +454,12 @@ core::Status MySqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
         std::string schema_name = "remote.emulation.mysql.localhost.databases." + db_name;
         std::string use_stmt = "SET search_path TO '" + escapeLiteral(schema_name) + "'";
         client::ResultSet rs;
-        auto set_status = client_->executeQuery(use_stmt, &rs, ctx);
+        parser::v3::Compiler compiler;
+        auto compile_result = compiler.compile(use_stmt);
+        core::Status set_status = core::Status::INVALID_ARGUMENT;
+        if (compile_result.ok) {
+            set_status = client_->executeBytecode(compile_result.bytecode, use_stmt, &rs, ctx);
+        }
         if (set_status == core::Status::OK) {
             default_db_set_ = true;
             bootstrapInformationSchema(ctx);
@@ -461,6 +467,54 @@ core::Status MySqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
     }
 
     return core::Status::OK;
+}
+
+core::Status MySqlAdapter::executeRemoteNativeSQL(const std::string& sql,
+                                                  client::ResultSet* results,
+                                                  core::ErrorContext* ctx) {
+    auto status = ensureRemoteClient(ctx);
+    if (status != core::Status::OK) {
+        return status;
+    }
+
+    parser::v3::Compiler compiler;
+    auto compile_result = compiler.compile(sql);
+    if (!compile_result.ok) {
+        if (ctx) {
+            const std::string message = compile_result.error.empty()
+                ? "Native SQL compilation failed"
+                : compile_result.error;
+            ctx->set(core::Status::INVALID_ARGUMENT, message.c_str(),
+                     __FILE__, __LINE__, __func__);
+        }
+        return core::Status::INVALID_ARGUMENT;
+    }
+
+    return client_->executeBytecode(compile_result.bytecode, sql, results, ctx);
+}
+
+core::Status MySqlAdapter::executeRemoteDialectSQL(const std::string& sql,
+                                                   client::ResultSet* results,
+                                                   core::ErrorContext* ctx) {
+    auto status = ensureRemoteClient(ctx);
+    if (status != core::Status::OK) {
+        return status;
+    }
+
+    std::vector<uint8_t> bytecode;
+    std::string compile_error;
+    status = compileQuery(sql, bytecode, compile_error);
+    if (status != core::Status::OK) {
+        if (ctx) {
+            const std::string message = compile_error.empty()
+                ? "MySQL SQL compilation failed"
+                : compile_error;
+            ctx->set(status, message.c_str(), __FILE__, __LINE__, __func__);
+        }
+        return status;
+    }
+
+    return client_->executeBytecode(bytecode, sql, results, ctx);
 }
 
 core::Status MySqlAdapter::executeRemoteQuery(const QueryContext& query,
@@ -1074,7 +1128,7 @@ bool MySqlAdapter::validateDatabaseExists(const std::string& db_name, core::Erro
     std::string check_sql = "SET search_path TO 'remote.emulation.mysql.localhost.databases." + 
                             escapeLiteral(db_name) + "'";
     client::ResultSet rs;
-    status = client_->executeQuery(check_sql, &rs, ctx);
+    status = executeRemoteNativeSQL(check_sql, &rs, ctx);
     
     return status == core::Status::OK;
 }
@@ -1332,7 +1386,7 @@ bool MySqlAdapter::handleShowQuery(const std::string& query, ResultContext& resu
         }
 
         client::ResultSet rs;
-        status = client_->executeQuery(
+        status = executeRemoteDialectSQL(
             "SELECT ID, USER, HOST, DB, COMMAND, TIME, STATE, INFO "
             "FROM information_schema.PROCESSLIST",
             &rs, &ctx);
@@ -1543,7 +1597,7 @@ core::Status MySqlAdapter::handleComStmtPrepare(network::Connection* conn) {
         if (ensureRemoteClient(&ctx) == core::Status::OK) {
             client::ResultSet rs;
             std::string describe_sql = query + " LIMIT 0";
-            if (client_->executeQuery(describe_sql, &rs, &ctx) == core::Status::OK) {
+            if (executeRemoteDialectSQL(describe_sql, &rs, &ctx) == core::Status::OK) {
                 const auto& cols = rs.getColumns();
                 for (size_t i = 0; i < cols.size(); ++i) {
                     ProtocolCodec::ColumnInfo ci;
@@ -2442,7 +2496,7 @@ void MySqlAdapter::bootstrapInformationSchema(core::ErrorContext* ctx) {
 
     auto safeExec = [&](const std::string& sql) {
         client::ResultSet rs;
-        client_->executeQuery(sql, &rs, ctx);
+        executeRemoteNativeSQL(sql, &rs, ctx);
     };
 
     auto info_table = [&](const std::string& name) {
@@ -2603,7 +2657,7 @@ void MySqlAdapter::bootstrapInformationSchema(core::ErrorContext* ctx) {
     auto copyQuery = [&](const std::string& sql,
                          const std::function<void(const client::ResultSet&, size_t)>& rowHandler) {
         client::ResultSet rs;
-        if (client_->executeQuery(sql, &rs, ctx) != core::Status::OK) {
+        if (executeRemoteNativeSQL(sql, &rs, ctx) != core::Status::OK) {
             return;
         }
         int64_t rows = rs.getRowCount();

@@ -22,12 +22,14 @@
 #include <iostream>
 #include <sstream>
 #include "scratchbird/parser/shared_types.h"
-#include "scratchbird/parser/v3_compiler.h"
 #include "scratchbird/parser/mysql/mysql_parser.h"
 #include "scratchbird/sblr/v3_codec.h"
 #include "scratchbird/sblr/v3_container.h"
 #include "scratchbird/sblr/v3_payloads.h"
 #include "scratchbird/sblr/v3_opcode_registry.h"
+#include "scratchbird/sblr/v3_opcode_identity.h"
+#include "scratchbird/sblr/v3_handler_registry.h"
+#include "scratchbird/sblr/v3_validator.h"
 #ifndef SCRATCHBIRD_WITH_COMPILER
 #define SCRATCHBIRD_WITH_COMPILER 1
 #endif
@@ -969,8 +971,8 @@ namespace scratchbird
 
         // ===== Numeric Type Coercion Helper =====
 
-        // Helper function to coerce any numeric TypedValue to double
-        // This handles INT32, INT64, FLOAT32, FLOAT64 without throwing
+        // Helper function to coerce any numeric TypedValue to double.
+        // Text values are accepted only through implicit operator coercion paths.
         static double coerceToDouble(const core::TypedValue& val) {
             switch (val.type()) {
                 case core::DataType::INT8:
@@ -996,6 +998,7 @@ namespace scratchbird
                 case core::DataType::FLOAT64:
                     return val.getFloat64();
                 case core::DataType::DECIMAL:
+                case core::DataType::MONEY:
                 case core::DataType::DECFLOAT16:
                 case core::DataType::DECFLOAT34:
                     // Try to convert decimal string to double
@@ -1004,6 +1007,23 @@ namespace scratchbird
                     } catch (...) {
                         throw std::runtime_error("Cannot convert DECIMAL to double");
                     }
+                case core::DataType::CHAR:
+                case core::DataType::VARCHAR:
+                case core::DataType::TEXT:
+                {
+                    core::TypeInfo target(core::DataType::FLOAT64);
+                    core::TypedValue converted;
+                    core::ErrorContext ctx;
+                    core::Status st = val.convertTo(target, converted, core::CastFormat::DEFAULT, &ctx);
+                    if (st != core::Status::OK)
+                    {
+                        std::string detail =
+                            ctx.message.empty() ? "Invalid text representation for numeric coercion"
+                                                : ctx.message;
+                        throw std::runtime_error(detail);
+                    }
+                    return converted.getFloat64();
+                }
                 default:
                     throw std::runtime_error("Type mismatch: expected numeric type, got " +
                                              std::to_string(static_cast<int>(val.type())));
@@ -1044,6 +1064,7 @@ namespace scratchbird
             return isIntegerType(type) ||
                    type == core::DataType::FLOAT32 ||
                    type == core::DataType::FLOAT64 ||
+                   type == core::DataType::MONEY ||
                    type == core::DataType::DECIMAL ||
                    type == core::DataType::DECFLOAT16 ||
                    type == core::DataType::DECFLOAT34;
@@ -1051,6 +1072,988 @@ namespace scratchbird
 
         static bool isDecfloatType(core::DataType type) {
             return type == core::DataType::DECFLOAT16 || type == core::DataType::DECFLOAT34;
+        }
+
+        static bool isStringLikeType(core::DataType type) {
+            return type == core::DataType::CHAR ||
+                   type == core::DataType::VARCHAR ||
+                   type == core::DataType::TEXT;
+        }
+
+        static bool isTemporalType(core::DataType type)
+        {
+            return type == core::DataType::DATE ||
+                   type == core::DataType::TIME ||
+                   type == core::DataType::TIMESTAMP ||
+                   type == core::DataType::TIME_WITH_ZONE ||
+                   type == core::DataType::TIMESTAMP_WITH_ZONE;
+        }
+
+        static bool isIntervalType(core::DataType type)
+        {
+            return type == core::DataType::INTERVAL;
+        }
+
+        static bool isImplicitTextComparisonTarget(core::DataType type)
+        {
+            return isNumericType(type) || isTemporalType(type) ||
+                   type == core::DataType::BOOLEAN ||
+                   type == core::DataType::UUID;
+        }
+
+        static bool isTemporalArithmeticBinaryOpcode(Opcode op)
+        {
+            return op == Opcode::EXPR_ADD || op == Opcode::EXPR_SUBTRACT;
+        }
+
+        static bool isTemporalArithmeticBinaryOpcode(scratchbird::sblr::v3::Opcode op)
+        {
+            return op == scratchbird::sblr::v3::Opcode::SBLR3_EXPR_ADD ||
+                   op == scratchbird::sblr::v3::Opcode::SBLR3_EXPR_SUBTRACT;
+        }
+
+        static core::TypeInfo implicitTargetTypeInfo(core::DataType target_type);
+
+        static constexpr int64_t kMicrosPerSecond = 1000000LL;
+        static constexpr int64_t kMicrosPerDay = 86400LL * kMicrosPerSecond;
+
+        static int64_t floorDivI64(int64_t value, int64_t divisor)
+        {
+            int64_t quotient = value / divisor;
+            int64_t remainder = value % divisor;
+            if (remainder != 0 && ((remainder > 0) != (divisor > 0)))
+            {
+                --quotient;
+            }
+            return quotient;
+        }
+
+        static int64_t floorModI64(int64_t value, int64_t divisor)
+        {
+            return value - floorDivI64(value, divisor) * divisor;
+        }
+
+        static bool isLeapYear(int32_t year)
+        {
+            return ((year % 4 == 0) && (year % 100 != 0)) || (year % 400 == 0);
+        }
+
+        static int32_t daysInMonth(int32_t year, int32_t month)
+        {
+            static const int32_t kDaysPerMonth[12] = {
+                31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
+            };
+            if (month < 1 || month > 12)
+            {
+                return 0;
+            }
+            if (month == 2 && isLeapYear(year))
+            {
+                return 29;
+            }
+            return kDaysPerMonth[month - 1];
+        }
+
+        static bool addMonthsToDays(int64_t base_days,
+                                    int32_t delta_months,
+                                    int64_t& out_days,
+                                    std::string& error_out)
+        {
+            if (delta_months == 0)
+            {
+                out_days = base_days;
+                return true;
+            }
+
+            int32_t year = core::TypeExtractor::extractYear(base_days);
+            int32_t month = core::TypeExtractor::extractMonth(base_days);
+            int32_t day = core::TypeExtractor::extractDay(base_days);
+
+            int64_t month_total = static_cast<int64_t>(year) * 12 +
+                                  static_cast<int64_t>(month - 1) +
+                                  static_cast<int64_t>(delta_months);
+            int64_t year_part = month_total / 12;
+            int64_t month_part = month_total % 12;
+            if (month_part < 0)
+            {
+                month_part += 12;
+                --year_part;
+            }
+
+            int32_t new_year = static_cast<int32_t>(year_part);
+            int32_t new_month = static_cast<int32_t>(month_part) + 1;
+            int32_t max_day = daysInMonth(new_year, new_month);
+            if (max_day <= 0)
+            {
+                error_out = "Invalid calendar result for temporal month arithmetic";
+                return false;
+            }
+            int32_t new_day = std::min(day, max_day);
+            out_days = core::TypeExtractor::ymdToDays(new_year, new_month, new_day);
+            return true;
+        }
+
+        static bool coerceTemporalValueTo(const core::TypedValue& input,
+                                          core::DataType target_type,
+                                          core::TypedValue& out_value,
+                                          std::string& error_out)
+        {
+            if (input.type() == target_type)
+            {
+                out_value = input;
+                return true;
+            }
+            core::TypeInfo target = implicitTargetTypeInfo(target_type);
+            core::ErrorContext ctx;
+            core::Status st = input.convertTo(target, out_value, core::CastFormat::DEFAULT, &ctx);
+            if (st == core::Status::OK)
+            {
+                return true;
+            }
+            error_out = ctx.message.empty() ? "Temporal coercion failed" : ctx.message;
+            return false;
+        }
+
+        static bool addIntervalToTemporal(const core::TypedValue& temporal_value,
+                                          const core::Interval& interval,
+                                          core::TypedValue& out_value,
+                                          std::string& error_out)
+        {
+            if (temporal_value.type() == core::DataType::DATE)
+            {
+                int64_t base_days = temporal_value.getDate();
+                int64_t adjusted_days = base_days;
+                if (!addMonthsToDays(base_days, interval.months, adjusted_days, error_out))
+                {
+                    return false;
+                }
+                adjusted_days += interval.days;
+
+                if (interval.microseconds == 0)
+                {
+                    out_value = core::TypedValue::makeDate(
+                        adjusted_days, temporal_value.getTimezoneOffsetSeconds());
+                    return true;
+                }
+
+                int64_t ts_micros = adjusted_days * kMicrosPerDay + interval.microseconds;
+                out_value = core::TypedValue::makeTimestamp(
+                    ts_micros, temporal_value.getTimezoneOffsetSeconds());
+                return true;
+            }
+
+            if (temporal_value.type() == core::DataType::TIME ||
+                temporal_value.type() == core::DataType::TIME_WITH_ZONE)
+            {
+                if (interval.months != 0 || interval.days != 0)
+                {
+                    error_out = "TIME arithmetic supports only pure microsecond intervals";
+                    return false;
+                }
+                core::TypedValue coerced_time;
+                if (!coerceTemporalValueTo(temporal_value,
+                                           core::DataType::TIME,
+                                           coerced_time,
+                                           error_out))
+                {
+                    return false;
+                }
+                int64_t wrapped = floorModI64(coerced_time.getTime() + interval.microseconds,
+                                              kMicrosPerDay);
+                out_value = core::TypedValue::makeTime(
+                    wrapped, temporal_value.getTimezoneOffsetSeconds());
+                return true;
+            }
+
+            if (temporal_value.type() == core::DataType::TIMESTAMP ||
+                temporal_value.type() == core::DataType::TIMESTAMP_WITH_ZONE)
+            {
+                core::TypedValue coerced_ts;
+                if (!coerceTemporalValueTo(temporal_value,
+                                           core::DataType::TIMESTAMP,
+                                           coerced_ts,
+                                           error_out))
+                {
+                    return false;
+                }
+
+                int64_t base_us = coerced_ts.getTimestamp();
+                int64_t base_days = floorDivI64(base_us, kMicrosPerDay);
+                int64_t time_us = floorModI64(base_us, kMicrosPerDay);
+
+                int64_t adjusted_days = base_days;
+                if (!addMonthsToDays(base_days, interval.months, adjusted_days, error_out))
+                {
+                    return false;
+                }
+                adjusted_days += interval.days;
+
+                int64_t result_time_us = time_us + interval.microseconds;
+                adjusted_days += floorDivI64(result_time_us, kMicrosPerDay);
+                result_time_us = floorModI64(result_time_us, kMicrosPerDay);
+
+                int64_t result_us = adjusted_days * kMicrosPerDay + result_time_us;
+                out_value = core::TypedValue::makeTimestamp(
+                    result_us, temporal_value.getTimezoneOffsetSeconds());
+                return true;
+            }
+
+            return false;
+        }
+
+        static bool temporalValueToMicros(const core::TypedValue& value,
+                                          int64_t& out_micros,
+                                          std::string& error_out)
+        {
+            if (value.type() == core::DataType::DATE)
+            {
+                out_micros = value.getDate() * kMicrosPerDay;
+                return true;
+            }
+            if (value.type() == core::DataType::TIME ||
+                value.type() == core::DataType::TIME_WITH_ZONE)
+            {
+                core::TypedValue out;
+                if (!coerceTemporalValueTo(value, core::DataType::TIME, out, error_out))
+                {
+                    return false;
+                }
+                out_micros = out.getTime();
+                return true;
+            }
+            if (value.type() == core::DataType::TIMESTAMP ||
+                value.type() == core::DataType::TIMESTAMP_WITH_ZONE)
+            {
+                core::TypedValue out;
+                if (!coerceTemporalValueTo(value, core::DataType::TIMESTAMP, out, error_out))
+                {
+                    return false;
+                }
+                out_micros = out.getTimestamp();
+                return true;
+            }
+            error_out = "Temporal conversion failed";
+            return false;
+        }
+
+        static bool evaluateTemporalArithmetic(scratchbird::sblr::v3::Opcode op,
+                                               const core::TypedValue& lhs,
+                                               const core::TypedValue& rhs,
+                                               core::TypedValue& out_value,
+                                               std::string& error_out)
+        {
+            if (!isTemporalArithmeticBinaryOpcode(op))
+            {
+                return false;
+            }
+
+            const bool lhs_temporal = isTemporalType(lhs.type());
+            const bool rhs_temporal = isTemporalType(rhs.type());
+            const bool lhs_interval = isIntervalType(lhs.type());
+            const bool rhs_interval = isIntervalType(rhs.type());
+
+            if (op == scratchbird::sblr::v3::Opcode::SBLR3_EXPR_ADD)
+            {
+                if (lhs_temporal && rhs_interval)
+                {
+                    return addIntervalToTemporal(lhs, rhs.getInterval(), out_value, error_out);
+                }
+                if (lhs_interval && rhs_temporal)
+                {
+                    return addIntervalToTemporal(rhs, lhs.getInterval(), out_value, error_out);
+                }
+            }
+            else if (op == scratchbird::sblr::v3::Opcode::SBLR3_EXPR_SUBTRACT)
+            {
+                if (lhs_temporal && rhs_interval)
+                {
+                    core::Interval negated = rhs.getInterval();
+                    negated.months = -negated.months;
+                    negated.days = -negated.days;
+                    negated.microseconds = -negated.microseconds;
+                    return addIntervalToTemporal(lhs, negated, out_value, error_out);
+                }
+                if (lhs_temporal && rhs_temporal)
+                {
+                    int64_t lhs_us = 0;
+                    int64_t rhs_us = 0;
+                    if (!temporalValueToMicros(lhs, lhs_us, error_out) ||
+                        !temporalValueToMicros(rhs, rhs_us, error_out))
+                    {
+                        return false;
+                    }
+                    int64_t diff_us = lhs_us - rhs_us;
+                    core::Interval interval;
+                    interval.months = 0;
+                    interval.days = static_cast<int32_t>(floorDivI64(diff_us, kMicrosPerDay));
+                    interval.microseconds = floorModI64(diff_us, kMicrosPerDay);
+                    out_value = core::TypedValue::makeInterval(interval);
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        static core::DataType implicitNumericTargetFor(core::DataType type)
+        {
+            if (isDecfloatType(type))
+            {
+                return type;
+            }
+            if (type == core::DataType::FLOAT32 ||
+                type == core::DataType::FLOAT64 ||
+                type == core::DataType::DECIMAL ||
+                type == core::DataType::MONEY)
+            {
+                return core::DataType::FLOAT64;
+            }
+            if (type == core::DataType::INT128 || type == core::DataType::UINT128)
+            {
+                return core::DataType::INT128;
+            }
+            if (isIntegerType(type))
+            {
+                return type;
+            }
+            return core::DataType::FLOAT64;
+        }
+
+        static core::TypeInfo implicitTargetTypeInfo(core::DataType target_type)
+        {
+            core::TypeInfo target(target_type);
+            if (target_type == core::DataType::TIMESTAMP_WITH_ZONE)
+            {
+                target.type = core::DataType::TIMESTAMP;
+                target.with_timezone = true;
+            }
+            else if (target_type == core::DataType::TIME_WITH_ZONE)
+            {
+                target.type = core::DataType::TIME;
+                target.with_timezone = true;
+            }
+            return target;
+        }
+
+        static bool tryImplicitTextCoercion(const core::TypedValue& text_value,
+                                            core::DataType target_type,
+                                            core::TypedValue& out_value,
+                                            std::string& error_out)
+        {
+            core::TypeInfo target = implicitTargetTypeInfo(target_type);
+            core::ErrorContext ctx;
+            core::Status st = text_value.convertTo(target, out_value,
+                                                   core::CastFormat::DEFAULT, &ctx);
+            if (st == core::Status::OK)
+            {
+                return true;
+            }
+            error_out = ctx.message.empty()
+                            ? "Invalid text representation for implicit coercion"
+                            : ctx.message;
+            return false;
+        }
+
+        static int64_t temporalComparisonKeyMicros(const core::TypedValue& value)
+        {
+            if (value.type() == core::DataType::TIMESTAMP)
+            {
+                return value.getTimestamp();
+            }
+
+            core::TypedValue converted;
+            core::TypeInfo ts_type = implicitTargetTypeInfo(core::DataType::TIMESTAMP);
+            core::ErrorContext ctx;
+            core::Status st = value.convertTo(ts_type, converted,
+                                              core::CastFormat::DEFAULT, &ctx);
+            if (st != core::Status::OK)
+            {
+                std::string detail =
+                    ctx.message.empty() ? "Temporal coercion failed for comparison"
+                                        : ctx.message;
+                throw std::runtime_error(detail);
+            }
+            return converted.getTimestamp();
+        }
+
+        static bool isArithmeticBinaryOpcode(Opcode op)
+        {
+            switch (op)
+            {
+                case Opcode::EXPR_ADD:
+                case Opcode::EXPR_SUBTRACT:
+                case Opcode::EXPR_MULTIPLY:
+                case Opcode::EXPR_DIVIDE:
+                case Opcode::EXPR_MODULO:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        static bool isComparisonBinaryOpcode(Opcode op)
+        {
+            switch (op)
+            {
+                case Opcode::EXPR_EQ:
+                case Opcode::EXPR_NE:
+                case Opcode::EXPR_LT:
+                case Opcode::EXPR_GT:
+                case Opcode::EXPR_LE:
+                case Opcode::EXPR_GE:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        static bool isArithmeticBinaryOpcode(scratchbird::sblr::v3::Opcode op)
+        {
+            switch (op)
+            {
+                case scratchbird::sblr::v3::Opcode::SBLR3_EXPR_ADD:
+                case scratchbird::sblr::v3::Opcode::SBLR3_EXPR_SUBTRACT:
+                case scratchbird::sblr::v3::Opcode::SBLR3_EXPR_MULTIPLY:
+                case scratchbird::sblr::v3::Opcode::SBLR3_EXPR_DIVIDE:
+                case scratchbird::sblr::v3::Opcode::SBLR3_EXPR_MODULO:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        static bool isComparisonBinaryOpcode(scratchbird::sblr::v3::Opcode op)
+        {
+            switch (op)
+            {
+                case scratchbird::sblr::v3::Opcode::SBLR3_EXPR_EQ:
+                case scratchbird::sblr::v3::Opcode::SBLR3_EXPR_NE:
+                case scratchbird::sblr::v3::Opcode::SBLR3_EXPR_LT:
+                case scratchbird::sblr::v3::Opcode::SBLR3_EXPR_GT:
+                case scratchbird::sblr::v3::Opcode::SBLR3_EXPR_LE:
+                case scratchbird::sblr::v3::Opcode::SBLR3_EXPR_GE:
+                case scratchbird::sblr::v3::Opcode::SBLR3_NULL_SAFE_EQ:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        static const char* binaryOperatorSymbol(Opcode op)
+        {
+            switch (op)
+            {
+                case Opcode::EXPR_ADD:
+                    return "+";
+                case Opcode::EXPR_SUBTRACT:
+                    return "-";
+                case Opcode::EXPR_MULTIPLY:
+                    return "*";
+                case Opcode::EXPR_DIVIDE:
+                    return "/";
+                case Opcode::EXPR_MODULO:
+                    return "%";
+                case Opcode::EXPR_EQ:
+                    return "=";
+                case Opcode::EXPR_NE:
+                    return "<>";
+                case Opcode::EXPR_LT:
+                    return "<";
+                case Opcode::EXPR_GT:
+                    return ">";
+                case Opcode::EXPR_LE:
+                    return "<=";
+                case Opcode::EXPR_GE:
+                    return ">=";
+                default:
+                    return "?";
+            }
+        }
+
+        static const char* binaryOperatorSymbol(scratchbird::sblr::v3::Opcode op)
+        {
+            switch (op)
+            {
+                case scratchbird::sblr::v3::Opcode::SBLR3_EXPR_ADD:
+                    return "+";
+                case scratchbird::sblr::v3::Opcode::SBLR3_EXPR_SUBTRACT:
+                    return "-";
+                case scratchbird::sblr::v3::Opcode::SBLR3_EXPR_MULTIPLY:
+                    return "*";
+                case scratchbird::sblr::v3::Opcode::SBLR3_EXPR_DIVIDE:
+                    return "/";
+                case scratchbird::sblr::v3::Opcode::SBLR3_EXPR_MODULO:
+                    return "%";
+                case scratchbird::sblr::v3::Opcode::SBLR3_EXPR_EQ:
+                    return "=";
+                case scratchbird::sblr::v3::Opcode::SBLR3_EXPR_NE:
+                    return "<>";
+                case scratchbird::sblr::v3::Opcode::SBLR3_EXPR_LT:
+                    return "<";
+                case scratchbird::sblr::v3::Opcode::SBLR3_EXPR_GT:
+                    return ">";
+                case scratchbird::sblr::v3::Opcode::SBLR3_EXPR_LE:
+                    return "<=";
+                case scratchbird::sblr::v3::Opcode::SBLR3_EXPR_GE:
+                    return ">=";
+                case scratchbird::sblr::v3::Opcode::SBLR3_NULL_SAFE_EQ:
+                    return "<=>";
+                default:
+                    return "?";
+            }
+        }
+
+        enum class ThreeValuedTruth : uint8_t
+        {
+            FALSE_VALUE = 0,
+            TRUE_VALUE = 1,
+            UNKNOWN_VALUE = 2,
+        };
+
+        static ThreeValuedTruth toThreeValuedTruth(const Value& value)
+        {
+            if (value.isNull())
+            {
+                return ThreeValuedTruth::UNKNOWN_VALUE;
+            }
+            return value.toBoolean() ? ThreeValuedTruth::TRUE_VALUE
+                                     : ThreeValuedTruth::FALSE_VALUE;
+        }
+
+        static Value evaluateThreeValuedAnd(const Value& lhs, const Value& rhs)
+        {
+            const ThreeValuedTruth left_truth = toThreeValuedTruth(lhs);
+            const ThreeValuedTruth right_truth = toThreeValuedTruth(rhs);
+            if (left_truth == ThreeValuedTruth::FALSE_VALUE ||
+                right_truth == ThreeValuedTruth::FALSE_VALUE)
+            {
+                return Value::makeBoolean(false);
+            }
+            if (left_truth == ThreeValuedTruth::UNKNOWN_VALUE ||
+                right_truth == ThreeValuedTruth::UNKNOWN_VALUE)
+            {
+                return Value::makeNull();
+            }
+            return Value::makeBoolean(true);
+        }
+
+        static Value evaluateThreeValuedOr(const Value& lhs, const Value& rhs)
+        {
+            const ThreeValuedTruth left_truth = toThreeValuedTruth(lhs);
+            const ThreeValuedTruth right_truth = toThreeValuedTruth(rhs);
+            if (left_truth == ThreeValuedTruth::TRUE_VALUE ||
+                right_truth == ThreeValuedTruth::TRUE_VALUE)
+            {
+                return Value::makeBoolean(true);
+            }
+            if (left_truth == ThreeValuedTruth::UNKNOWN_VALUE ||
+                right_truth == ThreeValuedTruth::UNKNOWN_VALUE)
+            {
+                return Value::makeNull();
+            }
+            return Value::makeBoolean(false);
+        }
+
+        static Value evaluateThreeValuedNot(const Value& value)
+        {
+            const ThreeValuedTruth truth = toThreeValuedTruth(value);
+            if (truth == ThreeValuedTruth::UNKNOWN_VALUE)
+            {
+                return Value::makeNull();
+            }
+            return Value::makeBoolean(truth == ThreeValuedTruth::FALSE_VALUE);
+        }
+
+        static bool predicateIsTrue(const Value& value)
+        {
+            return !value.isNull() && value.toBoolean();
+        }
+
+        static bool coerceNumericValueToTarget(core::TypedValue& value,
+                                               core::DataType target_type,
+                                               std::string& error_out)
+        {
+            core::TypeInfo target = implicitTargetTypeInfo(target_type);
+            core::TypedValue converted;
+            core::ErrorContext ctx;
+            core::Status st = value.convertTo(target, converted,
+                                              core::CastFormat::DEFAULT, &ctx);
+            if (st != core::Status::OK)
+            {
+                error_out = ctx.message.empty() ? "Numeric coercion failed" : ctx.message;
+                return false;
+            }
+            value = std::move(converted);
+            return true;
+        }
+
+        static bool normalizeImplicitOperandsForBinaryOp(Opcode op,
+                                                         core::TypedValue& left,
+                                                         core::TypedValue& right,
+                                                         std::string& error_out,
+                                                         bool strict_mode = false)
+        {
+            if (isTemporalArithmeticBinaryOpcode(op))
+            {
+                const bool left_is_text = isStringLikeType(left.type());
+                const bool right_is_text = isStringLikeType(right.type());
+                const bool left_temporal_or_interval =
+                    isTemporalType(left.type()) || isIntervalType(left.type());
+                const bool right_temporal_or_interval =
+                    isTemporalType(right.type()) || isIntervalType(right.type());
+
+                if (strict_mode &&
+                    ((left_is_text && right_temporal_or_interval) ||
+                     (right_is_text && left_temporal_or_interval)))
+                {
+                    error_out =
+                        "Implicit casts disabled by operator.strict_mode";
+                    return false;
+                }
+
+                if (left_is_text && right_temporal_or_interval)
+                {
+                    core::DataType target =
+                        isIntervalType(right.type()) ? core::DataType::TIMESTAMP : right.type();
+                    core::TypedValue converted;
+                    std::string coercion_error;
+                    if (!tryImplicitTextCoercion(left, target, converted, coercion_error))
+                    {
+                        error_out = "Invalid text representation for temporal operator " +
+                                    std::string(binaryOperatorSymbol(op)) + ": " + coercion_error;
+                        return false;
+                    }
+                    left = std::move(converted);
+                }
+                else if (right_is_text && left_temporal_or_interval)
+                {
+                    core::DataType target =
+                        isIntervalType(left.type()) ? core::DataType::TIMESTAMP : left.type();
+                    core::TypedValue converted;
+                    std::string coercion_error;
+                    if (!tryImplicitTextCoercion(right, target, converted, coercion_error))
+                    {
+                        error_out = "Invalid text representation for temporal operator " +
+                                    std::string(binaryOperatorSymbol(op)) + ": " + coercion_error;
+                        return false;
+                    }
+                    right = std::move(converted);
+                }
+            }
+
+            if (isArithmeticBinaryOpcode(op))
+            {
+                const bool left_is_text = isStringLikeType(left.type());
+                const bool right_is_text = isStringLikeType(right.type());
+                if (strict_mode && (left_is_text || right_is_text))
+                {
+                    error_out = "Implicit casts disabled by operator.strict_mode";
+                    return false;
+                }
+                if ((left_is_text && !isNumericType(right.type())) ||
+                    (right_is_text && !isNumericType(left.type())) ||
+                    (left_is_text && right_is_text))
+                {
+                    error_out = std::string("Invalid text representation for numeric operator ") +
+                                binaryOperatorSymbol(op);
+                    return false;
+                }
+
+                if (left_is_text || right_is_text)
+                {
+                    core::DataType target_type =
+                        implicitNumericTargetFor(left_is_text ? right.type() : left.type());
+
+                    if (left_is_text)
+                    {
+                        core::TypedValue converted;
+                        std::string coercion_error;
+                        if (!tryImplicitTextCoercion(left, target_type, converted, coercion_error))
+                        {
+                            error_out = std::string(
+                                            "Invalid text representation for numeric operator ") +
+                                        binaryOperatorSymbol(op) + ": " + coercion_error;
+                            return false;
+                        }
+                        left = std::move(converted);
+                    }
+                    if (right_is_text)
+                    {
+                        core::TypedValue converted;
+                        std::string coercion_error;
+                        if (!tryImplicitTextCoercion(right, target_type, converted, coercion_error))
+                        {
+                            error_out = std::string(
+                                            "Invalid text representation for numeric operator ") +
+                                        binaryOperatorSymbol(op) + ": " + coercion_error;
+                            return false;
+                        }
+                        right = std::move(converted);
+                    }
+
+                    if (left.type() != target_type && isNumericType(left.type()) &&
+                        !coerceNumericValueToTarget(left, target_type, error_out))
+                    {
+                        return false;
+                    }
+                    if (right.type() != target_type && isNumericType(right.type()) &&
+                        !coerceNumericValueToTarget(right, target_type, error_out))
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            if (isComparisonBinaryOpcode(op))
+            {
+                const bool left_is_text = isStringLikeType(left.type());
+                const bool right_is_text = isStringLikeType(right.type());
+                if (left_is_text && right_is_text)
+                {
+                    return true;
+                }
+                if (strict_mode && (left_is_text || right_is_text))
+                {
+                    error_out = "Implicit casts disabled by operator.strict_mode";
+                    return false;
+                }
+                if (left_is_text && isImplicitTextComparisonTarget(right.type()))
+                {
+                    core::TypedValue converted;
+                    std::string coercion_error;
+                    if (!tryImplicitTextCoercion(left, right.type(), converted, coercion_error))
+                    {
+                        error_out = "Invalid text representation for comparison: " + coercion_error;
+                        return false;
+                    }
+                    left = std::move(converted);
+                }
+                else if (right_is_text && isImplicitTextComparisonTarget(left.type()))
+                {
+                    core::TypedValue converted;
+                    std::string coercion_error;
+                    if (!tryImplicitTextCoercion(right, left.type(), converted, coercion_error))
+                    {
+                        error_out = "Invalid text representation for comparison: " + coercion_error;
+                        return false;
+                    }
+                    right = std::move(converted);
+                }
+                else if (left_is_text || right_is_text)
+                {
+                    error_out = "Implicit comparison coercion is unsupported for these operand types";
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        static bool normalizeImplicitOperandsForBinaryOp(scratchbird::sblr::v3::Opcode op,
+                                                         core::TypedValue& left,
+                                                         core::TypedValue& right,
+                                                         std::string& error_out,
+                                                         bool strict_mode = false)
+        {
+            if (isTemporalArithmeticBinaryOpcode(op))
+            {
+                const bool left_is_text = isStringLikeType(left.type());
+                const bool right_is_text = isStringLikeType(right.type());
+                const bool left_temporal_or_interval =
+                    isTemporalType(left.type()) || isIntervalType(left.type());
+                const bool right_temporal_or_interval =
+                    isTemporalType(right.type()) || isIntervalType(right.type());
+
+                if (strict_mode &&
+                    ((left_is_text && right_temporal_or_interval) ||
+                     (right_is_text && left_temporal_or_interval)))
+                {
+                    error_out =
+                        "Implicit casts disabled by operator.strict_mode";
+                    return false;
+                }
+
+                if (left_is_text && right_temporal_or_interval)
+                {
+                    core::DataType target =
+                        isIntervalType(right.type()) ? core::DataType::TIMESTAMP : right.type();
+                    core::TypedValue converted;
+                    std::string coercion_error;
+                    if (!tryImplicitTextCoercion(left, target, converted, coercion_error))
+                    {
+                        error_out = "Invalid text representation for temporal operator " +
+                                    std::string(binaryOperatorSymbol(op)) + ": " + coercion_error;
+                        return false;
+                    }
+                    left = std::move(converted);
+                }
+                else if (right_is_text && left_temporal_or_interval)
+                {
+                    core::DataType target =
+                        isIntervalType(left.type()) ? core::DataType::TIMESTAMP : left.type();
+                    core::TypedValue converted;
+                    std::string coercion_error;
+                    if (!tryImplicitTextCoercion(right, target, converted, coercion_error))
+                    {
+                        error_out = "Invalid text representation for temporal operator " +
+                                    std::string(binaryOperatorSymbol(op)) + ": " + coercion_error;
+                        return false;
+                    }
+                    right = std::move(converted);
+                }
+            }
+
+            if (isArithmeticBinaryOpcode(op))
+            {
+                const bool left_is_text = isStringLikeType(left.type());
+                const bool right_is_text = isStringLikeType(right.type());
+                if (strict_mode && (left_is_text || right_is_text))
+                {
+                    error_out = "Implicit casts disabled by operator.strict_mode";
+                    return false;
+                }
+                if ((left_is_text && !isNumericType(right.type())) ||
+                    (right_is_text && !isNumericType(left.type())) ||
+                    (left_is_text && right_is_text))
+                {
+                    error_out = std::string("Invalid text representation for numeric operator ") +
+                                binaryOperatorSymbol(op);
+                    return false;
+                }
+
+                if (left_is_text || right_is_text)
+                {
+                    core::DataType target_type =
+                        implicitNumericTargetFor(left_is_text ? right.type() : left.type());
+
+                    if (left_is_text)
+                    {
+                        core::TypedValue converted;
+                        std::string coercion_error;
+                        if (!tryImplicitTextCoercion(left, target_type, converted, coercion_error))
+                        {
+                            error_out = std::string(
+                                            "Invalid text representation for numeric operator ") +
+                                        binaryOperatorSymbol(op) + ": " + coercion_error;
+                            return false;
+                        }
+                        left = std::move(converted);
+                    }
+                    if (right_is_text)
+                    {
+                        core::TypedValue converted;
+                        std::string coercion_error;
+                        if (!tryImplicitTextCoercion(right, target_type, converted, coercion_error))
+                        {
+                            error_out = std::string(
+                                            "Invalid text representation for numeric operator ") +
+                                        binaryOperatorSymbol(op) + ": " + coercion_error;
+                            return false;
+                        }
+                        right = std::move(converted);
+                    }
+
+                    if (left.type() != target_type && isNumericType(left.type()) &&
+                        !coerceNumericValueToTarget(left, target_type, error_out))
+                    {
+                        return false;
+                    }
+                    if (right.type() != target_type && isNumericType(right.type()) &&
+                        !coerceNumericValueToTarget(right, target_type, error_out))
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            if (isComparisonBinaryOpcode(op))
+            {
+                const bool left_is_text = isStringLikeType(left.type());
+                const bool right_is_text = isStringLikeType(right.type());
+                if (left_is_text && right_is_text)
+                {
+                    return true;
+                }
+                if (strict_mode && (left_is_text || right_is_text))
+                {
+                    error_out = "Implicit casts disabled by operator.strict_mode";
+                    return false;
+                }
+                if (left_is_text && isImplicitTextComparisonTarget(right.type()))
+                {
+                    core::TypedValue converted;
+                    std::string coercion_error;
+                    if (!tryImplicitTextCoercion(left, right.type(), converted, coercion_error))
+                    {
+                        error_out = "Invalid text representation for comparison: " + coercion_error;
+                        return false;
+                    }
+                    left = std::move(converted);
+                }
+                else if (right_is_text && isImplicitTextComparisonTarget(left.type()))
+                {
+                    core::TypedValue converted;
+                    std::string coercion_error;
+                    if (!tryImplicitTextCoercion(right, left.type(), converted, coercion_error))
+                    {
+                        error_out = "Invalid text representation for comparison: " + coercion_error;
+                        return false;
+                    }
+                    right = std::move(converted);
+                }
+                else if (left_is_text || right_is_text)
+                {
+                    error_out = "Implicit comparison coercion is unsupported for these operand types";
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        static bool parseBooleanSetting(const std::string& raw_value, bool& out_value)
+        {
+            std::string normalized =
+                scratchbird::core::IdentifierUtils::toUpper(raw_value);
+            normalized.erase(std::remove_if(normalized.begin(),
+                                            normalized.end(),
+                                            [](unsigned char c) {
+                                                return std::isspace(c) != 0;
+                                            }),
+                             normalized.end());
+            if (normalized == "ON" || normalized == "TRUE" ||
+                normalized == "1" || normalized == "YES")
+            {
+                out_value = true;
+                return true;
+            }
+            if (normalized == "OFF" || normalized == "FALSE" ||
+                normalized == "0" || normalized == "NO")
+            {
+                out_value = false;
+                return true;
+            }
+            return false;
+        }
+
+        static bool isOperatorStrictModeEnabled(core::ConnectionContext* conn_ctx)
+        {
+            if (!conn_ctx)
+            {
+                return false;
+            }
+            std::string value;
+            if (!conn_ctx->getSessionVariable("OPERATOR.STRICT_MODE", value) &&
+                !conn_ctx->getSessionVariable("OPERATOR_STRICT_MODE", value))
+            {
+                return false;
+            }
+            bool parsed = false;
+            if (!parseBooleanSetting(value, parsed))
+            {
+                return false;
+            }
+            return parsed;
         }
 
         static core::DecFloatContext defaultDecfloatContext() {
@@ -2215,84 +3218,6 @@ namespace scratchbird
                 bool use_cached_result = false;
                 bool cache_checked = false;
 
-                auto execute_cte_def = [&](ExecutionResult& result) -> bool
-                {
-                    std::string cte_name = readString();
-                    std::string cte_key = core::IdentifierUtils::toUpper(cte_name);
-
-                    // Save current state
-                    auto saved_result_set = std::move(current_result_set_);
-                    auto saved_table = current_table_;
-                    size_t saved_pc = pc_;  // Save program counter for recursive execution
-
-                    // Execute the CTE query (next opcodes)
-                    current_result_set_ = std::make_unique<ResultSet>();
-
-                    // Read and execute the nested SELECT or UNION ALL
-                    Opcode cte_query_op = static_cast<Opcode>(readByte());
-
-                    // Check if this is a recursive CTE with UNION ALL
-                    if (cte_is_recursive_ && cte_query_op == Opcode::EXTENDED_OPCODE)
-                    {
-                        uint16_t ext_opcode = readExtendedOpcode();
-                        if (ext_opcode == static_cast<uint16_t>(ExtendedOpcode::EXT_UNION_ALL))
-                        {
-                            // Recursive CTE: Execute iteratively
-                            executeRecursiveCTE(cte_name, saved_pc);
-                        }
-                        else
-                        {
-                            result = ExecutionResult("Recursive CTE must use UNION ALL");
-                            return false;
-                        }
-                    }
-                    else if (cte_query_op == Opcode::SELECT)
-                    {
-                        // Non-recursive CTE: Execute once
-                        executeSelect();
-
-                        // Store the materialized CTE results
-                        if (current_result_set_)
-                        {
-                            // Extract column metadata
-                            std::vector<std::string> col_names;
-                            std::vector<core::DataType> col_types;
-                            for (size_t i = 0; i < current_result_set_->columnCount(); ++i)
-                            {
-                                col_names.push_back(current_result_set_->columnName(i));
-                                col_types.push_back(current_result_set_->columnType(i));
-                            }
-
-                            // Extract all rows
-                            std::vector<std::vector<Value>> rows;
-                            for (size_t r = 0; r < current_result_set_->rowCount(); ++r)
-                            {
-                                std::vector<Value> row;
-                                for (size_t c = 0; c < current_result_set_->columnCount(); ++c)
-                                {
-                                    row.push_back(current_result_set_->getValue(r, c));
-                                }
-                                rows.push_back(std::move(row));
-                            }
-
-                            // Store CTE results
-                            cte_results_[cte_key] = std::move(rows);
-                            cte_column_names_[cte_key] = std::move(col_names);
-                            cte_column_types_[cte_key] = std::move(col_types);
-                        }
-                    }
-                    else
-                    {
-                        result = ExecutionResult("CTE query must be a SELECT statement or UNION ALL");
-                        return false;
-                    }
-
-                    // Restore state
-                    current_result_set_ = std::move(saved_result_set);
-                    current_table_ = saved_table;
-                    return true;
-                };
-
                 while (true)
                 {
                     if (!cache_checked)
@@ -2307,8 +3232,15 @@ namespace scratchbird
                                 {
                                     db_->catalog_manager()->getSecurityPolicyEpoch(policy_epoch, nullptr);
                                 }
-                                QueryHash hash = computeResultCacheHash(bytecode, parameter_values_,
-                                                                        parameter_nulls_, policy_epoch);
+                                std::vector<uint8_t> cache_key_bytes = bytecode;
+                                cache_key_bytes.push_back(0x1e);
+                                cache_key_bytes.push_back(
+                                    static_cast<uint8_t>(
+                                        isOperatorStrictModeEnabled(conn_ctx) ? 1 : 0));
+                                QueryHash hash = computeResultCacheHash(cache_key_bytes,
+                                                                        parameter_values_,
+                                                                        parameter_nulls_,
+                                                                        policy_epoch);
                                 CachedResultSet cached;
                                 if (cache.get(hash, cached))
                                 {
@@ -2547,1165 +3479,37 @@ namespace scratchbird
                             is_txn_control = true;
                         }
 
-                        if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_WITH_CLAUSE))
+                        bool continue_after_cte = false;
+                        if (executeLegacyCteExtendedOpcode(ext_op, op, result, continue_after_cte))
                         {
-                            // Phase 2 Wave 2: Handle WITH clause (CTEs)
-                            uint16_t cte_count = readInt16();
-                            // Read recursive flag
-                            uint8_t is_recursive = readByte();
-                            cte_is_recursive_ = (is_recursive != 0);
-                            // Clear any previous CTE results
-                            cte_results_.clear();
-                            cte_column_names_.clear();
-                            cte_column_types_.clear();
-
-                            for (uint16_t i = 0; i < cte_count; ++i)
+                            if (continue_after_cte)
                             {
-                                if (static_cast<Opcode>(readByte()) != Opcode::EXTENDED_OPCODE)
-                                {
-                                    result = ExecutionResult("CTE definition missing EXTENDED opcode");
-                                    break;
-                                }
-                                uint16_t def_op = readExtendedOpcode();
-                                if (def_op != static_cast<uint16_t>(ExtendedOpcode::EXT_CTE_DEF))
-                                {
-                                    result = ExecutionResult("CTE definition missing EXT_CTE_DEF");
-                                    break;
-                                }
-                                if (!execute_cte_def(result))
-                                {
-                                    break;
-                                }
+                                cache_checked = false;
+                                continue;
                             }
-
-                            if (!result.success())
-                            {
-                                break;
-                            }
-
-                            // Continue with the statement following the WITH clause.
-                            op = static_cast<Opcode>(readByte());
-                            continue;
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CTE_DEF))
-                        {
-                            // Phase 2 Wave 2: Define and materialize a CTE
-                            if (!execute_cte_def(result))
-                            {
-                                break;
-                            }
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CTE_SCAN))
-                        {
-                            // Phase 2 Wave 2: Scan a CTE (replaces table scan)
-                            std::string cte_name = readString();
-                            std::string cte_key = core::IdentifierUtils::toUpper(cte_name);
-
-                            // Look up CTE results
-                            auto it = cte_results_.find(cte_key);
-                            if (it == cte_results_.end())
-                            {
-                                result = ExecutionResult("CTE '" + cte_name + "' not found");
-                                break;
-                            }
-
-                            // Set up result set with CTE data
-                            if (!current_result_set_)
-                            {
-                                current_result_set_ = std::make_unique<ResultSet>();
-                            }
-
-                            // Add columns from CTE
-                            const auto& col_names = cte_column_names_[cte_key];
-                            const auto& col_types = cte_column_types_[cte_key];
-                            for (size_t i = 0; i < col_names.size(); ++i)
-                            {
-                                current_result_set_->addColumn(col_names[i], col_types[i]);
-                            }
-
-                            // Add all rows from CTE
-                            for (const auto& row : it->second)
-                            {
-                                current_result_set_->addRow(row);
-                            }
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_UNION_ALL))
-                        {
-                            // Execute UNION ALL: concatenate results from left and right
-                            executeUnionAll();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_UNION))
-                        {
-                            // Execute UNION: concatenate and remove duplicates
-                            executeUnion();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_INTERSECT_ALL))
-                        {
-                            // Execute INTERSECT ALL: keep common rows with duplicates
-                            executeIntersectAll();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_INTERSECT))
-                        {
-                            // Execute INTERSECT: keep common rows without duplicates
-                            executeIntersect();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_EXCEPT_ALL))
-                        {
-                            // Execute EXCEPT ALL: rows in left but not in right, with duplicates
-                            executeExceptAll();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_EXCEPT))
-                        {
-                            // Execute EXCEPT: rows in left but not in right, without duplicates
-                            executeExcept();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CREATE_TRIGGER))
-                        {
-                            executeCreateTrigger();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_DROP_TRIGGER))
-                        {
-                            executeDropTrigger();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CREATE_DB_TRIGGER))
-                        {
-                            // Database trigger: ON CONNECT/DISCONNECT/TRANSACTION events
-                            executeCreateDatabaseTrigger();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_DROP_DB_TRIGGER))
-                        {
-                            // Drop database trigger
-                            executeDropDatabaseTrigger();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_MERGE_START))
-                        {
-                            // Alpha 1 - Advanced SQL: MERGE statement execution
-                            executeMerge();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ANALYZE))
-                        {
-                            // P1-10: ANALYZE statement execution
-                            executeAnalyze();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_COPY))
-                        {
-                            executeCopy();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CREATE_FUNCTION_STMT))
-                        {
-                            executeCreateFunctionStatement();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CREATE_PROCEDURE_STMT))
-                        {
-                            executeCreateProcedureStatement();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ALTER_FUNCTION_STMT))
-                        {
-                            executeAlterFunctionStatement();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ALTER_PROCEDURE_STMT))
-                        {
-                            executeAlterProcedureStatement();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_MYSQL_KILL))
-                        {
-                            executeMySqlKill();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_MYSQL_FLUSH))
-                        {
-                            executeMySqlFlush();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_MYSQL_LOCK_TABLES))
-                        {
-                            executeMySqlLockTables();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_MYSQL_UNLOCK_TABLES))
-                        {
-                            executeMySqlUnlockTables();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CREATE_PACKAGE_STMT))
-                        {
-                            executeCreatePackageStatement();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CREATE_EXCEPTION_STMT))
-                        {
-                            executeCreateExceptionStatement();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_DROP_FUNCTION_STMT))
-                        {
-                            executeDropFunctionStatement();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_DROP_PROCEDURE_STMT))
-                        {
-                            executeDropProcedureStatement();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_DROP_PACKAGE_STMT))
-                        {
-                            executeDropPackageStatement();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_DROP_EXCEPTION_STMT))
-                        {
-                            executeDropExceptionStatement();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ALTER_INDEX))
-                        {
-                            executeAlterIndex();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SUBQUERY_SCALAR) ||
-                                 ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SUBQUERY_EXISTS) ||
-                                 ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SUBQUERY_IN) ||
-                                 ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SUBQUERY_NOT_IN) ||
-                                 ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SUBQUERY_ARRAY))
-                        {
-                            // Phase 2 Wave 2 - Agent B: Subquery execution
-                            // These opcodes should not appear at statement level - they are expression-level
-                            result = ExecutionResult("Subquery opcodes must appear within expressions, not at statement level");
-                        }
-                        // ===== PSQL - Stored Procedures and Functions (Phase 2 Task 10.2, Phase 4-5) =====
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_FUNCTION))
-                        {
-                            executeFunction();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_PROCEDURE))
-                        {
-                            executeProcedure();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_BLOCK))
-                        {
-                            executeBlock();
-                            result = current_result_set_
-                                ? ExecutionResult(std::move(current_result_set_))
-                                : ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_DECLARE))
-                        {
-                            executeVarDeclaration();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ASSIGN))
-                        {
-                            executeAssignment();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_IF))
-                        {
-                            executeIfStatement();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_LOOP))
-                        {
-                            executeLoopStatement();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_WHILE))
-                        {
-                            executeWhileStatement();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_EXIT))
-                        {
-                            executeExitStatement();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_RETURN))
-                        {
-                            executeReturnStatement();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SUSPEND))
-                        {
-                            executeSuspendStatement();
-                            result = current_result_set_
-                                ? ExecutionResult(std::move(current_result_set_))
-                                : ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_RAISE))
-                        {
-                            executeRaiseStatement();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_EXECUTE_STMT))
-                        {
-                            executeExecuteStatement();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_PREPARE_STMT))
-                        {
-                            executePrepareStatement();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_EXECUTE_PREPARED))
-                        {
-                            result = executeExecutePrepared();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_DEALLOCATE_PREPARED))
-                        {
-                            executeDeallocatePrepared();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_TRY))
-                        {
-                            executeTryStatement();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_EXCEPT_HANDLER))
-                        {
-                            executeExceptHandler();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_VAR_LOAD))
-                        {
-                            executeVarLoad();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_VAR_STORE))
-                        {
-                            executeVarStore();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_JUMP))
-                        {
-                            executeJump();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_JUMP_IF_TRUE))
-                        {
-                            executeJumpIfTrue();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_JUMP_IF_FALSE))
-                        {
-                            executeJumpIfFalse();
-                            result = ExecutionResult();
-                        }
-                        // ===== PSQL Cursor Operations =====
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CURSOR_DECLARE))
-                        {
-                            executeCursorDeclare();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CURSOR_OPEN))
-                        {
-                            executeCursorOpen();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CURSOR_FETCH))
-                        {
-                            executeCursorFetch();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CURSOR_CLOSE))
-                        {
-                            executeCursorClose();
-                            result = ExecutionResult();
-                        }
-                        // ===== CALL statement (PSQL procedure invocation) =====
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CALL))
-                        {
-                            // CALL procedure_name(args...)
-                            // Read procedure name
-                            std::string procedure_name = readString();
-
-                            // Read argument count
-                            int32_t arg_count = readInt32();
-
-                            // Evaluate each argument expression and collect values
-                            std::vector<Value> args;
-                            args.reserve(static_cast<size_t>(arg_count));
-                            for (int32_t i = 0; i < arg_count; ++i)
-                            {
-                                uint32_t expr_len = readInt32();
-                                size_t expr_start = pc_;
-                                size_t expr_end = pc_ + expr_len;
-                                pc_ = expr_end;
-
-                                size_t saved_pc = pc_;
-                                pc_ = expr_start;
-                                args.push_back(evaluateExpressionRange(expr_end));
-                                pc_ = saved_pc;
-                            }
-
-                            int32_t out_count = readInt32();
-                            for (int32_t i = 0; i < out_count; ++i)
-                            {
-                                readString();
-                            }
-
-                            // Call the procedure using the existing callProcedureByName method
-                            result = callProcedureByName(procedure_name, args);
-
-                            // If the call failed, break out of the execution loop
                             if (!result.success())
                             {
                                 break;
                             }
                         }
-                        // ===== Spatial SRID Functions (Phase 2 Task 9.5) =====
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ST_SRID))
+                        else if (executeLegacyStatementSurfaceExtendedOpcode(ext_op, result))
                         {
-                            // ST_SRID(geom) - get SRID of geometry
-                            Value geom = pop();
-
-                            if (geom.isNull())
-                            {
-                                push(Value::makeNull());
-                            }
-                            else
-                            {
-                                int32_t srid = 0;
-                                if (geom.type() == core::DataType::POINT)
-                                {
-                                    srid = geom.getPoint().getSRID();
-                                }
-                                else if (geom.type() == core::DataType::LINESTRING)
-                                {
-                                    srid = geom.getLineString().getSRID();
-                                }
-                                else if (geom.type() == core::DataType::POLYGON)
-                                {
-                                    srid = geom.getPolygon().getSRID();
-                                }
-                                else
-                                {
-                                    push(Value::makeNull());
-                                    result = ExecutionResult();
-                                    break;
-                                }
-
-                                push(Value::makeInt32(srid));
-                            }
-                            result = ExecutionResult();
                         }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ST_SETSRID))
+                        else if (executeLegacyPsqlExtendedOpcode(ext_op, result))
                         {
-                            // ST_SetSRID(geom, srid) - set SRID of geometry
-                            Value srid_val = pop();
-                            Value geom = pop();
-
-                            if (geom.isNull() || srid_val.isNull())
-                            {
-                                push(Value::makeNull());
-                            }
-                            else
-                            {
-                                int32_t new_srid = static_cast<int32_t>(srid_val.toInt64());
-
-                                // Create copy with new SRID (don't transform coordinates!)
-                                if (geom.type() == core::DataType::POINT)
-                                {
-                                    core::Point pt = geom.getPoint();
-                                    pt.setSRID(new_srid);
-                                    push(Value::makePoint(pt));
-                                }
-                                else if (geom.type() == core::DataType::LINESTRING)
-                                {
-                                    core::LineString line = geom.getLineString();
-                                    line.setSRID(new_srid);
-                                    push(Value::makeLineString(line));
-                                }
-                                else if (geom.type() == core::DataType::POLYGON)
-                                {
-                                    core::Polygon poly = geom.getPolygon();
-                                    poly.setSRID(new_srid);
-                                    push(Value::makePolygon(poly));
-                                }
-                                else
-                                {
-                                    push(Value::makeNull());
-                                }
-                            }
-                            result = ExecutionResult();
                         }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ST_TRANSFORM))
+                        else if (executeLegacyCallExtendedOpcode(ext_op, result))
                         {
-                            // ST_Transform(geom, target_srid) - transform to different SRID
-                            Value target_srid_val = pop();
-                            Value geom = pop();
-
-                            if (geom.isNull() || target_srid_val.isNull())
+                            // Preserve legacy failure behavior for CALL in statement execution loop.
+                            if (!result.success())
                             {
-                                push(Value::makeNull());
-                                result = ExecutionResult();
-                            }
-                            else
-                            {
-                                int32_t target_srid = static_cast<int32_t>(target_srid_val.toInt64());
-
-#ifdef HAVE_PROJ
-                                try
-                                {
-                                    if (geom.type() == core::DataType::POINT)
-                                    {
-                                        core::Point pt = geom.getPoint();
-                                        int32_t source_srid = pt.getSRID();
-
-                                        if (source_srid == 0)
-                                        {
-                                            error("ST_Transform: geometry must have SRID");
-                                        }
-                                        if (source_srid == target_srid)
-                                        {
-                                            // No transformation needed
-                                            push(geom);
-                                        }
-                                        else
-                                        {
-                                            // Transform coordinates
-                                            geo::PROJTransform transform(source_srid, target_srid);
-                                            double x = pt.x;
-                                            double y = pt.y;
-                                            transform.transform(x, y);
-
-                                            // Create new point with transformed coordinates
-                                            core::Point transformed(x, y, target_srid);
-                                            push(Value::makePoint(transformed));
-                                        }
-                                    }
-                                    else if (geom.type() == core::DataType::LINESTRING)
-                                    {
-                                        core::LineString line = geom.getLineString();
-                                        int32_t source_srid = line.getSRID();
-
-                                        if (source_srid == 0)
-                                        {
-                                            error("ST_Transform: geometry must have SRID");
-                                        }
-                                        if (source_srid == target_srid)
-                                        {
-                                            push(geom);
-                                        }
-                                        else
-                                        {
-                                            // Transform all points
-                                            geo::PROJTransform transform(source_srid, target_srid);
-                                            std::vector<core::Point> transformed_points;
-
-                                            for (const auto &pt : line.points)
-                                            {
-                                                double x = pt.x;
-                                                double y = pt.y;
-                                                transform.transform(x, y);
-                                                transformed_points.emplace_back(x, y, target_srid);
-                                            }
-
-                                            core::LineString transformed(std::move(transformed_points), target_srid);
-                                            push(Value::makeLineString(transformed));
-                                        }
-                                    }
-                                    else if (geom.type() == core::DataType::POLYGON)
-                                    {
-                                        core::Polygon poly = geom.getPolygon();
-                                        int32_t source_srid = poly.getSRID();
-
-                                        if (source_srid == 0)
-                                        {
-                                            error("ST_Transform: geometry must have SRID");
-                                        }
-                                        if (source_srid == target_srid)
-                                        {
-                                            push(geom);
-                                        }
-                                        else
-                                        {
-                                            // Transform all rings
-                                            geo::PROJTransform transform(source_srid, target_srid);
-                                            std::vector<std::vector<core::Point>> transformed_rings;
-
-                                            for (const auto &ring : poly.rings)
-                                            {
-                                                std::vector<core::Point> transformed_ring;
-                                                for (const auto &pt : ring)
-                                                {
-                                                    double x = pt.x;
-                                                    double y = pt.y;
-                                                    transform.transform(x, y);
-                                                    transformed_ring.emplace_back(x, y, target_srid);
-                                                }
-                                                transformed_rings.push_back(std::move(transformed_ring));
-                                            }
-
-                                            core::Polygon transformed(std::move(transformed_rings), target_srid);
-                                            push(Value::makePolygon(transformed));
-                                        }
-                                    }
-                                    else
-                                    {
-                                        push(Value::makeNull());
-                                    }
-                                }
-                                catch (const geo::PROJException &e)
-                                {
-                                    // SECURITY FIX (HIGH-1): Log detailed error internally, return generic error to client
-                                    LOG_ERROR(EXECUTOR, "ST_Transform failed: %s", e.what());
-                                    error("Spatial transformation failed");
-                                }
-#else
-                                error("ST_Transform requires PROJ library (not available)");
-#endif
-                                result = ExecutionResult();
+                                break;
                             }
                         }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ST_DISTANCE_SPHERE))
+                        else if (executeLegacySpatialExtendedOpcode(ext_op, result))
                         {
-                            // ST_Distance_Sphere(geom1, geom2) - geodetic distance (always uses Haversine)
-                            Value geom2 = pop();
-                            Value geom1 = pop();
-
-                            if (geom1.isNull() || geom2.isNull())
-                            {
-                                push(Value::makeNull());
-                            }
-                            else
-                            {
-                                // Only works with points
-                                if (geom1.type() != core::DataType::POINT || geom2.type() != core::DataType::POINT)
-                                {
-                                    error("ST_Distance_Sphere only works with POINT geometries");
-                                }
-
-                                core::Point pt1 = geom1.getPoint();
-                                core::Point pt2 = geom2.getPoint();
-
-                                // Use Haversine formula (assumes geographic coordinates in degrees)
-                                double distance = geo::Geodetic::haversineDistance(pt1.x, pt1.y, pt2.x, pt2.y);
-
-                                push(Value::makeFloat64(distance));
-                            }
-                            result = ExecutionResult();
                         }
-                        // ===== Security Statements (ALPHA Phase 1 - Security System Phase 2) =====
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CREATE_USER))
-                        {
-                            executeCreateUser();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ALTER_USER))
-                        {
-                            executeAlterUser();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_DROP_USER))
-                        {
-                            executeDropUser();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CREATE_ROLE))
-                        {
-                            executeCreateRole();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ALTER_ROLE))
-                        {
-                            executeAlterRole();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_DROP_ROLE))
-                        {
-                            executeDropRole();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CREATE_GROUP))
-                        {
-                            executeCreateGroup();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_DROP_GROUP))
-                        {
-                            executeDropGroup();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CREATE_FOREIGN_SERVER))
-                        {
-                            executeCreateForeignServer();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_DROP_FOREIGN_SERVER))
-                        {
-                            executeDropForeignServer();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CREATE_FOREIGN_TABLE))
-                        {
-                            executeCreateForeignTable();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_DROP_FOREIGN_TABLE))
-                        {
-                            executeDropForeignTable();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CREATE_USER_MAPPING))
-                        {
-                            executeCreateUserMapping();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_DROP_USER_MAPPING))
-                        {
-                            executeDropUserMapping();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CREATE_SYNONYM))
-                        {
-                            executeCreateSynonym();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_DROP_SYNONYM))
-                        {
-                            executeDropSynonym();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CREATE_UDR))
-                        {
-                            executeCreateUdr();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_DROP_UDR))
-                        {
-                            executeDropUdr();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ALTER_DEFAULT_PRIVILEGES))
-                        {
-                            executeAlterDefaultPrivileges();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_GRANT_PRIVILEGE))
-                        {
-                            executeGrantPrivilege();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_REVOKE_PRIVILEGE))
-                        {
-                            executeRevokePrivilege();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_GRANT_ROLE))
-                        {
-                            executeGrantRole();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_REVOKE_ROLE))
-                        {
-                            executeRevokeRole();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SET_ROLE))
-                        {
-                            executeSetRole();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SET_SESSION_AUTH))
-                        {
-                            executeSetSessionAuth();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SET_CONSTRAINTS))
-                        {
-                            executeSetConstraints();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SET_VARIABLE))
-                        {
-                            executeSetVariable();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ALTER_SYSTEM))
-                        {
-                            executeAlterSystem();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CONNECT))
-                        {
-                            executeConnect();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_DISCONNECT))
-                        {
-                            executeDisconnect();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_RENAME_OBJECT))
-                        {
-                            executeRenameObject();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_MOVE_OBJECT))
-                        {
-                            executeMoveObject();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CREATE_SCHEMA))
-                        {
-                            executeCreateSchema();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_DROP_SCHEMA))
-                        {
-                            executeDropSchema();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ALTER_SCHEMA))
-                        {
-                            executeAlterSchema();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CREATE_DATABASE))
-                        {
-                            executeCreateDatabase();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CREATE_DOMAIN))
-                        {
-                            executeCreateDomain();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_COMMENT))
-                        {
-                            executeComment();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ALTER_DOMAIN))
-                        {
-                            executeAlterDomain();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_DROP_DOMAIN))
-                        {
-                            executeDropDomain();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_DROP_DATABASE))
-                        {
-                            executeDropDatabase();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ALTER_DATABASE))
-                        {
-                            executeAlterDatabase();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SET_AUTOCOMMIT))
-                        {
-                            executeSetAutocommitOpcode();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_COMMIT_RETAINING))
-                        {
-                            executeCommitFlags(sblr::CommitRollbackFlags::RETAINING |
-                                               sblr::CommitRollbackFlags::AND_CHAIN);
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ROLLBACK_RETAINING))
-                        {
-                            executeRollbackFlags(sblr::CommitRollbackFlags::RETAINING |
-                                                 sblr::CommitRollbackFlags::AND_CHAIN);
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_PREPARE_TRANSACTION))
-                        {
-                            executePrepareTransaction();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_COMMIT_PREPARED))
-                        {
-                            executeCommitPrepared();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ROLLBACK_PREPARED))
-                        {
-                            executeRollbackPrepared();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SAVEPOINT))
-                        {
-                            executeSavepoint();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_RELEASE_SAVEPOINT))
-                        {
-                            executeReleaseSavepoint();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ROLLBACK_TO_SAVEPOINT))
-                        {
-                            executeRollbackToSavepoint();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SAVEPOINT_BEGIN))
-                        {
-                            executeBlrSavepointBegin();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SAVEPOINT_END))
-                        {
-                            executeBlrSavepointEnd();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_CREATE_POLICY))
-                        {
-                            executeCreatePolicy();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_DROP_POLICY))
-                        {
-                            executeDropPolicy();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ALTER_POLICY))
-                        {
-                            executeAlterPolicy();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ALTER_TABLE_RLS))
-                        {
-                            executeAlterTableRLS();
-                            result = ExecutionResult();
-                        }
-                        // ===== SQL Engine Commands (ALPHA Phase 1 - Developer Experience) =====
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_TABLES))
-                        {
-                            executeShowTables();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_DATABASES))
-                        {
-                            executeShowDatabases();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_COLUMNS))
-                        {
-                            executeShowColumns();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_INDEXES))
-                        {
-                            executeShowIndexes();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_CREATE_TABLE))
-                        {
-                            executeShowCreateTable();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_DESCRIBE_TABLE))
-                        {
-                            executeDescribeTable();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        // ===== Extended SHOW Commands (Firebird ISQL compatibility) =====
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_TABLE))
-                        {
-                            executeShowTable();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_INDEX))
-                        {
-                            executeShowIndex();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_TRIGGER))
-                        {
-                            executeShowTrigger();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_PROCEDURE))
-                        {
-                            executeShowProcedure();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_FUNCTION))
-                        {
-                            executeShowFunction();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_VIEW))
-                        {
-                            executeShowView();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_DOMAIN))
-                        {
-                            executeShowDomain();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_GENERATOR))
-                        {
-                            executeShowGenerator();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_SCHEMA))
-                        {
-                            executeShowSchema();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_ROLE))
-                        {
-                            executeShowRole();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_GRANTS))
-                        {
-                            executeShowGrants();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_JOBS))
-                        {
-                            executeShowJobs();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_JOB))
-                        {
-                            executeShowJob();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_JOB_RUNS))
-                        {
-                            executeShowJobRuns();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_CHECKS))
-                        {
-                            executeShowChecks();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_COLLATIONS))
-                        {
-                            executeShowCollations();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_COMMENTS))
-                        {
-                            executeShowComments();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_DEPENDENCIES))
-                        {
-                            executeShowDependencies();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_PACKAGE))
-                        {
-                            executeShowPackage();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_SYSTEM))
-                        {
-                            executeShowSystem();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_METRICS))
-                        {
-                            executeShowMetrics();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_SQL_DIALECT))
-                        {
-                            executeShowSqlDialect();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_VERSION))
-                        {
-                            executeShowVersion();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_DATABASE))
-                        {
-                            executeShowDatabase();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_VARIABLE))
-                        {
-                            executeShowVariable();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_ALL))
-                        {
-                            executeShowAll();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_TRANSACTION_LEVEL))
-                        {
-                            executeShowTransactionLevel();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        // ===== Session SET Commands (Firebird ISQL compatibility) =====
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SET_SQL_DIALECT))
-                        {
-                            executeSetSqlDialect();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SET_NAMES))
-                        {
-                            executeSetNames();
-                            result = ExecutionResult();
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SET_LOCAL_TIMEOUT))
-                        {
-                            executeSetLocalTimeout();
-                            result = ExecutionResult();
-                        }
-                        // ===== Schema Navigation Commands =====
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_SCHEMA_PATH))
-                        {
-                            executeShowSchemaPath();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_SCHEMA_TREE))
-                        {
-                            executeShowSchemaTree();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_SEARCH_PATH))
-                        {
-                            executeShowSearchPath();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_LOCATION))
-                        {
-                            executeShowLocation();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_RESOLVED))
-                        {
-                            executeShowResolved();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SHOW_OBJECTS))
-                        {
-                            executeShowObjects();
-                            result = ExecutionResult(std::move(current_result_set_));
-                        }
-                        else
+                        else if (!executeLegacyAdminControlExtendedOpcode(ext_op, result))
                         {
                             result = ExecutionResult("Unknown extended opcode: " +
                                                      std::to_string(static_cast<int>(ext_op)));
@@ -13675,7 +13479,7 @@ namespace scratchbird
             core::ID materialized_table_id{};
             if (materialized)
             {
-#if SCRATCHBIRD_WITH_COMPILER
+#if 0
                 // Create hidden materialized data table
                 std::string mat_table_name = "__mv_" + resolved_view_name + "_data";
 
@@ -13686,8 +13490,8 @@ namespace scratchbird
                 // 4. Populate table with query results
 
                 // Compile the view definition using V3 compiler
-                parser::v3::Compiler compiler;
-                auto compile_result = compiler.compile(definition);
+                /* legacy path removed */
+                // Engine-side SQL compilation removed.
 
                 if (!compile_result.ok)
                 {
@@ -14011,10 +13815,10 @@ namespace scratchbird
             LOG_INFO(EXECUTOR, "Refreshing materialized view '%s' (table: '%s')",
                      view_name.c_str(), table_info.table_name.c_str());
 
-#if SCRATCHBIRD_WITH_COMPILER
+#if 0
             // Compile and execute the view definition using V3 compiler
-            parser::v3::Compiler compiler;
-            auto compile_result = compiler.compile(view_info.definition);
+            /* legacy path removed */
+            // Engine-side SQL compilation removed.
 
             if (!compile_result.ok)
             {
@@ -16113,7 +15917,7 @@ namespace scratchbird
                                 current_row_values_ = nullptr;
                                 current_row_columns_ = nullptr;
                                 pc_ = saved_pc;
-                                if (!where_result.toBoolean())
+                                if (!predicateIsTrue(where_result))
                                 {
                                     return false;
                                 }
@@ -17537,9 +17341,9 @@ namespace scratchbird
                     error("View definition missing for DML: " + table_name);
                 }
 
-#if SCRATCHBIRD_WITH_COMPILER
-                parser::v3::Compiler compiler;
-                auto compile_result = compiler.compile(view_info.definition);
+#if 0
+                /* legacy path removed */
+                // Engine-side SQL compilation removed.
                 if (!compile_result.ok)
                 {
                     std::string err_msg = "Failed to compile view definition for '" + table_name + "'";
@@ -18143,7 +17947,7 @@ namespace scratchbird
                         current_row_values_ = nullptr;
                         current_row_columns_ = nullptr;
                         pc_ = saved_pc;
-                        matches = where_result.toBoolean();
+                        matches = predicateIsTrue(where_result);
                     }
 
                     if (!matches)
@@ -18966,7 +18770,7 @@ namespace scratchbird
                                 current_row_values_ = nullptr;
                                 current_row_columns_ = nullptr;
                                 pc_ = saved_pc;
-                                matches = where_result.toBoolean();
+                                matches = predicateIsTrue(where_result);
                             }
                             catch (...)
                             {
@@ -19867,9 +19671,9 @@ namespace scratchbird
                     error("View definition missing for DML: " + table_name);
                 }
 
-#if SCRATCHBIRD_WITH_COMPILER
-                parser::v3::Compiler compiler;
-                auto compile_result = compiler.compile(view_info.definition);
+#if 0
+                /* legacy path removed */
+                // Engine-side SQL compilation removed.
                 if (!compile_result.ok)
                 {
                     std::string err_msg = "Failed to compile view definition for '" + table_name + "'";
@@ -20297,7 +20101,7 @@ namespace scratchbird
                         current_row_values_ = nullptr;
                         current_row_columns_ = nullptr;
                         pc_ = saved_pc;
-                        matches = where_result.toBoolean();
+                        matches = predicateIsTrue(where_result);
                     }
                     if (matches)
                     {
@@ -20751,7 +20555,7 @@ namespace scratchbird
                                 current_row_values_ = nullptr;
                                 current_row_columns_ = nullptr;
                                 pc_ = saved_pc;
-                                matches = where_result.toBoolean();
+                                matches = predicateIsTrue(where_result);
                             }
                             catch (...)
                             {
@@ -21224,7 +21028,7 @@ namespace scratchbird
                     try
                     {
                         Value condition_result = evaluateExpressionRange(on_condition.end);
-                        matches = condition_result.toBoolean();
+                        matches = predicateIsTrue(condition_result);
                     }
                     catch (...)
                     {
@@ -21258,7 +21062,7 @@ namespace scratchbird
                                     current_row_values_ = nullptr;
                                     current_row_columns_ = nullptr;
                                     pc_ = cond_pc;
-                                    if (!cond_val.toBoolean())
+                                    if (!predicateIsTrue(cond_val))
                                     {
                                         continue;
                                     }
@@ -21396,7 +21200,7 @@ namespace scratchbird
                                 current_row_values_ = nullptr;
                                 current_row_columns_ = nullptr;
                                 pc_ = cond_pc;
-                                if (!cond_val.toBoolean())
+                                if (!predicateIsTrue(cond_val))
                                 {
                                     continue;
                                 }
@@ -21543,7 +21347,7 @@ namespace scratchbird
                                 current_row_values_ = nullptr;
                                 current_row_columns_ = nullptr;
                                 pc_ = cond_pc;
-                                if (!cond_val.toBoolean())
+                                if (!predicateIsTrue(cond_val))
                                 {
                                     continue;
                                 }
@@ -22256,7 +22060,7 @@ namespace scratchbird
                     {
                         pc_ = scalar_aggregate_filter_start_;
                         Value where_val = evaluateExpressionRange(scalar_aggregate_filter_end_);
-                        if (!where_val.toBoolean())
+                        if (!predicateIsTrue(where_val))
                         {
                             current_row_values_ = saved_row_values;
                             current_row_columns_ = saved_row_columns;
@@ -22564,7 +22368,7 @@ namespace scratchbird
                         current_row_columns_ = nullptr;
                         pc_ = saved_pc;
 
-                        if (!where_result.toBoolean())
+                        if (!predicateIsTrue(where_result))
                         {
                             continue; // Skip this row
                         }
@@ -22840,7 +22644,7 @@ namespace scratchbird
                         current_row_columns_ = nullptr;
                         pc_ = saved_pc;
 
-                        if (!having_result.toBoolean())
+                        if (!predicateIsTrue(having_result))
                         {
                             continue; // Skip this group
                         }
@@ -23389,7 +23193,7 @@ namespace scratchbird
                             current_row_columns_ = nullptr;
                             pc_ = saved_pc;
 
-                            if (!where_result.toBoolean())
+                            if (!predicateIsTrue(where_result))
                             {
                                 continue; // Skip this row
                             }
@@ -23566,7 +23370,7 @@ namespace scratchbird
                             current_row_columns_ = nullptr;
                             pc_ = saved_pc;
 
-                            if (!having_result.toBoolean())
+                            if (!predicateIsTrue(having_result))
                             {
                                 continue; // Skip this group
                             }
@@ -24872,10 +24676,10 @@ namespace scratchbird
                                        const std::vector<std::pair<std::string, std::string>>& select_items,
                                        bool is_select_star)
         {
-#if SCRATCHBIRD_WITH_COMPILER
+#if 0
             // Compile the view's SELECT query using V3 compiler
-            parser::v3::Compiler compiler;
-            auto compile_result = compiler.compile(view_info.definition);
+            /* legacy path removed */
+            // Engine-side SQL compilation removed.
 
             if (!compile_result.ok)
             {
@@ -25155,7 +24959,7 @@ namespace scratchbird
                         current_row_columns_ = nullptr;
                         pc_ = saved_pc;
 
-                        if (!where_result.toBoolean())
+                        if (!predicateIsTrue(where_result))
                         {
                             continue;
                         }
@@ -25414,7 +25218,7 @@ namespace scratchbird
                         current_row_columns_ = nullptr;
                         pc_ = saved_pc;
 
-                        if (!where_result.toBoolean())
+                        if (!predicateIsTrue(where_result))
                         {
                             continue;
                         }
@@ -25938,7 +25742,7 @@ namespace scratchbird
                     current_row_values_ = nullptr;
                     pc_ = saved_pc;
 
-                    if (!where_result.toBoolean())
+                    if (!predicateIsTrue(where_result))
                     {
                         return;
                     }
@@ -26432,7 +26236,7 @@ namespace scratchbird
                             current_row_columns_ = nullptr;
                             pc_ = saved_pc;
 
-                            if (!where_result.toBoolean())
+                            if (!predicateIsTrue(where_result))
                             {
                                 return;
                             }
@@ -26877,7 +26681,7 @@ namespace scratchbird
                         current_row_values_ = nullptr;
                         current_row_columns_ = nullptr;
                         pc_ = saved_pc;
-                        if (!where_result.toBoolean())
+                        if (!predicateIsTrue(where_result))
                         {
                             continue;
                         }
@@ -37977,11 +37781,140 @@ namespace scratchbird
             Value right = pop();
             Value left = pop();
 
+            if (op == Opcode::EXPR_AND)
+            {
+                push(evaluateThreeValuedAnd(left, right));
+                return;
+            }
+            if (op == Opcode::EXPR_OR)
+            {
+                push(evaluateThreeValuedOr(left, right));
+                return;
+            }
+
             // Handle NULL propagation
             if (left.isNull() || right.isNull())
             {
                 push(Value::makeNull()); // NULL result
                 return;
+            }
+
+            const bool is_arithmetic_op =
+                op == Opcode::EXPR_ADD || op == Opcode::EXPR_SUBTRACT ||
+                op == Opcode::EXPR_MULTIPLY || op == Opcode::EXPR_DIVIDE ||
+                op == Opcode::EXPR_MODULO;
+            const bool is_comparison_op =
+                op == Opcode::EXPR_EQ || op == Opcode::EXPR_NE ||
+                op == Opcode::EXPR_LT || op == Opcode::EXPR_GT ||
+                op == Opcode::EXPR_LE || op == Opcode::EXPR_GE;
+
+            auto coerce_numeric_side_to_target = [&](Value& value,
+                                                     core::DataType target_type,
+                                                     const char* op_name) {
+                core::TypeInfo target = implicitTargetTypeInfo(target_type);
+                core::TypedValue converted;
+                core::ErrorContext ctx;
+                core::Status st = value.convertTo(target, converted,
+                                                  core::CastFormat::DEFAULT, &ctx);
+                if (st != core::Status::OK)
+                {
+                    std::string detail =
+                        ctx.message.empty() ? "Numeric coercion failed" : ctx.message;
+                    error("Implicit numeric coercion failed for operator " +
+                          std::string(op_name) + ": " + detail);
+                }
+                value = std::move(converted);
+            };
+
+            if (is_arithmetic_op)
+            {
+                const bool left_is_text = isStringLikeType(left.type());
+                const bool right_is_text = isStringLikeType(right.type());
+                if ((left_is_text && !isNumericType(right.type())) ||
+                    (right_is_text && !isNumericType(left.type())))
+                {
+                    error("Invalid text representation for numeric operator");
+                }
+                if (left_is_text && right_is_text)
+                {
+                    error("Invalid text representation for numeric operator");
+                }
+                if (left_is_text || right_is_text)
+                {
+                    core::DataType target_type = implicitNumericTargetFor(
+                        left_is_text ? right.type() : left.type());
+                    const char* op_name =
+                        (op == Opcode::EXPR_ADD) ? "+" :
+                        (op == Opcode::EXPR_SUBTRACT) ? "-" :
+                        (op == Opcode::EXPR_MULTIPLY) ? "*" :
+                        (op == Opcode::EXPR_DIVIDE) ? "/" : "%";
+
+                    if (left_is_text)
+                    {
+                        std::string coercion_error;
+                        Value converted;
+                        if (!tryImplicitTextCoercion(left, target_type, converted, coercion_error))
+                        {
+                            error("Invalid text representation for numeric operator " +
+                                  std::string(op_name) + ": " + coercion_error);
+                        }
+                        left = std::move(converted);
+                    }
+                    if (right_is_text)
+                    {
+                        std::string coercion_error;
+                        Value converted;
+                        if (!tryImplicitTextCoercion(right, target_type, converted, coercion_error))
+                        {
+                            error("Invalid text representation for numeric operator " +
+                                  std::string(op_name) + ": " + coercion_error);
+                        }
+                        right = std::move(converted);
+                    }
+
+                    if (left.type() != target_type && isNumericType(left.type()))
+                    {
+                        coerce_numeric_side_to_target(left, target_type, op_name);
+                    }
+                    if (right.type() != target_type && isNumericType(right.type()))
+                    {
+                        coerce_numeric_side_to_target(right, target_type, op_name);
+                    }
+                }
+            }
+
+            if (is_comparison_op)
+            {
+                const bool left_is_text = isStringLikeType(left.type());
+                const bool right_is_text = isStringLikeType(right.type());
+                if (left_is_text && right_is_text)
+                {
+                    // Text-vs-text comparison remains lexical/collation-aware.
+                }
+                else if (left_is_text && isImplicitTextComparisonTarget(right.type()))
+                {
+                    std::string coercion_error;
+                    Value converted;
+                    if (!tryImplicitTextCoercion(left, right.type(), converted, coercion_error))
+                    {
+                        error("Invalid text representation for comparison: " + coercion_error);
+                    }
+                    left = std::move(converted);
+                }
+                else if (right_is_text && isImplicitTextComparisonTarget(left.type()))
+                {
+                    std::string coercion_error;
+                    Value converted;
+                    if (!tryImplicitTextCoercion(right, left.type(), converted, coercion_error))
+                    {
+                        error("Invalid text representation for comparison: " + coercion_error);
+                    }
+                    right = std::move(converted);
+                }
+                else if (left_is_text || right_is_text)
+                {
+                    error("Implicit comparison coercion is unsupported for these operand types");
+                }
             }
 
             const bool use_integer128 = isIntegerType(left.type()) && isIntegerType(right.type()) &&
@@ -38096,7 +38029,11 @@ namespace scratchbird
                     if (left.type() == core::DataType::FLOAT64 ||
                         right.type() == core::DataType::FLOAT64 ||
                         left.type() == core::DataType::FLOAT32 ||
-                        right.type() == core::DataType::FLOAT32)
+                        right.type() == core::DataType::FLOAT32 ||
+                        left.type() == core::DataType::DECIMAL ||
+                        right.type() == core::DataType::DECIMAL ||
+                        left.type() == core::DataType::MONEY ||
+                        right.type() == core::DataType::MONEY)
                         push(Value::makeFloat64(coerceToDouble(left) + coerceToDouble(right)));
                     else if (use_integer128)
                         push(eval_integer128(op));
@@ -38129,7 +38066,11 @@ namespace scratchbird
                     if (left.type() == core::DataType::FLOAT64 ||
                         right.type() == core::DataType::FLOAT64 ||
                         left.type() == core::DataType::FLOAT32 ||
-                        right.type() == core::DataType::FLOAT32)
+                        right.type() == core::DataType::FLOAT32 ||
+                        left.type() == core::DataType::DECIMAL ||
+                        right.type() == core::DataType::DECIMAL ||
+                        left.type() == core::DataType::MONEY ||
+                        right.type() == core::DataType::MONEY)
                         push(Value::makeFloat64(coerceToDouble(left) - coerceToDouble(right)));
                     else if (use_integer128)
                         push(eval_integer128(op));
@@ -38162,7 +38103,11 @@ namespace scratchbird
                     if (left.type() == core::DataType::FLOAT64 ||
                         right.type() == core::DataType::FLOAT64 ||
                         left.type() == core::DataType::FLOAT32 ||
-                        right.type() == core::DataType::FLOAT32)
+                        right.type() == core::DataType::FLOAT32 ||
+                        left.type() == core::DataType::DECIMAL ||
+                        right.type() == core::DataType::DECIMAL ||
+                        left.type() == core::DataType::MONEY ||
+                        right.type() == core::DataType::MONEY)
                         push(Value::makeFloat64(coerceToDouble(left) * coerceToDouble(right)));
                     else if (use_integer128)
                         push(eval_integer128(op));
@@ -38198,7 +38143,11 @@ namespace scratchbird
                     if (left.type() == core::DataType::FLOAT64 ||
                         right.type() == core::DataType::FLOAT64 ||
                         left.type() == core::DataType::FLOAT32 ||
-                        right.type() == core::DataType::FLOAT32)
+                        right.type() == core::DataType::FLOAT32 ||
+                        left.type() == core::DataType::DECIMAL ||
+                        right.type() == core::DataType::DECIMAL ||
+                        left.type() == core::DataType::MONEY ||
+                        right.type() == core::DataType::MONEY)
                         push(Value::makeFloat64(coerceToDouble(left) / right_val));
                     else if (use_integer128)
                         push(eval_integer128(op));
@@ -38237,12 +38186,15 @@ namespace scratchbird
                         core::DecFloat rhs = coerceToDecfloat(right, precision);
                         result = core::DecFloat::compare(lhs, rhs, nullptr) == 0;
                     }
+                    else if (left.type() == core::DataType::UUID &&
+                             right.type() == core::DataType::UUID)
+                        result = left.getUUID() == right.getUUID();
+                    else if (isTemporalType(left.type()) && isTemporalType(right.type()))
+                        result = temporalComparisonKeyMicros(left) ==
+                                 temporalComparisonKeyMicros(right);
                     else if (isIntegerType(left.type()) && isIntegerType(right.type()))
                         result = compareIntegerValues(left, right) == 0;
-                    else if (left.type() == core::DataType::FLOAT64 ||
-                             right.type() == core::DataType::FLOAT64 ||
-                             left.type() == core::DataType::FLOAT32 ||
-                             right.type() == core::DataType::FLOAT32)
+                    else if (isNumericType(left.type()) && isNumericType(right.type()))
                         result = coerceToDouble(left) == coerceToDouble(right);
                     else
                         result = left.toInt64() == right.toInt64();
@@ -38266,12 +38218,15 @@ namespace scratchbird
                         core::DecFloat rhs = coerceToDecfloat(right, precision);
                         result = core::DecFloat::compare(lhs, rhs, nullptr) != 0;
                     }
+                    else if (left.type() == core::DataType::UUID &&
+                             right.type() == core::DataType::UUID)
+                        result = left.getUUID() != right.getUUID();
+                    else if (isTemporalType(left.type()) && isTemporalType(right.type()))
+                        result = temporalComparisonKeyMicros(left) !=
+                                 temporalComparisonKeyMicros(right);
                     else if (isIntegerType(left.type()) && isIntegerType(right.type()))
                         result = compareIntegerValues(left, right) != 0;
-                    else if (left.type() == core::DataType::FLOAT64 ||
-                             right.type() == core::DataType::FLOAT64 ||
-                             left.type() == core::DataType::FLOAT32 ||
-                             right.type() == core::DataType::FLOAT32)
+                    else if (isNumericType(left.type()) && isNumericType(right.type()))
                         result = coerceToDouble(left) != coerceToDouble(right);
                     else
                         result = left.toInt64() != right.toInt64();
@@ -38295,12 +38250,15 @@ namespace scratchbird
                         core::DecFloat rhs = coerceToDecfloat(right, precision);
                         result = core::DecFloat::compare(lhs, rhs, nullptr) < 0;
                     }
+                    else if (left.type() == core::DataType::UUID &&
+                             right.type() == core::DataType::UUID)
+                        result = compareStrings(left.toString(), right.toString()) < 0;
+                    else if (isTemporalType(left.type()) && isTemporalType(right.type()))
+                        result = temporalComparisonKeyMicros(left) <
+                                 temporalComparisonKeyMicros(right);
                     else if (isIntegerType(left.type()) && isIntegerType(right.type()))
                         result = compareIntegerValues(left, right) < 0;
-                    else if (left.type() == core::DataType::FLOAT64 ||
-                             right.type() == core::DataType::FLOAT64 ||
-                             left.type() == core::DataType::FLOAT32 ||
-                             right.type() == core::DataType::FLOAT32)
+                    else if (isNumericType(left.type()) && isNumericType(right.type()))
                         result = coerceToDouble(left) < coerceToDouble(right);
                     else
                         result = left.toInt64() < right.toInt64();
@@ -38324,12 +38282,15 @@ namespace scratchbird
                         core::DecFloat rhs = coerceToDecfloat(right, precision);
                         result = core::DecFloat::compare(lhs, rhs, nullptr) > 0;
                     }
+                    else if (left.type() == core::DataType::UUID &&
+                             right.type() == core::DataType::UUID)
+                        result = compareStrings(left.toString(), right.toString()) > 0;
+                    else if (isTemporalType(left.type()) && isTemporalType(right.type()))
+                        result = temporalComparisonKeyMicros(left) >
+                                 temporalComparisonKeyMicros(right);
                     else if (isIntegerType(left.type()) && isIntegerType(right.type()))
                         result = compareIntegerValues(left, right) > 0;
-                    else if (left.type() == core::DataType::FLOAT64 ||
-                             right.type() == core::DataType::FLOAT64 ||
-                             left.type() == core::DataType::FLOAT32 ||
-                             right.type() == core::DataType::FLOAT32)
+                    else if (isNumericType(left.type()) && isNumericType(right.type()))
                         result = coerceToDouble(left) > coerceToDouble(right);
                     else
                         result = left.toInt64() > right.toInt64();
@@ -38353,12 +38314,15 @@ namespace scratchbird
                         core::DecFloat rhs = coerceToDecfloat(right, precision);
                         result = core::DecFloat::compare(lhs, rhs, nullptr) <= 0;
                     }
+                    else if (left.type() == core::DataType::UUID &&
+                             right.type() == core::DataType::UUID)
+                        result = compareStrings(left.toString(), right.toString()) <= 0;
+                    else if (isTemporalType(left.type()) && isTemporalType(right.type()))
+                        result = temporalComparisonKeyMicros(left) <=
+                                 temporalComparisonKeyMicros(right);
                     else if (isIntegerType(left.type()) && isIntegerType(right.type()))
                         result = compareIntegerValues(left, right) <= 0;
-                    else if (left.type() == core::DataType::FLOAT64 ||
-                             right.type() == core::DataType::FLOAT64 ||
-                             left.type() == core::DataType::FLOAT32 ||
-                             right.type() == core::DataType::FLOAT32)
+                    else if (isNumericType(left.type()) && isNumericType(right.type()))
                         result = coerceToDouble(left) <= coerceToDouble(right);
                     else
                         result = left.toInt64() <= right.toInt64();
@@ -38382,12 +38346,15 @@ namespace scratchbird
                         core::DecFloat rhs = coerceToDecfloat(right, precision);
                         result = core::DecFloat::compare(lhs, rhs, nullptr) >= 0;
                     }
+                    else if (left.type() == core::DataType::UUID &&
+                             right.type() == core::DataType::UUID)
+                        result = compareStrings(left.toString(), right.toString()) >= 0;
+                    else if (isTemporalType(left.type()) && isTemporalType(right.type()))
+                        result = temporalComparisonKeyMicros(left) >=
+                                 temporalComparisonKeyMicros(right);
                     else if (isIntegerType(left.type()) && isIntegerType(right.type()))
                         result = compareIntegerValues(left, right) >= 0;
-                    else if (left.type() == core::DataType::FLOAT64 ||
-                             right.type() == core::DataType::FLOAT64 ||
-                             left.type() == core::DataType::FLOAT32 ||
-                             right.type() == core::DataType::FLOAT32)
+                    else if (isNumericType(left.type()) && isNumericType(right.type()))
                         result = coerceToDouble(left) >= coerceToDouble(right);
                     else
                         result = left.toInt64() >= right.toInt64();
@@ -38397,10 +38364,10 @@ namespace scratchbird
 
                 // Logical operators
                 case Opcode::EXPR_AND:
-                    push(Value::makeBoolean(left.toBoolean() && right.toBoolean()));
+                    push(evaluateThreeValuedAnd(left, right));
                     break;
                 case Opcode::EXPR_OR:
-                    push(Value::makeBoolean(left.toBoolean() || right.toBoolean()));
+                    push(evaluateThreeValuedOr(left, right));
                     break;
 
                 // Pattern matching
@@ -38887,7 +38854,7 @@ namespace scratchbird
             try
             {
                 Value condition_result = evaluateExpressionRange(condition_end_pc);
-                result = condition_result.toBoolean();
+                result = predicateIsTrue(condition_result);
             }
             catch (...)
             {
@@ -39855,6 +39822,20 @@ namespace scratchbird
 
         ExecutionResult Executor::executeV3(const std::vector<uint8_t> &bytecode)
         {
+            const scratchbird::sblr::v3::ValidationResult validation =
+                scratchbird::sblr::v3::validateContainerDetailed(bytecode.data(), bytecode.size());
+            if (!validation.ok)
+            {
+                std::string msg = validation.code + ": " + validation.message;
+                if (!validation.canonical_opcode_symbol.empty())
+                {
+                    msg += " [";
+                    msg += validation.canonical_opcode_symbol;
+                    msg += "]";
+                }
+                return ExecutionResult(msg);
+            }
+
             scratchbird::sblr::v3::Container container;
             std::string err;
             if (!scratchbird::sblr::v3::decodeContainer(bytecode.data(), bytecode.size(), container, err))
@@ -39881,6 +39862,14 @@ namespace scratchbird
                     return ExecutionResult(derr.message.empty() ? "Invalid SBLR3 instruction" : derr.message);
                 }
                 instructions.push_back(std::move(inst));
+            }
+
+            if (!instructions.empty())
+            {
+                const std::string root_symbol =
+                    scratchbird::sblr::v3::canonicalOpcodeSymbolForOpcode(instructions.front().opcode);
+                (void)scratchbird::sblr::v3::HandlerRegistry::instance()
+                    .hasStatementHandler(root_symbol);
             }
 
             auto getObject = [&](const scratchbird::sblr::v3::Value& value,
@@ -41036,7 +41025,7 @@ namespace scratchbird
                         }
                         if (op == Opcode::SBLR3_EXPR_NOT)
                         {
-                            return Value::makeBoolean(!val.toBoolean());
+                            return evaluateThreeValuedNot(val);
                         }
                         return Value::makeInt64(~val.toInt64());
                     }
@@ -41052,8 +41041,14 @@ namespace scratchbird
                     case Opcode::SBLR3_EXPR_LE:
                     case Opcode::SBLR3_EXPR_GT:
                     case Opcode::SBLR3_EXPR_GE:
+                    case Opcode::SBLR3_NULL_SAFE_EQ:
                     case Opcode::SBLR3_EXPR_AND:
                     case Opcode::SBLR3_EXPR_OR:
+                    case Opcode::SBLR3_BIT_AND:
+                    case Opcode::SBLR3_BIT_OR:
+                    case Opcode::SBLR3_BIT_XOR:
+                    case Opcode::SBLR3_BIT_SHIFT_LEFT:
+                    case Opcode::SBLR3_BIT_SHIFT_RIGHT:
                     case Opcode::SBLR3_PRED_STARTING_WITH:
                     case Opcode::SBLR3_PRED_CONTAINING:
                     case Opcode::SBLR3_JSON_EXTRACT:
@@ -41097,13 +41092,44 @@ namespace scratchbird
                         }
                         Value lhs = evalExpr(lhs_inst);
                         Value rhs = evalExpr(rhs_inst);
+                        const bool strict_mode = isOperatorStrictModeEnabled(conn_ctx_);
                         if (op == Opcode::SBLR3_EXPR_AND)
                         {
-                            return Value::makeBoolean(lhs.toBoolean() && rhs.toBoolean());
+                            return evaluateThreeValuedAnd(lhs, rhs);
                         }
                         if (op == Opcode::SBLR3_EXPR_OR)
                         {
-                            return Value::makeBoolean(lhs.toBoolean() || rhs.toBoolean());
+                            return evaluateThreeValuedOr(lhs, rhs);
+                        }
+                        if (op == Opcode::SBLR3_NULL_SAFE_EQ)
+                        {
+                            if (lhs.isNull() || rhs.isNull())
+                            {
+                                return Value::makeBoolean(lhs.isNull() && rhs.isNull());
+                            }
+                            std::string implicit_error;
+                            if (!normalizeImplicitOperandsForBinaryOp(
+                                    scratchbird::sblr::v3::Opcode::SBLR3_EXPR_EQ,
+                                    lhs,
+                                    rhs,
+                                    implicit_error,
+                                    strict_mode))
+                            {
+                                error(implicit_error);
+                            }
+                        }
+                        else if (lhs.isNull() || rhs.isNull())
+                        {
+                            return Value::makeNull();
+                        }
+                        std::string implicit_error;
+                        if (!normalizeImplicitOperandsForBinaryOp(op,
+                                                                  lhs,
+                                                                  rhs,
+                                                                  implicit_error,
+                                                                  strict_mode))
+                        {
+                            error(implicit_error);
                         }
                         if (op == Opcode::SBLR3_PRED_STARTING_WITH)
                         {
@@ -41156,47 +41182,268 @@ namespace scratchbird
                         }
                         if (op == Opcode::SBLR3_EXPR_EQ)
                         {
-                            return Value::makeBoolean(lhs.toString() == rhs.toString());
+                            bool result;
+                            if (core::TypeSystem::isString(lhs.type()) ||
+                                core::TypeSystem::isString(rhs.type()))
+                                result = compareStrings(lhs.toString(), rhs.toString()) == 0;
+                            else if (isDecfloatType(lhs.type()) || isDecfloatType(rhs.type()))
+                            {
+                                uint8_t precision =
+                                    (lhs.type() == core::DataType::DECFLOAT34 ||
+                                     rhs.type() == core::DataType::DECFLOAT34)
+                                        ? 34
+                                        : 16;
+                                core::DecFloat lhs_dec = coerceToDecfloat(lhs, precision);
+                                core::DecFloat rhs_dec = coerceToDecfloat(rhs, precision);
+                                result = core::DecFloat::compare(lhs_dec, rhs_dec, nullptr) == 0;
+                            }
+                            else if (lhs.type() == core::DataType::UUID &&
+                                     rhs.type() == core::DataType::UUID)
+                                result = lhs.getUUID() == rhs.getUUID();
+                            else if (isTemporalType(lhs.type()) && isTemporalType(rhs.type()))
+                                result = temporalComparisonKeyMicros(lhs) ==
+                                         temporalComparisonKeyMicros(rhs);
+                            else if (isIntegerType(lhs.type()) && isIntegerType(rhs.type()))
+                                result = compareIntegerValues(lhs, rhs) == 0;
+                            else if (isNumericType(lhs.type()) && isNumericType(rhs.type()))
+                                result = coerceToDouble(lhs) == coerceToDouble(rhs);
+                            else
+                                result = lhs.toInt64() == rhs.toInt64();
+                            return Value::makeBoolean(result);
+                        }
+                        if (op == Opcode::SBLR3_NULL_SAFE_EQ)
+                        {
+                            bool result;
+                            if (core::TypeSystem::isString(lhs.type()) ||
+                                core::TypeSystem::isString(rhs.type()))
+                                result = compareStrings(lhs.toString(), rhs.toString()) == 0;
+                            else if (isDecfloatType(lhs.type()) || isDecfloatType(rhs.type()))
+                            {
+                                uint8_t precision =
+                                    (lhs.type() == core::DataType::DECFLOAT34 ||
+                                     rhs.type() == core::DataType::DECFLOAT34)
+                                        ? 34
+                                        : 16;
+                                core::DecFloat lhs_dec = coerceToDecfloat(lhs, precision);
+                                core::DecFloat rhs_dec = coerceToDecfloat(rhs, precision);
+                                result = core::DecFloat::compare(lhs_dec, rhs_dec, nullptr) == 0;
+                            }
+                            else if (lhs.type() == core::DataType::UUID &&
+                                     rhs.type() == core::DataType::UUID)
+                                result = lhs.getUUID() == rhs.getUUID();
+                            else if (isTemporalType(lhs.type()) && isTemporalType(rhs.type()))
+                                result = temporalComparisonKeyMicros(lhs) ==
+                                         temporalComparisonKeyMicros(rhs);
+                            else if (isIntegerType(lhs.type()) && isIntegerType(rhs.type()))
+                                result = compareIntegerValues(lhs, rhs) == 0;
+                            else if (isNumericType(lhs.type()) && isNumericType(rhs.type()))
+                                result = coerceToDouble(lhs) == coerceToDouble(rhs);
+                            else
+                                result = lhs.toInt64() == rhs.toInt64();
+                            return Value::makeBoolean(result);
                         }
                         if (op == Opcode::SBLR3_EXPR_NE)
                         {
-                            return Value::makeBoolean(lhs.toString() != rhs.toString());
+                            bool result;
+                            if (core::TypeSystem::isString(lhs.type()) ||
+                                core::TypeSystem::isString(rhs.type()))
+                                result = compareStrings(lhs.toString(), rhs.toString()) != 0;
+                            else if (isDecfloatType(lhs.type()) || isDecfloatType(rhs.type()))
+                            {
+                                uint8_t precision =
+                                    (lhs.type() == core::DataType::DECFLOAT34 ||
+                                     rhs.type() == core::DataType::DECFLOAT34)
+                                        ? 34
+                                        : 16;
+                                core::DecFloat lhs_dec = coerceToDecfloat(lhs, precision);
+                                core::DecFloat rhs_dec = coerceToDecfloat(rhs, precision);
+                                result = core::DecFloat::compare(lhs_dec, rhs_dec, nullptr) != 0;
+                            }
+                            else if (lhs.type() == core::DataType::UUID &&
+                                     rhs.type() == core::DataType::UUID)
+                                result = lhs.getUUID() != rhs.getUUID();
+                            else if (isTemporalType(lhs.type()) && isTemporalType(rhs.type()))
+                                result = temporalComparisonKeyMicros(lhs) !=
+                                         temporalComparisonKeyMicros(rhs);
+                            else if (isIntegerType(lhs.type()) && isIntegerType(rhs.type()))
+                                result = compareIntegerValues(lhs, rhs) != 0;
+                            else if (isNumericType(lhs.type()) && isNumericType(rhs.type()))
+                                result = coerceToDouble(lhs) != coerceToDouble(rhs);
+                            else
+                                result = lhs.toInt64() != rhs.toInt64();
+                            return Value::makeBoolean(result);
                         }
                         if (op == Opcode::SBLR3_EXPR_LT)
                         {
-                            return Value::makeBoolean(lhs.toDouble() < rhs.toDouble());
+                            bool result;
+                            if (core::TypeSystem::isString(lhs.type()) ||
+                                core::TypeSystem::isString(rhs.type()))
+                                result = compareStrings(lhs.toString(), rhs.toString()) < 0;
+                            else if (isDecfloatType(lhs.type()) || isDecfloatType(rhs.type()))
+                            {
+                                uint8_t precision =
+                                    (lhs.type() == core::DataType::DECFLOAT34 ||
+                                     rhs.type() == core::DataType::DECFLOAT34)
+                                        ? 34
+                                        : 16;
+                                core::DecFloat lhs_dec = coerceToDecfloat(lhs, precision);
+                                core::DecFloat rhs_dec = coerceToDecfloat(rhs, precision);
+                                result = core::DecFloat::compare(lhs_dec, rhs_dec, nullptr) < 0;
+                            }
+                            else if (lhs.type() == core::DataType::UUID &&
+                                     rhs.type() == core::DataType::UUID)
+                                result = compareStrings(lhs.toString(), rhs.toString()) < 0;
+                            else if (isTemporalType(lhs.type()) && isTemporalType(rhs.type()))
+                                result = temporalComparisonKeyMicros(lhs) <
+                                         temporalComparisonKeyMicros(rhs);
+                            else if (isIntegerType(lhs.type()) && isIntegerType(rhs.type()))
+                                result = compareIntegerValues(lhs, rhs) < 0;
+                            else if (isNumericType(lhs.type()) && isNumericType(rhs.type()))
+                                result = coerceToDouble(lhs) < coerceToDouble(rhs);
+                            else
+                                result = lhs.toInt64() < rhs.toInt64();
+                            return Value::makeBoolean(result);
                         }
                         if (op == Opcode::SBLR3_EXPR_LE)
                         {
-                            return Value::makeBoolean(lhs.toDouble() <= rhs.toDouble());
+                            bool result;
+                            if (core::TypeSystem::isString(lhs.type()) ||
+                                core::TypeSystem::isString(rhs.type()))
+                                result = compareStrings(lhs.toString(), rhs.toString()) <= 0;
+                            else if (isDecfloatType(lhs.type()) || isDecfloatType(rhs.type()))
+                            {
+                                uint8_t precision =
+                                    (lhs.type() == core::DataType::DECFLOAT34 ||
+                                     rhs.type() == core::DataType::DECFLOAT34)
+                                        ? 34
+                                        : 16;
+                                core::DecFloat lhs_dec = coerceToDecfloat(lhs, precision);
+                                core::DecFloat rhs_dec = coerceToDecfloat(rhs, precision);
+                                result = core::DecFloat::compare(lhs_dec, rhs_dec, nullptr) <= 0;
+                            }
+                            else if (lhs.type() == core::DataType::UUID &&
+                                     rhs.type() == core::DataType::UUID)
+                                result = compareStrings(lhs.toString(), rhs.toString()) <= 0;
+                            else if (isTemporalType(lhs.type()) && isTemporalType(rhs.type()))
+                                result = temporalComparisonKeyMicros(lhs) <=
+                                         temporalComparisonKeyMicros(rhs);
+                            else if (isIntegerType(lhs.type()) && isIntegerType(rhs.type()))
+                                result = compareIntegerValues(lhs, rhs) <= 0;
+                            else if (isNumericType(lhs.type()) && isNumericType(rhs.type()))
+                                result = coerceToDouble(lhs) <= coerceToDouble(rhs);
+                            else
+                                result = lhs.toInt64() <= rhs.toInt64();
+                            return Value::makeBoolean(result);
                         }
                         if (op == Opcode::SBLR3_EXPR_GT)
                         {
-                            return Value::makeBoolean(lhs.toDouble() > rhs.toDouble());
+                            bool result;
+                            if (core::TypeSystem::isString(lhs.type()) ||
+                                core::TypeSystem::isString(rhs.type()))
+                                result = compareStrings(lhs.toString(), rhs.toString()) > 0;
+                            else if (isDecfloatType(lhs.type()) || isDecfloatType(rhs.type()))
+                            {
+                                uint8_t precision =
+                                    (lhs.type() == core::DataType::DECFLOAT34 ||
+                                     rhs.type() == core::DataType::DECFLOAT34)
+                                        ? 34
+                                        : 16;
+                                core::DecFloat lhs_dec = coerceToDecfloat(lhs, precision);
+                                core::DecFloat rhs_dec = coerceToDecfloat(rhs, precision);
+                                result = core::DecFloat::compare(lhs_dec, rhs_dec, nullptr) > 0;
+                            }
+                            else if (lhs.type() == core::DataType::UUID &&
+                                     rhs.type() == core::DataType::UUID)
+                                result = compareStrings(lhs.toString(), rhs.toString()) > 0;
+                            else if (isTemporalType(lhs.type()) && isTemporalType(rhs.type()))
+                                result = temporalComparisonKeyMicros(lhs) >
+                                         temporalComparisonKeyMicros(rhs);
+                            else if (isIntegerType(lhs.type()) && isIntegerType(rhs.type()))
+                                result = compareIntegerValues(lhs, rhs) > 0;
+                            else if (isNumericType(lhs.type()) && isNumericType(rhs.type()))
+                                result = coerceToDouble(lhs) > coerceToDouble(rhs);
+                            else
+                                result = lhs.toInt64() > rhs.toInt64();
+                            return Value::makeBoolean(result);
                         }
                         if (op == Opcode::SBLR3_EXPR_GE)
                         {
-                            return Value::makeBoolean(lhs.toDouble() >= rhs.toDouble());
+                            bool result;
+                            if (core::TypeSystem::isString(lhs.type()) ||
+                                core::TypeSystem::isString(rhs.type()))
+                                result = compareStrings(lhs.toString(), rhs.toString()) >= 0;
+                            else if (isDecfloatType(lhs.type()) || isDecfloatType(rhs.type()))
+                            {
+                                uint8_t precision =
+                                    (lhs.type() == core::DataType::DECFLOAT34 ||
+                                     rhs.type() == core::DataType::DECFLOAT34)
+                                        ? 34
+                                        : 16;
+                                core::DecFloat lhs_dec = coerceToDecfloat(lhs, precision);
+                                core::DecFloat rhs_dec = coerceToDecfloat(rhs, precision);
+                                result = core::DecFloat::compare(lhs_dec, rhs_dec, nullptr) >= 0;
+                            }
+                            else if (lhs.type() == core::DataType::UUID &&
+                                     rhs.type() == core::DataType::UUID)
+                                result = compareStrings(lhs.toString(), rhs.toString()) >= 0;
+                            else if (isTemporalType(lhs.type()) && isTemporalType(rhs.type()))
+                                result = temporalComparisonKeyMicros(lhs) >=
+                                         temporalComparisonKeyMicros(rhs);
+                            else if (isIntegerType(lhs.type()) && isIntegerType(rhs.type()))
+                                result = compareIntegerValues(lhs, rhs) >= 0;
+                            else if (isNumericType(lhs.type()) && isNumericType(rhs.type()))
+                                result = coerceToDouble(lhs) >= coerceToDouble(rhs);
+                            else
+                                result = lhs.toInt64() >= rhs.toInt64();
+                            return Value::makeBoolean(result);
                         }
                         if (op == Opcode::SBLR3_EXPR_ADD)
                         {
-                            return Value::makeFloat64(lhs.toDouble() + rhs.toDouble());
+                            Value temporal_result;
+                            std::string temporal_error;
+                            if (evaluateTemporalArithmetic(op, lhs, rhs, temporal_result, temporal_error))
+                            {
+                                return temporal_result;
+                            }
+                            if (!temporal_error.empty() &&
+                                (isTemporalType(lhs.type()) || isTemporalType(rhs.type()) ||
+                                 isIntervalType(lhs.type()) || isIntervalType(rhs.type())))
+                            {
+                                error(temporal_error);
+                            }
+                            return Value::makeFloat64(coerceToDouble(lhs) +
+                                                      coerceToDouble(rhs));
                         }
                         if (op == Opcode::SBLR3_EXPR_SUBTRACT)
                         {
-                            return Value::makeFloat64(lhs.toDouble() - rhs.toDouble());
+                            Value temporal_result;
+                            std::string temporal_error;
+                            if (evaluateTemporalArithmetic(op, lhs, rhs, temporal_result, temporal_error))
+                            {
+                                return temporal_result;
+                            }
+                            if (!temporal_error.empty() &&
+                                (isTemporalType(lhs.type()) || isTemporalType(rhs.type()) ||
+                                 isIntervalType(lhs.type()) || isIntervalType(rhs.type())))
+                            {
+                                error(temporal_error);
+                            }
+                            return Value::makeFloat64(coerceToDouble(lhs) -
+                                                      coerceToDouble(rhs));
                         }
                         if (op == Opcode::SBLR3_EXPR_MULTIPLY)
                         {
-                            return Value::makeFloat64(lhs.toDouble() * rhs.toDouble());
+                            return Value::makeFloat64(coerceToDouble(lhs) *
+                                                      coerceToDouble(rhs));
                         }
                         if (op == Opcode::SBLR3_EXPR_DIVIDE)
                         {
-                            if (rhs.toDouble() == 0.0)
+                            const double rhs_value = coerceToDouble(rhs);
+                            if (rhs_value == 0.0)
                             {
                                 error("Division by zero");
                             }
-                            return Value::makeFloat64(lhs.toDouble() / rhs.toDouble());
+                            return Value::makeFloat64(coerceToDouble(lhs) / rhs_value);
                         }
                         if (op == Opcode::SBLR3_EXPR_DIV_INT)
                         {
@@ -41213,6 +41460,39 @@ namespace scratchbird
                                 error("Modulo by zero");
                             }
                             return Value::makeInt64(lhs.toInt64() % rhs.toInt64());
+                        }
+                        if (op == Opcode::SBLR3_BIT_AND)
+                        {
+                            return Value::makeInt64(lhs.toInt64() & rhs.toInt64());
+                        }
+                        if (op == Opcode::SBLR3_BIT_OR)
+                        {
+                            return Value::makeInt64(lhs.toInt64() | rhs.toInt64());
+                        }
+                        if (op == Opcode::SBLR3_BIT_XOR)
+                        {
+                            return Value::makeInt64(lhs.toInt64() ^ rhs.toInt64());
+                        }
+                        if (op == Opcode::SBLR3_BIT_SHIFT_LEFT)
+                        {
+                            int64_t shift = rhs.toInt64();
+                            if (shift < 0 || shift >= 64)
+                            {
+                                error("BIT_SHIFT_LEFT shift count out of range");
+                            }
+                            uint64_t base = static_cast<uint64_t>(lhs.toInt64());
+                            return Value::makeInt64(
+                                static_cast<int64_t>(base << static_cast<uint32_t>(shift)));
+                        }
+                        if (op == Opcode::SBLR3_BIT_SHIFT_RIGHT)
+                        {
+                            int64_t shift = rhs.toInt64();
+                            if (shift < 0 || shift >= 64)
+                            {
+                                error("BIT_SHIFT_RIGHT shift count out of range");
+                            }
+                            return Value::makeInt64(
+                                lhs.toInt64() >> static_cast<uint32_t>(shift));
                         }
                         return Value::makeNull();
                     }
@@ -46794,6 +47074,2058 @@ namespace scratchbird
                 return fail("COPY direction not supported");
             };
 
+            auto executeSimpleTxnOpcode =
+                [&](scratchbird::sblr::v3::Opcode opcode,
+                    const scratchbird::sblr::v3::Value::Object& payload) -> ExecutionResult {
+                switch (opcode)
+                {
+                    case scratchbird::sblr::v3::Opcode::SBLR3_COMMIT: {
+                        executeCommitFlags(sblr::CommitRollbackFlags::AND_NO_CHAIN);
+                        return ExecutionResult();
+                    }
+                    case scratchbird::sblr::v3::Opcode::SBLR3_PREPARE_TRANSACTION: {
+                        if (!conn_ctx_)
+                        {
+                            return ExecutionResult("No connection context available");
+                        }
+                        std::string gid;
+                        if (!getString(payload, "name", gid) || gid.empty())
+                        {
+                            return ExecutionResult("PREPARE TRANSACTION requires a GID");
+                        }
+                        core::ErrorContext err_ctx;
+                        auto status = conn_ctx_->prepareTransaction(gid, &err_ctx);
+                        if (status != core::Status::OK)
+                        {
+                            std::string err_msg = "Prepare transaction failed";
+                            if (!err_ctx.message.empty())
+                            {
+                                err_msg += ": " + err_ctx.message;
+                            }
+                            return ExecutionResult(err_msg);
+                        }
+                        conn_ctx_->setAutocommitSuspended(false);
+                        return ExecutionResult();
+                    }
+                    case scratchbird::sblr::v3::Opcode::SBLR3_COMMIT_PREPARED: {
+                        std::string gid;
+                        if (!getString(payload, "name", gid) || gid.empty())
+                        {
+                            return ExecutionResult("COMMIT PREPARED requires a GID");
+                        }
+                        auto txn_manager = db_->transaction_manager();
+                        if (!txn_manager)
+                        {
+                            return ExecutionResult("Transaction manager not available");
+                        }
+                        core::ErrorContext err_ctx;
+                        auto status = txn_manager->commitPreparedTransaction(gid, &err_ctx);
+                        if (status != core::Status::OK)
+                        {
+                            std::string err_msg = "Commit prepared transaction failed";
+                            if (!err_ctx.message.empty())
+                            {
+                                err_msg += ": " + err_ctx.message;
+                            }
+                            return ExecutionResult(err_msg);
+                        }
+                        return ExecutionResult();
+                    }
+                    case scratchbird::sblr::v3::Opcode::SBLR3_COMMIT_RETAINING: {
+                        executeCommitFlags(sblr::CommitRollbackFlags::RETAINING);
+                        return ExecutionResult();
+                    }
+                    case scratchbird::sblr::v3::Opcode::SBLR3_ROLLBACK: {
+                        executeRollbackFlags(sblr::CommitRollbackFlags::AND_NO_CHAIN);
+                        return ExecutionResult();
+                    }
+                    case scratchbird::sblr::v3::Opcode::SBLR3_ROLLBACK_PREPARED: {
+                        std::string gid;
+                        if (!getString(payload, "name", gid) || gid.empty())
+                        {
+                            return ExecutionResult("ROLLBACK PREPARED requires a GID");
+                        }
+                        auto txn_manager = db_->transaction_manager();
+                        if (!txn_manager)
+                        {
+                            return ExecutionResult("Transaction manager not available");
+                        }
+                        core::ErrorContext err_ctx;
+                        auto status = txn_manager->rollbackPreparedTransaction(gid, &err_ctx);
+                        if (status != core::Status::OK)
+                        {
+                            std::string err_msg = "Rollback prepared transaction failed";
+                            if (!err_ctx.message.empty())
+                            {
+                                err_msg += ": " + err_ctx.message;
+                            }
+                            return ExecutionResult(err_msg);
+                        }
+                        return ExecutionResult();
+                    }
+                    case scratchbird::sblr::v3::Opcode::SBLR3_ROLLBACK_RETAINING: {
+                        executeRollbackFlags(sblr::CommitRollbackFlags::RETAINING);
+                        return ExecutionResult();
+                    }
+                    case scratchbird::sblr::v3::Opcode::SBLR3_SAVEPOINT: {
+                        if (!conn_ctx_)
+                        {
+                            return ExecutionResult("No connection context available");
+                        }
+                        std::string name;
+                        if (!getString(payload, "name", name) || name.empty())
+                        {
+                            return ExecutionResult("SAVEPOINT requires a name");
+                        }
+                        core::ErrorContext err_ctx;
+                        auto status = conn_ctx_->createSavepoint(name, &err_ctx);
+                        if (status != core::Status::OK)
+                        {
+                            return ExecutionResult(err_ctx.message.empty()
+                                                       ? "SAVEPOINT failed"
+                                                       : "SAVEPOINT failed: " + err_ctx.message);
+                        }
+                        return ExecutionResult();
+                    }
+                    case scratchbird::sblr::v3::Opcode::SBLR3_RELEASE_SAVEPOINT: {
+                        if (!conn_ctx_)
+                        {
+                            return ExecutionResult("No connection context available");
+                        }
+                        std::string name;
+                        if (!getString(payload, "name", name) || name.empty())
+                        {
+                            return ExecutionResult("RELEASE SAVEPOINT requires a name");
+                        }
+                        core::ErrorContext err_ctx;
+                        auto status = conn_ctx_->releaseSavepoint(name, &err_ctx);
+                        if (status != core::Status::OK)
+                        {
+                            return ExecutionResult(err_ctx.message.empty()
+                                                       ? "RELEASE SAVEPOINT failed"
+                                                       : "RELEASE SAVEPOINT failed: " + err_ctx.message);
+                        }
+                        return ExecutionResult();
+                    }
+                    case scratchbird::sblr::v3::Opcode::SBLR3_ROLLBACK_TO_SAVEPOINT: {
+                        if (!conn_ctx_)
+                        {
+                            return ExecutionResult("No connection context available");
+                        }
+                        std::string name;
+                        if (!getString(payload, "name", name) || name.empty())
+                        {
+                            return ExecutionResult("ROLLBACK TO SAVEPOINT requires a name");
+                        }
+                        core::ErrorContext err_ctx;
+                        auto status = conn_ctx_->rollbackToSavepoint(name, &err_ctx);
+                        if (status != core::Status::OK)
+                        {
+                            return ExecutionResult(err_ctx.message.empty()
+                                                       ? "ROLLBACK TO SAVEPOINT failed"
+                                                       : "ROLLBACK TO SAVEPOINT failed: " + err_ctx.message);
+                        }
+                        return ExecutionResult();
+                    }
+                    default:
+                        return ExecutionResult("Unsupported transaction opcode");
+                }
+            };
+
+            auto executeSessionControlOpcode =
+                [&](scratchbird::sblr::v3::Opcode opcode,
+                    const scratchbird::sblr::v3::Value::Object& payload) -> ExecutionResult {
+                switch (opcode)
+                {
+                    case scratchbird::sblr::v3::Opcode::SBLR3_SET_AUTOCOMMIT: {
+                        if (!conn_ctx_)
+                        {
+                            return ExecutionResult("No connection context available");
+                        }
+                        uint64_t action = 1;
+                        getU64(payload, "action", action);
+                        if (action != 1)
+                        {
+                            return ExecutionResult("SET AUTOCOMMIT only supports SET action");
+                        }
+                        auto it_value = payload.find("value");
+                        if (it_value == payload.end() || it_value->second.isNull())
+                        {
+                            return ExecutionResult("SET AUTOCOMMIT requires a value");
+                        }
+                        Value v = Value::makeNull();
+                        scratchbird::sblr::v3::Instruction val_inst;
+                        if (getInstrFromValue(it_value->second, val_inst))
+                        {
+                            v = evalExpr(val_inst);
+                        }
+                        else
+                        {
+                            const auto &raw = it_value->second.data;
+                            if (auto b = std::get_if<bool>(&raw))
+                            {
+                                v = Value::makeBool(*b);
+                            }
+                            else if (auto i = std::get_if<int64_t>(&raw))
+                            {
+                                v = Value::makeInt64(*i);
+                            }
+                            else if (auto u = std::get_if<uint64_t>(&raw))
+                            {
+                                v = Value::makeUInt64(*u);
+                            }
+                            else if (auto d = std::get_if<double>(&raw))
+                            {
+                                v = Value::makeFloat64(*d);
+                            }
+                            else
+                            {
+                                return ExecutionResult("SET AUTOCOMMIT value invalid");
+                            }
+                        }
+                        if (v.isNull())
+                        {
+                            return ExecutionResult("SET AUTOCOMMIT value cannot be NULL");
+                        }
+                        bool enabled = false;
+                        if (v.type() == core::DataType::BOOLEAN)
+                        {
+                            enabled = v.getBool();
+                        }
+                        else if (isNumericType(v.type()))
+                        {
+                            enabled = (v.toInt64() != 0);
+                        }
+                        else
+                        {
+                            return ExecutionResult("SET AUTOCOMMIT expects boolean value");
+                        }
+                        conn_ctx_->setAutocommitMode(enabled);
+                        return ExecutionResult();
+                    }
+                    case scratchbird::sblr::v3::Opcode::SBLR3_SET_ROLE: {
+                        if (!conn_ctx_)
+                        {
+                            return ExecutionResult("No connection context available");
+                        }
+                        uint64_t action = 1;
+                        getU64(payload, "action", action);
+                        bool is_reset = (action == 3);
+
+                        auto handle_role_switch_policy = [&]() -> ExecutionResult {
+                            if (!conn_ctx_->autocommitSuspended())
+                            {
+                                return ExecutionResult();
+                            }
+                            switch (conn_ctx_->roleSwitchPolicy())
+                            {
+                                case core::ConnectionContext::RoleSwitchPolicy::COMMIT: {
+                                    core::ErrorContext err_ctx;
+                                    auto status = conn_ctx_->commit(&err_ctx);
+                                    if (status != core::Status::OK)
+                                    {
+                                        std::string err_msg = "Commit failed";
+                                        if (!err_ctx.message.empty())
+                                        {
+                                            err_msg += ": " + err_ctx.message;
+                                        }
+                                        return ExecutionResult(err_msg);
+                                    }
+                                    conn_ctx_->setAutocommitSuspended(false);
+                                    break;
+                                }
+                                case core::ConnectionContext::RoleSwitchPolicy::ROLLBACK: {
+                                    core::ErrorContext err_ctx;
+                                    auto status = conn_ctx_->rollback(&err_ctx);
+                                    if (status != core::Status::OK)
+                                    {
+                                        std::string err_msg = "Rollback failed";
+                                        if (!err_ctx.message.empty())
+                                        {
+                                            err_msg += ": " + err_ctx.message;
+                                        }
+                                        return ExecutionResult(err_msg);
+                                    }
+                                    conn_ctx_->setAutocommitSuspended(false);
+                                    break;
+                                }
+                                case core::ConnectionContext::RoleSwitchPolicy::ERROR:
+                                    return ExecutionResult("SET ROLE requires COMMIT or ROLLBACK before switching roles");
+                                case core::ConnectionContext::RoleSwitchPolicy::DEFER:
+                                default:
+                                    break;
+                            }
+                            return ExecutionResult();
+                        };
+
+                        std::string role_name;
+                        auto it_value = payload.find("value");
+                        if (!is_reset && it_value != payload.end() && !it_value->second.isNull())
+                        {
+                            Value v = Value::makeNull();
+                            scratchbird::sblr::v3::Instruction val_inst;
+                            if (getInstrFromValue(it_value->second, val_inst))
+                            {
+                                v = evalExpr(val_inst);
+                            }
+                            else
+                            {
+                                const auto &raw = it_value->second.data;
+                                if (auto s = std::get_if<std::string>(&raw))
+                                {
+                                    v = Value::makeVarchar(*s);
+                                }
+                                else if (auto b = std::get_if<bool>(&raw))
+                                {
+                                    v = Value::makeBool(*b);
+                                }
+                                else if (auto i = std::get_if<int64_t>(&raw))
+                                {
+                                    v = Value::makeInt64(*i);
+                                }
+                                else if (auto u = std::get_if<uint64_t>(&raw))
+                                {
+                                    v = Value::makeUInt64(*u);
+                                }
+                            }
+
+                            if (v.isNull())
+                            {
+                                is_reset = true;
+                            }
+                            else
+                            {
+                                role_name = v.toString();
+                            }
+                        }
+
+                        ExecutionResult policy_result = handle_role_switch_policy();
+                        if (!policy_result.success())
+                        {
+                            return policy_result;
+                        }
+
+                        if (is_reset || role_name.empty())
+                        {
+                            conn_ctx_->clearActiveRole();
+                            core::ID schema_id{};
+                            if (resolveUserSchemaId(db_->catalog_manager(),
+                                                    conn_ctx_->getCurrentUserId(),
+                                                    schema_id))
+                            {
+                                conn_ctx_->setCurrentSchemaId(schema_id);
+                                core::CatalogManager::SchemaInfo schema_info;
+                                core::ErrorContext err_ctx;
+                                if (db_->catalog_manager()->getSchema(schema_id, schema_info, &err_ctx) ==
+                                    core::Status::OK)
+                                {
+                                    conn_ctx_->set_current_schema(schema_info.schema_name);
+                                    conn_ctx_->set_search_path({schema_info.schema_name});
+                                }
+                            }
+                            return ExecutionResult();
+                        }
+
+                        core::CatalogManager::RoleInfo role_info;
+                        core::ErrorContext err_ctx;
+                        auto get_role = db_->catalog_manager()->getRoleByName(role_name, role_info, &err_ctx);
+                        if (get_role != core::Status::OK)
+                        {
+                            return ExecutionResult("Role '" + role_name + "' not found");
+                        }
+
+                        const core::ID& current_user = conn_ctx_->getCurrentUserId();
+                        std::vector<core::CatalogManager::RoleMembershipInfo> user_roles;
+                        auto check_status = db_->catalog_manager()->getUserRoles(
+                            current_user, user_roles, &err_ctx);
+                        if (check_status != core::Status::OK)
+                        {
+                            return ExecutionResult("Failed to check role membership for user");
+                        }
+
+                        bool has_role = false;
+                        for (const auto& membership : user_roles)
+                        {
+                            if (membership.role_id == role_info.role_id)
+                            {
+                                has_role = true;
+                                break;
+                            }
+                        }
+                        if (!has_role)
+                        {
+                            return ExecutionResult("Permission denied: Role '" + role_name + "' not granted to current user");
+                        }
+
+                        conn_ctx_->setActiveRole(role_info.role_id);
+
+                        core::ID schema_id = role_info.default_schema_id;
+                        if (isZeroUuid(schema_id))
+                        {
+                            resolveUserSchemaId(db_->catalog_manager(), current_user, schema_id);
+                        }
+                        if (!isZeroUuid(schema_id))
+                        {
+                            conn_ctx_->setCurrentSchemaId(schema_id);
+                            core::CatalogManager::SchemaInfo schema_info;
+                            if (db_->catalog_manager()->getSchema(schema_id, schema_info, &err_ctx) ==
+                                core::Status::OK)
+                            {
+                                conn_ctx_->set_current_schema(schema_info.schema_name);
+                                conn_ctx_->set_search_path({schema_info.schema_name});
+                            }
+                        }
+                        return ExecutionResult();
+                    }
+                    default:
+                        return ExecutionResult("Unsupported session control opcode");
+                }
+            };
+
+            auto executeRenameMoveOpcode =
+                [&](scratchbird::sblr::v3::Opcode opcode,
+                    const scratchbird::sblr::v3::Value::Object& payload) -> ExecutionResult {
+                if (!db_ || !db_->catalog_manager())
+                {
+                    return ExecutionResult("Catalog manager not available");
+                }
+                uint64_t type_u = 0;
+                if (!getU64(payload, "object_type", type_u))
+                {
+                    return ExecutionResult("V3 rename/move missing object_type");
+                }
+                std::string object_path_str;
+                if (!getSchemaPathString(payload, "object_path", object_path_str) ||
+                    object_path_str.empty())
+                {
+                    return ExecutionResult("V3 rename/move missing object_path");
+                }
+
+                core::ErrorContext err_ctx;
+                core::ObjectPath object_path;
+                auto path_status = buildObjectPathFromName(object_path_str, object_path, &err_ctx);
+                if (path_status != core::Status::OK)
+                {
+                    return ExecutionResult(err_ctx.message.empty()
+                                               ? "Invalid object path"
+                                               : "Invalid object path: " + err_ctx.message);
+                }
+
+                core::CatalogManager::ObjectType object_type =
+                    static_cast<core::CatalogManager::ObjectType>(static_cast<uint8_t>(type_u));
+                core::CatalogManager::ResolveOptions opts;
+                opts.allow_search_path = false;
+                core::CatalogManager::ObjectType resolved_type =
+                    core::CatalogManager::ObjectType::UNKNOWN;
+                core::ID object_id{};
+                auto resolve_status = db_->catalog_manager()->resolveObjectPath(
+                    object_path, object_type, opts, object_id, resolved_type, &err_ctx);
+                if (resolve_status != core::Status::OK)
+                {
+                    return ExecutionResult(err_ctx.message.empty()
+                                               ? "Failed to resolve object"
+                                               : "Failed to resolve object: " + err_ctx.message);
+                }
+                object_type = resolved_type;
+
+                std::string new_name;
+                if (!getString(payload, "new_name", new_name) || new_name.empty())
+                {
+                    return ExecutionResult("V3 rename/move missing new_name");
+                }
+
+                if (opcode == scratchbird::sblr::v3::Opcode::SBLR3_RENAME_OBJECT)
+                {
+                    auto status = db_->catalog_manager()->renameObject(object_type, object_id,
+                                                                       new_name, &err_ctx);
+                    if (status != core::Status::OK)
+                    {
+                        return ExecutionResult(err_ctx.message.empty()
+                                                   ? "Failed to rename object"
+                                                   : "Failed to rename object: " + err_ctx.message);
+                    }
+                    recordObjectDefinition(object_type, object_id);
+                    return ExecutionResult();
+                }
+
+                auto split_path = [&](const std::string& name) -> std::vector<std::string> {
+                    std::vector<std::string> parts;
+                    std::string current;
+                    for (char ch : name)
+                    {
+                        if (ch == '.')
+                        {
+                            if (!current.empty())
+                            {
+                                parts.push_back(current);
+                                current.clear();
+                            }
+                        }
+                        else
+                        {
+                            current.push_back(ch);
+                        }
+                    }
+                    if (!current.empty())
+                    {
+                        parts.push_back(current);
+                    }
+                    return parts;
+                };
+
+                std::vector<std::string> parts = split_path(new_name);
+                if (parts.empty())
+                {
+                    return ExecutionResult("Invalid target schema");
+                }
+                std::string schema_name;
+                std::optional<std::string> rename_opt;
+                if (parts.size() == 1)
+                {
+                    schema_name = parts[0];
+                }
+                else
+                {
+                    schema_name.reserve(new_name.size());
+                    for (size_t i = 0; i + 1 < parts.size(); ++i)
+                    {
+                        if (i > 0)
+                        {
+                            schema_name.push_back('.');
+                        }
+                        schema_name += parts[i];
+                    }
+                    rename_opt = parts.back();
+                }
+
+                core::ObjectPath target_schema_path;
+                path_status = buildObjectPathFromName(schema_name, target_schema_path, &err_ctx);
+                if (path_status != core::Status::OK)
+                {
+                    return ExecutionResult(err_ctx.message.empty()
+                                               ? "Invalid target schema"
+                                               : "Invalid target schema: " + err_ctx.message);
+                }
+
+                core::ID target_schema_id{};
+                resolve_status = db_->catalog_manager()->resolveObjectPath(
+                    target_schema_path, core::CatalogManager::ObjectType::SCHEMA,
+                    opts, target_schema_id, resolved_type, &err_ctx);
+                if (resolve_status != core::Status::OK)
+                {
+                    return ExecutionResult(err_ctx.message.empty()
+                                               ? "Failed to resolve target schema"
+                                               : "Failed to resolve target schema: " + err_ctx.message);
+                }
+
+                auto status = db_->catalog_manager()->moveObject(object_type, object_id,
+                                                                 target_schema_id, rename_opt,
+                                                                 &err_ctx);
+                if (status != core::Status::OK)
+                {
+                    return ExecutionResult(err_ctx.message.empty()
+                                               ? "Failed to move object"
+                                               : "Failed to move object: " + err_ctx.message);
+                }
+                recordObjectDefinition(object_type, object_id);
+                return ExecutionResult();
+            };
+
+            auto executeStartTransactionOpcode =
+                [&](const scratchbird::sblr::v3::Value::Object& payload) -> ExecutionResult {
+                if (!conn_ctx_)
+                {
+                    return ExecutionResult("No connection context available");
+                }
+                core::IsolationLevel isolation = conn_ctx_->getIsolationLevel();
+                core::ReadCommittedMode read_committed_mode = conn_ctx_->getReadCommittedMode();
+                bool read_only = conn_ctx_->isReadOnly();
+                bool wait_for_locks = conn_ctx_->getWaitForLocks();
+                uint32_t lock_timeout = conn_ctx_->getLockTimeout();
+
+                auto action = sblr::TransactionConflictAction::DEFAULT;
+                bool has_conflict_error_code = false;
+                int32_t conflict_error_code = 0;
+
+                auto getOptU8 = [&](const std::string& key, uint8_t& out) -> bool {
+                    auto it = payload.find(key);
+                    if (it == payload.end() || it->second.isNull())
+                    {
+                        return false;
+                    }
+                    if (auto v = std::get_if<uint64_t>(&it->second.data))
+                    {
+                        out = static_cast<uint8_t>(*v);
+                        return true;
+                    }
+                    if (auto v = std::get_if<int64_t>(&it->second.data))
+                    {
+                        out = static_cast<uint8_t>(*v);
+                        return true;
+                    }
+                    return false;
+                };
+                auto getOptU32 = [&](const std::string& key, uint32_t& out) -> bool {
+                    auto it = payload.find(key);
+                    if (it == payload.end() || it->second.isNull())
+                    {
+                        return false;
+                    }
+                    if (auto v = std::get_if<uint64_t>(&it->second.data))
+                    {
+                        out = static_cast<uint32_t>(*v);
+                        return true;
+                    }
+                    if (auto v = std::get_if<int64_t>(&it->second.data))
+                    {
+                        out = static_cast<uint32_t>(*v);
+                        return true;
+                    }
+                    return false;
+                };
+                auto getOptI32 = [&](const std::string& key, int32_t& out) -> bool {
+                    auto it = payload.find(key);
+                    if (it == payload.end() || it->second.isNull())
+                    {
+                        return false;
+                    }
+                    if (auto v = std::get_if<int64_t>(&it->second.data))
+                    {
+                        out = static_cast<int32_t>(*v);
+                        return true;
+                    }
+                    if (auto v = std::get_if<uint64_t>(&it->second.data))
+                    {
+                        out = static_cast<int32_t>(*v);
+                        return true;
+                    }
+                    return false;
+                };
+                auto getOptBool = [&](const std::string& key, bool& out) -> bool {
+                    auto it = payload.find(key);
+                    if (it == payload.end() || it->second.isNull())
+                    {
+                        return false;
+                    }
+                    if (auto v = std::get_if<bool>(&it->second.data))
+                    {
+                        out = *v;
+                        return true;
+                    }
+                    return false;
+                };
+
+                uint8_t isolation_byte = 0;
+                if (getOptU8("isolation", isolation_byte))
+                {
+                    switch (isolation_byte)
+                    {
+                        case static_cast<uint8_t>(core::IsolationLevel::READ_COMMITTED):
+                        case static_cast<uint8_t>(core::IsolationLevel::READ_COMMITTED_READ_CONSISTENCY):
+                        case static_cast<uint8_t>(core::IsolationLevel::SNAPSHOT):
+                        case static_cast<uint8_t>(core::IsolationLevel::SNAPSHOT_TABLE_STABILITY):
+                            isolation = static_cast<core::IsolationLevel>(isolation_byte);
+                            break;
+                        default:
+                            return ExecutionResult("Unknown isolation level: " +
+                                                   std::to_string(isolation_byte));
+                    }
+                }
+
+                uint8_t rc_mode_byte = 0;
+                if (getOptU8("read_committed_mode", rc_mode_byte))
+                {
+                    switch (rc_mode_byte)
+                    {
+                        case static_cast<uint8_t>(core::ReadCommittedMode::DEFAULT):
+                        case static_cast<uint8_t>(core::ReadCommittedMode::READ_CONSISTENCY):
+                        case static_cast<uint8_t>(core::ReadCommittedMode::RECORD_VERSION):
+                        case static_cast<uint8_t>(core::ReadCommittedMode::NO_RECORD_VERSION):
+                            read_committed_mode =
+                                static_cast<core::ReadCommittedMode>(rc_mode_byte);
+                            break;
+                        default:
+                            return ExecutionResult("Unknown read committed mode: " +
+                                                   std::to_string(rc_mode_byte));
+                    }
+
+                    if (isolation != core::IsolationLevel::READ_COMMITTED &&
+                        isolation != core::IsolationLevel::READ_COMMITTED_READ_CONSISTENCY)
+                    {
+                        return ExecutionResult(
+                            "READ COMMITTED mode specified without READ COMMITTED isolation");
+                    }
+                }
+
+                uint8_t access_mode = 0;
+                if (getOptU8("access_mode", access_mode))
+                {
+                    if (access_mode == 0)
+                    {
+                        read_only = false;
+                    }
+                    else if (access_mode == 1)
+                    {
+                        read_only = true;
+                    }
+                    else
+                    {
+                        return ExecutionResult("Unknown access mode: " +
+                                               std::to_string(access_mode));
+                    }
+                }
+
+                uint8_t wait_mode = 0;
+                if (getOptU8("wait_mode", wait_mode))
+                {
+                    if (wait_mode == 0)
+                    {
+                        wait_for_locks = false;
+                    }
+                    else if (wait_mode == 1)
+                    {
+                        wait_for_locks = true;
+                    }
+                    else
+                    {
+                        return ExecutionResult("Unknown wait mode: " +
+                                               std::to_string(wait_mode));
+                    }
+                }
+
+                (void)getOptU32("lock_timeout", lock_timeout);
+
+                bool deferrable = false;
+                getOptBool("deferrable", deferrable);
+
+                uint8_t autocommit_mode = 0;
+                if (getOptU8("autocommit_mode", autocommit_mode))
+                {
+                    if (autocommit_mode == static_cast<uint8_t>(sblr::AutocommitMode::ON))
+                    {
+                        conn_ctx_->setAutocommitMode(true);
+                    }
+                    else if (autocommit_mode == static_cast<uint8_t>(sblr::AutocommitMode::OFF))
+                    {
+                        conn_ctx_->setAutocommitMode(false);
+                    }
+                }
+
+                uint8_t conflict_action_byte = 0;
+                if (getOptU8("conflict_action", conflict_action_byte))
+                {
+                    action = static_cast<sblr::TransactionConflictAction>(conflict_action_byte);
+                }
+                if (getOptI32("conflict_error_code", conflict_error_code))
+                {
+                    has_conflict_error_code = true;
+                }
+
+                (void)deferrable; // reserved for future use
+
+                if (action == sblr::TransactionConflictAction::DEFAULT)
+                {
+                    action = sblr::TransactionConflictAction::ROLLBACK;
+                }
+
+                if (action != sblr::TransactionConflictAction::COMMIT &&
+                    action != sblr::TransactionConflictAction::ROLLBACK &&
+                    action != sblr::TransactionConflictAction::ERROR &&
+                    action != sblr::TransactionConflictAction::KEEP)
+                {
+                    return ExecutionResult("Unknown transaction conflict action");
+                }
+
+                if (action == sblr::TransactionConflictAction::ERROR)
+                {
+                    std::string msg = "Transaction conflict: active transaction";
+                    if (has_conflict_error_code)
+                    {
+                        msg += " (error_code=" + std::to_string(conflict_error_code) + ")";
+                    }
+                    return ExecutionResult(msg);
+                }
+
+                if (action == sblr::TransactionConflictAction::KEEP)
+                {
+                    return ExecutionResult();
+                }
+
+                conn_ctx_->setWaitForLocks(wait_for_locks);
+                conn_ctx_->setLockTimeout(lock_timeout);
+                conn_ctx_->setReadCommittedMode(read_committed_mode);
+
+                if (read_committed_mode == core::ReadCommittedMode::READ_CONSISTENCY)
+                {
+                    isolation = core::IsolationLevel::READ_COMMITTED_READ_CONSISTENCY;
+                }
+                else if (read_committed_mode != core::ReadCommittedMode::DEFAULT &&
+                         isolation == core::IsolationLevel::READ_COMMITTED_READ_CONSISTENCY)
+                {
+                    isolation = core::IsolationLevel::READ_COMMITTED;
+                }
+
+                std::vector<core::ConnectionContext::TableReservation> reservations;
+                auto it_res = payload.find("reservations");
+                if (it_res != payload.end() && !it_res->second.isNull())
+                {
+                    if (auto list = std::get_if<scratchbird::sblr::v3::Value::List>(
+                            &it_res->second.data))
+                    {
+                        reservations.reserve(list->size());
+                        for (const auto& item : *list)
+                        {
+                            const auto* obj =
+                                std::get_if<scratchbird::sblr::v3::Value::Object>(&item.data);
+                            if (!obj)
+                            {
+                                return ExecutionResult("Invalid table reservation payload");
+                            }
+                            std::string table_name;
+                            uint64_t lock_mode_val = 0;
+                            bool for_write = false;
+                            if (!getString(*obj, "table_name", table_name))
+                            {
+                                return ExecutionResult("Table reservation missing table_name");
+                            }
+                            if (!getU64(*obj, "lock_mode", lock_mode_val))
+                            {
+                                return ExecutionResult("Table reservation missing lock_mode");
+                            }
+                            getBool(*obj, "for_write", for_write);
+                            core::TableLockMode lock_mode = (lock_mode_val == 0)
+                                ? core::TableLockMode::SHARED
+                                : core::TableLockMode::PROTECTED;
+                            reservations.push_back({core::ID{}, table_name, lock_mode, for_write});
+                        }
+                    }
+                }
+
+                if (!reservations.empty())
+                {
+                    core::ErrorContext err_ctx;
+                    auto status = conn_ctx_->reserveTables(reservations, &err_ctx);
+                    if (status != core::Status::OK)
+                    {
+                        std::string err_msg = "Failed to reserve tables";
+                        if (!err_ctx.message.empty())
+                        {
+                            err_msg += ": " + err_ctx.message;
+                        }
+                        return ExecutionResult(err_msg);
+                    }
+                }
+
+                core::ErrorContext err_ctx;
+                auto status = conn_ctx_->startTransaction(read_only,
+                                                          isolation,
+                                                          read_committed_mode,
+                                                          action == sblr::TransactionConflictAction::COMMIT,
+                                                          &err_ctx);
+                if (status != core::Status::OK)
+                {
+                    return ExecutionResult(err_ctx.message.empty()
+                                               ? "START TRANSACTION failed"
+                                               : "START TRANSACTION failed: " + err_ctx.message);
+                }
+
+                if (action == sblr::TransactionConflictAction::ROLLBACK)
+                {
+                    status = conn_ctx_->rollback(&err_ctx);
+                    if (status != core::Status::OK)
+                    {
+                        return ExecutionResult(err_ctx.message.empty()
+                                                   ? "ROLLBACK failed"
+                                                   : "ROLLBACK failed: " + err_ctx.message);
+                    }
+                }
+
+                conn_ctx_->setAutocommitSuspended(true);
+                return ExecutionResult();
+            };
+
+            auto executePsqlRuntimeOpcode =
+                [&](scratchbird::sblr::v3::Opcode opcode,
+                    const scratchbird::sblr::v3::Value::Object& payload) -> ExecutionResult {
+                switch (opcode)
+                {
+                    case scratchbird::sblr::v3::Opcode::SBLR3_RETURN: {
+                        auto it_val = payload.find("value");
+                        if (it_val != payload.end())
+                        {
+                            scratchbird::sblr::v3::Instruction vinst;
+                            if (getInstrFromValue(it_val->second, vinst))
+                            {
+                                return_value_ = evalExpr(vinst);
+                            }
+                        }
+                        return_requested_ = true;
+                        return ExecutionResult();
+                    }
+                    case scratchbird::sblr::v3::Opcode::SBLR3_SUSPEND: {
+                        if (!psql_output_active_ || psql_output_vars_.empty())
+                        {
+                            return ExecutionResult("SUSPEND requires output variables");
+                        }
+                        if (!current_result_set_)
+                        {
+                            current_result_set_ = std::make_unique<ResultSet>();
+                            for (size_t i = 0; i < psql_output_vars_.size(); ++i)
+                            {
+                                core::DataType type = core::DataType::UNKNOWN;
+                                if (i < psql_output_types_.size())
+                                {
+                                    type = psql_output_types_[i];
+                                }
+                                current_result_set_->addColumn(psql_output_vars_[i], type);
+                            }
+                        }
+                        std::vector<Value> row;
+                        row.reserve(psql_output_vars_.size());
+                        for (const auto& name : psql_output_vars_)
+                        {
+                            try
+                            {
+                                row.push_back(variable_stack_->getVariable(name));
+                            }
+                            catch (...)
+                            {
+                                row.push_back(Value());
+                            }
+                        }
+                        current_result_set_->addRow(std::move(row));
+                        return ExecutionResult();
+                    }
+                    case scratchbird::sblr::v3::Opcode::SBLR3_RAISE: {
+                        std::string sqlstate;
+                        std::string message;
+                        auto it_sqlstate = payload.find("sqlstate");
+                        if (it_sqlstate != payload.end())
+                        {
+                            if (auto s = std::get_if<std::string>(&it_sqlstate->second.data))
+                            {
+                                sqlstate = *s;
+                            }
+                        }
+                        auto it_msg = payload.find("message");
+                        if (it_msg != payload.end())
+                        {
+                            if (auto s = std::get_if<std::string>(&it_msg->second.data))
+                            {
+                                message = *s;
+                            }
+                        }
+                        std::vector<Value> params;
+                        auto it_params = payload.find("params");
+                        if (it_params != payload.end())
+                        {
+                            if (const auto* list = std::get_if<scratchbird::sblr::v3::Value::List>(&it_params->second.data))
+                            {
+                                for (const auto& entry : *list)
+                                {
+                                    scratchbird::sblr::v3::Instruction param_inst;
+                                    if (getInstrFromValue(entry, param_inst))
+                                    {
+                                        params.push_back(evalExpr(param_inst));
+                                    }
+                                }
+                            }
+                        }
+                        if (!sqlstate.empty() && sqlstate.size() != 5)
+                        {
+                            return ExecutionResult("RAISE sqlstate must be 5 characters");
+                        }
+                        if (message.empty() && sqlstate.empty() && params.empty() && has_psql_exception_)
+                        {
+                            return ExecutionResult(psql_exception_.message.empty()
+                                ? "PSQL RAISE"
+                                : psql_exception_.message);
+                        }
+                        auto format_message = [&](const std::string& tmpl,
+                                                  const std::vector<Value>& args) -> std::string {
+                            if (args.empty())
+                            {
+                                return tmpl;
+                            }
+                            std::string out;
+                            out.reserve(tmpl.size() + 16);
+                            size_t arg_idx = 0;
+                            for (size_t i = 0; i < tmpl.size(); ++i)
+                            {
+                                if (tmpl[i] == '%' && arg_idx < args.size())
+                                {
+                                    if (i + 1 < tmpl.size() && tmpl[i + 1] == '%')
+                                    {
+                                        out.push_back('%');
+                                        ++i;
+                                        continue;
+                                    }
+                                    if (i + 1 < tmpl.size() && tmpl[i + 1] == 's')
+                                    {
+                                        out += args[arg_idx++].toString();
+                                        ++i;
+                                        continue;
+                                    }
+                                    out += args[arg_idx++].toString();
+                                    continue;
+                                }
+                                out.push_back(tmpl[i]);
+                            }
+                            if (arg_idx < args.size())
+                            {
+                                out += " ";
+                                for (size_t i = arg_idx; i < args.size(); ++i)
+                                {
+                                    if (i > arg_idx)
+                                    {
+                                        out += ", ";
+                                    }
+                                    out += args[i].toString();
+                                }
+                            }
+                            return out;
+                        };
+                        std::string formatted = format_message(message, params);
+                        if (formatted.empty())
+                        {
+                            formatted = "PSQL RAISE";
+                        }
+                        psql_exception_.sqlstate = sqlstate;
+                        if (sqlstate.empty())
+                        {
+                            psql_exception_.name = message.empty() ? "EXCEPTION" : message;
+                        }
+                        else
+                        {
+                            psql_exception_.name.clear();
+                        }
+                        psql_exception_.message = formatted;
+                        has_psql_exception_ = true;
+                        return ExecutionResult(formatted);
+                    }
+                    case scratchbird::sblr::v3::Opcode::SBLR3_CALL: {
+                        std::string proc_name;
+                        if (!getString(payload, "proc_name", proc_name))
+                        {
+                            return ExecutionResult("CALL missing proc_name");
+                        }
+                        std::vector<Value> args;
+                        auto it_args = payload.find("args");
+                        if (it_args != payload.end())
+                        {
+                            const auto* list = std::get_if<scratchbird::sblr::v3::Value::List>(&it_args->second.data);
+                            if (list)
+                            {
+                                for (const auto& entry : *list)
+                                {
+                                    scratchbird::sblr::v3::Instruction arg_inst;
+                                    if (getInstrFromValue(entry, arg_inst))
+                                    {
+                                        args.push_back(evalExpr(arg_inst));
+                                    }
+                                }
+                            }
+                        }
+                        auto call_res = callProcedureByName(proc_name, args);
+                        if (!call_res.success())
+                        {
+                            return call_res;
+                        }
+                        return ExecutionResult();
+                    }
+                    case scratchbird::sblr::v3::Opcode::SBLR3_CURSOR_DECLARE: {
+                        std::string cursor_name;
+                        if (!getString(payload, "cursor_name", cursor_name))
+                        {
+                            return ExecutionResult("CURSOR DECLARE missing name");
+                        }
+                        if (cursors_.find(cursor_name) != cursors_.end())
+                        {
+                            return ExecutionResult("Cursor '" + cursor_name + "' already exists");
+                        }
+                        std::vector<uint8_t> query_bytecode;
+                        auto it_query = payload.find("query");
+                        if (it_query != payload.end())
+                        {
+                            scratchbird::sblr::v3::Instruction query_inst;
+                            if (getInstrFromValue(it_query->second, query_inst))
+                            {
+                                std::string enc_err;
+                                if (!buildV3ContainerBytes(query_inst, query_bytecode, enc_err))
+                                {
+                                    return ExecutionResult(enc_err.empty() ? "CURSOR DECLARE encode failed" : enc_err);
+                                }
+                            }
+                        }
+                        CursorState cursor(cursor_name);
+                        cursor.query_bytecode = std::move(query_bytecode);
+                        cursors_[cursor_name] = std::move(cursor);
+                        return ExecutionResult();
+                    }
+                    case scratchbird::sblr::v3::Opcode::SBLR3_CURSOR_OPEN: {
+                        std::string cursor_name;
+                        if (!getString(payload, "cursor_name", cursor_name))
+                        {
+                            return ExecutionResult("CURSOR OPEN missing name");
+                        }
+                        auto it = cursors_.find(cursor_name);
+                        if (it == cursors_.end())
+                        {
+                            return ExecutionResult("Cursor '" + cursor_name + "' does not exist");
+                        }
+                        CursorState& cursor = it->second;
+                        if (cursor.is_open)
+                        {
+                            return ExecutionResult("Cursor '" + cursor_name + "' is already open");
+                        }
+                        if (cursor.query_bytecode.empty())
+                        {
+                            return ExecutionResult("Cursor '" + cursor_name + "' has no query");
+                        }
+                        Executor nested(db_);
+                        if (conn_ctx_)
+                        {
+                            nested.setConnectionContext(conn_ctx_);
+                        }
+                        auto exec_res = nested.execute(cursor.query_bytecode);
+                        if (!exec_res.success())
+                        {
+                            return ExecutionResult("Cursor '" + cursor_name + "' execution failed: " + exec_res.error());
+                        }
+                        cursor.result_set.clear();
+                        cursor.column_names.clear();
+                        cursor.column_types.clear();
+                        if (auto* result_set = exec_res.resultSet())
+                        {
+                            cursor.column_names.reserve(result_set->columnCount());
+                            cursor.column_types.reserve(result_set->columnCount());
+                            for (size_t i = 0; i < result_set->columnCount(); ++i)
+                            {
+                                cursor.column_names.push_back(result_set->columnName(i));
+                                cursor.column_types.push_back(result_set->columnType(i));
+                            }
+                            cursor.result_set.reserve(result_set->rowCount());
+                            for (size_t row = 0; row < result_set->rowCount(); ++row)
+                            {
+                                std::vector<Value> values;
+                                values.reserve(result_set->columnCount());
+                                for (size_t col = 0; col < result_set->columnCount(); ++col)
+                                {
+                                    values.push_back(result_set->getValue(row, col));
+                                }
+                                cursor.result_set.push_back(std::move(values));
+                            }
+                        }
+                        cursor.current_row = 0;
+                        cursor.is_open = true;
+                        return ExecutionResult();
+                    }
+                    case scratchbird::sblr::v3::Opcode::SBLR3_CURSOR_FETCH: {
+                        std::string cursor_name;
+                        if (!getString(payload, "cursor_name", cursor_name))
+                        {
+                            return ExecutionResult("CURSOR FETCH missing name");
+                        }
+                        auto it = cursors_.find(cursor_name);
+                        if (it == cursors_.end())
+                        {
+                            return ExecutionResult("Cursor '" + cursor_name + "' does not exist");
+                        }
+                        CursorState& cursor = it->second;
+                        if (!cursor.is_open)
+                        {
+                            return ExecutionResult("Cursor '" + cursor_name + "' is not open");
+                        }
+                        std::string target_var;
+                        auto it_target = payload.find("target");
+                        if (it_target != payload.end())
+                        {
+                            getVarNameFromValue(it_target->second, target_var);
+                        }
+                        if (!variable_stack_)
+                        {
+                            variable_stack_ = std::make_unique<VariableStack>();
+                        }
+                        if (cursor.current_row >= cursor.result_set.size())
+                        {
+                            if (!target_var.empty())
+                            {
+                                std::string assign_err;
+                                if (!assignPsqlVariable(target_var, Value::makeNull(), assign_err))
+                                {
+                                    return ExecutionResult(assign_err.empty()
+                                        ? "CURSOR FETCH assignment failed"
+                                        : assign_err);
+                                }
+                            }
+                            return ExecutionResult();
+                        }
+                        const auto& row = cursor.result_set[cursor.current_row];
+                        if (!target_var.empty())
+                        {
+                            if (row.size() == 1)
+                            {
+                                std::string assign_err;
+                                if (!assignPsqlVariable(target_var, row.front(), assign_err))
+                                {
+                                    return ExecutionResult(assign_err.empty()
+                                        ? "CURSOR FETCH assignment failed"
+                                        : assign_err);
+                                }
+                            }
+                            else
+                            {
+                                std::string assign_err;
+                                Value record_val = Value::makeComposite(cursor.column_names, row);
+                                if (!assignPsqlVariable(target_var, record_val, assign_err))
+                                {
+                                    return ExecutionResult(assign_err.empty()
+                                        ? "CURSOR FETCH assignment failed"
+                                        : assign_err);
+                                }
+                            }
+                        }
+                        cursor.current_row++;
+                        return ExecutionResult();
+                    }
+                    case scratchbird::sblr::v3::Opcode::SBLR3_CURSOR_CLOSE: {
+                        std::string cursor_name;
+                        if (!getString(payload, "cursor_name", cursor_name))
+                        {
+                            return ExecutionResult("CURSOR CLOSE missing name");
+                        }
+                        auto it = cursors_.find(cursor_name);
+                        if (it == cursors_.end())
+                        {
+                            return ExecutionResult("Cursor '" + cursor_name + "' does not exist");
+                        }
+                        CursorState& cursor = it->second;
+                        if (!cursor.is_open)
+                        {
+                            return ExecutionResult("Cursor '" + cursor_name + "' is not open");
+                        }
+                        cursor.result_set.clear();
+                        cursor.current_row = 0;
+                        cursor.is_open = false;
+                        return ExecutionResult();
+                    }
+                    default:
+                        return ExecutionResult("Unsupported PSQL runtime opcode");
+                }
+            };
+
+            auto executePsqlFlowControlOpcode =
+                [&](scratchbird::sblr::v3::Opcode opcode,
+                    const scratchbird::sblr::v3::Value::Object& payload) -> ExecutionResult {
+                switch (opcode)
+                {
+                    case scratchbird::sblr::v3::Opcode::SBLR3_LABEL: {
+                        return ExecutionResult();
+                    }
+                    case scratchbird::sblr::v3::Opcode::SBLR3_JUMP: {
+                        std::string label;
+                        if (!getString(payload, "label", label) || label.empty())
+                        {
+                            return ExecutionResult("JUMP missing label");
+                        }
+                        pending_jump_label = label;
+                        return ExecutionResult();
+                    }
+                    case scratchbird::sblr::v3::Opcode::SBLR3_JUMP_IF_TRUE:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_JUMP_IF_FALSE: {
+                        std::string label;
+                        if (!getString(payload, "label", label) || label.empty())
+                        {
+                            return ExecutionResult("JUMP_IF missing label");
+                        }
+                        auto it_cond = payload.find("condition");
+                        if (it_cond == payload.end())
+                        {
+                            return ExecutionResult("JUMP_IF missing condition");
+                        }
+                        scratchbird::sblr::v3::Instruction cond_inst;
+                        if (!getInstrFromValue(it_cond->second, cond_inst))
+                        {
+                            return ExecutionResult("JUMP_IF condition invalid");
+                        }
+                        bool cond = predicateIsTrue(evalExpr(cond_inst));
+                        bool take_jump = (opcode == scratchbird::sblr::v3::Opcode::SBLR3_JUMP_IF_TRUE)
+                            ? cond
+                            : !cond;
+                        if (take_jump)
+                        {
+                            pending_jump_label = label;
+                        }
+                        return ExecutionResult();
+                    }
+                    case scratchbird::sblr::v3::Opcode::SBLR3_EXIT:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_PSQL_LEAVE: {
+                        auto it_when = payload.find("when");
+                        if (it_when != payload.end())
+                        {
+                            scratchbird::sblr::v3::Instruction when_inst;
+                            if (getInstrFromValue(it_when->second, when_inst))
+                            {
+                                if (!predicateIsTrue(evalExpr(when_inst)))
+                                {
+                                    return ExecutionResult();
+                                }
+                            }
+                        }
+                        std::string label;
+                        getString(payload, "label", label);
+                        if (v3_loop_stack.empty())
+                        {
+                            return ExecutionResult("EXIT/LEAVE used outside loop");
+                        }
+                        if (!label.empty())
+                        {
+                            bool found = false;
+                            std::string target = normalize_label(label);
+                            for (const auto& loop_state : v3_loop_stack)
+                            {
+                                if (!loop_state.label.empty() && normalize_label(loop_state.label) == target)
+                                {
+                                    found = true;
+                                    break;
+                                }
+                            }
+                            if (!found)
+                            {
+                                return ExecutionResult("EXIT/LEAVE label not found: " + label);
+                            }
+                        }
+                        pending_break_label = label.empty() ? std::optional<std::string>("")
+                                                            : std::optional<std::string>(normalize_label(label));
+                        return ExecutionResult();
+                    }
+                    case scratchbird::sblr::v3::Opcode::SBLR3_PSQL_CONTINUE: {
+                        std::string label;
+                        getString(payload, "label", label);
+                        if (v3_loop_stack.empty())
+                        {
+                            return ExecutionResult("CONTINUE used outside loop");
+                        }
+                        if (!label.empty())
+                        {
+                            bool found = false;
+                            std::string target = normalize_label(label);
+                            for (const auto& loop_state : v3_loop_stack)
+                            {
+                                if (!loop_state.label.empty() && normalize_label(loop_state.label) == target)
+                                {
+                                    found = true;
+                                    break;
+                                }
+                            }
+                            if (!found)
+                            {
+                                return ExecutionResult("CONTINUE label not found: " + label);
+                            }
+                        }
+                        pending_continue_label = label.empty() ? std::optional<std::string>("")
+                                                               : std::optional<std::string>(normalize_label(label));
+                        return ExecutionResult();
+                    }
+                    default:
+                        return ExecutionResult("Unsupported PSQL flow-control opcode");
+                }
+            };
+
+            auto executePsqlVariableOpcode =
+                [&](scratchbird::sblr::v3::Opcode opcode,
+                    const scratchbird::sblr::v3::Value::Object& payload) -> ExecutionResult {
+                switch (opcode)
+                {
+                    case scratchbird::sblr::v3::Opcode::SBLR3_DECLARE: {
+                        if (!variable_stack_)
+                        {
+                            variable_stack_ = std::make_unique<VariableStack>();
+                        }
+                        auto it_decls = payload.find("decls");
+                        if (it_decls == payload.end())
+                        {
+                            return ExecutionResult();
+                        }
+                        const auto* list = std::get_if<scratchbird::sblr::v3::Value::List>(&it_decls->second.data);
+                        if (!list)
+                        {
+                            return ExecutionResult();
+                        }
+                        for (const auto& entry : *list)
+                        {
+                            const auto* decl = std::get_if<scratchbird::sblr::v3::Value::Object>(&entry.data);
+                            if (!decl)
+                            {
+                                continue;
+                            }
+                            std::string var_name;
+                            if (!getString(*decl, "name", var_name))
+                            {
+                                continue;
+                            }
+                            if (variable_stack_->hasVariableInCurrentFrame(var_name))
+                            {
+                                return ExecutionResult("Duplicate variable declaration: " + var_name);
+                            }
+                            auto it_type = decl->find("type");
+                            if (it_type == decl->end())
+                            {
+                                return ExecutionResult("DECLARE missing type for variable: " + var_name);
+                            }
+                            scratchbird::sblr::v3::TypeSpec spec;
+                            if (!decodeTypeSpec(it_type->second, spec))
+                            {
+                                return ExecutionResult("DECLARE invalid type for variable: " + var_name);
+                            }
+                            PsqlVarTypeInfo type_info;
+                            std::string type_err;
+                            if (!decodePsqlVarType(spec, type_info, type_err))
+                            {
+                                return ExecutionResult(type_err.empty()
+                                    ? "DECLARE invalid type for variable: " + var_name
+                                    : type_err);
+                            }
+                            bool is_const = false;
+                            getBool(*decl, "constant", is_const);
+                            Value default_val = Value::makeNull();
+                            auto it_def = decl->find("default");
+                            if (it_def != decl->end())
+                            {
+                                scratchbird::sblr::v3::Instruction def_inst;
+                                if (getInstrFromValue(it_def->second, def_inst))
+                                {
+                                    default_val = evalExpr(def_inst);
+                                }
+                            }
+                            std::string assign_err;
+                            Value coerced;
+                            if (!coercePsqlValue(type_info, default_val, coerced, assign_err))
+                            {
+                                return ExecutionResult(assign_err.empty()
+                                    ? "DECLARE default invalid for variable: " + var_name
+                                    : assign_err);
+                            }
+                            VariableEntry entry_meta;
+                            entry_meta.value = std::move(coerced);
+                            entry_meta.is_constant = is_const;
+                            entry_meta.has_type = type_info.has_type;
+                            entry_meta.type_info = type_info.type_info;
+                            entry_meta.domain_id = type_info.domain_id;
+                            entry_meta.nullable = type_info.nullable;
+                            variable_stack_->declareVariable(var_name, entry_meta);
+                        }
+                        return ExecutionResult();
+                    }
+                    case scratchbird::sblr::v3::Opcode::SBLR3_ASSIGN: {
+                        std::string var_name;
+                        auto it_target = payload.find("target");
+                        if (it_target == payload.end() || !getVarNameFromValue(it_target->second, var_name))
+                        {
+                            return ExecutionResult("ASSIGN missing target");
+                        }
+                        auto it_val = payload.find("value");
+                        if (it_val == payload.end())
+                        {
+                            return ExecutionResult("ASSIGN missing value");
+                        }
+                        scratchbird::sblr::v3::Instruction val_inst;
+                        if (!getInstrFromValue(it_val->second, val_inst))
+                        {
+                            return ExecutionResult("ASSIGN invalid value");
+                        }
+                        Value value = evalExpr(val_inst);
+                        if (!variable_stack_)
+                        {
+                            variable_stack_ = std::make_unique<VariableStack>();
+                        }
+                        std::string assign_err;
+                        if (!assignPsqlVariable(var_name, value, assign_err))
+                        {
+                            return ExecutionResult(assign_err.empty()
+                                ? "ASSIGN failed for variable: " + var_name
+                                : assign_err);
+                        }
+                        return ExecutionResult();
+                    }
+                    default:
+                        return ExecutionResult("Unsupported PSQL variable opcode");
+                }
+            };
+
+            auto executePsqlConditionalOpcode =
+                [&](scratchbird::sblr::v3::Opcode opcode,
+                    const scratchbird::sblr::v3::Value::Object& payload) -> ExecutionResult {
+                switch (opcode)
+                {
+                    case scratchbird::sblr::v3::Opcode::SBLR3_IF: {
+                        auto it_cond = payload.find("condition");
+                        if (it_cond == payload.end())
+                        {
+                            return ExecutionResult("IF missing condition");
+                        }
+                        scratchbird::sblr::v3::Instruction cond_inst;
+                        if (!getInstrFromValue(it_cond->second, cond_inst))
+                        {
+                            return ExecutionResult("IF condition invalid");
+                        }
+                        bool cond = predicateIsTrue(evalExpr(cond_inst));
+                        if (cond)
+                        {
+                            auto it_body = payload.find("then_body");
+                            if (it_body != payload.end())
+                            {
+                                if (const auto* list = std::get_if<scratchbird::sblr::v3::Value::List>(&it_body->second.data))
+                                {
+                                    return execStmtList(*list);
+                                }
+                            }
+                            return ExecutionResult();
+                        }
+                        auto it_elsif = payload.find("elsif");
+                        if (it_elsif != payload.end())
+                        {
+                            if (const auto* list = std::get_if<scratchbird::sblr::v3::Value::List>(&it_elsif->second.data))
+                            {
+                                for (const auto& entry : *list)
+                                {
+                                    const auto* obj = std::get_if<scratchbird::sblr::v3::Value::Object>(&entry.data);
+                                    if (!obj)
+                                    {
+                                        continue;
+                                    }
+                                    scratchbird::sblr::v3::Instruction econd;
+                                    auto it_econd = obj->find("condition");
+                                    if (it_econd != obj->end() && getInstrFromValue(it_econd->second, econd))
+                                    {
+                                        if (predicateIsTrue(evalExpr(econd)))
+                                        {
+                                            auto it_body2 = obj->find("body");
+                                            if (it_body2 != obj->end())
+                                            {
+                                                if (const auto* list2 = std::get_if<scratchbird::sblr::v3::Value::List>(&it_body2->second.data))
+                                                {
+                                                    return execStmtList(*list2);
+                                                }
+                                            }
+                                            return ExecutionResult();
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        auto it_else = payload.find("else_body");
+                        if (it_else != payload.end())
+                        {
+                            if (const auto* list = std::get_if<scratchbird::sblr::v3::Value::List>(&it_else->second.data))
+                            {
+                                return execStmtList(*list);
+                            }
+                        }
+                        return ExecutionResult();
+                    }
+                    default:
+                        return ExecutionResult("Unsupported PSQL conditional opcode");
+                }
+            };
+
+            auto executePsqlLoopOpcode =
+                [&](scratchbird::sblr::v3::Opcode opcode,
+                    const scratchbird::sblr::v3::Value::Object& payload) -> ExecutionResult {
+                switch (opcode)
+                {
+                    case scratchbird::sblr::v3::Opcode::SBLR3_WHILE: {
+                        auto it_cond = payload.find("condition");
+                        auto it_body = payload.find("body");
+                        if (it_cond == payload.end() || it_body == payload.end())
+                        {
+                            return ExecutionResult("WHILE missing condition/body");
+                        }
+                        scratchbird::sblr::v3::Instruction cond_inst;
+                        if (!getInstrFromValue(it_cond->second, cond_inst))
+                        {
+                            return ExecutionResult("WHILE condition invalid");
+                        }
+                        const auto* body_list = std::get_if<scratchbird::sblr::v3::Value::List>(&it_body->second.data);
+                        if (!body_list)
+                        {
+                            return ExecutionResult("WHILE body invalid");
+                        }
+                        std::string loop_label;
+                        getString(payload, "label", loop_label);
+                        v3_loop_stack.push_back({loop_label});
+                        while (predicateIsTrue(evalExpr(cond_inst)))
+                        {
+                            auto res = execStmtList(*body_list);
+                            if (!res.success())
+                            {
+                                v3_loop_stack.pop_back();
+                                return res;
+                            }
+                            if (return_requested_)
+                            {
+                                v3_loop_stack.pop_back();
+                                return ExecutionResult();
+                            }
+                            bool do_break = false;
+                            bool do_continue = false;
+                            handle_loop_control(loop_label, do_break, do_continue);
+                            if (do_break)
+                            {
+                                v3_loop_stack.pop_back();
+                                return ExecutionResult();
+                            }
+                            if (do_continue)
+                            {
+                                continue;
+                            }
+                        }
+                        if (!v3_loop_stack.empty())
+                        {
+                            v3_loop_stack.pop_back();
+                        }
+                        return ExecutionResult();
+                    }
+                    case scratchbird::sblr::v3::Opcode::SBLR3_PSQL_FOR_SELECT: {
+                        auto it_query = payload.find("query");
+                        auto it_body = payload.find("body");
+                        if (it_query == payload.end() || it_body == payload.end())
+                        {
+                            return ExecutionResult("FOR SELECT missing query/body");
+                        }
+                        scratchbird::sblr::v3::Instruction query_inst;
+                        if (!getInstrFromValue(it_query->second, query_inst))
+                        {
+                            return ExecutionResult("FOR SELECT query invalid");
+                        }
+                        const auto* body_list = std::get_if<scratchbird::sblr::v3::Value::List>(&it_body->second.data);
+                        if (!body_list)
+                        {
+                            return ExecutionResult("FOR SELECT body invalid");
+                        }
+                        std::vector<uint8_t> query_bytecode;
+                        std::string enc_err;
+                        if (!buildV3ContainerBytes(query_inst, query_bytecode, enc_err))
+                        {
+                            return ExecutionResult(enc_err.empty() ? "FOR SELECT encode failed" : enc_err);
+                        }
+                        Executor nested(db_);
+                        if (conn_ctx_)
+                        {
+                            nested.setConnectionContext(conn_ctx_);
+                        }
+                        auto exec_res = nested.execute(query_bytecode);
+                        if (!exec_res.success())
+                        {
+                            return exec_res;
+                        }
+                        auto* rs = exec_res.resultSet();
+                        if (!rs)
+                        {
+                            return ExecutionResult();
+                        }
+                        std::string record_var;
+                        auto it_rec = payload.find("record");
+                        if (it_rec != payload.end())
+                        {
+                            getVarNameFromValue(it_rec->second, record_var);
+                        }
+                        if (!variable_stack_)
+                        {
+                            variable_stack_ = std::make_unique<VariableStack>();
+                        }
+                        std::string loop_label;
+                        getString(payload, "label", loop_label);
+                        v3_loop_stack.push_back({loop_label});
+                        for (size_t r = 0; r < rs->rowCount(); ++r)
+                        {
+                            if (!record_var.empty())
+                            {
+                                std::vector<std::string> field_names;
+                                std::vector<Value> field_values;
+                                field_names.reserve(rs->columnCount());
+                                field_values.reserve(rs->columnCount());
+                                for (size_t c = 0; c < rs->columnCount(); ++c)
+                                {
+                                    field_names.push_back(rs->columnName(c));
+                                    field_values.push_back(rs->getValue(r, c));
+                                }
+                                std::string assign_err;
+                                Value record_val = Value::makeComposite(field_names, field_values);
+                                if (!assignPsqlVariable(record_var, record_val, assign_err))
+                                {
+                                    v3_loop_stack.pop_back();
+                                    return ExecutionResult(assign_err.empty()
+                                        ? "FOR SELECT record assignment failed"
+                                        : assign_err);
+                                }
+                            }
+                            auto res = execStmtList(*body_list);
+                            if (!res.success())
+                            {
+                                v3_loop_stack.pop_back();
+                                return res;
+                            }
+                            if (return_requested_)
+                            {
+                                v3_loop_stack.pop_back();
+                                return ExecutionResult();
+                            }
+                            bool do_break = false;
+                            bool do_continue = false;
+                            handle_loop_control(loop_label, do_break, do_continue);
+                            if (do_break)
+                            {
+                                v3_loop_stack.pop_back();
+                                return ExecutionResult();
+                            }
+                            if (do_continue)
+                            {
+                                continue;
+                            }
+                        }
+                        if (!v3_loop_stack.empty())
+                        {
+                            v3_loop_stack.pop_back();
+                        }
+                        return ExecutionResult();
+                    }
+                    case scratchbird::sblr::v3::Opcode::SBLR3_PSQL_FOR_EXECUTE: {
+                        auto it_sql = payload.find("sql");
+                        auto it_body = payload.find("body");
+                        if (it_sql == payload.end() || it_body == payload.end())
+                        {
+                            return ExecutionResult("FOR EXECUTE missing sql/body");
+                        }
+                        scratchbird::sblr::v3::Instruction sql_inst;
+                        if (!getInstrFromValue(it_sql->second, sql_inst))
+                        {
+                            return ExecutionResult("FOR EXECUTE sql invalid");
+                        }
+                        const auto* body_list = std::get_if<scratchbird::sblr::v3::Value::List>(&it_body->second.data);
+                        if (!body_list)
+                        {
+                            return ExecutionResult("FOR EXECUTE body invalid");
+                        }
+                        std::string sql_text = evalExpr(sql_inst).toString();
+                        if (sql_text.empty())
+                        {
+                            return ExecutionResult("FOR EXECUTE empty SQL");
+                        }
+                        ExecutionResult exec_res(
+                            "FOR EXECUTE requires precompiled SBLR; SQL execution in engine is disabled");
+                        if (!exec_res.success())
+                        {
+                            return exec_res;
+                        }
+                        auto* rs = exec_res.resultSet();
+                        if (!rs)
+                        {
+                            return ExecutionResult();
+                        }
+                        std::string record_var;
+                        auto it_rec = payload.find("record");
+                        if (it_rec != payload.end())
+                        {
+                            getVarNameFromValue(it_rec->second, record_var);
+                        }
+                        if (!variable_stack_)
+                        {
+                            variable_stack_ = std::make_unique<VariableStack>();
+                        }
+                        std::string loop_label;
+                        getString(payload, "label", loop_label);
+                        v3_loop_stack.push_back({loop_label});
+                        for (size_t r = 0; r < rs->rowCount(); ++r)
+                        {
+                            if (!record_var.empty())
+                            {
+                                std::vector<std::string> field_names;
+                                std::vector<Value> field_values;
+                                field_names.reserve(rs->columnCount());
+                                field_values.reserve(rs->columnCount());
+                                for (size_t c = 0; c < rs->columnCount(); ++c)
+                                {
+                                    field_names.push_back(rs->columnName(c));
+                                    field_values.push_back(rs->getValue(r, c));
+                                }
+                                std::string assign_err;
+                                Value record_val = Value::makeComposite(field_names, field_values);
+                                if (!assignPsqlVariable(record_var, record_val, assign_err))
+                                {
+                                    v3_loop_stack.pop_back();
+                                    return ExecutionResult(assign_err.empty()
+                                        ? "FOR EXECUTE record assignment failed"
+                                        : assign_err);
+                                }
+                            }
+                            auto res = execStmtList(*body_list);
+                            if (!res.success())
+                            {
+                                v3_loop_stack.pop_back();
+                                return res;
+                            }
+                            if (return_requested_)
+                            {
+                                v3_loop_stack.pop_back();
+                                return ExecutionResult();
+                            }
+                            bool do_break = false;
+                            bool do_continue = false;
+                            handle_loop_control(loop_label, do_break, do_continue);
+                            if (do_break)
+                            {
+                                v3_loop_stack.pop_back();
+                                return ExecutionResult();
+                            }
+                            if (do_continue)
+                            {
+                                continue;
+                            }
+                        }
+                        if (!v3_loop_stack.empty())
+                        {
+                            v3_loop_stack.pop_back();
+                        }
+                        return ExecutionResult();
+                    }
+                    case scratchbird::sblr::v3::Opcode::SBLR3_LOOP: {
+                        auto it_body = payload.find("body");
+                        const auto* body_list = (it_body != payload.end())
+                            ? std::get_if<scratchbird::sblr::v3::Value::List>(&it_body->second.data)
+                            : nullptr;
+                        if (!body_list)
+                        {
+                            return ExecutionResult("LOOP body invalid");
+                        }
+                        std::string loop_label;
+                        getString(payload, "label", loop_label);
+                        v3_loop_stack.push_back({loop_label});
+                        while (true)
+                        {
+                            auto res = execStmtList(*body_list);
+                            if (!res.success())
+                            {
+                                v3_loop_stack.pop_back();
+                                return res;
+                            }
+                            if (return_requested_)
+                            {
+                                v3_loop_stack.pop_back();
+                                return ExecutionResult();
+                            }
+                            bool do_break = false;
+                            bool do_continue = false;
+                            handle_loop_control(loop_label, do_break, do_continue);
+                            if (do_break)
+                            {
+                                v3_loop_stack.pop_back();
+                                return ExecutionResult();
+                            }
+                            if (do_continue)
+                            {
+                                continue;
+                            }
+                        }
+                    }
+                    default:
+                        return ExecutionResult("Unsupported PSQL loop opcode");
+                }
+            };
+
+            auto executePsqlBlockOpcode =
+                [&](scratchbird::sblr::v3::Opcode opcode,
+                    const scratchbird::sblr::v3::Value::Object& payload) -> ExecutionResult {
+                switch (opcode)
+                {
+                    case scratchbird::sblr::v3::Opcode::SBLR3_BLOCK: {
+                        if (!variable_stack_)
+                        {
+                            variable_stack_ = std::make_unique<VariableStack>();
+                        }
+                        variable_stack_->pushFrame();
+                        auto it_decls = payload.find("decls");
+                        if (it_decls != payload.end())
+                        {
+                            const auto* list = std::get_if<scratchbird::sblr::v3::Value::List>(&it_decls->second.data);
+                            if (list)
+                            {
+                                for (const auto& entry : *list)
+                                {
+                                    const auto* decl = std::get_if<scratchbird::sblr::v3::Value::Object>(&entry.data);
+                                    if (!decl)
+                                    {
+                                        continue;
+                                    }
+                                    std::string var_name;
+                                    if (!getString(*decl, "name", var_name))
+                                    {
+                                        continue;
+                                    }
+                                    if (variable_stack_->hasVariableInCurrentFrame(var_name))
+                                    {
+                                        variable_stack_->popFrame();
+                                        return ExecutionResult("Duplicate variable declaration: " + var_name);
+                                    }
+                                    auto it_type = decl->find("type");
+                                    if (it_type == decl->end())
+                                    {
+                                        variable_stack_->popFrame();
+                                        return ExecutionResult("DECLARE missing type for variable: " + var_name);
+                                    }
+                                    scratchbird::sblr::v3::TypeSpec spec;
+                                    if (!decodeTypeSpec(it_type->second, spec))
+                                    {
+                                        variable_stack_->popFrame();
+                                        return ExecutionResult("DECLARE invalid type for variable: " + var_name);
+                                    }
+                                    PsqlVarTypeInfo type_info;
+                                    std::string type_err;
+                                    if (!decodePsqlVarType(spec, type_info, type_err))
+                                    {
+                                        variable_stack_->popFrame();
+                                        return ExecutionResult(type_err.empty()
+                                            ? "DECLARE invalid type for variable: " + var_name
+                                            : type_err);
+                                    }
+                                    bool is_const = false;
+                                    getBool(*decl, "constant", is_const);
+                                    Value default_val = Value::makeNull();
+                                    auto it_def = decl->find("default");
+                                    if (it_def != decl->end())
+                                    {
+                                        scratchbird::sblr::v3::Instruction def_inst;
+                                        if (getInstrFromValue(it_def->second, def_inst))
+                                        {
+                                            default_val = evalExpr(def_inst);
+                                        }
+                                    }
+                                    std::string assign_err;
+                                    Value coerced;
+                                    if (!coercePsqlValue(type_info, default_val, coerced, assign_err))
+                                    {
+                                        variable_stack_->popFrame();
+                                        return ExecutionResult(assign_err.empty()
+                                            ? "DECLARE default invalid for variable: " + var_name
+                                            : assign_err);
+                                    }
+                                    VariableEntry entry_meta;
+                                    entry_meta.value = std::move(coerced);
+                                    entry_meta.is_constant = is_const;
+                                    entry_meta.has_type = type_info.has_type;
+                                    entry_meta.type_info = type_info.type_info;
+                                    entry_meta.domain_id = type_info.domain_id;
+                                    entry_meta.nullable = type_info.nullable;
+                                    variable_stack_->declareVariable(var_name, entry_meta);
+                                }
+                            }
+                        }
+                        auto it_body = payload.find("body");
+                        if (it_body != payload.end())
+                        {
+                            if (const auto* list = std::get_if<scratchbird::sblr::v3::Value::List>(&it_body->second.data))
+                            {
+                                auto res = execStmtList(*list);
+                                if (!res.success())
+                                {
+                                    auto it_handlers = payload.find("exception_handlers");
+                                    if (it_handlers != payload.end())
+                                    {
+                                        const auto* handlers =
+                                            std::get_if<scratchbird::sblr::v3::Value::List>(&it_handlers->second.data);
+                                        if (handlers)
+                                        {
+                                            for (const auto& entry : *handlers)
+                                            {
+                                                const auto* hobj = std::get_if<scratchbird::sblr::v3::Value::Object>(&entry.data);
+                                                if (!hobj)
+                                                {
+                                                    continue;
+                                                }
+                                                std::string condition;
+                                                getString(*hobj, "condition", condition);
+                                                std::string cond_norm = core::IdentifierUtils::toUpper(condition);
+                                                if (!has_psql_exception_)
+                                                {
+                                                    psql_exception_.sqlstate.clear();
+                                                    psql_exception_.name = "EXCEPTION";
+                                                    psql_exception_.message = res.error();
+                                                    has_psql_exception_ = true;
+                                                }
+                                                auto matches = [&](const PsqlExceptionInfo& ex) -> bool {
+                                                    if (cond_norm.empty() || cond_norm == "ANY" ||
+                                                        cond_norm == "EXCEPTION" || cond_norm == "OTHERS")
+                                                    {
+                                                        return true;
+                                                    }
+                                                    if (!ex.sqlstate.empty() &&
+                                                        core::IdentifierUtils::toUpper(ex.sqlstate) == cond_norm)
+                                                    {
+                                                        return true;
+                                                    }
+                                                    if (!ex.name.empty() &&
+                                                        core::IdentifierUtils::toUpper(ex.name) == cond_norm)
+                                                    {
+                                                        return true;
+                                                    }
+                                                    return false;
+                                                };
+                                                if (matches(psql_exception_))
+                                                {
+                                                    auto it_handler = hobj->find("handler");
+                                                    if (it_handler != hobj->end())
+                                                    {
+                                                        if (const auto* handler_list =
+                                                                std::get_if<scratchbird::sblr::v3::Value::List>(&it_handler->second.data))
+                                                        {
+                                                            variable_stack_->pushFrame();
+                                                            if (variable_stack_->hasVariableInCurrentFrame("SQLSTATE"))
+                                                            {
+                                                                variable_stack_->setVariable("SQLSTATE",
+                                                                    Value::makeText(psql_exception_.sqlstate));
+                                                            }
+                                                            else
+                                                            {
+                                                                variable_stack_->declareVariable("SQLSTATE",
+                                                                    Value::makeText(psql_exception_.sqlstate));
+                                                            }
+                                                            if (variable_stack_->hasVariableInCurrentFrame("SQLERRM"))
+                                                            {
+                                                                variable_stack_->setVariable("SQLERRM",
+                                                                    Value::makeText(psql_exception_.message));
+                                                            }
+                                                            else
+                                                            {
+                                                                variable_stack_->declareVariable("SQLERRM",
+                                                                    Value::makeText(psql_exception_.message));
+                                                            }
+                                                            auto handler_res = execStmtList(*handler_list);
+                                                            variable_stack_->popFrame();
+                                                            variable_stack_->popFrame();
+                                                            if (handler_res.success())
+                                                            {
+                                                                has_psql_exception_ = false;
+                                                            }
+                                                            return handler_res;
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                variable_stack_->popFrame();
+                                return res;
+                            }
+                        }
+                        variable_stack_->popFrame();
+                        return ExecutionResult();
+                    }
+                    default:
+                        return ExecutionResult("Unsupported PSQL block opcode");
+                }
+            };
+
             execStmt = [&](const scratchbird::sblr::v3::Instruction& inst) -> ExecutionResult {
                 using scratchbird::sblr::v3::Opcode;
                 const char* name_c = scratchbird::sblr::v3::opcodeName(inst.opcode);
@@ -47853,7 +50185,7 @@ namespace scratchbird
                                         Value cond = evalExpr(join.condition);
                                         current_row_values_ = nullptr;
                                         current_row_columns_ = nullptr;
-                                        if (!cond.toBoolean())
+                                        if (!predicateIsTrue(cond))
                                         {
                                             pass = false;
                                         }
@@ -48068,7 +50400,7 @@ namespace scratchbird
                                 Value cond = evalExpr(where_inst);
                                 current_row_values_ = nullptr;
                                 current_row_columns_ = nullptr;
-                                if (!cond.toBoolean())
+                                if (!predicateIsTrue(cond))
                                 {
                                     continue;
                                 }
@@ -48354,7 +50686,7 @@ namespace scratchbird
                                             Value ok = evalExpr(filter_inst);
                                             current_row_values_ = nullptr;
                                             current_row_columns_ = nullptr;
-                                            if (ok.toBoolean())
+                                            if (predicateIsTrue(ok))
                                             {
                                                 filtered_count++;
                                             }
@@ -48371,7 +50703,7 @@ namespace scratchbird
                                                 Value ok = evalExpr(filter_inst);
                                                 current_row_values_ = nullptr;
                                                 current_row_columns_ = nullptr;
-                                                if (!ok.toBoolean())
+                                                if (!predicateIsTrue(ok))
                                                 {
                                                     continue;
                                                 }
@@ -48416,7 +50748,7 @@ namespace scratchbird
                                                 Value ok = evalExpr(filter_inst);
                                                 current_row_values_ = nullptr;
                                                 current_row_columns_ = nullptr;
-                                                if (!ok.toBoolean())
+                                                if (!predicateIsTrue(ok))
                                                 {
                                                     continue;
                                                 }
@@ -48500,7 +50832,7 @@ namespace scratchbird
                                                 Value ok = evalExpr(filter_inst);
                                                 current_row_values_ = nullptr;
                                                 current_row_columns_ = nullptr;
-                                                if (!ok.toBoolean())
+                                                if (!predicateIsTrue(ok))
                                                 {
                                                     continue;
                                                 }
@@ -48582,7 +50914,7 @@ namespace scratchbird
                                             Value ok = evalExpr(filter_inst);
                                             current_row_values_ = nullptr;
                                             current_row_columns_ = nullptr;
-                                            if (!ok.toBoolean())
+                                            if (!predicateIsTrue(ok))
                                             {
                                                 continue;
                                             }
@@ -48665,7 +50997,7 @@ namespace scratchbird
                                                 Value ok = evalExpr(filter_inst);
                                                 current_row_values_ = nullptr;
                                                 current_row_columns_ = nullptr;
-                                                if (!ok.toBoolean())
+                                                if (!predicateIsTrue(ok))
                                                 {
                                                     continue;
                                                 }
@@ -48726,7 +51058,7 @@ namespace scratchbird
                                                 Value ok = evalExpr(filter_inst);
                                                 current_row_values_ = nullptr;
                                                 current_row_columns_ = nullptr;
-                                                if (!ok.toBoolean())
+                                                if (!predicateIsTrue(ok))
                                                 {
                                                     continue;
                                                 }
@@ -48869,7 +51201,7 @@ namespace scratchbird
                                     if (has_having_inst)
                                     {
                                         Value cond = evalExpr(having_inst);
-                                        if (!cond.toBoolean())
+                                        if (!predicateIsTrue(cond))
                                         {
                                             current_row_values_ = nullptr;
                                             current_row_columns_ = nullptr;
@@ -50296,7 +52628,7 @@ namespace scratchbird
                                         if (on_conflict.has_where)
                                         {
                                             Value cond = evalExpr(on_conflict.where_inst);
-                                            if (!cond.toBoolean())
+                                            if (!predicateIsTrue(cond))
                                             {
                                                 current_row_values_ = nullptr;
                                                 current_row_columns_ = nullptr;
@@ -51163,7 +53495,7 @@ namespace scratchbird
                                             Value cond = evalExpr(join.condition);
                                             current_row_values_ = nullptr;
                                             current_row_columns_ = nullptr;
-                                            if (!cond.toBoolean())
+                                            if (!predicateIsTrue(cond))
                                             {
                                                 pass = false;
                                             }
@@ -51360,7 +53692,7 @@ namespace scratchbird
                                     Value cond = evalExpr(where_inst);
                                     current_row_values_ = nullptr;
                                     current_row_columns_ = nullptr;
-                                    if (!cond.toBoolean())
+                                    if (!predicateIsTrue(cond))
                                     {
                                         continue;
                                     }
@@ -52149,7 +54481,7 @@ namespace scratchbird
                                             Value cond = evalExpr(join.condition);
                                             current_row_values_ = nullptr;
                                             current_row_columns_ = nullptr;
-                                            if (!cond.toBoolean())
+                                            if (!predicateIsTrue(cond))
                                             {
                                                 pass = false;
                                             }
@@ -52295,7 +54627,7 @@ namespace scratchbird
                                     Value cond = evalExpr(where_inst);
                                     current_row_values_ = nullptr;
                                     current_row_columns_ = nullptr;
-                                    if (!cond.toBoolean())
+                                    if (!predicateIsTrue(cond))
                                     {
                                         continue;
                                     }
@@ -52735,7 +55067,7 @@ namespace scratchbird
                                 Value on_val = evalExpr(on_inst);
                                 current_row_values_ = nullptr;
                                 current_row_columns_ = nullptr;
-                                if (!on_val.toBoolean())
+                                if (!predicateIsTrue(on_val))
                                 {
                                     continue;
                                 }
@@ -52753,7 +55085,7 @@ namespace scratchbird
                                         Value cond = evalExpr(action.condition);
                                         current_row_values_ = nullptr;
                                         current_row_columns_ = nullptr;
-                                        if (!cond.toBoolean())
+                                        if (!predicateIsTrue(cond))
                                         {
                                             continue;
                                         }
@@ -52847,7 +55179,7 @@ namespace scratchbird
                                         Value cond = evalExpr(action.condition);
                                         current_row_values_ = nullptr;
                                         current_row_columns_ = nullptr;
-                                        if (!cond.toBoolean())
+                                        if (!predicateIsTrue(cond))
                                         {
                                             continue;
                                         }
@@ -52943,7 +55275,7 @@ namespace scratchbird
                                         Value cond = evalExpr(action.condition);
                                         current_row_values_ = nullptr;
                                         current_row_columns_ = nullptr;
-                                        if (!cond.toBoolean())
+                                        if (!predicateIsTrue(cond))
                                         {
                                             continue;
                                         }
@@ -53029,1141 +55361,45 @@ namespace scratchbird
                         return res;
                     }
                     case Opcode::SBLR3_BLOCK: {
-                        if (!variable_stack_)
-                        {
-                            variable_stack_ = std::make_unique<VariableStack>();
-                        }
-                        variable_stack_->pushFrame();
-                        auto it_decls = payload.find("decls");
-                        if (it_decls != payload.end())
-                        {
-                            const auto* list = std::get_if<scratchbird::sblr::v3::Value::List>(&it_decls->second.data);
-                            if (list)
-                            {
-                                for (const auto& entry : *list)
-                                {
-                                    const auto* decl = std::get_if<scratchbird::sblr::v3::Value::Object>(&entry.data);
-                                    if (!decl)
-                                    {
-                                        continue;
-                                    }
-                                    std::string var_name;
-                                    if (!getString(*decl, "name", var_name))
-                                    {
-                                        continue;
-                                    }
-                                    if (variable_stack_->hasVariableInCurrentFrame(var_name))
-                                    {
-                                        variable_stack_->popFrame();
-                                        return ExecutionResult("Duplicate variable declaration: " + var_name);
-                                    }
-                                    auto it_type = decl->find("type");
-                                    if (it_type == decl->end())
-                                    {
-                                        variable_stack_->popFrame();
-                                        return ExecutionResult("DECLARE missing type for variable: " + var_name);
-                                    }
-                                    scratchbird::sblr::v3::TypeSpec spec;
-                                    if (!decodeTypeSpec(it_type->second, spec))
-                                    {
-                                        variable_stack_->popFrame();
-                                        return ExecutionResult("DECLARE invalid type for variable: " + var_name);
-                                    }
-                                    PsqlVarTypeInfo type_info;
-                                    std::string type_err;
-                                    if (!decodePsqlVarType(spec, type_info, type_err))
-                                    {
-                                        variable_stack_->popFrame();
-                                        return ExecutionResult(type_err.empty()
-                                            ? "DECLARE invalid type for variable: " + var_name
-                                            : type_err);
-                                    }
-                                    bool is_const = false;
-                                    getBool(*decl, "constant", is_const);
-                                    Value default_val = Value::makeNull();
-                                    auto it_def = decl->find("default");
-                                    if (it_def != decl->end())
-                                    {
-                                        scratchbird::sblr::v3::Instruction def_inst;
-                                        if (getInstrFromValue(it_def->second, def_inst))
-                                        {
-                                            default_val = evalExpr(def_inst);
-                                        }
-                                    }
-                                    std::string assign_err;
-                                    Value coerced;
-                                    if (!coercePsqlValue(type_info, default_val, coerced, assign_err))
-                                    {
-                                        variable_stack_->popFrame();
-                                        return ExecutionResult(assign_err.empty()
-                                            ? "DECLARE default invalid for variable: " + var_name
-                                            : assign_err);
-                                    }
-                                    VariableEntry entry_meta;
-                                    entry_meta.value = std::move(coerced);
-                                    entry_meta.is_constant = is_const;
-                                    entry_meta.has_type = type_info.has_type;
-                                    entry_meta.type_info = type_info.type_info;
-                                    entry_meta.domain_id = type_info.domain_id;
-                                    entry_meta.nullable = type_info.nullable;
-                                    variable_stack_->declareVariable(var_name, entry_meta);
-                                }
-                            }
-                        }
-                        auto it_body = payload.find("body");
-                        if (it_body != payload.end())
-                        {
-                            if (const auto* list = std::get_if<scratchbird::sblr::v3::Value::List>(&it_body->second.data))
-                            {
-                                auto res = execStmtList(*list);
-                                if (!res.success())
-                                {
-                                    auto it_handlers = payload.find("exception_handlers");
-                                    if (it_handlers != payload.end())
-                                    {
-                                        const auto* handlers =
-                                            std::get_if<scratchbird::sblr::v3::Value::List>(&it_handlers->second.data);
-                                        if (handlers)
-                                        {
-                                            for (const auto& entry : *handlers)
-                                            {
-                                                const auto* hobj = std::get_if<scratchbird::sblr::v3::Value::Object>(&entry.data);
-                                                if (!hobj)
-                                                {
-                                                    continue;
-                                                }
-                                                std::string condition;
-                                                getString(*hobj, "condition", condition);
-                                                std::string cond_norm = core::IdentifierUtils::toUpper(condition);
-                                                if (!has_psql_exception_)
-                                                {
-                                                    psql_exception_.sqlstate.clear();
-                                                    psql_exception_.name = "EXCEPTION";
-                                                    psql_exception_.message = res.error();
-                                                    has_psql_exception_ = true;
-                                                }
-                                                auto matches = [&](const PsqlExceptionInfo& ex) -> bool {
-                                                    if (cond_norm.empty() || cond_norm == "ANY" ||
-                                                        cond_norm == "EXCEPTION" || cond_norm == "OTHERS")
-                                                    {
-                                                        return true;
-                                                    }
-                                                    if (!ex.sqlstate.empty() &&
-                                                        core::IdentifierUtils::toUpper(ex.sqlstate) == cond_norm)
-                                                    {
-                                                        return true;
-                                                    }
-                                                    if (!ex.name.empty() &&
-                                                        core::IdentifierUtils::toUpper(ex.name) == cond_norm)
-                                                    {
-                                                        return true;
-                                                    }
-                                                    return false;
-                                                };
-                                                if (matches(psql_exception_))
-                                                {
-                                                    auto it_handler = hobj->find("handler");
-                                                    if (it_handler != hobj->end())
-                                                    {
-                                                        if (const auto* handler_list =
-                                                                std::get_if<scratchbird::sblr::v3::Value::List>(&it_handler->second.data))
-                                                        {
-                                                            variable_stack_->pushFrame();
-                                                            if (variable_stack_->hasVariableInCurrentFrame("SQLSTATE"))
-                                                            {
-                                                                variable_stack_->setVariable("SQLSTATE",
-                                                                    Value::makeText(psql_exception_.sqlstate));
-                                                            }
-                                                            else
-                                                            {
-                                                                variable_stack_->declareVariable("SQLSTATE",
-                                                                    Value::makeText(psql_exception_.sqlstate));
-                                                            }
-                                                            if (variable_stack_->hasVariableInCurrentFrame("SQLERRM"))
-                                                            {
-                                                                variable_stack_->setVariable("SQLERRM",
-                                                                    Value::makeText(psql_exception_.message));
-                                                            }
-                                                            else
-                                                            {
-                                                                variable_stack_->declareVariable("SQLERRM",
-                                                                    Value::makeText(psql_exception_.message));
-                                                            }
-                                                            auto handler_res = execStmtList(*handler_list);
-                                                            variable_stack_->popFrame();
-                                                            variable_stack_->popFrame();
-                                                            if (handler_res.success())
-                                                            {
-                                                                has_psql_exception_ = false;
-                                                            }
-                                                            return handler_res;
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                variable_stack_->popFrame();
-                                return res;
-                            }
-                        }
-                        variable_stack_->popFrame();
-                        return ExecutionResult();
+                        return executePsqlBlockOpcode(
+                            static_cast<Opcode>(inst.opcode), payload);
                     }
-                    case Opcode::SBLR3_DECLARE: {
-                        if (!variable_stack_)
-                        {
-                            variable_stack_ = std::make_unique<VariableStack>();
-                        }
-                        auto it_decls = payload.find("decls");
-                        if (it_decls == payload.end())
-                        {
-                            return ExecutionResult();
-                        }
-                        const auto* list = std::get_if<scratchbird::sblr::v3::Value::List>(&it_decls->second.data);
-                        if (!list)
-                        {
-                            return ExecutionResult();
-                        }
-                        for (const auto& entry : *list)
-                        {
-                            const auto* decl = std::get_if<scratchbird::sblr::v3::Value::Object>(&entry.data);
-                            if (!decl)
-                            {
-                                continue;
-                            }
-                            std::string var_name;
-                            if (!getString(*decl, "name", var_name))
-                            {
-                                continue;
-                            }
-                            if (variable_stack_->hasVariableInCurrentFrame(var_name))
-                            {
-                                return ExecutionResult("Duplicate variable declaration: " + var_name);
-                            }
-                            auto it_type = decl->find("type");
-                            if (it_type == decl->end())
-                            {
-                                return ExecutionResult("DECLARE missing type for variable: " + var_name);
-                            }
-                            scratchbird::sblr::v3::TypeSpec spec;
-                            if (!decodeTypeSpec(it_type->second, spec))
-                            {
-                                return ExecutionResult("DECLARE invalid type for variable: " + var_name);
-                            }
-                            PsqlVarTypeInfo type_info;
-                            std::string type_err;
-                            if (!decodePsqlVarType(spec, type_info, type_err))
-                            {
-                                return ExecutionResult(type_err.empty()
-                                    ? "DECLARE invalid type for variable: " + var_name
-                                    : type_err);
-                            }
-                            bool is_const = false;
-                            getBool(*decl, "constant", is_const);
-                            Value default_val = Value::makeNull();
-                            auto it_def = decl->find("default");
-                            if (it_def != decl->end())
-                            {
-                                scratchbird::sblr::v3::Instruction def_inst;
-                                if (getInstrFromValue(it_def->second, def_inst))
-                                {
-                                    default_val = evalExpr(def_inst);
-                                }
-                            }
-                            std::string assign_err;
-                            Value coerced;
-                            if (!coercePsqlValue(type_info, default_val, coerced, assign_err))
-                            {
-                                return ExecutionResult(assign_err.empty()
-                                    ? "DECLARE default invalid for variable: " + var_name
-                                    : assign_err);
-                            }
-                            VariableEntry entry_meta;
-                            entry_meta.value = std::move(coerced);
-                            entry_meta.is_constant = is_const;
-                            entry_meta.has_type = type_info.has_type;
-                            entry_meta.type_info = type_info.type_info;
-                            entry_meta.domain_id = type_info.domain_id;
-                            entry_meta.nullable = type_info.nullable;
-                            variable_stack_->declareVariable(var_name, entry_meta);
-                        }
-                        return ExecutionResult();
-                    }
+                    case Opcode::SBLR3_DECLARE:
                     case Opcode::SBLR3_ASSIGN: {
-                        std::string var_name;
-                        auto it_target = payload.find("target");
-                        if (it_target == payload.end() || !getVarNameFromValue(it_target->second, var_name))
-                        {
-                            return ExecutionResult("ASSIGN missing target");
-                        }
-                        auto it_val = payload.find("value");
-                        if (it_val == payload.end())
-                        {
-                            return ExecutionResult("ASSIGN missing value");
-                        }
-                        scratchbird::sblr::v3::Instruction val_inst;
-                        if (!getInstrFromValue(it_val->second, val_inst))
-                        {
-                            return ExecutionResult("ASSIGN invalid value");
-                        }
-                        Value value = evalExpr(val_inst);
-                        if (!variable_stack_)
-                        {
-                            variable_stack_ = std::make_unique<VariableStack>();
-                        }
-                        std::string assign_err;
-                        if (!assignPsqlVariable(var_name, value, assign_err))
-                        {
-                            return ExecutionResult(assign_err.empty()
-                                ? "ASSIGN failed for variable: " + var_name
-                                : assign_err);
-                        }
-                        return ExecutionResult();
+                        return executePsqlVariableOpcode(
+                            static_cast<Opcode>(inst.opcode), payload);
                     }
-                    case Opcode::SBLR3_LABEL: {
-                        return ExecutionResult();
-                    }
-                    case Opcode::SBLR3_JUMP: {
-                        std::string label;
-                        if (!getString(payload, "label", label) || label.empty())
-                        {
-                            return ExecutionResult("JUMP missing label");
-                        }
-                        pending_jump_label = label;
-                        return ExecutionResult();
-                    }
+                    case Opcode::SBLR3_LABEL:
+                    case Opcode::SBLR3_JUMP:
                     case Opcode::SBLR3_JUMP_IF_TRUE:
-                    case Opcode::SBLR3_JUMP_IF_FALSE: {
-                        std::string label;
-                        if (!getString(payload, "label", label) || label.empty())
-                        {
-                            return ExecutionResult("JUMP_IF missing label");
-                        }
-                        auto it_cond = payload.find("condition");
-                        if (it_cond == payload.end())
-                        {
-                            return ExecutionResult("JUMP_IF missing condition");
-                        }
-                        scratchbird::sblr::v3::Instruction cond_inst;
-                        if (!getInstrFromValue(it_cond->second, cond_inst))
-                        {
-                            return ExecutionResult("JUMP_IF condition invalid");
-                        }
-                        bool cond = evalExpr(cond_inst).toBoolean();
-                        bool take_jump = (static_cast<Opcode>(inst.opcode) == Opcode::SBLR3_JUMP_IF_TRUE)
-                            ? cond
-                            : !cond;
-                        if (take_jump)
-                        {
-                            pending_jump_label = label;
-                        }
-                        return ExecutionResult();
-                    }
-                    case Opcode::SBLR3_IF: {
-                        auto it_cond = payload.find("condition");
-                        if (it_cond == payload.end())
-                        {
-                            return ExecutionResult("IF missing condition");
-                        }
-                        scratchbird::sblr::v3::Instruction cond_inst;
-                        if (!getInstrFromValue(it_cond->second, cond_inst))
-                        {
-                            return ExecutionResult("IF condition invalid");
-                        }
-                        bool cond = evalExpr(cond_inst).toBoolean();
-                        if (cond)
-                        {
-                            auto it_body = payload.find("then_body");
-                            if (it_body != payload.end())
-                            {
-                                if (const auto* list = std::get_if<scratchbird::sblr::v3::Value::List>(&it_body->second.data))
-                                {
-                                    return execStmtList(*list);
-                                }
-                            }
-                            return ExecutionResult();
-                        }
-                        auto it_elsif = payload.find("elsif");
-                        if (it_elsif != payload.end())
-                        {
-                            if (const auto* list = std::get_if<scratchbird::sblr::v3::Value::List>(&it_elsif->second.data))
-                            {
-                                for (const auto& entry : *list)
-                                {
-                                    const auto* obj = std::get_if<scratchbird::sblr::v3::Value::Object>(&entry.data);
-                                    if (!obj)
-                                    {
-                                        continue;
-                                    }
-                                    scratchbird::sblr::v3::Instruction econd;
-                                    auto it_econd = obj->find("condition");
-                                    if (it_econd != obj->end() && getInstrFromValue(it_econd->second, econd))
-                                    {
-                                        if (evalExpr(econd).toBoolean())
-                                        {
-                                            auto it_body2 = obj->find("body");
-                                            if (it_body2 != obj->end())
-                                            {
-                                                if (const auto* list2 = std::get_if<scratchbird::sblr::v3::Value::List>(&it_body2->second.data))
-                                                {
-                                                    return execStmtList(*list2);
-                                                }
-                                            }
-                                            return ExecutionResult();
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        auto it_else = payload.find("else_body");
-                        if (it_else != payload.end())
-                        {
-                            if (const auto* list = std::get_if<scratchbird::sblr::v3::Value::List>(&it_else->second.data))
-                            {
-                                return execStmtList(*list);
-                            }
-                        }
-                        return ExecutionResult();
-                    }
-                    case Opcode::SBLR3_WHILE: {
-                        auto it_cond = payload.find("condition");
-                        auto it_body = payload.find("body");
-                        if (it_cond == payload.end() || it_body == payload.end())
-                        {
-                            return ExecutionResult("WHILE missing condition/body");
-                        }
-                        scratchbird::sblr::v3::Instruction cond_inst;
-                        if (!getInstrFromValue(it_cond->second, cond_inst))
-                        {
-                            return ExecutionResult("WHILE condition invalid");
-                        }
-                        const auto* body_list = std::get_if<scratchbird::sblr::v3::Value::List>(&it_body->second.data);
-                        if (!body_list)
-                        {
-                            return ExecutionResult("WHILE body invalid");
-                        }
-                        std::string loop_label;
-                        getString(payload, "label", loop_label);
-                        v3_loop_stack.push_back({loop_label});
-                        while (evalExpr(cond_inst).toBoolean())
-                        {
-                            auto res = execStmtList(*body_list);
-                            if (!res.success())
-                            {
-                                v3_loop_stack.pop_back();
-                                return res;
-                            }
-                            if (return_requested_)
-                            {
-                                v3_loop_stack.pop_back();
-                                return ExecutionResult();
-                            }
-                            bool do_break = false;
-                            bool do_continue = false;
-                            handle_loop_control(loop_label, do_break, do_continue);
-                            if (do_break)
-                            {
-                                v3_loop_stack.pop_back();
-                                return ExecutionResult();
-                            }
-                            if (do_continue)
-                            {
-                                continue;
-                            }
-                        }
-                        if (!v3_loop_stack.empty())
-                        {
-                            v3_loop_stack.pop_back();
-                        }
-                        return ExecutionResult();
-                    }
-                    case Opcode::SBLR3_PSQL_FOR_SELECT: {
-                        auto it_query = payload.find("query");
-                        auto it_body = payload.find("body");
-                        if (it_query == payload.end() || it_body == payload.end())
-                        {
-                            return ExecutionResult("FOR SELECT missing query/body");
-                        }
-                        scratchbird::sblr::v3::Instruction query_inst;
-                        if (!getInstrFromValue(it_query->second, query_inst))
-                        {
-                            return ExecutionResult("FOR SELECT query invalid");
-                        }
-                        const auto* body_list = std::get_if<scratchbird::sblr::v3::Value::List>(&it_body->second.data);
-                        if (!body_list)
-                        {
-                            return ExecutionResult("FOR SELECT body invalid");
-                        }
-                        std::vector<uint8_t> query_bytecode;
-                        std::string enc_err;
-                        if (!buildV3ContainerBytes(query_inst, query_bytecode, enc_err))
-                        {
-                            return ExecutionResult(enc_err.empty() ? "FOR SELECT encode failed" : enc_err);
-                        }
-                        Executor nested(db_);
-                        if (conn_ctx_)
-                        {
-                            nested.setConnectionContext(conn_ctx_);
-                        }
-                        auto exec_res = nested.execute(query_bytecode);
-                        if (!exec_res.success())
-                        {
-                            return exec_res;
-                        }
-                        auto* rs = exec_res.resultSet();
-                        if (!rs)
-                        {
-                            return ExecutionResult();
-                        }
-                        std::string record_var;
-                        auto it_rec = payload.find("record");
-                        if (it_rec != payload.end())
-                        {
-                            getVarNameFromValue(it_rec->second, record_var);
-                        }
-                        if (!variable_stack_)
-                        {
-                            variable_stack_ = std::make_unique<VariableStack>();
-                        }
-                        std::string loop_label;
-                        getString(payload, "label", loop_label);
-                        v3_loop_stack.push_back({loop_label});
-                        for (size_t r = 0; r < rs->rowCount(); ++r)
-                        {
-                            if (!record_var.empty())
-                            {
-                                std::vector<std::string> field_names;
-                                std::vector<Value> field_values;
-                                field_names.reserve(rs->columnCount());
-                                field_values.reserve(rs->columnCount());
-                                for (size_t c = 0; c < rs->columnCount(); ++c)
-                                {
-                                    field_names.push_back(rs->columnName(c));
-                                    field_values.push_back(rs->getValue(r, c));
-                                }
-                                std::string assign_err;
-                                Value record_val = Value::makeComposite(field_names, field_values);
-                                if (!assignPsqlVariable(record_var, record_val, assign_err))
-                                {
-                                    v3_loop_stack.pop_back();
-                                    return ExecutionResult(assign_err.empty()
-                                        ? "FOR SELECT record assignment failed"
-                                        : assign_err);
-                                }
-                            }
-                            auto res = execStmtList(*body_list);
-                            if (!res.success())
-                            {
-                                v3_loop_stack.pop_back();
-                                return res;
-                            }
-                            if (return_requested_)
-                            {
-                                v3_loop_stack.pop_back();
-                                return ExecutionResult();
-                            }
-                            bool do_break = false;
-                            bool do_continue = false;
-                            handle_loop_control(loop_label, do_break, do_continue);
-                            if (do_break)
-                            {
-                                v3_loop_stack.pop_back();
-                                return ExecutionResult();
-                            }
-                            if (do_continue)
-                            {
-                                continue;
-                            }
-                        }
-                        if (!v3_loop_stack.empty())
-                        {
-                            v3_loop_stack.pop_back();
-                        }
-                        return ExecutionResult();
-                    }
-                    case Opcode::SBLR3_PSQL_FOR_EXECUTE: {
-                        auto it_sql = payload.find("sql");
-                        auto it_body = payload.find("body");
-                        if (it_sql == payload.end() || it_body == payload.end())
-                        {
-                            return ExecutionResult("FOR EXECUTE missing sql/body");
-                        }
-                        scratchbird::sblr::v3::Instruction sql_inst;
-                        if (!getInstrFromValue(it_sql->second, sql_inst))
-                        {
-                            return ExecutionResult("FOR EXECUTE sql invalid");
-                        }
-                        const auto* body_list = std::get_if<scratchbird::sblr::v3::Value::List>(&it_body->second.data);
-                        if (!body_list)
-                        {
-                            return ExecutionResult("FOR EXECUTE body invalid");
-                        }
-                        std::string sql_text = evalExpr(sql_inst).toString();
-                        if (sql_text.empty())
-                        {
-                            return ExecutionResult("FOR EXECUTE empty SQL");
-                        }
-                        parser::v3::Compiler compiler;
-                        auto compile_result = compiler.compile(sql_text);
-                        if (!compile_result.ok)
-                        {
-                            return ExecutionResult(compile_result.error.empty()
-                                ? "FOR EXECUTE compilation error"
-                                : compile_result.error);
-                        }
-                        std::vector<uint8_t> query_bytecode = compile_result.bytecode;
-                        Executor nested(db_);
-                        if (conn_ctx_)
-                        {
-                            nested.setConnectionContext(conn_ctx_);
-                        }
-                        auto exec_res = nested.execute(query_bytecode);
-                        if (!exec_res.success())
-                        {
-                            return exec_res;
-                        }
-                        auto* rs = exec_res.resultSet();
-                        if (!rs)
-                        {
-                            return ExecutionResult();
-                        }
-                        std::string record_var;
-                        auto it_rec = payload.find("record");
-                        if (it_rec != payload.end())
-                        {
-                            getVarNameFromValue(it_rec->second, record_var);
-                        }
-                        if (!variable_stack_)
-                        {
-                            variable_stack_ = std::make_unique<VariableStack>();
-                        }
-                        std::string loop_label;
-                        getString(payload, "label", loop_label);
-                        v3_loop_stack.push_back({loop_label});
-                        for (size_t r = 0; r < rs->rowCount(); ++r)
-                        {
-                            if (!record_var.empty())
-                            {
-                                std::vector<std::string> field_names;
-                                std::vector<Value> field_values;
-                                field_names.reserve(rs->columnCount());
-                                field_values.reserve(rs->columnCount());
-                                for (size_t c = 0; c < rs->columnCount(); ++c)
-                                {
-                                    field_names.push_back(rs->columnName(c));
-                                    field_values.push_back(rs->getValue(r, c));
-                                }
-                                std::string assign_err;
-                                Value record_val = Value::makeComposite(field_names, field_values);
-                                if (!assignPsqlVariable(record_var, record_val, assign_err))
-                                {
-                                    v3_loop_stack.pop_back();
-                                    return ExecutionResult(assign_err.empty()
-                                        ? "FOR EXECUTE record assignment failed"
-                                        : assign_err);
-                                }
-                            }
-                            auto res = execStmtList(*body_list);
-                            if (!res.success())
-                            {
-                                v3_loop_stack.pop_back();
-                                return res;
-                            }
-                            if (return_requested_)
-                            {
-                                v3_loop_stack.pop_back();
-                                return ExecutionResult();
-                            }
-                            bool do_break = false;
-                            bool do_continue = false;
-                            handle_loop_control(loop_label, do_break, do_continue);
-                            if (do_break)
-                            {
-                                v3_loop_stack.pop_back();
-                                return ExecutionResult();
-                            }
-                            if (do_continue)
-                            {
-                                continue;
-                            }
-                        }
-                        if (!v3_loop_stack.empty())
-                        {
-                            v3_loop_stack.pop_back();
-                        }
-                        return ExecutionResult();
-                    }
-                    case Opcode::SBLR3_LOOP: {
-                        auto it_body = payload.find("body");
-                        const auto* body_list = (it_body != payload.end())
-                            ? std::get_if<scratchbird::sblr::v3::Value::List>(&it_body->second.data)
-                            : nullptr;
-                        if (!body_list)
-                        {
-                            return ExecutionResult("LOOP body invalid");
-                        }
-                        std::string loop_label;
-                        getString(payload, "label", loop_label);
-                        v3_loop_stack.push_back({loop_label});
-                        while (true)
-                        {
-                            auto res = execStmtList(*body_list);
-                            if (!res.success())
-                            {
-                                v3_loop_stack.pop_back();
-                                return res;
-                            }
-                            if (return_requested_)
-                            {
-                                v3_loop_stack.pop_back();
-                                return ExecutionResult();
-                            }
-                            bool do_break = false;
-                            bool do_continue = false;
-                            handle_loop_control(loop_label, do_break, do_continue);
-                            if (do_break)
-                            {
-                                v3_loop_stack.pop_back();
-                                return ExecutionResult();
-                            }
-                            if (do_continue)
-                            {
-                                continue;
-                            }
-                        }
-                    }
+                    case Opcode::SBLR3_JUMP_IF_FALSE:
                     case Opcode::SBLR3_EXIT:
                     case Opcode::SBLR3_PSQL_LEAVE:
-                    {
-                        auto it_when = payload.find("when");
-                        if (it_when != payload.end())
-                        {
-                            scratchbird::sblr::v3::Instruction when_inst;
-                            if (getInstrFromValue(it_when->second, when_inst))
-                            {
-                                if (!evalExpr(when_inst).toBoolean())
-                                {
-                                    return ExecutionResult();
-                                }
-                            }
-                        }
-                        std::string label;
-                        getString(payload, "label", label);
-                        if (v3_loop_stack.empty())
-                        {
-                            return ExecutionResult("EXIT/LEAVE used outside loop");
-                        }
-                        if (!label.empty())
-                        {
-                            bool found = false;
-                            std::string target = normalize_label(label);
-                            for (const auto& loop_state : v3_loop_stack)
-                            {
-                                if (!loop_state.label.empty() && normalize_label(loop_state.label) == target)
-                                {
-                                    found = true;
-                                    break;
-                                }
-                            }
-                            if (!found)
-                            {
-                                return ExecutionResult("EXIT/LEAVE label not found: " + label);
-                            }
-                        }
-                        pending_break_label = label.empty() ? std::optional<std::string>("")
-                                                            : std::optional<std::string>(normalize_label(label));
-                        return ExecutionResult();
+                    case Opcode::SBLR3_PSQL_CONTINUE: {
+                        return executePsqlFlowControlOpcode(
+                            static_cast<Opcode>(inst.opcode), payload);
                     }
-                    case Opcode::SBLR3_PSQL_CONTINUE:
-                    {
-                        std::string label;
-                        getString(payload, "label", label);
-                        if (v3_loop_stack.empty())
-                        {
-                            return ExecutionResult("CONTINUE used outside loop");
-                        }
-                        if (!label.empty())
-                        {
-                            bool found = false;
-                            std::string target = normalize_label(label);
-                            for (const auto& loop_state : v3_loop_stack)
-                            {
-                                if (!loop_state.label.empty() && normalize_label(loop_state.label) == target)
-                                {
-                                    found = true;
-                                    break;
-                                }
-                            }
-                            if (!found)
-                            {
-                                return ExecutionResult("CONTINUE label not found: " + label);
-                            }
-                        }
-                        pending_continue_label = label.empty() ? std::optional<std::string>("")
-                                                               : std::optional<std::string>(normalize_label(label));
-                        return ExecutionResult();
+                    case Opcode::SBLR3_IF: {
+                        return executePsqlConditionalOpcode(
+                            static_cast<Opcode>(inst.opcode), payload);
                     }
-                    case Opcode::SBLR3_RETURN: {
-                        auto it_val = payload.find("value");
-                        if (it_val != payload.end())
-                        {
-                            scratchbird::sblr::v3::Instruction vinst;
-                            if (getInstrFromValue(it_val->second, vinst))
-                            {
-                                return_value_ = evalExpr(vinst);
-                            }
-                        }
-                        return_requested_ = true;
-                        return ExecutionResult();
+                    case Opcode::SBLR3_WHILE:
+                    case Opcode::SBLR3_PSQL_FOR_SELECT:
+                    case Opcode::SBLR3_PSQL_FOR_EXECUTE:
+                    case Opcode::SBLR3_LOOP: {
+                        return executePsqlLoopOpcode(
+                            static_cast<Opcode>(inst.opcode), payload);
                     }
-                    case Opcode::SBLR3_SUSPEND: {
-                        if (!psql_output_active_ || psql_output_vars_.empty())
-                        {
-                            return ExecutionResult("SUSPEND requires output variables");
-                        }
-                        if (!current_result_set_)
-                        {
-                            current_result_set_ = std::make_unique<ResultSet>();
-                            for (size_t i = 0; i < psql_output_vars_.size(); ++i)
-                            {
-                                core::DataType type = core::DataType::UNKNOWN;
-                                if (i < psql_output_types_.size())
-                                {
-                                    type = psql_output_types_[i];
-                                }
-                                current_result_set_->addColumn(psql_output_vars_[i], type);
-                            }
-                        }
-                        std::vector<Value> row;
-                        row.reserve(psql_output_vars_.size());
-                        for (const auto& name : psql_output_vars_)
-                        {
-                            try
-                            {
-                                row.push_back(variable_stack_->getVariable(name));
-                            }
-                            catch (...)
-                            {
-                                row.push_back(Value());
-                            }
-                        }
-                        current_result_set_->addRow(std::move(row));
-                        return ExecutionResult();
-                    }
-                    case Opcode::SBLR3_RAISE: {
-                        std::string sqlstate;
-                        std::string message;
-                        auto it_sqlstate = payload.find("sqlstate");
-                        if (it_sqlstate != payload.end())
-                        {
-                            if (auto s = std::get_if<std::string>(&it_sqlstate->second.data))
-                            {
-                                sqlstate = *s;
-                            }
-                        }
-                        auto it_msg = payload.find("message");
-                        if (it_msg != payload.end())
-                        {
-                            if (auto s = std::get_if<std::string>(&it_msg->second.data))
-                            {
-                                message = *s;
-                            }
-                        }
-                        std::vector<Value> params;
-                        auto it_params = payload.find("params");
-                        if (it_params != payload.end())
-                        {
-                            if (const auto* list = std::get_if<scratchbird::sblr::v3::Value::List>(&it_params->second.data))
-                            {
-                                for (const auto& entry : *list)
-                                {
-                                    scratchbird::sblr::v3::Instruction param_inst;
-                                    if (getInstrFromValue(entry, param_inst))
-                                    {
-                                        params.push_back(evalExpr(param_inst));
-                                    }
-                                }
-                            }
-                        }
-                        if (!sqlstate.empty() && sqlstate.size() != 5)
-                        {
-                            return ExecutionResult("RAISE sqlstate must be 5 characters");
-                        }
-                        if (message.empty() && sqlstate.empty() && params.empty() && has_psql_exception_)
-                        {
-                            return ExecutionResult(psql_exception_.message.empty()
-                                ? "PSQL RAISE"
-                                : psql_exception_.message);
-                        }
-                        auto format_message = [&](const std::string& tmpl,
-                                                  const std::vector<Value>& args) -> std::string {
-                            if (args.empty())
-                            {
-                                return tmpl;
-                            }
-                            std::string out;
-                            out.reserve(tmpl.size() + 16);
-                            size_t arg_idx = 0;
-                            for (size_t i = 0; i < tmpl.size(); ++i)
-                            {
-                                if (tmpl[i] == '%' && arg_idx < args.size())
-                                {
-                                    if (i + 1 < tmpl.size() && tmpl[i + 1] == '%')
-                                    {
-                                        out.push_back('%');
-                                        ++i;
-                                        continue;
-                                    }
-                                    if (i + 1 < tmpl.size() && tmpl[i + 1] == 's')
-                                    {
-                                        out += args[arg_idx++].toString();
-                                        ++i;
-                                        continue;
-                                    }
-                                    out += args[arg_idx++].toString();
-                                    continue;
-                                }
-                                out.push_back(tmpl[i]);
-                            }
-                            if (arg_idx < args.size())
-                            {
-                                out += " ";
-                                for (size_t i = arg_idx; i < args.size(); ++i)
-                                {
-                                    if (i > arg_idx)
-                                    {
-                                        out += ", ";
-                                    }
-                                    out += args[i].toString();
-                                }
-                            }
-                            return out;
-                        };
-                        std::string formatted = format_message(message, params);
-                        if (formatted.empty())
-                        {
-                            formatted = "PSQL RAISE";
-                        }
-                        psql_exception_.sqlstate = sqlstate;
-                        if (sqlstate.empty())
-                        {
-                            psql_exception_.name = message.empty() ? "EXCEPTION" : message;
-                        }
-                        else
-                        {
-                            psql_exception_.name.clear();
-                        }
-                        psql_exception_.message = formatted;
-                        has_psql_exception_ = true;
-                        return ExecutionResult(formatted);
-                    }
-                    case Opcode::SBLR3_CALL: {
-                        std::string proc_name;
-                        if (!getString(payload, "proc_name", proc_name))
-                        {
-                            return ExecutionResult("CALL missing proc_name");
-                        }
-                        std::vector<Value> args;
-                        auto it_args = payload.find("args");
-                        if (it_args != payload.end())
-                        {
-                            const auto* list = std::get_if<scratchbird::sblr::v3::Value::List>(&it_args->second.data);
-                            if (list)
-                            {
-                                for (const auto& entry : *list)
-                                {
-                                    scratchbird::sblr::v3::Instruction arg_inst;
-                                    if (getInstrFromValue(entry, arg_inst))
-                                    {
-                                        args.push_back(evalExpr(arg_inst));
-                                    }
-                                }
-                            }
-                        }
-                        auto call_res = callProcedureByName(proc_name, args);
-                        if (!call_res.success())
-                        {
-                            return call_res;
-                        }
-                        return ExecutionResult();
-                    }
-                    case Opcode::SBLR3_CURSOR_DECLARE: {
-                        std::string cursor_name;
-                        if (!getString(payload, "cursor_name", cursor_name))
-                        {
-                            return ExecutionResult("CURSOR DECLARE missing name");
-                        }
-                        if (cursors_.find(cursor_name) != cursors_.end())
-                        {
-                            return ExecutionResult("Cursor '" + cursor_name + "' already exists");
-                        }
-                        std::vector<uint8_t> query_bytecode;
-                        auto it_query = payload.find("query");
-                        if (it_query != payload.end())
-                        {
-                            scratchbird::sblr::v3::Instruction query_inst;
-                            if (getInstrFromValue(it_query->second, query_inst))
-                            {
-                                std::string enc_err;
-                                if (!buildV3ContainerBytes(query_inst, query_bytecode, enc_err))
-                                {
-                                    return ExecutionResult(enc_err.empty() ? "CURSOR DECLARE encode failed" : enc_err);
-                                }
-                            }
-                        }
-                        CursorState cursor(cursor_name);
-                        cursor.query_bytecode = std::move(query_bytecode);
-                        cursors_[cursor_name] = std::move(cursor);
-                        return ExecutionResult();
-                    }
-                    case Opcode::SBLR3_CURSOR_OPEN: {
-                        std::string cursor_name;
-                        if (!getString(payload, "cursor_name", cursor_name))
-                        {
-                            return ExecutionResult("CURSOR OPEN missing name");
-                        }
-                        auto it = cursors_.find(cursor_name);
-                        if (it == cursors_.end())
-                        {
-                            return ExecutionResult("Cursor '" + cursor_name + "' does not exist");
-                        }
-                        CursorState& cursor = it->second;
-                        if (cursor.is_open)
-                        {
-                            return ExecutionResult("Cursor '" + cursor_name + "' is already open");
-                        }
-                        if (cursor.query_bytecode.empty())
-                        {
-                            return ExecutionResult("Cursor '" + cursor_name + "' has no query");
-                        }
-                        Executor nested(db_);
-                        if (conn_ctx_)
-                        {
-                            nested.setConnectionContext(conn_ctx_);
-                        }
-                        auto exec_res = nested.execute(cursor.query_bytecode);
-                        if (!exec_res.success())
-                        {
-                            return ExecutionResult("Cursor '" + cursor_name + "' execution failed: " + exec_res.error());
-                        }
-                        cursor.result_set.clear();
-                        cursor.column_names.clear();
-                        cursor.column_types.clear();
-                        if (auto* result_set = exec_res.resultSet())
-                        {
-                            cursor.column_names.reserve(result_set->columnCount());
-                            cursor.column_types.reserve(result_set->columnCount());
-                            for (size_t i = 0; i < result_set->columnCount(); ++i)
-                            {
-                                cursor.column_names.push_back(result_set->columnName(i));
-                                cursor.column_types.push_back(result_set->columnType(i));
-                            }
-                            cursor.result_set.reserve(result_set->rowCount());
-                            for (size_t row = 0; row < result_set->rowCount(); ++row)
-                            {
-                                std::vector<Value> values;
-                                values.reserve(result_set->columnCount());
-                                for (size_t col = 0; col < result_set->columnCount(); ++col)
-                                {
-                                    values.push_back(result_set->getValue(row, col));
-                                }
-                                cursor.result_set.push_back(std::move(values));
-                            }
-                        }
-                        cursor.current_row = 0;
-                        cursor.is_open = true;
-                        return ExecutionResult();
-                    }
-                    case Opcode::SBLR3_CURSOR_FETCH: {
-                        std::string cursor_name;
-                        if (!getString(payload, "cursor_name", cursor_name))
-                        {
-                            return ExecutionResult("CURSOR FETCH missing name");
-                        }
-                        auto it = cursors_.find(cursor_name);
-                        if (it == cursors_.end())
-                        {
-                            return ExecutionResult("Cursor '" + cursor_name + "' does not exist");
-                        }
-                        CursorState& cursor = it->second;
-                        if (!cursor.is_open)
-                        {
-                            return ExecutionResult("Cursor '" + cursor_name + "' is not open");
-                        }
-                        std::string target_var;
-                        auto it_target = payload.find("target");
-                        if (it_target != payload.end())
-                        {
-                            getVarNameFromValue(it_target->second, target_var);
-                        }
-                        if (!variable_stack_)
-                        {
-                            variable_stack_ = std::make_unique<VariableStack>();
-                        }
-                        if (cursor.current_row >= cursor.result_set.size())
-                        {
-                            if (!target_var.empty())
-                            {
-                                std::string assign_err;
-                                if (!assignPsqlVariable(target_var, Value::makeNull(), assign_err))
-                                {
-                                    return ExecutionResult(assign_err.empty()
-                                        ? "CURSOR FETCH assignment failed"
-                                        : assign_err);
-                                }
-                            }
-                            return ExecutionResult();
-                        }
-                        const auto& row = cursor.result_set[cursor.current_row];
-                        if (!target_var.empty())
-                        {
-                            if (row.size() == 1)
-                            {
-                                std::string assign_err;
-                                if (!assignPsqlVariable(target_var, row.front(), assign_err))
-                                {
-                                    return ExecutionResult(assign_err.empty()
-                                        ? "CURSOR FETCH assignment failed"
-                                        : assign_err);
-                                }
-                            }
-                            else
-                            {
-                                std::string assign_err;
-                                Value record_val = Value::makeComposite(cursor.column_names, row);
-                                if (!assignPsqlVariable(target_var, record_val, assign_err))
-                                {
-                                    return ExecutionResult(assign_err.empty()
-                                        ? "CURSOR FETCH assignment failed"
-                                        : assign_err);
-                                }
-                            }
-                        }
-                        cursor.current_row++;
-                        return ExecutionResult();
-                    }
+                    case Opcode::SBLR3_RETURN:
+                    case Opcode::SBLR3_SUSPEND:
+                    case Opcode::SBLR3_RAISE:
+                    case Opcode::SBLR3_CALL:
+                    case Opcode::SBLR3_CURSOR_DECLARE:
+                    case Opcode::SBLR3_CURSOR_OPEN:
+                    case Opcode::SBLR3_CURSOR_FETCH:
                     case Opcode::SBLR3_CURSOR_CLOSE: {
-                        std::string cursor_name;
-                        if (!getString(payload, "cursor_name", cursor_name))
-                        {
-                            return ExecutionResult("CURSOR CLOSE missing name");
-                        }
-                        auto it = cursors_.find(cursor_name);
-                        if (it == cursors_.end())
-                        {
-                            return ExecutionResult("Cursor '" + cursor_name + "' does not exist");
-                        }
-                        CursorState& cursor = it->second;
-                        if (!cursor.is_open)
-                        {
-                            return ExecutionResult("Cursor '" + cursor_name + "' is not open");
-                        }
-                        cursor.result_set.clear();
-                        cursor.current_row = 0;
-                        cursor.is_open = false;
-                        return ExecutionResult();
+                        return executePsqlRuntimeOpcode(
+                            static_cast<Opcode>(inst.opcode), payload);
                     }
 	                    default:
 	                        break;
@@ -54267,1091 +55503,518 @@ namespace scratchbird
 	                    return ExecutionResult(std::move(current_result_set_));
 	                };
 
-	                switch (static_cast<scratchbird::sblr::v3::Opcode>(inst.opcode))
-	                {
-	                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_TABLE:
-	                        return handleCreateTable(payload);
-                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_INDEX:
-                        return handleCreateIndex(payload);
-                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_DOMAIN:
-                        return handleCreateDomain(payload);
-                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_VIEW:
-                        return handleCreateView(payload);
-                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_POLICY:
-                        return handleCreatePolicyV3(payload);
-                    case scratchbird::sblr::v3::Opcode::SBLR3_DROP_TABLE:
-                    case scratchbird::sblr::v3::Opcode::SBLR3_DROP_INDEX:
-                        return handleDrop(payload, inst.opcode);
-                    case scratchbird::sblr::v3::Opcode::SBLR3_DROP_POLICY:
-                        return handleDropPolicyV3(payload);
-                    case scratchbird::sblr::v3::Opcode::SBLR3_TRUNCATE_TABLE:
-                        return handleTruncate(payload);
-                    case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_TABLE:
-                        return handleAlterTable(payload);
-                    case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_POLICY:
-                        return handleAlterPolicyV3(payload);
-                    case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_TABLE_SET_TABLESPACE:
-                        return handleAlterTableSetTablespace(payload);
-	                    case scratchbird::sblr::v3::Opcode::SBLR3_COPY:
-	                        return handleCopyV3(payload);
-	                    case scratchbird::sblr::v3::Opcode::SBLR3_SHOW_TABLES: {
-	                        std::string schema_name;
-	                        std::string like_pattern;
-	                        getString(payload, "key", schema_name);
-	                        getPayloadStringValue(payload, "value", like_pattern);
-	                        return runLegacyShowHandler(
-	                            &Executor::executeShowTables, {schema_name, like_pattern});
-	                    }
-	                    case scratchbird::sblr::v3::Opcode::SBLR3_SHOW_COLUMNS: {
-	                        std::string table_name;
-	                        std::string like_pattern;
-	                        getString(payload, "key", table_name);
-	                        getPayloadStringValue(payload, "value", like_pattern);
-	                        return runLegacyShowHandler(
-	                            &Executor::executeShowColumns, {table_name, like_pattern});
-	                    }
-	                    case scratchbird::sblr::v3::Opcode::SBLR3_SHOW_DATABASES: {
-	                        std::string like_pattern;
-	                        getPayloadStringValue(payload, "value", like_pattern);
-	                        return runLegacyShowHandler(
-	                            &Executor::executeShowDatabases, {like_pattern});
-	                    }
-	                    case scratchbird::sblr::v3::Opcode::SBLR3_SHOW_INDEXES: {
-	                        std::string table_name;
-	                        getString(payload, "key", table_name);
-	                        return runLegacyShowHandler(
-	                            &Executor::executeShowIndexes, {table_name});
-	                    }
-	                    case scratchbird::sblr::v3::Opcode::SBLR3_SHOW_CREATE_TABLE: {
-	                        std::string table_name;
-	                        getString(payload, "key", table_name);
-	                        return runLegacyShowHandler(
-	                            &Executor::executeShowCreateTable, {table_name});
-	                    }
-	                    case scratchbird::sblr::v3::Opcode::SBLR3_SHOW_TABLE: {
-	                        std::string object_name;
-	                        getString(payload, "key", object_name);
-	                        return runLegacyShowHandler(
-	                            &Executor::executeShowTable, {object_name});
-	                    }
-	                    case scratchbird::sblr::v3::Opcode::SBLR3_SHOW_INDEX: {
-	                        std::string object_name;
-	                        getString(payload, "key", object_name);
-	                        return runLegacyShowHandler(
-	                            &Executor::executeShowIndex, {object_name});
-	                    }
-	                    case scratchbird::sblr::v3::Opcode::SBLR3_SHOW_TRIGGER: {
-	                        std::string object_name;
-	                        getString(payload, "key", object_name);
-	                        return runLegacyShowHandler(
-	                            &Executor::executeShowTrigger, {object_name});
-	                    }
-	                    case scratchbird::sblr::v3::Opcode::SBLR3_SHOW_PROCEDURE: {
-	                        std::string object_name;
-	                        getString(payload, "key", object_name);
-	                        return runLegacyShowHandler(
-	                            &Executor::executeShowProcedure, {object_name});
-	                    }
-	                    case scratchbird::sblr::v3::Opcode::SBLR3_SHOW_FUNCTION: {
-	                        std::string object_name;
-	                        getString(payload, "key", object_name);
-	                        return runLegacyShowHandler(
-	                            &Executor::executeShowFunction, {object_name});
-	                    }
-	                    case scratchbird::sblr::v3::Opcode::SBLR3_SHOW_VIEW: {
-	                        std::string object_name;
-	                        getString(payload, "key", object_name);
-	                        return runLegacyShowHandler(
-	                            &Executor::executeShowView, {object_name});
-	                    }
-	                    case scratchbird::sblr::v3::Opcode::SBLR3_SHOW_DOMAIN: {
-	                        std::string object_name;
-	                        getString(payload, "key", object_name);
-	                        return runLegacyShowHandler(
-	                            &Executor::executeShowDomain, {object_name});
-	                    }
-	                    case scratchbird::sblr::v3::Opcode::SBLR3_SHOW_GENERATOR: {
-	                        std::string object_name;
-	                        getString(payload, "key", object_name);
-	                        return runLegacyShowHandler(
-	                            &Executor::executeShowGenerator, {object_name});
-	                    }
-	                    case scratchbird::sblr::v3::Opcode::SBLR3_SHOW_SCHEMA: {
-	                        std::string object_name;
-	                        getString(payload, "key", object_name);
-	                        return runLegacyShowHandler(
-	                            &Executor::executeShowSchema, {object_name});
-	                    }
-	                    case scratchbird::sblr::v3::Opcode::SBLR3_SHOW_ROLE: {
-	                        std::string object_name;
-	                        getString(payload, "key", object_name);
-	                        return runLegacyShowHandler(
-	                            &Executor::executeShowRole, {object_name});
-	                    }
-	                    case scratchbird::sblr::v3::Opcode::SBLR3_SHOW_GRANTS: {
-	                        std::string object_name;
-	                        getString(payload, "key", object_name);
-	                        return runLegacyShowHandler(
-	                            &Executor::executeShowGrants, {object_name});
-	                    }
-	                    case scratchbird::sblr::v3::Opcode::SBLR3_SHOW_VARIABLE: {
-	                        std::string var_name;
-	                        getString(payload, "key", var_name);
-	                        return runLegacyShowHandler(
-	                            &Executor::executeShowVariable, {var_name});
-	                    }
-	                    case scratchbird::sblr::v3::Opcode::SBLR3_SHOW_ALL:
-	                        return runLegacyShowHandler(&Executor::executeShowAll, {});
-	                    case scratchbird::sblr::v3::Opcode::SBLR3_SHOW_TRANSACTION_LEVEL:
-	                        return runLegacyShowHandler(&Executor::executeShowTransactionLevel, {});
-	                    case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_SYSTEM: {
-	                        if (!conn_ctx_ || !conn_ctx_->isSuperuser())
-	                        {
-	                            return ExecutionResult("Permission denied: ALTER SYSTEM (superuser only)");
-                        }
-                        if (!db_)
+                    enum class LegacyShowArgProfile
+                    {
+                        NONE,
+                        KEY,
+                        VALUE,
+                        KEY_AND_VALUE
+                    };
+
+                    struct LegacyShowDispatchEntry
+                    {
+                        scratchbird::sblr::v3::Opcode opcode;
+                        void (Executor::*handler)();
+                        LegacyShowArgProfile arg_profile;
+                    };
+
+                    static const std::array<LegacyShowDispatchEntry, 19> kLegacyShowDispatch = {{
+                        {scratchbird::sblr::v3::Opcode::SBLR3_SHOW_TABLES,
+                         &Executor::executeShowTables,
+                         LegacyShowArgProfile::KEY_AND_VALUE},
+                        {scratchbird::sblr::v3::Opcode::SBLR3_SHOW_COLUMNS,
+                         &Executor::executeShowColumns,
+                         LegacyShowArgProfile::KEY_AND_VALUE},
+                        {scratchbird::sblr::v3::Opcode::SBLR3_SHOW_DATABASES,
+                         &Executor::executeShowDatabases,
+                         LegacyShowArgProfile::VALUE},
+                        {scratchbird::sblr::v3::Opcode::SBLR3_SHOW_INDEXES,
+                         &Executor::executeShowIndexes,
+                         LegacyShowArgProfile::KEY},
+                        {scratchbird::sblr::v3::Opcode::SBLR3_SHOW_CREATE_TABLE,
+                         &Executor::executeShowCreateTable,
+                         LegacyShowArgProfile::KEY},
+                        {scratchbird::sblr::v3::Opcode::SBLR3_SHOW_TABLE,
+                         &Executor::executeShowTable,
+                         LegacyShowArgProfile::KEY},
+                        {scratchbird::sblr::v3::Opcode::SBLR3_SHOW_INDEX,
+                         &Executor::executeShowIndex,
+                         LegacyShowArgProfile::KEY},
+                        {scratchbird::sblr::v3::Opcode::SBLR3_SHOW_TRIGGER,
+                         &Executor::executeShowTrigger,
+                         LegacyShowArgProfile::KEY},
+                        {scratchbird::sblr::v3::Opcode::SBLR3_SHOW_PROCEDURE,
+                         &Executor::executeShowProcedure,
+                         LegacyShowArgProfile::KEY},
+                        {scratchbird::sblr::v3::Opcode::SBLR3_SHOW_FUNCTION,
+                         &Executor::executeShowFunction,
+                         LegacyShowArgProfile::KEY},
+                        {scratchbird::sblr::v3::Opcode::SBLR3_SHOW_VIEW,
+                         &Executor::executeShowView,
+                         LegacyShowArgProfile::KEY},
+                        {scratchbird::sblr::v3::Opcode::SBLR3_SHOW_DOMAIN,
+                         &Executor::executeShowDomain,
+                         LegacyShowArgProfile::KEY},
+                        {scratchbird::sblr::v3::Opcode::SBLR3_SHOW_GENERATOR,
+                         &Executor::executeShowGenerator,
+                         LegacyShowArgProfile::KEY},
+                        {scratchbird::sblr::v3::Opcode::SBLR3_SHOW_SCHEMA,
+                         &Executor::executeShowSchema,
+                         LegacyShowArgProfile::KEY},
+                        {scratchbird::sblr::v3::Opcode::SBLR3_SHOW_ROLE,
+                         &Executor::executeShowRole,
+                         LegacyShowArgProfile::KEY},
+                        {scratchbird::sblr::v3::Opcode::SBLR3_SHOW_GRANTS,
+                         &Executor::executeShowGrants,
+                         LegacyShowArgProfile::KEY},
+                        {scratchbird::sblr::v3::Opcode::SBLR3_SHOW_VARIABLE,
+                         &Executor::executeShowVariable,
+                         LegacyShowArgProfile::KEY},
+                        {scratchbird::sblr::v3::Opcode::SBLR3_SHOW_ALL,
+                         &Executor::executeShowAll,
+                         LegacyShowArgProfile::NONE},
+                        {scratchbird::sblr::v3::Opcode::SBLR3_SHOW_TRANSACTION_LEVEL,
+                         &Executor::executeShowTransactionLevel,
+                         LegacyShowArgProfile::NONE}
+                    }};
+
+	                    auto executeLegacyShowOpcode =
+	                        [&](scratchbird::sblr::v3::Opcode opcode,
+	                            const scratchbird::sblr::v3::Value::Object& payload) -> ExecutionResult {
+                        auto it = std::find_if(
+                            kLegacyShowDispatch.begin(),
+                            kLegacyShowDispatch.end(),
+                            [&](const LegacyShowDispatchEntry& entry) {
+                                return entry.opcode == opcode;
+                            });
+                        if (it == kLegacyShowDispatch.end())
                         {
-                            return ExecutionResult("Database not available");
+                            return ExecutionResult("Unsupported admin control opcode");
                         }
 
-                        std::string key;
-                        if (!getString(payload, "key", key) || key.empty())
+                        std::vector<std::string> args;
+                        switch (it->arg_profile)
                         {
-                            return ExecutionResult("V3 ALTER SYSTEM missing key");
-                        }
-                        auto it_value = payload.find("value");
-                        if (it_value == payload.end() || it_value->second.isNull())
-                        {
-                            return ExecutionResult("V3 ALTER SYSTEM requires a value");
-                        }
-                        Value v = Value::makeNull();
-                        scratchbird::sblr::v3::Instruction val_inst;
-                        if (getInstrFromValue(it_value->second, val_inst))
-                        {
-                            v = evalExpr(val_inst);
-                        }
-                        else
-                        {
-                            const auto &raw = it_value->second.data;
-                            if (auto b = std::get_if<bool>(&raw))
-                            {
-                                v = Value::makeBool(*b);
-                            }
-                            else if (auto i = std::get_if<int64_t>(&raw))
-                            {
-                                v = Value::makeInt64(*i);
-                            }
-                            else if (auto u = std::get_if<uint64_t>(&raw))
-                            {
-                                v = Value::makeUInt64(*u);
-                            }
-                            else if (auto d = std::get_if<double>(&raw))
-                            {
-                                v = Value::makeFloat64(*d);
-                            }
-                            else if (auto s = std::get_if<std::string>(&raw))
-                            {
-                                v = Value::makeVarchar(*s);
-                            }
-                            else
-                            {
-                                return ExecutionResult("V3 ALTER SYSTEM value invalid");
-                            }
-                        }
-                        if (v.isNull())
-                        {
-                            return ExecutionResult("V3 ALTER SYSTEM value cannot be NULL");
-                        }
-
-                        auto to_lower = [](const std::string& input) -> std::string {
-                            std::string out = input;
-                            std::transform(out.begin(), out.end(), out.begin(),
-                                           [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-                            return out;
-                        };
-                        auto dot = key.find('.');
-                        std::string section;
-                        std::string setting;
-                        if (dot == std::string::npos)
-                        {
-                            section = "system";
-                            setting = to_lower(key);
-                        }
-                        else
-                        {
-                            section = to_lower(key.substr(0, dot));
-                            setting = to_lower(key.substr(dot + 1));
-                        }
-                        if (section.empty() || setting.empty())
-                        {
-                            return ExecutionResult("V3 ALTER SYSTEM expects section.key");
-                        }
-
-                        core::Config::getInstance().set(section, setting, v.toString());
-                        if (section == "scheduler")
-                        {
-                            core::ErrorContext err_ctx;
-                            core::Status status = db_->applySchedulerConfig(&err_ctx);
-                            if (status != core::Status::OK)
-                            {
-                                return ExecutionResult("Failed to apply scheduler config: " + err_ctx.message);
-                            }
-                        }
-                        return ExecutionResult();
-                    }
-                    case scratchbird::sblr::v3::Opcode::SBLR3_SET_AUTOCOMMIT: {
-                        if (!conn_ctx_)
-                        {
-                            return ExecutionResult("No connection context available");
-                        }
-                        uint64_t action = 1;
-                        getU64(payload, "action", action);
-                        if (action != 1)
-                        {
-                            return ExecutionResult("SET AUTOCOMMIT only supports SET action");
-                        }
-                        auto it_value = payload.find("value");
-                        if (it_value == payload.end() || it_value->second.isNull())
-                        {
-                            return ExecutionResult("SET AUTOCOMMIT requires a value");
-                        }
-                        Value v = Value::makeNull();
-                        scratchbird::sblr::v3::Instruction val_inst;
-                        if (getInstrFromValue(it_value->second, val_inst))
-                        {
-                            v = evalExpr(val_inst);
-                        }
-                        else
-                        {
-                            const auto &raw = it_value->second.data;
-                            if (auto b = std::get_if<bool>(&raw))
-                            {
-                                v = Value::makeBool(*b);
-                            }
-                            else if (auto i = std::get_if<int64_t>(&raw))
-                            {
-                                v = Value::makeInt64(*i);
-                            }
-                            else if (auto u = std::get_if<uint64_t>(&raw))
-                            {
-                                v = Value::makeUInt64(*u);
-                            }
-                            else if (auto d = std::get_if<double>(&raw))
-                            {
-                                v = Value::makeFloat64(*d);
-                            }
-                            else
-                            {
-                                return ExecutionResult("SET AUTOCOMMIT value invalid");
-                            }
-                        }
-                        if (v.isNull())
-                        {
-                            return ExecutionResult("SET AUTOCOMMIT value cannot be NULL");
-                        }
-                        bool enabled = false;
-                        if (v.type() == core::DataType::BOOLEAN)
-                        {
-                            enabled = v.getBool();
-                        }
-                        else if (isNumericType(v.type()))
-                        {
-                            enabled = (v.toInt64() != 0);
-                        }
-                        else
-                        {
-                            return ExecutionResult("SET AUTOCOMMIT expects boolean value");
-                        }
-                        conn_ctx_->setAutocommitMode(enabled);
-                        return ExecutionResult();
-                    }
-                    case scratchbird::sblr::v3::Opcode::SBLR3_SET_ROLE: {
-                        if (!conn_ctx_)
-                        {
-                            return ExecutionResult("No connection context available");
-                        }
-                        uint64_t action = 1;
-                        getU64(payload, "action", action);
-                        bool is_reset = (action == 3);
-
-                        auto handle_role_switch_policy = [&]() -> ExecutionResult {
-                            if (!conn_ctx_->autocommitSuspended())
-                            {
-                                return ExecutionResult();
-                            }
-                            switch (conn_ctx_->roleSwitchPolicy())
-                            {
-                                case core::ConnectionContext::RoleSwitchPolicy::COMMIT: {
-                                    core::ErrorContext err_ctx;
-                                    auto status = conn_ctx_->commit(&err_ctx);
-                                    if (status != core::Status::OK)
-                                    {
-                                        std::string err_msg = "Commit failed";
-                                        if (!err_ctx.message.empty())
-                                        {
-                                            err_msg += ": " + err_ctx.message;
-                                        }
-                                        return ExecutionResult(err_msg);
-                                    }
-                                    conn_ctx_->setAutocommitSuspended(false);
-                                    break;
-                                }
-                                case core::ConnectionContext::RoleSwitchPolicy::ROLLBACK: {
-                                    core::ErrorContext err_ctx;
-                                    auto status = conn_ctx_->rollback(&err_ctx);
-                                    if (status != core::Status::OK)
-                                    {
-                                        std::string err_msg = "Rollback failed";
-                                        if (!err_ctx.message.empty())
-                                        {
-                                            err_msg += ": " + err_ctx.message;
-                                        }
-                                        return ExecutionResult(err_msg);
-                                    }
-                                    conn_ctx_->setAutocommitSuspended(false);
-                                    break;
-                                }
-                                case core::ConnectionContext::RoleSwitchPolicy::ERROR:
-                                    return ExecutionResult("SET ROLE requires COMMIT or ROLLBACK before switching roles");
-                                case core::ConnectionContext::RoleSwitchPolicy::DEFER:
-                                default:
-                                    break;
-                            }
-                            return ExecutionResult();
-                        };
-
-                        std::string role_name;
-                        auto it_value = payload.find("value");
-                        if (!is_reset && it_value != payload.end() && !it_value->second.isNull())
-                        {
-                            Value v = Value::makeNull();
-                            scratchbird::sblr::v3::Instruction val_inst;
-                            if (getInstrFromValue(it_value->second, val_inst))
-                            {
-                                v = evalExpr(val_inst);
-                            }
-                            else
-                            {
-                                const auto &raw = it_value->second.data;
-                                if (auto s = std::get_if<std::string>(&raw))
-                                {
-                                    v = Value::makeVarchar(*s);
-                                }
-                                else if (auto b = std::get_if<bool>(&raw))
-                                {
-                                    v = Value::makeBool(*b);
-                                }
-                                else if (auto i = std::get_if<int64_t>(&raw))
-                                {
-                                    v = Value::makeInt64(*i);
-                                }
-                                else if (auto u = std::get_if<uint64_t>(&raw))
-                                {
-                                    v = Value::makeUInt64(*u);
-                                }
-                            }
-
-                            if (v.isNull())
-                            {
-                                is_reset = true;
-                            }
-                            else
-                            {
-                                role_name = v.toString();
-                            }
-                        }
-
-                        ExecutionResult policy_result = handle_role_switch_policy();
-                        if (!policy_result.success())
-                        {
-                            return policy_result;
-                        }
-
-                        if (is_reset || role_name.empty())
-                        {
-                            conn_ctx_->clearActiveRole();
-                            core::ID schema_id{};
-                            if (resolveUserSchemaId(db_->catalog_manager(),
-                                                    conn_ctx_->getCurrentUserId(),
-                                                    schema_id))
-                            {
-                                conn_ctx_->setCurrentSchemaId(schema_id);
-                                core::CatalogManager::SchemaInfo schema_info;
-                                core::ErrorContext err_ctx;
-                                if (db_->catalog_manager()->getSchema(schema_id, schema_info, &err_ctx) ==
-                                    core::Status::OK)
-                                {
-                                    conn_ctx_->set_current_schema(schema_info.schema_name);
-                                    conn_ctx_->set_search_path({schema_info.schema_name});
-                                }
-                            }
-                            return ExecutionResult();
-                        }
-
-                        core::CatalogManager::RoleInfo role_info;
-                        core::ErrorContext err_ctx;
-                        auto get_role = db_->catalog_manager()->getRoleByName(role_name, role_info, &err_ctx);
-                        if (get_role != core::Status::OK)
-                        {
-                            return ExecutionResult("Role '" + role_name + "' not found");
-                        }
-
-                        const core::ID& current_user = conn_ctx_->getCurrentUserId();
-                        std::vector<core::CatalogManager::RoleMembershipInfo> user_roles;
-                        auto check_status = db_->catalog_manager()->getUserRoles(
-                            current_user, user_roles, &err_ctx);
-                        if (check_status != core::Status::OK)
-                        {
-                            return ExecutionResult("Failed to check role membership for user");
-                        }
-
-                        bool has_role = false;
-                        for (const auto& membership : user_roles)
-                        {
-                            if (membership.role_id == role_info.role_id)
-                            {
-                                has_role = true;
+                            case LegacyShowArgProfile::KEY: {
+                                std::string key;
+                                getString(payload, "key", key);
+                                args.push_back(std::move(key));
                                 break;
                             }
-                        }
-                        if (!has_role)
-                        {
-                            return ExecutionResult("Permission denied: Role '" + role_name + "' not granted to current user");
-                        }
-
-                        conn_ctx_->setActiveRole(role_info.role_id);
-
-                        core::ID schema_id = role_info.default_schema_id;
-                        if (isZeroUuid(schema_id))
-                        {
-                            resolveUserSchemaId(db_->catalog_manager(), current_user, schema_id);
-                        }
-                        if (!isZeroUuid(schema_id))
-                        {
-                            conn_ctx_->setCurrentSchemaId(schema_id);
-                            core::CatalogManager::SchemaInfo schema_info;
-                            if (db_->catalog_manager()->getSchema(schema_id, schema_info, &err_ctx) ==
-                                core::Status::OK)
-                            {
-                                conn_ctx_->set_current_schema(schema_info.schema_name);
-                                conn_ctx_->set_search_path({schema_info.schema_name});
+                            case LegacyShowArgProfile::VALUE: {
+                                std::string value;
+                                getPayloadStringValue(payload, "value", value);
+                                args.push_back(std::move(value));
+                                break;
                             }
-                        }
-                        return ExecutionResult();
-                    }
-                    case scratchbird::sblr::v3::Opcode::SBLR3_RENAME_OBJECT:
-                    case scratchbird::sblr::v3::Opcode::SBLR3_MOVE_OBJECT: {
-                        if (!db_ || !db_->catalog_manager())
-                        {
-                            return ExecutionResult("Catalog manager not available");
-                        }
-                        uint64_t type_u = 0;
-                        if (!getU64(payload, "object_type", type_u))
-                        {
-                            return ExecutionResult("V3 rename/move missing object_type");
-                        }
-                        std::string object_path_str;
-                        if (!getSchemaPathString(payload, "object_path", object_path_str) ||
-                            object_path_str.empty())
-                        {
-                            return ExecutionResult("V3 rename/move missing object_path");
-                        }
-
-                        core::ErrorContext err_ctx;
-                        core::ObjectPath object_path;
-                        auto path_status = buildObjectPathFromName(object_path_str, object_path, &err_ctx);
-                        if (path_status != core::Status::OK)
-                        {
-                            return ExecutionResult(err_ctx.message.empty()
-                                                       ? "Invalid object path"
-                                                       : "Invalid object path: " + err_ctx.message);
-                        }
-
-                        core::CatalogManager::ObjectType object_type =
-                            static_cast<core::CatalogManager::ObjectType>(static_cast<uint8_t>(type_u));
-                        core::CatalogManager::ResolveOptions opts;
-                        opts.allow_search_path = false;
-                        core::CatalogManager::ObjectType resolved_type =
-                            core::CatalogManager::ObjectType::UNKNOWN;
-                        core::ID object_id{};
-                        auto resolve_status = db_->catalog_manager()->resolveObjectPath(
-                            object_path, object_type, opts, object_id, resolved_type, &err_ctx);
-                        if (resolve_status != core::Status::OK)
-                        {
-                            return ExecutionResult(err_ctx.message.empty()
-                                                       ? "Failed to resolve object"
-                                                       : "Failed to resolve object: " + err_ctx.message);
-                        }
-                        object_type = resolved_type;
-
-                        std::string new_name;
-                        if (!getString(payload, "new_name", new_name) || new_name.empty())
-                        {
-                            return ExecutionResult("V3 rename/move missing new_name");
-                        }
-
-                        if (static_cast<scratchbird::sblr::v3::Opcode>(inst.opcode) ==
-                            scratchbird::sblr::v3::Opcode::SBLR3_RENAME_OBJECT)
-                        {
-                            auto status = db_->catalog_manager()->renameObject(object_type, object_id,
-                                                                               new_name, &err_ctx);
-                            if (status != core::Status::OK)
-                            {
-                                return ExecutionResult(err_ctx.message.empty()
-                                                           ? "Failed to rename object"
-                                                           : "Failed to rename object: " + err_ctx.message);
+                            case LegacyShowArgProfile::KEY_AND_VALUE: {
+                                std::string key;
+                                std::string value;
+                                getString(payload, "key", key);
+                                getPayloadStringValue(payload, "value", value);
+                                args.push_back(std::move(key));
+                                args.push_back(std::move(value));
+                                break;
                             }
-                            recordObjectDefinition(object_type, object_id);
-                            return ExecutionResult();
-                        }
+                            case LegacyShowArgProfile::NONE:
+                                break;
+	                        }
+	                        return runLegacyShowHandler(it->handler, args);
+	                    };
 
-                        auto split_path = [&](const std::string& name) -> std::vector<std::string> {
-                            std::vector<std::string> parts;
-                            std::string current;
-                            for (char ch : name)
+                        auto executeLegacySetVariableOpcode =
+                            [&](const scratchbird::sblr::v3::Value::Object& payload) -> ExecutionResult {
+                            std::string key;
+                            if (!getString(payload, "key", key) || key.empty())
                             {
-                                if (ch == '.')
+                                return ExecutionResult("V3 SET VARIABLE missing key");
+                            }
+
+                            auto parse_u64_field = [&](const char* field,
+                                                       uint64_t& out) -> bool {
+                                auto it = payload.find(field);
+                                if (it == payload.end() || it->second.isNull())
                                 {
-                                    if (!current.empty())
+                                    return true;
+                                }
+                                if (auto u = std::get_if<uint64_t>(&it->second.data))
+                                {
+                                    out = *u;
+                                    return true;
+                                }
+                                if (auto i = std::get_if<int64_t>(&it->second.data))
+                                {
+                                    if (*i < 0)
                                     {
-                                        parts.push_back(current);
-                                        current.clear();
+                                        return false;
                                     }
+                                    out = static_cast<uint64_t>(*i);
+                                    return true;
+                                }
+                                return false;
+                            };
+
+                            uint64_t action = 1;
+                            if (!parse_u64_field("action", action))
+                            {
+                                return ExecutionResult("V3 SET VARIABLE action must be non-negative integer");
+                            }
+                            uint64_t scope = 0;
+                            if (!parse_u64_field("scope", scope))
+                            {
+                                return ExecutionResult("V3 SET VARIABLE scope must be non-negative integer");
+                            }
+
+                            std::string normalized_key =
+                                scratchbird::core::IdentifierUtils::toUpper(key);
+                            if (normalized_key == "OPERATOR.STRICT_MODE" ||
+                                normalized_key == "OPERATOR_STRICT_MODE")
+                            {
+                                if (scope != 0)
+                                {
+                                    return ExecutionResult(
+                                        "SET LOCAL operator.strict_mode is not supported");
+                                }
+                                if (!conn_ctx_)
+                                {
+                                    return ExecutionResult(
+                                        "SET operator.strict_mode requires connection context");
+                                }
+
+                                const bool reset_mode = (action == 3);
+                                auto it_value = payload.find("value");
+                                if (reset_mode || it_value == payload.end() || it_value->second.isNull())
+                                {
+                                    conn_ctx_->clearSessionVariable("OPERATOR.STRICT_MODE");
+                                    conn_ctx_->clearSessionVariable("OPERATOR_STRICT_MODE");
+                                    return ExecutionResult();
+                                }
+
+                                std::string raw_value;
+                                if (!getPayloadStringValue(payload, "value", raw_value))
+                                {
+                                    return ExecutionResult("V3 SET VARIABLE value is invalid");
+                                }
+
+                                bool strict_mode = false;
+                                if (!parseBooleanSetting(raw_value, strict_mode))
+                                {
+                                    return ExecutionResult(
+                                        "operator.strict_mode must be ON/OFF/TRUE/FALSE/1/0");
+                                }
+                                const std::string stored = strict_mode ? "ON" : "OFF";
+                                conn_ctx_->setSessionVariable("OPERATOR.STRICT_MODE", stored);
+                                conn_ctx_->setSessionVariable("OPERATOR_STRICT_MODE", stored);
+                                return ExecutionResult();
+                            }
+
+                            std::vector<uint8_t> arg_stream;
+                            arg_stream.reserve(128);
+                            auto append_string = [&](const std::string& value) {
+                                uint8_t len_buf[10];
+                                size_t len_written = scratchbird::sblr::writeUVarint(
+                                    len_buf, static_cast<uint64_t>(value.size()));
+                                arg_stream.insert(arg_stream.end(), len_buf, len_buf + len_written);
+                                arg_stream.insert(arg_stream.end(), value.begin(), value.end());
+                            };
+
+                            std::string var_name = (scope != 0) ? ("LOCAL_" + key) : key;
+                            append_string(var_name);
+
+                            const bool reset_mode = (action == 3);
+                            auto it_value = payload.find("value");
+                            if (reset_mode || it_value == payload.end() || it_value->second.isNull())
+                            {
+                                // Legacy executeSetVariable() treats marker=0 as DEFAULT/RESET.
+                                arg_stream.push_back(0);
+                            }
+                            else
+                            {
+                                arg_stream.push_back(1);
+
+                                scratchbird::sblr::v3::Instruction value_inst;
+                                std::vector<uint8_t> encoded_value;
+                                if (getInstrFromValue(it_value->second, value_inst))
+                                {
+                                    encoded_value = v3EncodeInstructionBytes(value_inst);
                                 }
                                 else
                                 {
-                                    current.push_back(ch);
+                                    std::string scalar_text;
+                                    const auto& raw = it_value->second.data;
+                                    if (auto s = std::get_if<std::string>(&raw))
+                                    {
+                                        scalar_text = *s;
+                                    }
+                                    else if (auto b = std::get_if<bool>(&raw))
+                                    {
+                                        scalar_text = *b ? "TRUE" : "FALSE";
+                                    }
+                                    else if (auto i = std::get_if<int64_t>(&raw))
+                                    {
+                                        scalar_text = std::to_string(*i);
+                                    }
+                                    else if (auto u = std::get_if<uint64_t>(&raw))
+                                    {
+                                        scalar_text = std::to_string(*u);
+                                    }
+                                    else if (auto d = std::get_if<double>(&raw))
+                                    {
+                                        scalar_text = std::to_string(*d);
+                                    }
+                                    else
+                                    {
+                                        return ExecutionResult("V3 SET VARIABLE value is invalid");
+                                    }
+
+                                    scratchbird::sblr::v3::Instruction lit;
+                                    lit.opcode = static_cast<uint16_t>(
+                                        scratchbird::sblr::v3::Opcode::SBLR3_LITERAL_STRING);
+                                    lit.flags = 0;
+                                    lit.payload = scratchbird::sblr::v3::Value(
+                                        scratchbird::sblr::v3::Value::Object{
+                                            {"value", scratchbird::sblr::v3::Value(scalar_text)}});
+                                    encoded_value = v3EncodeInstructionBytes(lit);
                                 }
-                            }
-                            if (!current.empty())
-                            {
-                                parts.push_back(current);
-                            }
-                            return parts;
-                        };
 
-                        std::vector<std::string> parts = split_path(new_name);
-                        if (parts.empty())
-                        {
-                            return ExecutionResult("Invalid target schema");
-                        }
-                        std::string schema_name;
-                        std::optional<std::string> rename_opt;
-                        if (parts.size() == 1)
-                        {
-                            schema_name = parts[0];
-                        }
-                        else
-                        {
-                            schema_name.reserve(new_name.size());
-                            for (size_t i = 0; i + 1 < parts.size(); ++i)
-                            {
-                                if (i > 0)
-                                {
-                                    schema_name.push_back('.');
-                                }
-                                schema_name += parts[i];
-                            }
-                            rename_opt = parts.back();
-                        }
-
-                        core::ObjectPath target_schema_path;
-                        path_status = buildObjectPathFromName(schema_name, target_schema_path, &err_ctx);
-                        if (path_status != core::Status::OK)
-                        {
-                            return ExecutionResult(err_ctx.message.empty()
-                                                       ? "Invalid target schema"
-                                                       : "Invalid target schema: " + err_ctx.message);
-                        }
-
-                        core::ID target_schema_id{};
-                        resolve_status = db_->catalog_manager()->resolveObjectPath(
-                            target_schema_path, core::CatalogManager::ObjectType::SCHEMA,
-                            opts, target_schema_id, resolved_type, &err_ctx);
-                        if (resolve_status != core::Status::OK)
-                        {
-                            return ExecutionResult(err_ctx.message.empty()
-                                                       ? "Failed to resolve target schema"
-                                                       : "Failed to resolve target schema: " + err_ctx.message);
-                        }
-
-                        auto status = db_->catalog_manager()->moveObject(object_type, object_id,
-                                                                         target_schema_id, rename_opt,
-                                                                         &err_ctx);
-                        if (status != core::Status::OK)
-                        {
-                            return ExecutionResult(err_ctx.message.empty()
-                                                       ? "Failed to move object"
-                                                       : "Failed to move object: " + err_ctx.message);
-                        }
-                        recordObjectDefinition(object_type, object_id);
-                        return ExecutionResult();
-                    }
-                    case scratchbird::sblr::v3::Opcode::SBLR3_START_TRANSACTION: {
-                        if (!conn_ctx_)
-                        {
-                            return ExecutionResult("No connection context available");
-                        }
-                        core::IsolationLevel isolation = conn_ctx_->getIsolationLevel();
-                        core::ReadCommittedMode read_committed_mode = conn_ctx_->getReadCommittedMode();
-                        bool read_only = conn_ctx_->isReadOnly();
-                        bool wait_for_locks = conn_ctx_->getWaitForLocks();
-                        uint32_t lock_timeout = conn_ctx_->getLockTimeout();
-
-                        auto action = sblr::TransactionConflictAction::DEFAULT;
-                        bool has_conflict_error_code = false;
-                        int32_t conflict_error_code = 0;
-
-                        auto getOptU8 = [&](const std::string& key, uint8_t& out) -> bool {
-                            auto it = payload.find(key);
-                            if (it == payload.end() || it->second.isNull())
-                            {
-                                return false;
-                            }
-                            if (auto v = std::get_if<uint64_t>(&it->second.data))
-                            {
-                                out = static_cast<uint8_t>(*v);
-                                return true;
-                            }
-                            if (auto v = std::get_if<int64_t>(&it->second.data))
-                            {
-                                out = static_cast<uint8_t>(*v);
-                                return true;
-                            }
-                            return false;
-                        };
-                        auto getOptU32 = [&](const std::string& key, uint32_t& out) -> bool {
-                            auto it = payload.find(key);
-                            if (it == payload.end() || it->second.isNull())
-                            {
-                                return false;
-                            }
-                            if (auto v = std::get_if<uint64_t>(&it->second.data))
-                            {
-                                out = static_cast<uint32_t>(*v);
-                                return true;
-                            }
-                            if (auto v = std::get_if<int64_t>(&it->second.data))
-                            {
-                                out = static_cast<uint32_t>(*v);
-                                return true;
-                            }
-                            return false;
-                        };
-                        auto getOptI32 = [&](const std::string& key, int32_t& out) -> bool {
-                            auto it = payload.find(key);
-                            if (it == payload.end() || it->second.isNull())
-                            {
-                                return false;
-                            }
-                            if (auto v = std::get_if<int64_t>(&it->second.data))
-                            {
-                                out = static_cast<int32_t>(*v);
-                                return true;
-                            }
-                            if (auto v = std::get_if<uint64_t>(&it->second.data))
-                            {
-                                out = static_cast<int32_t>(*v);
-                                return true;
-                            }
-                            return false;
-                        };
-                        auto getOptBool = [&](const std::string& key, bool& out) -> bool {
-                            auto it = payload.find(key);
-                            if (it == payload.end() || it->second.isNull())
-                            {
-                                return false;
-                            }
-                            if (auto v = std::get_if<bool>(&it->second.data))
-                            {
-                                out = *v;
-                                return true;
-                            }
-                            return false;
-                        };
-
-                        uint8_t isolation_byte = 0;
-                        if (getOptU8("isolation", isolation_byte))
-                        {
-                            switch (isolation_byte)
-                            {
-                                case static_cast<uint8_t>(core::IsolationLevel::READ_COMMITTED):
-                                case static_cast<uint8_t>(core::IsolationLevel::READ_COMMITTED_READ_CONSISTENCY):
-                                case static_cast<uint8_t>(core::IsolationLevel::SNAPSHOT):
-                                case static_cast<uint8_t>(core::IsolationLevel::SNAPSHOT_TABLE_STABILITY):
-                                    isolation = static_cast<core::IsolationLevel>(isolation_byte);
-                                    break;
-                                default:
-                                    return ExecutionResult("Unknown isolation level: " +
-                                                           std::to_string(isolation_byte));
-                            }
-                        }
-
-                        uint8_t rc_mode_byte = 0;
-                        if (getOptU8("read_committed_mode", rc_mode_byte))
-                        {
-                            switch (rc_mode_byte)
-                            {
-                                case static_cast<uint8_t>(core::ReadCommittedMode::DEFAULT):
-                                case static_cast<uint8_t>(core::ReadCommittedMode::READ_CONSISTENCY):
-                                case static_cast<uint8_t>(core::ReadCommittedMode::RECORD_VERSION):
-                                case static_cast<uint8_t>(core::ReadCommittedMode::NO_RECORD_VERSION):
-                                    read_committed_mode =
-                                        static_cast<core::ReadCommittedMode>(rc_mode_byte);
-                                    break;
-                                default:
-                                    return ExecutionResult("Unknown read committed mode: " +
-                                                           std::to_string(rc_mode_byte));
+                                arg_stream.insert(arg_stream.end(),
+                                                  encoded_value.begin(),
+                                                  encoded_value.end());
                             }
 
-                            if (isolation != core::IsolationLevel::READ_COMMITTED &&
-                                isolation != core::IsolationLevel::READ_COMMITTED_READ_CONSISTENCY)
+                            const uint8_t* saved_bytecode = bytecode_;
+                            size_t saved_bytecode_size = bytecode_size_;
+                            size_t saved_pc = pc_;
+                            const std::vector<uint8_t>* saved_bytecode_vec = current_bytecode_vec_;
+
+                            current_bytecode_vec_ = &arg_stream;
+                            bytecode_ = arg_stream.data();
+                            bytecode_size_ = arg_stream.size();
+                            pc_ = 0;
+
+                            try
                             {
-                                return ExecutionResult(
-                                    "READ COMMITTED mode specified without READ COMMITTED isolation");
+                                executeSetVariable();
                             }
-                        }
-
-                        uint8_t access_mode = 0;
-                        if (getOptU8("access_mode", access_mode))
-                        {
-                            if (access_mode == 0)
+                            catch (const std::exception& ex)
                             {
-                                read_only = false;
+                                bytecode_ = saved_bytecode;
+                                bytecode_size_ = saved_bytecode_size;
+                                pc_ = saved_pc;
+                                current_bytecode_vec_ = saved_bytecode_vec;
+                                return ExecutionResult(ex.what());
                             }
-                            else if (access_mode == 1)
-                            {
-                                read_only = true;
-                            }
-                            else
-                            {
-                                return ExecutionResult("Unknown access mode: " +
-                                                       std::to_string(access_mode));
-                            }
-                        }
 
-                        uint8_t wait_mode = 0;
-                        if (getOptU8("wait_mode", wait_mode))
-                        {
-                            if (wait_mode == 0)
-                            {
-                                wait_for_locks = false;
-                            }
-                            else if (wait_mode == 1)
-                            {
-                                wait_for_locks = true;
-                            }
-                            else
-                            {
-                                return ExecutionResult("Unknown wait mode: " +
-                                                       std::to_string(wait_mode));
-                            }
-                        }
-
-                        (void)getOptU32("lock_timeout", lock_timeout);
-
-                        bool deferrable = false;
-                        getOptBool("deferrable", deferrable);
-
-                        uint8_t autocommit_mode = 0;
-                        if (getOptU8("autocommit_mode", autocommit_mode))
-                        {
-                            if (autocommit_mode == static_cast<uint8_t>(sblr::AutocommitMode::ON))
-                            {
-                                conn_ctx_->setAutocommitMode(true);
-                            }
-                            else if (autocommit_mode == static_cast<uint8_t>(sblr::AutocommitMode::OFF))
-                            {
-                                conn_ctx_->setAutocommitMode(false);
-                            }
-                        }
-
-                        uint8_t conflict_action_byte = 0;
-                        if (getOptU8("conflict_action", conflict_action_byte))
-                        {
-                            action = static_cast<sblr::TransactionConflictAction>(conflict_action_byte);
-                        }
-                        if (getOptI32("conflict_error_code", conflict_error_code))
-                        {
-                            has_conflict_error_code = true;
-                        }
-
-                        (void)deferrable; // reserved for future use
-
-                        if (action == sblr::TransactionConflictAction::DEFAULT)
-                        {
-                            action = sblr::TransactionConflictAction::ROLLBACK;
-                        }
-
-                        if (action != sblr::TransactionConflictAction::COMMIT &&
-                            action != sblr::TransactionConflictAction::ROLLBACK &&
-                            action != sblr::TransactionConflictAction::ERROR &&
-                            action != sblr::TransactionConflictAction::KEEP)
-                        {
-                            return ExecutionResult("Unknown transaction conflict action");
-                        }
-
-                        if (action == sblr::TransactionConflictAction::ERROR)
-                        {
-                            std::string msg = "Transaction conflict: active transaction";
-                            if (has_conflict_error_code)
-                            {
-                                msg += " (error_code=" + std::to_string(conflict_error_code) + ")";
-                            }
-                            return ExecutionResult(msg);
-                        }
-
-                        if (action == sblr::TransactionConflictAction::KEEP)
-                        {
+                            bytecode_ = saved_bytecode;
+                            bytecode_size_ = saved_bytecode_size;
+                            pc_ = saved_pc;
+                            current_bytecode_vec_ = saved_bytecode_vec;
                             return ExecutionResult();
-                        }
+                        };
 
-                        conn_ctx_->setWaitForLocks(wait_for_locks);
-                        conn_ctx_->setLockTimeout(lock_timeout);
-                        conn_ctx_->setReadCommittedMode(read_committed_mode);
+		                auto executeAdminControlOpcode =
+		                    [&](scratchbird::sblr::v3::Opcode opcode,
+		                        const scratchbird::sblr::v3::Value::Object& payload) -> ExecutionResult {
+		                    switch (opcode)
+		                    {
+                                case scratchbird::sblr::v3::Opcode::SBLR3_SET_VARIABLE:
+                                    return executeLegacySetVariableOpcode(payload);
+		                        case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_SYSTEM: {
+		                            if (!conn_ctx_ || !conn_ctx_->isSuperuser())
+		                            {
+	                                return ExecutionResult("Permission denied: ALTER SYSTEM (superuser only)");
+	                            }
+	                            if (!db_)
+	                            {
+	                                return ExecutionResult("Database not available");
+	                            }
 
-                        if (read_committed_mode == core::ReadCommittedMode::READ_CONSISTENCY)
-                        {
-                            isolation = core::IsolationLevel::READ_COMMITTED_READ_CONSISTENCY;
-                        }
-                        else if (read_committed_mode != core::ReadCommittedMode::DEFAULT &&
-                                 isolation == core::IsolationLevel::READ_COMMITTED_READ_CONSISTENCY)
-                        {
-                            isolation = core::IsolationLevel::READ_COMMITTED;
-                        }
+	                            std::string key;
+	                            if (!getString(payload, "key", key) || key.empty())
+	                            {
+	                                return ExecutionResult("V3 ALTER SYSTEM missing key");
+	                            }
+	                            auto it_value = payload.find("value");
+	                            if (it_value == payload.end() || it_value->second.isNull())
+	                            {
+	                                return ExecutionResult("V3 ALTER SYSTEM requires a value");
+	                            }
+	                            Value v = Value::makeNull();
+	                            scratchbird::sblr::v3::Instruction val_inst;
+	                            if (getInstrFromValue(it_value->second, val_inst))
+	                            {
+	                                v = evalExpr(val_inst);
+	                            }
+	                            else
+	                            {
+	                                const auto &raw = it_value->second.data;
+	                                if (auto b = std::get_if<bool>(&raw))
+	                                {
+	                                    v = Value::makeBool(*b);
+	                                }
+	                                else if (auto i = std::get_if<int64_t>(&raw))
+	                                {
+	                                    v = Value::makeInt64(*i);
+	                                }
+	                                else if (auto u = std::get_if<uint64_t>(&raw))
+	                                {
+	                                    v = Value::makeUInt64(*u);
+	                                }
+	                                else if (auto d = std::get_if<double>(&raw))
+	                                {
+	                                    v = Value::makeFloat64(*d);
+	                                }
+	                                else if (auto s = std::get_if<std::string>(&raw))
+	                                {
+	                                    v = Value::makeVarchar(*s);
+	                                }
+	                                else
+	                                {
+	                                    return ExecutionResult("V3 ALTER SYSTEM value invalid");
+	                                }
+	                            }
+	                            if (v.isNull())
+	                            {
+	                                return ExecutionResult("V3 ALTER SYSTEM value cannot be NULL");
+	                            }
 
-                        std::vector<core::ConnectionContext::TableReservation> reservations;
-                        auto it_res = payload.find("reservations");
-                        if (it_res != payload.end() && !it_res->second.isNull())
-                        {
-                            if (auto list = std::get_if<scratchbird::sblr::v3::Value::List>(
-                                    &it_res->second.data))
-                            {
-                                reservations.reserve(list->size());
-                                for (const auto& item : *list)
-                                {
-                                    const auto* obj =
-                                        std::get_if<scratchbird::sblr::v3::Value::Object>(&item.data);
-                                    if (!obj)
-                                    {
-                                        return ExecutionResult("Invalid table reservation payload");
-                                    }
-                                    std::string table_name;
-                                    uint64_t lock_mode_val = 0;
-                                    bool for_write = false;
-                                    if (!getString(*obj, "table_name", table_name))
-                                    {
-                                        return ExecutionResult("Table reservation missing table_name");
-                                    }
-                                    if (!getU64(*obj, "lock_mode", lock_mode_val))
-                                    {
-                                        return ExecutionResult("Table reservation missing lock_mode");
-                                    }
-                                    getBool(*obj, "for_write", for_write);
-                                    core::TableLockMode lock_mode = (lock_mode_val == 0)
-                                        ? core::TableLockMode::SHARED
-                                        : core::TableLockMode::PROTECTED;
-                                    reservations.push_back({core::ID{}, table_name, lock_mode, for_write});
-                                }
-                            }
-                        }
+	                            auto to_lower = [](const std::string& input) -> std::string {
+	                                std::string out = input;
+	                                std::transform(out.begin(), out.end(), out.begin(),
+	                                               [](unsigned char c) {
+	                                                   return static_cast<char>(std::tolower(c));
+	                                               });
+	                                return out;
+	                            };
+	                            auto dot = key.find('.');
+	                            std::string section;
+	                            std::string setting;
+	                            if (dot == std::string::npos)
+	                            {
+	                                section = "system";
+	                                setting = to_lower(key);
+	                            }
+	                            else
+	                            {
+	                                section = to_lower(key.substr(0, dot));
+	                                setting = to_lower(key.substr(dot + 1));
+	                            }
+	                            if (section.empty() || setting.empty())
+	                            {
+	                                return ExecutionResult("V3 ALTER SYSTEM expects section.key");
+	                            }
 
-                        if (!reservations.empty())
-                        {
-                            core::ErrorContext err_ctx;
-                            auto status = conn_ctx_->reserveTables(reservations, &err_ctx);
-                            if (status != core::Status::OK)
-                            {
-                                std::string err_msg = "Failed to reserve tables";
-                                if (!err_ctx.message.empty())
-                                {
-                                    err_msg += ": " + err_ctx.message;
-                                }
-                                return ExecutionResult(err_msg);
-                            }
-                        }
+	                            core::Config::getInstance().set(section, setting, v.toString());
+	                            if (section == "scheduler")
+	                            {
+	                                core::ErrorContext err_ctx;
+	                                core::Status status = db_->applySchedulerConfig(&err_ctx);
+	                                if (status != core::Status::OK)
+	                                {
+	                                    return ExecutionResult(
+	                                        "Failed to apply scheduler config: " + err_ctx.message);
+	                                }
+	                            }
+	                            return ExecutionResult();
+	                        }
+	                        default:
+	                            return executeLegacyShowOpcode(opcode, payload);
+	                    }
+	                };
 
-                        core::ErrorContext err_ctx;
-                        auto status = conn_ctx_->startTransaction(read_only,
-                                                                  isolation,
-                                                                  read_committed_mode,
-                                                                  action == sblr::TransactionConflictAction::COMMIT,
-                                                                  &err_ctx);
-                        if (status != core::Status::OK)
-                        {
-                            return ExecutionResult(err_ctx.message.empty()
-                                                       ? "START TRANSACTION failed"
-                                                       : "START TRANSACTION failed: " + err_ctx.message);
-                        }
+	                auto executeDdlMutationOpcode =
+	                    [&](scratchbird::sblr::v3::Opcode opcode,
+	                        const scratchbird::sblr::v3::Value::Object& payload) -> ExecutionResult {
+	                    switch (opcode)
+	                    {
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_TABLE:
+	                            return handleCreateTable(payload);
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_INDEX:
+	                            return handleCreateIndex(payload);
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_DOMAIN:
+	                            return handleCreateDomain(payload);
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_VIEW:
+	                            return handleCreateView(payload);
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_POLICY:
+	                            return handleCreatePolicyV3(payload);
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_DROP_TABLE:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_DROP_INDEX:
+	                            return handleDrop(payload, static_cast<uint16_t>(opcode));
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_DROP_POLICY:
+	                            return handleDropPolicyV3(payload);
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_TRUNCATE_TABLE:
+	                            return handleTruncate(payload);
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_TABLE:
+	                            return handleAlterTable(payload);
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_POLICY:
+	                            return handleAlterPolicyV3(payload);
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_TABLE_SET_TABLESPACE:
+	                            return handleAlterTableSetTablespace(payload);
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_COPY:
+	                            return handleCopyV3(payload);
+	                        default:
+	                            return ExecutionResult("Unsupported DDL mutation opcode");
+	                    }
+	                };
 
-                        if (action == sblr::TransactionConflictAction::ROLLBACK)
-                        {
-                            status = conn_ctx_->rollback(&err_ctx);
-                            if (status != core::Status::OK)
-                            {
-                                return ExecutionResult(err_ctx.message.empty()
-                                                           ? "ROLLBACK failed"
-                                                           : "ROLLBACK failed: " + err_ctx.message);
-                            }
-                        }
-
-                        conn_ctx_->setAutocommitSuspended(true);
-                        return ExecutionResult();
-                    }
-                    case scratchbird::sblr::v3::Opcode::SBLR3_COMMIT: {
-                        executeCommitFlags(sblr::CommitRollbackFlags::AND_NO_CHAIN);
-                        return ExecutionResult();
-                    }
-                    case scratchbird::sblr::v3::Opcode::SBLR3_PREPARE_TRANSACTION: {
-                        if (!conn_ctx_)
-                        {
-                            return ExecutionResult("No connection context available");
-                        }
-                        std::string gid;
-                        if (!getString(payload, "name", gid) || gid.empty())
-                        {
-                            return ExecutionResult("PREPARE TRANSACTION requires a GID");
-                        }
-                        core::ErrorContext err_ctx;
-                        auto status = conn_ctx_->prepareTransaction(gid, &err_ctx);
-                        if (status != core::Status::OK)
-                        {
-                            std::string err_msg = "Prepare transaction failed";
-                            if (!err_ctx.message.empty())
-                            {
-                                err_msg += ": " + err_ctx.message;
-                            }
-                            return ExecutionResult(err_msg);
-                        }
-                        conn_ctx_->setAutocommitSuspended(false);
-                        return ExecutionResult();
-                    }
-                    case scratchbird::sblr::v3::Opcode::SBLR3_COMMIT_PREPARED: {
-                        std::string gid;
-                        if (!getString(payload, "name", gid) || gid.empty())
-                        {
-                            return ExecutionResult("COMMIT PREPARED requires a GID");
-                        }
-                        auto txn_manager = db_->transaction_manager();
-                        if (!txn_manager)
-                        {
-                            return ExecutionResult("Transaction manager not available");
-                        }
-                        core::ErrorContext err_ctx;
-                        auto status = txn_manager->commitPreparedTransaction(gid, &err_ctx);
-                        if (status != core::Status::OK)
-                        {
-                            std::string err_msg = "Commit prepared transaction failed";
-                            if (!err_ctx.message.empty())
-                            {
-                                err_msg += ": " + err_ctx.message;
-                            }
-                            return ExecutionResult(err_msg);
-                        }
-                        return ExecutionResult();
-                    }
-                    case scratchbird::sblr::v3::Opcode::SBLR3_COMMIT_RETAINING: {
-                        executeCommitFlags(sblr::CommitRollbackFlags::RETAINING);
-                        return ExecutionResult();
-                    }
-                    case scratchbird::sblr::v3::Opcode::SBLR3_ROLLBACK: {
-                        executeRollbackFlags(sblr::CommitRollbackFlags::AND_NO_CHAIN);
-                        return ExecutionResult();
-                    }
-                    case scratchbird::sblr::v3::Opcode::SBLR3_ROLLBACK_PREPARED: {
-                        std::string gid;
-                        if (!getString(payload, "name", gid) || gid.empty())
-                        {
-                            return ExecutionResult("ROLLBACK PREPARED requires a GID");
-                        }
-                        auto txn_manager = db_->transaction_manager();
-                        if (!txn_manager)
-                        {
-                            return ExecutionResult("Transaction manager not available");
-                        }
-                        core::ErrorContext err_ctx;
-                        auto status = txn_manager->rollbackPreparedTransaction(gid, &err_ctx);
-                        if (status != core::Status::OK)
-                        {
-                            std::string err_msg = "Rollback prepared transaction failed";
-                            if (!err_ctx.message.empty())
-                            {
-                                err_msg += ": " + err_ctx.message;
-                            }
-                            return ExecutionResult(err_msg);
-                        }
-                        return ExecutionResult();
-                    }
-                    case scratchbird::sblr::v3::Opcode::SBLR3_ROLLBACK_RETAINING: {
-                        executeRollbackFlags(sblr::CommitRollbackFlags::RETAINING);
-                        return ExecutionResult();
-                    }
-                    case scratchbird::sblr::v3::Opcode::SBLR3_SAVEPOINT: {
-                        if (!conn_ctx_)
-                        {
-                            return ExecutionResult("No connection context available");
-                        }
-                        std::string name;
-                        if (!getString(payload, "name", name) || name.empty())
-                        {
-                            return ExecutionResult("SAVEPOINT requires a name");
-                        }
-                        core::ErrorContext err_ctx;
-                        auto status = conn_ctx_->createSavepoint(name, &err_ctx);
-                        if (status != core::Status::OK)
-                        {
-                            return ExecutionResult(err_ctx.message.empty()
-                                                       ? "SAVEPOINT failed"
-                                                       : "SAVEPOINT failed: " + err_ctx.message);
-                        }
-                        return ExecutionResult();
-                    }
-                    case scratchbird::sblr::v3::Opcode::SBLR3_RELEASE_SAVEPOINT: {
-                        if (!conn_ctx_)
-                        {
-                            return ExecutionResult("No connection context available");
-                        }
-                        std::string name;
-                        if (!getString(payload, "name", name) || name.empty())
-                        {
-                            return ExecutionResult("RELEASE SAVEPOINT requires a name");
-                        }
-                        core::ErrorContext err_ctx;
-                        auto status = conn_ctx_->releaseSavepoint(name, &err_ctx);
-                        if (status != core::Status::OK)
-                        {
-                            return ExecutionResult(err_ctx.message.empty()
-                                                       ? "RELEASE SAVEPOINT failed"
-                                                       : "RELEASE SAVEPOINT failed: " + err_ctx.message);
-                        }
-                        return ExecutionResult();
-                    }
-                    case scratchbird::sblr::v3::Opcode::SBLR3_ROLLBACK_TO_SAVEPOINT: {
-                        if (!conn_ctx_)
-                        {
-                            return ExecutionResult("No connection context available");
-                        }
-                        std::string name;
-                        if (!getString(payload, "name", name) || name.empty())
-                        {
-                            return ExecutionResult("ROLLBACK TO SAVEPOINT requires a name");
-                        }
-                        core::ErrorContext err_ctx;
-                        auto status = conn_ctx_->rollbackToSavepoint(name, &err_ctx);
-                        if (status != core::Status::OK)
-                        {
-                            return ExecutionResult(err_ctx.message.empty()
-                                                       ? "ROLLBACK TO SAVEPOINT failed"
-                                                       : "ROLLBACK TO SAVEPOINT failed: " + err_ctx.message);
-                        }
-                        return ExecutionResult();
-                    }
+	                switch (static_cast<scratchbird::sblr::v3::Opcode>(inst.opcode))
+	                {
+	                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_TABLE:
+	                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_INDEX:
+	                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_DOMAIN:
+	                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_VIEW:
+	                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_POLICY:
+	                    case scratchbird::sblr::v3::Opcode::SBLR3_DROP_TABLE:
+	                    case scratchbird::sblr::v3::Opcode::SBLR3_DROP_INDEX:
+	                    case scratchbird::sblr::v3::Opcode::SBLR3_DROP_POLICY:
+	                    case scratchbird::sblr::v3::Opcode::SBLR3_TRUNCATE_TABLE:
+	                    case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_TABLE:
+	                    case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_POLICY:
+	                    case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_TABLE_SET_TABLESPACE:
+	                    case scratchbird::sblr::v3::Opcode::SBLR3_COPY:
+	                        return executeDdlMutationOpcode(
+	                            static_cast<scratchbird::sblr::v3::Opcode>(inst.opcode),
+	                            payload);
+                    case scratchbird::sblr::v3::Opcode::SBLR3_SET_AUTOCOMMIT:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_SET_ROLE:
+                        return executeSessionControlOpcode(
+                            static_cast<scratchbird::sblr::v3::Opcode>(inst.opcode),
+                            payload);
+                    case scratchbird::sblr::v3::Opcode::SBLR3_RENAME_OBJECT:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_MOVE_OBJECT:
+                        return executeRenameMoveOpcode(
+                            static_cast<scratchbird::sblr::v3::Opcode>(inst.opcode),
+                            payload);
+                    case scratchbird::sblr::v3::Opcode::SBLR3_START_TRANSACTION:
+                        return executeStartTransactionOpcode(payload);
+                    case scratchbird::sblr::v3::Opcode::SBLR3_COMMIT:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_PREPARE_TRANSACTION:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_COMMIT_PREPARED:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_COMMIT_RETAINING:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_ROLLBACK:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_ROLLBACK_PREPARED:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_ROLLBACK_RETAINING:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_SAVEPOINT:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_RELEASE_SAVEPOINT:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_ROLLBACK_TO_SAVEPOINT:
+                        return executeSimpleTxnOpcode(static_cast<scratchbird::sblr::v3::Opcode>(inst.opcode),
+                                                      payload);
                     default:
                         break;
-                }
+	                }
 
-                return ExecutionResult("V3 opcode not implemented in executor: " + name);
-            };
+                    auto admin_result =
+                        executeAdminControlOpcode(
+                            static_cast<scratchbird::sblr::v3::Opcode>(inst.opcode),
+                            payload);
+                    if (admin_result.success() ||
+                        admin_result.error() != "Unsupported admin control opcode")
+                    {
+                        return admin_result;
+                    }
+
+	                return ExecutionResult("V3 opcode not implemented in executor: " + name);
+	            };
 
             ExecutionResult result;
             auto is_txn_control = [](scratchbird::sblr::v3::Opcode opcode) -> bool {
@@ -55391,13 +56054,17 @@ namespace scratchbird
                     QueryResultCache& cache = QueryResultCacheManager::getInstance();
                     if (cache.isEnabled())
                     {
-                        std::vector<uint8_t> cache_key_bytes = container.bytecode_stream;
-                        cache_key_bytes.push_back(0x1d);
-                        for (int i = 7; i >= 0; --i)
-                        {
+	                        std::vector<uint8_t> cache_key_bytes = container.bytecode_stream;
+	                        cache_key_bytes.push_back(0x1d);
+	                        for (int i = 7; i >= 0; --i)
+	                        {
+	                            cache_key_bytes.push_back(
+	                                static_cast<uint8_t>((static_cast<uint64_t>(inst_index) >> (i * 8)) & 0xFF));
+	                        }
+                            cache_key_bytes.push_back(0x1e);
                             cache_key_bytes.push_back(
-                                static_cast<uint8_t>((static_cast<uint64_t>(inst_index) >> (i * 8)) & 0xFF));
-                        }
+                                static_cast<uint8_t>(
+                                    isOperatorStrictModeEnabled(conn_ctx_) ? 1 : 0));
 
                         uint64_t policy_epoch = 0;
                         if (db_ && db_->catalog_manager())
@@ -55467,6 +56134,1056 @@ namespace scratchbird
         // ========================================================================
         // Public API: Call a procedure by name (for database triggers, CALL stmt)
         // ========================================================================
+        bool Executor::executeLegacyCallExtendedOpcode(uint16_t ext_opcode,
+                                                       ExecutionResult& result)
+        {
+            if (ext_opcode != static_cast<uint16_t>(ExtendedOpcode::EXT_CALL))
+            {
+                return false;
+            }
+
+            // CALL procedure_name(args...)
+            // Read procedure name
+            std::string procedure_name = readString();
+
+            // Read argument count
+            int32_t arg_count = readInt32();
+
+            // Evaluate each argument expression and collect values
+            std::vector<Value> args;
+            args.reserve(static_cast<size_t>(arg_count));
+            for (int32_t i = 0; i < arg_count; ++i)
+            {
+                uint32_t expr_len = readInt32();
+                size_t expr_start = pc_;
+                size_t expr_end = pc_ + expr_len;
+                pc_ = expr_end;
+
+                size_t saved_pc = pc_;
+                pc_ = expr_start;
+                args.push_back(evaluateExpressionRange(expr_end));
+                pc_ = saved_pc;
+            }
+
+            int32_t out_count = readInt32();
+            for (int32_t i = 0; i < out_count; ++i)
+            {
+                readString();
+            }
+
+            // Call the procedure using the existing callProcedureByName method
+            result = callProcedureByName(procedure_name, args);
+            return true;
+        }
+
+        bool Executor::executeLegacyCteExtendedOpcode(uint16_t ext_opcode,
+                                                      Opcode& op,
+                                                      ExecutionResult& result,
+                                                      bool& should_continue)
+        {
+            should_continue = false;
+            auto execute_cte_def = [&](ExecutionResult& cte_result) -> bool
+            {
+                std::string cte_name = readString();
+                std::string cte_key = core::IdentifierUtils::toUpper(cte_name);
+
+                // Save current state
+                auto saved_result_set = std::move(current_result_set_);
+                auto saved_table = current_table_;
+                size_t saved_pc = pc_;  // Save program counter for recursive execution
+
+                // Execute the CTE query (next opcodes)
+                current_result_set_ = std::make_unique<ResultSet>();
+
+                // Read and execute the nested SELECT or UNION ALL
+                Opcode cte_query_op = static_cast<Opcode>(readByte());
+
+                // Check if this is a recursive CTE with UNION ALL
+                if (cte_is_recursive_ && cte_query_op == Opcode::EXTENDED_OPCODE)
+                {
+                    uint16_t ext_nested_opcode = readExtendedOpcode();
+                    if (ext_nested_opcode == static_cast<uint16_t>(ExtendedOpcode::EXT_UNION_ALL))
+                    {
+                        // Recursive CTE: Execute iteratively
+                        executeRecursiveCTE(cte_name, saved_pc);
+                    }
+                    else
+                    {
+                        cte_result = ExecutionResult("Recursive CTE must use UNION ALL");
+                        return false;
+                    }
+                }
+                else if (cte_query_op == Opcode::SELECT)
+                {
+                    // Non-recursive CTE: Execute once
+                    executeSelect();
+
+                    // Store the materialized CTE results
+                    if (current_result_set_)
+                    {
+                        // Extract column metadata
+                        std::vector<std::string> col_names;
+                        std::vector<core::DataType> col_types;
+                        for (size_t i = 0; i < current_result_set_->columnCount(); ++i)
+                        {
+                            col_names.push_back(current_result_set_->columnName(i));
+                            col_types.push_back(current_result_set_->columnType(i));
+                        }
+
+                        // Extract all rows
+                        std::vector<std::vector<Value>> rows;
+                        for (size_t r = 0; r < current_result_set_->rowCount(); ++r)
+                        {
+                            std::vector<Value> row;
+                            for (size_t c = 0; c < current_result_set_->columnCount(); ++c)
+                            {
+                                row.push_back(current_result_set_->getValue(r, c));
+                            }
+                            rows.push_back(std::move(row));
+                        }
+
+                        // Store CTE results
+                        cte_results_[cte_key] = std::move(rows);
+                        cte_column_names_[cte_key] = std::move(col_names);
+                        cte_column_types_[cte_key] = std::move(col_types);
+                    }
+                }
+                else
+                {
+                    cte_result = ExecutionResult("CTE query must be a SELECT statement or UNION ALL");
+                    return false;
+                }
+
+                // Restore state
+                current_result_set_ = std::move(saved_result_set);
+                current_table_ = saved_table;
+                return true;
+            };
+
+            if (ext_opcode == static_cast<uint16_t>(ExtendedOpcode::EXT_WITH_CLAUSE))
+            {
+                // Phase 2 Wave 2: Handle WITH clause (CTEs)
+                uint16_t cte_count = readInt16();
+                // Read recursive flag
+                uint8_t is_recursive = readByte();
+                cte_is_recursive_ = (is_recursive != 0);
+                // Clear any previous CTE results
+                cte_results_.clear();
+                cte_column_names_.clear();
+                cte_column_types_.clear();
+
+                for (uint16_t i = 0; i < cte_count; ++i)
+                {
+                    if (static_cast<Opcode>(readByte()) != Opcode::EXTENDED_OPCODE)
+                    {
+                        result = ExecutionResult("CTE definition missing EXTENDED opcode");
+                        return true;
+                    }
+
+                    uint16_t def_op = readExtendedOpcode();
+                    if (def_op != static_cast<uint16_t>(ExtendedOpcode::EXT_CTE_DEF))
+                    {
+                        result = ExecutionResult("CTE definition missing EXT_CTE_DEF");
+                        return true;
+                    }
+
+                    if (!execute_cte_def(result))
+                    {
+                        return true;
+                    }
+                }
+
+                // Continue with the statement following the WITH clause.
+                op = static_cast<Opcode>(readByte());
+                should_continue = true;
+                result = ExecutionResult();
+                return true;
+            }
+
+            if (ext_opcode == static_cast<uint16_t>(ExtendedOpcode::EXT_CTE_DEF))
+            {
+                // Phase 2 Wave 2: Define and materialize a CTE
+                if (!execute_cte_def(result))
+                {
+                    return true;
+                }
+                result = ExecutionResult();
+                return true;
+            }
+
+            if (ext_opcode == static_cast<uint16_t>(ExtendedOpcode::EXT_CTE_SCAN))
+            {
+                // Phase 2 Wave 2: Scan a CTE (replaces table scan)
+                std::string cte_name = readString();
+                std::string cte_key = core::IdentifierUtils::toUpper(cte_name);
+
+                // Look up CTE results
+                auto it = cte_results_.find(cte_key);
+                if (it == cte_results_.end())
+                {
+                    result = ExecutionResult("CTE '" + cte_name + "' not found");
+                    return true;
+                }
+
+                // Set up result set with CTE data
+                if (!current_result_set_)
+                {
+                    current_result_set_ = std::make_unique<ResultSet>();
+                }
+
+                // Add columns from CTE
+                const auto& col_names = cte_column_names_[cte_key];
+                const auto& col_types = cte_column_types_[cte_key];
+                for (size_t i = 0; i < col_names.size(); ++i)
+                {
+                    current_result_set_->addColumn(col_names[i], col_types[i]);
+                }
+
+                // Add all rows from CTE
+                for (const auto& row : it->second)
+                {
+                    current_result_set_->addRow(row);
+                }
+
+                result = ExecutionResult();
+                return true;
+            }
+
+            return false;
+        }
+
+        bool Executor::executeLegacySpatialExtendedOpcode(uint16_t ext_opcode,
+                                                          ExecutionResult& result)
+        {
+            switch (static_cast<ExtendedOpcode>(ext_opcode))
+            {
+                case ExtendedOpcode::EXT_ST_SRID: {
+                    Value geom = pop();
+
+                    if (geom.isNull())
+                    {
+                        push(Value::makeNull());
+                    }
+                    else
+                    {
+                        int32_t srid = 0;
+                        if (geom.type() == core::DataType::POINT)
+                        {
+                            srid = geom.getPoint().getSRID();
+                        }
+                        else if (geom.type() == core::DataType::LINESTRING)
+                        {
+                            srid = geom.getLineString().getSRID();
+                        }
+                        else if (geom.type() == core::DataType::POLYGON)
+                        {
+                            srid = geom.getPolygon().getSRID();
+                        }
+                        else
+                        {
+                            push(Value::makeNull());
+                            result = ExecutionResult();
+                            return true;
+                        }
+
+                        push(Value::makeInt32(srid));
+                    }
+                    result = ExecutionResult();
+                    return true;
+                }
+                case ExtendedOpcode::EXT_ST_SETSRID: {
+                    Value srid_val = pop();
+                    Value geom = pop();
+
+                    if (geom.isNull() || srid_val.isNull())
+                    {
+                        push(Value::makeNull());
+                    }
+                    else
+                    {
+                        int32_t new_srid = static_cast<int32_t>(srid_val.toInt64());
+
+                        if (geom.type() == core::DataType::POINT)
+                        {
+                            core::Point pt = geom.getPoint();
+                            pt.setSRID(new_srid);
+                            push(Value::makePoint(pt));
+                        }
+                        else if (geom.type() == core::DataType::LINESTRING)
+                        {
+                            core::LineString line = geom.getLineString();
+                            line.setSRID(new_srid);
+                            push(Value::makeLineString(line));
+                        }
+                        else if (geom.type() == core::DataType::POLYGON)
+                        {
+                            core::Polygon poly = geom.getPolygon();
+                            poly.setSRID(new_srid);
+                            push(Value::makePolygon(poly));
+                        }
+                        else
+                        {
+                            push(Value::makeNull());
+                        }
+                    }
+                    result = ExecutionResult();
+                    return true;
+                }
+                case ExtendedOpcode::EXT_ST_TRANSFORM: {
+                    Value target_srid_val = pop();
+                    Value geom = pop();
+
+                    if (geom.isNull() || target_srid_val.isNull())
+                    {
+                        push(Value::makeNull());
+                        result = ExecutionResult();
+                        return true;
+                    }
+
+                    int32_t target_srid = static_cast<int32_t>(target_srid_val.toInt64());
+
+#ifdef HAVE_PROJ
+                    try
+                    {
+                        if (geom.type() == core::DataType::POINT)
+                        {
+                            core::Point pt = geom.getPoint();
+                            int32_t source_srid = pt.getSRID();
+
+                            if (source_srid == 0)
+                            {
+                                error("ST_Transform: geometry must have SRID");
+                            }
+                            if (source_srid == target_srid)
+                            {
+                                push(geom);
+                            }
+                            else
+                            {
+                                geo::PROJTransform transform(source_srid, target_srid);
+                                double x = pt.x;
+                                double y = pt.y;
+                                transform.transform(x, y);
+
+                                core::Point transformed(x, y, target_srid);
+                                push(Value::makePoint(transformed));
+                            }
+                        }
+                        else if (geom.type() == core::DataType::LINESTRING)
+                        {
+                            core::LineString line = geom.getLineString();
+                            int32_t source_srid = line.getSRID();
+
+                            if (source_srid == 0)
+                            {
+                                error("ST_Transform: geometry must have SRID");
+                            }
+                            if (source_srid == target_srid)
+                            {
+                                push(geom);
+                            }
+                            else
+                            {
+                                geo::PROJTransform transform(source_srid, target_srid);
+                                std::vector<core::Point> transformed_points;
+
+                                for (const auto& pt : line.points)
+                                {
+                                    double x = pt.x;
+                                    double y = pt.y;
+                                    transform.transform(x, y);
+                                    transformed_points.emplace_back(x, y, target_srid);
+                                }
+
+                                core::LineString transformed(std::move(transformed_points), target_srid);
+                                push(Value::makeLineString(transformed));
+                            }
+                        }
+                        else if (geom.type() == core::DataType::POLYGON)
+                        {
+                            core::Polygon poly = geom.getPolygon();
+                            int32_t source_srid = poly.getSRID();
+
+                            if (source_srid == 0)
+                            {
+                                error("ST_Transform: geometry must have SRID");
+                            }
+                            if (source_srid == target_srid)
+                            {
+                                push(geom);
+                            }
+                            else
+                            {
+                                geo::PROJTransform transform(source_srid, target_srid);
+                                std::vector<std::vector<core::Point>> transformed_rings;
+
+                                for (const auto& ring : poly.rings)
+                                {
+                                    std::vector<core::Point> transformed_ring;
+                                    for (const auto& pt : ring)
+                                    {
+                                        double x = pt.x;
+                                        double y = pt.y;
+                                        transform.transform(x, y);
+                                        transformed_ring.emplace_back(x, y, target_srid);
+                                    }
+                                    transformed_rings.push_back(std::move(transformed_ring));
+                                }
+
+                                core::Polygon transformed(std::move(transformed_rings), target_srid);
+                                push(Value::makePolygon(transformed));
+                            }
+                        }
+                        else
+                        {
+                            push(Value::makeNull());
+                        }
+                    }
+                    catch (const geo::PROJException& e)
+                    {
+                        LOG_ERROR(EXECUTOR, "ST_Transform failed: %s", e.what());
+                        error("Spatial transformation failed");
+                    }
+#else
+                    error("ST_Transform requires PROJ library (not available)");
+#endif
+                    result = ExecutionResult();
+                    return true;
+                }
+                case ExtendedOpcode::EXT_ST_DISTANCE_SPHERE: {
+                    Value geom2 = pop();
+                    Value geom1 = pop();
+
+                    if (geom1.isNull() || geom2.isNull())
+                    {
+                        push(Value::makeNull());
+                    }
+                    else
+                    {
+                        if (geom1.type() != core::DataType::POINT || geom2.type() != core::DataType::POINT)
+                        {
+                            error("ST_Distance_Sphere only works with POINT geometries");
+                        }
+
+                        core::Point pt1 = geom1.getPoint();
+                        core::Point pt2 = geom2.getPoint();
+                        double distance = geo::Geodetic::haversineDistance(pt1.x, pt1.y, pt2.x, pt2.y);
+
+                        push(Value::makeFloat64(distance));
+                    }
+                    result = ExecutionResult();
+                    return true;
+                }
+                default:
+                    return false;
+            }
+        }
+
+        bool Executor::executeLegacyPsqlExtendedOpcode(uint16_t ext_opcode,
+                                                       ExecutionResult& result)
+        {
+            switch (static_cast<ExtendedOpcode>(ext_opcode))
+            {
+                case ExtendedOpcode::EXT_FUNCTION:
+                    executeFunction();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_PROCEDURE:
+                    executeProcedure();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_BLOCK:
+                    executeBlock();
+                    result = current_result_set_
+                        ? ExecutionResult(std::move(current_result_set_))
+                        : ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_DECLARE:
+                    executeVarDeclaration();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_ASSIGN:
+                    executeAssignment();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_IF:
+                    executeIfStatement();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_LOOP:
+                    executeLoopStatement();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_WHILE:
+                    executeWhileStatement();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_EXIT:
+                    executeExitStatement();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_RETURN:
+                    executeReturnStatement();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_SUSPEND:
+                    executeSuspendStatement();
+                    result = current_result_set_
+                        ? ExecutionResult(std::move(current_result_set_))
+                        : ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_RAISE:
+                    executeRaiseStatement();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_EXECUTE_STMT:
+                    executeExecuteStatement();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_PREPARE_STMT:
+                    executePrepareStatement();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_EXECUTE_PREPARED:
+                    result = executeExecutePrepared();
+                    return true;
+                case ExtendedOpcode::EXT_DEALLOCATE_PREPARED:
+                    executeDeallocatePrepared();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_TRY:
+                    executeTryStatement();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_EXCEPT_HANDLER:
+                    executeExceptHandler();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_VAR_LOAD:
+                    executeVarLoad();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_VAR_STORE:
+                    executeVarStore();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_JUMP:
+                    executeJump();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_JUMP_IF_TRUE:
+                    executeJumpIfTrue();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_JUMP_IF_FALSE:
+                    executeJumpIfFalse();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_CURSOR_DECLARE:
+                    executeCursorDeclare();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_CURSOR_OPEN:
+                    executeCursorOpen();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_CURSOR_FETCH:
+                    executeCursorFetch();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_CURSOR_CLOSE:
+                    executeCursorClose();
+                    result = ExecutionResult();
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        bool Executor::executeLegacyStatementSurfaceExtendedOpcode(uint16_t ext_opcode,
+                                                                   ExecutionResult& result)
+        {
+            switch (static_cast<ExtendedOpcode>(ext_opcode))
+            {
+                case ExtendedOpcode::EXT_UNION_ALL:
+                    executeUnionAll();
+                    result = ExecutionResult(std::move(current_result_set_));
+                    return true;
+                case ExtendedOpcode::EXT_UNION:
+                    executeUnion();
+                    result = ExecutionResult(std::move(current_result_set_));
+                    return true;
+                case ExtendedOpcode::EXT_INTERSECT_ALL:
+                    executeIntersectAll();
+                    result = ExecutionResult(std::move(current_result_set_));
+                    return true;
+                case ExtendedOpcode::EXT_INTERSECT:
+                    executeIntersect();
+                    result = ExecutionResult(std::move(current_result_set_));
+                    return true;
+                case ExtendedOpcode::EXT_EXCEPT_ALL:
+                    executeExceptAll();
+                    result = ExecutionResult(std::move(current_result_set_));
+                    return true;
+                case ExtendedOpcode::EXT_EXCEPT:
+                    executeExcept();
+                    result = ExecutionResult(std::move(current_result_set_));
+                    return true;
+                case ExtendedOpcode::EXT_CREATE_TRIGGER:
+                    executeCreateTrigger();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_DROP_TRIGGER:
+                    executeDropTrigger();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_CREATE_DB_TRIGGER:
+                    executeCreateDatabaseTrigger();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_DROP_DB_TRIGGER:
+                    executeDropDatabaseTrigger();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_MERGE_START:
+                    executeMerge();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_ANALYZE:
+                    executeAnalyze();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_COPY:
+                    executeCopy();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_CREATE_FUNCTION_STMT:
+                    executeCreateFunctionStatement();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_CREATE_PROCEDURE_STMT:
+                    executeCreateProcedureStatement();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_ALTER_FUNCTION_STMT:
+                    executeAlterFunctionStatement();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_ALTER_PROCEDURE_STMT:
+                    executeAlterProcedureStatement();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_MYSQL_KILL:
+                    executeMySqlKill();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_MYSQL_FLUSH:
+                    executeMySqlFlush();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_MYSQL_LOCK_TABLES:
+                    executeMySqlLockTables();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_MYSQL_UNLOCK_TABLES:
+                    executeMySqlUnlockTables();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_CREATE_PACKAGE_STMT:
+                    executeCreatePackageStatement();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_CREATE_EXCEPTION_STMT:
+                    executeCreateExceptionStatement();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_DROP_FUNCTION_STMT:
+                    executeDropFunctionStatement();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_DROP_PROCEDURE_STMT:
+                    executeDropProcedureStatement();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_DROP_PACKAGE_STMT:
+                    executeDropPackageStatement();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_DROP_EXCEPTION_STMT:
+                    executeDropExceptionStatement();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_ALTER_INDEX:
+                    executeAlterIndex();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_SUBQUERY_SCALAR:
+                case ExtendedOpcode::EXT_SUBQUERY_EXISTS:
+                case ExtendedOpcode::EXT_SUBQUERY_IN:
+                case ExtendedOpcode::EXT_SUBQUERY_NOT_IN:
+                case ExtendedOpcode::EXT_SUBQUERY_ARRAY:
+                    result = ExecutionResult(
+                        "Subquery opcodes must appear within expressions, not at statement level");
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        bool Executor::executeLegacyShowSetExtendedOpcode(uint16_t ext_opcode,
+                                                          ExecutionResult& result)
+        {
+            auto run_legacy_show = [&](void (Executor::*fn)()) {
+                (this->*fn)();
+                result = ExecutionResult(std::move(current_result_set_));
+            };
+            auto run_legacy_set = [&](void (Executor::*fn)()) {
+                (this->*fn)();
+                result = ExecutionResult();
+            };
+
+            switch (static_cast<ExtendedOpcode>(ext_opcode))
+            {
+                case ExtendedOpcode::EXT_SHOW_TABLES: run_legacy_show(&Executor::executeShowTables); return true;
+                case ExtendedOpcode::EXT_SHOW_DATABASES: run_legacy_show(&Executor::executeShowDatabases); return true;
+                case ExtendedOpcode::EXT_SHOW_COLUMNS: run_legacy_show(&Executor::executeShowColumns); return true;
+                case ExtendedOpcode::EXT_SHOW_INDEXES: run_legacy_show(&Executor::executeShowIndexes); return true;
+                case ExtendedOpcode::EXT_SHOW_CREATE_TABLE: run_legacy_show(&Executor::executeShowCreateTable); return true;
+                case ExtendedOpcode::EXT_DESCRIBE_TABLE: run_legacy_show(&Executor::executeDescribeTable); return true;
+                case ExtendedOpcode::EXT_SHOW_TABLE: run_legacy_show(&Executor::executeShowTable); return true;
+                case ExtendedOpcode::EXT_SHOW_INDEX: run_legacy_show(&Executor::executeShowIndex); return true;
+                case ExtendedOpcode::EXT_SHOW_TRIGGER: run_legacy_show(&Executor::executeShowTrigger); return true;
+                case ExtendedOpcode::EXT_SHOW_PROCEDURE: run_legacy_show(&Executor::executeShowProcedure); return true;
+                case ExtendedOpcode::EXT_SHOW_FUNCTION: run_legacy_show(&Executor::executeShowFunction); return true;
+                case ExtendedOpcode::EXT_SHOW_VIEW: run_legacy_show(&Executor::executeShowView); return true;
+                case ExtendedOpcode::EXT_SHOW_DOMAIN: run_legacy_show(&Executor::executeShowDomain); return true;
+                case ExtendedOpcode::EXT_SHOW_GENERATOR: run_legacy_show(&Executor::executeShowGenerator); return true;
+                case ExtendedOpcode::EXT_SHOW_SCHEMA: run_legacy_show(&Executor::executeShowSchema); return true;
+                case ExtendedOpcode::EXT_SHOW_ROLE: run_legacy_show(&Executor::executeShowRole); return true;
+                case ExtendedOpcode::EXT_SHOW_GRANTS: run_legacy_show(&Executor::executeShowGrants); return true;
+                case ExtendedOpcode::EXT_SHOW_JOBS: run_legacy_show(&Executor::executeShowJobs); return true;
+                case ExtendedOpcode::EXT_SHOW_JOB: run_legacy_show(&Executor::executeShowJob); return true;
+                case ExtendedOpcode::EXT_SHOW_JOB_RUNS: run_legacy_show(&Executor::executeShowJobRuns); return true;
+                case ExtendedOpcode::EXT_SHOW_CHECKS: run_legacy_show(&Executor::executeShowChecks); return true;
+                case ExtendedOpcode::EXT_SHOW_COLLATIONS: run_legacy_show(&Executor::executeShowCollations); return true;
+                case ExtendedOpcode::EXT_SHOW_COMMENTS: run_legacy_show(&Executor::executeShowComments); return true;
+                case ExtendedOpcode::EXT_SHOW_DEPENDENCIES: run_legacy_show(&Executor::executeShowDependencies); return true;
+                case ExtendedOpcode::EXT_SHOW_PACKAGE: run_legacy_show(&Executor::executeShowPackage); return true;
+                case ExtendedOpcode::EXT_SHOW_SYSTEM: run_legacy_show(&Executor::executeShowSystem); return true;
+                case ExtendedOpcode::EXT_SHOW_METRICS: run_legacy_show(&Executor::executeShowMetrics); return true;
+                case ExtendedOpcode::EXT_SHOW_SQL_DIALECT: run_legacy_show(&Executor::executeShowSqlDialect); return true;
+                case ExtendedOpcode::EXT_SHOW_VERSION: run_legacy_show(&Executor::executeShowVersion); return true;
+                case ExtendedOpcode::EXT_SHOW_DATABASE: run_legacy_show(&Executor::executeShowDatabase); return true;
+                case ExtendedOpcode::EXT_SHOW_VARIABLE: run_legacy_show(&Executor::executeShowVariable); return true;
+                case ExtendedOpcode::EXT_SHOW_ALL: run_legacy_show(&Executor::executeShowAll); return true;
+                case ExtendedOpcode::EXT_SHOW_TRANSACTION_LEVEL: run_legacy_show(&Executor::executeShowTransactionLevel); return true;
+                case ExtendedOpcode::EXT_SET_SQL_DIALECT: run_legacy_set(&Executor::executeSetSqlDialect); return true;
+                case ExtendedOpcode::EXT_SET_NAMES: run_legacy_set(&Executor::executeSetNames); return true;
+                case ExtendedOpcode::EXT_SET_LOCAL_TIMEOUT: run_legacy_set(&Executor::executeSetLocalTimeout); return true;
+                case ExtendedOpcode::EXT_SHOW_SCHEMA_PATH: run_legacy_show(&Executor::executeShowSchemaPath); return true;
+                case ExtendedOpcode::EXT_SHOW_SCHEMA_TREE: run_legacy_show(&Executor::executeShowSchemaTree); return true;
+                case ExtendedOpcode::EXT_SHOW_SEARCH_PATH: run_legacy_show(&Executor::executeShowSearchPath); return true;
+                case ExtendedOpcode::EXT_SHOW_LOCATION: run_legacy_show(&Executor::executeShowLocation); return true;
+                case ExtendedOpcode::EXT_SHOW_RESOLVED: run_legacy_show(&Executor::executeShowResolved); return true;
+                case ExtendedOpcode::EXT_SHOW_OBJECTS: run_legacy_show(&Executor::executeShowObjects); return true;
+                default:
+                    return false;
+            }
+        }
+
+        bool Executor::executeLegacyAdminControlExtendedOpcode(uint16_t ext_opcode,
+                                                               ExecutionResult& result)
+        {
+            switch (static_cast<ExtendedOpcode>(ext_opcode))
+            {
+                case ExtendedOpcode::EXT_CREATE_USER:
+                    executeCreateUser();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_ALTER_USER:
+                    executeAlterUser();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_DROP_USER:
+                    executeDropUser();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_CREATE_ROLE:
+                    executeCreateRole();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_ALTER_ROLE:
+                    executeAlterRole();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_DROP_ROLE:
+                    executeDropRole();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_CREATE_GROUP:
+                    executeCreateGroup();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_DROP_GROUP:
+                    executeDropGroup();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_CREATE_FOREIGN_SERVER:
+                    executeCreateForeignServer();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_DROP_FOREIGN_SERVER:
+                    executeDropForeignServer();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_CREATE_FOREIGN_TABLE:
+                    executeCreateForeignTable();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_DROP_FOREIGN_TABLE:
+                    executeDropForeignTable();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_CREATE_USER_MAPPING:
+                    executeCreateUserMapping();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_DROP_USER_MAPPING:
+                    executeDropUserMapping();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_CREATE_SYNONYM:
+                    executeCreateSynonym();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_DROP_SYNONYM:
+                    executeDropSynonym();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_CREATE_UDR:
+                    executeCreateUdr();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_DROP_UDR:
+                    executeDropUdr();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_ALTER_DEFAULT_PRIVILEGES:
+                    executeAlterDefaultPrivileges();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_GRANT_PRIVILEGE:
+                    executeGrantPrivilege();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_REVOKE_PRIVILEGE:
+                    executeRevokePrivilege();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_GRANT_ROLE:
+                    executeGrantRole();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_REVOKE_ROLE:
+                    executeRevokeRole();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_SET_ROLE:
+                    executeSetRole();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_SET_SESSION_AUTH:
+                    executeSetSessionAuth();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_SET_CONSTRAINTS:
+                    executeSetConstraints();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_SET_VARIABLE:
+                    executeSetVariable();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_ALTER_SYSTEM:
+                    executeAlterSystem();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_CONNECT:
+                    executeConnect();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_DISCONNECT:
+                    executeDisconnect();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_RENAME_OBJECT:
+                    executeRenameObject();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_MOVE_OBJECT:
+                    executeMoveObject();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_CREATE_SCHEMA:
+                    executeCreateSchema();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_DROP_SCHEMA:
+                    executeDropSchema();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_ALTER_SCHEMA:
+                    executeAlterSchema();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_CREATE_DATABASE:
+                    executeCreateDatabase();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_CREATE_DOMAIN:
+                    executeCreateDomain();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_COMMENT:
+                    executeComment();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_ALTER_DOMAIN:
+                    executeAlterDomain();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_DROP_DOMAIN:
+                    executeDropDomain();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_DROP_DATABASE:
+                    executeDropDatabase();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_ALTER_DATABASE:
+                    executeAlterDatabase();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_SET_AUTOCOMMIT:
+                    executeSetAutocommitOpcode();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_COMMIT_RETAINING:
+                    executeCommitFlags(sblr::CommitRollbackFlags::RETAINING |
+                                       sblr::CommitRollbackFlags::AND_CHAIN);
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_ROLLBACK_RETAINING:
+                    executeRollbackFlags(sblr::CommitRollbackFlags::RETAINING |
+                                         sblr::CommitRollbackFlags::AND_CHAIN);
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_PREPARE_TRANSACTION:
+                    executePrepareTransaction();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_COMMIT_PREPARED:
+                    executeCommitPrepared();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_ROLLBACK_PREPARED:
+                    executeRollbackPrepared();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_SAVEPOINT:
+                    executeSavepoint();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_RELEASE_SAVEPOINT:
+                    executeReleaseSavepoint();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_ROLLBACK_TO_SAVEPOINT:
+                    executeRollbackToSavepoint();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_SAVEPOINT_BEGIN:
+                    executeBlrSavepointBegin();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_SAVEPOINT_END:
+                    executeBlrSavepointEnd();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_CREATE_POLICY:
+                    executeCreatePolicy();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_DROP_POLICY:
+                    executeDropPolicy();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_ALTER_POLICY:
+                    executeAlterPolicy();
+                    result = ExecutionResult();
+                    return true;
+                case ExtendedOpcode::EXT_ALTER_TABLE_RLS:
+                    executeAlterTableRLS();
+                    result = ExecutionResult();
+                    return true;
+                default:
+                    return executeLegacyShowSetExtendedOpcode(ext_opcode, result);
+            }
+        }
+
+        bool Executor::executeLegacyRoutineExtendedOpcode(uint16_t ext_opcode,
+                                                          bool allow_debug_span)
+        {
+            switch (static_cast<ExtendedOpcode>(ext_opcode))
+            {
+                case ExtendedOpcode::EXT_DEBUG_SPAN: {
+                    if (!allow_debug_span)
+                    {
+                        return false;
+                    }
+                    int32_t line = static_cast<int32_t>(readInt32());
+                    int32_t column = static_cast<int32_t>(readInt32());
+                    if (conn_ctx_)
+                    {
+                        conn_ctx_->updateStatementSourceLocation(line, column);
+                    }
+                    return true;
+                }
+                case ExtendedOpcode::EXT_BLOCK:
+                    executeBlock();
+                    return true;
+                case ExtendedOpcode::EXT_ASSIGN:
+                    executeAssignment();
+                    return true;
+                case ExtendedOpcode::EXT_IF:
+                    executeIfStatement();
+                    return true;
+                case ExtendedOpcode::EXT_LOOP:
+                    executeLoopStatement();
+                    return true;
+                case ExtendedOpcode::EXT_WHILE:
+                    executeWhileStatement();
+                    return true;
+                case ExtendedOpcode::EXT_EXIT:
+                    executeExitStatement();
+                    return true;
+                case ExtendedOpcode::EXT_RETURN:
+                    executeReturnStatement();
+                    return true;
+                case ExtendedOpcode::EXT_RAISE:
+                    executeRaiseStatement();
+                    return true;
+                case ExtendedOpcode::EXT_VAR_LOAD:
+                    executeVarLoad();
+                    return true;
+                case ExtendedOpcode::EXT_VAR_STORE:
+                    executeVarStore();
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
         ExecutionResult Executor::callProcedureByName(const std::string& procedure_name,
                                                       const std::vector<Value>& args)
         {
@@ -55637,56 +57354,11 @@ namespace scratchbird
                     }
 
                     // Handle extended opcodes for PSQL statements
-                    if (opcode == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
-                    {
-                        uint16_t ext_opcode = readExtendedOpcode();
-                        switch (static_cast<ExtendedOpcode>(ext_opcode))
-                        {
-                            case ExtendedOpcode::EXT_DEBUG_SPAN:
-                            {
-                                int32_t line = static_cast<int32_t>(readInt32());
-                                int32_t column = static_cast<int32_t>(readInt32());
-                                if (conn_ctx_)
-                                {
-                                    conn_ctx_->updateStatementSourceLocation(line, column);
-                                }
-                                break;
-                            }
-                            case ExtendedOpcode::EXT_BLOCK:
-                                executeBlock();
-                                break;
-                            case ExtendedOpcode::EXT_ASSIGN:
-                                executeAssignment();
-                                break;
-                            case ExtendedOpcode::EXT_IF:
-                                executeIfStatement();
-                                break;
-                            case ExtendedOpcode::EXT_LOOP:
-                                executeLoopStatement();
-                                break;
-                            case ExtendedOpcode::EXT_WHILE:
-                                executeWhileStatement();
-                                break;
-                            case ExtendedOpcode::EXT_EXIT:
-                                executeExitStatement();
-                                break;
-                            case ExtendedOpcode::EXT_RETURN:
-                                executeReturnStatement();
-                                break;
-                            case ExtendedOpcode::EXT_RAISE:
-                                executeRaiseStatement();
-                                break;
-                            case ExtendedOpcode::EXT_VAR_LOAD:
-                                executeVarLoad();
-                                break;
-                            case ExtendedOpcode::EXT_VAR_STORE:
-                                executeVarStore();
-                                break;
-                            default:
-                                // Unknown extended opcode
-                                break;
-                        }
-                    }
+	                    if (opcode == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
+	                    {
+	                        uint16_t ext_opcode = readExtendedOpcode();
+	                        executeLegacyRoutineExtendedOpcode(ext_opcode, true);
+	                    }
                     else
                     {
                         Opcode op = static_cast<Opcode>(opcode);
@@ -55896,45 +57568,11 @@ namespace scratchbird
                         break;
                     }
 
-                    if (opcode == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
-                    {
-                        uint16_t ext_opcode = readExtendedOpcode();
-                        switch (static_cast<ExtendedOpcode>(ext_opcode))
-                        {
-                            case ExtendedOpcode::EXT_BLOCK:
-                                executeBlock();
-                                break;
-                            case ExtendedOpcode::EXT_ASSIGN:
-                                executeAssignment();
-                                break;
-                            case ExtendedOpcode::EXT_IF:
-                                executeIfStatement();
-                                break;
-                            case ExtendedOpcode::EXT_LOOP:
-                                executeLoopStatement();
-                                break;
-                            case ExtendedOpcode::EXT_WHILE:
-                                executeWhileStatement();
-                                break;
-                            case ExtendedOpcode::EXT_EXIT:
-                                executeExitStatement();
-                                break;
-                            case ExtendedOpcode::EXT_RETURN:
-                                executeReturnStatement();
-                                break;
-                            case ExtendedOpcode::EXT_RAISE:
-                                executeRaiseStatement();
-                                break;
-                            case ExtendedOpcode::EXT_VAR_LOAD:
-                                executeVarLoad();
-                                break;
-                            case ExtendedOpcode::EXT_VAR_STORE:
-                                executeVarStore();
-                                break;
-                            default:
-                                break;
-                        }
-                    }
+	                    if (opcode == static_cast<uint8_t>(Opcode::EXTENDED_OPCODE))
+	                    {
+	                        uint16_t ext_opcode = readExtendedOpcode();
+	                        executeLegacyRoutineExtendedOpcode(ext_opcode, false);
+	                    }
                 }
             }
             catch (const std::exception& e)
@@ -56387,7 +58025,7 @@ namespace scratchbird
 
             // Check condition
             bool condition_true = false;
-            condition_true = condition.toBoolean();
+            condition_true = predicateIsTrue(condition);
             
 
             if (!condition_true)
@@ -56416,7 +58054,7 @@ namespace scratchbird
                 }
 
                 Value cond_val = evaluateExpressionFromBuffer(state.condition_bytecode);
-                if (!cond_val.toBoolean())
+                if (!predicateIsTrue(cond_val))
                 {
                     pc_ = loop_end_offset;
                     return;
@@ -56451,7 +58089,7 @@ namespace scratchbird
             if (state.has_condition)
             {
                 Value cond_val = evaluateExpressionFromBuffer(state.condition_bytecode);
-                if (!cond_val.toBoolean())
+                if (!predicateIsTrue(cond_val))
                 {
                     loop_stack_.pop_back();
                     pc_ = state.loop_end_pc;
@@ -56507,7 +58145,7 @@ namespace scratchbird
                 pc_ = saved_pc;
 
                 bool condition_true = false;
-                condition_true = condition.toBoolean();
+                condition_true = predicateIsTrue(condition);
 
                 if (!condition_true)
                 {
@@ -56735,17 +58373,8 @@ namespace scratchbird
                 into_vars.push_back(readString());
             }
 
-            parser::v3::Compiler compiler;
-            auto compile_result = compiler.compile(sql_text);
-            if (!compile_result.ok)
-            {
-                std::string err = "EXECUTE STATEMENT compile failed";
-                if (!compile_result.error.empty())
-                {
-                    err += ": " + compile_result.error;
-                }
-                error(err);
-            }
+            std::vector<uint8_t> statement_bytecode;
+            error("EXECUTE STATEMENT requires precompiled SBLR; SQL execution in engine is disabled");
 
             Executor nested(db_);
             if (conn_ctx_)
@@ -56765,7 +58394,7 @@ namespace scratchbird
                 }
                 nested.setParameters(param_values, param_nulls);
             }
-            auto exec_result = nested.execute(compile_result.bytecode);
+            auto exec_result = nested.execute(statement_bytecode);
             if (!exec_result.success())
             {
                 error("EXECUTE STATEMENT execution failed: " + exec_result.error());
@@ -57352,7 +58981,7 @@ namespace scratchbird
             Value condition = pop();
 
             // Use toBoolean() which handles various value types
-            bool is_true = condition.toBoolean();
+            bool is_true = predicateIsTrue(condition);
 
             if (is_true)
             {
@@ -57369,7 +58998,7 @@ namespace scratchbird
             Value condition = pop();
 
             // Use toBoolean() which handles various value types
-            bool is_false = !condition.toBoolean();
+            bool is_false = !predicateIsTrue(condition);
 
             if (is_false)
             {
@@ -61025,6 +62654,36 @@ namespace scratchbird
                 return;
             }
 
+            if (normalized == "OPERATOR.STRICT_MODE" || normalized == "OPERATOR_STRICT_MODE")
+            {
+                if (local_scope)
+                {
+                    error("SET LOCAL operator.strict_mode is not supported");
+                }
+                if (!conn_ctx_)
+                {
+                    error("SET operator.strict_mode requires connection context");
+                }
+
+                auto value_opt = readOptionalValue();
+                if (!value_opt.has_value() || value_opt->isNull())
+                {
+                    conn_ctx_->clearSessionVariable("OPERATOR.STRICT_MODE");
+                    conn_ctx_->clearSessionVariable("OPERATOR_STRICT_MODE");
+                    return;
+                }
+
+                bool strict_mode = false;
+                if (!parseBooleanSetting(value_opt->toString(), strict_mode))
+                {
+                    error("operator.strict_mode must be ON/OFF/TRUE/FALSE/1/0");
+                }
+                const std::string stored = strict_mode ? "ON" : "OFF";
+                conn_ctx_->setSessionVariable("OPERATOR.STRICT_MODE", stored);
+                conn_ctx_->setSessionVariable("OPERATOR_STRICT_MODE", stored);
+                return;
+            }
+
             if (local_scope)
             {
                 error("SET LOCAL is only supported for statement_timeout");
@@ -61460,9 +63119,22 @@ namespace scratchbird
                                          session_info.policy_epoch_table);
             conn_ctx_->setCurrentSchemaId(session_info.current_schema_id);
 
+            std::vector<std::string> effective_search_path = session_info.search_path;
             if (!isZeroUuid(role_schema_id))
             {
                 conn_ctx_->setCurrentSchemaId(role_schema_id);
+
+                std::string role_schema_path;
+                if (catalog->getSchemaPath(role_schema_id, role_schema_path, &err_ctx) == core::Status::OK &&
+                    !role_schema_path.empty())
+                {
+                    effective_search_path.erase(
+                        std::remove(effective_search_path.begin(),
+                                    effective_search_path.end(),
+                                    role_schema_path),
+                        effective_search_path.end());
+                    effective_search_path.insert(effective_search_path.begin(), role_schema_path);
+                }
             }
 
             core::CatalogManager::SchemaInfo schema_info;
@@ -61471,7 +63143,15 @@ namespace scratchbird
                 catalog->getSchema(active_schema_id, schema_info, &err_ctx) == core::Status::OK)
             {
                 conn_ctx_->set_current_schema(schema_info.schema_name);
-                conn_ctx_->set_search_path({schema_info.schema_name});
+                if (effective_search_path.empty())
+                {
+                    effective_search_path.push_back(schema_info.schema_name);
+                }
+            }
+
+            if (!effective_search_path.empty())
+            {
+                conn_ctx_->set_search_path(effective_search_path);
             }
         }
 
@@ -61556,6 +63236,13 @@ namespace scratchbird
                 if (catalog->getSchema(session_info.current_schema_id, schema_info, &err_ctx) == core::Status::OK)
                 {
                     conn_ctx_->set_current_schema(schema_info.schema_name);
+                }
+                if (!session_info.search_path.empty())
+                {
+                    conn_ctx_->set_search_path(session_info.search_path);
+                }
+                else if (!schema_info.schema_name.empty())
+                {
                     conn_ctx_->set_search_path({schema_info.schema_name});
                 }
             }
@@ -65847,6 +67534,11 @@ namespace scratchbird
                     : core::IsolationLevel::SNAPSHOT;
                 value = isolation_to_string(level);
             }
+            else if (normalized == "OPERATOR.STRICT_MODE" || normalized == "OPERATOR_STRICT_MODE")
+            {
+                normalized = "OPERATOR.STRICT_MODE";
+                value = isOperatorStrictModeEnabled(conn_ctx_) ? "ON" : "OFF";
+            }
             else
             {
                 if (conn_ctx_ && conn_ctx_->getSessionVariable(normalized, value))
@@ -65980,6 +67672,8 @@ namespace scratchbird
                         ? "ON"
                         : "OFF");
             add_row("time_zone", resolve_timezone());
+            add_row("operator.strict_mode",
+                    isOperatorStrictModeEnabled(conn_ctx_) ? "ON" : "OFF");
             add_row("transaction_isolation", isolation_to_string(conn_ctx_
                 ? conn_ctx_->getIsolationLevel()
                 : core::IsolationLevel::SNAPSHOT));
@@ -67568,7 +69262,7 @@ namespace scratchbird
                             {
                                 return Value::makeBoolean(val.isNull());
                             }
-                            return Value::makeBoolean(!val.toBoolean());
+                            return evaluateThreeValuedNot(val);
                         }
                         case Opcode::SBLR3_EXPR_ADD:
                         case Opcode::SBLR3_EXPR_SUBTRACT:
@@ -67582,8 +69276,14 @@ namespace scratchbird
                         case Opcode::SBLR3_EXPR_LE:
                         case Opcode::SBLR3_EXPR_GT:
                         case Opcode::SBLR3_EXPR_GE:
+                        case Opcode::SBLR3_NULL_SAFE_EQ:
                         case Opcode::SBLR3_EXPR_AND:
-                        case Opcode::SBLR3_EXPR_OR: {
+                        case Opcode::SBLR3_EXPR_OR:
+                        case Opcode::SBLR3_BIT_AND:
+                        case Opcode::SBLR3_BIT_OR:
+                        case Opcode::SBLR3_BIT_XOR:
+                        case Opcode::SBLR3_BIT_SHIFT_LEFT:
+                        case Opcode::SBLR3_BIT_SHIFT_RIGHT: {
                             const auto* obj = std::get_if<scratchbird::sblr::v3::Value::Object>(
                                 &inst.payload.data);
                             if (!obj)
@@ -67620,61 +69320,368 @@ namespace scratchbird
                             }
 
                             ok = true;
+                            const bool strict_mode = isOperatorStrictModeEnabled(conn_ctx_);
                             if (op == Opcode::SBLR3_EXPR_AND)
                             {
-                                return Value::makeBoolean(lhs.toBoolean() && rhs.toBoolean());
+                                return evaluateThreeValuedAnd(lhs, rhs);
                             }
                             if (op == Opcode::SBLR3_EXPR_OR)
                             {
-                                return Value::makeBoolean(lhs.toBoolean() || rhs.toBoolean());
+                                return evaluateThreeValuedOr(lhs, rhs);
+                            }
+                            if (op == Opcode::SBLR3_NULL_SAFE_EQ)
+                            {
+                                if (lhs.isNull() || rhs.isNull())
+                                {
+                                    return Value::makeBoolean(lhs.isNull() && rhs.isNull());
+                                }
+                                std::string null_safe_error;
+                                if (!normalizeImplicitOperandsForBinaryOp(
+                                        scratchbird::sblr::v3::Opcode::SBLR3_EXPR_EQ,
+                                        lhs,
+                                        rhs,
+                                        null_safe_error,
+                                        strict_mode))
+                                {
+                                    ok = false;
+                                    return Value::makeNull();
+                                }
+                            }
+                            else if (lhs.isNull() || rhs.isNull())
+                            {
+                                return Value::makeNull();
+                            }
+                            std::string implicit_error;
+                            if (!normalizeImplicitOperandsForBinaryOp(op,
+                                                                      lhs,
+                                                                      rhs,
+                                                                      implicit_error,
+                                                                      strict_mode))
+                            {
+                                ok = false;
+                                return Value::makeNull();
                             }
                             if (op == Opcode::SBLR3_EXPR_EQ)
                             {
-                                return Value::makeBoolean(lhs.toString() == rhs.toString());
+                                bool result;
+                                if (core::TypeSystem::isString(lhs.type()) ||
+                                    core::TypeSystem::isString(rhs.type()))
+                                    result = compareStrings(lhs.toString(), rhs.toString()) == 0;
+                                else if (isDecfloatType(lhs.type()) || isDecfloatType(rhs.type()))
+                                {
+                                    uint8_t precision =
+                                        (lhs.type() == core::DataType::DECFLOAT34 ||
+                                         rhs.type() == core::DataType::DECFLOAT34)
+                                            ? 34
+                                            : 16;
+                                    core::DecFloat lhs_dec = coerceToDecfloat(lhs, precision);
+                                    core::DecFloat rhs_dec = coerceToDecfloat(rhs, precision);
+                                    result = core::DecFloat::compare(lhs_dec, rhs_dec, nullptr) == 0;
+                                }
+                                else if (lhs.type() == core::DataType::UUID &&
+                                         rhs.type() == core::DataType::UUID)
+                                    result = lhs.getUUID() == rhs.getUUID();
+                                else if (isTemporalType(lhs.type()) && isTemporalType(rhs.type()))
+                                    result = temporalComparisonKeyMicros(lhs) ==
+                                             temporalComparisonKeyMicros(rhs);
+                                else if (isIntegerType(lhs.type()) && isIntegerType(rhs.type()))
+                                    result = compareIntegerValues(lhs, rhs) == 0;
+                                else if (isNumericType(lhs.type()) && isNumericType(rhs.type()))
+                                    result = coerceToDouble(lhs) == coerceToDouble(rhs);
+                                else
+                                    result = lhs.toInt64() == rhs.toInt64();
+                                return Value::makeBoolean(result);
+                            }
+                            if (op == Opcode::SBLR3_NULL_SAFE_EQ)
+                            {
+                                bool result;
+                                if (core::TypeSystem::isString(lhs.type()) ||
+                                    core::TypeSystem::isString(rhs.type()))
+                                    result = compareStrings(lhs.toString(), rhs.toString()) == 0;
+                                else if (isDecfloatType(lhs.type()) || isDecfloatType(rhs.type()))
+                                {
+                                    uint8_t precision =
+                                        (lhs.type() == core::DataType::DECFLOAT34 ||
+                                         rhs.type() == core::DataType::DECFLOAT34)
+                                            ? 34
+                                            : 16;
+                                    core::DecFloat lhs_dec = coerceToDecfloat(lhs, precision);
+                                    core::DecFloat rhs_dec = coerceToDecfloat(rhs, precision);
+                                    result = core::DecFloat::compare(lhs_dec, rhs_dec, nullptr) == 0;
+                                }
+                                else if (lhs.type() == core::DataType::UUID &&
+                                         rhs.type() == core::DataType::UUID)
+                                    result = lhs.getUUID() == rhs.getUUID();
+                                else if (isTemporalType(lhs.type()) && isTemporalType(rhs.type()))
+                                    result = temporalComparisonKeyMicros(lhs) ==
+                                             temporalComparisonKeyMicros(rhs);
+                                else if (isIntegerType(lhs.type()) && isIntegerType(rhs.type()))
+                                    result = compareIntegerValues(lhs, rhs) == 0;
+                                else if (isNumericType(lhs.type()) && isNumericType(rhs.type()))
+                                    result = coerceToDouble(lhs) == coerceToDouble(rhs);
+                                else
+                                    result = lhs.toInt64() == rhs.toInt64();
+                                return Value::makeBoolean(result);
                             }
                             if (op == Opcode::SBLR3_EXPR_NE)
                             {
-                                return Value::makeBoolean(lhs.toString() != rhs.toString());
+                                bool result;
+                                if (core::TypeSystem::isString(lhs.type()) ||
+                                    core::TypeSystem::isString(rhs.type()))
+                                    result = compareStrings(lhs.toString(), rhs.toString()) != 0;
+                                else if (isDecfloatType(lhs.type()) || isDecfloatType(rhs.type()))
+                                {
+                                    uint8_t precision =
+                                        (lhs.type() == core::DataType::DECFLOAT34 ||
+                                         rhs.type() == core::DataType::DECFLOAT34)
+                                            ? 34
+                                            : 16;
+                                    core::DecFloat lhs_dec = coerceToDecfloat(lhs, precision);
+                                    core::DecFloat rhs_dec = coerceToDecfloat(rhs, precision);
+                                    result = core::DecFloat::compare(lhs_dec, rhs_dec, nullptr) != 0;
+                                }
+                                else if (lhs.type() == core::DataType::UUID &&
+                                         rhs.type() == core::DataType::UUID)
+                                    result = lhs.getUUID() != rhs.getUUID();
+                                else if (isTemporalType(lhs.type()) && isTemporalType(rhs.type()))
+                                    result = temporalComparisonKeyMicros(lhs) !=
+                                             temporalComparisonKeyMicros(rhs);
+                                else if (isIntegerType(lhs.type()) && isIntegerType(rhs.type()))
+                                    result = compareIntegerValues(lhs, rhs) != 0;
+                                else if (isNumericType(lhs.type()) && isNumericType(rhs.type()))
+                                    result = coerceToDouble(lhs) != coerceToDouble(rhs);
+                                else
+                                    result = lhs.toInt64() != rhs.toInt64();
+                                return Value::makeBoolean(result);
                             }
                             if (op == Opcode::SBLR3_EXPR_LT)
                             {
-                                return Value::makeBoolean(lhs.toDouble() < rhs.toDouble());
+                                bool result;
+                                if (core::TypeSystem::isString(lhs.type()) ||
+                                    core::TypeSystem::isString(rhs.type()))
+                                    result = compareStrings(lhs.toString(), rhs.toString()) < 0;
+                                else if (isDecfloatType(lhs.type()) || isDecfloatType(rhs.type()))
+                                {
+                                    uint8_t precision =
+                                        (lhs.type() == core::DataType::DECFLOAT34 ||
+                                         rhs.type() == core::DataType::DECFLOAT34)
+                                            ? 34
+                                            : 16;
+                                    core::DecFloat lhs_dec = coerceToDecfloat(lhs, precision);
+                                    core::DecFloat rhs_dec = coerceToDecfloat(rhs, precision);
+                                    result = core::DecFloat::compare(lhs_dec, rhs_dec, nullptr) < 0;
+                                }
+                                else if (lhs.type() == core::DataType::UUID &&
+                                         rhs.type() == core::DataType::UUID)
+                                    result = compareStrings(lhs.toString(), rhs.toString()) < 0;
+                                else if (isTemporalType(lhs.type()) && isTemporalType(rhs.type()))
+                                    result = temporalComparisonKeyMicros(lhs) <
+                                             temporalComparisonKeyMicros(rhs);
+                                else if (isIntegerType(lhs.type()) && isIntegerType(rhs.type()))
+                                    result = compareIntegerValues(lhs, rhs) < 0;
+                                else if (isNumericType(lhs.type()) && isNumericType(rhs.type()))
+                                    result = coerceToDouble(lhs) < coerceToDouble(rhs);
+                                else
+                                    result = lhs.toInt64() < rhs.toInt64();
+                                return Value::makeBoolean(result);
                             }
                             if (op == Opcode::SBLR3_EXPR_LE)
                             {
-                                return Value::makeBoolean(lhs.toDouble() <= rhs.toDouble());
+                                bool result;
+                                if (core::TypeSystem::isString(lhs.type()) ||
+                                    core::TypeSystem::isString(rhs.type()))
+                                    result = compareStrings(lhs.toString(), rhs.toString()) <= 0;
+                                else if (isDecfloatType(lhs.type()) || isDecfloatType(rhs.type()))
+                                {
+                                    uint8_t precision =
+                                        (lhs.type() == core::DataType::DECFLOAT34 ||
+                                         rhs.type() == core::DataType::DECFLOAT34)
+                                            ? 34
+                                            : 16;
+                                    core::DecFloat lhs_dec = coerceToDecfloat(lhs, precision);
+                                    core::DecFloat rhs_dec = coerceToDecfloat(rhs, precision);
+                                    result = core::DecFloat::compare(lhs_dec, rhs_dec, nullptr) <= 0;
+                                }
+                                else if (lhs.type() == core::DataType::UUID &&
+                                         rhs.type() == core::DataType::UUID)
+                                    result = compareStrings(lhs.toString(), rhs.toString()) <= 0;
+                                else if (isTemporalType(lhs.type()) && isTemporalType(rhs.type()))
+                                    result = temporalComparisonKeyMicros(lhs) <=
+                                             temporalComparisonKeyMicros(rhs);
+                                else if (isIntegerType(lhs.type()) && isIntegerType(rhs.type()))
+                                    result = compareIntegerValues(lhs, rhs) <= 0;
+                                else if (isNumericType(lhs.type()) && isNumericType(rhs.type()))
+                                    result = coerceToDouble(lhs) <= coerceToDouble(rhs);
+                                else
+                                    result = lhs.toInt64() <= rhs.toInt64();
+                                return Value::makeBoolean(result);
                             }
                             if (op == Opcode::SBLR3_EXPR_GT)
                             {
-                                return Value::makeBoolean(lhs.toDouble() > rhs.toDouble());
+                                bool result;
+                                if (core::TypeSystem::isString(lhs.type()) ||
+                                    core::TypeSystem::isString(rhs.type()))
+                                    result = compareStrings(lhs.toString(), rhs.toString()) > 0;
+                                else if (isDecfloatType(lhs.type()) || isDecfloatType(rhs.type()))
+                                {
+                                    uint8_t precision =
+                                        (lhs.type() == core::DataType::DECFLOAT34 ||
+                                         rhs.type() == core::DataType::DECFLOAT34)
+                                            ? 34
+                                            : 16;
+                                    core::DecFloat lhs_dec = coerceToDecfloat(lhs, precision);
+                                    core::DecFloat rhs_dec = coerceToDecfloat(rhs, precision);
+                                    result = core::DecFloat::compare(lhs_dec, rhs_dec, nullptr) > 0;
+                                }
+                                else if (lhs.type() == core::DataType::UUID &&
+                                         rhs.type() == core::DataType::UUID)
+                                    result = compareStrings(lhs.toString(), rhs.toString()) > 0;
+                                else if (isTemporalType(lhs.type()) && isTemporalType(rhs.type()))
+                                    result = temporalComparisonKeyMicros(lhs) >
+                                             temporalComparisonKeyMicros(rhs);
+                                else if (isIntegerType(lhs.type()) && isIntegerType(rhs.type()))
+                                    result = compareIntegerValues(lhs, rhs) > 0;
+                                else if (isNumericType(lhs.type()) && isNumericType(rhs.type()))
+                                    result = coerceToDouble(lhs) > coerceToDouble(rhs);
+                                else
+                                    result = lhs.toInt64() > rhs.toInt64();
+                                return Value::makeBoolean(result);
                             }
                             if (op == Opcode::SBLR3_EXPR_GE)
                             {
-                                return Value::makeBoolean(lhs.toDouble() >= rhs.toDouble());
+                                bool result;
+                                if (core::TypeSystem::isString(lhs.type()) ||
+                                    core::TypeSystem::isString(rhs.type()))
+                                    result = compareStrings(lhs.toString(), rhs.toString()) >= 0;
+                                else if (isDecfloatType(lhs.type()) || isDecfloatType(rhs.type()))
+                                {
+                                    uint8_t precision =
+                                        (lhs.type() == core::DataType::DECFLOAT34 ||
+                                         rhs.type() == core::DataType::DECFLOAT34)
+                                            ? 34
+                                            : 16;
+                                    core::DecFloat lhs_dec = coerceToDecfloat(lhs, precision);
+                                    core::DecFloat rhs_dec = coerceToDecfloat(rhs, precision);
+                                    result = core::DecFloat::compare(lhs_dec, rhs_dec, nullptr) >= 0;
+                                }
+                                else if (lhs.type() == core::DataType::UUID &&
+                                         rhs.type() == core::DataType::UUID)
+                                    result = compareStrings(lhs.toString(), rhs.toString()) >= 0;
+                                else if (isTemporalType(lhs.type()) && isTemporalType(rhs.type()))
+                                    result = temporalComparisonKeyMicros(lhs) >=
+                                             temporalComparisonKeyMicros(rhs);
+                                else if (isIntegerType(lhs.type()) && isIntegerType(rhs.type()))
+                                    result = compareIntegerValues(lhs, rhs) >= 0;
+                                else if (isNumericType(lhs.type()) && isNumericType(rhs.type()))
+                                    result = coerceToDouble(lhs) >= coerceToDouble(rhs);
+                                else
+                                    result = lhs.toInt64() >= rhs.toInt64();
+                                return Value::makeBoolean(result);
                             }
                             if (op == Opcode::SBLR3_EXPR_ADD)
                             {
-                                return Value::makeFloat64(lhs.toDouble() + rhs.toDouble());
+                                Value temporal_result;
+                                std::string temporal_error;
+                                if (evaluateTemporalArithmetic(op, lhs, rhs, temporal_result, temporal_error))
+                                {
+                                    return temporal_result;
+                                }
+                                if (!temporal_error.empty() &&
+                                    (isTemporalType(lhs.type()) || isTemporalType(rhs.type()) ||
+                                     isIntervalType(lhs.type()) || isIntervalType(rhs.type())))
+                                {
+                                    ok = false;
+                                    return Value::makeNull();
+                                }
+                                return Value::makeFloat64(coerceToDouble(lhs) +
+                                                          coerceToDouble(rhs));
                             }
                             if (op == Opcode::SBLR3_EXPR_SUBTRACT)
                             {
-                                return Value::makeFloat64(lhs.toDouble() - rhs.toDouble());
+                                Value temporal_result;
+                                std::string temporal_error;
+                                if (evaluateTemporalArithmetic(op, lhs, rhs, temporal_result, temporal_error))
+                                {
+                                    return temporal_result;
+                                }
+                                if (!temporal_error.empty() &&
+                                    (isTemporalType(lhs.type()) || isTemporalType(rhs.type()) ||
+                                     isIntervalType(lhs.type()) || isIntervalType(rhs.type())))
+                                {
+                                    ok = false;
+                                    return Value::makeNull();
+                                }
+                                return Value::makeFloat64(coerceToDouble(lhs) -
+                                                          coerceToDouble(rhs));
                             }
                             if (op == Opcode::SBLR3_EXPR_MULTIPLY)
                             {
-                                return Value::makeFloat64(lhs.toDouble() * rhs.toDouble());
+                                return Value::makeFloat64(coerceToDouble(lhs) *
+                                                          coerceToDouble(rhs));
                             }
                             if (op == Opcode::SBLR3_EXPR_DIVIDE)
                             {
-                                return Value::makeFloat64(lhs.toDouble() / rhs.toDouble());
+                                const double rhs_value = coerceToDouble(rhs);
+                                if (rhs_value == 0.0)
+                                {
+                                    ok = false;
+                                    return Value::makeNull();
+                                }
+                                return Value::makeFloat64(coerceToDouble(lhs) /
+                                                          rhs_value);
                             }
                             if (op == Opcode::SBLR3_EXPR_DIV_INT)
                             {
+                                if (rhs.toInt64() == 0)
+                                {
+                                    ok = false;
+                                    return Value::makeNull();
+                                }
                                 return Value::makeInt64(lhs.toInt64() / rhs.toInt64());
                             }
                             if (op == Opcode::SBLR3_EXPR_MODULO)
                             {
+                                if (rhs.toInt64() == 0)
+                                {
+                                    ok = false;
+                                    return Value::makeNull();
+                                }
                                 return Value::makeInt64(lhs.toInt64() % rhs.toInt64());
+                            }
+                            if (op == Opcode::SBLR3_BIT_AND)
+                            {
+                                return Value::makeInt64(lhs.toInt64() & rhs.toInt64());
+                            }
+                            if (op == Opcode::SBLR3_BIT_OR)
+                            {
+                                return Value::makeInt64(lhs.toInt64() | rhs.toInt64());
+                            }
+                            if (op == Opcode::SBLR3_BIT_XOR)
+                            {
+                                return Value::makeInt64(lhs.toInt64() ^ rhs.toInt64());
+                            }
+                            if (op == Opcode::SBLR3_BIT_SHIFT_LEFT)
+                            {
+                                int64_t shift = rhs.toInt64();
+                                if (shift < 0 || shift >= 64)
+                                {
+                                    ok = false;
+                                    return Value::makeNull();
+                                }
+                                uint64_t base = static_cast<uint64_t>(lhs.toInt64());
+                                return Value::makeInt64(
+                                    static_cast<int64_t>(base << static_cast<uint32_t>(shift)));
+                            }
+                            if (op == Opcode::SBLR3_BIT_SHIFT_RIGHT)
+                            {
+                                int64_t shift = rhs.toInt64();
+                                if (shift < 0 || shift >= 64)
+                                {
+                                    ok = false;
+                                    return Value::makeNull();
+                                }
+                                return Value::makeInt64(
+                                    lhs.toInt64() >> static_cast<uint32_t>(shift));
                             }
                             return Value::makeNull();
                         }
@@ -67686,7 +69693,7 @@ namespace scratchbird
 
                 bool ok = false;
                 Value result = eval_v3_expr(v3_inst, ok);
-                return ok && result.toBoolean();
+                return ok && !result.isNull() && result.toBoolean();
             }
 
             // Save current execution state
@@ -67718,7 +69725,7 @@ namespace scratchbird
                 current_row_columns_ = saved_row_columns;
 
                 // Convert result to boolean using Value API
-                return result.toBoolean();
+                return !result.isNull() && result.toBoolean();
             }
             catch (...)
             {
@@ -71494,10 +73501,10 @@ namespace scratchbird
                 {
                     int v0 = base64_val(text[i]);
                     int v1 = base64_val(text[i + 1]);
-                    int v2 = base64_val(text[i + 2]);
+                    int value_two = base64_val(text[i + 2]);
                     int v3 = base64_val(text[i + 3]);
 
-                    if (v0 < 0 || v1 < 0 || v2 == -2 || v3 == -2)
+                    if (v0 < 0 || v1 < 0 || value_two == -2 || v3 == -2)
                     {
                         error("Invalid base64 character");
                         return;
@@ -71505,13 +73512,13 @@ namespace scratchbird
 
                     result.push_back(static_cast<uint8_t>((v0 << 2) | (v1 >> 4)));
 
-                    if (v2 >= 0)
+                    if (value_two >= 0)
                     {
-                        result.push_back(static_cast<uint8_t>(((v1 & 0x0F) << 4) | (v2 >> 2)));
+                        result.push_back(static_cast<uint8_t>(((v1 & 0x0F) << 4) | (value_two >> 2)));
 
                         if (v3 >= 0)
                         {
-                            result.push_back(static_cast<uint8_t>(((v2 & 0x03) << 6) | v3));
+                            result.push_back(static_cast<uint8_t>(((value_two & 0x03) << 6) | v3));
                         }
                     }
                 }

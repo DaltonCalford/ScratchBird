@@ -90,7 +90,7 @@ TEST(CRC32C_Comprehensive, ChecksumFieldExclusion)
     header->page_size = PAGE_SIZE;
     header->lsn = 0x1234567890ABCDEFull;
     header->page_id = 42;
-    header->flags = PAGE_FLAG_DIRTY;
+    header->flags = PAGE_FLAG_DIRTY | PAGE_FLAG_CHECKSUM_VALID;
     header->generation = 100;
     pageSetLower(*header, sizeof(PageHeader));
     pageSetUpper(*header, PAGE_SIZE);
@@ -175,6 +175,7 @@ TEST(CRC32C_Comprehensive, ValidationCorrectness)
         header->page_type = PAGE_TYPE_HEAP;
         header->page_size = page_size;
         header->page_id = 0;
+        header->flags = PAGE_FLAG_CHECKSUM_VALID;
 
         // Fill page with test data
         for (size_t i = 64; i < std::min(size_t(page_size), size_t(256)); i++) {
@@ -212,6 +213,7 @@ TEST(CRC32C_Comprehensive, AllPageSizes)
         header->version = 1;
         header->page_type = PAGE_TYPE_DATABASE_HEADER;
         header->page_size = page_size;
+        header->flags = PAGE_FLAG_CHECKSUM_VALID;
         header->checksum = 0;
 
         // Fill with random data
@@ -283,6 +285,7 @@ TEST(CRC32C_Comprehensive, MinimumPageWithMaxData)
     header->version = 1;
     header->page_type = PAGE_TYPE_HEAP;
     header->page_size = PAGE_SIZE;
+    header->flags = PAGE_FLAG_CHECKSUM_VALID;
 
     // Fill entire page (except header) with 0xFF
     std::fill(page.begin() + sizeof(PageHeader), page.end(), 0xFF);
@@ -304,6 +307,7 @@ TEST(CRC32C_Comprehensive, MaximumPageSize)
     header->version = 1;
     header->page_type = PAGE_TYPE_HEAP;
     header->page_size = PAGE_SIZE;
+    header->flags = PAGE_FLAG_CHECKSUM_VALID;
 
     // Fill with pattern
     for (size_t i = sizeof(PageHeader); i < PAGE_SIZE; i++) {

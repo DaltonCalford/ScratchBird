@@ -273,21 +273,13 @@ TEST_F(IPCIntegrationTest, PreparedStatement_FullLifecycle) {
     handler_->onSimpleQuery(1, "INSERT INTO prep_test VALUES (1, 'Alice'), (2, 'Bob')", &ctx);
     handler_->reset();
     
-    // Parse
+    // Parse path is intentionally disabled in engine IPC handler:
+    // parser tiers must compile SQL to SBLR before submit.
     auto status = handler_->onParse(1, "select_stmt", "SELECT * FROM prep_test", &ctx);
     EXPECT_EQ(status, core::Status::OK);
-    EXPECT_TRUE(handler_->parseCompleteCalled());
-    handler_->reset();
-    
-    // Bind
-    status = handler_->onBind(1, "portal1", "select_stmt", &ctx);
-    EXPECT_EQ(status, core::Status::OK);
-    EXPECT_TRUE(handler_->bindCompleteCalled());
-    handler_->reset();
-    
-    // Execute
-    status = handler_->onExecute(1, "portal1", 0, &ctx);
-    EXPECT_EQ(status, core::Status::OK);
+    EXPECT_FALSE(handler_->parseCompleteCalled());
+    EXPECT_EQ(handler_->lastSqlState(), "0A000");
+    EXPECT_NE(handler_->lastError().find("disabled"), std::string::npos);
 }
 
 TEST_F(IPCIntegrationTest, PreparedStatement_MultipleExecutions) {

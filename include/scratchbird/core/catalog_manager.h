@@ -1007,6 +1007,27 @@ public:
             DROP = 1
         };
 
+        enum class JobGroup : uint8_t
+        {
+            USER_DEFINED = 0,
+            SYSTEM_LOCAL = 1,
+            MANAGEMENT = 2,
+            GROUP = 3,
+            CLUSTER = 4,
+            IT_MANAGEMENT = 5,
+            OLAP = 6
+        };
+
+        enum class JobParamType : uint8_t
+        {
+            BOOL = 0,
+            INT = 1,
+            FLOAT = 2,
+            STRING = 3,
+            UUID = 4,
+            JSON = 5
+        };
+
         struct JobInfo
         {
             ID job_id;
@@ -1067,6 +1088,1559 @@ public:
             std::string secret_key;
             std::string secret_value;
             uint64_t created_time = 0;
+        };
+
+        struct JobTypeCatalogInfo
+        {
+            ID job_type_id;
+            std::string job_type_name;
+            JobGroup job_group = JobGroup::USER_DEFINED;
+            bool is_system = false;
+            bool is_enabled = true;
+            uint32_t default_timeout_ms = 0;
+            uint16_t default_max_retries = 0;
+            uint8_t default_priority = 0;
+            bool has_description = false;
+            std::string description;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct JobTypeParamCatalogInfo
+        {
+            ID param_id;
+            ID job_type_id;
+            std::string param_key;
+            JobParamType param_type = JobParamType::STRING;
+            bool is_required = false;
+            bool has_default_value = false;
+            std::string default_value;
+            bool has_description = false;
+            std::string description;
+            bool is_valid = true;
+        };
+
+        struct JobParamCatalogInfo
+        {
+            ID param_id;
+            ID job_id;
+            std::string param_key;
+            JobParamType param_type = JobParamType::STRING;
+            std::string param_value;
+            bool is_valid = true;
+        };
+
+        struct JobScheduleCatalogInfo
+        {
+            ID schedule_id;
+            ScheduleKind schedule_kind = ScheduleKind::CRON;
+            bool has_interval_ms = false;
+            uint64_t interval_ms = 0;
+            bool has_cron_expr = false;
+            std::string cron_expr;
+            bool is_enabled = true;
+            bool is_valid = true;
+        };
+
+        struct JobTypePolicyCatalogInfo
+        {
+            ID policy_id;
+            ID job_type_id;
+            uint16_t max_concurrent = 0;
+            bool is_enabled = true;
+            bool is_valid = true;
+        };
+
+        enum class RemoteConnectorState : uint8_t
+        {
+            DISABLED = 0,
+            PROBING = 1,
+            READY = 2,
+            DEGRADED = 3,
+            FAILED = 4
+        };
+
+        enum class RemoteSnapshotKind : uint8_t
+        {
+            FULL = 0,
+            INCREMENTAL = 1,
+            CAPABILITY_REFRESH = 2
+        };
+
+        enum class RemoteSnapshotStatus : uint8_t
+        {
+            STARTED = 0,
+            RUNNING = 1,
+            COMPLETE = 2,
+            FAILED = 3,
+            CANCELLED = 4
+        };
+
+        enum class RemoteObjectKind : uint8_t
+        {
+            SCHEMA = 0,
+            TABLE = 1,
+            VIEW = 2,
+            INDEX = 3,
+            SEQUENCE = 4,
+            PROCEDURE = 5,
+            FUNCTION = 6,
+            TRIGGER = 7,
+            DOMAIN = 8,
+            TYPE = 9
+        };
+
+        enum class RemoteSchemaMappingMode : uint8_t
+        {
+            EXACT = 0,
+            PREFIX = 1,
+            REGEX = 2
+        };
+
+        enum class RemoteTxnMode : uint8_t
+        {
+            NONE = 0,
+            AUTO = 1,
+            JOINED = 2,
+            XA_PREPARED = 3
+        };
+
+        enum class RemoteTxnState : uint8_t
+        {
+            ACTIVE = 0,
+            PREPARED = 1,
+            COMMITTED = 2,
+            ROLLED_BACK = 3,
+            ABORTED = 4
+        };
+
+        enum class RemoteExecStatus : uint8_t
+        {
+            SUCCESS = 0,
+            FAILED = 1,
+            TIMEOUT = 2,
+            CANCELLED = 3
+        };
+
+        enum class RemoteErrorClass : uint8_t
+        {
+            CONNECTION = 0,
+            AUTH = 1,
+            CAPABILITY = 2,
+            METADATA = 3,
+            EXECUTION = 4,
+            TIMEOUT = 5,
+            TRANSACTION = 6,
+            POLICY = 7,
+            INTERNAL = 8
+        };
+
+        enum class RemoteOperationClass : uint8_t
+        {
+            QUERY = 0,
+            DML = 1,
+            DDL = 2,
+            ADMIN = 3,
+            PROCEDURAL = 4,
+            METADATA = 5,
+            TXN_CONTROL = 6
+        };
+
+        struct RemoteConnectorCatalogInfo
+        {
+            ID remote_connector_id;
+            ID fdw_server_id;
+            ID fdw_id;
+            std::string connector_name;
+            std::string engine_name;
+            bool has_engine_version_text = false;
+            std::string engine_version_text;
+            std::string endpoint_uri;
+            bool has_default_mapping_id = false;
+            ID default_mapping_id;
+            bool has_policy_id = false;
+            ID policy_id;
+            RemoteConnectorState state = RemoteConnectorState::DISABLED;
+            uint32_t failure_count = 0;
+            bool has_last_probe_time = false;
+            uint64_t last_probe_time = 0;
+            bool has_last_ready_time = false;
+            uint64_t last_ready_time = 0;
+            uint32_t module_checksum = 0;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct RemoteConnectorCapabilityCatalogInfo
+        {
+            ID capability_id;
+            ID remote_connector_id;
+            std::string capability_key;
+            std::string capability_group;
+            std::string capability_value_json;
+            bool has_source_version_text = false;
+            std::string source_version_text;
+            bool is_enabled = true;
+            uint64_t discovered_time = 0;
+            bool is_valid = true;
+        };
+
+        struct RemoteMetadataSnapshotCatalogInfo
+        {
+            ID snapshot_id;
+            ID remote_connector_id;
+            uint64_t snapshot_seq = 0;
+            RemoteSnapshotKind snapshot_kind = RemoteSnapshotKind::FULL;
+            RemoteSnapshotStatus snapshot_status = RemoteSnapshotStatus::STARTED;
+            bool has_engine_version_text = false;
+            std::string engine_version_text;
+            uint32_t object_count = 0;
+            uint32_t column_count = 0;
+            bool has_catalog_hash = false;
+            uint32_t catalog_hash = 0;
+            uint64_t started_time = 0;
+            bool has_completed_time = false;
+            uint64_t completed_time = 0;
+            bool has_error_id = false;
+            ID error_id;
+            bool is_valid = true;
+        };
+
+        struct RemoteMetadataObjectCatalogInfo
+        {
+            ID remote_object_id;
+            ID snapshot_id;
+            std::string remote_path;
+            bool has_remote_schema_name = false;
+            std::string remote_schema_name;
+            std::string remote_object_name;
+            RemoteObjectKind remote_object_kind = RemoteObjectKind::TABLE;
+            uint32_t remote_signature = 0;
+            bool has_definition_json = false;
+            std::string definition_json;
+            bool has_mapped_local_object_id = false;
+            ID mapped_local_object_id;
+            bool has_mapped_local_schema_id = false;
+            ID mapped_local_schema_id;
+            bool is_supported = true;
+            bool is_valid = true;
+        };
+
+        struct RemoteMetadataColumnCatalogInfo
+        {
+            ID remote_column_id;
+            ID remote_object_id;
+            uint32_t ordinal_position = 0;
+            std::string column_name;
+            std::string remote_type_name;
+            bool has_normalized_domain_id = false;
+            ID normalized_domain_id;
+            bool is_nullable = true;
+            bool has_default_expr_text = false;
+            std::string default_expr_text;
+            bool has_precision_value = false;
+            uint32_t precision_value = 0;
+            bool has_scale_value = false;
+            uint32_t scale_value = 0;
+            bool has_length_value = false;
+            uint32_t length_value = 0;
+            bool has_charset_name = false;
+            std::string charset_name;
+            bool has_collation_name = false;
+            std::string collation_name;
+            bool has_extra_json = false;
+            std::string extra_json;
+            bool is_valid = true;
+        };
+
+        struct RemoteSchemaMappingCatalogInfo
+        {
+            ID schema_mapping_id;
+            ID remote_connector_id;
+            std::string mapping_name;
+            std::string remote_schema_pattern;
+            ID local_schema_id;
+            RemoteSchemaMappingMode mapping_mode = RemoteSchemaMappingMode::EXACT;
+            std::string include_object_kinds;
+            bool has_exclude_object_patterns = false;
+            std::string exclude_object_patterns;
+            bool has_rename_rule_json = false;
+            std::string rename_rule_json;
+            bool has_last_snapshot_id = false;
+            ID last_snapshot_id;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct RemotePassthroughPolicyCatalogInfo
+        {
+            ID remote_policy_id;
+            ID remote_connector_id;
+            bool allow_query = true;
+            bool allow_dml = false;
+            bool allow_ddl = false;
+            bool allow_admin = false;
+            bool allow_procedural = false;
+            bool allow_join_local_txn = false;
+            uint64_t max_rows = 0;
+            uint64_t max_bytes = 0;
+            uint32_t timeout_ms = 0;
+            bool has_required_capabilities = false;
+            std::string required_capabilities;
+            std::string audit_level;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct RemotePreparedStatementCatalogInfo
+        {
+            ID remote_prepared_id;
+            ID remote_connector_id;
+            ID session_id;
+            std::string statement_name;
+            uint32_t statement_fingerprint = 0;
+            std::string command_text;
+            bool has_parameter_signature = false;
+            uint32_t parameter_signature = 0;
+            std::string remote_handle;
+            uint64_t created_time = 0;
+            uint64_t last_used_time = 0;
+            bool has_expires_time = false;
+            uint64_t expires_time = 0;
+            bool is_valid = true;
+        };
+
+        struct RemoteTxnBindingCatalogInfo
+        {
+            ID remote_txn_binding_id;
+            ID remote_connector_id;
+            ID session_id;
+            uint64_t txid = 0;
+            RemoteTxnMode txn_mode = RemoteTxnMode::NONE;
+            RemoteTxnState txn_state = RemoteTxnState::ACTIVE;
+            std::string remote_txn_token;
+            uint64_t begin_time = 0;
+            bool has_terminal_time = false;
+            uint64_t terminal_time = 0;
+            bool has_last_heartbeat = false;
+            uint64_t last_heartbeat = 0;
+            bool has_last_error_id = false;
+            ID last_error_id;
+            bool is_valid = true;
+        };
+
+        struct RemoteExecutionAuditCatalogInfo
+        {
+            ID remote_exec_audit_id;
+            ID remote_connector_id;
+            ID session_id;
+            bool has_txid = false;
+            uint64_t txid = 0;
+            ID request_id;
+            RemoteOperationClass operation_class = RemoteOperationClass::QUERY;
+            uint32_t statement_fingerprint = 0;
+            bool used_prepared = false;
+            RemoteTxnMode txn_mode = RemoteTxnMode::NONE;
+            RemoteExecStatus exec_status = RemoteExecStatus::SUCCESS;
+            uint64_t rows_returned = 0;
+            uint64_t rows_affected = 0;
+            uint64_t bytes_in = 0;
+            uint64_t bytes_out = 0;
+            uint32_t latency_ms = 0;
+            uint64_t started_time = 0;
+            uint64_t finished_time = 0;
+            bool has_error_id = false;
+            ID error_id;
+            bool is_valid = true;
+        };
+
+        struct RemoteErrorCatalogInfo
+        {
+            ID remote_error_id;
+            ID remote_connector_id;
+            RemoteErrorClass error_class = RemoteErrorClass::INTERNAL;
+            bool has_remote_code = false;
+            std::string remote_code;
+            std::string mapped_code;
+            std::string message_text;
+            uint64_t first_seen_time = 0;
+            uint64_t last_seen_time = 0;
+            uint32_t occurrence_count = 1;
+            bool is_open = true;
+            bool is_valid = true;
+        };
+
+        enum class SubscriptionTableState : uint8_t
+        {
+            INIT = 0,
+            DATA_COPY = 1,
+            CATCHUP = 2,
+            READY = 3,
+            ERROR = 4
+        };
+
+        struct ExtensionCatalogInfo
+        {
+            ID extension_id;
+            std::string extension_name;
+            ID schema_id;
+            std::string version;
+            ID owner_id;
+            bool is_relocatable = false;
+            bool has_config_id = false;
+            ID config_id;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct PublicationCatalogInfo
+        {
+            ID publication_id;
+            std::string publication_name;
+            ID owner_id;
+            bool publish_insert = true;
+            bool publish_update = true;
+            bool publish_delete = true;
+            bool publish_truncate = false;
+            bool publish_via_partition_root = false;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct PublicationTableCatalogInfo
+        {
+            ID publication_table_id;
+            ID publication_id;
+            ID table_id;
+            bool has_column_list_id = false;
+            ID column_list_id;
+            bool has_where_expr_sblr_id = false;
+            ID where_expr_sblr_id;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct PublicationSchemaCatalogInfo
+        {
+            ID publication_schema_id;
+            ID publication_id;
+            ID schema_id;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct SubscriptionCatalogInfo
+        {
+            ID subscription_id;
+            std::string subscription_name;
+            ID owner_id;
+            bool has_connection_info_id = false;
+            ID connection_info_id;
+            bool enabled = true;
+            bool has_slot_name = false;
+            std::string slot_name;
+            bool sync_commit = true;
+            bool copy_data = true;
+            bool create_slot = true;
+            bool refresh_on_start = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct SubscriptionTableCatalogInfo
+        {
+            ID subscription_table_id;
+            ID subscription_id;
+            ID table_id;
+            SubscriptionTableState state = SubscriptionTableState::INIT;
+            bool has_last_error = false;
+            std::string last_error;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        enum class ReplicationDirection : uint8_t
+        {
+            ONE_WAY = 0,
+            BIDIRECTIONAL = 1
+        };
+
+        enum class ReplicationChannelState : uint8_t
+        {
+            INIT = 0,
+            SNAPSHOT = 1,
+            CATCHUP = 2,
+            STREAMING = 3,
+            PAUSED = 4,
+            DEGRADED = 5,
+            FENCED = 6,
+            STOPPED = 7,
+            FAILED = 8
+        };
+
+        enum class ReplicationMemberRole : uint8_t
+        {
+            PUBLISHER = 0,
+            SUBSCRIBER = 1,
+            PEER = 2
+        };
+
+        enum class ReplicationCursorState : uint8_t
+        {
+            ACTIVE = 0,
+            STALLED = 1,
+            ERROR = 2,
+            CLOSED = 3
+        };
+
+        enum class ReplicationTxnState : uint8_t
+        {
+            RECEIVED = 0,
+            VALIDATED = 1,
+            APPLIED = 2,
+            SKIPPED = 3,
+            FAILED = 4,
+            CONFLICT = 5
+        };
+
+        enum class ReplicationRetryState : uint8_t
+        {
+            QUEUED = 0,
+            RUNNING = 1,
+            EXHAUSTED = 2,
+            DEAD_LETTER = 3
+        };
+
+        enum class ReplicationDdlPolicy : uint8_t
+        {
+            BLOCK = 0,
+            MANUAL_APPROVE = 1,
+            SAFE_ONLY = 2,
+            FULL = 3
+        };
+
+        enum class ReplicationConflictPolicy : uint8_t
+        {
+            SOURCE_WINS = 0,
+            TARGET_WINS = 1,
+            LAST_COMMIT_WINS = 2,
+            ORIGIN_PRIORITY = 3,
+            MANUAL_REQUIRED = 4
+        };
+
+        enum class ReplicationConflictKind : uint8_t
+        {
+            UPDATE_UPDATE = 0,
+            DELETE_UPDATE = 1,
+            UNIQUE_CONSTRAINT = 2,
+            DDL_DML = 3,
+            DDL_DDL = 4,
+            TYPE_MISMATCH = 5
+        };
+
+        enum class ReplicationResolutionState : uint8_t
+        {
+            OPEN = 0,
+            AUTO_RESOLVED = 1,
+            MANUAL_PENDING = 2,
+            MANUAL_RESOLVED = 3,
+            IGNORED = 4
+        };
+
+        enum class ReplicationEventKind : uint8_t
+        {
+            CHANNEL_START = 0,
+            CHANNEL_PAUSE = 1,
+            CHANNEL_RESUME = 2,
+            CHANNEL_STOP = 3,
+            LAG_ALERT = 4,
+            SPLIT_BRAIN_DETECTED = 5,
+            SPLIT_BRAIN_CLEARED = 6,
+            RECOVERY_START = 7,
+            RECOVERY_COMPLETE = 8
+        };
+
+        struct ReplicationChannelCatalogInfo
+        {
+            ID replication_channel_id;
+            std::string channel_name;
+            ReplicationDirection direction = ReplicationDirection::ONE_WAY;
+            ReplicationChannelState channel_state = ReplicationChannelState::INIT;
+            uint64_t mode_version = 1;
+            bool has_publication_id = false;
+            ID publication_id;
+            bool has_subscription_id = false;
+            ID subscription_id;
+            bool has_source_server_id = false;
+            ID source_server_id;
+            bool has_target_server_id = false;
+            ID target_server_id;
+            ReplicationDdlPolicy ddl_policy = ReplicationDdlPolicy::SAFE_ONLY;
+            ReplicationConflictPolicy conflict_policy = ReplicationConflictPolicy::MANUAL_REQUIRED;
+            uint16_t max_retry_count = 0;
+            uint64_t retry_backoff_base_ms = 0;
+            uint64_t retry_backoff_max_ms = 0;
+            uint64_t lag_warn_ms = 0;
+            uint64_t lag_critical_ms = 0;
+            uint32_t batch_max_txn = 0;
+            uint64_t batch_max_bytes = 0;
+            bool split_brain_fence_enabled = true;
+            uint64_t split_brain_detect_window_ms = 0;
+            ID created_by_id;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct ReplicationChannelMemberCatalogInfo
+        {
+            ID channel_member_id;
+            ID replication_channel_id;
+            std::string member_name;
+            ReplicationMemberRole member_role = ReplicationMemberRole::SUBSCRIBER;
+            bool has_fdw_server_id = false;
+            ID fdw_server_id;
+            bool local_endpoint = false;
+            uint16_t priority_rank = 0;
+            ID origin_id;
+            bool is_active = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct ReplicationOriginCatalogInfo
+        {
+            ID origin_id;
+            std::string origin_name;
+            std::string origin_scope;
+            uint16_t origin_priority = 0;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct ReplicationCursorCatalogInfo
+        {
+            ID replication_cursor_id;
+            ID replication_channel_id;
+            ID channel_member_id;
+            std::string cursor_name;
+            ReplicationCursorState cursor_state = ReplicationCursorState::ACTIVE;
+            std::string cursor_payload;
+            uint64_t source_commit_seq = 0;
+            bool has_source_commit_time = false;
+            uint64_t source_commit_time = 0;
+            uint64_t applied_commit_seq = 0;
+            bool has_applied_time = false;
+            uint64_t applied_time = 0;
+            uint64_t lag_ms = 0;
+            bool has_heartbeat_time = false;
+            uint64_t heartbeat_time = 0;
+            bool has_last_error_id = false;
+            ID last_error_id;
+            bool is_valid = true;
+        };
+
+        struct ReplicationOriginProgressCatalogInfo
+        {
+            ID origin_progress_id;
+            ID replication_channel_id;
+            ID target_member_id;
+            ID origin_id;
+            uint64_t max_applied_commit_seq = 0;
+            bool has_max_applied_time = false;
+            uint64_t max_applied_time = 0;
+            bool is_valid = true;
+        };
+
+        struct ReplicationTxnBatchCatalogInfo
+        {
+            ID replication_batch_id;
+            ID replication_channel_id;
+            ID source_member_id;
+            ID origin_id;
+            std::string source_txn_id;
+            uint64_t source_commit_seq = 0;
+            uint64_t source_commit_time = 0;
+            ReplicationTxnState txn_state = ReplicationTxnState::RECEIVED;
+            uint32_t change_count = 0;
+            uint64_t payload_bytes = 0;
+            uint32_t batch_checksum = 0;
+            uint64_t received_time = 0;
+            bool has_applied_time = false;
+            uint64_t applied_time = 0;
+            uint16_t retry_count = 0;
+            bool has_last_error_id = false;
+            ID last_error_id;
+            bool is_valid = true;
+        };
+
+        struct ReplicationApplyLogCatalogInfo
+        {
+            ID replication_apply_log_id;
+            ID replication_batch_id;
+            ID target_member_id;
+            uint16_t apply_order = 0;
+            ReplicationTxnState txn_state = ReplicationTxnState::RECEIVED;
+            uint64_t apply_start_time = 0;
+            bool has_apply_end_time = false;
+            uint64_t apply_end_time = 0;
+            bool has_applied_commit_seq = false;
+            uint64_t applied_commit_seq = 0;
+            uint64_t rows_inserted = 0;
+            uint64_t rows_updated = 0;
+            uint64_t rows_deleted = 0;
+            uint32_t ddl_count = 0;
+            bool has_error_id = false;
+            ID error_id;
+            bool is_valid = true;
+        };
+
+        struct ReplicationRetryQueueCatalogInfo
+        {
+            ID replication_retry_id;
+            ID replication_batch_id;
+            ReplicationRetryState retry_state = ReplicationRetryState::QUEUED;
+            uint16_t retry_count = 0;
+            uint64_t next_retry_time = 0;
+            bool has_last_retry_time = false;
+            uint64_t last_retry_time = 0;
+            bool has_last_error_id = false;
+            ID last_error_id;
+            bool has_dead_letter_reason = false;
+            std::string dead_letter_reason;
+            bool is_valid = true;
+        };
+
+        struct ReplicationConflictCatalogInfo
+        {
+            ID replication_conflict_id;
+            ID replication_channel_id;
+            ID replication_batch_id;
+            ReplicationConflictKind conflict_kind = ReplicationConflictKind::UPDATE_UPDATE;
+            ID source_origin_id;
+            bool has_target_origin_id = false;
+            ID target_origin_id;
+            ID target_object_id;
+            bool has_target_row_id = false;
+            ID target_row_id;
+            uint64_t source_commit_seq = 0;
+            bool has_target_commit_seq = false;
+            uint64_t target_commit_seq = 0;
+            std::string source_payload;
+            bool has_target_payload = false;
+            std::string target_payload;
+            ReplicationResolutionState resolution_state = ReplicationResolutionState::OPEN;
+            bool has_resolved_by_id = false;
+            ID resolved_by_id;
+            bool has_resolved_time = false;
+            uint64_t resolved_time = 0;
+            bool has_resolution_note = false;
+            std::string resolution_note;
+            bool is_valid = true;
+        };
+
+        struct ReplicationSplitBrainEventCatalogInfo
+        {
+            ID replication_split_brain_id;
+            ID replication_channel_id;
+            ReplicationEventKind event_kind = ReplicationEventKind::CHANNEL_START;
+            uint64_t detected_time = 0;
+            bool has_resolved_time = false;
+            uint64_t resolved_time = 0;
+            std::string detection_payload;
+            bool has_resolution_payload = false;
+            std::string resolution_payload;
+            bool fence_applied = false;
+            bool fence_cleared = false;
+            bool has_approved_by_id = false;
+            ID approved_by_id;
+            bool is_valid = true;
+        };
+
+        struct ReplicationErrorCatalogInfo
+        {
+            ID replication_error_id;
+            ID replication_channel_id;
+            std::string source_component;
+            std::string source_code;
+            std::string message_text;
+            bool recoverable = false;
+            bool has_retry_after_ms = false;
+            uint64_t retry_after_ms = 0;
+            uint64_t first_seen_time = 0;
+            uint64_t last_seen_time = 0;
+            uint32_t occurrence_count = 1;
+            bool is_open = true;
+            bool is_valid = true;
+        };
+
+        enum class FabricScopeKind : uint8_t
+        {
+            GROUP = 0,
+            CLUSTER = 1
+        };
+
+        enum class FabricLinkState : uint8_t
+        {
+            INIT = 0,
+            CONNECTING = 1,
+            READY = 2,
+            DEGRADED = 3,
+            FAILED = 4,
+            FENCED = 5,
+            DISABLED = 6
+        };
+
+        enum class FabricSessionState : uint8_t
+        {
+            OPENING = 0,
+            ACTIVE = 1,
+            CLOSING = 2,
+            CLOSED = 3,
+            FAILED = 4
+        };
+
+        enum class FabricTxnState : uint8_t
+        {
+            ACTIVE = 0,
+            PREPARED = 1,
+            COMMITTED = 2,
+            ROLLED_BACK = 3,
+            ABORTED = 4
+        };
+
+        enum class FabricTaskKind : uint8_t
+        {
+            ELECTION = 0,
+            TRANSFER = 1,
+            PASSTHROUGH_SBLR_EXECUTE = 2,
+            VERIFY = 3
+        };
+
+        enum class FabricTaskState : uint8_t
+        {
+            QUEUED = 0,
+            RUNNING = 1,
+            STREAMING = 2,
+            PAUSED = 3,
+            SUCCESS = 4,
+            FAILED = 5,
+            CANCELLED = 6
+        };
+
+        enum class FabricErrorClass : uint8_t
+        {
+            CONNECTION = 0,
+            AUTH = 1,
+            TRANSACTION = 2,
+            TASK = 3,
+            TIMEOUT = 4,
+            POLICY = 5,
+            INTERNAL = 6
+        };
+
+        enum class CubeRangeKind : uint8_t
+        {
+            TIME = 0,
+            HASH = 1,
+            RANGE = 2,
+            TENANT = 3
+        };
+
+        enum class OlapCompression : uint8_t
+        {
+            NONE = 0,
+            LZ4 = 1
+        };
+
+        enum class OlapTier : uint8_t
+        {
+            HOT = 0,
+            WARM = 1,
+            COLD = 2
+        };
+
+        enum class OlapIngestState : uint8_t
+        {
+            QUEUED = 0,
+            INGESTING = 1,
+            COMMITTED = 2,
+            FAILED = 3
+        };
+
+        enum class CubeStatus : uint8_t
+        {
+            ACTIVE = 0,
+            DISABLED = 1,
+            REBUILDING = 2
+        };
+
+        enum class CubeSourceKind : uint8_t
+        {
+            COLUMN = 0,
+            EXPRESSION = 1
+        };
+
+        enum class CubeAggFunction : uint8_t
+        {
+            SUM = 0,
+            COUNT = 1,
+            MIN = 2,
+            MAX = 3,
+            AVG = 4,
+            APPROX_COUNT_DISTINCT = 5
+        };
+
+        enum class CubeNullHandling : uint8_t
+        {
+            IGNORE_NULLS = 0,
+            INCLUDE_NULLS = 1
+        };
+
+        enum class CubeMaterializationState : uint8_t
+        {
+            BUILDING = 0,
+            ACTIVE = 1,
+            STALE = 2,
+            FAILED = 3
+        };
+
+        enum class CubeRefreshMode : uint8_t
+        {
+            MANUAL = 0,
+            INTERVAL = 1,
+            ON_COMMIT = 2,
+            ON_SCHEDULE = 3
+        };
+
+        enum class CubeJobType : uint8_t
+        {
+            BUILD = 0,
+            REFRESH = 1,
+            REBUILD = 2,
+            DROP = 3
+        };
+
+        enum class CubeJobState : uint8_t
+        {
+            QUEUED = 0,
+            RUNNING = 1,
+            COMPLETED = 2,
+            FAILED = 3
+        };
+
+        struct ClusterFabricLinkCatalogInfo
+        {
+            ID cluster_fabric_link_id;
+            std::string link_name;
+            FabricScopeKind scope_kind = FabricScopeKind::GROUP;
+            ID remote_node_id;
+            bool has_remote_server_id = false;
+            ID remote_server_id;
+            uint8_t transport_kind = 2; // ConnectionTransport::INET
+            bool has_auth_profile_id = false;
+            ID auth_profile_id;
+            FabricLinkState link_state = FabricLinkState::INIT;
+            uint64_t mode_version = 1;
+            uint16_t priority_rank = 0;
+            uint32_t max_sessions = 0;
+            uint32_t max_tasks = 0;
+            uint64_t heartbeat_interval_ms = 0;
+            uint16_t miss_threshold = 0;
+            uint16_t fail_threshold = 0;
+            bool has_last_heartbeat_time = false;
+            uint64_t last_heartbeat_time = 0;
+            bool has_last_ready_time = false;
+            uint64_t last_ready_time = 0;
+            ID created_by_id;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct ClusterFabricSessionCatalogInfo
+        {
+            ID cluster_fabric_session_id;
+            ID cluster_fabric_link_id;
+            ID session_id;
+            ID effective_user_id;
+            bool has_effective_role_id = false;
+            ID effective_role_id;
+            bool has_effective_group_id = false;
+            ID effective_group_id;
+            ID effective_schema_id;
+            bool has_search_path_profile_id = false;
+            ID search_path_profile_id;
+            FabricSessionState session_state = FabricSessionState::OPENING;
+            uint64_t opened_time = 0;
+            bool has_closed_time = false;
+            uint64_t closed_time = 0;
+            bool has_last_activity_time = false;
+            uint64_t last_activity_time = 0;
+            bool is_valid = true;
+        };
+
+        struct ClusterFabricTxnCatalogInfo
+        {
+            ID cluster_fabric_txn_id;
+            ID cluster_fabric_session_id;
+            ID transaction_id;
+            FabricTxnState txn_state = FabricTxnState::ACTIVE;
+            uint64_t begin_time = 0;
+            bool has_terminal_time = false;
+            uint64_t terminal_time = 0;
+            bool has_last_error_id = false;
+            ID last_error_id;
+            bool is_valid = true;
+        };
+
+        struct ClusterFabricTaskCatalogInfo
+        {
+            ID cluster_fabric_task_id;
+            ID cluster_fabric_link_id;
+            bool has_cluster_fabric_session_id = false;
+            ID cluster_fabric_session_id;
+            bool has_cluster_fabric_txn_id = false;
+            ID cluster_fabric_txn_id;
+            FabricTaskKind task_kind = FabricTaskKind::ELECTION;
+            FabricTaskState task_state = FabricTaskState::QUEUED;
+            uint8_t priority = 0;
+            bool has_task_payload_id = false;
+            ID task_payload_id;
+            bool has_sblr_artifact_id = false;
+            ID sblr_artifact_id;
+            bool has_source_object_id = false;
+            ID source_object_id;
+            bool has_target_object_id = false;
+            ID target_object_id;
+            bool has_expected_fingerprint = false;
+            uint32_t expected_fingerprint = 0;
+            bool has_observed_fingerprint = false;
+            uint32_t observed_fingerprint = 0;
+            uint64_t submitted_time = 0;
+            bool has_started_time = false;
+            uint64_t started_time = 0;
+            bool has_finished_time = false;
+            uint64_t finished_time = 0;
+            bool has_last_error_id = false;
+            ID last_error_id;
+            bool is_valid = true;
+        };
+
+        struct ClusterFabricTaskChunkCatalogInfo
+        {
+            ID cluster_fabric_task_chunk_id;
+            ID cluster_fabric_task_id;
+            uint64_t chunk_seq = 0;
+            uint64_t chunk_total = 0;
+            uint64_t chunk_bytes = 0;
+            uint32_t chunk_checksum = 0;
+            bool is_final_chunk = false;
+            uint64_t sent_time = 0;
+            bool has_acked_time = false;
+            uint64_t acked_time = 0;
+            bool is_valid = true;
+        };
+
+        struct ClusterFabricEventCatalogInfo
+        {
+            ID cluster_fabric_event_id;
+            ID cluster_fabric_link_id;
+            bool has_cluster_fabric_session_id = false;
+            ID cluster_fabric_session_id;
+            bool has_cluster_fabric_task_id = false;
+            ID cluster_fabric_task_id;
+            std::string event_kind;
+            uint64_t event_time = 0;
+            bool has_event_payload = false;
+            std::string event_payload;
+            bool has_actor_id = false;
+            ID actor_id;
+            bool is_valid = true;
+        };
+
+        struct ClusterFabricErrorCatalogInfo
+        {
+            ID cluster_fabric_error_id;
+            ID cluster_fabric_link_id;
+            FabricErrorClass error_class = FabricErrorClass::INTERNAL;
+            std::string source_component;
+            std::string source_code;
+            std::string message_text;
+            bool recoverable = false;
+            uint64_t first_seen_time = 0;
+            uint64_t last_seen_time = 0;
+            uint32_t occurrence_count = 1;
+            bool is_open = true;
+            bool is_valid = true;
+        };
+
+        struct OlapWatermarkCatalogInfo
+        {
+            ID watermark_id;
+            ID table_id;
+            uint64_t last_ingested_txid = 0;
+            uint64_t last_ingested_time = 0;
+            bool is_valid = true;
+        };
+
+        struct OlapPartitionCatalogInfo
+        {
+            ID partition_id;
+            ID table_id;
+            bool has_shard_id = false;
+            ID shard_id;
+            CubeRangeKind range_kind = CubeRangeKind::TIME;
+            bool has_range_min_bytes = false;
+            std::string range_min_bytes;
+            bool has_range_max_bytes = false;
+            std::string range_max_bytes;
+            uint64_t row_count = 0;
+            uint64_t size_bytes = 0;
+            OlapCompression compression = OlapCompression::NONE;
+            OlapTier tier = OlapTier::HOT;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct OlapSegmentCatalogInfo
+        {
+            ID segment_id;
+            ID partition_id;
+            uint32_t segment_index = 0;
+            uint64_t row_count = 0;
+            uint64_t size_bytes = 0;
+            bool has_min_key_bytes = false;
+            std::string min_key_bytes;
+            bool has_max_key_bytes = false;
+            std::string max_key_bytes;
+            uint64_t created_time = 0;
+            bool is_valid = true;
+        };
+
+        struct OlapIngestLogCatalogInfo
+        {
+            ID batch_id;
+            ID table_id;
+            uint64_t min_txid = 0;
+            uint64_t max_txid = 0;
+            uint64_t row_count = 0;
+            uint64_t size_bytes = 0;
+            OlapIngestState ingest_state = OlapIngestState::QUEUED;
+            uint64_t created_time = 0;
+            bool has_completed_time = false;
+            uint64_t completed_time = 0;
+            bool is_valid = true;
+        };
+
+        struct CubeCatalogInfo
+        {
+            ID cube_id;
+            ID schema_id;
+            std::string cube_name;
+            ID base_table_id;
+            CubeStatus status = CubeStatus::ACTIVE;
+            ID owner_id;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct CubeDimensionCatalogInfo
+        {
+            ID dimension_id;
+            ID cube_id;
+            std::string dimension_name;
+            CubeSourceKind source_kind = CubeSourceKind::COLUMN;
+            bool has_source_column_id = false;
+            ID source_column_id;
+            bool has_source_expr_sblr_id = false;
+            ID source_expr_sblr_id;
+            ID data_type_id;
+            bool is_time_dimension = false;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct CubeLevelCatalogInfo
+        {
+            ID level_id;
+            ID dimension_id;
+            std::string level_name;
+            ID key_expr_sblr_id;
+            bool has_label_expr_sblr_id = false;
+            ID label_expr_sblr_id;
+            bool has_sort_expr_sblr_id = false;
+            ID sort_expr_sblr_id;
+            uint16_t level_order = 0;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct CubeHierarchyCatalogInfo
+        {
+            ID hierarchy_id;
+            ID dimension_id;
+            std::string hierarchy_name;
+            bool is_default = false;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct CubeHierarchyLevelCatalogInfo
+        {
+            ID hierarchy_level_id;
+            ID hierarchy_id;
+            ID level_id;
+            uint16_t position = 0;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct CubeMeasureCatalogInfo
+        {
+            ID measure_id;
+            ID cube_id;
+            std::string measure_name;
+            CubeAggFunction agg_function = CubeAggFunction::SUM;
+            ID source_expr_sblr_id;
+            ID data_type_id;
+            CubeNullHandling null_handling = CubeNullHandling::IGNORE_NULLS;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct CubeMaterializationCatalogInfo
+        {
+            ID materialization_id;
+            ID cube_id;
+            ID storage_table_id;
+            uint32_t dimension_set_hash = 0;
+            uint32_t measure_set_hash = 0;
+            bool has_policy_group_hash = false;
+            uint32_t policy_group_hash = 0;
+            CubeMaterializationState state = CubeMaterializationState::BUILDING;
+            uint64_t row_count = 0;
+            uint64_t size_bytes = 0;
+            bool has_last_refresh_time = false;
+            uint64_t last_refresh_time = 0;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct CubeRefreshPolicyCatalogInfo
+        {
+            ID policy_id;
+            ID cube_id;
+            CubeRefreshMode refresh_mode = CubeRefreshMode::MANUAL;
+            bool has_interval_ms = false;
+            uint64_t interval_ms = 0;
+            bool has_watermark_column_id = false;
+            ID watermark_column_id;
+            bool has_max_staleness_ms = false;
+            uint64_t max_staleness_ms = 0;
+            bool is_enabled = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct CubeJobCatalogInfo
+        {
+            ID job_id;
+            ID cube_id;
+            CubeJobType job_type = CubeJobType::BUILD;
+            CubeJobState state = CubeJobState::QUEUED;
+            uint64_t created_time = 0;
+            bool has_started_time = false;
+            uint64_t started_time = 0;
+            bool has_completed_time = false;
+            uint64_t completed_time = 0;
+            bool has_error_code = false;
+            std::string error_code;
+            bool has_error_message = false;
+            std::string error_message;
+            bool is_valid = true;
+        };
+
+        struct CubeJobStepCatalogInfo
+        {
+            ID step_id;
+            ID job_id;
+            uint16_t step_index = 0;
+            std::string step_name;
+            CubeJobState state = CubeJobState::QUEUED;
+            bool has_started_time = false;
+            uint64_t started_time = 0;
+            bool has_completed_time = false;
+            uint64_t completed_time = 0;
+            bool is_valid = true;
+        };
+
+        struct CubeStatsCatalogInfo
+        {
+            ID cube_id;
+            uint64_t row_count = 0;
+            uint64_t size_bytes = 0;
+            uint64_t last_refresh_time = 0;
+            uint64_t avg_query_latency_ms = 0;
+            float cache_hit_rate = 0.0f;
+            bool is_valid = true;
+        };
+
+        struct TsParserCatalogInfo
+        {
+            ID parser_id;
+            std::string parser_name;
+            ID start_proc_id;
+            ID gettoken_proc_id;
+            ID end_proc_id;
+            ID lextypes_proc_id;
+            bool has_headline_proc_id = false;
+            ID headline_proc_id;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct TsTemplateCatalogInfo
+        {
+            ID template_id;
+            std::string template_name;
+            ID init_proc_id;
+            ID lexize_proc_id;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct TsDictionaryCatalogInfo
+        {
+            ID dictionary_id;
+            std::string dictionary_name;
+            ID template_id;
+            bool has_init_options = false;
+            ID init_options_uuid;
+            std::string init_options_json;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct TsConfigCatalogInfo
+        {
+            ID config_id;
+            std::string config_name;
+            ID parser_id;
+            bool has_default_dictionary_id = false;
+            ID default_dictionary_id;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct TsConfigMapCatalogInfo
+        {
+            ID map_id;
+            ID config_id;
+            std::string token_type;
+            ID dict_list_uuid;
+            std::vector<ID> dictionary_ids;
+            bool is_override = false;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct BlobFilterCatalogInfo
+        {
+            ID filter_id;
+            std::string filter_name;
+            int16_t input_subtype = 0;
+            int16_t output_subtype = 0;
+            std::string entry_point;
+            std::string module_name;
+            ID owner_id;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct TriggerMessageCatalogInfo
+        {
+            ID message_id;
+            ID trigger_id;
+            int16_t message_number = 0;
+            std::string message_text;
+            ID message_text_oid;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct ColumnDropHistoryCatalogInfo
+        {
+            ID history_id;
+            ID table_id;
+            std::string column_name;
+            ID column_type_id;
+            uint64_t dropped_time = 0;
+            bool has_dropped_by = false;
+            ID dropped_by_id;
+            bool is_valid = true;
+        };
+
+        enum class SblrArtifactState : uint8_t
+        {
+            QUEUED = 0,
+            COMPILING = 1,
+            READY = 2,
+            FAILED = 3,
+            RETIRED = 4
+        };
+
+        enum class SblrQueueState : uint8_t
+        {
+            QUEUED = 0,
+            RUNNING = 1,
+            RETRY_WAIT = 2,
+            FAILED = 3,
+            COMPLETED = 4
+        };
+
+        struct SblrModuleCatalogInfo
+        {
+            ID module_id;
+            uint64_t sblr_checksum = 0;
+            std::string feature_key;
+            std::string result_shape_id;
+            std::string payload_schema_id;
+            ID container_blob_id;
+            uint32_t normalization_evidence_hash = 0;
+            uint32_t statement_norm_count = 0;
+            uint64_t capability_profile_version = 0;
+            uint64_t created_txid = 0;
+            uint64_t created_at = 0;
+            bool is_valid = true;
+        };
+
+        struct SblrPlanCatalogInfo
+        {
+            ID plan_id;
+            ID module_id;
+            uint64_t catalog_epoch = 0;
+            uint64_t security_epoch = 0;
+            uint32_t normalization_evidence_hash = 0;
+            uint64_t plan_checksum = 0;
+            uint32_t dependency_count = 0;
+            ID plan_blob_id;
+            uint64_t created_txid = 0;
+            uint64_t created_at = 0;
+            bool is_valid = true;
+        };
+
+        struct SblrPlanDependencyCatalogInfo
+        {
+            ID plan_id;
+            ID object_id;
+            ObjectType object_kind = ObjectType::TABLE;
+            bool is_valid = true;
+        };
+
+        struct SblrStatementNormCatalogInfo
+        {
+            ID module_id;
+            ID statement_id;
+            uint32_t statement_order = 0;
+            std::string feature_key;
+            std::string ast_family;
+            uint16_t normalization_rule_set_id = 0;
+            uint64_t clause_presence_mask_lo = 0;
+            uint64_t clause_presence_mask_hi = 0;
+            uint32_t clause_order_checksum = 0;
+            uint32_t alias_rewrite_flags = 0;
+            uint64_t created_txid = 0;
+            bool is_valid = true;
+        };
+
+        struct SblrArtifactCatalogInfo
+        {
+            ID artifact_id;
+            ID module_id;
+            ID plan_id;
+            std::string target_platform;
+            std::string compiler_id;
+            std::string compiler_version;
+            SblrArtifactState artifact_state = SblrArtifactState::QUEUED;
+            ID binary_blob_id;
+            std::string hash_sha256;
+            bool has_signature_blob_id = false;
+            ID signature_blob_id;
+            uint64_t catalog_epoch = 0;
+            uint64_t security_epoch = 0;
+            uint64_t created_txid = 0;
+            uint64_t created_at = 0;
+            bool has_retired_at = false;
+            uint64_t retired_at = 0;
+            bool is_valid = true;
+        };
+
+        struct SblrArtifactStatsCatalogInfo
+        {
+            ID artifact_id;
+            uint64_t execution_count = 0;
+            uint64_t execution_cpu_us = 0;
+            uint64_t last_used_at = 0;
+            uint64_t fallback_count = 0;
+            uint64_t load_failure_count = 0;
+            bool is_valid = true;
+        };
+
+        struct SblrCompilerTargetCatalogInfo
+        {
+            std::string target_name;
+            std::string abi_name;
+            bool enabled = true;
+            std::string min_compiler_version;
+            uint32_t policy_flags = 0;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct SblrCompileQueueCatalogInfo
+        {
+            ID queue_id;
+            ID module_id;
+            std::string target_platform;
+            SblrQueueState queue_state = SblrQueueState::QUEUED;
+            uint8_t priority = 0;
+            uint32_t attempt_count = 0;
+            bool has_last_error_code = false;
+            std::string last_error_code;
+            uint64_t created_time = 0;
+            bool has_last_attempt_time = false;
+            uint64_t last_attempt_time = 0;
+            bool is_valid = true;
         };
 
         // Role membership information (Phase 2 - Security Tables)
@@ -1277,7 +2851,11 @@ public:
             std::vector<ID> effective_groups; // All groups (direct + transitive)
             uint64_t login_time = 0;
             uint64_t last_activity_time = 0;
+            ID home_schema_id;               // Resolved home schema UUID
             ID current_schema_id;            // Current schema context
+            ID search_path_profile_id;       // Persisted search-path profile UUID
+            std::vector<ID> search_path_schema_ids; // Ordered search-path schema UUIDs
+            std::vector<std::string> search_path;   // Ordered search-path schema paths
             ID authkey_id;                   // Bound AuthKey UUID (Plan 03)
             std::string emulation_mode;      // Dialect tag or emulation mode (Plan 03)
             uint64_t policy_epoch_global = 0;
@@ -1495,6 +3073,2685 @@ public:
             ObjectType type;
             ID schema_id;
             std::string name;
+        };
+
+        // ============================================================================
+        // Canonical Type Catalog Structures (CAT-010)
+        // ============================================================================
+
+        enum class TypeKind : uint8_t
+        {
+            SCALAR = 0,
+            DOMAIN = 1,
+            COMPOSITE = 2,
+            ENUM = 3,
+            RANGE = 4,
+            ARRAY = 5,
+            MAP = 6,
+            LIST = 7,
+            VECTOR = 8,
+            GEOMETRY = 9,
+            JSON = 10,
+            BSON = 11,
+            XML = 12,
+            VARIANT = 13
+        };
+
+        enum class TypeCastKind : uint8_t
+        {
+            IMPLICIT = 0,
+            ASSIGNMENT = 1,
+            EXPLICIT = 2,
+            BINARY_COMPATIBLE = 3
+        };
+
+        enum class TypeModifierValueKind : uint8_t
+        {
+            U64 = 1,
+            I64 = 2,
+            F64 = 3,
+            BOOL = 4,
+            TEXT = 5,
+            UUID = 6,
+            JSON = 7
+        };
+
+        // Mirrors 15_Complex_Types/DOMAIN_EMULATION_PARAMETERS.md parameter keys.
+        enum class TypeModifierKey : uint16_t
+        {
+            LENGTH_CHARS = 1,
+            LENGTH_BYTES = 2,
+            PRECISION = 3,
+            SCALE = 4,
+            MONEY_SCALE = 5,
+            NUMERIC_MODE = 6,
+            CHARSET_UUID = 7,
+            COLLATION_UUID = 8,
+            TIMEZONE_MODE = 9,
+            TIMEZONE_DEFAULT = 10,
+            INTERVAL_FIELDS = 11,
+            BIT_LENGTH = 12,
+            BIT_IS_VARYING = 13,
+            INET_FAMILY = 14,
+            CIDR_REQUIRED = 15,
+            ENUM_LABELS = 16,
+            ENUM_KIND = 17,
+            SET_LABELS = 18,
+            ENUM_COLLATION_UUID = 19,
+            ELEMENT_TYPE_UUID = 20,
+            KEY_TYPE_UUID = 21,
+            VALUE_TYPE_UUID = 22,
+            FROZEN = 23,
+            VECTOR_ELEMENT_TYPE = 24,
+            VECTOR_DIM = 25,
+            VECTOR_METRIC = 26,
+            VECTOR_SPARSE = 27,
+            VECTOR_NORMALIZED = 28,
+            GEOMETRY_KIND = 29,
+            GEOMETRY_SRID = 30,
+            GEOMETRY_DIMS = 31,
+            JSON_VALIDATION = 32,
+            BSON_VALIDATION = 33,
+            CASSANDRA_TIME_PRECISION = 34,
+            CASSANDRA_COUNTER = 35,
+            CASSANDRA_TIMEUUID = 36,
+            MONGO_TYPE_TAG = 37
+        };
+
+        struct TypeCatalogInfo
+        {
+            ID type_id;
+            ID schema_id;
+            std::string type_name;
+            TypeKind type_kind = TypeKind::SCALAR;
+            ID base_type_id;
+            ID element_type_id;
+            ID key_type_id;
+            ID value_type_id;
+            ID range_subtype_id;
+            bool is_system = false;
+            uint8_t system_origin = 0;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct TypeModifierInfo
+        {
+            ID type_id;
+            uint16_t modifier_key = 0;
+            TypeModifierValueKind value_kind = TypeModifierValueKind::U64;
+            std::optional<uint64_t> val_u64;
+            std::optional<int64_t> val_i64;
+            std::optional<double> val_f64;
+            std::optional<bool> val_bool;
+            std::optional<std::string> val_text;
+            ID val_uuid;
+            std::optional<std::string> val_json;
+            bool is_valid = true;
+        };
+
+        struct TypeIoInfo
+        {
+            ID type_id;
+            ID input_fn_id;
+            ID output_fn_id;
+            ID binary_input_fn_id;
+            ID binary_output_fn_id;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct TypeCastInfo
+        {
+            ID source_type_id;
+            ID target_type_id;
+            TypeCastKind cast_kind = TypeCastKind::EXPLICIT;
+            bool is_lossy = false;
+            ID cast_fn_id;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct TypeTransformInfo
+        {
+            ID transform_id;
+            ID type_id;
+            ID language_id;
+            ID from_sql_proc_id;
+            ID to_sql_proc_id;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct EncodingConversionInfo
+        {
+            ID conversion_id;
+            std::string conversion_name;
+            ID source_charset_id;
+            ID target_charset_id;
+            ID conversion_proc_id;
+            bool is_default = false;
+            bool is_system = false;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        enum class DomainParamType : uint8_t
+        {
+            U32 = 1,
+            I32 = 2,
+            U64 = 3,
+            I64 = 4,
+            U8 = 5,
+            BOOL = 6,
+            STRING = 7,
+            UUID = 8,
+            ENUM_VALUE = 9,
+            F32 = 10,
+            F64 = 11
+        };
+
+        enum class DomainConstraintKind : uint8_t
+        {
+            NOT_NULL = 1,
+            DEFAULT = 2,
+            CHECK = 3
+        };
+
+        enum class DomainSecurityKind : uint8_t
+        {
+            MASK_FUNCTION = 1,
+            AUDIT_ACCESS = 2,
+            REQUIRE_PERMISSION = 3,
+            ENCRYPTION = 4
+        };
+
+        enum class DomainValidationKind : uint8_t
+        {
+            VALIDATE_FUNCTION = 1,
+            ON_VIOLATION = 2,
+            ERROR_MESSAGE = 3
+        };
+
+        enum class DomainIntegrityKind : uint8_t
+        {
+            UNIQUE_ACROSS_DATABASE = 1,
+            CASE_INSENSITIVE = 2,
+            NORMALIZE_FUNCTION = 3
+        };
+
+        struct DomainParamKeyCatalogInfo
+        {
+            uint16_t param_key_id = 0;
+            std::string param_name;
+            DomainParamType param_type = DomainParamType::STRING;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct DomainParameterCatalogInfo
+        {
+            ID domain_id;
+            uint16_t param_key_id = 0;
+            DomainParamType param_type = DomainParamType::STRING;
+            std::optional<uint32_t> val_u32;
+            std::optional<int32_t> val_i32;
+            std::optional<uint64_t> val_u64;
+            std::optional<int64_t> val_i64;
+            std::optional<uint8_t> val_u8;
+            std::optional<bool> val_bool;
+            std::optional<std::string> val_string;
+            ID val_uuid;
+            std::optional<int32_t> val_enum;
+            std::optional<float> val_f32;
+            std::optional<double> val_f64;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct DomainConstraintCatalogInfo
+        {
+            ID constraint_id;
+            ID domain_id;
+            DomainConstraintKind constraint_kind = DomainConstraintKind::CHECK;
+            std::string constraint_expr_sblr;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct DomainSecurityCatalogInfo
+        {
+            ID security_id;
+            ID domain_id;
+            DomainSecurityKind security_kind = DomainSecurityKind::MASK_FUNCTION;
+            std::string security_expr_sblr;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct DomainValidationCatalogInfo
+        {
+            ID validation_id;
+            ID domain_id;
+            DomainValidationKind validation_kind = DomainValidationKind::VALIDATE_FUNCTION;
+            std::string validation_expr_sblr;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct DomainIntegrityCatalogInfo
+        {
+            ID integrity_id;
+            ID domain_id;
+            DomainIntegrityKind integrity_kind = DomainIntegrityKind::UNIQUE_ACROSS_DATABASE;
+            std::string integrity_expr_sblr;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        enum class CollationTailoringKind : uint8_t
+        {
+            UCA = 1,
+            LOCALE = 2,
+            VENDOR_MYSQL = 3,
+            VENDOR_FIREBIRD = 4,
+            VENDOR_POSTGRESQL = 5,
+            CUSTOM = 6
+        };
+
+        enum class ResourceBundleKind : uint8_t
+        {
+            UNSPECIFIED = 0,
+            I18N = 1,
+            TIMEZONE = 2,
+            CHARSET = 3,
+            COLLATION = 4,
+            COMPOSITE = 5
+        };
+
+        enum class ResourceArtifactKind : uint8_t
+        {
+            UNSPECIFIED = 0,
+            CHARSET_JSON = 1,
+            CHARSET_MAP = 2,
+            COLLATION_JSON = 3,
+            UCA_WEIGHTS = 4,
+            LOCALE_MANIFEST = 5,
+            TZ_SOURCE = 6,
+            TZ_TAR = 7,
+            OTHER = 8
+        };
+
+        struct CharsetAliasCatalogInfo
+        {
+            ID alias_id;
+            ID charset_id;
+            ID bundle_id;
+            std::string alias_name;
+            std::string normalized_name;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct CollationTailoringCatalogInfo
+        {
+            ID tailoring_id;
+            uint32_t collation_id = 0;
+            ID bundle_id;
+            CollationTailoringKind tailoring_kind = CollationTailoringKind::CUSTOM;
+            std::optional<std::string> tailoring_json;
+            std::optional<std::string> tailoring_blob;
+            std::string tailoring_hash;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct ResourceBundleCatalogInfo
+        {
+            ID bundle_id;
+            ResourceBundleKind bundle_kind = ResourceBundleKind::COMPOSITE;
+            std::string bundle_name;
+            std::string bundle_version;
+            std::string source_uri;
+            std::string manifest_json;
+            std::string content_hash;
+            bool is_active = false;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t activated_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct ResourceArtifactCatalogInfo
+        {
+            ID artifact_id;
+            ID bundle_id;
+            std::string artifact_path;
+            ResourceArtifactKind artifact_kind = ResourceArtifactKind::OTHER;
+            std::string content_blob;
+            std::string content_hash;
+            uint64_t content_size_bytes = 0;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct TimezoneTransitionCatalogInfo
+        {
+            ID transition_id;
+            ID timezone_id;
+            ID bundle_id;
+            int64_t effective_utc_epoch = 0;
+            int32_t utc_offset_seconds = 0;
+            bool is_dst = false;
+            std::string abbreviation;
+            uint32_t sequence_no = 0;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct TimezoneLeapSecondCatalogInfo
+        {
+            ID leap_id;
+            ID bundle_id;
+            int64_t effective_utc_epoch = 0;
+            int32_t total_correction_seconds = 0;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        // ============================================================================
+        // Canonical reserved-word/parser capability catalog structures (CAT-014)
+        // ============================================================================
+
+        enum class EmulationEngine : uint8_t
+        {
+            NATIVE = 0,
+            FIREBIRD = 1,
+            POSTGRESQL = 2,
+            MYSQL = 3,
+            CASSANDRA = 4,
+            MILVUS = 5,
+            MONGODB = 6,
+            NEO4J = 7,
+            REDIS = 8,
+            UNSPECIFIED = 255
+        };
+
+        enum class StorageProfile : uint8_t
+        {
+            RELATIONAL = 0,
+            NATIVE_EMULATION = 1,
+            HYBRID = 2,
+            UNSPECIFIED = 255
+        };
+
+        enum class ParserCapabilityAction : uint8_t
+        {
+            IMPLEMENT = 1,
+            REMAP = 2,
+            REJECT = 3
+        };
+
+        enum class ParserTransformStage : uint8_t
+        {
+            PRE_PARSE = 1,
+            AST_REWRITE = 2,
+            SBLR_REWRITE = 3,
+            RESULT_REWRITE = 4
+        };
+
+        enum class ParserErrorSeverity : uint8_t
+        {
+            ERROR = 1,
+            WARNING = 2,
+            NOTICE = 3
+        };
+
+        enum class ParserPrecedenceTiebreak : uint8_t
+        {
+            SPECIFICITY_FIRST = 1,
+            PROFILE_ORDER = 2,
+            FEATURE_KEY_ASC = 3
+        };
+
+        struct ReservedWordCatalogInfo
+        {
+            ID reserved_word_id;
+            std::string word;
+            EmulationEngine parser_scope = EmulationEngine::NATIVE;
+            bool is_reserved = true;
+            bool is_keyword = true;
+            uint64_t last_updated_txid = 0;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct EmulationProfileCatalogInfo
+        {
+            ID emulation_profile_id;
+            EmulationEngine engine = EmulationEngine::NATIVE;
+            bool enabled = false;
+            StorageProfile storage_profile = StorageProfile::RELATIONAL;
+            std::string requested_engine_version;
+            uint64_t installed_txid = 0;
+            uint64_t last_modified_txid = 0;
+            uint64_t config_flags = 0;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct ParserProfileCatalogInfo
+        {
+            ID parser_profile_id;
+            std::string profile_name;
+            EmulationEngine parser_engine = EmulationEngine::NATIVE;
+            uint16_t version_major = 0;
+            uint16_t version_minor = 0;
+            bool is_native = false;
+            bool is_default = false;
+            bool is_enabled = true;
+            ID base_profile_id;
+            std::string profile_hash;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct ParserTransformCatalogInfo
+        {
+            ID parser_transform_id;
+            ID parser_profile_id;
+            std::string transform_name;
+            std::string feature_family;
+            std::string feature_key;
+            ParserTransformStage transform_stage = ParserTransformStage::AST_REWRITE;
+            std::string input_contract_json;
+            std::string output_contract_json;
+            std::string implementation_ref;
+            bool is_deterministic = true;
+            bool is_idempotent = true;
+            uint32_t timeout_ms = 1000;
+            bool is_enabled = true;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct ParserCapabilityCatalogInfo
+        {
+            ID parser_capability_id;
+            ID parser_profile_id;
+            std::string feature_family;
+            std::string feature_key;
+            ParserCapabilityAction capability_action = ParserCapabilityAction::IMPLEMENT;
+            ID parser_transform_id;
+            std::string reject_code;
+            uint16_t precedence_rank = 0;
+            std::string notes;
+            bool is_enabled = true;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct ParserErrorMapCatalogInfo
+        {
+            ID parser_error_map_id;
+            ID parser_profile_id;
+            std::string reject_code;
+            std::string dialect_sqlstate;
+            std::string dialect_error_code;
+            ParserErrorSeverity error_severity = ParserErrorSeverity::ERROR;
+            std::string message_template;
+            std::optional<std::string> hint_template;
+            bool is_retryable = false;
+            bool is_enabled = true;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct ParserFeaturePrecedenceCatalogInfo
+        {
+            ID parser_feature_precedence_id;
+            ID parser_profile_id;
+            std::string feature_family;
+            std::string feature_key;
+            uint16_t precedence_rank = 0;
+            ParserPrecedenceTiebreak precedence_tiebreak =
+                ParserPrecedenceTiebreak::SPECIFICITY_FIRST;
+            bool is_terminal = false;
+            bool is_enabled = true;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        // ============================================================================
+        // Canonical relation extension catalog structures (CAT-015)
+        // ============================================================================
+
+        enum class PartitionStrategy : uint8_t
+        {
+            RANGE = 0,
+            LIST = 1,
+            HASH = 2
+        };
+
+        enum class PartitionBoundKind : uint8_t
+        {
+            RANGE = 0,
+            LIST = 1,
+            HASH = 2,
+            DEFAULT = 3
+        };
+
+        enum class InheritanceKind : uint8_t
+        {
+            INHERITS = 0,
+            PARTITION = 1
+        };
+
+        enum class PackageMemberKind : uint8_t
+        {
+            PROCEDURE = 0,
+            FUNCTION = 1
+        };
+
+        enum class EventStatus : uint8_t
+        {
+            ENABLED = 0,
+            DISABLED = 1,
+            SLAVESIDE_DISABLED = 2
+        };
+
+        enum class EventOnCompletion : uint8_t
+        {
+            DROP = 0,
+            PRESERVE = 1
+        };
+
+        enum class LanguageKind : uint8_t
+        {
+            INTERNAL = 0,
+            SQL = 1,
+            PSQL = 2,
+            PLPGSQL = 3,
+            PLPYTHON = 4,
+            PLLUA = 5,
+            PLJAVASCRIPT = 6,
+            PLDOTNET = 7,
+            PLJAVA = 8,
+            PLWASM = 9,
+            CUSTOM = 10
+        };
+
+        struct PartitionedTableCatalogInfo
+        {
+            ID partitioned_table_id;
+            ID table_id;
+            PartitionStrategy strategy = PartitionStrategy::RANGE;
+            ID key_columns_id;
+            ID key_expr_sblr_id;
+            uint32_t partition_count = 0;
+            ID default_partition_id;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct PartitionCatalogInfo
+        {
+            ID partition_id;
+            ID parent_table_id;
+            ID partition_table_id;
+            std::string partition_name;
+            PartitionBoundKind bound_kind = PartitionBoundKind::RANGE;
+            std::optional<std::string> range_min_bytes;
+            std::optional<std::string> range_max_bytes;
+            ID list_values_id;
+            uint32_t hash_modulus = 0;
+            uint32_t hash_remainder = 0;
+            ID bound_expr_sblr_id;
+            bool is_default = false;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct TableInheritanceCatalogInfo
+        {
+            ID inheritance_id;
+            ID parent_table_id;
+            ID child_table_id;
+            InheritanceKind inheritance_kind = InheritanceKind::INHERITS;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+        };
+
+        struct LanguageCatalogInfo
+        {
+            ID language_id;
+            std::string language_name;
+            LanguageKind language_kind = LanguageKind::SQL;
+            ID handler_udr_id;
+            ID inline_handler_udr_id;
+            ID validator_udr_id;
+            ID owner_id;
+            bool is_trusted = false;
+            bool is_system = false;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct EventCatalogInfo
+        {
+            ID event_id;
+            ID schema_id;
+            std::string event_name;
+            ID definer_id;
+            EventStatus status = EventStatus::ENABLED;
+            EventOnCompletion on_completion = EventOnCompletion::PRESERVE;
+            ScheduleKind schedule_kind = ScheduleKind::CRON;
+            std::optional<std::string> cron_expr;
+            std::optional<uint64_t> interval_ms;
+            std::optional<uint64_t> starts_time;
+            std::optional<uint64_t> ends_time;
+            std::optional<uint64_t> last_executed_time;
+            ID body_sblr_id;
+            ID body_sql_id;
+            std::optional<std::string> comment;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct PackageMemberCatalogInfo
+        {
+            ID member_id;
+            ID package_id;
+            std::string member_name;
+            PackageMemberKind member_kind = PackageMemberKind::PROCEDURE;
+            ID procedure_id;
+            uint16_t position = 0;
+            bool is_public = true;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        // ============================================================================
+        // Canonical index metadata extension catalog structures (CAT-016)
+        // ============================================================================
+
+        enum class IndexSortOrder : uint8_t
+        {
+            ASC = 0,
+            DESC = 1
+        };
+
+        enum class IndexNullOrder : uint8_t
+        {
+            FIRST = 0,
+            LAST = 1
+        };
+
+        enum class IndexOptionValueType : uint8_t
+        {
+            INT = 0,
+            FLOAT = 1,
+            BOOL = 2,
+            STRING = 3,
+            JSON = 4
+        };
+
+        enum class IndexOpclassFunctionKind : uint8_t
+        {
+            COMPARE = 0,
+            CONSISTENT = 1,
+            UNION = 2,
+            PENALTY = 3,
+            PICKSPLIT = 4,
+            COMPRESS = 5,
+            DECOMPRESS = 6,
+            SAME = 7,
+            EXTRACT_VALUE = 8,
+            EXTRACT_QUERY = 9,
+            TERM_NORMALIZE = 10,
+            TERM_TOKENIZE = 11,
+            DISTANCE = 12
+        };
+
+        enum class IndexMaintenanceKind : uint8_t
+        {
+            REBUILD = 0,
+            REBALANCE = 1,
+            COMPACT = 2,
+            RELOCATE = 3
+        };
+
+        enum class IndexMaintenanceMode : uint8_t
+        {
+            OFFLINE = 0,
+            ONLINE = 1
+        };
+
+        enum class IndexMaintenanceState : uint8_t
+        {
+            BUILDING_SHADOW = 0,
+            APPLYING_DELTAS = 1,
+            SWAPPING = 2,
+            COMPLETE = 3,
+            FAILED = 4
+        };
+
+        enum class IndexDeltaOp : uint8_t
+        {
+            INSERT = 0,
+            DELETE = 1,
+            UPDATE = 2
+        };
+
+        enum class IndexHealthStatus : uint8_t
+        {
+            HEALTHY = 0,
+            WARNING = 1,
+            ERROR = 2,
+            CORRUPT = 3
+        };
+
+        enum class BackupHistoryKind : uint8_t
+        {
+            FULL = 0,
+            INCREMENTAL = 1,
+            DIFFERENTIAL = 2,
+            SNAPSHOT = 3,
+            LOGICAL = 4
+        };
+
+        enum class BackupHistoryStatus : uint8_t
+        {
+            STARTED = 0,
+            RUNNING = 1,
+            SUCCESS = 2,
+            FAILED = 3,
+            CANCELLED = 4
+        };
+
+        enum class ConnectionTransport : uint8_t
+        {
+            LOCAL = 0,
+            IPC = 1,
+            INET = 2
+        };
+
+        enum class ConnectionAuthMethod : uint8_t
+        {
+            TRUST = 0,
+            REJECT = 1,
+            PASSWORD = 2,
+            MD5 = 3,
+            SCRAM_SHA_256 = 4,
+            SCRAM_SHA_512 = 5,
+            CERTIFICATE = 6,
+            LDAP = 7,
+            KERBEROS = 8,
+            PEER = 9,
+            IDENT = 10,
+            RADIUS = 11,
+            PAM = 12
+        };
+
+        enum class RuntimeTransactionState : uint8_t
+        {
+            IN_PROGRESS = 0,
+            COMMITTED = 1,
+            ABORTED = 2,
+            PREPARED = 3
+        };
+
+        enum class CertKind : uint8_t
+        {
+            SERVER = 0,
+            CLIENT = 1,
+            CLUSTER = 2,
+            SIGNING = 3
+        };
+
+        enum class CertStatus : uint8_t
+        {
+            ACTIVE = 0,
+            REVOKED = 1,
+            EXPIRED = 2,
+            SUSPENDED = 3
+        };
+
+        enum class KeyMaterialKind : uint8_t
+        {
+            SYMMETRIC = 0,
+            ASYMMETRIC_PRIVATE = 1,
+            ASYMMETRIC_PUBLIC = 2
+        };
+
+        enum class TrustAnchorState : uint8_t
+        {
+            ACTIVE = 0,
+            ROLLING_OUT = 1,
+            RETIRED = 2
+        };
+
+        enum class TlsVersion : uint8_t
+        {
+            TLS_1_2 = 0,
+            TLS_1_3 = 1
+        };
+
+        enum class RevocationSource : uint8_t
+        {
+            LOCAL = 0,
+            CRL = 1,
+            OCSP = 2,
+            OPERATOR = 3
+        };
+
+        enum class RevocationReason : uint8_t
+        {
+            UNSPECIFIED = 0,
+            KEY_COMPROMISE = 1,
+            CA_COMPROMISE = 2,
+            AFFILIATION_CHANGED = 3,
+            SUPERSEDED = 4,
+            CESSATION_OF_OPERATION = 5
+        };
+
+        enum class PkiArtifactKind : uint8_t
+        {
+            CERT = 0,
+            TRUST_ANCHOR = 1,
+            REVOCATION = 2,
+            CHANNEL_BINDING = 3
+        };
+
+        enum class DistributionState : uint8_t
+        {
+            PENDING = 0,
+            IN_PROGRESS = 1,
+            APPLIED = 2,
+            FAILED = 3
+        };
+
+        enum class RolloverPhase : uint8_t
+        {
+            PREPARE = 0,
+            DISTRIBUTE = 1,
+            ACTIVATE = 2,
+            COMPLETE = 3,
+            FAILED = 4
+        };
+
+        enum class EncryptionAlgorithm : uint8_t
+        {
+            AES_256_GCM = 0,
+            CHACHA20_POLY1305 = 1
+        };
+
+        enum class KdfAlgorithm : uint8_t
+        {
+            PBKDF2_SHA256 = 0,
+            ARGON2ID = 1
+        };
+
+        enum class KeyRotationPolicy : uint8_t
+        {
+            MANUAL = 0,
+            TIME_BASED = 1,
+            USAGE_BASED = 2
+        };
+
+        enum class EncryptionKeyStatus : uint8_t
+        {
+            STAGED = 0,
+            ACTIVE = 1,
+            RETIRED = 2,
+            DESTROYED = 3
+        };
+
+        enum class UnlockResult : uint8_t
+        {
+            NOT_ATTEMPTED = 0,
+            SUCCESS = 1,
+            FAILED = 2,
+            TIMED_OUT = 3
+        };
+
+        struct IndexAccessMethodCatalogInfo
+        {
+            ID access_method_id;
+            std::string method_name;
+            std::string index_type_name;
+            ID handler_udr_id;
+            bool supports_unique = false;
+            bool supports_multicolumn = false;
+            bool supports_include = false;
+            bool supports_partial = false;
+            bool supports_order = false;
+            bool supports_nulls_order = false;
+            bool supports_concurrent = false;
+            uint16_t default_fillfactor = 0;
+            bool is_system = false;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct IndexOpclassCatalogInfo
+        {
+            ID opclass_id;
+            std::string opclass_name;
+            std::string index_type_name;
+            ID input_type_id;
+            ID collation_id;
+            ID owner_schema_id;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct IndexOpclassFunctionCatalogInfo
+        {
+            ID opclass_fn_id;
+            ID opclass_id;
+            IndexOpclassFunctionKind fn_kind = IndexOpclassFunctionKind::COMPARE;
+            ID function_id;
+            uint16_t support_number = 0;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct IndexColumnCatalogInfo
+        {
+            ID index_column_id;
+            ID index_id;
+            uint16_t position = 0;
+            ID column_id;
+            ID expression_sblr_id;
+            ID opclass_id;
+            ID collation_id;
+            IndexSortOrder sort_order = IndexSortOrder::ASC;
+            IndexNullOrder null_order = IndexNullOrder::LAST;
+            uint16_t prefix_length = 0;
+            bool has_prefix_length = false;
+            bool is_include = false;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct IndexOptionCatalogInfo
+        {
+            ID option_id;
+            ID index_id;
+            std::string option_key;
+            std::string option_value;
+            IndexOptionValueType option_type = IndexOptionValueType::STRING;
+            bool is_valid = true;
+            uint64_t updated_time = 0;
+        };
+
+        struct IndexMaintenanceCatalogInfo
+        {
+            ID maintenance_id;
+            ID index_id;
+            IndexMaintenanceKind maintenance_kind = IndexMaintenanceKind::REBUILD;
+            IndexMaintenanceMode maintenance_mode = IndexMaintenanceMode::OFFLINE;
+            IndexMaintenanceState maintenance_state = IndexMaintenanceState::BUILDING_SHADOW;
+            uint32_t shadow_root_page_id = 0;
+            uint32_t shadow_meta_page_id = 0;
+            ID target_filespace_id;
+            uint16_t target_fillfactor = 0;
+            bool has_target_fillfactor = false;
+            uint64_t started_txid = 0;
+            uint64_t started_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct IndexMaintenanceDeltaCatalogInfo
+        {
+            ID maintenance_delta_id;
+            ID maintenance_id;
+            uint64_t delta_id = 0;
+            IndexDeltaOp delta_op = IndexDeltaOp::INSERT;
+            uint64_t tid_gpid = 0;
+            uint16_t tid_slot = 0;
+            uint64_t commit_txid = 0;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+        };
+
+        struct IndexBuildDeltaCatalogInfo
+        {
+            ID build_delta_id;
+            ID index_id;
+            uint64_t delta_id = 0;
+            IndexDeltaOp delta_op = IndexDeltaOp::INSERT;
+            uint64_t tid_gpid = 0;
+            uint16_t tid_slot = 0;
+            ID key_bytes_id;
+            uint64_t created_txid = 0;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+        };
+
+        struct IndexStatsCatalogInfo
+        {
+            ID index_id;
+            uint32_t stats_version = 0;
+            uint64_t last_analyze_txid = 0;
+            uint64_t row_count_est = 0;
+            uint64_t distinct_count_est = 0;
+            float null_frac = 0.0f;
+            ID histogram_bounds_id;
+            ID most_common_vals_id;
+            uint16_t avg_key_len = 0;
+            uint16_t avg_entry_len = 0;
+            uint32_t leaf_pages = 0;
+            uint16_t height = 0;
+            uint64_t clustering_factor = 0;
+            float correlation = 0.0f;
+            float bloat_ratio = 0.0f;
+            uint64_t last_vacuum_txid = 0;
+            uint64_t last_reindex_txid = 0;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct IndexUsageCatalogInfo
+        {
+            ID index_id;
+            uint64_t scan_count = 0;
+            uint64_t tuple_read = 0;
+            uint64_t tuple_returned = 0;
+            uint64_t index_only_hits = 0;
+            uint64_t blocks_read = 0;
+            uint64_t blocks_hit = 0;
+            uint64_t total_time_ns = 0;
+            uint64_t last_used_time = 0;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct IndexContentionCatalogInfo
+        {
+            ID index_id;
+            uint64_t lock_wait_count = 0;
+            uint64_t lock_wait_time_ns = 0;
+            uint64_t deadlock_count = 0;
+            uint64_t latch_wait_count = 0;
+            uint64_t latch_wait_time_ns = 0;
+            uint64_t unique_key_conflict_count = 0;
+            uint64_t hot_key_count = 0;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct IndexStorageCatalogInfo
+        {
+            ID index_id;
+            uint64_t page_count = 0;
+            uint64_t bytes_used = 0;
+            uint64_t bytes_allocated = 0;
+            float fragmentation_ratio = 0.0f;
+            ID filespace_id;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct IndexHealthCatalogInfo
+        {
+            ID index_id;
+            uint64_t last_light_scan_txid = 0;
+            uint64_t last_light_scan_time = 0;
+            IndexHealthStatus light_status = IndexHealthStatus::HEALTHY;
+            uint32_t light_error_count = 0;
+            uint64_t last_diag_scan_txid = 0;
+            uint64_t last_diag_scan_time = 0;
+            IndexHealthStatus diagnostic_status = IndexHealthStatus::HEALTHY;
+            uint32_t diagnostic_error_count = 0;
+            uint32_t checksum_errors = 0;
+            uint32_t order_errors = 0;
+            uint32_t pointer_errors = 0;
+            uint32_t orphan_pages = 0;
+            uint32_t duplicate_keys = 0;
+            uint32_t in_memory_errors = 0;
+            uint64_t pages_scanned = 0;
+            uint64_t bytes_scanned = 0;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct FilespaceStatsCatalogInfo
+        {
+            uint32_t filespace_id = 0;
+            uint64_t total_pages = 0;
+            uint64_t free_pages = 0;
+            uint64_t dirty_pages = 0;
+            uint64_t read_iops = 0;
+            uint64_t write_iops = 0;
+            uint64_t last_scan_txid = 0;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct LobCatalogInfo
+        {
+            ID lob_id;
+            ID database_id;
+            ID owner_id;
+            uint64_t data_length = 0;
+            uint64_t page_count = 0;
+            bool has_checksum = false;
+            uint32_t checksum = 0;
+            bool is_encrypted = false;
+            ID encryption_key_id;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct LobPageCatalogInfo
+        {
+            ID lob_page_id;
+            ID lob_id;
+            uint32_t page_index = 0;
+            uint64_t page_gpid = 0;
+            uint32_t chunk_bytes = 0;
+            bool has_checksum = false;
+            uint32_t checksum = 0;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct BackupHistoryCatalogInfo
+        {
+            ID backup_id;
+            ID database_id;
+            BackupHistoryKind backup_kind = BackupHistoryKind::FULL;
+            BackupHistoryStatus backup_status = BackupHistoryStatus::STARTED;
+            std::string storage_profile;
+            std::string storage_uri;
+            bool has_size_bytes = false;
+            uint64_t size_bytes = 0;
+            bool has_checksum = false;
+            uint32_t checksum = 0;
+            uint64_t started_time = 0;
+            uint64_t completed_time = 0;
+            ID created_by_user_id;
+            std::string error_message;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct RuntimeConnectionCatalogInfo
+        {
+            ID connection_id;
+            ID database_id;
+            ID server_instance_id;
+            ConnectionTransport transport = ConnectionTransport::LOCAL;
+            std::string protocol;
+            std::string client_host;
+            bool has_client_port = false;
+            uint16_t client_port = 0;
+            std::string server_host;
+            bool has_server_port = false;
+            uint16_t server_port = 0;
+            bool is_tls = false;
+            std::string tls_profile_name;
+            std::string client_os;
+            std::string client_app;
+            std::string client_version;
+            std::string client_exec_path;
+            bool has_client_pid = false;
+            uint32_t client_pid = 0;
+            ConnectionAuthMethod auth_method = ConnectionAuthMethod::PASSWORD;
+            std::string auth_policy_name;
+            ID auth_context_id;
+            bool has_route_fingerprint = false;
+            uint32_t route_fingerprint = 0;
+            ID route_details_id;
+            bool is_cluster_bridge = false;
+            ID bridge_peer_server_id;
+            uint64_t created_time = 0;
+            uint64_t last_activity_time = 0;
+            bool has_ended_time = false;
+            uint64_t ended_time = 0;
+            bool is_valid = true;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct RuntimeTransactionCatalogInfo
+        {
+            uint64_t txid = 0;
+            ID database_id;
+            ID session_id;
+            ID connection_id;
+            ID user_id;
+            ID role_id;
+            EmulationEngine emulation_engine = EmulationEngine::NATIVE;
+            uint8_t isolation_level = 0;
+            bool read_only = false;
+            bool autocommit = false;
+            RuntimeTransactionState state = RuntimeTransactionState::IN_PROGRESS;
+            uint64_t start_time = 0;
+            bool has_end_time = false;
+            uint64_t end_time = 0;
+            bool has_last_statement_hash = false;
+            uint64_t last_statement_hash = 0;
+            bool has_last_statement_time = false;
+            uint64_t last_statement_time = 0;
+            bool has_last_error_code = false;
+            uint32_t last_error_code = 0;
+            std::string last_sqlstate;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct AuthMappingCatalogInfo
+        {
+            ID mapping_id;
+            AuthMethod auth_method = AuthMethod::LDAP;
+            std::string auth_source;
+            std::string external_subject;
+            std::string external_group;
+            ID database_id;
+            ID user_id;
+            ID role_id;
+            ID group_id;
+            uint8_t priority = 0;
+            bool is_enabled = true;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct RoleSettingCatalogInfo
+        {
+            ID role_setting_id;
+            ID role_id;
+            ID database_id;
+            std::string setting_key;
+            std::string setting_value;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t modified_time = 0;
+        };
+
+        struct SecurityLabelCatalogInfo
+        {
+            ID security_label_id;
+            ID object_id;
+            std::string provider_name;
+            std::string label_text;
+            ID created_by_id;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+        };
+
+        struct SecurityClassCatalogInfo
+        {
+            ID security_class_id;
+            std::string class_name;
+            ID acl_payload_id;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t modified_time = 0;
+        };
+
+        struct CertRegistryCatalogInfo
+        {
+            ID cert_id;
+            CertKind cert_kind = CertKind::SERVER;
+            std::string subject_name;
+            std::string issuer_name;
+            std::string serial_number;
+            uint64_t not_before = 0;
+            uint64_t not_after = 0;
+            ID public_key_id;
+            ID cert_der_id;
+            ID cert_pem_id;
+            std::string signature_algorithm;
+            std::array<uint8_t, 32> thumbprint_sha256{};
+            CertStatus status = CertStatus::ACTIVE;
+            uint64_t created_time = 0;
+            uint64_t revoked_time = 0;
+            bool has_revoked_time = false;
+            bool is_valid = true;
+        };
+
+        struct PrivateKeyStoreCatalogInfo
+        {
+            ID key_id;
+            ID cert_id;
+            KeyMaterialKind key_kind = KeyMaterialKind::ASYMMETRIC_PRIVATE;
+            ID key_material_encrypted_id;
+            ID kek_profile_id;
+            uint64_t created_time = 0;
+            uint64_t rotated_time = 0;
+            bool has_rotated_time = false;
+            uint64_t destroyed_time = 0;
+            bool has_destroyed_time = false;
+            bool is_valid = true;
+        };
+
+        struct TrustAnchorCatalogInfo
+        {
+            ID anchor_id;
+            ID cert_id;
+            std::array<uint8_t, 32> thumbprint_sha256{};
+            TrustAnchorState state = TrustAnchorState::ACTIVE;
+            uint64_t activated_time = 0;
+            uint64_t expires_time = 0;
+            bool has_expires_time = false;
+            ID rollover_group_id;
+            bool is_valid = true;
+        };
+
+        struct ChannelCertBindingCatalogInfo
+        {
+            ID binding_id;
+            std::string channel_name;
+            CertKind cert_kind = CertKind::SERVER;
+            ID cert_id;
+            ID encryption_profile_id;
+            bool enforce_mtls = false;
+            TlsVersion min_tls_version = TlsVersion::TLS_1_2;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct CertRevocationCatalogInfo
+        {
+            ID revocation_id;
+            ID cert_id;
+            RevocationSource source_kind = RevocationSource::LOCAL;
+            RevocationReason reason_code = RevocationReason::UNSPECIFIED;
+            uint64_t revoked_time = 0;
+            uint64_t expiry_time = 0;
+            bool has_expiry_time = false;
+            ID evidence_id;
+            uint64_t created_time = 0;
+            bool is_valid = true;
+        };
+
+        struct PkiDistributionStateCatalogInfo
+        {
+            ID distribution_id;
+            ID member_id;
+            PkiArtifactKind artifact_kind = PkiArtifactKind::CERT;
+            ID artifact_id;
+            std::array<uint8_t, 32> artifact_hash{};
+            DistributionState distribution_state = DistributionState::PENDING;
+            uint32_t retry_count = 0;
+            uint64_t last_attempt_time = 0;
+            bool has_last_attempt_time = false;
+            uint64_t last_success_time = 0;
+            bool has_last_success_time = false;
+            ID last_error_id;
+            bool is_valid = true;
+        };
+
+        struct TrustAnchorRolloverCatalogInfo
+        {
+            ID rollover_id;
+            ID rollover_group_id;
+            ID old_anchor_id;
+            ID new_anchor_id;
+            RolloverPhase phase = RolloverPhase::PREPARE;
+            uint16_t quorum_required = 0;
+            uint16_t quorum_acked = 0;
+            uint64_t started_time = 0;
+            uint64_t completed_time = 0;
+            bool has_completed_time = false;
+            uint64_t deadline_time = 0;
+            bool has_deadline_time = false;
+            ID last_error_id;
+            bool is_valid = true;
+        };
+
+        enum class ClockSourceKind : uint8_t
+        {
+            NTP = 0,
+            PTP = 1,
+            PEER_MEDIAN = 2
+        };
+
+        enum class ClusterNodeState : uint8_t
+        {
+            JOINING = 0,
+            SYNCING = 1,
+            WARMING = 2,
+            ONLINE = 3,
+            DRAINING = 4,
+            OFFLINE = 5,
+            SUSPECT = 6,
+            FAILED = 7
+        };
+
+        enum class ClusterNodeRole : uint8_t
+        {
+            METADATA = 0,
+            OLTP_DATA = 1,
+            ROUTER = 2,
+            PARSER = 3,
+            LISTENER = 4,
+            BACKUP = 5,
+            SCHEDULER = 6,
+            METRICS = 7,
+            OLAP_INGEST = 8,
+            OLAP_STORAGE = 9,
+            OLAP_COMPUTE = 10,
+            VECTOR_INDEX = 11,
+            SEARCH_INDEX = 12,
+            GRAPH_COMPUTE = 13,
+            CACHE = 14
+        };
+
+        enum class ClusterServiceType : uint8_t
+        {
+            OLTP_RPC = 0,
+            OLAP_INGEST = 1,
+            OLAP_QUERY = 2,
+            VECTOR_QUERY = 3,
+            TEXT_SEARCH = 4,
+            GRAPH_QUERY = 5,
+            BACKUP = 6,
+            METRICS = 7,
+            ADMIN = 8
+        };
+
+        enum class ClusterServiceState : uint8_t
+        {
+            STARTING = 0,
+            ONLINE = 1,
+            DRAINING = 2,
+            OFFLINE = 3
+        };
+
+        struct NodeCatalogInfo
+        {
+            ID node_id;
+            ID cluster_id;
+            std::string node_name;
+            ClusterNodeRole node_role = ClusterNodeRole::METADATA;
+            std::string host;
+            uint16_t port = 0;
+            ConnectionTransport transport = ConnectionTransport::LOCAL;
+            std::string region;
+            std::string zone;
+            std::string rack;
+            ClusterNodeState state = ClusterNodeState::JOINING;
+            bool has_last_heartbeat_time = false;
+            uint64_t last_heartbeat_time = 0;
+            uint64_t created_txid = 0;
+            uint64_t last_modified_txid = 0;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct NodeRoleBindingCatalogInfo
+        {
+            ID binding_id;
+            ID node_id;
+            ClusterNodeRole role = ClusterNodeRole::METADATA;
+            bool is_primary = false;
+            uint64_t created_txid = 0;
+            uint64_t last_modified_txid = 0;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct NodeServiceCatalogInfo
+        {
+            ID service_id;
+            ID node_id;
+            ClusterNodeRole role = ClusterNodeRole::METADATA;
+            ClusterServiceType service_type = ClusterServiceType::OLTP_RPC;
+            ConnectionTransport transport = ConnectionTransport::LOCAL;
+            std::string host;
+            uint16_t port = 0;
+            ID tls_profile_id;
+            ID auth_profile_id;
+            ClusterServiceState state = ClusterServiceState::STARTING;
+            uint64_t created_txid = 0;
+            uint64_t last_modified_txid = 0;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct NodeCapabilityCatalogInfo
+        {
+            ID capability_id;
+            ID node_id;
+            std::string capability_key;
+            std::string capability_value;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        enum class ClusterMode : uint8_t
+        {
+            WORKGROUP = 0,
+            CLUSTER = 1
+        };
+
+        enum class ClusterState : uint8_t
+        {
+            INIT = 0,
+            ONLINE = 1,
+            DEGRADED = 2,
+            MAINTENANCE = 3,
+            OFFLINE = 4
+        };
+
+        enum class ConsensusMode : uint8_t
+        {
+            SINGLE = 0,
+            RAFT = 1,
+            PAXOS = 2
+        };
+
+        enum class ConsistencyLevel : uint8_t
+        {
+            ONE = 0,
+            QUORUM = 1,
+            ALL = 2,
+            LOCAL_QUORUM = 3
+        };
+
+        enum class FailoverMode : uint8_t
+        {
+            DISABLED = 0,
+            MANUAL = 1,
+            AUTO = 2
+        };
+
+        enum class RebalanceMode : uint8_t
+        {
+            MANUAL = 0,
+            AUTO = 1,
+            SCHEDULED = 2
+        };
+
+        enum class ShardPolicyParamType : uint8_t
+        {
+            U64 = 0,
+            I64 = 1,
+            F64 = 2,
+            BOOL = 3,
+            TEXT = 4,
+            UUID = 5,
+            JSON = 6
+        };
+
+        enum class ShardKeyKind : uint8_t
+        {
+            HASH = 0,
+            RANGE = 1,
+            GEO = 2,
+            TOKEN = 3
+        };
+
+        enum class HashFunctionKind : uint8_t
+        {
+            MURMUR3 = 0,
+            XXHASH64 = 1,
+            SHA256 = 2
+        };
+
+        enum class RangeOrderKind : uint8_t
+        {
+            ASC = 0,
+            DESC = 1
+        };
+
+        enum class ShardState : uint8_t
+        {
+            CREATING = 0,
+            ONLINE = 1,
+            REBALANCING = 2,
+            DRAINING = 3,
+            OFFLINE = 4
+        };
+
+        enum class ShardKind : uint8_t
+        {
+            ROW = 0,
+            COLUMN = 1,
+            VECTOR = 2,
+            DOCUMENT = 3
+        };
+
+        enum class ShardRangeKind : uint8_t
+        {
+            TOKEN = 0,
+            HASH_BUCKET = 1,
+            BYTES = 2,
+            GEO = 3
+        };
+
+        enum class ReplicaRole : uint8_t
+        {
+            PRIMARY = 0,
+            SECONDARY = 1,
+            LEARNER = 2
+        };
+
+        enum class ReplicaState : uint8_t
+        {
+            SYNCING = 0,
+            ONLINE = 1,
+            LAGGING = 2,
+            OFFLINE = 3
+        };
+
+        enum class ShardMigrationState : uint8_t
+        {
+            PLANNED = 0,
+            RUNNING = 1,
+            PAUSED = 2,
+            COMPLETED = 3,
+            FAILED = 4
+        };
+
+        enum class ThrottleState : uint8_t
+        {
+            NONE = 0,
+            LOW = 1,
+            MEDIUM = 2,
+            HIGH = 3
+        };
+
+        enum class WorkloadMatchKind : uint8_t
+        {
+            ROLE = 0,
+            USER = 1,
+            DATABASE = 2,
+            SCHEMA = 3,
+            CLIENT_APP = 4,
+            STATEMENT_TAG = 5,
+            QUERY_TYPE = 6,
+            REGEX = 7,
+            RESOURCE_TAG = 8,
+            CUSTOM = 9
+        };
+
+        enum class RouteTargetKind : uint8_t
+        {
+            NODE = 0,
+            SERVICE = 1,
+            ROLE = 2,
+            SHARD = 3,
+            TIER = 4
+        };
+
+        enum class AdmissionRejectMode : uint8_t
+        {
+            REJECT = 0,
+            QUEUE = 1,
+            SHED_LOW_PRIORITY = 2
+        };
+
+        enum class AdmissionTargetKind : uint8_t
+        {
+            CLUSTER = 0,
+            NODE = 1,
+            SERVICE = 2,
+            WORKLOAD_CLASS = 3
+        };
+
+        enum class SloBurnSeverity : uint8_t
+        {
+            NONE = 0,
+            MODERATE = 1,
+            HIGH = 2,
+            CRITICAL = 3
+        };
+
+        enum class SloActionPlan : uint8_t
+        {
+            NONE = 0,
+            ADMISSION_TIGHTEN = 1,
+            SCALE_OUT = 2,
+            SCALE_OUT_AND_TIGHTEN = 3,
+            INCIDENT_PAGE = 4
+        };
+
+        enum class AutoscaleActionKind : uint8_t
+        {
+            SCALE_OUT = 0,
+            SCALE_IN = 1,
+            NO_OP = 2
+        };
+
+        enum class AutoscaleActionState : uint8_t
+        {
+            PENDING = 0,
+            APPLIED = 1,
+            FAILED = 2,
+            CANCELLED = 3
+        };
+
+        enum class ClusterPolicyKind : uint8_t
+        {
+            BASE = 0,
+            SECURITY = 1,
+            ROUTING = 2,
+            HEALING = 3,
+            CUSTOM = 4
+        };
+
+        enum class FailureDetectorKind : uint8_t
+        {
+            PHI = 0,
+            HEARTBEAT = 1,
+            GOSSIP = 2
+        };
+
+        enum class AlertRuleKind : uint8_t
+        {
+            METRIC = 0,
+            EVENT = 1,
+            LOG = 2
+        };
+
+        enum class AlertSeverity : uint8_t
+        {
+            INFO = 0,
+            WARNING = 1,
+            CRITICAL = 2
+        };
+
+        enum class AlertTargetKind : uint8_t
+        {
+            EMAIL = 0,
+            WEBHOOK = 1,
+            SYSLOG = 2,
+            PAGER = 3,
+            SMS = 4,
+            SLACK = 5,
+            CUSTOM = 6
+        };
+
+        enum class AlertRouteKind : uint8_t
+        {
+            IMMEDIATE = 0,
+            BATCH = 1,
+            ESCALATION = 2
+        };
+
+        enum class AlertEventState : uint8_t
+        {
+            OPEN = 0,
+            ACKED = 1,
+            RESOLVED = 2,
+            SUPPRESSED = 3
+        };
+
+        enum class AlertSilenceScope : uint8_t
+        {
+            CLUSTER = 0,
+            NODE = 1,
+            RULE = 2,
+            TARGET = 3
+        };
+
+        enum class PartitionState : uint8_t
+        {
+            OPEN = 0,
+            RESOLVED = 1
+        };
+
+        enum class HealingTriggerKind : uint8_t
+        {
+            PARTITION = 0,
+            FAILOVER = 1,
+            CAPACITY = 2,
+            MANUAL = 3
+        };
+
+        enum class HealingActionKind : uint8_t
+        {
+            RESTART_NODE = 0,
+            REBALANCE_SHARDS = 1,
+            REPAIR_REPLICA = 2,
+            PROMOTE_REPLICA = 3,
+            ISOLATE_NODE = 4,
+            NOTIFY = 5
+        };
+
+        enum class HealingParamType : uint8_t
+        {
+            BOOL = 0,
+            INT = 1,
+            FLOAT = 2,
+            STRING = 3,
+            UUID = 4,
+            JSON = 5
+        };
+
+        enum class HealingRunState : uint8_t
+        {
+            QUEUED = 0,
+            RUNNING = 1,
+            COMPLETED = 2,
+            FAILED = 3,
+            CANCELLED = 4
+        };
+
+        enum class HealingStepState : uint8_t
+        {
+            PENDING = 0,
+            RUNNING = 1,
+            COMPLETED = 2,
+            FAILED = 3,
+            SKIPPED = 4
+        };
+
+        struct WorkloadClassCatalogInfo
+        {
+            ID class_id;
+            std::string class_name;
+            std::string description;
+            WorkloadMatchKind match_kind = WorkloadMatchKind::CUSTOM;
+            ID match_expr_sblr_id;
+            std::string match_text;
+            bool has_default_role = false;
+            ClusterNodeRole default_role = ClusterNodeRole::ROUTER;
+            uint8_t priority = 0;
+            bool has_max_latency_ms = false;
+            uint32_t max_latency_ms = 0;
+            bool allow_cross_shard = false;
+            bool is_enabled = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct WorkloadRouteCatalogInfo
+        {
+            ID route_id;
+            ID class_id;
+            std::string route_name;
+            RouteTargetKind target_kind = RouteTargetKind::NODE;
+            ID target_uuid;
+            std::string target_label;
+            bool has_role = false;
+            ClusterNodeRole role = ClusterNodeRole::ROUTER;
+            bool has_service_type = false;
+            ClusterServiceType service_type = ClusterServiceType::OLTP_RPC;
+            ConnectionTransport transport = ConnectionTransport::LOCAL;
+            uint16_t route_weight = 0;
+            ID selector_expr_sblr_id;
+            ID fallback_route_id;
+            bool is_enabled = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct AdmissionPolicyCatalogInfo
+        {
+            ID policy_id;
+            std::string policy_name;
+            uint32_t max_concurrent_sessions = 0;
+            uint32_t max_concurrent_queries = 0;
+            uint32_t max_queue_depth = 0;
+            uint8_t cpu_reject_pct = 0;
+            uint8_t mem_reject_pct = 0;
+            uint8_t io_reject_pct = 0;
+            AdmissionRejectMode reject_mode = AdmissionRejectMode::REJECT;
+            uint32_t queue_timeout_ms = 0;
+            bool is_enabled = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct AdmissionBindingCatalogInfo
+        {
+            ID binding_id;
+            ID policy_id;
+            AdmissionTargetKind target_kind = AdmissionTargetKind::CLUSTER;
+            ID target_uuid;
+            ID class_id;
+            uint8_t priority = 0;
+            bool is_enabled = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct SloProfileCatalogInfo
+        {
+            ID slo_profile_id;
+            std::string profile_name;
+            ClusterNodeRole role = ClusterNodeRole::OLTP_DATA;
+            double availability_target_pct = 0.0;
+            uint32_t latency_p95_target_ms = 0;
+            uint32_t latency_p99_target_ms = 0;
+            double error_rate_target_pct = 0.0;
+            uint32_t window_minutes = 0;
+            uint32_t short_burn_window_minutes = 0;
+            uint32_t long_burn_window_minutes = 0;
+            double critical_burn_threshold = 0.0;
+            double high_burn_threshold = 0.0;
+            double moderate_burn_threshold = 0.0;
+            uint64_t version_u64 = 0;
+            bool is_active = true;
+            bool is_valid = true;
+        };
+
+        struct SloBindingCatalogInfo
+        {
+            ID slo_binding_id;
+            ID slo_profile_id;
+            bool has_node_id = false;
+            ID node_id;
+            ClusterNodeRole role = ClusterNodeRole::OLTP_DATA;
+            uint16_t priority_rank = 0;
+            uint64_t effective_from_time = 0;
+            bool has_effective_to_time = false;
+            uint64_t effective_to_time = 0;
+            uint64_t version_u64 = 0;
+            bool is_valid = true;
+        };
+
+        struct SloWindowCatalogInfo
+        {
+            ID slo_window_id;
+            ID node_id;
+            ClusterNodeRole role = ClusterNodeRole::OLTP_DATA;
+            uint64_t window_start_time = 0;
+            uint64_t window_end_time = 0;
+            uint64_t request_count = 0;
+            uint64_t success_count = 0;
+            uint64_t error_count = 0;
+            uint32_t latency_p95_ms = 0;
+            uint32_t latency_p99_ms = 0;
+            double availability_sli_pct = 0.0;
+            double error_rate_sli_pct = 0.0;
+            uint64_t version_u64 = 0;
+            bool is_valid = true;
+        };
+
+        struct SloBurnEventCatalogInfo
+        {
+            ID slo_burn_event_id;
+            ID node_id;
+            ClusterNodeRole role = ClusterNodeRole::OLTP_DATA;
+            ID slo_profile_id;
+            double short_burn_rate = 0.0;
+            double long_burn_rate = 0.0;
+            SloBurnSeverity burn_severity = SloBurnSeverity::NONE;
+            SloActionPlan action_plan = SloActionPlan::NONE;
+            uint64_t event_time = 0;
+            bool has_resolved_time = false;
+            uint64_t resolved_time = 0;
+            bool is_valid = true;
+        };
+
+        struct AutoscalePolicyCatalogInfo
+        {
+            ID autoscale_policy_id;
+            ClusterNodeRole role = ClusterNodeRole::OLTP_DATA;
+            uint16_t min_nodes = 0;
+            uint16_t max_nodes = 0;
+            uint16_t scale_out_step = 0;
+            uint16_t scale_in_step = 0;
+            uint32_t scale_out_cooldown_ms = 0;
+            uint32_t scale_in_cooldown_ms = 0;
+            uint8_t cpu_scale_out_pct = 0;
+            uint8_t queue_scale_out_pct = 0;
+            double slo_burn_scale_out_threshold = 0.0;
+            double slo_recovery_scale_in_threshold = 0.0;
+            uint64_t version_u64 = 0;
+            bool is_valid = true;
+        };
+
+        struct AutoscaleActionCatalogInfo
+        {
+            ID autoscale_action_id;
+            ClusterNodeRole role = ClusterNodeRole::OLTP_DATA;
+            AutoscaleActionKind action_kind = AutoscaleActionKind::NO_OP;
+            int16_t requested_count_delta = 0;
+            int16_t applied_count_delta = 0;
+            std::string trigger_reason;
+            double trigger_burn_rate = 0.0;
+            uint64_t policy_version_u64 = 0;
+            uint64_t action_time = 0;
+            bool has_completed_time = false;
+            uint64_t completed_time = 0;
+            AutoscaleActionState action_state = AutoscaleActionState::PENDING;
+            std::string failure_code;
+            bool is_valid = true;
+        };
+
+        struct AdmissionTuningEventCatalogInfo
+        {
+            ID admission_tuning_event_id;
+            ClusterNodeRole role = ClusterNodeRole::OLTP_DATA;
+            uint32_t old_max_concurrent_queries = 0;
+            uint32_t new_max_concurrent_queries = 0;
+            uint32_t old_max_queue_depth = 0;
+            uint32_t new_max_queue_depth = 0;
+            uint32_t old_queue_timeout_ms = 0;
+            uint32_t new_queue_timeout_ms = 0;
+            std::string reason;
+            uint64_t policy_version_u64 = 0;
+            uint64_t event_time = 0;
+            bool is_valid = true;
+        };
+
+        struct ClusterPolicyCatalogInfo
+        {
+            ID policy_id;
+            ID cluster_id;
+            std::string policy_name;
+            ClusterPolicyKind policy_kind = ClusterPolicyKind::BASE;
+            ID policy_json_uuid;
+            bool has_policy_json_uuid = false;
+            bool is_active = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct FailureDetectorCatalogInfo
+        {
+            ID detector_id;
+            ID cluster_id;
+            FailureDetectorKind detector_kind = FailureDetectorKind::PHI;
+            uint32_t heartbeat_interval_ms = 0;
+            bool has_phi_threshold = false;
+            double phi_threshold = 0.0;
+            bool has_miss_threshold = false;
+            uint16_t miss_threshold = 0;
+            bool has_suspect_threshold = false;
+            uint16_t suspect_threshold = 0;
+            bool has_fail_threshold = false;
+            uint16_t fail_threshold = 0;
+            uint32_t grace_startup_ms = 0;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct AlertRuleCatalogInfo
+        {
+            ID rule_id;
+            std::string rule_name;
+            AlertRuleKind rule_kind = AlertRuleKind::METRIC;
+            AlertSeverity severity = AlertSeverity::INFO;
+            ID condition_sblr_uuid;
+            bool has_condition_sblr_uuid = false;
+            std::string condition_text;
+            bool has_condition_text = false;
+            uint32_t throttle_interval_ms = 0;
+            bool is_enabled = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct AlertTargetCatalogInfo
+        {
+            ID target_id;
+            std::string target_name;
+            AlertTargetKind target_kind = AlertTargetKind::WEBHOOK;
+            std::string endpoint;
+            ID auth_secret_uuid;
+            bool has_auth_secret_uuid = false;
+            bool is_enabled = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct AlertRouteCatalogInfo
+        {
+            ID route_id;
+            ID rule_id;
+            ID target_id;
+            AlertRouteKind route_kind = AlertRouteKind::IMMEDIATE;
+            AlertSeverity severity_min = AlertSeverity::INFO;
+            AlertSeverity severity_max = AlertSeverity::CRITICAL;
+            bool is_enabled = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct AlertEventCatalogInfo
+        {
+            ID event_id;
+            ID rule_id;
+            AlertSeverity severity = AlertSeverity::INFO;
+            AlertEventState event_state = AlertEventState::OPEN;
+            uint64_t event_time = 0;
+            bool has_resolved_time = false;
+            uint64_t resolved_time = 0;
+            bool has_event_payload_uuid = false;
+            ID event_payload_uuid;
+            bool is_valid = true;
+        };
+
+        struct AlertAckCatalogInfo
+        {
+            ID ack_id;
+            ID event_id;
+            ID user_id;
+            uint64_t ack_time = 0;
+            bool has_comment = false;
+            std::string comment;
+            bool is_valid = true;
+        };
+
+        struct AlertSilenceCatalogInfo
+        {
+            ID silence_id;
+            AlertSilenceScope scope_kind = AlertSilenceScope::CLUSTER;
+            bool has_scope_uuid = false;
+            ID scope_uuid;
+            uint64_t starts_time = 0;
+            uint64_t ends_time = 0;
+            ID created_by_uuid;
+            bool has_reason = false;
+            std::string reason;
+            bool is_enabled = true;
+            bool is_valid = true;
+        };
+
+        struct NetworkPartitionEventCatalogInfo
+        {
+            ID partition_id;
+            ID cluster_id;
+            PartitionState partition_state = PartitionState::OPEN;
+            uint64_t opened_time = 0;
+            bool has_resolved_time = false;
+            uint64_t resolved_time = 0;
+            bool quorum_reachable = false;
+            ID local_node_id;
+            bool has_description = false;
+            std::string description;
+            bool is_valid = true;
+        };
+
+        struct NetworkPartitionMemberCatalogInfo
+        {
+            ID member_id;
+            ID partition_id;
+            ID node_id;
+            uint16_t side_id = 0;
+            bool reachable = false;
+            bool is_valid = true;
+        };
+
+        struct HealingPolicyCatalogInfo
+        {
+            ID policy_id;
+            std::string policy_name;
+            HealingTriggerKind trigger_kind = HealingTriggerKind::PARTITION;
+            AlertSeverity min_severity = AlertSeverity::INFO;
+            bool is_enabled = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct HealingActionCatalogInfo
+        {
+            ID action_id;
+            ID policy_id;
+            HealingActionKind action_kind = HealingActionKind::NOTIFY;
+            uint16_t action_order = 0;
+            bool is_blocking = false;
+            uint16_t max_retries = 0;
+            uint32_t cooldown_ms = 0;
+            bool is_enabled = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct HealingActionParamCatalogInfo
+        {
+            ID param_id;
+            ID action_id;
+            std::string param_key;
+            HealingParamType param_type = HealingParamType::STRING;
+            bool has_val_u64 = false;
+            uint64_t val_u64 = 0;
+            bool has_val_i64 = false;
+            int64_t val_i64 = 0;
+            bool has_val_f64 = false;
+            double val_f64 = 0.0;
+            bool has_val_bool = false;
+            bool val_bool = false;
+            bool has_val_text = false;
+            std::string val_text;
+            bool has_val_uuid = false;
+            ID val_uuid;
+            bool has_val_json = false;
+            std::string val_json;
+            bool is_valid = true;
+        };
+
+        struct HealingRunCatalogInfo
+        {
+            ID run_id;
+            ID policy_id;
+            bool has_trigger_event_id = false;
+            ID trigger_event_id;
+            HealingRunState state = HealingRunState::QUEUED;
+            uint64_t started_time = 0;
+            bool has_completed_time = false;
+            uint64_t completed_time = 0;
+            bool has_error_message = false;
+            std::string error_message;
+            bool is_valid = true;
+        };
+
+        struct HealingStepCatalogInfo
+        {
+            ID step_id;
+            ID run_id;
+            ID action_id;
+            uint16_t step_index = 0;
+            HealingStepState state = HealingStepState::PENDING;
+            bool has_started_time = false;
+            uint64_t started_time = 0;
+            bool has_completed_time = false;
+            uint64_t completed_time = 0;
+            bool has_error_message = false;
+            std::string error_message;
+            bool is_valid = true;
+        };
+
+        struct ClusterCatalogInfo
+        {
+            ID cluster_id;
+            std::string cluster_name;
+            ClusterMode cluster_mode = ClusterMode::WORKGROUP;
+            ClusterState cluster_state = ClusterState::INIT;
+            uint64_t cluster_state_version = 0;
+            ConsensusMode consensus_mode = ConsensusMode::SINGLE;
+            ID policy_id;
+            uint64_t config_version = 0;
+            uint64_t created_txid = 0;
+            uint64_t last_modified_txid = 0;
+            uint64_t created_time = 0;
+            uint64_t last_state_change_time = 0;
+            std::string description;
+            bool is_valid = true;
+        };
+
+        struct ShardPolicyCatalogInfo
+        {
+            ID policy_id;
+            std::string policy_name;
+            uint16_t replication_factor = 0;
+            ConsistencyLevel consistency_read = ConsistencyLevel::QUORUM;
+            ConsistencyLevel consistency_write = ConsistencyLevel::QUORUM;
+            FailoverMode failover_mode = FailoverMode::AUTO;
+            RebalanceMode rebalance_mode = RebalanceMode::MANUAL;
+            bool shard_key_required = false;
+            bool allow_cross_shard_txn = false;
+            uint32_t default_shard_count = 0;
+            uint32_t shard_size_target_mb = 0;
+            uint8_t shard_growth_trigger_pct = 0;
+            uint64_t rebalance_interval_ms = 0;
+            uint64_t created_txid = 0;
+            uint64_t last_modified_txid = 0;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct ShardPolicyParamCatalogInfo
+        {
+            ID policy_param_id;
+            ID policy_id;
+            std::string param_key;
+            ShardPolicyParamType param_type = ShardPolicyParamType::U64;
+            bool has_val_u64 = false;
+            uint64_t val_u64 = 0;
+            bool has_val_i64 = false;
+            int64_t val_i64 = 0;
+            bool has_val_f64 = false;
+            double val_f64 = 0.0;
+            bool has_val_bool = false;
+            bool val_bool = false;
+            bool has_val_text = false;
+            std::string val_text;
+            bool has_val_uuid = false;
+            ID val_uuid;
+            bool has_val_json = false;
+            std::string val_json;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct ShardKeyCatalogInfo
+        {
+            ID shard_key_id;
+            ID table_id;
+            ShardKeyKind shard_key_kind = ShardKeyKind::HASH;
+            ID key_columns_id;
+            ID key_expression_sblr_id;
+            HashFunctionKind hash_function = HashFunctionKind::MURMUR3;
+            bool has_partition_count = false;
+            uint32_t partition_count = 0;
+            bool has_range_order = false;
+            RangeOrderKind range_order = RangeOrderKind::ASC;
+            uint32_t key_version = 1;
+            bool is_active = true;
+            uint64_t created_txid = 0;
+            uint64_t last_modified_txid = 0;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct ShardCatalogInfo
+        {
+            ID shard_id;
+            std::string shard_name;
+            ID cluster_id;
+            ShardState shard_state = ShardState::CREATING;
+            ShardKind shard_kind = ShardKind::ROW;
+            ID policy_id;
+            uint64_t created_txid = 0;
+            uint64_t last_modified_txid = 0;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct ShardScopeCatalogInfo
+        {
+            ID scope_id;
+            ID shard_id;
+            ID object_id;
+            ObjectType object_kind = ObjectType::TABLE;
+            ID shard_key_id;
+            bool is_primary_scope = false;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct ShardRangeCatalogInfo
+        {
+            ID range_id;
+            ID shard_id;
+            ShardRangeKind range_kind = ShardRangeKind::TOKEN;
+            ID range_type_id;
+            std::string range_min_bytes;
+            std::string range_max_bytes;
+            bool has_range_min_s64 = false;
+            int64_t range_min_s64 = 0;
+            bool has_range_max_s64 = false;
+            int64_t range_max_s64 = 0;
+            bool inclusive_min = true;
+            bool inclusive_max = false;
+            bool has_hash_bucket = false;
+            uint32_t hash_bucket = 0;
+            std::string zone_tag;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct ShardReplicaCatalogInfo
+        {
+            ID replica_id;
+            ID shard_id;
+            ID node_id;
+            ReplicaRole replica_role = ReplicaRole::SECONDARY;
+            ReplicaState replica_state = ReplicaState::SYNCING;
+            bool has_last_applied_txid = false;
+            uint64_t last_applied_txid = 0;
+            bool has_last_sync_time = false;
+            uint64_t last_sync_time = 0;
+            bool is_voting = false;
+            uint8_t weight = 0;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct ShardMigrationCatalogInfo
+        {
+            ID migration_id;
+            ID shard_id;
+            ID source_node_id;
+            ID target_node_id;
+            ShardMigrationState state = ShardMigrationState::PLANNED;
+            uint64_t bytes_total = 0;
+            uint64_t bytes_copied = 0;
+            uint64_t rows_total = 0;
+            uint64_t rows_copied = 0;
+            ThrottleState throttle_state = ThrottleState::NONE;
+            uint64_t started_time = 0;
+            uint64_t updated_time = 0;
+            bool has_completed_time = false;
+            uint64_t completed_time = 0;
+            std::string error_code;
+            std::string error_message;
+            bool is_valid = true;
+        };
+
+        struct ShardZoneCatalogInfo
+        {
+            ID zone_id;
+            std::string zone_name;
+            std::string description;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct ShardZoneRangeCatalogInfo
+        {
+            ID zone_range_id;
+            ID zone_id;
+            ID range_id;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        enum class ClockStateLabel : uint8_t
+        {
+            HEALTHY = 0,
+            WARN = 1,
+            SOFT_SKEW = 2,
+            HARD_SKEW = 3,
+            STALE = 4
+        };
+
+        enum class ClockActionTaken : uint8_t
+        {
+            NONE = 0,
+            DEGRADE_WEIGHT = 1,
+            READ_ONLY = 2,
+            QUARANTINE = 3,
+            FENCE_WRITES = 4
+        };
+
+        struct ClockPolicyCatalogInfo
+        {
+            ID clock_policy_id;
+            std::string policy_name;
+            uint32_t warn_skew_ms = 0;
+            uint32_t soft_skew_ms = 0;
+            uint32_t hard_skew_ms = 0;
+            uint32_t max_jitter_ms = 0;
+            uint32_t sample_interval_ms = 0;
+            uint32_t stale_after_ms = 0;
+            uint32_t skew_guard_ms = 0;
+            bool node_quarantine_on_hard_skew = false;
+            uint64_t version_u64 = 0;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool is_valid = true;
+        };
+
+        struct ClockSourceCatalogInfo
+        {
+            ID clock_source_id;
+            ID clock_policy_id;
+            ClockSourceKind source_kind = ClockSourceKind::NTP;
+            std::string endpoint;
+            uint16_t priority_rank = 0;
+            bool is_enabled = true;
+            bool has_last_probe_time = false;
+            uint64_t last_probe_time = 0;
+            bool has_last_probe_offset_ms = false;
+            int32_t last_probe_offset_ms = 0;
+            bool has_last_probe_jitter_ms = false;
+            uint32_t last_probe_jitter_ms = 0;
+            uint64_t version_u64 = 0;
+            bool is_valid = true;
+        };
+
+        struct NodeClockStateCatalogInfo
+        {
+            ID node_clock_state_id;
+            ID node_id;
+            ID clock_policy_id;
+            ClockStateLabel clock_state = ClockStateLabel::HEALTHY;
+            int32_t offset_ms = 0;
+            uint32_t jitter_ms = 0;
+            uint32_t sample_count = 0;
+            uint64_t last_sync_time = 0;
+            uint64_t last_transition_time = 0;
+            uint32_t logical_counter = 0;
+            uint64_t version_u64 = 0;
+            bool is_valid = true;
+        };
+
+        struct ClockViolationEventCatalogInfo
+        {
+            ID clock_violation_event_id;
+            ID node_id;
+            ID clock_policy_id;
+            ClockStateLabel clock_state = ClockStateLabel::WARN;
+            int32_t offset_ms = 0;
+            uint32_t jitter_ms = 0;
+            ClockActionTaken action_taken = ClockActionTaken::NONE;
+            uint64_t event_time = 0;
+            bool has_resolved_time = false;
+            uint64_t resolved_time = 0;
+            uint64_t version_u64 = 0;
+            bool is_valid = true;
+        };
+
+        struct EncryptionProfileCatalogInfo
+        {
+            ID profile_id;
+            std::string profile_name;
+            EncryptionAlgorithm cipher = EncryptionAlgorithm::AES_256_GCM;
+            KdfAlgorithm kdf_algorithm = KdfAlgorithm::PBKDF2_SHA256;
+            ID kdf_params_id;
+            KeyRotationPolicy key_rotation_policy = KeyRotationPolicy::MANUAL;
+            uint16_t min_shards_required = 1;
+            uint32_t unlock_timeout_ms = 0;
+            bool is_active = true;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct EncryptionKeyCatalogInfo
+        {
+            ID key_id;
+            ID profile_id;
+            KeyMaterialKind key_kind = KeyMaterialKind::SYMMETRIC;
+            EncryptionKeyStatus key_status = EncryptionKeyStatus::STAGED;
+            ID key_material_encrypted_id;
+            std::array<uint8_t, 32> key_material_hash{};
+            uint32_t key_version = 0;
+            uint64_t created_time = 0;
+            uint64_t activated_time = 0;
+            bool has_activated_time = false;
+            uint64_t retired_time = 0;
+            bool has_retired_time = false;
+            bool is_valid = true;
+        };
+
+        struct EncryptionKeyShardCatalogInfo
+        {
+            ID shard_id;
+            ID key_id;
+            uint16_t shard_index = 0;
+            uint16_t shard_total = 0;
+            ID shard_material_encrypted_id;
+            std::string holder_identity;
+            uint64_t created_time = 0;
+            uint64_t last_collected_time = 0;
+            bool has_last_collected_time = false;
+            bool is_valid = true;
+        };
+
+        struct EncryptionBootstrapInfoCatalogInfo
+        {
+            ID database_id;
+            ID profile_id;
+            ID active_key_id;
+            uint16_t min_shards_required = 1;
+            uint32_t unlock_timeout_ms = 0;
+            std::string unlock_policy;
+            uint64_t last_unlock_time = 0;
+            bool has_last_unlock_time = false;
+            UnlockResult last_unlock_result = UnlockResult::NOT_ATTEMPTED;
+            uint64_t policy_version = 0;
+            bool is_valid = true;
         };
 
         // Emulation type information (Phase 4 - Emulation Tables)
@@ -2111,6 +6368,2142 @@ public:
                              DomainInfo& info_out, ErrorContext* ctx = nullptr) -> Status;
         auto getDomainById(const ID& domain_id,
                            DomainInfo& info_out, ErrorContext* ctx = nullptr) -> Status;
+
+        // ============================================================================
+        // Canonical type catalog operations (CAT-010)
+        // ============================================================================
+
+        auto upsertTypeCatalogEntry(const TypeCatalogInfo& info,
+                                    ID& type_id_out,
+                                    ErrorContext* ctx = nullptr) -> Status;
+        auto getTypeCatalogEntry(const ID& type_id,
+                                 TypeCatalogInfo& info_out,
+                                 ErrorContext* ctx = nullptr) -> Status;
+        auto getTypeCatalogEntryByName(const ID& schema_id,
+                                       const std::string& type_name,
+                                       TypeCatalogInfo& info_out,
+                                       ErrorContext* ctx = nullptr) -> Status;
+        auto listTypeCatalogEntries(const ID& schema_id,
+                                    std::vector<TypeCatalogInfo>& types_out,
+                                    ErrorContext* ctx = nullptr) -> Status;
+        auto deleteTypeCatalogEntry(const ID& type_id,
+                                    ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertTypeModifier(const TypeModifierInfo& info,
+                                ErrorContext* ctx = nullptr) -> Status;
+        auto getTypeModifier(const ID& type_id,
+                             uint16_t modifier_key,
+                             TypeModifierInfo& info_out,
+                             ErrorContext* ctx = nullptr) -> Status;
+        auto listTypeModifiers(const ID& type_id,
+                               std::vector<TypeModifierInfo>& modifiers_out,
+                               ErrorContext* ctx = nullptr) -> Status;
+        auto deleteTypeModifier(const ID& type_id,
+                                uint16_t modifier_key,
+                                ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertTypeIo(const TypeIoInfo& info,
+                          ErrorContext* ctx = nullptr) -> Status;
+        auto getTypeIo(const ID& type_id,
+                       TypeIoInfo& info_out,
+                       ErrorContext* ctx = nullptr) -> Status;
+        auto listTypeIo(std::vector<TypeIoInfo>& rows_out,
+                        ErrorContext* ctx = nullptr) -> Status;
+        auto deleteTypeIo(const ID& type_id,
+                          ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertTypeCast(const TypeCastInfo& info,
+                            ErrorContext* ctx = nullptr) -> Status;
+        auto getTypeCast(const ID& source_type_id,
+                         const ID& target_type_id,
+                         TypeCastKind cast_kind,
+                         TypeCastInfo& info_out,
+                         ErrorContext* ctx = nullptr) -> Status;
+        auto listTypeCasts(std::vector<TypeCastInfo>& casts_out,
+                           ErrorContext* ctx = nullptr) -> Status;
+        auto deleteTypeCast(const ID& source_type_id,
+                            const ID& target_type_id,
+                            TypeCastKind cast_kind,
+                            ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertTypeTransform(const TypeTransformInfo& info,
+                                 ID& transform_id_out,
+                                 ErrorContext* ctx = nullptr) -> Status;
+        auto getTypeTransform(const ID& transform_id,
+                              TypeTransformInfo& info_out,
+                              ErrorContext* ctx = nullptr) -> Status;
+        auto getTypeTransformByTypeLanguage(const ID& type_id,
+                                            const ID& language_id,
+                                            TypeTransformInfo& info_out,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto listTypeTransforms(const ID& type_id,
+                                std::vector<TypeTransformInfo>& rows_out,
+                                ErrorContext* ctx = nullptr) -> Status;
+        auto deleteTypeTransform(const ID& transform_id,
+                                 ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertEncodingConversion(const EncodingConversionInfo& info,
+                                      ID& conversion_id_out,
+                                      ErrorContext* ctx = nullptr) -> Status;
+        auto getEncodingConversion(const ID& conversion_id,
+                                   EncodingConversionInfo& info_out,
+                                   ErrorContext* ctx = nullptr) -> Status;
+        auto getEncodingConversionByName(const std::string& conversion_name,
+                                         EncodingConversionInfo& info_out,
+                                         ErrorContext* ctx = nullptr) -> Status;
+        auto listEncodingConversions(std::vector<EncodingConversionInfo>& rows_out,
+                                     ErrorContext* ctx = nullptr) -> Status;
+        auto deleteEncodingConversion(const ID& conversion_id,
+                                      ErrorContext* ctx = nullptr) -> Status;
+
+        // ============================================================================
+        // Canonical domain extension catalog operations (CAT-011)
+        // ============================================================================
+
+        auto upsertDomainParamKey(const DomainParamKeyCatalogInfo& info,
+                                  ErrorContext* ctx = nullptr) -> Status;
+        auto getDomainParamKey(uint16_t param_key_id,
+                               DomainParamKeyCatalogInfo& info_out,
+                               ErrorContext* ctx = nullptr) -> Status;
+        auto getDomainParamKeyByName(const std::string& param_name,
+                                     DomainParamKeyCatalogInfo& info_out,
+                                     ErrorContext* ctx = nullptr) -> Status;
+        auto listDomainParamKeys(std::vector<DomainParamKeyCatalogInfo>& rows_out,
+                                 ErrorContext* ctx = nullptr) -> Status;
+        auto deleteDomainParamKey(uint16_t param_key_id,
+                                  ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertDomainParameter(const DomainParameterCatalogInfo& info,
+                                   ErrorContext* ctx = nullptr) -> Status;
+        auto getDomainParameter(const ID& domain_id,
+                                uint16_t param_key_id,
+                                DomainParameterCatalogInfo& info_out,
+                                ErrorContext* ctx = nullptr) -> Status;
+        auto listDomainParameters(const ID& domain_id,
+                                  std::vector<DomainParameterCatalogInfo>& rows_out,
+                                  ErrorContext* ctx = nullptr) -> Status;
+        auto deleteDomainParameter(const ID& domain_id,
+                                   uint16_t param_key_id,
+                                   ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertDomainConstraintCatalogEntry(const DomainConstraintCatalogInfo& info,
+                                                ID& constraint_id_out,
+                                                ErrorContext* ctx = nullptr) -> Status;
+        auto getDomainConstraintCatalogEntry(const ID& constraint_id,
+                                             DomainConstraintCatalogInfo& info_out,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto listDomainConstraintCatalogEntries(const ID& domain_id,
+                                                std::vector<DomainConstraintCatalogInfo>& rows_out,
+                                                ErrorContext* ctx = nullptr) -> Status;
+        auto deleteDomainConstraintCatalogEntry(const ID& constraint_id,
+                                                ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertDomainSecurityCatalogEntry(const DomainSecurityCatalogInfo& info,
+                                              ID& security_id_out,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto getDomainSecurityCatalogEntry(const ID& security_id,
+                                           DomainSecurityCatalogInfo& info_out,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto listDomainSecurityCatalogEntries(const ID& domain_id,
+                                              std::vector<DomainSecurityCatalogInfo>& rows_out,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto deleteDomainSecurityCatalogEntry(const ID& security_id,
+                                              ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertDomainValidationCatalogEntry(const DomainValidationCatalogInfo& info,
+                                                ID& validation_id_out,
+                                                ErrorContext* ctx = nullptr) -> Status;
+        auto getDomainValidationCatalogEntry(const ID& validation_id,
+                                             DomainValidationCatalogInfo& info_out,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto listDomainValidationCatalogEntries(const ID& domain_id,
+                                                std::vector<DomainValidationCatalogInfo>& rows_out,
+                                                ErrorContext* ctx = nullptr) -> Status;
+        auto deleteDomainValidationCatalogEntry(const ID& validation_id,
+                                                ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertDomainIntegrityCatalogEntry(const DomainIntegrityCatalogInfo& info,
+                                               ID& integrity_id_out,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto getDomainIntegrityCatalogEntry(const ID& integrity_id,
+                                            DomainIntegrityCatalogInfo& info_out,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto listDomainIntegrityCatalogEntries(const ID& domain_id,
+                                               std::vector<DomainIntegrityCatalogInfo>& rows_out,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto deleteDomainIntegrityCatalogEntry(const ID& integrity_id,
+                                               ErrorContext* ctx = nullptr) -> Status;
+
+        // ============================================================================
+        // Canonical charset/collation extension catalog operations (CAT-012)
+        // ============================================================================
+
+        auto upsertCharsetAliasCatalogEntry(const CharsetAliasCatalogInfo& info,
+                                            ID& alias_id_out,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto getCharsetAliasCatalogEntry(const ID& alias_id,
+                                         CharsetAliasCatalogInfo& info_out,
+                                         ErrorContext* ctx = nullptr) -> Status;
+        auto getCharsetAliasCatalogEntryByNormalizedName(const std::string& normalized_name,
+                                                         CharsetAliasCatalogInfo& info_out,
+                                                         ErrorContext* ctx = nullptr) -> Status;
+        auto listCharsetAliasCatalogEntries(const ID& charset_id,
+                                            std::vector<CharsetAliasCatalogInfo>& rows_out,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteCharsetAliasCatalogEntry(const ID& alias_id,
+                                            ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertCollationTailoringCatalogEntry(const CollationTailoringCatalogInfo& info,
+                                                  ID& tailoring_id_out,
+                                                  ErrorContext* ctx = nullptr) -> Status;
+        auto getCollationTailoringCatalogEntry(const ID& tailoring_id,
+                                               CollationTailoringCatalogInfo& info_out,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto listCollationTailoringCatalogEntries(
+            uint32_t collation_id,
+            std::vector<CollationTailoringCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteCollationTailoringCatalogEntry(const ID& tailoring_id,
+                                                  ErrorContext* ctx = nullptr) -> Status;
+
+        // ============================================================================
+        // Canonical resource/timezone extension catalog operations (CAT-013)
+        // ============================================================================
+
+        auto upsertResourceBundleCatalogEntry(const ResourceBundleCatalogInfo& info,
+                                              ID& bundle_id_out,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto getResourceBundleCatalogEntry(const ID& bundle_id,
+                                           ResourceBundleCatalogInfo& info_out,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto getActiveResourceBundleByKind(ResourceBundleKind kind,
+                                           ResourceBundleCatalogInfo& info_out,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto listResourceBundleCatalogEntries(ResourceBundleKind kind_filter,
+                                              std::vector<ResourceBundleCatalogInfo>& rows_out,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto deleteResourceBundleCatalogEntry(const ID& bundle_id,
+                                              ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertResourceArtifactCatalogEntry(const ResourceArtifactCatalogInfo& info,
+                                                ID& artifact_id_out,
+                                                ErrorContext* ctx = nullptr) -> Status;
+        auto getResourceArtifactCatalogEntry(const ID& artifact_id,
+                                             ResourceArtifactCatalogInfo& info_out,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto listResourceArtifactCatalogEntries(const ID& bundle_id,
+                                                std::vector<ResourceArtifactCatalogInfo>& rows_out,
+                                                ErrorContext* ctx = nullptr) -> Status;
+        auto deleteResourceArtifactCatalogEntry(const ID& artifact_id,
+                                                ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertTimezoneTransitionCatalogEntry(const TimezoneTransitionCatalogInfo& info,
+                                                  ID& transition_id_out,
+                                                  ErrorContext* ctx = nullptr) -> Status;
+        auto getTimezoneTransitionCatalogEntry(const ID& transition_id,
+                                               TimezoneTransitionCatalogInfo& info_out,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto listTimezoneTransitionCatalogEntries(const ID& timezone_id,
+                                                  std::vector<TimezoneTransitionCatalogInfo>& rows_out,
+                                                  ErrorContext* ctx = nullptr) -> Status;
+        auto deleteTimezoneTransitionCatalogEntry(const ID& transition_id,
+                                                  ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertTimezoneLeapSecondCatalogEntry(const TimezoneLeapSecondCatalogInfo& info,
+                                                  ID& leap_id_out,
+                                                  ErrorContext* ctx = nullptr) -> Status;
+        auto getTimezoneLeapSecondCatalogEntry(const ID& leap_id,
+                                               TimezoneLeapSecondCatalogInfo& info_out,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto listTimezoneLeapSecondCatalogEntries(const ID& bundle_id,
+                                                  std::vector<TimezoneLeapSecondCatalogInfo>& rows_out,
+                                                  ErrorContext* ctx = nullptr) -> Status;
+        auto deleteTimezoneLeapSecondCatalogEntry(const ID& leap_id,
+                                                  ErrorContext* ctx = nullptr) -> Status;
+
+        // ============================================================================
+        // Canonical reserved-word/parser capability catalog operations (CAT-014)
+        // ============================================================================
+
+        auto upsertReservedWordCatalogEntry(const ReservedWordCatalogInfo& info,
+                                            ID& reserved_word_id_out,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto getReservedWordCatalogEntry(const ID& reserved_word_id,
+                                         ReservedWordCatalogInfo& info_out,
+                                         ErrorContext* ctx = nullptr) -> Status;
+        auto getReservedWordCatalogEntryByWord(const std::string& word,
+                                               EmulationEngine parser_scope,
+                                               ReservedWordCatalogInfo& info_out,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto listReservedWordCatalogEntries(
+            EmulationEngine parser_scope_filter,
+            std::vector<ReservedWordCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteReservedWordCatalogEntry(const ID& reserved_word_id,
+                                            ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertEmulationProfileCatalogEntry(const EmulationProfileCatalogInfo& info,
+                                                ID& emulation_profile_id_out,
+                                                ErrorContext* ctx = nullptr) -> Status;
+        auto getEmulationProfileCatalogEntry(const ID& emulation_profile_id,
+                                             EmulationProfileCatalogInfo& info_out,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto getEmulationProfileCatalogEntryByEngine(EmulationEngine engine,
+                                                     EmulationProfileCatalogInfo& info_out,
+                                                     ErrorContext* ctx = nullptr) -> Status;
+        auto listEmulationProfileCatalogEntries(
+            std::vector<EmulationProfileCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteEmulationProfileCatalogEntry(const ID& emulation_profile_id,
+                                                ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertParserProfileCatalogEntry(const ParserProfileCatalogInfo& info,
+                                             ID& parser_profile_id_out,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto getParserProfileCatalogEntry(const ID& parser_profile_id,
+                                          ParserProfileCatalogInfo& info_out,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto getParserProfileCatalogEntryByName(const std::string& profile_name,
+                                                ParserProfileCatalogInfo& info_out,
+                                                ErrorContext* ctx = nullptr) -> Status;
+        auto listParserProfileCatalogEntries(
+            EmulationEngine parser_engine_filter,
+            std::vector<ParserProfileCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteParserProfileCatalogEntry(const ID& parser_profile_id,
+                                             ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertParserTransformCatalogEntry(const ParserTransformCatalogInfo& info,
+                                               ID& parser_transform_id_out,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto getParserTransformCatalogEntry(const ID& parser_transform_id,
+                                            ParserTransformCatalogInfo& info_out,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto listParserTransformCatalogEntries(
+            const ID& parser_profile_id,
+            std::vector<ParserTransformCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteParserTransformCatalogEntry(const ID& parser_transform_id,
+                                               ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertParserCapabilityCatalogEntry(const ParserCapabilityCatalogInfo& info,
+                                                ID& parser_capability_id_out,
+                                                ErrorContext* ctx = nullptr) -> Status;
+        auto getParserCapabilityCatalogEntry(const ID& parser_capability_id,
+                                             ParserCapabilityCatalogInfo& info_out,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto listParserCapabilityCatalogEntries(
+            const ID& parser_profile_id,
+            const std::string& feature_family,
+            std::vector<ParserCapabilityCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteParserCapabilityCatalogEntry(const ID& parser_capability_id,
+                                                ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertParserErrorMapCatalogEntry(const ParserErrorMapCatalogInfo& info,
+                                              ID& parser_error_map_id_out,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto getParserErrorMapCatalogEntry(const ID& parser_error_map_id,
+                                           ParserErrorMapCatalogInfo& info_out,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto getParserErrorMapCatalogEntryByRejectCode(const ID& parser_profile_id,
+                                                       const std::string& reject_code,
+                                                       ParserErrorMapCatalogInfo& info_out,
+                                                       ErrorContext* ctx = nullptr) -> Status;
+        auto listParserErrorMapCatalogEntries(
+            const ID& parser_profile_id,
+            std::vector<ParserErrorMapCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteParserErrorMapCatalogEntry(const ID& parser_error_map_id,
+                                              ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertParserFeaturePrecedenceCatalogEntry(
+            const ParserFeaturePrecedenceCatalogInfo& info,
+            ID& parser_feature_precedence_id_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto getParserFeaturePrecedenceCatalogEntry(
+            const ID& parser_feature_precedence_id,
+            ParserFeaturePrecedenceCatalogInfo& info_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto listParserFeaturePrecedenceCatalogEntries(
+            const ID& parser_profile_id,
+            const std::string& feature_family,
+            std::vector<ParserFeaturePrecedenceCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteParserFeaturePrecedenceCatalogEntry(
+            const ID& parser_feature_precedence_id,
+            ErrorContext* ctx = nullptr) -> Status;
+
+        // ============================================================================
+        // Canonical relation extension catalog operations (CAT-015)
+        // ============================================================================
+
+        auto upsertPartitionedTableCatalogEntry(const PartitionedTableCatalogInfo& info,
+                                                ID& partitioned_table_id_out,
+                                                ErrorContext* ctx = nullptr) -> Status;
+        auto getPartitionedTableCatalogEntry(const ID& partitioned_table_id,
+                                             PartitionedTableCatalogInfo& info_out,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto getPartitionedTableCatalogEntryByTable(const ID& table_id,
+                                                    PartitionedTableCatalogInfo& info_out,
+                                                    ErrorContext* ctx = nullptr) -> Status;
+        auto listPartitionedTableCatalogEntries(
+            std::vector<PartitionedTableCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deletePartitionedTableCatalogEntry(const ID& partitioned_table_id,
+                                                ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertPartitionCatalogEntry(const PartitionCatalogInfo& info,
+                                         ID& partition_id_out,
+                                         ErrorContext* ctx = nullptr) -> Status;
+        auto getPartitionCatalogEntry(const ID& partition_id,
+                                      PartitionCatalogInfo& info_out,
+                                      ErrorContext* ctx = nullptr) -> Status;
+        auto listPartitionCatalogEntries(const ID& parent_table_id,
+                                         std::vector<PartitionCatalogInfo>& rows_out,
+                                         ErrorContext* ctx = nullptr) -> Status;
+        auto deletePartitionCatalogEntry(const ID& partition_id,
+                                         ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertTableInheritanceCatalogEntry(const TableInheritanceCatalogInfo& info,
+                                                ID& inheritance_id_out,
+                                                ErrorContext* ctx = nullptr) -> Status;
+        auto getTableInheritanceCatalogEntry(const ID& inheritance_id,
+                                             TableInheritanceCatalogInfo& info_out,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto listTableInheritanceCatalogEntries(const ID& parent_table_id,
+                                                std::vector<TableInheritanceCatalogInfo>& rows_out,
+                                                ErrorContext* ctx = nullptr) -> Status;
+        auto deleteTableInheritanceCatalogEntry(const ID& inheritance_id,
+                                                ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertLanguageCatalogEntry(const LanguageCatalogInfo& info,
+                                        ID& language_id_out,
+                                        ErrorContext* ctx = nullptr) -> Status;
+        auto getLanguageCatalogEntry(const ID& language_id,
+                                     LanguageCatalogInfo& info_out,
+                                     ErrorContext* ctx = nullptr) -> Status;
+        auto getLanguageCatalogEntryByName(const std::string& language_name,
+                                           LanguageCatalogInfo& info_out,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto listLanguageCatalogEntries(std::vector<LanguageCatalogInfo>& rows_out,
+                                        ErrorContext* ctx = nullptr) -> Status;
+        auto deleteLanguageCatalogEntry(const ID& language_id,
+                                        ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertEventCatalogEntry(const EventCatalogInfo& info,
+                                     ID& event_id_out,
+                                     ErrorContext* ctx = nullptr) -> Status;
+        auto getEventCatalogEntry(const ID& event_id,
+                                  EventCatalogInfo& info_out,
+                                  ErrorContext* ctx = nullptr) -> Status;
+        auto listEventCatalogEntries(const ID& schema_id,
+                                     std::vector<EventCatalogInfo>& rows_out,
+                                     ErrorContext* ctx = nullptr) -> Status;
+        auto deleteEventCatalogEntry(const ID& event_id,
+                                     ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertPackageMemberCatalogEntry(const PackageMemberCatalogInfo& info,
+                                             ID& member_id_out,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto getPackageMemberCatalogEntry(const ID& member_id,
+                                          PackageMemberCatalogInfo& info_out,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto listPackageMemberCatalogEntries(const ID& package_id,
+                                             std::vector<PackageMemberCatalogInfo>& rows_out,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto deletePackageMemberCatalogEntry(const ID& member_id,
+                                             ErrorContext* ctx = nullptr) -> Status;
+
+        // ============================================================================
+        // Canonical index metadata extension catalog operations (CAT-016)
+        // ============================================================================
+
+        auto upsertIndexAccessMethodCatalogEntry(const IndexAccessMethodCatalogInfo& info,
+                                                 ID& access_method_id_out,
+                                                 ErrorContext* ctx = nullptr) -> Status;
+        auto getIndexAccessMethodCatalogEntry(const ID& access_method_id,
+                                              IndexAccessMethodCatalogInfo& info_out,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto getIndexAccessMethodCatalogEntryByName(const std::string& method_name,
+                                                    IndexAccessMethodCatalogInfo& info_out,
+                                                    ErrorContext* ctx = nullptr) -> Status;
+        auto listIndexAccessMethodCatalogEntries(
+            std::vector<IndexAccessMethodCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteIndexAccessMethodCatalogEntry(const ID& access_method_id,
+                                                 ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertIndexOpclassCatalogEntry(const IndexOpclassCatalogInfo& info,
+                                            ID& opclass_id_out,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto getIndexOpclassCatalogEntry(const ID& opclass_id,
+                                         IndexOpclassCatalogInfo& info_out,
+                                         ErrorContext* ctx = nullptr) -> Status;
+        auto listIndexOpclassCatalogEntries(const std::string& index_type_name,
+                                            std::vector<IndexOpclassCatalogInfo>& rows_out,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteIndexOpclassCatalogEntry(const ID& opclass_id,
+                                            ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertIndexOpclassFunctionCatalogEntry(const IndexOpclassFunctionCatalogInfo& info,
+                                                    ID& opclass_fn_id_out,
+                                                    ErrorContext* ctx = nullptr) -> Status;
+        auto getIndexOpclassFunctionCatalogEntry(const ID& opclass_fn_id,
+                                                 IndexOpclassFunctionCatalogInfo& info_out,
+                                                 ErrorContext* ctx = nullptr) -> Status;
+        auto listIndexOpclassFunctionCatalogEntries(
+            const ID& opclass_id,
+            std::vector<IndexOpclassFunctionCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteIndexOpclassFunctionCatalogEntry(const ID& opclass_fn_id,
+                                                    ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertIndexColumnCatalogEntry(const IndexColumnCatalogInfo& info,
+                                           ID& index_column_id_out,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto getIndexColumnCatalogEntry(const ID& index_column_id,
+                                        IndexColumnCatalogInfo& info_out,
+                                        ErrorContext* ctx = nullptr) -> Status;
+        auto listIndexColumnCatalogEntries(const ID& index_id,
+                                           std::vector<IndexColumnCatalogInfo>& rows_out,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto deleteIndexColumnCatalogEntry(const ID& index_column_id,
+                                           ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertIndexOptionCatalogEntry(const IndexOptionCatalogInfo& info,
+                                           ID& option_id_out,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto getIndexOptionCatalogEntry(const ID& option_id,
+                                        IndexOptionCatalogInfo& info_out,
+                                        ErrorContext* ctx = nullptr) -> Status;
+        auto listIndexOptionCatalogEntries(const ID& index_id,
+                                           std::vector<IndexOptionCatalogInfo>& rows_out,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto deleteIndexOptionCatalogEntry(const ID& option_id,
+                                           ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertIndexMaintenanceCatalogEntry(const IndexMaintenanceCatalogInfo& info,
+                                                ID& maintenance_id_out,
+                                                ErrorContext* ctx = nullptr) -> Status;
+        auto getIndexMaintenanceCatalogEntry(const ID& maintenance_id,
+                                             IndexMaintenanceCatalogInfo& info_out,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto listIndexMaintenanceCatalogEntries(const ID& index_id,
+                                                std::vector<IndexMaintenanceCatalogInfo>& rows_out,
+                                                ErrorContext* ctx = nullptr) -> Status;
+        auto deleteIndexMaintenanceCatalogEntry(const ID& maintenance_id,
+                                                ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertIndexMaintenanceDeltaCatalogEntry(
+            const IndexMaintenanceDeltaCatalogInfo& info,
+            ID& maintenance_delta_id_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto getIndexMaintenanceDeltaCatalogEntry(const ID& maintenance_delta_id,
+                                                  IndexMaintenanceDeltaCatalogInfo& info_out,
+                                                  ErrorContext* ctx = nullptr) -> Status;
+        auto listIndexMaintenanceDeltaCatalogEntries(
+            const ID& maintenance_id,
+            std::vector<IndexMaintenanceDeltaCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteIndexMaintenanceDeltaCatalogEntry(const ID& maintenance_delta_id,
+                                                     ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertIndexBuildDeltaCatalogEntry(const IndexBuildDeltaCatalogInfo& info,
+                                               ID& build_delta_id_out,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto getIndexBuildDeltaCatalogEntry(const ID& build_delta_id,
+                                            IndexBuildDeltaCatalogInfo& info_out,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto listIndexBuildDeltaCatalogEntries(const ID& index_id,
+                                               std::vector<IndexBuildDeltaCatalogInfo>& rows_out,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto deleteIndexBuildDeltaCatalogEntry(const ID& build_delta_id,
+                                               ErrorContext* ctx = nullptr) -> Status;
+
+        // ============================================================================
+        // Canonical index telemetry extension catalog operations (CAT-017)
+        // ============================================================================
+
+        auto upsertIndexStatsCatalogEntry(const IndexStatsCatalogInfo& info,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto getIndexStatsCatalogEntry(const ID& index_id,
+                                       IndexStatsCatalogInfo& info_out,
+                                       ErrorContext* ctx = nullptr) -> Status;
+        auto listIndexStatsCatalogEntries(std::vector<IndexStatsCatalogInfo>& rows_out,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto deleteIndexStatsCatalogEntry(const ID& index_id,
+                                          ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertIndexUsageCatalogEntry(const IndexUsageCatalogInfo& info,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto getIndexUsageCatalogEntry(const ID& index_id,
+                                       IndexUsageCatalogInfo& info_out,
+                                       ErrorContext* ctx = nullptr) -> Status;
+        auto listIndexUsageCatalogEntries(std::vector<IndexUsageCatalogInfo>& rows_out,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto deleteIndexUsageCatalogEntry(const ID& index_id,
+                                          ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertIndexContentionCatalogEntry(const IndexContentionCatalogInfo& info,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto getIndexContentionCatalogEntry(const ID& index_id,
+                                            IndexContentionCatalogInfo& info_out,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto listIndexContentionCatalogEntries(std::vector<IndexContentionCatalogInfo>& rows_out,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto deleteIndexContentionCatalogEntry(const ID& index_id,
+                                               ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertIndexStorageCatalogEntry(const IndexStorageCatalogInfo& info,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto getIndexStorageCatalogEntry(const ID& index_id,
+                                         IndexStorageCatalogInfo& info_out,
+                                         ErrorContext* ctx = nullptr) -> Status;
+        auto listIndexStorageCatalogEntries(std::vector<IndexStorageCatalogInfo>& rows_out,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteIndexStorageCatalogEntry(const ID& index_id,
+                                            ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertIndexHealthCatalogEntry(const IndexHealthCatalogInfo& info,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto getIndexHealthCatalogEntry(const ID& index_id,
+                                        IndexHealthCatalogInfo& info_out,
+                                        ErrorContext* ctx = nullptr) -> Status;
+        auto listIndexHealthCatalogEntries(std::vector<IndexHealthCatalogInfo>& rows_out,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto deleteIndexHealthCatalogEntry(const ID& index_id,
+                                           ErrorContext* ctx = nullptr) -> Status;
+
+        // ============================================================================
+        // Canonical storage extension catalog operations (CAT-018)
+        // ============================================================================
+
+        auto upsertFilespaceStatsCatalogEntry(const FilespaceStatsCatalogInfo& info,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto getFilespaceStatsCatalogEntry(uint32_t filespace_id,
+                                           FilespaceStatsCatalogInfo& info_out,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto listFilespaceStatsCatalogEntries(std::vector<FilespaceStatsCatalogInfo>& rows_out,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto deleteFilespaceStatsCatalogEntry(uint32_t filespace_id,
+                                              ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertLobCatalogEntry(const LobCatalogInfo& info,
+                                   ErrorContext* ctx = nullptr) -> Status;
+        auto getLobCatalogEntry(const ID& lob_id,
+                                LobCatalogInfo& info_out,
+                                ErrorContext* ctx = nullptr) -> Status;
+        auto listLobCatalogEntries(std::vector<LobCatalogInfo>& rows_out,
+                                   ErrorContext* ctx = nullptr) -> Status;
+        auto deleteLobCatalogEntry(const ID& lob_id,
+                                   ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertLobPageCatalogEntry(const LobPageCatalogInfo& info,
+                                       ErrorContext* ctx = nullptr) -> Status;
+        auto getLobPageCatalogEntry(const ID& lob_page_id,
+                                    LobPageCatalogInfo& info_out,
+                                    ErrorContext* ctx = nullptr) -> Status;
+        auto listLobPageCatalogEntries(const ID& lob_id,
+                                       std::vector<LobPageCatalogInfo>& rows_out,
+                                       ErrorContext* ctx = nullptr) -> Status;
+        auto deleteLobPageCatalogEntry(const ID& lob_page_id,
+                                       ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertBackupHistoryCatalogEntry(const BackupHistoryCatalogInfo& info,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto getBackupHistoryCatalogEntry(const ID& backup_id,
+                                          BackupHistoryCatalogInfo& info_out,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto listBackupHistoryCatalogEntries(const ID& database_id,
+                                             std::vector<BackupHistoryCatalogInfo>& rows_out,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto deleteBackupHistoryCatalogEntry(const ID& backup_id,
+                                             ErrorContext* ctx = nullptr) -> Status;
+
+        // ============================================================================
+        // Canonical runtime context catalog operations (CAT-019)
+        // ============================================================================
+
+        auto upsertRuntimeConnectionCatalogEntry(const RuntimeConnectionCatalogInfo& info,
+                                                 ErrorContext* ctx = nullptr) -> Status;
+        auto getRuntimeConnectionCatalogEntry(const ID& connection_id,
+                                              RuntimeConnectionCatalogInfo& info_out,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto listRuntimeConnectionCatalogEntries(
+            const ID& database_id,
+            std::vector<RuntimeConnectionCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteRuntimeConnectionCatalogEntry(const ID& connection_id,
+                                                 ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertRuntimeTransactionCatalogEntry(const RuntimeTransactionCatalogInfo& info,
+                                                  ErrorContext* ctx = nullptr) -> Status;
+        auto getRuntimeTransactionCatalogEntry(uint64_t txid,
+                                               RuntimeTransactionCatalogInfo& info_out,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto listRuntimeTransactionCatalogEntries(
+            const ID& database_id,
+            std::vector<RuntimeTransactionCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteRuntimeTransactionCatalogEntry(uint64_t txid,
+                                                  ErrorContext* ctx = nullptr) -> Status;
+
+        // ============================================================================
+        // Canonical security extension and PKI/crypto catalog operations (CAT-020)
+        // ============================================================================
+
+        auto upsertAuthMappingCatalogEntry(const AuthMappingCatalogInfo& info,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto getAuthMappingCatalogEntry(const ID& mapping_id,
+                                        AuthMappingCatalogInfo& info_out,
+                                        ErrorContext* ctx = nullptr) -> Status;
+        auto listAuthMappingCatalogEntries(std::vector<AuthMappingCatalogInfo>& rows_out,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto deleteAuthMappingCatalogEntry(const ID& mapping_id,
+                                           ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertRoleSettingCatalogEntry(const RoleSettingCatalogInfo& info,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto getRoleSettingCatalogEntry(const ID& role_setting_id,
+                                        RoleSettingCatalogInfo& info_out,
+                                        ErrorContext* ctx = nullptr) -> Status;
+        auto listRoleSettingCatalogEntries(const ID& role_id,
+                                           std::vector<RoleSettingCatalogInfo>& rows_out,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto deleteRoleSettingCatalogEntry(const ID& role_setting_id,
+                                           ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertSecurityLabelCatalogEntry(const SecurityLabelCatalogInfo& info,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto getSecurityLabelCatalogEntry(const ID& security_label_id,
+                                          SecurityLabelCatalogInfo& info_out,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto listSecurityLabelCatalogEntries(const ID& object_id,
+                                             std::vector<SecurityLabelCatalogInfo>& rows_out,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto deleteSecurityLabelCatalogEntry(const ID& security_label_id,
+                                             ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertSecurityClassCatalogEntry(const SecurityClassCatalogInfo& info,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto getSecurityClassCatalogEntry(const ID& security_class_id,
+                                          SecurityClassCatalogInfo& info_out,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto listSecurityClassCatalogEntries(std::vector<SecurityClassCatalogInfo>& rows_out,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto deleteSecurityClassCatalogEntry(const ID& security_class_id,
+                                             ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertCertRegistryCatalogEntry(const CertRegistryCatalogInfo& info,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto getCertRegistryCatalogEntry(const ID& cert_id,
+                                         CertRegistryCatalogInfo& info_out,
+                                         ErrorContext* ctx = nullptr) -> Status;
+        auto listCertRegistryCatalogEntries(std::vector<CertRegistryCatalogInfo>& rows_out,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteCertRegistryCatalogEntry(const ID& cert_id,
+                                            ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertTrustAnchorCatalogEntry(const TrustAnchorCatalogInfo& info,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto getTrustAnchorCatalogEntry(const ID& anchor_id,
+                                        TrustAnchorCatalogInfo& info_out,
+                                        ErrorContext* ctx = nullptr) -> Status;
+        auto listTrustAnchorCatalogEntries(std::vector<TrustAnchorCatalogInfo>& rows_out,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto deleteTrustAnchorCatalogEntry(const ID& anchor_id,
+                                           ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertPrivateKeyStoreCatalogEntry(const PrivateKeyStoreCatalogInfo& info,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto getPrivateKeyStoreCatalogEntry(const ID& key_id,
+                                            PrivateKeyStoreCatalogInfo& info_out,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto listPrivateKeyStoreCatalogEntries(std::vector<PrivateKeyStoreCatalogInfo>& rows_out,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto deletePrivateKeyStoreCatalogEntry(const ID& key_id,
+                                               ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertChannelCertBindingCatalogEntry(const ChannelCertBindingCatalogInfo& info,
+                                                  ErrorContext* ctx = nullptr) -> Status;
+        auto getChannelCertBindingCatalogEntry(const ID& binding_id,
+                                               ChannelCertBindingCatalogInfo& info_out,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto listChannelCertBindingCatalogEntries(
+            std::vector<ChannelCertBindingCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteChannelCertBindingCatalogEntry(const ID& binding_id,
+                                                  ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertCertRevocationCatalogEntry(const CertRevocationCatalogInfo& info,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto getCertRevocationCatalogEntry(const ID& revocation_id,
+                                           CertRevocationCatalogInfo& info_out,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto listCertRevocationCatalogEntries(std::vector<CertRevocationCatalogInfo>& rows_out,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto deleteCertRevocationCatalogEntry(const ID& revocation_id,
+                                              ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertPkiDistributionStateCatalogEntry(const PkiDistributionStateCatalogInfo& info,
+                                                    ErrorContext* ctx = nullptr) -> Status;
+        auto getPkiDistributionStateCatalogEntry(const ID& distribution_id,
+                                                 PkiDistributionStateCatalogInfo& info_out,
+                                                 ErrorContext* ctx = nullptr) -> Status;
+        auto listPkiDistributionStateCatalogEntries(
+            std::vector<PkiDistributionStateCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deletePkiDistributionStateCatalogEntry(const ID& distribution_id,
+                                                    ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertTrustAnchorRolloverCatalogEntry(const TrustAnchorRolloverCatalogInfo& info,
+                                                   ErrorContext* ctx = nullptr) -> Status;
+        auto getTrustAnchorRolloverCatalogEntry(const ID& rollover_id,
+                                                TrustAnchorRolloverCatalogInfo& info_out,
+                                                ErrorContext* ctx = nullptr) -> Status;
+        auto listTrustAnchorRolloverCatalogEntries(
+            std::vector<TrustAnchorRolloverCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteTrustAnchorRolloverCatalogEntry(const ID& rollover_id,
+                                                   ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertNodeCatalogEntry(const NodeCatalogInfo& info,
+                                    ErrorContext* ctx = nullptr) -> Status;
+        auto getNodeCatalogEntry(const ID& node_id,
+                                 NodeCatalogInfo& info_out,
+                                 ErrorContext* ctx = nullptr) -> Status;
+        auto listNodeCatalogEntries(const ID& cluster_id,
+                                    std::vector<NodeCatalogInfo>& rows_out,
+                                    ErrorContext* ctx = nullptr) -> Status;
+        auto deleteNodeCatalogEntry(const ID& node_id,
+                                    ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertNodeRoleBindingCatalogEntry(const NodeRoleBindingCatalogInfo& info,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto getNodeRoleBindingCatalogEntry(const ID& binding_id,
+                                            NodeRoleBindingCatalogInfo& info_out,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto listNodeRoleBindingCatalogEntries(const ID& node_id,
+                                               std::vector<NodeRoleBindingCatalogInfo>& rows_out,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto deleteNodeRoleBindingCatalogEntry(const ID& binding_id,
+                                               ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertNodeServiceCatalogEntry(const NodeServiceCatalogInfo& info,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto getNodeServiceCatalogEntry(const ID& service_id,
+                                        NodeServiceCatalogInfo& info_out,
+                                        ErrorContext* ctx = nullptr) -> Status;
+        auto listNodeServiceCatalogEntries(const ID& node_id,
+                                           std::vector<NodeServiceCatalogInfo>& rows_out,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto deleteNodeServiceCatalogEntry(const ID& service_id,
+                                           ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertNodeCapabilityCatalogEntry(const NodeCapabilityCatalogInfo& info,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto getNodeCapabilityCatalogEntry(const ID& capability_id,
+                                           NodeCapabilityCatalogInfo& info_out,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto listNodeCapabilityCatalogEntries(const ID& node_id,
+                                              std::vector<NodeCapabilityCatalogInfo>& rows_out,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto deleteNodeCapabilityCatalogEntry(const ID& capability_id,
+                                              ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertClockPolicyCatalogEntry(const ClockPolicyCatalogInfo& info,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto getClockPolicyCatalogEntry(const ID& clock_policy_id,
+                                        ClockPolicyCatalogInfo& info_out,
+                                        ErrorContext* ctx = nullptr) -> Status;
+        auto listClockPolicyCatalogEntries(std::vector<ClockPolicyCatalogInfo>& rows_out,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto deleteClockPolicyCatalogEntry(const ID& clock_policy_id,
+                                           ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertClockSourceCatalogEntry(const ClockSourceCatalogInfo& info,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto getClockSourceCatalogEntry(const ID& clock_source_id,
+                                        ClockSourceCatalogInfo& info_out,
+                                        ErrorContext* ctx = nullptr) -> Status;
+        auto listClockSourceCatalogEntries(const ID& clock_policy_id,
+                                           std::vector<ClockSourceCatalogInfo>& rows_out,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto deleteClockSourceCatalogEntry(const ID& clock_source_id,
+                                           ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertNodeClockStateCatalogEntry(const NodeClockStateCatalogInfo& info,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto getNodeClockStateCatalogEntry(const ID& node_clock_state_id,
+                                           NodeClockStateCatalogInfo& info_out,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto listNodeClockStateCatalogEntries(const ID& node_id,
+                                              std::vector<NodeClockStateCatalogInfo>& rows_out,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto deleteNodeClockStateCatalogEntry(const ID& node_clock_state_id,
+                                              ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertClockViolationEventCatalogEntry(const ClockViolationEventCatalogInfo& info,
+                                                   ErrorContext* ctx = nullptr) -> Status;
+        auto getClockViolationEventCatalogEntry(const ID& clock_violation_event_id,
+                                                ClockViolationEventCatalogInfo& info_out,
+                                                ErrorContext* ctx = nullptr) -> Status;
+        auto listClockViolationEventCatalogEntries(const ID& node_id,
+                                                   std::vector<ClockViolationEventCatalogInfo>& rows_out,
+                                                   ErrorContext* ctx = nullptr) -> Status;
+        auto deleteClockViolationEventCatalogEntry(const ID& clock_violation_event_id,
+                                                   ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertWorkloadClassCatalogEntry(const WorkloadClassCatalogInfo& info,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto getWorkloadClassCatalogEntry(const ID& class_id,
+                                          WorkloadClassCatalogInfo& info_out,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto listWorkloadClassCatalogEntries(std::vector<WorkloadClassCatalogInfo>& rows_out,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto deleteWorkloadClassCatalogEntry(const ID& class_id,
+                                             ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertWorkloadRouteCatalogEntry(const WorkloadRouteCatalogInfo& info,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto getWorkloadRouteCatalogEntry(const ID& route_id,
+                                          WorkloadRouteCatalogInfo& info_out,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto listWorkloadRouteCatalogEntries(const ID& class_id,
+                                             std::vector<WorkloadRouteCatalogInfo>& rows_out,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto deleteWorkloadRouteCatalogEntry(const ID& route_id,
+                                             ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertAdmissionPolicyCatalogEntry(const AdmissionPolicyCatalogInfo& info,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto getAdmissionPolicyCatalogEntry(const ID& policy_id,
+                                            AdmissionPolicyCatalogInfo& info_out,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto listAdmissionPolicyCatalogEntries(std::vector<AdmissionPolicyCatalogInfo>& rows_out,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto deleteAdmissionPolicyCatalogEntry(const ID& policy_id,
+                                               ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertAdmissionBindingCatalogEntry(const AdmissionBindingCatalogInfo& info,
+                                                ErrorContext* ctx = nullptr) -> Status;
+        auto getAdmissionBindingCatalogEntry(const ID& binding_id,
+                                             AdmissionBindingCatalogInfo& info_out,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto listAdmissionBindingCatalogEntries(
+            const ID& policy_id,
+            std::vector<AdmissionBindingCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteAdmissionBindingCatalogEntry(const ID& binding_id,
+                                                ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertSloProfileCatalogEntry(const SloProfileCatalogInfo& info,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto getSloProfileCatalogEntry(const ID& slo_profile_id,
+                                       SloProfileCatalogInfo& info_out,
+                                       ErrorContext* ctx = nullptr) -> Status;
+        auto listSloProfileCatalogEntries(std::vector<SloProfileCatalogInfo>& rows_out,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto deleteSloProfileCatalogEntry(const ID& slo_profile_id,
+                                          ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertSloBindingCatalogEntry(const SloBindingCatalogInfo& info,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto getSloBindingCatalogEntry(const ID& slo_binding_id,
+                                       SloBindingCatalogInfo& info_out,
+                                       ErrorContext* ctx = nullptr) -> Status;
+        auto listSloBindingCatalogEntries(const ID& slo_profile_id,
+                                          std::vector<SloBindingCatalogInfo>& rows_out,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto deleteSloBindingCatalogEntry(const ID& slo_binding_id,
+                                          ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertSloWindowCatalogEntry(const SloWindowCatalogInfo& info,
+                                         ErrorContext* ctx = nullptr) -> Status;
+        auto getSloWindowCatalogEntry(const ID& slo_window_id,
+                                      SloWindowCatalogInfo& info_out,
+                                      ErrorContext* ctx = nullptr) -> Status;
+        auto listSloWindowCatalogEntries(const ID& node_id,
+                                         std::vector<SloWindowCatalogInfo>& rows_out,
+                                         ErrorContext* ctx = nullptr) -> Status;
+        auto deleteSloWindowCatalogEntry(const ID& slo_window_id,
+                                         ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertSloBurnEventCatalogEntry(const SloBurnEventCatalogInfo& info,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto getSloBurnEventCatalogEntry(const ID& slo_burn_event_id,
+                                         SloBurnEventCatalogInfo& info_out,
+                                         ErrorContext* ctx = nullptr) -> Status;
+        auto listSloBurnEventCatalogEntries(const ID& node_id,
+                                            std::vector<SloBurnEventCatalogInfo>& rows_out,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteSloBurnEventCatalogEntry(const ID& slo_burn_event_id,
+                                            ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertAutoscalePolicyCatalogEntry(const AutoscalePolicyCatalogInfo& info,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto getAutoscalePolicyCatalogEntry(const ID& autoscale_policy_id,
+                                            AutoscalePolicyCatalogInfo& info_out,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto listAutoscalePolicyCatalogEntries(std::vector<AutoscalePolicyCatalogInfo>& rows_out,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto deleteAutoscalePolicyCatalogEntry(const ID& autoscale_policy_id,
+                                               ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertAutoscaleActionCatalogEntry(const AutoscaleActionCatalogInfo& info,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto getAutoscaleActionCatalogEntry(const ID& autoscale_action_id,
+                                            AutoscaleActionCatalogInfo& info_out,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto listAutoscaleActionCatalogEntries(const ClusterNodeRole role,
+                                               std::vector<AutoscaleActionCatalogInfo>& rows_out,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto deleteAutoscaleActionCatalogEntry(const ID& autoscale_action_id,
+                                               ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertAdmissionTuningEventCatalogEntry(const AdmissionTuningEventCatalogInfo& info,
+                                                    ErrorContext* ctx = nullptr) -> Status;
+        auto getAdmissionTuningEventCatalogEntry(const ID& admission_tuning_event_id,
+                                                 AdmissionTuningEventCatalogInfo& info_out,
+                                                 ErrorContext* ctx = nullptr) -> Status;
+        auto listAdmissionTuningEventCatalogEntries(
+            const ClusterNodeRole role,
+            std::vector<AdmissionTuningEventCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteAdmissionTuningEventCatalogEntry(const ID& admission_tuning_event_id,
+                                                    ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertClusterPolicyCatalogEntry(const ClusterPolicyCatalogInfo& info,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto getClusterPolicyCatalogEntry(const ID& policy_id,
+                                          ClusterPolicyCatalogInfo& info_out,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto listClusterPolicyCatalogEntries(const ID& cluster_id,
+                                             std::vector<ClusterPolicyCatalogInfo>& rows_out,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto deleteClusterPolicyCatalogEntry(const ID& policy_id,
+                                             ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertFailureDetectorCatalogEntry(const FailureDetectorCatalogInfo& info,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto getFailureDetectorCatalogEntry(const ID& detector_id,
+                                            FailureDetectorCatalogInfo& info_out,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto listFailureDetectorCatalogEntries(const ID& cluster_id,
+                                               std::vector<FailureDetectorCatalogInfo>& rows_out,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto deleteFailureDetectorCatalogEntry(const ID& detector_id,
+                                               ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertAlertRuleCatalogEntry(const AlertRuleCatalogInfo& info,
+                                         ErrorContext* ctx = nullptr) -> Status;
+        auto getAlertRuleCatalogEntry(const ID& rule_id,
+                                      AlertRuleCatalogInfo& info_out,
+                                      ErrorContext* ctx = nullptr) -> Status;
+        auto listAlertRuleCatalogEntries(std::vector<AlertRuleCatalogInfo>& rows_out,
+                                         ErrorContext* ctx = nullptr) -> Status;
+        auto deleteAlertRuleCatalogEntry(const ID& rule_id,
+                                         ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertAlertTargetCatalogEntry(const AlertTargetCatalogInfo& info,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto getAlertTargetCatalogEntry(const ID& target_id,
+                                        AlertTargetCatalogInfo& info_out,
+                                        ErrorContext* ctx = nullptr) -> Status;
+        auto listAlertTargetCatalogEntries(std::vector<AlertTargetCatalogInfo>& rows_out,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto deleteAlertTargetCatalogEntry(const ID& target_id,
+                                           ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertAlertRouteCatalogEntry(const AlertRouteCatalogInfo& info,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto getAlertRouteCatalogEntry(const ID& route_id,
+                                       AlertRouteCatalogInfo& info_out,
+                                       ErrorContext* ctx = nullptr) -> Status;
+        auto listAlertRouteCatalogEntries(const ID& rule_id,
+                                          std::vector<AlertRouteCatalogInfo>& rows_out,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto deleteAlertRouteCatalogEntry(const ID& route_id,
+                                          ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertAlertEventCatalogEntry(const AlertEventCatalogInfo& info,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto getAlertEventCatalogEntry(const ID& event_id,
+                                       AlertEventCatalogInfo& info_out,
+                                       ErrorContext* ctx = nullptr) -> Status;
+        auto listAlertEventCatalogEntries(const ID& rule_id,
+                                          std::vector<AlertEventCatalogInfo>& rows_out,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto deleteAlertEventCatalogEntry(const ID& event_id,
+                                          ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertAlertAckCatalogEntry(const AlertAckCatalogInfo& info,
+                                        ErrorContext* ctx = nullptr) -> Status;
+        auto getAlertAckCatalogEntry(const ID& ack_id,
+                                     AlertAckCatalogInfo& info_out,
+                                     ErrorContext* ctx = nullptr) -> Status;
+        auto listAlertAckCatalogEntries(const ID& event_id,
+                                        std::vector<AlertAckCatalogInfo>& rows_out,
+                                        ErrorContext* ctx = nullptr) -> Status;
+        auto deleteAlertAckCatalogEntry(const ID& ack_id,
+                                        ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertAlertSilenceCatalogEntry(const AlertSilenceCatalogInfo& info,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto getAlertSilenceCatalogEntry(const ID& silence_id,
+                                         AlertSilenceCatalogInfo& info_out,
+                                         ErrorContext* ctx = nullptr) -> Status;
+        auto listAlertSilenceCatalogEntries(std::vector<AlertSilenceCatalogInfo>& rows_out,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteAlertSilenceCatalogEntry(const ID& silence_id,
+                                            ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertNetworkPartitionEventCatalogEntry(const NetworkPartitionEventCatalogInfo& info,
+                                                     ErrorContext* ctx = nullptr) -> Status;
+        auto getNetworkPartitionEventCatalogEntry(const ID& partition_id,
+                                                  NetworkPartitionEventCatalogInfo& info_out,
+                                                  ErrorContext* ctx = nullptr) -> Status;
+        auto listNetworkPartitionEventCatalogEntries(
+            const ID& cluster_id,
+            std::vector<NetworkPartitionEventCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteNetworkPartitionEventCatalogEntry(const ID& partition_id,
+                                                     ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertNetworkPartitionMemberCatalogEntry(const NetworkPartitionMemberCatalogInfo& info,
+                                                      ErrorContext* ctx = nullptr) -> Status;
+        auto getNetworkPartitionMemberCatalogEntry(const ID& member_id,
+                                                   NetworkPartitionMemberCatalogInfo& info_out,
+                                                   ErrorContext* ctx = nullptr) -> Status;
+        auto listNetworkPartitionMemberCatalogEntries(
+            const ID& partition_id,
+            std::vector<NetworkPartitionMemberCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteNetworkPartitionMemberCatalogEntry(const ID& member_id,
+                                                      ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertHealingPolicyCatalogEntry(const HealingPolicyCatalogInfo& info,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto getHealingPolicyCatalogEntry(const ID& policy_id,
+                                          HealingPolicyCatalogInfo& info_out,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto listHealingPolicyCatalogEntries(std::vector<HealingPolicyCatalogInfo>& rows_out,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto deleteHealingPolicyCatalogEntry(const ID& policy_id,
+                                             ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertHealingActionCatalogEntry(const HealingActionCatalogInfo& info,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto getHealingActionCatalogEntry(const ID& action_id,
+                                          HealingActionCatalogInfo& info_out,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto listHealingActionCatalogEntries(const ID& policy_id,
+                                             std::vector<HealingActionCatalogInfo>& rows_out,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto deleteHealingActionCatalogEntry(const ID& action_id,
+                                             ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertHealingActionParamCatalogEntry(const HealingActionParamCatalogInfo& info,
+                                                  ErrorContext* ctx = nullptr) -> Status;
+        auto getHealingActionParamCatalogEntry(const ID& param_id,
+                                               HealingActionParamCatalogInfo& info_out,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto listHealingActionParamCatalogEntries(
+            const ID& action_id,
+            std::vector<HealingActionParamCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteHealingActionParamCatalogEntry(const ID& param_id,
+                                                  ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertHealingRunCatalogEntry(const HealingRunCatalogInfo& info,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto getHealingRunCatalogEntry(const ID& run_id,
+                                       HealingRunCatalogInfo& info_out,
+                                       ErrorContext* ctx = nullptr) -> Status;
+        auto listHealingRunCatalogEntries(const ID& policy_id,
+                                          std::vector<HealingRunCatalogInfo>& rows_out,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto deleteHealingRunCatalogEntry(const ID& run_id,
+                                          ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertHealingStepCatalogEntry(const HealingStepCatalogInfo& info,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto getHealingStepCatalogEntry(const ID& step_id,
+                                        HealingStepCatalogInfo& info_out,
+                                        ErrorContext* ctx = nullptr) -> Status;
+        auto listHealingStepCatalogEntries(const ID& run_id,
+                                           std::vector<HealingStepCatalogInfo>& rows_out,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto deleteHealingStepCatalogEntry(const ID& step_id,
+                                           ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertJobTypeCatalogEntry(const JobTypeCatalogInfo& info,
+                                       ErrorContext* ctx = nullptr) -> Status;
+        auto getJobTypeCatalogEntry(const ID& job_type_id,
+                                    JobTypeCatalogInfo& info_out,
+                                    ErrorContext* ctx = nullptr) -> Status;
+        auto listJobTypeCatalogEntries(std::vector<JobTypeCatalogInfo>& rows_out,
+                                       ErrorContext* ctx = nullptr) -> Status;
+        auto deleteJobTypeCatalogEntry(const ID& job_type_id,
+                                       ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertJobTypeParamCatalogEntry(const JobTypeParamCatalogInfo& info,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto getJobTypeParamCatalogEntry(const ID& param_id,
+                                         JobTypeParamCatalogInfo& info_out,
+                                         ErrorContext* ctx = nullptr) -> Status;
+        auto listJobTypeParamCatalogEntries(const ID& job_type_id,
+                                            std::vector<JobTypeParamCatalogInfo>& rows_out,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteJobTypeParamCatalogEntry(const ID& param_id,
+                                            ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertJobParamCatalogEntry(const JobParamCatalogInfo& info,
+                                        ErrorContext* ctx = nullptr) -> Status;
+        auto getJobParamCatalogEntry(const ID& param_id,
+                                     JobParamCatalogInfo& info_out,
+                                     ErrorContext* ctx = nullptr) -> Status;
+        auto listJobParamCatalogEntries(const ID& job_id,
+                                        std::vector<JobParamCatalogInfo>& rows_out,
+                                        ErrorContext* ctx = nullptr) -> Status;
+        auto deleteJobParamCatalogEntry(const ID& param_id,
+                                        ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertJobScheduleCatalogEntry(const JobScheduleCatalogInfo& info,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto getJobScheduleCatalogEntry(const ID& schedule_id,
+                                        JobScheduleCatalogInfo& info_out,
+                                        ErrorContext* ctx = nullptr) -> Status;
+        auto listJobScheduleCatalogEntries(std::vector<JobScheduleCatalogInfo>& rows_out,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto deleteJobScheduleCatalogEntry(const ID& schedule_id,
+                                           ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertJobTypePolicyCatalogEntry(const JobTypePolicyCatalogInfo& info,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto getJobTypePolicyCatalogEntry(const ID& policy_id,
+                                          JobTypePolicyCatalogInfo& info_out,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto listJobTypePolicyCatalogEntries(const ID& job_type_id,
+                                             std::vector<JobTypePolicyCatalogInfo>& rows_out,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto deleteJobTypePolicyCatalogEntry(const ID& policy_id,
+                                             ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertRemoteConnectorCatalogEntry(const RemoteConnectorCatalogInfo& info,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto getRemoteConnectorCatalogEntry(const ID& remote_connector_id,
+                                            RemoteConnectorCatalogInfo& info_out,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto listRemoteConnectorCatalogEntries(std::vector<RemoteConnectorCatalogInfo>& rows_out,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto deleteRemoteConnectorCatalogEntry(const ID& remote_connector_id,
+                                               ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertRemoteConnectorCapabilityCatalogEntry(
+            const RemoteConnectorCapabilityCatalogInfo& info,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto getRemoteConnectorCapabilityCatalogEntry(const ID& capability_id,
+                                                      RemoteConnectorCapabilityCatalogInfo& info_out,
+                                                      ErrorContext* ctx = nullptr) -> Status;
+        auto listRemoteConnectorCapabilityCatalogEntries(
+            const ID& remote_connector_id,
+            std::vector<RemoteConnectorCapabilityCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteRemoteConnectorCapabilityCatalogEntry(const ID& capability_id,
+                                                         ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertRemoteMetadataSnapshotCatalogEntry(const RemoteMetadataSnapshotCatalogInfo& info,
+                                                      ErrorContext* ctx = nullptr) -> Status;
+        auto getRemoteMetadataSnapshotCatalogEntry(const ID& snapshot_id,
+                                                   RemoteMetadataSnapshotCatalogInfo& info_out,
+                                                   ErrorContext* ctx = nullptr) -> Status;
+        auto listRemoteMetadataSnapshotCatalogEntries(
+            const ID& remote_connector_id,
+            std::vector<RemoteMetadataSnapshotCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteRemoteMetadataSnapshotCatalogEntry(const ID& snapshot_id,
+                                                      ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertRemoteMetadataObjectCatalogEntry(const RemoteMetadataObjectCatalogInfo& info,
+                                                    ErrorContext* ctx = nullptr) -> Status;
+        auto getRemoteMetadataObjectCatalogEntry(const ID& remote_object_id,
+                                                 RemoteMetadataObjectCatalogInfo& info_out,
+                                                 ErrorContext* ctx = nullptr) -> Status;
+        auto listRemoteMetadataObjectCatalogEntries(
+            const ID& snapshot_id,
+            std::vector<RemoteMetadataObjectCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteRemoteMetadataObjectCatalogEntry(const ID& remote_object_id,
+                                                    ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertRemoteMetadataColumnCatalogEntry(const RemoteMetadataColumnCatalogInfo& info,
+                                                    ErrorContext* ctx = nullptr) -> Status;
+        auto getRemoteMetadataColumnCatalogEntry(const ID& remote_column_id,
+                                                 RemoteMetadataColumnCatalogInfo& info_out,
+                                                 ErrorContext* ctx = nullptr) -> Status;
+        auto listRemoteMetadataColumnCatalogEntries(
+            const ID& remote_object_id,
+            std::vector<RemoteMetadataColumnCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteRemoteMetadataColumnCatalogEntry(const ID& remote_column_id,
+                                                    ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertRemoteSchemaMappingCatalogEntry(const RemoteSchemaMappingCatalogInfo& info,
+                                                   ErrorContext* ctx = nullptr) -> Status;
+        auto getRemoteSchemaMappingCatalogEntry(const ID& schema_mapping_id,
+                                                RemoteSchemaMappingCatalogInfo& info_out,
+                                                ErrorContext* ctx = nullptr) -> Status;
+        auto listRemoteSchemaMappingCatalogEntries(
+            const ID& remote_connector_id,
+            std::vector<RemoteSchemaMappingCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteRemoteSchemaMappingCatalogEntry(const ID& schema_mapping_id,
+                                                   ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertRemotePassthroughPolicyCatalogEntry(
+            const RemotePassthroughPolicyCatalogInfo& info,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto getRemotePassthroughPolicyCatalogEntry(const ID& remote_policy_id,
+                                                    RemotePassthroughPolicyCatalogInfo& info_out,
+                                                    ErrorContext* ctx = nullptr) -> Status;
+        auto listRemotePassthroughPolicyCatalogEntries(
+            const ID& remote_connector_id,
+            std::vector<RemotePassthroughPolicyCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteRemotePassthroughPolicyCatalogEntry(const ID& remote_policy_id,
+                                                       ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertRemotePreparedStatementCatalogEntry(
+            const RemotePreparedStatementCatalogInfo& info,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto getRemotePreparedStatementCatalogEntry(const ID& remote_prepared_id,
+                                                    RemotePreparedStatementCatalogInfo& info_out,
+                                                    ErrorContext* ctx = nullptr) -> Status;
+        auto listRemotePreparedStatementCatalogEntries(
+            const ID& session_id,
+            std::vector<RemotePreparedStatementCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteRemotePreparedStatementCatalogEntry(const ID& remote_prepared_id,
+                                                       ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertRemoteTxnBindingCatalogEntry(const RemoteTxnBindingCatalogInfo& info,
+                                                ErrorContext* ctx = nullptr) -> Status;
+        auto getRemoteTxnBindingCatalogEntry(const ID& remote_txn_binding_id,
+                                             RemoteTxnBindingCatalogInfo& info_out,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto listRemoteTxnBindingCatalogEntries(const ID& remote_connector_id,
+                                                std::vector<RemoteTxnBindingCatalogInfo>& rows_out,
+                                                ErrorContext* ctx = nullptr) -> Status;
+        auto deleteRemoteTxnBindingCatalogEntry(const ID& remote_txn_binding_id,
+                                                ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertRemoteExecutionAuditCatalogEntry(const RemoteExecutionAuditCatalogInfo& info,
+                                                    ErrorContext* ctx = nullptr) -> Status;
+        auto getRemoteExecutionAuditCatalogEntry(const ID& remote_exec_audit_id,
+                                                 RemoteExecutionAuditCatalogInfo& info_out,
+                                                 ErrorContext* ctx = nullptr) -> Status;
+        auto listRemoteExecutionAuditCatalogEntries(
+            const ID& remote_connector_id,
+            std::vector<RemoteExecutionAuditCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteRemoteExecutionAuditCatalogEntry(const ID& remote_exec_audit_id,
+                                                    ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertRemoteErrorCatalogEntry(const RemoteErrorCatalogInfo& info,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto getRemoteErrorCatalogEntry(const ID& remote_error_id,
+                                        RemoteErrorCatalogInfo& info_out,
+                                        ErrorContext* ctx = nullptr) -> Status;
+        auto listRemoteErrorCatalogEntries(const ID& remote_connector_id,
+                                           std::vector<RemoteErrorCatalogInfo>& rows_out,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto deleteRemoteErrorCatalogEntry(const ID& remote_error_id,
+                                           ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertExtensionCatalogEntry(const ExtensionCatalogInfo& info,
+                                         ErrorContext* ctx = nullptr) -> Status;
+        auto getExtensionCatalogEntry(const ID& extension_id,
+                                      ExtensionCatalogInfo& info_out,
+                                      ErrorContext* ctx = nullptr) -> Status;
+        auto listExtensionCatalogEntries(std::vector<ExtensionCatalogInfo>& rows_out,
+                                         ErrorContext* ctx = nullptr) -> Status;
+        auto deleteExtensionCatalogEntry(const ID& extension_id,
+                                         ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertPublicationCatalogEntry(const PublicationCatalogInfo& info,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto getPublicationCatalogEntry(const ID& publication_id,
+                                        PublicationCatalogInfo& info_out,
+                                        ErrorContext* ctx = nullptr) -> Status;
+        auto listPublicationCatalogEntries(std::vector<PublicationCatalogInfo>& rows_out,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto deletePublicationCatalogEntry(const ID& publication_id,
+                                           ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertPublicationTableCatalogEntry(const PublicationTableCatalogInfo& info,
+                                                ErrorContext* ctx = nullptr) -> Status;
+        auto getPublicationTableCatalogEntry(const ID& publication_table_id,
+                                             PublicationTableCatalogInfo& info_out,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto listPublicationTableCatalogEntries(const ID& publication_id,
+                                                std::vector<PublicationTableCatalogInfo>& rows_out,
+                                                ErrorContext* ctx = nullptr) -> Status;
+        auto deletePublicationTableCatalogEntry(const ID& publication_table_id,
+                                                ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertPublicationSchemaCatalogEntry(const PublicationSchemaCatalogInfo& info,
+                                                 ErrorContext* ctx = nullptr) -> Status;
+        auto getPublicationSchemaCatalogEntry(const ID& publication_schema_id,
+                                              PublicationSchemaCatalogInfo& info_out,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto listPublicationSchemaCatalogEntries(const ID& publication_id,
+                                                 std::vector<PublicationSchemaCatalogInfo>& rows_out,
+                                                 ErrorContext* ctx = nullptr) -> Status;
+        auto deletePublicationSchemaCatalogEntry(const ID& publication_schema_id,
+                                                 ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertSubscriptionCatalogEntry(const SubscriptionCatalogInfo& info,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto getSubscriptionCatalogEntry(const ID& subscription_id,
+                                         SubscriptionCatalogInfo& info_out,
+                                         ErrorContext* ctx = nullptr) -> Status;
+        auto listSubscriptionCatalogEntries(std::vector<SubscriptionCatalogInfo>& rows_out,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteSubscriptionCatalogEntry(const ID& subscription_id,
+                                            ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertSubscriptionTableCatalogEntry(const SubscriptionTableCatalogInfo& info,
+                                                 ErrorContext* ctx = nullptr) -> Status;
+        auto getSubscriptionTableCatalogEntry(const ID& subscription_table_id,
+                                              SubscriptionTableCatalogInfo& info_out,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto listSubscriptionTableCatalogEntries(const ID& subscription_id,
+                                                 std::vector<SubscriptionTableCatalogInfo>& rows_out,
+                                                 ErrorContext* ctx = nullptr) -> Status;
+        auto deleteSubscriptionTableCatalogEntry(const ID& subscription_table_id,
+                                                 ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertReplicationChannelCatalogEntry(const ReplicationChannelCatalogInfo& info,
+                                                  ErrorContext* ctx = nullptr) -> Status;
+        auto getReplicationChannelCatalogEntry(const ID& replication_channel_id,
+                                               ReplicationChannelCatalogInfo& info_out,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto listReplicationChannelCatalogEntries(std::vector<ReplicationChannelCatalogInfo>& rows_out,
+                                                  ErrorContext* ctx = nullptr) -> Status;
+        auto deleteReplicationChannelCatalogEntry(const ID& replication_channel_id,
+                                                  ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertReplicationChannelMemberCatalogEntry(const ReplicationChannelMemberCatalogInfo& info,
+                                                        ErrorContext* ctx = nullptr) -> Status;
+        auto getReplicationChannelMemberCatalogEntry(const ID& channel_member_id,
+                                                     ReplicationChannelMemberCatalogInfo& info_out,
+                                                     ErrorContext* ctx = nullptr) -> Status;
+        auto listReplicationChannelMemberCatalogEntries(
+            const ID& replication_channel_id,
+            std::vector<ReplicationChannelMemberCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteReplicationChannelMemberCatalogEntry(const ID& channel_member_id,
+                                                        ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertReplicationOriginCatalogEntry(const ReplicationOriginCatalogInfo& info,
+                                                 ErrorContext* ctx = nullptr) -> Status;
+        auto getReplicationOriginCatalogEntry(const ID& origin_id,
+                                              ReplicationOriginCatalogInfo& info_out,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto listReplicationOriginCatalogEntries(std::vector<ReplicationOriginCatalogInfo>& rows_out,
+                                                 ErrorContext* ctx = nullptr) -> Status;
+        auto deleteReplicationOriginCatalogEntry(const ID& origin_id,
+                                                 ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertReplicationCursorCatalogEntry(const ReplicationCursorCatalogInfo& info,
+                                                 ErrorContext* ctx = nullptr) -> Status;
+        auto getReplicationCursorCatalogEntry(const ID& replication_cursor_id,
+                                              ReplicationCursorCatalogInfo& info_out,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto listReplicationCursorCatalogEntries(
+            const ID& replication_channel_id,
+            std::vector<ReplicationCursorCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteReplicationCursorCatalogEntry(const ID& replication_cursor_id,
+                                                 ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertReplicationOriginProgressCatalogEntry(const ReplicationOriginProgressCatalogInfo& info,
+                                                         ErrorContext* ctx = nullptr) -> Status;
+        auto getReplicationOriginProgressCatalogEntry(const ID& origin_progress_id,
+                                                      ReplicationOriginProgressCatalogInfo& info_out,
+                                                      ErrorContext* ctx = nullptr) -> Status;
+        auto listReplicationOriginProgressCatalogEntries(
+            const ID& replication_channel_id,
+            std::vector<ReplicationOriginProgressCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteReplicationOriginProgressCatalogEntry(const ID& origin_progress_id,
+                                                         ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertReplicationTxnBatchCatalogEntry(const ReplicationTxnBatchCatalogInfo& info,
+                                                   ErrorContext* ctx = nullptr) -> Status;
+        auto getReplicationTxnBatchCatalogEntry(const ID& replication_batch_id,
+                                                ReplicationTxnBatchCatalogInfo& info_out,
+                                                ErrorContext* ctx = nullptr) -> Status;
+        auto listReplicationTxnBatchCatalogEntries(
+            const ID& replication_channel_id,
+            std::vector<ReplicationTxnBatchCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteReplicationTxnBatchCatalogEntry(const ID& replication_batch_id,
+                                                   ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertReplicationApplyLogCatalogEntry(const ReplicationApplyLogCatalogInfo& info,
+                                                   ErrorContext* ctx = nullptr) -> Status;
+        auto getReplicationApplyLogCatalogEntry(const ID& replication_apply_log_id,
+                                                ReplicationApplyLogCatalogInfo& info_out,
+                                                ErrorContext* ctx = nullptr) -> Status;
+        auto listReplicationApplyLogCatalogEntries(
+            const ID& replication_batch_id,
+            std::vector<ReplicationApplyLogCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteReplicationApplyLogCatalogEntry(const ID& replication_apply_log_id,
+                                                   ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertReplicationRetryQueueCatalogEntry(const ReplicationRetryQueueCatalogInfo& info,
+                                                     ErrorContext* ctx = nullptr) -> Status;
+        auto getReplicationRetryQueueCatalogEntry(const ID& replication_retry_id,
+                                                  ReplicationRetryQueueCatalogInfo& info_out,
+                                                  ErrorContext* ctx = nullptr) -> Status;
+        auto listReplicationRetryQueueCatalogEntries(
+            std::vector<ReplicationRetryQueueCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteReplicationRetryQueueCatalogEntry(const ID& replication_retry_id,
+                                                     ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertReplicationConflictCatalogEntry(const ReplicationConflictCatalogInfo& info,
+                                                   ErrorContext* ctx = nullptr) -> Status;
+        auto getReplicationConflictCatalogEntry(const ID& replication_conflict_id,
+                                                ReplicationConflictCatalogInfo& info_out,
+                                                ErrorContext* ctx = nullptr) -> Status;
+        auto listReplicationConflictCatalogEntries(
+            const ID& replication_channel_id,
+            std::vector<ReplicationConflictCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteReplicationConflictCatalogEntry(const ID& replication_conflict_id,
+                                                   ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertReplicationSplitBrainEventCatalogEntry(
+            const ReplicationSplitBrainEventCatalogInfo& info,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto getReplicationSplitBrainEventCatalogEntry(const ID& replication_split_brain_id,
+                                                       ReplicationSplitBrainEventCatalogInfo& info_out,
+                                                       ErrorContext* ctx = nullptr) -> Status;
+        auto listReplicationSplitBrainEventCatalogEntries(
+            const ID& replication_channel_id,
+            std::vector<ReplicationSplitBrainEventCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteReplicationSplitBrainEventCatalogEntry(const ID& replication_split_brain_id,
+                                                          ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertReplicationErrorCatalogEntry(const ReplicationErrorCatalogInfo& info,
+                                                ErrorContext* ctx = nullptr) -> Status;
+        auto getReplicationErrorCatalogEntry(const ID& replication_error_id,
+                                             ReplicationErrorCatalogInfo& info_out,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto listReplicationErrorCatalogEntries(
+            const ID& replication_channel_id,
+            std::vector<ReplicationErrorCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteReplicationErrorCatalogEntry(const ID& replication_error_id,
+                                                ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertClusterFabricLinkCatalogEntry(const ClusterFabricLinkCatalogInfo& info,
+                                                 ErrorContext* ctx = nullptr) -> Status;
+        auto getClusterFabricLinkCatalogEntry(const ID& cluster_fabric_link_id,
+                                              ClusterFabricLinkCatalogInfo& info_out,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto listClusterFabricLinkCatalogEntries(std::vector<ClusterFabricLinkCatalogInfo>& rows_out,
+                                                 ErrorContext* ctx = nullptr) -> Status;
+        auto deleteClusterFabricLinkCatalogEntry(const ID& cluster_fabric_link_id,
+                                                 ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertClusterFabricSessionCatalogEntry(const ClusterFabricSessionCatalogInfo& info,
+                                                    ErrorContext* ctx = nullptr) -> Status;
+        auto getClusterFabricSessionCatalogEntry(const ID& cluster_fabric_session_id,
+                                                 ClusterFabricSessionCatalogInfo& info_out,
+                                                 ErrorContext* ctx = nullptr) -> Status;
+        auto listClusterFabricSessionCatalogEntries(
+            const ID& cluster_fabric_link_id,
+            std::vector<ClusterFabricSessionCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteClusterFabricSessionCatalogEntry(const ID& cluster_fabric_session_id,
+                                                    ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertClusterFabricTxnCatalogEntry(const ClusterFabricTxnCatalogInfo& info,
+                                                ErrorContext* ctx = nullptr) -> Status;
+        auto getClusterFabricTxnCatalogEntry(const ID& cluster_fabric_txn_id,
+                                             ClusterFabricTxnCatalogInfo& info_out,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto listClusterFabricTxnCatalogEntries(
+            const ID& cluster_fabric_session_id,
+            std::vector<ClusterFabricTxnCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteClusterFabricTxnCatalogEntry(const ID& cluster_fabric_txn_id,
+                                                ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertClusterFabricTaskCatalogEntry(const ClusterFabricTaskCatalogInfo& info,
+                                                 ErrorContext* ctx = nullptr) -> Status;
+        auto getClusterFabricTaskCatalogEntry(const ID& cluster_fabric_task_id,
+                                              ClusterFabricTaskCatalogInfo& info_out,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto listClusterFabricTaskCatalogEntries(
+            const ID& cluster_fabric_link_id,
+            std::vector<ClusterFabricTaskCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteClusterFabricTaskCatalogEntry(const ID& cluster_fabric_task_id,
+                                                 ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertClusterFabricTaskChunkCatalogEntry(const ClusterFabricTaskChunkCatalogInfo& info,
+                                                      ErrorContext* ctx = nullptr) -> Status;
+        auto getClusterFabricTaskChunkCatalogEntry(const ID& cluster_fabric_task_chunk_id,
+                                                   ClusterFabricTaskChunkCatalogInfo& info_out,
+                                                   ErrorContext* ctx = nullptr) -> Status;
+        auto listClusterFabricTaskChunkCatalogEntries(
+            const ID& cluster_fabric_task_id,
+            std::vector<ClusterFabricTaskChunkCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteClusterFabricTaskChunkCatalogEntry(const ID& cluster_fabric_task_chunk_id,
+                                                      ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertClusterFabricEventCatalogEntry(const ClusterFabricEventCatalogInfo& info,
+                                                  ErrorContext* ctx = nullptr) -> Status;
+        auto getClusterFabricEventCatalogEntry(const ID& cluster_fabric_event_id,
+                                               ClusterFabricEventCatalogInfo& info_out,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto listClusterFabricEventCatalogEntries(
+            const ID& cluster_fabric_link_id,
+            std::vector<ClusterFabricEventCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteClusterFabricEventCatalogEntry(const ID& cluster_fabric_event_id,
+                                                  ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertClusterFabricErrorCatalogEntry(const ClusterFabricErrorCatalogInfo& info,
+                                                  ErrorContext* ctx = nullptr) -> Status;
+        auto getClusterFabricErrorCatalogEntry(const ID& cluster_fabric_error_id,
+                                               ClusterFabricErrorCatalogInfo& info_out,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto listClusterFabricErrorCatalogEntries(
+            const ID& cluster_fabric_link_id,
+            std::vector<ClusterFabricErrorCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteClusterFabricErrorCatalogEntry(const ID& cluster_fabric_error_id,
+                                                  ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertOlapWatermarkCatalogEntry(const OlapWatermarkCatalogInfo& info,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto getOlapWatermarkCatalogEntry(const ID& watermark_id,
+                                          OlapWatermarkCatalogInfo& info_out,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto listOlapWatermarkCatalogEntries(std::vector<OlapWatermarkCatalogInfo>& rows_out,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto deleteOlapWatermarkCatalogEntry(const ID& watermark_id,
+                                             ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertOlapPartitionCatalogEntry(const OlapPartitionCatalogInfo& info,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto getOlapPartitionCatalogEntry(const ID& partition_id,
+                                          OlapPartitionCatalogInfo& info_out,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto listOlapPartitionCatalogEntries(const ID& table_id,
+                                             std::vector<OlapPartitionCatalogInfo>& rows_out,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto deleteOlapPartitionCatalogEntry(const ID& partition_id,
+                                             ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertOlapSegmentCatalogEntry(const OlapSegmentCatalogInfo& info,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto getOlapSegmentCatalogEntry(const ID& segment_id,
+                                        OlapSegmentCatalogInfo& info_out,
+                                        ErrorContext* ctx = nullptr) -> Status;
+        auto listOlapSegmentCatalogEntries(const ID& partition_id,
+                                           std::vector<OlapSegmentCatalogInfo>& rows_out,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto deleteOlapSegmentCatalogEntry(const ID& segment_id,
+                                           ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertOlapIngestLogCatalogEntry(const OlapIngestLogCatalogInfo& info,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto getOlapIngestLogCatalogEntry(const ID& batch_id,
+                                          OlapIngestLogCatalogInfo& info_out,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto listOlapIngestLogCatalogEntries(const ID& table_id,
+                                             std::vector<OlapIngestLogCatalogInfo>& rows_out,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto deleteOlapIngestLogCatalogEntry(const ID& batch_id,
+                                             ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertCubeCatalogEntry(const CubeCatalogInfo& info,
+                                    ErrorContext* ctx = nullptr) -> Status;
+        auto getCubeCatalogEntry(const ID& cube_id,
+                                 CubeCatalogInfo& info_out,
+                                 ErrorContext* ctx = nullptr) -> Status;
+        auto listCubeCatalogEntries(const ID& schema_id,
+                                    std::vector<CubeCatalogInfo>& rows_out,
+                                    ErrorContext* ctx = nullptr) -> Status;
+        auto deleteCubeCatalogEntry(const ID& cube_id,
+                                    ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertCubeDimensionCatalogEntry(const CubeDimensionCatalogInfo& info,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto getCubeDimensionCatalogEntry(const ID& dimension_id,
+                                          CubeDimensionCatalogInfo& info_out,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto listCubeDimensionCatalogEntries(const ID& cube_id,
+                                             std::vector<CubeDimensionCatalogInfo>& rows_out,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto deleteCubeDimensionCatalogEntry(const ID& dimension_id,
+                                             ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertCubeLevelCatalogEntry(const CubeLevelCatalogInfo& info,
+                                         ErrorContext* ctx = nullptr) -> Status;
+        auto getCubeLevelCatalogEntry(const ID& level_id,
+                                      CubeLevelCatalogInfo& info_out,
+                                      ErrorContext* ctx = nullptr) -> Status;
+        auto listCubeLevelCatalogEntries(const ID& dimension_id,
+                                         std::vector<CubeLevelCatalogInfo>& rows_out,
+                                         ErrorContext* ctx = nullptr) -> Status;
+        auto deleteCubeLevelCatalogEntry(const ID& level_id,
+                                         ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertCubeHierarchyCatalogEntry(const CubeHierarchyCatalogInfo& info,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto getCubeHierarchyCatalogEntry(const ID& hierarchy_id,
+                                          CubeHierarchyCatalogInfo& info_out,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto listCubeHierarchyCatalogEntries(const ID& dimension_id,
+                                             std::vector<CubeHierarchyCatalogInfo>& rows_out,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto deleteCubeHierarchyCatalogEntry(const ID& hierarchy_id,
+                                             ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertCubeHierarchyLevelCatalogEntry(const CubeHierarchyLevelCatalogInfo& info,
+                                                  ErrorContext* ctx = nullptr) -> Status;
+        auto getCubeHierarchyLevelCatalogEntry(const ID& hierarchy_level_id,
+                                               CubeHierarchyLevelCatalogInfo& info_out,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto listCubeHierarchyLevelCatalogEntries(const ID& hierarchy_id,
+                                                  std::vector<CubeHierarchyLevelCatalogInfo>& rows_out,
+                                                  ErrorContext* ctx = nullptr) -> Status;
+        auto deleteCubeHierarchyLevelCatalogEntry(const ID& hierarchy_level_id,
+                                                  ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertCubeMeasureCatalogEntry(const CubeMeasureCatalogInfo& info,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto getCubeMeasureCatalogEntry(const ID& measure_id,
+                                        CubeMeasureCatalogInfo& info_out,
+                                        ErrorContext* ctx = nullptr) -> Status;
+        auto listCubeMeasureCatalogEntries(const ID& cube_id,
+                                           std::vector<CubeMeasureCatalogInfo>& rows_out,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto deleteCubeMeasureCatalogEntry(const ID& measure_id,
+                                           ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertCubeMaterializationCatalogEntry(const CubeMaterializationCatalogInfo& info,
+                                                   ErrorContext* ctx = nullptr) -> Status;
+        auto getCubeMaterializationCatalogEntry(const ID& materialization_id,
+                                                CubeMaterializationCatalogInfo& info_out,
+                                                ErrorContext* ctx = nullptr) -> Status;
+        auto listCubeMaterializationCatalogEntries(
+            const ID& cube_id,
+            std::vector<CubeMaterializationCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteCubeMaterializationCatalogEntry(const ID& materialization_id,
+                                                   ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertCubeRefreshPolicyCatalogEntry(const CubeRefreshPolicyCatalogInfo& info,
+                                                 ErrorContext* ctx = nullptr) -> Status;
+        auto getCubeRefreshPolicyCatalogEntry(const ID& policy_id,
+                                              CubeRefreshPolicyCatalogInfo& info_out,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto listCubeRefreshPolicyCatalogEntries(const ID& cube_id,
+                                                 std::vector<CubeRefreshPolicyCatalogInfo>& rows_out,
+                                                 ErrorContext* ctx = nullptr) -> Status;
+        auto deleteCubeRefreshPolicyCatalogEntry(const ID& policy_id,
+                                                 ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertCubeJobCatalogEntry(const CubeJobCatalogInfo& info,
+                                       ErrorContext* ctx = nullptr) -> Status;
+        auto getCubeJobCatalogEntry(const ID& job_id,
+                                    CubeJobCatalogInfo& info_out,
+                                    ErrorContext* ctx = nullptr) -> Status;
+        auto listCubeJobCatalogEntries(const ID& cube_id,
+                                       std::vector<CubeJobCatalogInfo>& rows_out,
+                                       ErrorContext* ctx = nullptr) -> Status;
+        auto deleteCubeJobCatalogEntry(const ID& job_id,
+                                       ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertCubeJobStepCatalogEntry(const CubeJobStepCatalogInfo& info,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto getCubeJobStepCatalogEntry(const ID& step_id,
+                                        CubeJobStepCatalogInfo& info_out,
+                                        ErrorContext* ctx = nullptr) -> Status;
+        auto listCubeJobStepCatalogEntries(const ID& job_id,
+                                           std::vector<CubeJobStepCatalogInfo>& rows_out,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto deleteCubeJobStepCatalogEntry(const ID& step_id,
+                                           ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertCubeStatsCatalogEntry(const CubeStatsCatalogInfo& info,
+                                         ErrorContext* ctx = nullptr) -> Status;
+        auto getCubeStatsCatalogEntry(const ID& cube_id,
+                                      CubeStatsCatalogInfo& info_out,
+                                      ErrorContext* ctx = nullptr) -> Status;
+        auto listCubeStatsCatalogEntries(std::vector<CubeStatsCatalogInfo>& rows_out,
+                                         ErrorContext* ctx = nullptr) -> Status;
+        auto deleteCubeStatsCatalogEntry(const ID& cube_id,
+                                         ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertTsParserCatalogEntry(const TsParserCatalogInfo& info,
+                                        ErrorContext* ctx = nullptr) -> Status;
+        auto getTsParserCatalogEntry(const ID& parser_id,
+                                     TsParserCatalogInfo& info_out,
+                                     ErrorContext* ctx = nullptr) -> Status;
+        auto listTsParserCatalogEntries(std::vector<TsParserCatalogInfo>& rows_out,
+                                        ErrorContext* ctx = nullptr) -> Status;
+        auto deleteTsParserCatalogEntry(const ID& parser_id,
+                                        ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertTsTemplateCatalogEntry(const TsTemplateCatalogInfo& info,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto getTsTemplateCatalogEntry(const ID& template_id,
+                                       TsTemplateCatalogInfo& info_out,
+                                       ErrorContext* ctx = nullptr) -> Status;
+        auto listTsTemplateCatalogEntries(std::vector<TsTemplateCatalogInfo>& rows_out,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto deleteTsTemplateCatalogEntry(const ID& template_id,
+                                          ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertTsDictionaryCatalogEntry(const TsDictionaryCatalogInfo& info,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto getTsDictionaryCatalogEntry(const ID& dictionary_id,
+                                         TsDictionaryCatalogInfo& info_out,
+                                         ErrorContext* ctx = nullptr) -> Status;
+        auto listTsDictionaryCatalogEntries(const ID& template_id,
+                                            std::vector<TsDictionaryCatalogInfo>& rows_out,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteTsDictionaryCatalogEntry(const ID& dictionary_id,
+                                            ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertTsConfigCatalogEntry(const TsConfigCatalogInfo& info,
+                                        ErrorContext* ctx = nullptr) -> Status;
+        auto getTsConfigCatalogEntry(const ID& config_id,
+                                     TsConfigCatalogInfo& info_out,
+                                     ErrorContext* ctx = nullptr) -> Status;
+        auto listTsConfigCatalogEntries(const ID& parser_id,
+                                        std::vector<TsConfigCatalogInfo>& rows_out,
+                                        ErrorContext* ctx = nullptr) -> Status;
+        auto deleteTsConfigCatalogEntry(const ID& config_id,
+                                        ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertTsConfigMapCatalogEntry(const TsConfigMapCatalogInfo& info,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto getTsConfigMapCatalogEntry(const ID& map_id,
+                                        TsConfigMapCatalogInfo& info_out,
+                                        ErrorContext* ctx = nullptr) -> Status;
+        auto listTsConfigMapCatalogEntries(const ID& config_id,
+                                           std::vector<TsConfigMapCatalogInfo>& rows_out,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto deleteTsConfigMapCatalogEntry(const ID& map_id,
+                                           ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertBlobFilterCatalogEntry(const BlobFilterCatalogInfo& info,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto getBlobFilterCatalogEntry(const ID& filter_id,
+                                       BlobFilterCatalogInfo& info_out,
+                                       ErrorContext* ctx = nullptr) -> Status;
+        auto listBlobFilterCatalogEntries(std::vector<BlobFilterCatalogInfo>& rows_out,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto deleteBlobFilterCatalogEntry(const ID& filter_id,
+                                          ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertTriggerMessageCatalogEntry(const TriggerMessageCatalogInfo& info,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto getTriggerMessageCatalogEntry(const ID& message_id,
+                                           TriggerMessageCatalogInfo& info_out,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto listTriggerMessageCatalogEntries(const ID& trigger_id,
+                                              std::vector<TriggerMessageCatalogInfo>& rows_out,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto deleteTriggerMessageCatalogEntry(const ID& message_id,
+                                              ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertColumnDropHistoryCatalogEntry(const ColumnDropHistoryCatalogInfo& info,
+                                                 ErrorContext* ctx = nullptr) -> Status;
+        auto getColumnDropHistoryCatalogEntry(const ID& history_id,
+                                              ColumnDropHistoryCatalogInfo& info_out,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto listColumnDropHistoryCatalogEntries(
+            const ID& table_id,
+            std::vector<ColumnDropHistoryCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteColumnDropHistoryCatalogEntry(const ID& history_id,
+                                                 ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertSblrModuleCatalogEntry(const SblrModuleCatalogInfo& info,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto getSblrModuleCatalogEntry(const ID& module_id,
+                                       SblrModuleCatalogInfo& info_out,
+                                       ErrorContext* ctx = nullptr) -> Status;
+        auto listSblrModuleCatalogEntries(std::vector<SblrModuleCatalogInfo>& rows_out,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto deleteSblrModuleCatalogEntry(const ID& module_id,
+                                          ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertSblrPlanCatalogEntry(const SblrPlanCatalogInfo& info,
+                                        ErrorContext* ctx = nullptr) -> Status;
+        auto getSblrPlanCatalogEntry(const ID& plan_id,
+                                     SblrPlanCatalogInfo& info_out,
+                                     ErrorContext* ctx = nullptr) -> Status;
+        auto listSblrPlanCatalogEntries(const ID& module_id,
+                                        std::vector<SblrPlanCatalogInfo>& rows_out,
+                                        ErrorContext* ctx = nullptr) -> Status;
+        auto deleteSblrPlanCatalogEntry(const ID& plan_id,
+                                        ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertSblrPlanDependencyCatalogEntry(const SblrPlanDependencyCatalogInfo& info,
+                                                  ErrorContext* ctx = nullptr) -> Status;
+        auto getSblrPlanDependencyCatalogEntry(const ID& plan_id,
+                                               const ID& object_id,
+                                               SblrPlanDependencyCatalogInfo& info_out,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto listSblrPlanDependencyCatalogEntries(
+            const ID& plan_id,
+            std::vector<SblrPlanDependencyCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteSblrPlanDependencyCatalogEntry(const ID& plan_id,
+                                                  const ID& object_id,
+                                                  ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertSblrStatementNormCatalogEntry(const SblrStatementNormCatalogInfo& info,
+                                                 ErrorContext* ctx = nullptr) -> Status;
+        auto getSblrStatementNormCatalogEntry(const ID& module_id,
+                                              const ID& statement_id,
+                                              SblrStatementNormCatalogInfo& info_out,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto listSblrStatementNormCatalogEntries(
+            const ID& module_id,
+            std::vector<SblrStatementNormCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteSblrStatementNormCatalogEntry(const ID& module_id,
+                                                 const ID& statement_id,
+                                                 ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertSblrArtifactCatalogEntry(const SblrArtifactCatalogInfo& info,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto getSblrArtifactCatalogEntry(const ID& artifact_id,
+                                         SblrArtifactCatalogInfo& info_out,
+                                         ErrorContext* ctx = nullptr) -> Status;
+        auto listSblrArtifactCatalogEntries(const ID& module_id,
+                                            std::vector<SblrArtifactCatalogInfo>& rows_out,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteSblrArtifactCatalogEntry(const ID& artifact_id,
+                                            ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertSblrArtifactStatsCatalogEntry(const SblrArtifactStatsCatalogInfo& info,
+                                                 ErrorContext* ctx = nullptr) -> Status;
+        auto getSblrArtifactStatsCatalogEntry(const ID& artifact_id,
+                                              SblrArtifactStatsCatalogInfo& info_out,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto listSblrArtifactStatsCatalogEntries(
+            std::vector<SblrArtifactStatsCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteSblrArtifactStatsCatalogEntry(const ID& artifact_id,
+                                                 ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertSblrCompilerTargetCatalogEntry(const SblrCompilerTargetCatalogInfo& info,
+                                                  ErrorContext* ctx = nullptr) -> Status;
+        auto getSblrCompilerTargetCatalogEntry(const std::string& target_name,
+                                               SblrCompilerTargetCatalogInfo& info_out,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto listSblrCompilerTargetCatalogEntries(
+            std::vector<SblrCompilerTargetCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteSblrCompilerTargetCatalogEntry(const std::string& target_name,
+                                                  ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertSblrCompileQueueCatalogEntry(const SblrCompileQueueCatalogInfo& info,
+                                                ErrorContext* ctx = nullptr) -> Status;
+        auto getSblrCompileQueueCatalogEntry(const ID& queue_id,
+                                             SblrCompileQueueCatalogInfo& info_out,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto listSblrCompileQueueCatalogEntries(
+            const ID& module_id,
+            std::vector<SblrCompileQueueCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteSblrCompileQueueCatalogEntry(const ID& queue_id,
+                                                ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertClusterCatalogEntry(const ClusterCatalogInfo& info,
+                                       ErrorContext* ctx = nullptr) -> Status;
+        auto getClusterCatalogEntry(const ID& cluster_id,
+                                    ClusterCatalogInfo& info_out,
+                                    ErrorContext* ctx = nullptr) -> Status;
+        auto listClusterCatalogEntries(std::vector<ClusterCatalogInfo>& rows_out,
+                                       ErrorContext* ctx = nullptr) -> Status;
+        auto deleteClusterCatalogEntry(const ID& cluster_id,
+                                       ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertShardPolicyCatalogEntry(const ShardPolicyCatalogInfo& info,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto getShardPolicyCatalogEntry(const ID& policy_id,
+                                        ShardPolicyCatalogInfo& info_out,
+                                        ErrorContext* ctx = nullptr) -> Status;
+        auto listShardPolicyCatalogEntries(std::vector<ShardPolicyCatalogInfo>& rows_out,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto deleteShardPolicyCatalogEntry(const ID& policy_id,
+                                           ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertShardPolicyParamCatalogEntry(const ShardPolicyParamCatalogInfo& info,
+                                                ErrorContext* ctx = nullptr) -> Status;
+        auto getShardPolicyParamCatalogEntry(const ID& policy_param_id,
+                                             ShardPolicyParamCatalogInfo& info_out,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto listShardPolicyParamCatalogEntries(
+            const ID& policy_id,
+            std::vector<ShardPolicyParamCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteShardPolicyParamCatalogEntry(const ID& policy_param_id,
+                                                ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertShardKeyCatalogEntry(const ShardKeyCatalogInfo& info,
+                                        ErrorContext* ctx = nullptr) -> Status;
+        auto getShardKeyCatalogEntry(const ID& shard_key_id,
+                                     ShardKeyCatalogInfo& info_out,
+                                     ErrorContext* ctx = nullptr) -> Status;
+        auto listShardKeyCatalogEntries(const ID& table_id,
+                                        std::vector<ShardKeyCatalogInfo>& rows_out,
+                                        ErrorContext* ctx = nullptr) -> Status;
+        auto deleteShardKeyCatalogEntry(const ID& shard_key_id,
+                                        ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertShardCatalogEntry(const ShardCatalogInfo& info,
+                                     ErrorContext* ctx = nullptr) -> Status;
+        auto getShardCatalogEntry(const ID& shard_id,
+                                  ShardCatalogInfo& info_out,
+                                  ErrorContext* ctx = nullptr) -> Status;
+        auto listShardCatalogEntries(const ID& cluster_id,
+                                     std::vector<ShardCatalogInfo>& rows_out,
+                                     ErrorContext* ctx = nullptr) -> Status;
+        auto deleteShardCatalogEntry(const ID& shard_id,
+                                     ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertShardScopeCatalogEntry(const ShardScopeCatalogInfo& info,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto getShardScopeCatalogEntry(const ID& scope_id,
+                                       ShardScopeCatalogInfo& info_out,
+                                       ErrorContext* ctx = nullptr) -> Status;
+        auto listShardScopeCatalogEntries(const ID& shard_id,
+                                          std::vector<ShardScopeCatalogInfo>& rows_out,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto deleteShardScopeCatalogEntry(const ID& scope_id,
+                                          ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertShardRangeCatalogEntry(const ShardRangeCatalogInfo& info,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto getShardRangeCatalogEntry(const ID& range_id,
+                                       ShardRangeCatalogInfo& info_out,
+                                       ErrorContext* ctx = nullptr) -> Status;
+        auto listShardRangeCatalogEntries(const ID& shard_id,
+                                          std::vector<ShardRangeCatalogInfo>& rows_out,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto deleteShardRangeCatalogEntry(const ID& range_id,
+                                          ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertShardReplicaCatalogEntry(const ShardReplicaCatalogInfo& info,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto getShardReplicaCatalogEntry(const ID& replica_id,
+                                         ShardReplicaCatalogInfo& info_out,
+                                         ErrorContext* ctx = nullptr) -> Status;
+        auto listShardReplicaCatalogEntries(const ID& shard_id,
+                                            std::vector<ShardReplicaCatalogInfo>& rows_out,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteShardReplicaCatalogEntry(const ID& replica_id,
+                                            ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertShardMigrationCatalogEntry(const ShardMigrationCatalogInfo& info,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto getShardMigrationCatalogEntry(const ID& migration_id,
+                                           ShardMigrationCatalogInfo& info_out,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto listShardMigrationCatalogEntries(const ID& shard_id,
+                                              std::vector<ShardMigrationCatalogInfo>& rows_out,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto deleteShardMigrationCatalogEntry(const ID& migration_id,
+                                              ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertShardZoneCatalogEntry(const ShardZoneCatalogInfo& info,
+                                         ErrorContext* ctx = nullptr) -> Status;
+        auto getShardZoneCatalogEntry(const ID& zone_id,
+                                      ShardZoneCatalogInfo& info_out,
+                                      ErrorContext* ctx = nullptr) -> Status;
+        auto listShardZoneCatalogEntries(std::vector<ShardZoneCatalogInfo>& rows_out,
+                                         ErrorContext* ctx = nullptr) -> Status;
+        auto deleteShardZoneCatalogEntry(const ID& zone_id,
+                                         ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertShardZoneRangeCatalogEntry(const ShardZoneRangeCatalogInfo& info,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto getShardZoneRangeCatalogEntry(const ID& zone_range_id,
+                                           ShardZoneRangeCatalogInfo& info_out,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto listShardZoneRangeCatalogEntries(const ID& zone_id,
+                                              std::vector<ShardZoneRangeCatalogInfo>& rows_out,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto deleteShardZoneRangeCatalogEntry(const ID& zone_range_id,
+                                              ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertEncryptionProfileCatalogEntry(const EncryptionProfileCatalogInfo& info,
+                                                 ErrorContext* ctx = nullptr) -> Status;
+        auto getEncryptionProfileCatalogEntry(const ID& profile_id,
+                                              EncryptionProfileCatalogInfo& info_out,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto listEncryptionProfileCatalogEntries(
+            std::vector<EncryptionProfileCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteEncryptionProfileCatalogEntry(const ID& profile_id,
+                                                 ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertEncryptionKeyCatalogEntry(const EncryptionKeyCatalogInfo& info,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto getEncryptionKeyCatalogEntry(const ID& key_id,
+                                          EncryptionKeyCatalogInfo& info_out,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto listEncryptionKeyCatalogEntries(const ID& profile_id,
+                                             std::vector<EncryptionKeyCatalogInfo>& rows_out,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto deleteEncryptionKeyCatalogEntry(const ID& key_id,
+                                             ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertEncryptionKeyShardCatalogEntry(const EncryptionKeyShardCatalogInfo& info,
+                                                  ErrorContext* ctx = nullptr) -> Status;
+        auto getEncryptionKeyShardCatalogEntry(const ID& shard_id,
+                                               EncryptionKeyShardCatalogInfo& info_out,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto listEncryptionKeyShardCatalogEntries(
+            const ID& key_id,
+            std::vector<EncryptionKeyShardCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteEncryptionKeyShardCatalogEntry(const ID& shard_id,
+                                                  ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertEncryptionBootstrapInfoCatalogEntry(
+            const EncryptionBootstrapInfoCatalogInfo& info,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto getEncryptionBootstrapInfoCatalogEntry(
+            const ID& database_id,
+            EncryptionBootstrapInfoCatalogInfo& info_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto listEncryptionBootstrapInfoCatalogEntries(
+            std::vector<EncryptionBootstrapInfoCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteEncryptionBootstrapInfoCatalogEntry(const ID& database_id,
+                                                       ErrorContext* ctx = nullptr) -> Status;
 
         // ========================================================================
         // UDR Operations (Phase A CRUD - Catalog Cleanup)
@@ -3964,9 +10357,752 @@ public:
 
         // Plan 03B: Domains catalog page
         auto ensureDomainsTablePage(ErrorContext* ctx = nullptr) -> Status;
+        auto databaseTablePage() const -> uint32_t
+        {
+            return database_table_page_;
+        }
+        auto objectTablePage() const -> uint32_t
+        {
+            return object_table_page_;
+        }
+        auto objectNameTablePage() const -> uint32_t
+        {
+            return object_name_table_page_;
+        }
         auto domainsTablePage() const -> uint32_t
         {
             return domains_table_page_;
+        }
+        auto typeTablePage() const -> uint32_t
+        {
+            return type_table_page_;
+        }
+        auto typeModifiersTablePage() const -> uint32_t
+        {
+            return type_modifiers_table_page_;
+        }
+        auto typeIoTablePage() const -> uint32_t
+        {
+            return type_io_table_page_;
+        }
+        auto typeCastsTablePage() const -> uint32_t
+        {
+            return type_casts_table_page_;
+        }
+        auto typeTransformsTablePage() const -> uint32_t
+        {
+            return type_transforms_table_page_;
+        }
+        auto encodingConversionsTablePage() const -> uint32_t
+        {
+            return encoding_conversions_table_page_;
+        }
+        auto domainParamKeysTablePage() const -> uint32_t
+        {
+            return domain_param_keys_table_page_;
+        }
+        auto domainParametersTablePage() const -> uint32_t
+        {
+            return domain_parameters_table_page_;
+        }
+        auto domainConstraintsTablePage() const -> uint32_t
+        {
+            return domain_constraints_table_page_;
+        }
+        auto domainSecurityTablePage() const -> uint32_t
+        {
+            return domain_security_table_page_;
+        }
+        auto domainValidationTablePage() const -> uint32_t
+        {
+            return domain_validation_table_page_;
+        }
+        auto domainIntegrityTablePage() const -> uint32_t
+        {
+            return domain_integrity_table_page_;
+        }
+        auto charsetAliasesTablePage() const -> uint32_t
+        {
+            return charset_aliases_table_page_;
+        }
+        auto collationTailoringTablePage() const -> uint32_t
+        {
+            return collation_tailoring_table_page_;
+        }
+        auto resourceBundlesTablePage() const -> uint32_t
+        {
+            return resource_bundles_table_page_;
+        }
+        auto resourceArtifactsTablePage() const -> uint32_t
+        {
+            return resource_artifacts_table_page_;
+        }
+        auto timezoneTransitionsTablePage() const -> uint32_t
+        {
+            return timezone_transitions_table_page_;
+        }
+        auto timezoneLeapSecondsTablePage() const -> uint32_t
+        {
+            return timezone_leap_seconds_table_page_;
+        }
+        auto reservedWordsTablePage() const -> uint32_t
+        {
+            return reserved_words_table_page_;
+        }
+        auto emulationProfileTablePage() const -> uint32_t
+        {
+            return emulation_profile_table_page_;
+        }
+        auto parserProfilesTablePage() const -> uint32_t
+        {
+            return parser_profiles_table_page_;
+        }
+        auto parserCapabilityEntriesTablePage() const -> uint32_t
+        {
+            return parser_capability_entries_table_page_;
+        }
+        auto parserTransformEntriesTablePage() const -> uint32_t
+        {
+            return parser_transform_entries_table_page_;
+        }
+        auto parserErrorMapEntriesTablePage() const -> uint32_t
+        {
+            return parser_error_map_entries_table_page_;
+        }
+        auto parserFeaturePrecedenceTablePage() const -> uint32_t
+        {
+            return parser_feature_precedence_table_page_;
+        }
+        auto partitionedTablesTablePage() const -> uint32_t
+        {
+            return partitioned_tables_table_page_;
+        }
+        auto partitionsTablePage() const -> uint32_t
+        {
+            return partitions_table_page_;
+        }
+        auto tableInheritanceTablePage() const -> uint32_t
+        {
+            return table_inheritance_table_page_;
+        }
+        auto languagesTablePage() const -> uint32_t
+        {
+            return languages_table_page_;
+        }
+        auto eventsTablePage() const -> uint32_t
+        {
+            return events_table_page_;
+        }
+        auto packageMembersTablePage() const -> uint32_t
+        {
+            return package_members_table_page_;
+        }
+        auto indexColumnsTablePage() const -> uint32_t
+        {
+            return index_columns_table_page_;
+        }
+        auto indexOpclassTablePage() const -> uint32_t
+        {
+            return index_opclass_table_page_;
+        }
+        auto indexOpclassFunctionTablePage() const -> uint32_t
+        {
+            return index_opclass_fn_table_page_;
+        }
+        auto indexOptionsTablePage() const -> uint32_t
+        {
+            return index_options_table_page_;
+        }
+        auto indexAccessMethodsTablePage() const -> uint32_t
+        {
+            return index_access_methods_table_page_;
+        }
+        auto indexMaintenanceTablePage() const -> uint32_t
+        {
+            return index_maintenance_table_page_;
+        }
+        auto indexMaintenanceDeltasTablePage() const -> uint32_t
+        {
+            return index_maintenance_deltas_table_page_;
+        }
+        auto indexBuildDeltasTablePage() const -> uint32_t
+        {
+            return index_build_deltas_table_page_;
+        }
+        auto indexStatsTablePage() const -> uint32_t
+        {
+            return index_stats_table_page_;
+        }
+        auto indexUsageTablePage() const -> uint32_t
+        {
+            return index_usage_table_page_;
+        }
+        auto indexContentionTablePage() const -> uint32_t
+        {
+            return index_contention_table_page_;
+        }
+        auto indexStorageTablePage() const -> uint32_t
+        {
+            return index_storage_table_page_;
+        }
+        auto indexHealthTablePage() const -> uint32_t
+        {
+            return index_health_table_page_;
+        }
+
+        auto filespaceStatsTablePage() const -> uint32_t
+        {
+            return filespace_stats_table_page_;
+        }
+
+        auto lobTablePage() const -> uint32_t
+        {
+            return lob_table_page_;
+        }
+
+        auto lobPageTablePage() const -> uint32_t
+        {
+            return lob_page_table_page_;
+        }
+
+        auto backupHistoryTablePage() const -> uint32_t
+        {
+            return backup_history_table_page_;
+        }
+
+        auto connectionTablePage() const -> uint32_t
+        {
+            return connection_table_page_;
+        }
+
+        auto transactionTablePage() const -> uint32_t
+        {
+            return transaction_table_page_;
+        }
+
+        auto authMappingTablePage() const -> uint32_t
+        {
+            return auth_mapping_table_page_;
+        }
+        auto roleSettingTablePage() const -> uint32_t
+        {
+            return role_setting_table_page_;
+        }
+        auto securityLabelTablePage() const -> uint32_t
+        {
+            return security_label_table_page_;
+        }
+        auto securityClassTablePage() const -> uint32_t
+        {
+            return security_class_table_page_;
+        }
+        auto certRegistryTablePage() const -> uint32_t
+        {
+            return cert_registry_table_page_;
+        }
+        auto privateKeyStoreTablePage() const -> uint32_t
+        {
+            return private_key_store_table_page_;
+        }
+        auto trustAnchorTablePage() const -> uint32_t
+        {
+            return trust_anchor_table_page_;
+        }
+        auto channelCertBindingTablePage() const -> uint32_t
+        {
+            return channel_cert_binding_table_page_;
+        }
+        auto certRevocationTablePage() const -> uint32_t
+        {
+            return cert_revocation_table_page_;
+        }
+        auto pkiDistributionStateTablePage() const -> uint32_t
+        {
+            return pki_distribution_state_table_page_;
+        }
+        auto trustAnchorRolloverTablePage() const -> uint32_t
+        {
+            return trust_anchor_rollover_table_page_;
+        }
+        auto encryptionProfileTablePage() const -> uint32_t
+        {
+            return encryption_profile_table_page_;
+        }
+        auto encryptionKeyTablePage() const -> uint32_t
+        {
+            return encryption_key_table_page_;
+        }
+        auto encryptionKeyShardTablePage() const -> uint32_t
+        {
+            return encryption_key_shard_table_page_;
+        }
+        auto encryptionBootstrapInfoTablePage() const -> uint32_t
+        {
+            return encryption_bootstrap_info_table_page_;
+        }
+        auto nodeTablePage() const -> uint32_t
+        {
+            return node_table_page_;
+        }
+        auto nodeRoleBindingTablePage() const -> uint32_t
+        {
+            return node_role_binding_table_page_;
+        }
+        auto nodeServiceTablePage() const -> uint32_t
+        {
+            return node_service_table_page_;
+        }
+        auto nodeCapabilityTablePage() const -> uint32_t
+        {
+            return node_capability_table_page_;
+        }
+        auto clockPolicyTablePage() const -> uint32_t
+        {
+            return clock_policy_table_page_;
+        }
+        auto clockSourceTablePage() const -> uint32_t
+        {
+            return clock_source_table_page_;
+        }
+        auto nodeClockStateTablePage() const -> uint32_t
+        {
+            return node_clock_state_table_page_;
+        }
+        auto clockViolationEventTablePage() const -> uint32_t
+        {
+            return clock_violation_event_table_page_;
+        }
+        auto clusterTablePage() const -> uint32_t
+        {
+            return cluster_table_page_;
+        }
+        auto shardPolicyTablePage() const -> uint32_t
+        {
+            return shard_policy_table_page_;
+        }
+        auto shardPolicyParamTablePage() const -> uint32_t
+        {
+            return shard_policy_param_table_page_;
+        }
+        auto shardKeyTablePage() const -> uint32_t
+        {
+            return shard_key_table_page_;
+        }
+        auto shardTablePage() const -> uint32_t
+        {
+            return shard_table_page_;
+        }
+        auto shardScopeTablePage() const -> uint32_t
+        {
+            return shard_scope_table_page_;
+        }
+        auto shardRangeTablePage() const -> uint32_t
+        {
+            return shard_range_table_page_;
+        }
+        auto shardReplicaTablePage() const -> uint32_t
+        {
+            return shard_replica_table_page_;
+        }
+        auto shardMigrationTablePage() const -> uint32_t
+        {
+            return shard_migration_table_page_;
+        }
+        auto shardZoneTablePage() const -> uint32_t
+        {
+            return shard_zone_table_page_;
+        }
+        auto shardZoneRangeTablePage() const -> uint32_t
+        {
+            return shard_zone_range_table_page_;
+        }
+        auto workloadClassTablePage() const -> uint32_t
+        {
+            return workload_class_table_page_;
+        }
+        auto workloadRouteTablePage() const -> uint32_t
+        {
+            return workload_route_table_page_;
+        }
+        auto admissionPolicyTablePage() const -> uint32_t
+        {
+            return admission_policy_table_page_;
+        }
+        auto admissionBindingTablePage() const -> uint32_t
+        {
+            return admission_binding_table_page_;
+        }
+        auto sloProfileTablePage() const -> uint32_t
+        {
+            return slo_profile_table_page_;
+        }
+        auto sloBindingTablePage() const -> uint32_t
+        {
+            return slo_binding_table_page_;
+        }
+        auto sloWindowTablePage() const -> uint32_t
+        {
+            return slo_window_table_page_;
+        }
+        auto sloBurnEventTablePage() const -> uint32_t
+        {
+            return slo_burn_event_table_page_;
+        }
+        auto autoscalePolicyTablePage() const -> uint32_t
+        {
+            return autoscale_policy_table_page_;
+        }
+        auto autoscaleActionTablePage() const -> uint32_t
+        {
+            return autoscale_action_table_page_;
+        }
+        auto admissionTuningEventTablePage() const -> uint32_t
+        {
+            return admission_tuning_event_table_page_;
+        }
+        auto clusterPolicyTablePage() const -> uint32_t
+        {
+            return cluster_policy_table_page_;
+        }
+        auto failureDetectorTablePage() const -> uint32_t
+        {
+            return failure_detector_table_page_;
+        }
+        auto alertRuleTablePage() const -> uint32_t
+        {
+            return alert_rule_table_page_;
+        }
+        auto alertTargetTablePage() const -> uint32_t
+        {
+            return alert_target_table_page_;
+        }
+        auto alertRouteTablePage() const -> uint32_t
+        {
+            return alert_route_table_page_;
+        }
+        auto alertEventTablePage() const -> uint32_t
+        {
+            return alert_event_table_page_;
+        }
+        auto alertAckTablePage() const -> uint32_t
+        {
+            return alert_ack_table_page_;
+        }
+        auto alertSilenceTablePage() const -> uint32_t
+        {
+            return alert_silence_table_page_;
+        }
+        auto networkPartitionEventTablePage() const -> uint32_t
+        {
+            return network_partition_event_table_page_;
+        }
+        auto networkPartitionMemberTablePage() const -> uint32_t
+        {
+            return network_partition_member_table_page_;
+        }
+        auto healingPolicyTablePage() const -> uint32_t
+        {
+            return healing_policy_table_page_;
+        }
+        auto healingActionTablePage() const -> uint32_t
+        {
+            return healing_action_table_page_;
+        }
+        auto healingActionParamTablePage() const -> uint32_t
+        {
+            return healing_action_param_table_page_;
+        }
+        auto healingRunTablePage() const -> uint32_t
+        {
+            return healing_run_table_page_;
+        }
+        auto healingStepTablePage() const -> uint32_t
+        {
+            return healing_step_table_page_;
+        }
+        auto jobTypeTablePage() const -> uint32_t
+        {
+            return job_type_table_page_;
+        }
+        auto jobTypeParamTablePage() const -> uint32_t
+        {
+            return job_type_param_table_page_;
+        }
+        auto jobParamTablePage() const -> uint32_t
+        {
+            return job_param_table_page_;
+        }
+        auto jobScheduleTablePage() const -> uint32_t
+        {
+            return job_schedule_table_page_;
+        }
+        auto jobTypePolicyTablePage() const -> uint32_t
+        {
+            return job_type_policy_table_page_;
+        }
+        auto remoteConnectorTablePage() const -> uint32_t
+        {
+            return remote_connector_table_page_;
+        }
+        auto remoteConnectorCapabilityTablePage() const -> uint32_t
+        {
+            return remote_connector_capability_table_page_;
+        }
+        auto remoteMetadataSnapshotTablePage() const -> uint32_t
+        {
+            return remote_metadata_snapshot_table_page_;
+        }
+        auto remoteMetadataObjectTablePage() const -> uint32_t
+        {
+            return remote_metadata_object_table_page_;
+        }
+        auto remoteMetadataColumnTablePage() const -> uint32_t
+        {
+            return remote_metadata_column_table_page_;
+        }
+        auto remoteSchemaMappingTablePage() const -> uint32_t
+        {
+            return remote_schema_mapping_table_page_;
+        }
+        auto remotePassthroughPolicyTablePage() const -> uint32_t
+        {
+            return remote_passthrough_policy_table_page_;
+        }
+        auto remotePreparedStatementTablePage() const -> uint32_t
+        {
+            return remote_prepared_statement_table_page_;
+        }
+        auto remoteTxnBindingTablePage() const -> uint32_t
+        {
+            return remote_txn_binding_table_page_;
+        }
+        auto remoteExecutionAuditTablePage() const -> uint32_t
+        {
+            return remote_execution_audit_table_page_;
+        }
+        auto remoteErrorTablePage() const -> uint32_t
+        {
+            return remote_error_table_page_;
+        }
+        auto extensionTablePage() const -> uint32_t
+        {
+            return extensions_table_page_;
+        }
+        auto publicationTablePage() const -> uint32_t
+        {
+            return publication_table_page_;
+        }
+        auto publicationTableLinkTablePage() const -> uint32_t
+        {
+            return publication_table_link_table_page_;
+        }
+        auto publicationSchemaTablePage() const -> uint32_t
+        {
+            return publication_schema_table_page_;
+        }
+        auto subscriptionTablePage() const -> uint32_t
+        {
+            return subscription_table_page_;
+        }
+        auto subscriptionTableLinkTablePage() const -> uint32_t
+        {
+            return subscription_table_link_table_page_;
+        }
+        auto clusterFabricLinkTablePage() const -> uint32_t
+        {
+            return cluster_fabric_link_table_page_;
+        }
+        auto clusterFabricSessionTablePage() const -> uint32_t
+        {
+            return cluster_fabric_session_table_page_;
+        }
+        auto clusterFabricTxnTablePage() const -> uint32_t
+        {
+            return cluster_fabric_txn_table_page_;
+        }
+        auto clusterFabricTaskTablePage() const -> uint32_t
+        {
+            return cluster_fabric_task_table_page_;
+        }
+        auto clusterFabricTaskChunkTablePage() const -> uint32_t
+        {
+            return cluster_fabric_task_chunk_table_page_;
+        }
+        auto clusterFabricEventTablePage() const -> uint32_t
+        {
+            return cluster_fabric_event_table_page_;
+        }
+        auto clusterFabricErrorTablePage() const -> uint32_t
+        {
+            return cluster_fabric_error_table_page_;
+        }
+        auto olapWatermarkTablePage() const -> uint32_t
+        {
+            return olap_watermark_table_page_;
+        }
+        auto olapPartitionTablePage() const -> uint32_t
+        {
+            return olap_partition_table_page_;
+        }
+        auto olapSegmentTablePage() const -> uint32_t
+        {
+            return olap_segment_table_page_;
+        }
+        auto olapIngestLogTablePage() const -> uint32_t
+        {
+            return olap_ingest_log_table_page_;
+        }
+        auto cubeTablePage() const -> uint32_t
+        {
+            return cube_table_page_;
+        }
+        auto cubeDimensionTablePage() const -> uint32_t
+        {
+            return cube_dimension_table_page_;
+        }
+        auto cubeLevelTablePage() const -> uint32_t
+        {
+            return cube_level_table_page_;
+        }
+        auto cubeHierarchyTablePage() const -> uint32_t
+        {
+            return cube_hierarchy_table_page_;
+        }
+        auto cubeHierarchyLevelTablePage() const -> uint32_t
+        {
+            return cube_hierarchy_level_table_page_;
+        }
+        auto cubeMeasureTablePage() const -> uint32_t
+        {
+            return cube_measure_table_page_;
+        }
+        auto cubeMaterializationTablePage() const -> uint32_t
+        {
+            return cube_materialization_table_page_;
+        }
+        auto cubeRefreshPolicyTablePage() const -> uint32_t
+        {
+            return cube_refresh_policy_table_page_;
+        }
+        auto cubeJobTablePage() const -> uint32_t
+        {
+            return cube_job_table_page_;
+        }
+        auto cubeJobStepTablePage() const -> uint32_t
+        {
+            return cube_job_step_table_page_;
+        }
+        auto cubeStatsTablePage() const -> uint32_t
+        {
+            return cube_stats_table_page_;
+        }
+        auto tsParserTablePage() const -> uint32_t
+        {
+            return ts_parser_table_page_;
+        }
+        auto tsTemplateTablePage() const -> uint32_t
+        {
+            return ts_template_table_page_;
+        }
+        auto tsDictionaryTablePage() const -> uint32_t
+        {
+            return ts_dictionary_table_page_;
+        }
+        auto tsConfigTablePage() const -> uint32_t
+        {
+            return ts_config_table_page_;
+        }
+        auto tsConfigMapTablePage() const -> uint32_t
+        {
+            return ts_config_map_table_page_;
+        }
+        auto blobFilterTablePage() const -> uint32_t
+        {
+            return blob_filter_table_page_;
+        }
+        auto triggerMessageTablePage() const -> uint32_t
+        {
+            return trigger_message_table_page_;
+        }
+        auto columnDropHistoryTablePage() const -> uint32_t
+        {
+            return column_drop_history_table_page_;
+        }
+        auto sblrModuleTablePage() const -> uint32_t
+        {
+            return sblr_module_table_page_;
+        }
+        auto sblrPlanTablePage() const -> uint32_t
+        {
+            return sblr_plan_table_page_;
+        }
+        auto sblrPlanDependencyTablePage() const -> uint32_t
+        {
+            return sblr_plan_dependency_table_page_;
+        }
+        auto sblrStatementNormTablePage() const -> uint32_t
+        {
+            return sblr_statement_norm_table_page_;
+        }
+        auto sblrArtifactTablePage() const -> uint32_t
+        {
+            return sblr_artifact_table_page_;
+        }
+        auto sblrArtifactStatsTablePage() const -> uint32_t
+        {
+            return sblr_artifact_stats_table_page_;
+        }
+        auto sblrCompilerTargetTablePage() const -> uint32_t
+        {
+            return sblr_compiler_target_table_page_;
+        }
+        auto sblrCompileQueueTablePage() const -> uint32_t
+        {
+            return sblr_compile_queue_table_page_;
+        }
+        auto replicationChannelTablePage() const -> uint32_t
+        {
+            return replication_channel_table_page_;
+        }
+        auto replicationChannelMemberTablePage() const -> uint32_t
+        {
+            return replication_channel_member_table_page_;
+        }
+        auto replicationOriginTablePage() const -> uint32_t
+        {
+            return replication_origin_table_page_;
+        }
+        auto replicationCursorTablePage() const -> uint32_t
+        {
+            return replication_cursor_table_page_;
+        }
+        auto replicationOriginProgressTablePage() const -> uint32_t
+        {
+            return replication_origin_progress_table_page_;
+        }
+        auto replicationTxnBatchTablePage() const -> uint32_t
+        {
+            return replication_txn_batch_table_page_;
+        }
+        auto replicationApplyLogTablePage() const -> uint32_t
+        {
+            return replication_apply_log_table_page_;
+        }
+        auto replicationRetryQueueTablePage() const -> uint32_t
+        {
+            return replication_retry_queue_table_page_;
+        }
+        auto replicationConflictTablePage() const -> uint32_t
+        {
+            return replication_conflict_table_page_;
+        }
+        auto replicationSplitBrainEventTablePage() const -> uint32_t
+        {
+            return replication_split_brain_event_table_page_;
+        }
+        auto replicationErrorTablePage() const -> uint32_t
+        {
+            return replication_error_table_page_;
         }
 
         // Plan 03B: Encryption key catalog table
@@ -4004,6 +11140,22 @@ public:
                                        std::vector<ColumnInfo>& columns,
                                        ErrorContext* ctx) -> Status;
         auto enforceSystemDomainBindings(ErrorContext* ctx) -> Status;
+        auto ensureHomeSearchPathCatalogTables(ErrorContext* ctx) -> Status;
+        auto resolveSessionHomeSchema(const UserInfo& user,
+                                      const std::vector<ID>& effective_roles,
+                                      const std::vector<ID>& effective_groups,
+                                      const std::string& emulation_mode,
+                                      ID& home_schema_id_out,
+                                      ErrorContext* ctx) -> Status;
+        auto resolveSessionSearchPath(const ID& user_id,
+                                      const std::vector<ID>& effective_roles,
+                                      const std::vector<ID>& effective_groups,
+                                      const std::string& emulation_mode,
+                                      const ID& home_schema_id,
+                                      ID& profile_id_out,
+                                      std::vector<ID>& schema_ids_out,
+                                      std::vector<std::string>& schema_paths_out,
+                                      ErrorContext* ctx) -> Status;
         auto updateColumnDomainBindings(const ID& table_id,
                                         const std::vector<ColumnInfo>& columns,
                                         ErrorContext* ctx) -> Status;
@@ -4292,8 +11444,8 @@ public:
         auto rollbackPageMigration(const std::unordered_map<GPID, GPID> &page_mapping,
                                     ErrorContext *ctx = nullptr) -> Status;
 
-        // Catalog page layout - use higher page numbers (page 1 reserved for FSM).
-        static constexpr uint32_t CATALOG_ROOT_PAGE = 3;
+        // Canonical bootstrap map places catalog root on fixed page 2.
+        static constexpr uint32_t CATALOG_ROOT_PAGE = BOOTSTRAP_PAGE_CATALOG_ROOT;
         static constexpr uint32_t SCHEMAS_TABLE_PAGE = 4;
         static constexpr uint32_t TABLES_TABLE_PAGE = 5;
         static constexpr uint32_t COLUMNS_TABLE_PAGE = 6;
@@ -4337,7 +11489,8 @@ public:
         
         // Trigger storage (Phase 2 Wave 2 - Agent C)
         std::unordered_map<ID, TriggerInfo> trigger_cache_;  // keyed by trigger_id
-        std::unordered_map<std::string, ID> trigger_name_to_id_;  // name -> ID lookup
+        std::unordered_map<std::pair<ID, std::string>, ID, PairHash<ID, std::string>>
+            trigger_name_to_id_;  // (table_id, normalized_name) -> trigger_id
         std::unordered_multimap<ID, ID> table_triggers_;  // table_id -> trigger_id (multiple per table)
         mutable std::mutex trigger_mutex_;  // Separate mutex for trigger operations
 
@@ -4366,6 +11519,9 @@ public:
         uint32_t table_count_ = 0;
 
         // Actual page numbers (may differ from constants during init)
+        uint32_t database_table_page_ = 0;      // Canonical core catalog: database
+        uint32_t object_table_page_ = 0;        // Canonical core catalog: object
+        uint32_t object_name_table_page_ = 0;   // Canonical core catalog: object_name
         uint32_t schemas_table_page_ = SCHEMAS_TABLE_PAGE;
         uint32_t tables_table_page_ = TABLES_TABLE_PAGE;
         uint32_t columns_table_page_ = COLUMNS_TABLE_PAGE;
@@ -4406,6 +11562,186 @@ public:
         uint32_t procedures_table_page_ = 0;        // Stored procedures/functions (Phase 3)
         uint32_t procedure_params_table_page_ = 0;  // Procedure parameters (Phase 3)
         uint32_t domains_table_page_ = 0;           // User-defined domains (Phase 3)
+        uint32_t type_table_page_ = 0;              // Canonical type metadata (CAT-010)
+        uint32_t type_modifiers_table_page_ = 0;    // Type modifiers (CAT-010)
+        uint32_t type_io_table_page_ = 0;           // Type IO handlers (CAT-010)
+        uint32_t type_casts_table_page_ = 0;        // Type casts (CAT-010)
+        uint32_t type_transforms_table_page_ = 0;   // Type transforms (CAT-010)
+        uint32_t encoding_conversions_table_page_ = 0; // Charset conversions (CAT-010)
+        uint32_t domain_param_keys_table_page_ = 0; // Domain parameter key registry (CAT-011)
+        uint32_t domain_parameters_table_page_ = 0; // Domain typed parameters (CAT-011)
+        uint32_t domain_constraints_table_page_ = 0; // Domain constraints (CAT-011)
+        uint32_t domain_security_table_page_ = 0;   // Domain security rules (CAT-011)
+        uint32_t domain_validation_table_page_ = 0; // Domain validation rules (CAT-011)
+        uint32_t domain_integrity_table_page_ = 0;  // Domain integrity rules (CAT-011)
+        uint32_t charset_aliases_table_page_ = 0;   // Charset alias registry (CAT-012)
+        uint32_t collation_tailoring_table_page_ = 0; // Collation tailoring registry (CAT-012)
+        uint32_t resource_bundles_table_page_ = 0;  // Resource bundle registry (CAT-013)
+        uint32_t resource_artifacts_table_page_ = 0; // Resource artifact blobs (CAT-013)
+        uint32_t timezone_transitions_table_page_ = 0; // Timezone transitions (CAT-013)
+        uint32_t timezone_leap_seconds_table_page_ = 0; // Timezone leap seconds (CAT-013)
+        uint32_t reserved_words_table_page_ = 0;    // Reserved words catalog (CAT-014)
+        uint32_t emulation_profile_table_page_ = 0; // Emulation profile catalog (CAT-014)
+        uint32_t parser_profiles_table_page_ = 0;   // Parser profile catalog (CAT-014)
+        uint32_t parser_capability_entries_table_page_ = 0; // Parser capability catalog (CAT-014)
+        uint32_t parser_transform_entries_table_page_ = 0; // Parser transform catalog (CAT-014)
+        uint32_t parser_error_map_entries_table_page_ = 0; // Parser error map catalog (CAT-014)
+        uint32_t parser_feature_precedence_table_page_ = 0; // Parser precedence catalog (CAT-014)
+        uint32_t partitioned_tables_table_page_ = 0; // Partitioned table catalog (CAT-015)
+        uint32_t partitions_table_page_ = 0;      // Partition catalog (CAT-015)
+        uint32_t table_inheritance_table_page_ = 0; // Table inheritance catalog (CAT-015)
+        uint32_t languages_table_page_ = 0;       // Language catalog (CAT-015)
+        uint32_t events_table_page_ = 0;          // Event catalog (CAT-015)
+        uint32_t package_members_table_page_ = 0; // Package member catalog (CAT-015)
+        uint32_t index_columns_table_page_ = 0;   // Index column catalog (CAT-016)
+        uint32_t index_opclass_table_page_ = 0;   // Index opclass catalog (CAT-016)
+        uint32_t index_opclass_fn_table_page_ = 0; // Index opclass function catalog (CAT-016)
+        uint32_t index_options_table_page_ = 0;   // Index option catalog (CAT-016)
+        uint32_t index_access_methods_table_page_ = 0; // Index access method catalog (CAT-016)
+        uint32_t index_maintenance_table_page_ = 0; // Index maintenance catalog (CAT-016)
+        uint32_t index_maintenance_deltas_table_page_ = 0; // Index maintenance delta catalog (CAT-016)
+        uint32_t index_build_deltas_table_page_ = 0; // Index build delta catalog (CAT-016)
+        uint32_t index_stats_table_page_ = 0; // Index statistics catalog (CAT-017)
+        uint32_t index_usage_table_page_ = 0; // Index usage telemetry catalog (CAT-017)
+        uint32_t index_contention_table_page_ = 0; // Index contention telemetry catalog (CAT-017)
+        uint32_t index_storage_table_page_ = 0; // Index storage telemetry catalog (CAT-017)
+        uint32_t index_health_table_page_ = 0; // Index health telemetry catalog (CAT-017)
+        uint32_t filespace_stats_table_page_ = 0; // Filespace usage/IO telemetry catalog (CAT-018)
+        uint32_t lob_table_page_ = 0; // Large object metadata catalog (CAT-018)
+        uint32_t lob_page_table_page_ = 0; // Large object page map catalog (CAT-018)
+        uint32_t backup_history_table_page_ = 0; // Backup history catalog (CAT-018)
+        uint32_t connection_table_page_ = 0; // Runtime connection attribution catalog (CAT-019)
+        uint32_t transaction_table_page_ = 0; // Runtime transaction attribution catalog (CAT-019)
+        uint32_t auth_mapping_table_page_ = 0; // Auth mapping catalog (CAT-020)
+        uint32_t role_setting_table_page_ = 0; // Role setting catalog (CAT-020)
+        uint32_t security_label_table_page_ = 0; // Security label catalog (CAT-020)
+        uint32_t security_class_table_page_ = 0; // Security class catalog (CAT-020)
+        uint32_t cert_registry_table_page_ = 0; // PKI cert registry catalog (CAT-020)
+        uint32_t private_key_store_table_page_ = 0; // PKI private key store catalog (CAT-020)
+        uint32_t trust_anchor_table_page_ = 0; // PKI trust anchor catalog (CAT-020)
+        uint32_t channel_cert_binding_table_page_ = 0; // PKI channel cert binding catalog (CAT-020)
+        uint32_t cert_revocation_table_page_ = 0; // PKI cert revocation catalog (CAT-020)
+        uint32_t pki_distribution_state_table_page_ = 0; // PKI distribution state catalog (CAT-020)
+        uint32_t trust_anchor_rollover_table_page_ = 0; // PKI trust anchor rollover catalog (CAT-020)
+        uint32_t encryption_profile_table_page_ = 0; // Crypto profile catalog (CAT-020)
+        uint32_t encryption_key_table_page_ = 0; // Crypto key catalog (CAT-020)
+        uint32_t encryption_key_shard_table_page_ = 0; // Crypto key shard catalog (CAT-020)
+        uint32_t encryption_bootstrap_info_table_page_ = 0; // Crypto bootstrap info catalog (CAT-020)
+        uint32_t node_table_page_ = 0; // Cluster node catalog (CAT-021)
+        uint32_t node_role_binding_table_page_ = 0; // Cluster node role binding catalog (CAT-021)
+        uint32_t node_service_table_page_ = 0; // Cluster node service catalog (CAT-021)
+        uint32_t node_capability_table_page_ = 0; // Cluster node capability catalog (CAT-021)
+        uint32_t clock_policy_table_page_ = 0; // Cluster clock policy catalog (CAT-021)
+        uint32_t clock_source_table_page_ = 0; // Cluster clock source catalog (CAT-021)
+        uint32_t node_clock_state_table_page_ = 0; // Cluster node clock state catalog (CAT-021)
+        uint32_t clock_violation_event_table_page_ = 0; // Cluster clock violation event catalog (CAT-021)
+        uint32_t cluster_table_page_ = 0; // Cluster catalog (CAT-022)
+        uint32_t shard_policy_table_page_ = 0; // Shard policy catalog (CAT-022)
+        uint32_t shard_policy_param_table_page_ = 0; // Shard policy param catalog (CAT-022)
+        uint32_t shard_key_table_page_ = 0; // Shard key catalog (CAT-022)
+        uint32_t shard_table_page_ = 0; // Shard catalog (CAT-022)
+        uint32_t shard_scope_table_page_ = 0; // Shard scope catalog (CAT-022)
+        uint32_t shard_range_table_page_ = 0; // Shard range catalog (CAT-022)
+        uint32_t shard_replica_table_page_ = 0; // Shard replica catalog (CAT-022)
+        uint32_t shard_migration_table_page_ = 0; // Shard migration catalog (CAT-022)
+        uint32_t shard_zone_table_page_ = 0; // Shard zone catalog (CAT-022)
+        uint32_t shard_zone_range_table_page_ = 0; // Shard zone range catalog (CAT-022)
+        uint32_t workload_class_table_page_ = 0; // Workload class catalog (CAT-023)
+        uint32_t workload_route_table_page_ = 0; // Workload route catalog (CAT-023)
+        uint32_t admission_policy_table_page_ = 0; // Admission policy catalog (CAT-023)
+        uint32_t admission_binding_table_page_ = 0; // Admission binding catalog (CAT-023)
+        uint32_t slo_profile_table_page_ = 0; // SLO profile catalog (CAT-023)
+        uint32_t slo_binding_table_page_ = 0; // SLO binding catalog (CAT-023)
+        uint32_t slo_window_table_page_ = 0; // SLO window catalog (CAT-023)
+        uint32_t slo_burn_event_table_page_ = 0; // SLO burn event catalog (CAT-023)
+        uint32_t autoscale_policy_table_page_ = 0; // Autoscale policy catalog (CAT-023)
+        uint32_t autoscale_action_table_page_ = 0; // Autoscale action catalog (CAT-023)
+        uint32_t admission_tuning_event_table_page_ = 0; // Admission tuning event catalog (CAT-023)
+        uint32_t cluster_policy_table_page_ = 0; // Cluster policy catalog (CAT-024)
+        uint32_t failure_detector_table_page_ = 0; // Failure detector catalog (CAT-024)
+        uint32_t alert_rule_table_page_ = 0; // Alert rule catalog (CAT-024)
+        uint32_t alert_target_table_page_ = 0; // Alert target catalog (CAT-024)
+        uint32_t alert_route_table_page_ = 0; // Alert route catalog (CAT-024)
+        uint32_t alert_event_table_page_ = 0; // Alert event catalog (CAT-024)
+        uint32_t alert_ack_table_page_ = 0; // Alert ack catalog (CAT-024)
+        uint32_t alert_silence_table_page_ = 0; // Alert silence catalog (CAT-024)
+        uint32_t network_partition_event_table_page_ = 0; // Network partition event catalog (CAT-024)
+        uint32_t network_partition_member_table_page_ = 0; // Network partition member catalog (CAT-024)
+        uint32_t healing_policy_table_page_ = 0; // Healing policy catalog (CAT-024)
+        uint32_t healing_action_table_page_ = 0; // Healing action catalog (CAT-024)
+        uint32_t healing_action_param_table_page_ = 0; // Healing action param catalog (CAT-024)
+        uint32_t healing_run_table_page_ = 0; // Healing run catalog (CAT-024)
+        uint32_t healing_step_table_page_ = 0; // Healing step catalog (CAT-024)
+        uint32_t job_type_table_page_ = 0; // Scheduler job type catalog (CAT-025)
+        uint32_t job_type_param_table_page_ = 0; // Scheduler job type param catalog (CAT-025)
+        uint32_t job_param_table_page_ = 0; // Scheduler job param catalog (CAT-025)
+        uint32_t job_schedule_table_page_ = 0; // Scheduler job schedule catalog (CAT-025)
+        uint32_t job_type_policy_table_page_ = 0; // Scheduler job type policy catalog (CAT-025)
+        uint32_t remote_connector_table_page_ = 0; // Remote connector catalog (CAT-026)
+        uint32_t remote_connector_capability_table_page_ = 0; // Remote capability catalog (CAT-026)
+        uint32_t remote_metadata_snapshot_table_page_ = 0; // Remote snapshot catalog (CAT-026)
+        uint32_t remote_metadata_object_table_page_ = 0; // Remote metadata object catalog (CAT-026)
+        uint32_t remote_metadata_column_table_page_ = 0; // Remote metadata column catalog (CAT-026)
+        uint32_t remote_schema_mapping_table_page_ = 0; // Remote schema mapping catalog (CAT-026)
+        uint32_t remote_passthrough_policy_table_page_ = 0; // Remote passthrough policy catalog (CAT-026)
+        uint32_t remote_prepared_statement_table_page_ = 0; // Remote prepared statement catalog (CAT-026)
+        uint32_t remote_txn_binding_table_page_ = 0; // Remote transaction binding catalog (CAT-026)
+        uint32_t remote_execution_audit_table_page_ = 0; // Remote execution audit catalog (CAT-026)
+        uint32_t remote_error_table_page_ = 0; // Remote error catalog (CAT-026)
+        uint32_t publication_table_page_ = 0; // Publication catalog (CAT-028)
+        uint32_t publication_table_link_table_page_ = 0; // Publication table mapping catalog (CAT-028)
+        uint32_t publication_schema_table_page_ = 0; // Publication schema mapping catalog (CAT-028)
+        uint32_t subscription_table_page_ = 0; // Subscription catalog (CAT-028)
+        uint32_t subscription_table_link_table_page_ = 0; // Subscription table state catalog (CAT-028)
+        uint32_t cluster_fabric_link_table_page_ = 0; // Cluster fabric link catalog (CAT-029)
+        uint32_t cluster_fabric_session_table_page_ = 0; // Cluster fabric session catalog (CAT-029)
+        uint32_t cluster_fabric_txn_table_page_ = 0; // Cluster fabric txn catalog (CAT-029)
+        uint32_t cluster_fabric_task_table_page_ = 0; // Cluster fabric task catalog (CAT-029)
+        uint32_t cluster_fabric_task_chunk_table_page_ = 0; // Cluster fabric task chunk catalog (CAT-029)
+        uint32_t cluster_fabric_event_table_page_ = 0; // Cluster fabric event catalog (CAT-029)
+        uint32_t cluster_fabric_error_table_page_ = 0; // Cluster fabric error catalog (CAT-029)
+        uint32_t olap_watermark_table_page_ = 0; // OLAP watermark catalog (CAT-030)
+        uint32_t olap_partition_table_page_ = 0; // OLAP partition catalog (CAT-030)
+        uint32_t olap_segment_table_page_ = 0; // OLAP segment catalog (CAT-030)
+        uint32_t olap_ingest_log_table_page_ = 0; // OLAP ingest log catalog (CAT-030)
+        uint32_t cube_table_page_ = 0; // Cube catalog (CAT-030)
+        uint32_t cube_dimension_table_page_ = 0; // Cube dimension catalog (CAT-030)
+        uint32_t cube_level_table_page_ = 0; // Cube level catalog (CAT-030)
+        uint32_t cube_hierarchy_table_page_ = 0; // Cube hierarchy catalog (CAT-030)
+        uint32_t cube_hierarchy_level_table_page_ = 0; // Cube hierarchy level catalog (CAT-030)
+        uint32_t cube_measure_table_page_ = 0; // Cube measure catalog (CAT-030)
+        uint32_t cube_materialization_table_page_ = 0; // Cube materialization catalog (CAT-030)
+        uint32_t cube_refresh_policy_table_page_ = 0; // Cube refresh policy catalog (CAT-030)
+        uint32_t cube_job_table_page_ = 0; // Cube job catalog (CAT-030)
+        uint32_t cube_job_step_table_page_ = 0; // Cube job step catalog (CAT-030)
+        uint32_t cube_stats_table_page_ = 0; // Cube stats catalog (CAT-030)
+        uint32_t ts_parser_table_page_ = 0; // Text search parser catalog (CAT-031)
+        uint32_t ts_template_table_page_ = 0; // Text search template catalog (CAT-031)
+        uint32_t ts_dictionary_table_page_ = 0; // Text search dictionary catalog (CAT-031)
+        uint32_t ts_config_table_page_ = 0; // Text search config catalog (CAT-031)
+        uint32_t ts_config_map_table_page_ = 0; // Text search map catalog (CAT-031)
+        uint32_t blob_filter_table_page_ = 0; // Engine-specific blob filter catalog (CAT-032)
+        uint32_t trigger_message_table_page_ = 0; // Engine-specific trigger message catalog (CAT-032)
+        uint32_t column_drop_history_table_page_ = 0; // Engine-specific column drop history catalog (CAT-032)
+        uint32_t sblr_module_table_page_ = 0; // SBLR module catalog (CAT-033)
+        uint32_t sblr_plan_table_page_ = 0; // SBLR plan catalog (CAT-033)
+        uint32_t sblr_plan_dependency_table_page_ = 0; // SBLR plan dependency catalog (CAT-033)
+        uint32_t sblr_statement_norm_table_page_ = 0; // SBLR statement normalization catalog (CAT-033)
+        uint32_t sblr_artifact_table_page_ = 0; // SBLR artifact catalog (CAT-033)
+        uint32_t sblr_artifact_stats_table_page_ = 0; // SBLR artifact stats catalog (CAT-033)
+        uint32_t sblr_compiler_target_table_page_ = 0; // SBLR compiler target catalog (CAT-033)
+        uint32_t sblr_compile_queue_table_page_ = 0; // SBLR compile queue catalog (CAT-033)
+        uint32_t replication_channel_table_page_ = 0; // Replication channel catalog (CAT-027)
+        uint32_t replication_channel_member_table_page_ = 0; // Replication channel member catalog (CAT-027)
+        uint32_t replication_origin_table_page_ = 0; // Replication origin catalog (CAT-027)
+        uint32_t replication_cursor_table_page_ = 0; // Replication cursor catalog (CAT-027)
+        uint32_t replication_origin_progress_table_page_ = 0; // Replication origin progress catalog (CAT-027)
+        uint32_t replication_txn_batch_table_page_ = 0; // Replication txn batch catalog (CAT-027)
+        uint32_t replication_apply_log_table_page_ = 0; // Replication apply log catalog (CAT-027)
+        uint32_t replication_retry_queue_table_page_ = 0; // Replication retry queue catalog (CAT-027)
+        uint32_t replication_conflict_table_page_ = 0; // Replication conflict catalog (CAT-027)
+        uint32_t replication_split_brain_event_table_page_ = 0; // Replication split brain catalog (CAT-027)
+        uint32_t replication_error_table_page_ = 0; // Replication error catalog (CAT-027)
         uint32_t udr_table_page_ = 0;               // UDR - external functions (Phase 3)
         uint32_t exceptions_table_page_ = 0;        // Exceptions (Phase 3)
         uint32_t packages_table_page_ = 0;          // Firebird packages (Phase 3)
@@ -4428,12 +11764,34 @@ public:
         uint32_t encryption_keys_table_page_ = 0;   // Encryption keys (Plan 03B)
         uint32_t authkeys_table_page_ = 0;          // AuthKeys (Plan 03)
         uint32_t sessions_table_page_ = 0;          // Sessions (Plan 03)
+        uint32_t home_schema_bindings_table_page_ = 0; // Home schema bindings (CAT-009)
+        uint32_t search_path_profiles_table_page_ = 0; // Search-path profiles (CAT-009)
+        uint32_t search_path_entries_table_page_ = 0;  // Search-path entries (CAT-009)
         uint32_t audit_log_table_page_ = 0;         // Audit log (Plan 03)
         uint32_t security_policy_epoch_table_page_ = 0; // Policy epoch (Plan 03)
 
         uint64_t security_policy_epoch_ = 0;
 
         // Internal methods
+        auto ensureDatabaseCatalogRecord(const ID& owner_id, ErrorContext* ctx) -> Status;
+        auto ensureObjectCatalogRecord(const ID& object_id,
+                                       ObjectType object_type,
+                                       const ID& schema_id,
+                                       const ID& parent_object_id,
+                                       const ID& owner_id,
+                                       uint64_t created_time,
+                                       ErrorContext* ctx) -> Status;
+        auto ensureObjectNameCatalogRecord(const ID& object_id,
+                                           ObjectType object_type,
+                                           const ID& parent_object_id,
+                                           const std::string& schema_path,
+                                           const std::string& language_code,
+                                           const std::string& name_text,
+                                           bool name_is_delimited,
+                                           uint64_t created_time,
+                                           ID* name_id_out,
+                                           ErrorContext* ctx) -> Status;
+        auto syncObjectCatalogFromCaches(ErrorContext* ctx) -> Status;
         auto resolveTablespaceUuid(uint16_t tablespace_id) const -> ID;
         auto resolveTablespaceId(const ID &tablespace_uuid) const -> uint16_t;
         void resolveTablespaceBindings();

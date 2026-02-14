@@ -934,6 +934,24 @@ namespace scratchbird
             // PSQL variable operations
             void executeVarLoad();           // Load variable onto stack
             void executeVarStore();          // Store stack value to variable
+            bool executeLegacyCallExtendedOpcode(uint16_t ext_opcode,
+                                                 ExecutionResult& result);
+            bool executeLegacyCteExtendedOpcode(uint16_t ext_opcode,
+                                                Opcode& op,
+                                                ExecutionResult& result,
+                                                bool& should_continue);
+            bool executeLegacySpatialExtendedOpcode(uint16_t ext_opcode,
+                                                    ExecutionResult& result);
+            bool executeLegacyPsqlExtendedOpcode(uint16_t ext_opcode,
+                                                 ExecutionResult& result);
+            bool executeLegacyStatementSurfaceExtendedOpcode(uint16_t ext_opcode,
+                                                             ExecutionResult& result);
+            bool executeLegacyShowSetExtendedOpcode(uint16_t ext_opcode,
+                                                    ExecutionResult& result);
+            bool executeLegacyAdminControlExtendedOpcode(uint16_t ext_opcode,
+                                                         ExecutionResult& result);
+            bool executeLegacyRoutineExtendedOpcode(uint16_t ext_opcode,
+                                                    bool allow_debug_span);
 
             // PSQL control flow helpers
             void executeJump();              // Unconditional jump

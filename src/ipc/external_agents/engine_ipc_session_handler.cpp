@@ -14,10 +14,6 @@
 
 #include "scratchbird/ipc/engine_ipc_session_handler.h"
 #include "scratchbird/sblr/executor.h"
-#include "scratchbird/sblr/postgresql_query_compiler.h"
-#include "scratchbird/sblr/mysql_query_compiler.h"
-#include "scratchbird/sblr/firebird_query_compiler.h"
-#include "scratchbird/sblr/query_compiler_v3.h"
 #include "scratchbird/core/catalog_manager.h"
 
 #include <sstream>
@@ -270,39 +266,6 @@ struct Portal {
 // Session State
 // ============================================================================
 
-// Client protocol types for selecting appropriate query compiler
-enum class ClientProtocolType {
-    UNKNOWN,
-    POSTGRESQL,
-    MYSQL,
-    FIREBIRD,
-    NATIVE_SB
-};
-
-ClientProtocolType detectClientProtocol(const IPCStartupPayload& startup) {
-    std::string app = startup.application;
-    std::transform(app.begin(), app.end(), app.begin(),
-                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-
-    // Listener/parser pool binds one protocol per port, so parser application
-    // identity is sufficient to select the compiler.
-    if (app.find("firebird") != std::string::npos || app.find("fb") != std::string::npos) {
-        return ClientProtocolType::FIREBIRD;
-    }
-    if (app.find("mysql") != std::string::npos) {
-        return ClientProtocolType::MYSQL;
-    }
-    if (app.find("native") != std::string::npos ||
-        app.find("scratchbird") != std::string::npos ||
-        app.find("sbwp") != std::string::npos) {
-        return ClientProtocolType::NATIVE_SB;
-    }
-    if (app.find("postgres") != std::string::npos || app.find("psql") != std::string::npos) {
-        return ClientProtocolType::POSTGRESQL;
-    }
-    return ClientProtocolType::UNKNOWN;
-}
-
 struct EngineSessionState {
     uint32_t session_id = 0;
     std::string database_name;
@@ -310,9 +273,6 @@ struct EngineSessionState {
     bool in_transaction = false;
     bool autocommit = true;
     TransactionIsolation isolation_level = TransactionIsolation::READ_COMMITTED;
-    
-    // Client protocol for selecting appropriate compiler
-    ClientProtocolType client_protocol = ClientProtocolType::POSTGRESQL;
     
     // Prepared statement cache with LRU eviction
     std::unique_ptr<StatementCache> stmt_cache;
@@ -325,12 +285,6 @@ struct EngineSessionState {
     core::Database* database = nullptr;
     std::unique_ptr<core::ConnectionContext> conn_ctx;
     std::unique_ptr<sblr::Executor> executor;
-    
-    // Query compilers (lazily initialized)
-    std::unique_ptr<sblr::PostgreSQLQueryCompiler> pg_compiler;
-    std::unique_ptr<sblr::MySQLQueryCompiler> mysql_compiler;
-    std::unique_ptr<sblr::FirebirdQueryCompiler> firebird_compiler;
-    std::unique_ptr<sblr::QueryCompilerV3> native_compiler;
     
     // COPY state
     bool in_copy_in = false;
@@ -345,42 +299,6 @@ struct EngineSessionState {
     std::chrono::steady_clock::time_point last_activity;
     
     EngineSessionState() : stmt_cache(std::make_unique<StatementCache>()) {}
-    
-    // Get or create PostgreSQL compiler
-    sblr::PostgreSQLQueryCompiler* getPostgreSQLCompiler(core::Database* db) {
-        if (!pg_compiler) {
-            pg_compiler = std::make_unique<sblr::PostgreSQLQueryCompiler>(db);
-            std::string db_name = database_name.empty() ? std::string("default") : database_name;
-            pg_compiler->setDefaultSchema("remote.emulation.postgresql.localhost.databases." + db_name);
-        }
-        return pg_compiler.get();
-    }
-    
-    // Get or create MySQL compiler
-    sblr::MySQLQueryCompiler* getMySQLCompiler(core::Database* db) {
-        if (!mysql_compiler) {
-            mysql_compiler = std::make_unique<sblr::MySQLQueryCompiler>(db);
-            std::string db_name = database_name.empty() ? std::string("default") : database_name;
-            mysql_compiler->setDefaultSchema("remote.emulation.mysql.localhost.databases." + db_name);
-        }
-        return mysql_compiler.get();
-    }
-
-    // Get or create Firebird compiler
-    sblr::FirebirdQueryCompiler* getFirebirdCompiler(core::Database* db) {
-        if (!firebird_compiler) {
-            firebird_compiler = std::make_unique<sblr::FirebirdQueryCompiler>(db);
-        }
-        return firebird_compiler.get();
-    }
-
-    // Get or create native V3 compiler
-    sblr::QueryCompilerV3* getNativeCompiler(core::Database* db) {
-        if (!native_compiler) {
-            native_compiler = std::make_unique<sblr::QueryCompilerV3>(db);
-        }
-        return native_compiler.get();
-    }
 };
 
 // ============================================================================
@@ -434,8 +352,6 @@ core::Status EngineIPCSessionHandler::onAttach(uint32_t session_id,
     session->database = database_;
     session->created_at = std::chrono::steady_clock::now();
     session->last_activity = session->created_at;
-    session->client_protocol = detectClientProtocol(startup);
-    
     // Create executor (ConnectionContext is optional for basic queries)
     session->executor = std::make_unique<sblr::Executor>(database_);
     
@@ -488,143 +404,17 @@ core::Status EngineIPCSessionHandler::onSimpleQuery(uint32_t session_id,
         }
         return core::Status::NOT_FOUND;
     }
-    
-    if (!session->executor) {
-        return sendError(session_id, "XX000", "Executor not initialized");
+
+    (void)session;
+    (void)sql;
+    if (ctx) {
+        ctx->set(core::Status::NOT_SUPPORTED,
+                 "Engine IPC SQL text path is disabled; submit precompiled SBLR bytecode",
+                 __FILE__, __LINE__, __func__);
     }
-    
-    // Compile SQL to bytecode using appropriate compiler for client protocol
-    std::vector<uint8_t> bytecode;
-    std::vector<std::string> warnings;
-    
-    switch (session->client_protocol) {
-        case ClientProtocolType::POSTGRESQL:
-        case ClientProtocolType::UNKNOWN: {
-            auto* compiler = session->getPostgreSQLCompiler(database_);
-            auto result = compiler->compile(sql);
-            if (!result.success()) {
-                std::string error_msg = result.errors().empty() 
-                    ? "PostgreSQL SQL compilation failed" 
-                    : result.errors().front();
-                return sendError(session_id, "42601", error_msg);
-            }
-            bytecode = result.bytecode();
-            warnings = result.warnings();
-            break;
-        }
-        case ClientProtocolType::MYSQL: {
-            auto* compiler = session->getMySQLCompiler(database_);
-            auto result = compiler->compile(sql);
-            if (!result.success()) {
-                std::string error_msg = result.errors().empty() 
-                    ? "MySQL SQL compilation failed" 
-                    : result.errors().front();
-                return sendError(session_id, "42000", error_msg);
-            }
-            bytecode = result.bytecode();
-            warnings = result.warnings();
-            break;
-        }
-        case ClientProtocolType::FIREBIRD: {
-            auto* compiler = session->getFirebirdCompiler(database_);
-            auto result = compiler->compile(sql);
-            if (!result.success()) {
-                std::string error_msg = result.errors().empty()
-                    ? "Firebird SQL compilation failed"
-                    : result.errors().front();
-                return sendError(session_id, "42000", error_msg);
-            }
-            bytecode = result.bytecode();
-            warnings = result.warnings();
-            break;
-        }
-        case ClientProtocolType::NATIVE_SB: {
-            auto* compiler = session->getNativeCompiler(database_);
-            auto result = compiler->compile(sql);
-            if (!result.success()) {
-                std::string error_msg = result.errors().empty()
-                    ? "Native V3 SQL compilation failed"
-                    : result.errors().front();
-                return sendError(session_id, "42601", error_msg);
-            }
-            bytecode = result.bytecode();
-            warnings = result.warnings();
-            break;
-        }
-    }
-    
-    // Execute the compiled bytecode
-    auto exec_result = session->executor->execute(bytecode);
-    
-    if (!exec_result.success()) {
-        return sendError(session_id, "XX000", exec_result.error());
-    }
-    
-    // Send warnings if any
-    for (const auto& warning : warnings) {
-        sendNotice(session_id, warning);
-    }
-    
-    // Handle result
-    if (exec_result.hasResultSet()) {
-        auto* rs = exec_result.resultSet();
-        
-        // Send row description
-        std::vector<IPCFieldDesc> fields;
-        for (size_t i = 0; i < rs->columnCount(); ++i) {
-            IPCFieldDesc field;
-            std::strncpy(field.name, rs->columnName(i).c_str(), sizeof(field.name) - 1);
-            field.name[sizeof(field.name) - 1] = '\0';
-            field.type_oid = static_cast<uint32_t>(rs->columnType(i));
-            field.type_size = 0;  // Will be determined by type
-            field.type_modifier = -1;
-            fields.push_back(field);
-        }
-        
-        auto status = sendRowDescription(session_id, fields);
-        if (status != core::Status::OK) return status;
-        
-        // Send all rows
-        for (size_t row_idx = 0; row_idx < rs->rowCount(); ++row_idx) {
-            std::vector<std::optional<std::string>> row_values;
-            row_values.reserve(rs->columnCount());
-            
-            for (size_t col_idx = 0; col_idx < rs->columnCount(); ++col_idx) {
-                const auto& value = rs->getValue(row_idx, col_idx);
-                if (value.isNull()) {
-                    row_values.push_back(std::nullopt);
-                } else {
-                    // Convert value to string representation
-                    row_values.push_back(value.toString());
-                }
-            }
-            
-            status = sendDataRow(session_id, row_values);
-            if (status != core::Status::OK) return status;
-        }
-        
-        // Send command complete with row count
-        return sendCommandComplete(session_id, "SELECT", rs->rowCount());
-    } else {
-        // Non-SELECT command
-        uint64_t rows_affected = static_cast<uint64_t>(exec_result.affectedCount());
-        
-        // Generate command tag based on SQL type
-        std::string sql_upper = sql;
-        std::transform(sql_upper.begin(), sql_upper.end(), sql_upper.begin(), ::toupper);
-        std::string tag;
-        if (sql_upper.find("INSERT") == 0) {
-            tag = "INSERT 0 " + std::to_string(rows_affected);
-        } else if (sql_upper.find("UPDATE") == 0) {
-            tag = "UPDATE " + std::to_string(rows_affected);
-        } else if (sql_upper.find("DELETE") == 0) {
-            tag = "DELETE " + std::to_string(rows_affected);
-        } else {
-            tag = "OK";
-        }
-        
-        return sendCommandComplete(session_id, tag, rows_affected);
-    }
+    return sendError(session_id,
+                     "0A000",
+                     "Engine IPC SQL text path is disabled; submit precompiled SBLR bytecode");
 }
 
 core::Status EngineIPCSessionHandler::onParse(uint32_t session_id,
@@ -639,82 +429,18 @@ core::Status EngineIPCSessionHandler::onParse(uint32_t session_id,
         }
         return core::Status::NOT_FOUND;
     }
-    
-    // Compile SQL to bytecode using appropriate compiler for client protocol
-    std::vector<uint8_t> bytecode;
-    std::vector<IPCFieldDesc> param_fields;
-    std::vector<IPCFieldDesc> result_fields;
-    
-    switch (session->client_protocol) {
-        case ClientProtocolType::POSTGRESQL:
-        case ClientProtocolType::UNKNOWN: {
-            auto* compiler = session->getPostgreSQLCompiler(database_);
-            auto result = compiler->compile(sql);
-            if (!result.success()) {
-                std::string error_msg = result.errors().empty() 
-                    ? "PostgreSQL SQL compilation failed" 
-                    : result.errors().front();
-                return sendError(session_id, "42601", error_msg);
-            }
-            bytecode = result.bytecode();
-            break;
-        }
-        case ClientProtocolType::MYSQL: {
-            auto* compiler = session->getMySQLCompiler(database_);
-            auto result = compiler->compile(sql);
-            if (!result.success()) {
-                std::string error_msg = result.errors().empty() 
-                    ? "MySQL SQL compilation failed" 
-                    : result.errors().front();
-                return sendError(session_id, "42000", error_msg);
-            }
-            bytecode = result.bytecode();
-            break;
-        }
-        case ClientProtocolType::FIREBIRD: {
-            auto* compiler = session->getFirebirdCompiler(database_);
-            auto result = compiler->compile(sql);
-            if (!result.success()) {
-                std::string error_msg = result.errors().empty()
-                    ? "Firebird SQL compilation failed"
-                    : result.errors().front();
-                return sendError(session_id, "42000", error_msg);
-            }
-            bytecode = result.bytecode();
-            break;
-        }
-        case ClientProtocolType::NATIVE_SB: {
-            auto* compiler = session->getNativeCompiler(database_);
-            auto result = compiler->compile(sql);
-            if (!result.success()) {
-                std::string error_msg = result.errors().empty()
-                    ? "Native V3 SQL compilation failed"
-                    : result.errors().front();
-                return sendError(session_id, "42601", error_msg);
-            }
-            bytecode = result.bytecode();
-            break;
-        }
+
+    (void)session;
+    (void)stmt_name;
+    (void)sql;
+    if (ctx) {
+        ctx->set(core::Status::NOT_SUPPORTED,
+                 "Engine IPC parse path is disabled; parser must manage SQL->SBLR compilation",
+                 __FILE__, __LINE__, __func__);
     }
-    
-    // Create prepared statement entry with compiled bytecode
-    auto stmt = std::make_unique<PreparedStatement>();
-    stmt->name = stmt_name;
-    stmt->sql = sql;
-    stmt->bytecode = std::move(bytecode);
-    stmt->param_fields = std::move(param_fields);
-    stmt->result_fields = std::move(result_fields);
-    stmt->created_at = std::chrono::steady_clock::now();
-    stmt->memory_size = stmt->sql.size() + stmt->bytecode.size() + 
-                        (param_fields.size() + result_fields.size()) * sizeof(IPCFieldDesc);
-    
-    // Extract parameter information from parse result
-    // This would require more detailed AST inspection in a full implementation
-    
-    // Store in cache
-    session->stmt_cache->put(stmt_name, std::move(stmt));
-    
-    return sendParseComplete(session_id);
+    return sendError(session_id,
+                     "0A000",
+                     "Engine IPC parse path is disabled; parser must manage SQL->SBLR compilation");
 }
 
 core::Status EngineIPCSessionHandler::onBind(uint32_t session_id,

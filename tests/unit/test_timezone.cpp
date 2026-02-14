@@ -288,9 +288,9 @@ TEST_F(TimezoneTest, TypedValue_StringToTimestamp_WithTimezone)
     ASSERT_EQ(v1.convertTo(TypeInfo(DataType::TIMESTAMP), ts1, CastFormat::DEFAULT, &ctx),
               Status::OK);
 
-    TypedValue v2 = TypedValue::makeVarchar("2025-10-04 10:30:00-05:00");
+    TypedValue value_two = TypedValue::makeVarchar("2025-10-04 10:30:00-05:00");
     TypedValue ts2;
-    ASSERT_EQ(v2.convertTo(TypeInfo(DataType::TIMESTAMP), ts2, CastFormat::DEFAULT, &ctx),
+    ASSERT_EQ(value_two.convertTo(TypeInfo(DataType::TIMESTAMP), ts2, CastFormat::DEFAULT, &ctx),
               Status::OK);
 
     EXPECT_EQ(ts1.getTimestamp(), ts2.getTimestamp());
@@ -314,6 +314,53 @@ TEST_F(TimezoneTest, TypedValue_TimestampToString_UsesOffset)
 
     EXPECT_TRUE(result.find("2025-10-04") != std::string::npos);
     EXPECT_TRUE(result.find("15:30:00") != std::string::npos);
+}
+
+TEST_F(TimezoneTest, TypedValue_Timestamp_NoExplicitOffset_UsesSentinel)
+{
+    ErrorContext ctx;
+    TypedValue input = TypedValue::makeVarchar("2025-10-04 15:30:00");
+    TypedValue ts;
+    ASSERT_EQ(input.convertTo(TypeInfo(DataType::TIMESTAMP), ts, CastFormat::DEFAULT, &ctx),
+              Status::OK);
+
+    EXPECT_EQ(ts.getTimezoneOffsetSeconds(), TypedValue::kNoDisplayOffsetSeconds);
+
+    std::string rendered = ts.toString();
+    size_t tz_pos = rendered.find_first_of("+-", 19);
+    EXPECT_EQ(tz_pos, std::string::npos);
+}
+
+TEST_F(TimezoneTest, TypedValue_Timestamp_ExplicitUtcOffset_Preserved)
+{
+    ErrorContext ctx;
+    TypedValue input = TypedValue::makeVarchar("2025-10-04 15:30:00+00:00");
+    TypedValue ts;
+    ASSERT_EQ(input.convertTo(TypeInfo(DataType::TIMESTAMP), ts, CastFormat::DEFAULT, &ctx),
+              Status::OK);
+
+    EXPECT_EQ(ts.getTimezoneOffsetSeconds(), 0);
+    EXPECT_TRUE(ts.toString().find("+00:00") != std::string::npos);
+}
+
+TEST_F(TimezoneTest, TypedValue_InvalidTimestamp_ReturnsDatetimeOutOfRange)
+{
+    ErrorContext ctx;
+    TypedValue input = TypedValue::makeVarchar("2025-13-01 00:00:00");
+    TypedValue out;
+    Status status =
+        input.convertTo(TypeInfo(DataType::TIMESTAMP), out, CastFormat::DEFAULT, &ctx);
+    EXPECT_EQ(status, Status::DATETIME_VALUE_OUT_OF_RANGE);
+}
+
+TEST_F(TimezoneTest, TypedValue_InvalidTime_ReturnsDatetimeOutOfRange)
+{
+    ErrorContext ctx;
+    TypedValue input = TypedValue::makeVarchar("24:00:00");
+    TypedValue out;
+    Status status =
+        input.convertTo(TypeInfo(DataType::TIME), out, CastFormat::DEFAULT, &ctx);
+    EXPECT_EQ(status, Status::DATETIME_VALUE_OUT_OF_RANGE);
 }
 
 // ===== Round-Trip Tests =====

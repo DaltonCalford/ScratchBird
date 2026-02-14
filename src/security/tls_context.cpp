@@ -665,7 +665,7 @@ core::Status TLSContext::initServer(const TLSConfig& config, core::ErrorContext*
     }
 
     // Security options
-    long options = SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3;
+    long options = SSL_OP_NO_SSLv3;
     if (!config.compression) {
         options |= SSL_OP_NO_COMPRESSION;
     }
@@ -759,7 +759,7 @@ core::Status TLSContext::initClient(const TLSClientConfig& config, core::ErrorCo
     }
 
     // Security options
-    long options = SSL_OP_NO_SSLv2 | SSL_OP_NO_SSLv3 | SSL_OP_NO_COMPRESSION;
+    long options = SSL_OP_NO_SSLv3 | SSL_OP_NO_COMPRESSION;
     SSL_CTX_set_options(ctx_, options);
 
     return core::Status::OK;

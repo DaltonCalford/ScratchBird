@@ -68,7 +68,7 @@ enum class TokenType : uint16_t {
     STAR,                 // *
     SLASH,                // /
     PERCENT,              // %
-    CARET,                // ^ (power)
+    CARET,                // ^ (bitwise XOR)
     DOUBLE_PIPE,          // || (concatenation)
 
     // Comparison

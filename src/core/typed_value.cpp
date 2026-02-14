@@ -270,6 +270,112 @@ namespace scratchbird::core
             return 0;
         }
 
+        size_t minimalSignedStorageSize(int128_t value)
+        {
+            for (size_t bytes = 1; bytes <= 16; ++bytes)
+            {
+                if (bytes == 16)
+                {
+                    return 16;
+                }
+                int bits = static_cast<int>(bytes * 8);
+                int128_t minv = -(static_cast<int128_t>(uint128_t{1} << (bits - 1)));
+                int128_t maxv = static_cast<int128_t>((uint128_t{1} << (bits - 1)) - 1);
+                if (value >= minv && value <= maxv)
+                {
+                    return bytes;
+                }
+            }
+            return 16;
+        }
+
+        uint8_t defaultMoneyScale()
+        {
+            uint64_t configured =
+                Config::getInstance().getUInt("types", "money_default_scale", 4);
+            if (configured > 9)
+            {
+                configured = 9;
+            }
+            return static_cast<uint8_t>(configured);
+        }
+
+        bool hasConcreteDisplayOffset(int32_t offset_seconds)
+        {
+            return offset_seconds != TypedValue::kNoDisplayOffsetSeconds;
+        }
+
+        int32_t mathOffsetSeconds(int32_t offset_seconds)
+        {
+            return hasConcreteDisplayOffset(offset_seconds) ? offset_seconds : 0;
+        }
+
+        bool isLeapYear(int year)
+        {
+            return ((year % 4 == 0) && (year % 100 != 0)) || (year % 400 == 0);
+        }
+
+        int daysInMonth(int year, int month)
+        {
+            static const int kDaysPerMonth[12] = {
+                31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
+            };
+            if (month < 1 || month > 12)
+            {
+                return 0;
+            }
+            if (month == 2 && isLeapYear(year))
+            {
+                return 29;
+            }
+            return kDaysPerMonth[month - 1];
+        }
+
+        bool isValidDateYmd(int year, int month, int day)
+        {
+            int dim = daysInMonth(year, month);
+            return dim > 0 && day >= 1 && day <= dim;
+        }
+
+        uint8_t effectiveDecimalPrecision(int128_t unscaled, uint8_t configured_precision,
+                                          uint8_t scale)
+        {
+            if (configured_precision != 0)
+            {
+                return configured_precision;
+            }
+            uint128_t abs_value = 0;
+            if (unscaled < 0)
+            {
+                // Avoid overflow for INT128 minimum by using two-step negation.
+                abs_value = static_cast<uint128_t>(-(unscaled + 1));
+                abs_value += 1;
+            }
+            else
+            {
+                abs_value = static_cast<uint128_t>(unscaled);
+            }
+            uint8_t digits = 1;
+            while (abs_value >= 10 && digits < DECIMAL_MAX_PRECISION)
+            {
+                abs_value /= 10;
+                ++digits;
+            }
+            if (digits < scale)
+            {
+                digits = scale;
+            }
+            if (digits == 0)
+            {
+                digits = 1;
+            }
+            if (digits > DECIMAL_MAX_PRECISION)
+            {
+                digits = DECIMAL_MAX_PRECISION;
+            }
+            return digits;
+        }
+
         std::string trimAscii(const std::string &input)
         {
             size_t start = 0;
@@ -374,7 +480,8 @@ namespace scratchbird::core
         {
             return type == DataType::CHAR || type == DataType::VARCHAR ||
                    type == DataType::TEXT || type == DataType::JSON ||
-                   type == DataType::JSONB || type == DataType::XML;
+                   type == DataType::JSONB || type == DataType::BSON ||
+                   type == DataType::XML;
         }
 
         bool isBinaryLike(DataType type)
@@ -382,6 +489,12 @@ namespace scratchbird::core
             return type == DataType::BINARY || type == DataType::VARBINARY ||
                    type == DataType::BLOB || type == DataType::BYTEA ||
                    type == DataType::VECTOR;
+        }
+
+        bool isArrayLikeType(DataType type)
+        {
+            return type == DataType::ARRAY || type == DataType::LIST ||
+                   type == DataType::MAP;
         }
 
         bool isIntegerType(DataType type)
@@ -534,8 +647,8 @@ namespace scratchbird::core
 
             if (source.type() == DataType::MONEY)
             {
-                Decimal money(static_cast<int128_t>(source.getInt64()), 19, 4);
-                return DecFloat::parse(money.toStringWithPrecision(4),
+                Decimal money(static_cast<int128_t>(source.getInt64()), 19, defaultMoneyScale());
+                return DecFloat::parse(money.toStringWithPrecision(defaultMoneyScale()),
                                        target == DataType::DECFLOAT16 ? 16 : 34,
                                        df_ctx, out, ctx);
             }
@@ -739,7 +852,7 @@ namespace scratchbird::core
             std::string trimmed = trimAscii(input);
             if (trimmed.empty())
             {
-                SET_ERROR_CONTEXT(ctx, Status::INVALID_DATETIME_FORMAT, "Empty value");
+                SET_ERROR_CONTEXT(ctx, Status::DATETIME_VALUE_OUT_OF_RANGE, "Empty value");
                 return false;
             }
 
@@ -1013,7 +1126,7 @@ namespace scratchbird::core
             hour = minute = second = microseconds = 0;
             if (text.empty())
             {
-                SET_ERROR_CONTEXT(ctx, Status::INVALID_DATETIME_FORMAT, "Empty time value");
+                SET_ERROR_CONTEXT(ctx, Status::DATETIME_VALUE_OUT_OF_RANGE, "Empty time value");
                 return false;
             }
 
@@ -1030,7 +1143,7 @@ namespace scratchbird::core
                                      &hour, &minute, &second);
             if (parsed < 2)
             {
-                SET_ERROR_CONTEXT(ctx, Status::INVALID_DATETIME_FORMAT,
+                SET_ERROR_CONTEXT(ctx, Status::DATETIME_VALUE_OUT_OF_RANGE,
                                   "Invalid time format");
                 return false;
             }
@@ -1043,7 +1156,7 @@ namespace scratchbird::core
             {
                 if (frac_part.size() > 6)
                 {
-                    SET_ERROR_CONTEXT(ctx, Status::INVALID_DATETIME_FORMAT,
+                    SET_ERROR_CONTEXT(ctx, Status::DATETIME_VALUE_OUT_OF_RANGE,
                                       "Too many fractional second digits");
                     return false;
                 }
@@ -1052,7 +1165,7 @@ namespace scratchbird::core
                 {
                     if (ch < '0' || ch > '9')
                     {
-                        SET_ERROR_CONTEXT(ctx, Status::INVALID_DATETIME_FORMAT,
+                        SET_ERROR_CONTEXT(ctx, Status::DATETIME_VALUE_OUT_OF_RANGE,
                                           "Invalid fractional seconds");
                         return false;
                     }
@@ -1582,10 +1695,10 @@ namespace scratchbird::core
             {
                 int v0 = base64_val(cleaned[i]);
                 int v1 = base64_val(cleaned[i + 1]);
-                int v2 = base64_val(cleaned[i + 2]);
+                int value_two = base64_val(cleaned[i + 2]);
                 int v3 = base64_val(cleaned[i + 3]);
 
-                if (v0 < 0 || v1 < 0 || v2 == -2 || v3 == -2)
+                if (v0 < 0 || v1 < 0 || value_two == -2 || v3 == -2)
                 {
                     SET_ERROR_CONTEXT(ctx, Status::INVALID_TEXT_REPRESENTATION,
                                       "Invalid base64 character");
@@ -1594,12 +1707,12 @@ namespace scratchbird::core
 
                 out.push_back(static_cast<uint8_t>((v0 << 2) | (v1 >> 4)));
 
-                if (v2 >= 0)
+                if (value_two >= 0)
                 {
-                    out.push_back(static_cast<uint8_t>(((v1 & 0x0F) << 4) | (v2 >> 2)));
+                    out.push_back(static_cast<uint8_t>(((v1 & 0x0F) << 4) | (value_two >> 2)));
                     if (v3 >= 0)
                     {
-                        out.push_back(static_cast<uint8_t>(((v2 & 0x03) << 6) | v3));
+                        out.push_back(static_cast<uint8_t>(((value_two & 0x03) << 6) | v3));
                     }
                 }
             }
@@ -2822,6 +2935,7 @@ namespace scratchbird::core
             case DataType::INT128:
             case DataType::UINT128:
             case DataType::JSONB:
+            case DataType::BSON:
             case DataType::VECTOR:
                 return binary_data_;
             default:
@@ -2887,8 +3001,8 @@ namespace scratchbird::core
             throw std::runtime_error("Cannot get value from NULL");
         }
         ensureDecrypted();
-        if (type_ != DataType::ARRAY) {
-            throw std::runtime_error("Type mismatch: expected ARRAY");
+        if (!isArrayLikeType(type_)) {
+            throw std::runtime_error("Type mismatch: expected ARRAY/LIST/MAP");
         }
         if (!complex_data_ || !complex_data_->array) {
             throw std::runtime_error("Complex data not initialized");
@@ -3057,7 +3171,8 @@ namespace scratchbird::core
                                    std::numeric_limits<double>::max_digits10);
             case DataType::DECIMAL:
             {
-                uint8_t precision = decimal_precision_ == 0 ? DECIMAL_MAX_PRECISION : decimal_precision_;
+                uint8_t precision =
+                    effectiveDecimalPrecision(decimal_unscaled_, decimal_precision_, decimal_scale_);
                 Decimal decimal(decimal_unscaled_, precision, decimal_scale_);
                 return decimal.toStringWithPrecision(decimal_scale_);
             }
@@ -3075,8 +3190,9 @@ namespace scratchbird::core
             }
             case DataType::MONEY:
             {
-                Decimal decimal(static_cast<int128_t>(data_.int64_val), 19, 4);
-                return decimal.toStringWithPrecision(4);
+                uint8_t scale = defaultMoneyScale();
+                Decimal decimal(static_cast<int128_t>(data_.int64_val), 19, scale);
+                return decimal.toStringWithPrecision(scale);
             }
             case DataType::BOOLEAN:
                 return data_.bool_val ? "true" : "false";
@@ -3087,6 +3203,7 @@ namespace scratchbird::core
             case DataType::XML:
                 return string_data_;
             case DataType::JSONB:
+            case DataType::BSON:
             {
                 if (binary_data_.empty())
                 {
@@ -3102,7 +3219,8 @@ namespace scratchbird::core
             case DataType::DATE:
             {
                 int64_t days = data_.int64_val;
-                int32_t offset = timezone_offset_seconds_;
+                int32_t stored_offset = timezone_offset_seconds_;
+                int32_t offset = mathOffsetSeconds(stored_offset);
                 int64_t default_micros = defaultDateTimeMicros();
                 int64_t day_micros =
                     static_cast<int64_t>(FirebirdDateTime::SECONDS_PER_DAY) * 1000000;
@@ -3113,7 +3231,7 @@ namespace scratchbird::core
                 int32_t mjd_date =
                     static_cast<int32_t>(local_days + FirebirdDateTime::UNIX_EPOCH_MJD);
                 std::string result = FirebirdDateTime::formatDate(mjd_date);
-                if (offset != 0)
+                if (hasConcreteDisplayOffset(stored_offset))
                 {
                     result += formatOffsetSeconds(offset);
                 }
@@ -3122,7 +3240,8 @@ namespace scratchbird::core
             case DataType::TIME:
             {
                 int64_t micros = data_.int64_val;
-                int32_t offset = timezone_offset_seconds_;
+                int32_t stored_offset = timezone_offset_seconds_;
+                int32_t offset = mathOffsetSeconds(stored_offset);
                 int64_t local_micros = micros + static_cast<int64_t>(offset) * 1000000;
                 const int64_t micros_per_day =
                     static_cast<int64_t>(FirebirdDateTime::SECONDS_PER_DAY) * 1000000;
@@ -3142,7 +3261,7 @@ namespace scratchbird::core
                 int minute = static_cast<int>((total_seconds / 60) % 60);
                 int second = static_cast<int>(total_seconds % 60);
                 std::string result = formatTimeMicros(hour, minute, second, micro_remainder);
-                if (offset != 0)
+                if (hasConcreteDisplayOffset(stored_offset))
                 {
                     result += formatOffsetSeconds(offset);
                 }
@@ -3151,7 +3270,8 @@ namespace scratchbird::core
             case DataType::TIMESTAMP:
             {
                 int64_t utc_micros = data_.int64_val;
-                int32_t offset = timezone_offset_seconds_;
+                int32_t stored_offset = timezone_offset_seconds_;
+                int32_t offset = mathOffsetSeconds(stored_offset);
                 int64_t local_micros = utc_micros + static_cast<int64_t>(offset) * 1000000;
                 int64_t total_seconds = floorDiv(local_micros, 1000000);
                 int64_t micro_remainder = local_micros - total_seconds * 1000000;
@@ -3175,7 +3295,7 @@ namespace scratchbird::core
                 std::string result = FirebirdDateTime::formatDate(mjd_date) + " " +
                                      formatTimeMicros(hour, minute, second,
                                                       static_cast<int32_t>(micro_remainder));
-                if (offset != 0)
+                if (hasConcreteDisplayOffset(stored_offset))
                 {
                     result += formatOffsetSeconds(offset);
                 }
@@ -3430,10 +3550,23 @@ namespace scratchbird::core
                 }
                 return "<empty interval>";
             case DataType::ARRAY:
+            case DataType::LIST:
+            case DataType::MAP:
             case DataType::COMPOSITE:
                 if (complex_data_ && complex_data_->array) {
                     std::ostringstream oss;
-                    oss << (type_ == DataType::ARRAY ? "{" : "(");
+                    if (type_ == DataType::COMPOSITE)
+                    {
+                        oss << "(";
+                    }
+                    else if (type_ == DataType::LIST)
+                    {
+                        oss << "[";
+                    }
+                    else
+                    {
+                        oss << "{";
+                    }
                     for (size_t i = 0; i < complex_data_->array->size(); ++i)
                     {
                         if (i > 0)
@@ -3442,10 +3575,33 @@ namespace scratchbird::core
                         }
                         oss << (*complex_data_->array)[i].toString();
                     }
-                    oss << (type_ == DataType::ARRAY ? "}" : ")");
+                    if (type_ == DataType::COMPOSITE)
+                    {
+                        oss << ")";
+                    }
+                    else if (type_ == DataType::LIST)
+                    {
+                        oss << "]";
+                    }
+                    else
+                    {
+                        oss << "}";
+                    }
                     return oss.str();
                 }
-                return type_ == DataType::ARRAY ? "<empty array>" : "<empty composite>";
+                if (type_ == DataType::COMPOSITE)
+                {
+                    return "<empty composite>";
+                }
+                if (type_ == DataType::LIST)
+                {
+                    return "<empty list>";
+                }
+                if (type_ == DataType::MAP)
+                {
+                    return "<empty map>";
+                }
+                return "<empty array>";
             case DataType::VARIANT:
                 if (complex_data_ && complex_data_->array && !complex_data_->array->empty()) {
                     if (complex_data_->array->size() == 1)
@@ -4137,6 +4293,7 @@ namespace scratchbird::core
                 break;
             }
             case DataType::JSONB:
+            case DataType::BSON:
             {
                 std::vector<uint8_t> payload = binary_data_;
                 if (payload.empty() && !string_data_.empty())
@@ -4155,10 +4312,20 @@ namespace scratchbird::core
             }
             case DataType::DECIMAL:
             {
-                uint8_t precision = decimal_precision_ == 0
-                                        ? (type_ == DataType::DECIMAL ? DECIMAL_MAX_PRECISION
-                                                                      : defaultDecfloatPrecision(type_))
-                                        : decimal_precision_;
+                if (decimal_precision_ == 0)
+                {
+                    if (decimal_scale_ > DECIMAL_MAX_PRECISION)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                          "Invalid DECIMAL scale");
+                        return Status::INVALID_ARGUMENT;
+                    }
+                    size_t width = minimalSignedStorageSize(decimal_unscaled_);
+                    appendInt128(out, decimal_unscaled_, width);
+                    break;
+                }
+
+                uint8_t precision = decimal_precision_;
                 if (precision > DECIMAL_MAX_PRECISION || decimal_scale_ > precision)
                 {
                     SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid DECIMAL precision/scale");
@@ -4228,16 +4395,40 @@ namespace scratchbird::core
                 break;
             }
             case DataType::TIME:
-            case DataType::TIME_WITH_ZONE:
             {
                 int64_t micros = data_.int64_val;
                 appendInt64(out, micros);
                 appendInt32(out, timezone_offset_seconds_);
                 break;
             }
+            case DataType::TIME_WITH_ZONE:
+            {
+                if (!hasConcreteDisplayOffset(timezone_offset_seconds_))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_PARAMETER_VALUE,
+                                      "TIME WITH TIME ZONE requires concrete offset");
+                    return Status::INVALID_PARAMETER_VALUE;
+                }
+                int64_t micros = data_.int64_val;
+                appendInt64(out, micros);
+                appendInt32(out, timezone_offset_seconds_);
+                break;
+            }
             case DataType::TIMESTAMP:
+            {
+                int64_t micros = data_.int64_val;
+                appendInt64(out, micros);
+                appendInt32(out, timezone_offset_seconds_);
+                break;
+            }
             case DataType::TIMESTAMP_WITH_ZONE:
             {
+                if (!hasConcreteDisplayOffset(timezone_offset_seconds_))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_PARAMETER_VALUE,
+                                      "TIMESTAMP WITH TIME ZONE requires concrete offset");
+                    return Status::INVALID_PARAMETER_VALUE;
+                }
                 int64_t micros = data_.int64_val;
                 appendInt64(out, micros);
                 appendInt32(out, timezone_offset_seconds_);
@@ -4624,6 +4815,8 @@ namespace scratchbird::core
                 break;
             }
             case DataType::ARRAY:
+            case DataType::LIST:
+            case DataType::MAP:
             {
                 if (!complex_data_ || !complex_data_->array)
                 {
@@ -4644,7 +4837,7 @@ namespace scratchbird::core
                     {
                         elem_type = element.type();
                     }
-                    else if (elem_type != element.type())
+                    else if (type_ != DataType::MAP && elem_type != element.type())
                     {
                         SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "ARRAY elements must be homogeneous");
                         return Status::INVALID_ARGUMENT;
@@ -5052,6 +5245,7 @@ namespace scratchbird::core
                 break;
             }
             case DataType::JSONB:
+            case DataType::BSON:
             {
                 status = readLengthPrefixedBinary(binary_data_);
                 if (status != Status::OK)
@@ -5062,10 +5256,26 @@ namespace scratchbird::core
             }
             case DataType::DECIMAL:
             {
-                uint8_t precision = decimal_precision_ == 0
-                                        ? (type_ == DataType::DECIMAL ? DECIMAL_MAX_PRECISION
-                                                                      : defaultDecfloatPrecision(type_))
-                                        : decimal_precision_;
+                if (decimal_precision_ == 0)
+                {
+                    size_t width = data.size() - offset;
+                    if (width == 0 || width > 16)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid DECIMAL payload width");
+                        return Status::DATA_CORRUPTED;
+                    }
+                    int128_t value = 0;
+                    if (!readInt128(data, offset, width, value))
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid DECIMAL payload");
+                        return Status::DATA_CORRUPTED;
+                    }
+                    decimal_unscaled_ = value;
+                    decimal_precision_ = 0;
+                    break;
+                }
+
+                uint8_t precision = decimal_precision_;
                 if (precision > DECIMAL_MAX_PRECISION || decimal_scale_ > precision)
                 {
                     SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid DECIMAL precision/scale");
@@ -5111,7 +5321,6 @@ namespace scratchbird::core
                 break;
             }
             case DataType::TIME:
-            case DataType::TIME_WITH_ZONE:
             {
                 int64_t micros = 0;
                 int32_t offset_seconds = 0;
@@ -5125,7 +5334,40 @@ namespace scratchbird::core
                 timezone_offset_seconds_ = offset_seconds;
                 break;
             }
+            case DataType::TIME_WITH_ZONE:
+            {
+                int64_t micros = 0;
+                int32_t offset_seconds = 0;
+                if (!readInt64(data, offset, micros) ||
+                    !readInt32(data, offset, offset_seconds))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid TIME payload");
+                    return Status::DATA_CORRUPTED;
+                }
+                if (!hasConcreteDisplayOffset(offset_seconds))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                      "TIME WITH TIME ZONE missing concrete offset");
+                    return Status::DATA_CORRUPTED;
+                }
+                data_.int64_val = micros;
+                timezone_offset_seconds_ = offset_seconds;
+                break;
+            }
             case DataType::TIMESTAMP:
+            {
+                int64_t micros = 0;
+                int32_t offset_seconds = 0;
+                if (!readInt64(data, offset, micros) ||
+                    !readInt32(data, offset, offset_seconds))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid TIMESTAMP payload");
+                    return Status::DATA_CORRUPTED;
+                }
+                data_.int64_val = micros;
+                timezone_offset_seconds_ = offset_seconds;
+                break;
+            }
             case DataType::TIMESTAMP_WITH_ZONE:
             {
                 int64_t micros = 0;
@@ -5134,6 +5376,12 @@ namespace scratchbird::core
                     !readInt32(data, offset, offset_seconds))
                 {
                     SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid TIMESTAMP payload");
+                    return Status::DATA_CORRUPTED;
+                }
+                if (!hasConcreteDisplayOffset(offset_seconds))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                      "TIMESTAMP WITH TIME ZONE missing concrete offset");
                     return Status::DATA_CORRUPTED;
                 }
                 data_.int64_val = micros;
@@ -5726,6 +5974,8 @@ namespace scratchbird::core
                 break;
             }
             case DataType::ARRAY:
+            case DataType::LIST:
+            case DataType::MAP:
             {
                 int32_t ndim = 0;
                 int32_t flags = 0;
@@ -6117,7 +6367,7 @@ namespace scratchbird::core
         decimal_unscaled_ = 0;
         decimal_precision_ = 0;
         decimal_scale_ = 0;
-        timezone_offset_seconds_ = 0;
+        timezone_offset_seconds_ = kNoDisplayOffsetSeconds;
         bit_length_ = 0;
     }
 
@@ -6304,7 +6554,9 @@ namespace scratchbird::core
 
         auto stringValueForParse = [&]() -> std::string
         {
-            return (type_ == DataType::JSONB) ? toString() : string_data_;
+            return (type_ == DataType::JSONB || type_ == DataType::BSON)
+                       ? toString()
+                       : string_data_;
         };
 
         auto normalized_format = (format == CastFormat::DEFAULT) ? CastFormat::HEX : format;
@@ -6360,6 +6612,13 @@ namespace scratchbird::core
 
             result_out = *this;
             return Status::OK;
+        }
+
+        if (!TypeSystem::isExplicitlyConvertible(type_, target))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::DATATYPE_MISMATCH,
+                              "Explicit cast not allowed by canonical cast matrix");
+            return wrapStatus(Status::DATATYPE_MISMATCH);
         }
 
         auto setInvalidNumber = [&](const std::string& input) -> Status
@@ -6548,10 +6807,19 @@ namespace scratchbird::core
         switch (target)
         {
             case DataType::JSONB:
+            case DataType::BSON:
             {
-                if (type_ == DataType::JSONB)
+                if (type_ == target)
                 {
                     result_out = *this;
+                    return Status::OK;
+                }
+
+                if (type_ == DataType::JSONB || type_ == DataType::BSON)
+                {
+                    result_out = TypedValue(target);
+                    result_out.is_null_ = false;
+                    result_out.binary_data_ = binary_data_;
                     return Status::OK;
                 }
 
@@ -6578,7 +6846,9 @@ namespace scratchbird::core
                     return wrapStatus(Status::INVALID_TEXT_REPRESENTATION);
                 }
 
-                result_out = makeJSONB(encoded);
+                result_out = TypedValue(target);
+                result_out.is_null_ = false;
+                result_out.binary_data_ = std::move(encoded);
                 return Status::OK;
             }
             case DataType::CHAR:
@@ -6673,7 +6943,8 @@ namespace scratchbird::core
             case DataType::VECTOR:
             {
                 if (isBinaryLike(type_) || type_ == DataType::UUID || type_ == DataType::INT128 ||
-                    type_ == DataType::UINT128 || type_ == DataType::JSONB)
+                    type_ == DataType::UINT128 || type_ == DataType::JSONB ||
+                    type_ == DataType::BSON)
                 {
                     return setBinaryResult(target, getBinary());
                 }
@@ -6942,7 +7213,7 @@ namespace scratchbird::core
                 }
                 else if (type_ == DataType::MONEY)
                 {
-                    Decimal dec(static_cast<int128_t>(data_.int64_val), 19, 4);
+                    Decimal dec(static_cast<int128_t>(data_.int64_val), 19, defaultMoneyScale());
                     int128_t money_val = static_cast<int128_t>(dec.toInt64());
                     if (money_val < 0)
                     {
@@ -7088,7 +7359,7 @@ namespace scratchbird::core
                 }
                 else if (type_ == DataType::MONEY)
                 {
-                    Decimal dec(static_cast<int128_t>(data_.int64_val), 19, 4);
+                    Decimal dec(static_cast<int128_t>(data_.int64_val), 19, defaultMoneyScale());
                     value = static_cast<int128_t>(dec.toInt64());
                 }
                 else if (isFloatType(type_))
@@ -7210,7 +7481,7 @@ namespace scratchbird::core
                 }
                 else if (type_ == DataType::MONEY)
                 {
-                    Decimal dec(static_cast<int128_t>(data_.int64_val), 19, 4);
+                    Decimal dec(static_cast<int128_t>(data_.int64_val), 19, defaultMoneyScale());
                     value = dec.toDouble();
                 }
                 else if (type_ == DataType::BOOLEAN)
@@ -7310,7 +7581,7 @@ namespace scratchbird::core
                     }
                     else if (type_ == DataType::MONEY)
                     {
-                        Decimal money(static_cast<int128_t>(data_.int64_val), 19, 4);
+                        Decimal money(static_cast<int128_t>(data_.int64_val), 19, defaultMoneyScale());
                         dec = money.rescale(precision, scale, DecimalRoundingMode::HALF_UP);
                     }
                     else if (isIntegerType(type_) || type_ == DataType::BOOLEAN)
@@ -7433,7 +7704,7 @@ namespace scratchbird::core
                                             ? DECIMAL_MAX_PRECISION
                                             : decimal_precision_;
                     Decimal dec(decimal_unscaled_, precision, decimal_scale_);
-                    money = dec.rescale(19, 4, DecimalRoundingMode::HALF_UP);
+                    money = dec.rescale(19, defaultMoneyScale(), DecimalRoundingMode::HALF_UP);
                 }
                 else if (type_ == DataType::DECFLOAT16 ||
                          type_ == DataType::DECFLOAT34)
@@ -7444,12 +7715,12 @@ namespace scratchbird::core
                         return wrapStatus(Status::INVALID_ARGUMENT);
                     }
                     Decimal dec;
-                    Status st = decfloatToDecimal(df, 19, 4, dec, ctx);
+                    Status st = decfloatToDecimal(df, 19, defaultMoneyScale(), dec, ctx);
                     if (st != Status::OK)
                     {
                         return st;
                     }
-                    money = dec.rescale(19, 4, DecimalRoundingMode::HALF_UP);
+                    money = dec.rescale(19, defaultMoneyScale(), DecimalRoundingMode::HALF_UP);
                 }
                 else if (isIntegerType(type_) || type_ == DataType::BOOLEAN)
                 {
@@ -7497,7 +7768,7 @@ namespace scratchbird::core
                         int_val = toInt64();
                     }
                     int128_t scaled = int_val * POWERS_OF_10[4];
-                    money = Decimal(scaled, 19, 4);
+                    money = Decimal(scaled, 19, defaultMoneyScale());
                 }
                 else if (isFloatType(type_))
                 {
@@ -7510,12 +7781,12 @@ namespace scratchbird::core
                                           "Float is not finite");
                         return wrapStatus(Status::NUMERIC_VALUE_OUT_OF_RANGE);
                     }
-                    money = Decimal(val, 19, 4);
+                    money = Decimal(val, 19, defaultMoneyScale());
                 }
                 else if (isStringLike(type_))
                 {
                     std::string text = trimAscii(stringValueForParse());
-                    Status status = Decimal::parseWithError(text, 19, 4, &money, ctx);
+                    Status status = Decimal::parseWithError(text, 19, defaultMoneyScale(), &money, ctx);
                     if (status != Status::OK)
                     {
                         return setInvalidNumber(text);
@@ -7572,28 +7843,38 @@ namespace scratchbird::core
             case DataType::TIME:
             case DataType::TIMESTAMP:
             {
-                auto resolve_target_offset = [&](int64_t utc_micros) -> int32_t
+                auto resolve_target_offset = [&](int64_t utc_micros,
+                                                bool &has_target_offset) -> int32_t
                 {
-                    if (!target_type.with_timezone && target_type.timezone_hint == 0)
-                    {
-                        return 0;
-                    }
-
                     if (target_type.timezone_hint != 0)
                     {
                         uint16_t tz_id = target_type.timezone_hint;
                         TimezoneOffset offset = timezoneManager().getOffset(tz_id, utc_micros);
+                        has_target_offset = true;
                         return static_cast<int32_t>(offset.offset_minutes) * 60;
                     }
 
-                    if (timezone_offset_seconds_ != 0)
+                    if (target_type.with_timezone)
                     {
+                        if (hasConcreteDisplayOffset(timezone_offset_seconds_))
+                        {
+                            has_target_offset = true;
+                            return timezone_offset_seconds_;
+                        }
+                        uint16_t tz_id = timezoneManager().getDefaultTimezone();
+                        TimezoneOffset offset = timezoneManager().getOffset(tz_id, utc_micros);
+                        has_target_offset = true;
+                        return static_cast<int32_t>(offset.offset_minutes) * 60;
+                    }
+
+                    if (hasConcreteDisplayOffset(timezone_offset_seconds_))
+                    {
+                        has_target_offset = true;
                         return timezone_offset_seconds_;
                     }
 
-                    uint16_t tz_id = timezoneManager().getDefaultTimezone();
-                    TimezoneOffset offset = timezoneManager().getOffset(tz_id, utc_micros);
-                    return static_cast<int32_t>(offset.offset_minutes) * 60;
+                    has_target_offset = false;
+                    return 0;
                 };
 
                 if (type_ == DataType::DATE && target == DataType::TIMESTAMP)
@@ -7602,32 +7883,47 @@ namespace scratchbird::core
                     int64_t micros = data_.int64_val * FirebirdDateTime::SECONDS_PER_DAY *
                                          1000000 +
                                      default_micros;
-                    int32_t target_offset = resolve_target_offset(micros);
-                    result_out = makeTimestamp(micros, target_offset);
+                    bool has_target_offset = false;
+                    int32_t target_offset = resolve_target_offset(micros, has_target_offset);
+                    int32_t stored_offset = has_target_offset
+                                                ? target_offset
+                                                : TypedValue::kNoDisplayOffsetSeconds;
+                    result_out = makeTimestamp(micros, stored_offset);
                     return Status::OK;
                 }
                 if (type_ == DataType::TIME && target == DataType::TIMESTAMP)
                 {
                     int64_t micros = data_.int64_val;
-                    int32_t target_offset = resolve_target_offset(micros);
-                    result_out = makeTimestamp(micros, target_offset);
+                    bool has_target_offset = false;
+                    int32_t target_offset = resolve_target_offset(micros, has_target_offset);
+                    int32_t stored_offset = has_target_offset
+                                                ? target_offset
+                                                : TypedValue::kNoDisplayOffsetSeconds;
+                    result_out = makeTimestamp(micros, stored_offset);
                     return Status::OK;
                 }
                 if (type_ == DataType::TIMESTAMP && target == DataType::DATE)
                 {
                     int64_t utc_micros = data_.int64_val;
-                    int32_t target_offset = resolve_target_offset(utc_micros);
+                    bool has_target_offset = false;
+                    int32_t target_offset =
+                        resolve_target_offset(utc_micros, has_target_offset);
                     int64_t local_micros = utc_micros +
                                            static_cast<int64_t>(target_offset) * 1000000;
                     int64_t local_seconds = local_micros / 1000000;
                     int64_t days = floorDiv(local_seconds, FirebirdDateTime::SECONDS_PER_DAY);
-                    result_out = makeDate(days, target_offset);
+                    int32_t stored_offset = has_target_offset
+                                                ? target_offset
+                                                : TypedValue::kNoDisplayOffsetSeconds;
+                    result_out = makeDate(days, stored_offset);
                     return Status::OK;
                 }
                 if (type_ == DataType::TIMESTAMP && target == DataType::TIME)
                 {
                     int64_t utc_micros = data_.int64_val;
-                    int32_t target_offset = resolve_target_offset(utc_micros);
+                    bool has_target_offset = false;
+                    int32_t target_offset =
+                        resolve_target_offset(utc_micros, has_target_offset);
                     int64_t local_micros = utc_micros +
                                            static_cast<int64_t>(target_offset) * 1000000;
                     int64_t micros_per_day =
@@ -7637,7 +7933,10 @@ namespace scratchbird::core
                     {
                         time_micros += micros_per_day;
                     }
-                    result_out = makeTime(time_micros, target_offset);
+                    int32_t stored_offset = has_target_offset
+                                                ? target_offset
+                                                : TypedValue::kNoDisplayOffsetSeconds;
+                    result_out = makeTime(time_micros, stored_offset);
                     return Status::OK;
                 }
 
@@ -7668,7 +7967,7 @@ namespace scratchbird::core
                 std::string input = stringValueForParse();
                 if (!parseOffsetSuffix(input, min_pos, base, offset_seconds, has_offset, ctx))
                 {
-                    return wrapStatus(Status::INVALID_DATETIME_FORMAT);
+                    return wrapStatus(Status::DATETIME_VALUE_OUT_OF_RANGE);
                 }
 
                 if (target == DataType::DATE)
@@ -7678,9 +7977,15 @@ namespace scratchbird::core
                     int day = 0;
                     if (!parseDateParts(base, year, month, day))
                     {
-                        SET_ERROR_CONTEXT(ctx, Status::INVALID_DATETIME_FORMAT,
+                        SET_ERROR_CONTEXT(ctx, Status::DATETIME_VALUE_OUT_OF_RANGE,
                                           "Invalid DATE format");
-                        return wrapStatus(Status::INVALID_DATETIME_FORMAT);
+                        return wrapStatus(Status::DATETIME_VALUE_OUT_OF_RANGE);
+                    }
+                    if (!isValidDateYmd(year, month, day))
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::DATETIME_VALUE_OUT_OF_RANGE,
+                                          "Invalid DATE value");
+                        return wrapStatus(Status::DATETIME_VALUE_OUT_OF_RANGE);
                     }
                     int32_t mjd = FirebirdDateTime::dateToMJD(year, month, day);
                     int64_t days = static_cast<int64_t>(mjd) - FirebirdDateTime::UNIX_EPOCH_MJD;
@@ -7701,7 +8006,10 @@ namespace scratchbird::core
                                          static_cast<int64_t>(offset_seconds) * 1000000;
                     int64_t utc_days = floorDiv(utc_micros / 1000000,
                                                 FirebirdDateTime::SECONDS_PER_DAY);
-                    int32_t stored_offset = (has_offset || use_timezone) ? offset_seconds : 0;
+                    int32_t stored_offset =
+                        (has_offset || use_timezone)
+                            ? offset_seconds
+                            : TypedValue::kNoDisplayOffsetSeconds;
                     result_out = makeDate(utc_days, stored_offset);
                     return Status::OK;
                 }
@@ -7714,14 +8022,14 @@ namespace scratchbird::core
                     int micros = 0;
                     if (!parseTimeParts(base, hour, minute, second, micros, ctx))
                     {
-                        return wrapStatus(Status::INVALID_DATETIME_FORMAT);
+                        return wrapStatus(Status::DATETIME_VALUE_OUT_OF_RANGE);
                     }
                     if (minute < 0 || minute > 59 || second < 0 || second > 59 ||
                         hour < 0 || hour > 23)
                     {
-                        SET_ERROR_CONTEXT(ctx, Status::INVALID_DATETIME_FORMAT,
+                        SET_ERROR_CONTEXT(ctx, Status::DATETIME_VALUE_OUT_OF_RANGE,
                                           "Invalid TIME value");
-                        return wrapStatus(Status::INVALID_DATETIME_FORMAT);
+                        return wrapStatus(Status::DATETIME_VALUE_OUT_OF_RANGE);
                     }
                     int64_t local_micros = (static_cast<int64_t>(hour) * 3600 +
                                             static_cast<int64_t>(minute) * 60 +
@@ -7745,7 +8053,10 @@ namespace scratchbird::core
                     {
                         utc_micros += micros_per_day;
                     }
-                    int32_t stored_offset = (has_offset || use_timezone) ? offset_seconds : 0;
+                    int32_t stored_offset =
+                        (has_offset || use_timezone)
+                            ? offset_seconds
+                            : TypedValue::kNoDisplayOffsetSeconds;
                     result_out = makeTime(utc_micros, stored_offset);
                     return Status::OK;
                 }
@@ -7758,9 +8069,9 @@ namespace scratchbird::core
                 }
                 if (sep_pos == std::string::npos)
                 {
-                    SET_ERROR_CONTEXT(ctx, Status::INVALID_DATETIME_FORMAT,
+                    SET_ERROR_CONTEXT(ctx, Status::DATETIME_VALUE_OUT_OF_RANGE,
                                       "Invalid TIMESTAMP format");
-                    return wrapStatus(Status::INVALID_DATETIME_FORMAT);
+                    return wrapStatus(Status::DATETIME_VALUE_OUT_OF_RANGE);
                 }
                 std::string date_part = base.substr(0, sep_pos);
                 std::string time_part = base.substr(sep_pos + 1);
@@ -7770,9 +8081,15 @@ namespace scratchbird::core
                 int day = 0;
                 if (!parseDateParts(date_part, year, month, day))
                 {
-                    SET_ERROR_CONTEXT(ctx, Status::INVALID_DATETIME_FORMAT,
+                    SET_ERROR_CONTEXT(ctx, Status::DATETIME_VALUE_OUT_OF_RANGE,
                                       "Invalid TIMESTAMP date");
-                    return wrapStatus(Status::INVALID_DATETIME_FORMAT);
+                    return wrapStatus(Status::DATETIME_VALUE_OUT_OF_RANGE);
+                }
+                if (!isValidDateYmd(year, month, day))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATETIME_VALUE_OUT_OF_RANGE,
+                                      "Invalid TIMESTAMP date value");
+                    return wrapStatus(Status::DATETIME_VALUE_OUT_OF_RANGE);
                 }
                 int hour = 0;
                 int minute = 0;
@@ -7780,14 +8097,14 @@ namespace scratchbird::core
                 int micros = 0;
                 if (!parseTimeParts(time_part, hour, minute, second, micros, ctx))
                 {
-                    return wrapStatus(Status::INVALID_DATETIME_FORMAT);
+                    return wrapStatus(Status::DATETIME_VALUE_OUT_OF_RANGE);
                 }
                 if (minute < 0 || minute > 59 || second < 0 || second > 59 ||
                     hour < 0 || hour > 23)
                 {
-                    SET_ERROR_CONTEXT(ctx, Status::INVALID_DATETIME_FORMAT,
+                    SET_ERROR_CONTEXT(ctx, Status::DATETIME_VALUE_OUT_OF_RANGE,
                                       "Invalid TIMESTAMP time");
-                    return wrapStatus(Status::INVALID_DATETIME_FORMAT);
+                    return wrapStatus(Status::DATETIME_VALUE_OUT_OF_RANGE);
                 }
 
                 int32_t mjd = FirebirdDateTime::dateToMJD(year, month, day);
@@ -7806,7 +8123,10 @@ namespace scratchbird::core
                 }
                 int64_t utc_micros = local_micros -
                                      static_cast<int64_t>(offset_seconds) * 1000000;
-                int32_t stored_offset = (has_offset || use_timezone) ? offset_seconds : 0;
+                int32_t stored_offset =
+                    (has_offset || use_timezone)
+                        ? offset_seconds
+                        : TypedValue::kNoDisplayOffsetSeconds;
                 result_out = makeTimestamp(utc_micros, stored_offset);
                 return Status::OK;
             }

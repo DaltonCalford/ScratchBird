@@ -2526,7 +2526,7 @@ namespace scratchbird::core
                 overwrite_tuple_data = toasted_overwrite_tuple.data();
                 overwrite_tuple_size = static_cast<uint32_t>(toasted_overwrite_tuple.size());
                 overwrite_tuple_toasted = true;
-                overwrite_toast_id = toast_ptr.va_valueid;
+                overwrite_toast_id = toast_ptr.lob_uuid;
             }
 
             // Step 2: Allocate page for BACK version (OLD data)

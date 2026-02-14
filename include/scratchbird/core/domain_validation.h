@@ -9,6 +9,7 @@
  */
 #pragma once
 
+#include <cstdint>
 #include <string>
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"
@@ -17,10 +18,23 @@
 
 namespace scratchbird::core
 {
+    struct DomainInfo;
+
     struct ValidationConfig
     {
         std::string function_name;
         std::string error_message;
+    };
+
+    enum class CollectionMutationKind : uint8_t
+    {
+        REPLACE_VALUE = 0,
+        UPDATE_ELEMENT = 1,
+        UPDATE_FIELD = 2,
+        APPEND = 3,
+        REMOVE = 4,
+        SLICE = 5,
+        MERGE = 6
     };
 
     class DomainValidation
@@ -31,6 +45,11 @@ namespace scratchbird::core
                                   FunctionInvoker* invoker,
                                   bool& is_valid_out,
                                   ErrorContext* ctx = nullptr) -> Status;
+
+        // Enforce frozen-collection mutation policy for emulated domains.
+        static auto validateCollectionMutation(const DomainInfo& domain,
+                                               CollectionMutationKind mutation,
+                                               ErrorContext* ctx = nullptr) -> Status;
 
         static void setValidationError(const ValidationConfig& config,
                                        const TypedValue& value,

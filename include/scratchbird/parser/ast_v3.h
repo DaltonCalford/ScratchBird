@@ -2982,6 +2982,7 @@ enum class BinaryOp : uint8_t {
     ADD, SUB, MUL, DIV, DIV_INT, MOD, POWER,
     // Comparison
     EQ, NE, LT, LE, GT, GE,
+    NULL_SAFE_EQ,
     // Logical
     AND, OR,
     // String

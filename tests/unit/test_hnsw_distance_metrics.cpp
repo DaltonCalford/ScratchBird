@@ -342,11 +342,11 @@ TEST_F(HNSWDistanceMetricsTest, RealWorld_TextEmbeddings)
     }
 
     VectorValue v1(doc1);
-    VectorValue v2(doc2);
+    VectorValue value_two(doc2);
     VectorValue v3(doc3);
 
-    // Cosine similarity: v1 should be closer to v2 than to v3
-    auto sim_1_2 = v1.distance(v2, DistanceMetric::COSINE);
+    // Cosine similarity: v1 should be closer to value_two than to v3
+    auto sim_1_2 = v1.distance(value_two, DistanceMetric::COSINE);
     auto sim_1_3 = v1.distance(v3, DistanceMetric::COSINE);
 
     ASSERT_TRUE(sim_1_2.has_value());
@@ -369,9 +369,9 @@ TEST_F(HNSWDistanceMetricsTest, RealWorld_ImageEmbeddings)
     }
 
     VectorValue v1(image1);
-    VectorValue v2(image2);
+    VectorValue value_two(image2);
 
-    auto cosine = v1.distance(v2, DistanceMetric::COSINE);
+    auto cosine = v1.distance(value_two, DistanceMetric::COSINE);
     ASSERT_TRUE(cosine.has_value());
 
     // Should be very similar (cosine > 0.99)

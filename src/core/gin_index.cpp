@@ -558,7 +558,7 @@ namespace scratchbird
             // Initialize meta page header
             meta->hip_header.magic = K_MAGIC_SBRD;
             meta->hip_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
-            meta->hip_header.page_type = static_cast<uint16_t>(PageType::GIN_INDEX_META);
+            meta->hip_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_GIN_META);
             meta->hip_header.page_size = db->page_size();
             meta->hip_header.page_id = meta_page;
             meta->hip_header.generation = 1;
@@ -633,7 +633,7 @@ namespace scratchbird
             }
 
             auto *meta = reinterpret_cast<SBGinIndexMetaPage *>(meta_data);
-            if (meta->hip_header.page_type != static_cast<uint16_t>(PageType::GIN_INDEX_META))
+            if (meta->hip_header.page_type != static_cast<uint16_t>(PageType::PAGE_TYPE_GIN_META))
             {
                 db->buffer_pool()->unpinPageGlobal(meta_gpid, false, ctx);
                 SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Invalid GIN index meta page");
@@ -824,7 +824,7 @@ namespace scratchbird
 
                 pending->gpp_header.magic = K_MAGIC_SBRD;
                 pending->gpp_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
-                pending->gpp_header.page_type = static_cast<uint16_t>(PageType::GIN_PENDING_LIST);
+                pending->gpp_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_GIN_PENDING);
                 pending->gpp_header.page_size = db_->page_size();
                 pending->gpp_header.page_id = pending_page;
                 pending->gpp_header.generation = 1;
@@ -885,7 +885,7 @@ namespace scratchbird
 
                 new_pending->gpp_header.magic = K_MAGIC_SBRD;
                 new_pending->gpp_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
-                new_pending->gpp_header.page_type = static_cast<uint16_t>(PageType::GIN_PENDING_LIST);
+                new_pending->gpp_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_GIN_PENDING);
                 new_pending->gpp_header.page_size = db_->page_size();
                 new_pending->gpp_header.page_id = new_pending_page;
                 new_pending->gpp_header.generation = 1;
@@ -1370,7 +1370,7 @@ namespace scratchbird
 
             list_page->gpl_header.magic = K_MAGIC_SBRD;
             list_page->gpl_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
-            list_page->gpl_header.page_type = static_cast<uint16_t>(PageType::GIN_POSTING_LIST);
+            list_page->gpl_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_GIN_DATA);
             list_page->gpl_header.page_size = db_->page_size();
             list_page->gpl_header.page_id = new_posting_page;
             list_page->gpl_header.generation = 1;
@@ -1583,7 +1583,7 @@ namespace scratchbird
 
             leaf->gpt_header.magic = K_MAGIC_SBRD;
             leaf->gpt_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
-            leaf->gpt_header.page_type = static_cast<uint16_t>(PageType::GIN_POSTING_TREE);
+            leaf->gpt_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_GIN_ENTRY);
             leaf->gpt_header.page_size = db_->page_size();
             leaf->gpt_header.page_id = leaf_page;
             leaf->gpt_header.generation = 1;
@@ -1750,7 +1750,7 @@ namespace scratchbird
 
                 root->gpt_header.magic = K_MAGIC_SBRD;
                 root->gpt_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
-                root->gpt_header.page_type = static_cast<uint16_t>(PageType::GIN_POSTING_TREE);
+                root->gpt_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_GIN_ENTRY);
                 root->gpt_header.page_size = db_->page_size();
                 root->gpt_header.page_id = new_root;
                 root->gpt_header.generation = 1;
@@ -1884,7 +1884,7 @@ namespace scratchbird
 
             sibling->gpt_header.magic = K_MAGIC_SBRD;
             sibling->gpt_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
-            sibling->gpt_header.page_type = static_cast<uint16_t>(PageType::GIN_POSTING_TREE);
+            sibling->gpt_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_GIN_ENTRY);
             sibling->gpt_header.page_size = db_->page_size();
             sibling->gpt_header.page_id = new_sibling;
             sibling->gpt_header.generation = 1;
@@ -2141,7 +2141,7 @@ namespace scratchbird
 
             sibling->gpt_header.magic = K_MAGIC_SBRD;
             sibling->gpt_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
-            sibling->gpt_header.page_type = static_cast<uint16_t>(PageType::GIN_POSTING_TREE);
+            sibling->gpt_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_GIN_ENTRY);
             sibling->gpt_header.page_size = db_->page_size();
             sibling->gpt_header.page_id = new_sibling;
             sibling->gpt_header.generation = 1;
@@ -2458,7 +2458,7 @@ namespace scratchbird
 
                 leaf->get_header.magic = K_MAGIC_SBRD;
                 leaf->get_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
-                leaf->get_header.page_type = static_cast<uint16_t>(PageType::GIN_INDEX_META);
+                leaf->get_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_GIN_ENTRY);
                 leaf->get_header.page_size = db_->page_size();
                 leaf->get_header.page_id = root_page;
                 leaf->get_header.generation = 1;
@@ -2506,23 +2506,111 @@ namespace scratchbird
                 return status;
             }
 
-            // If there was a split, create new root
+            // If there was a split, either create a new root (root was leaf)
+            // or insert a separator into existing root (root already internal).
             if (new_sibling != 0)
             {
-                uint32_t new_root = 0;
-                status = createNewEntryTreeRoot(leaf_page, new_sibling, separator_key, &new_root, ctx);
+                uint8_t *root_probe = nullptr;
+                status = pinIndexPage(root_page, (void **)&root_probe, ctx);
                 if (status != Status::OK)
                 {
                     return status;
                 }
+                auto *root_probe_base = reinterpret_cast<SBGinEntryTreeLeaf *>(root_probe);
+                bool root_is_leaf = (root_probe_base->get_is_leaf == 1);
+                unpinIndexPage(root_page, false, ctx);
 
-                // Update meta with new root
-                status = pinIndexPage(meta_page_, (void **)&meta_data, ctx);
-                if (status == Status::OK)
+                if (root_is_leaf)
                 {
-                    meta = reinterpret_cast<SBGinIndexMetaPage *>(meta_data);
-                    meta->gin_keys_btree_root = new_root;
-                    unpinIndexPage(meta_page_, true, ctx);
+                    uint32_t new_root = 0;
+                    status = createNewEntryTreeRoot(leaf_page, new_sibling, separator_key, &new_root, ctx);
+                    if (status != Status::OK)
+                    {
+                        return status;
+                    }
+
+                    // Update meta with new root
+                    status = pinIndexPage(meta_page_, (void **)&meta_data, ctx);
+                    if (status == Status::OK)
+                    {
+                        meta = reinterpret_cast<SBGinIndexMetaPage *>(meta_data);
+                        meta->gin_keys_btree_root = new_root;
+                        unpinIndexPage(meta_page_, true, ctx);
+                    }
+                }
+                else
+                {
+                    uint8_t *root_data = nullptr;
+                    status = pinIndexPage(root_page, (void **)&root_data, ctx);
+                    if (status != Status::OK)
+                    {
+                        return status;
+                    }
+
+                    auto *root = reinterpret_cast<SBGinEntryTreeInternal *>(root_data);
+                    if (root->get_is_leaf != 0)
+                    {
+                        unpinIndexPage(root_page, false, ctx);
+                        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                          "GIN entry tree root has invalid node type");
+                        return Status::PAGE_CORRUPT;
+                    }
+
+                    const uint16_t entry_size =
+                        static_cast<uint16_t>(sizeof(uint16_t) + sizeof(uint32_t) + separator_key.size());
+                    if (root->get_free_space < entry_size ||
+                        root->get_entry_count >= MAX_ENTRY_TREE_INTERNAL_ENTRIES)
+                    {
+                        unpinIndexPage(root_page, false, ctx);
+                        SET_ERROR_CONTEXT(ctx, Status::PAGE_FULL,
+                                          "GIN entry tree root split required but not implemented");
+                        return Status::PAGE_FULL;
+                    }
+
+                    uint16_t insert_pos = root->get_entry_count;
+                    for (uint16_t i = 0; i < root->get_entry_count; i++)
+                    {
+                        uint16_t offset = root->get_offsets[i];
+                        auto *entry = reinterpret_cast<GinEntryTreeInternalEntry *>(root_data + offset);
+                        std::vector<uint8_t> existing_key(entry->key_data, entry->key_data + entry->key_len);
+                        if (compareKeys(separator_key, existing_key) < 0)
+                        {
+                            insert_pos = i;
+                            break;
+                        }
+                    }
+
+                    uint16_t new_offset = root->get_data_end - entry_size;
+                    auto *new_entry = reinterpret_cast<GinEntryTreeInternalEntry *>(root_data + new_offset);
+                    new_entry->key_len = static_cast<uint16_t>(separator_key.size());
+                    new_entry->child_page = leaf_page;
+                    std::memcpy(new_entry->key_data, separator_key.data(), separator_key.size());
+
+                    if (insert_pos < root->get_entry_count)
+                    {
+                        std::memmove(&root->get_offsets[insert_pos + 1],
+                                     &root->get_offsets[insert_pos],
+                                     (root->get_entry_count - insert_pos) * sizeof(uint16_t));
+                    }
+                    root->get_offsets[insert_pos] = new_offset;
+                    root->get_entry_count++;
+                    root->get_data_end = new_offset;
+                    root->get_free_space -= entry_size;
+
+                    // Range [separator_key, next_separator) should go to new_sibling.
+                    if (insert_pos + 1 < root->get_entry_count)
+                    {
+                        uint16_t next_offset = root->get_offsets[insert_pos + 1];
+                        auto *next_entry =
+                            reinterpret_cast<GinEntryTreeInternalEntry *>(root_data + next_offset);
+                        next_entry->child_page = new_sibling;
+                    }
+                    else
+                    {
+                        root->get_rightmost_child = new_sibling;
+                    }
+
+                    unpinIndexPage(root_page, true, ctx);
                 }
             }
 
@@ -2534,9 +2622,18 @@ namespace scratchbird
                                            ErrorContext *ctx)
         {
             uint32_t current_page = tree_root;
+            uint32_t traversal_hops = 0;
+            constexpr uint32_t kMaxTraversalHops = 4096;
 
             while (true)
             {
+                if (++traversal_hops > kMaxTraversalHops)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                      "GIN entry tree traversal exceeded maximum hops");
+                    return Status::PAGE_CORRUPT;
+                }
+
                 uint8_t *page_data = nullptr;
                 Status status = pinIndexPage(current_page, (void **)&page_data, ctx);
                 if (status != Status::OK)
@@ -2570,6 +2667,14 @@ namespace scratchbird
                         next_page = entry->child_page;
                         break;
                     }
+                }
+
+                if (next_page == 0 || next_page == current_page)
+                {
+                    unpinIndexPage(current_page, false, ctx);
+                    SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                      "GIN entry tree has invalid child pointer");
+                    return Status::PAGE_CORRUPT;
                 }
 
                 unpinIndexPage(current_page, false, ctx);
@@ -2631,10 +2736,9 @@ namespace scratchbird
                 *position_out = result_pos;
             }
 
-            unpinIndexPage(leaf_page, false, ctx);
-
             if (result_pos == -1 || result_pos >= leaf->get_entry_count)
             {
+                unpinIndexPage(leaf_page, false, ctx);
                 return Status::NOT_FOUND;
             }
 
@@ -2645,9 +2749,15 @@ namespace scratchbird
 
             if (compareKeys(key, entry_key) == 0)
             {
+                if (value_out)
+                {
+                    *value_out = entry->value;
+                }
+                unpinIndexPage(leaf_page, false, ctx);
                 return Status::OK;
             }
 
+            unpinIndexPage(leaf_page, false, ctx);
             return Status::NOT_FOUND;
         }
 
@@ -2676,7 +2786,70 @@ namespace scratchbird
             if (leaf->get_free_space < space_needed || leaf->get_entry_count >= MAX_ENTRY_TREE_LEAF_ENTRIES)
             {
                 unpinIndexPage(leaf_page, false, ctx);
-                return splitEntryTreeLeaf(leaf_page, new_sibling_out, separator_key_out, ctx);
+                status = splitEntryTreeLeaf(leaf_page, new_sibling_out, separator_key_out, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                // Insert the key/value into whichever leaf now owns the key range.
+                uint32_t target_leaf = (compareKeys(key, *separator_key_out) < 0)
+                    ? leaf_page
+                    : *new_sibling_out;
+
+                uint8_t *target_data = nullptr;
+                status = pinIndexPage(target_leaf, (void **)&target_data, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                auto *target = reinterpret_cast<SBGinEntryTreeLeaf *>(target_data);
+                uint16_t target_space_needed = sizeof(uint16_t) + sizeof(GinEntryTreeValue) + key.size();
+                if (target->get_free_space < target_space_needed ||
+                    target->get_entry_count >= MAX_ENTRY_TREE_LEAF_ENTRIES)
+                {
+                    unpinIndexPage(target_leaf, false, ctx);
+                    SET_ERROR_CONTEXT(ctx, Status::PAGE_FULL,
+                                      "GIN split target leaf has insufficient free space");
+                    return Status::PAGE_FULL;
+                }
+
+                int32_t target_insert_pos = 0;
+                for (uint16_t i = 0; i < target->get_entry_count; i++)
+                {
+                    uint16_t offset = target->get_offsets[i];
+                    auto *entry = reinterpret_cast<GinEntryTreeLeafEntry *>(target_data + offset);
+                    std::vector<uint8_t> entry_key(entry->key_data, entry->key_data + entry->key_len);
+
+                    if (compareKeys(key, entry_key) < 0)
+                    {
+                        target_insert_pos = i;
+                        break;
+                    }
+                    target_insert_pos = i + 1;
+                }
+
+                uint16_t target_new_offset = target->get_data_end - target_space_needed;
+                auto *new_entry = reinterpret_cast<GinEntryTreeLeafEntry *>(target_data + target_new_offset);
+                new_entry->key_len = key.size();
+                new_entry->value = value;
+                std::memcpy(new_entry->key_data, key.data(), key.size());
+
+                if (target_insert_pos < target->get_entry_count)
+                {
+                    std::memmove(&target->get_offsets[target_insert_pos + 1],
+                                 &target->get_offsets[target_insert_pos],
+                                 (target->get_entry_count - target_insert_pos) * sizeof(uint16_t));
+                }
+
+                target->get_offsets[target_insert_pos] = target_new_offset;
+                target->get_entry_count++;
+                target->get_data_end = target_new_offset;
+                target->get_free_space -= target_space_needed;
+
+                unpinIndexPage(target_leaf, true, ctx);
+                return Status::OK;
             }
 
             // Find insertion position
@@ -2760,14 +2933,14 @@ namespace scratchbird
 
             sibling->get_header.magic = K_MAGIC_SBRD;
             sibling->get_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
-            sibling->get_header.page_type = static_cast<uint16_t>(PageType::GIN_INDEX_META);
+            sibling->get_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_GIN_ENTRY);
             sibling->get_header.page_size = db_->page_size();
             sibling->get_header.page_id = new_sibling;
             sibling->get_header.generation = 1;
             sibling->get_header.checksum = 0;
             sibling->get_header.flags = 0;
             sibling->get_header.lsn = 0;
-            pageSetLower(sibling->get_header, sizeof(SBGinEntryTreeInternal));
+            pageSetLower(sibling->get_header, sizeof(SBGinEntryTreeLeaf));
             pageSetUpper(sibling->get_header, db_->page_size());
             pageSetSpecial(sibling->get_header, db_->page_size());
             sibling->get_is_leaf = 1;
@@ -2775,47 +2948,76 @@ namespace scratchbird
             sibling->get_free_space = db_->page_size() - sizeof(SBGinEntryTreeLeaf);
             sibling->get_data_end = db_->page_size();
 
-            // Split point: move second half to sibling
-            uint16_t split_point = leaf->get_entry_count / 2;
-            uint16_t sibling_new_data_end = db_->page_size();
+            struct EntrySnapshot
+            {
+                std::vector<uint8_t> key;
+                GinEntryTreeValue value;
+            };
+            std::vector<EntrySnapshot> entries;
+            entries.reserve(leaf->get_entry_count);
 
-            // Copy entries from split_point onwards to sibling
-            for (uint16_t i = split_point; i < leaf->get_entry_count; i++)
+            for (uint16_t i = 0; i < leaf->get_entry_count; i++)
             {
                 uint16_t offset = leaf->get_offsets[i];
                 auto *entry = reinterpret_cast<GinEntryTreeLeafEntry *>(leaf_data + offset);
+                EntrySnapshot snap;
+                snap.key.assign(entry->key_data, entry->key_data + entry->key_len);
+                snap.value = entry->value;
+                entries.push_back(std::move(snap));
+            }
 
-                // Calculate entry size
-                uint16_t entry_size = sizeof(uint16_t) + sizeof(GinEntryTreeValue) + entry->key_len;
+            uint16_t split_point = static_cast<uint16_t>(entries.size() / 2);
 
-                // Allocate space in sibling
-                sibling_new_data_end -= entry_size;
-                auto *new_entry = reinterpret_cast<GinEntryTreeLeafEntry *>(sibling_data + sibling_new_data_end);
+            // Rebuild original leaf (lower half)
+            leaf->get_entry_count = 0;
+            leaf->get_free_space = db_->page_size() - sizeof(SBGinEntryTreeLeaf);
+            leaf->get_data_end = db_->page_size();
 
-                // Copy entry
-                new_entry->key_len = entry->key_len;
-                new_entry->value = entry->value;
-                std::memcpy(new_entry->key_data, entry->key_data, entry->key_len);
+            for (uint16_t i = 0; i < split_point; i++)
+            {
+                const auto &e = entries[i];
+                uint16_t entry_size = sizeof(uint16_t) + sizeof(GinEntryTreeValue) + e.key.size();
+                uint16_t new_offset = leaf->get_data_end - entry_size;
+                auto *new_entry = reinterpret_cast<GinEntryTreeLeafEntry *>(leaf_data + new_offset);
+                new_entry->key_len = static_cast<uint16_t>(e.key.size());
+                new_entry->value = e.value;
+                std::memcpy(new_entry->key_data, e.key.data(), e.key.size());
+                leaf->get_offsets[leaf->get_entry_count] = new_offset;
+                leaf->get_entry_count++;
+                leaf->get_data_end = new_offset;
+                leaf->get_free_space -= entry_size;
+            }
 
-                // Add offset to sibling
-                sibling->get_offsets[sibling->get_entry_count] = sibling_new_data_end;
+            // Build sibling (upper half)
+            sibling->get_entry_count = 0;
+            sibling->get_free_space = db_->page_size() - sizeof(SBGinEntryTreeLeaf);
+            sibling->get_data_end = db_->page_size();
+
+            for (size_t i = split_point; i < entries.size(); i++)
+            {
+                const auto &e = entries[i];
+                uint16_t entry_size = sizeof(uint16_t) + sizeof(GinEntryTreeValue) + e.key.size();
+                uint16_t new_offset = sibling->get_data_end - entry_size;
+                auto *new_entry = reinterpret_cast<GinEntryTreeLeafEntry *>(sibling_data + new_offset);
+                new_entry->key_len = static_cast<uint16_t>(e.key.size());
+                new_entry->value = e.value;
+                std::memcpy(new_entry->key_data, e.key.data(), e.key.size());
+                sibling->get_offsets[sibling->get_entry_count] = new_offset;
                 sibling->get_entry_count++;
+                sibling->get_data_end = new_offset;
                 sibling->get_free_space -= entry_size;
             }
 
-            sibling->get_data_end = sibling_new_data_end;
-
-            // Update original leaf
-            leaf->get_entry_count = split_point;
-            // Recalculate free space
-            leaf->get_free_space = leaf->get_data_end -
-                (static_cast<uint32_t>(sizeof(SBGinEntryTreeLeaf)) +
-                 leaf->get_entry_count * sizeof(uint16_t));
-
-            // Separator key is the first key of sibling
-            uint16_t sep_offset = sibling->get_offsets[0];
-            auto *sep_entry = reinterpret_cast<GinEntryTreeLeafEntry *>(sibling_data + sep_offset);
-            separator_key_out->assign(sep_entry->key_data, sep_entry->key_data + sep_entry->key_len);
+            // Separator key is first key of sibling
+            if (split_point >= entries.size())
+            {
+                unpinIndexPage(leaf_page, false, ctx);
+                unpinIndexPage(new_sibling, false, ctx);
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                  "GIN entry tree split produced empty sibling");
+                return Status::PAGE_CORRUPT;
+            }
+            *separator_key_out = entries[split_point].key;
 
             *new_sibling_out = new_sibling;
 
@@ -2852,7 +3054,7 @@ namespace scratchbird
 
             root->get_header.magic = K_MAGIC_SBRD;
             root->get_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
-            root->get_header.page_type = static_cast<uint16_t>(PageType::GIN_INDEX_META);
+            root->get_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_GIN_ENTRY);
             root->get_header.page_size = db_->page_size();
             root->get_header.page_id = new_root;
             root->get_header.generation = 1;

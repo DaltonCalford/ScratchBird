@@ -139,8 +139,10 @@ TEST(BtreeRightmostChildTest, Comprehensive) {
         uint32_t root_page = 0;
         GPID root_gpid = 0;
 
-        // Find the B-tree root page for our index
-        for (uint32_t pid = 0; pid < 100; pid++)
+        // Find the B-tree root page for our index.
+        // Scan all currently known pages; root page id is not guaranteed to be <100.
+        const uint32_t scan_limit = temp_pm->totalPages();
+        for (uint32_t pid = 0; pid < scan_limit; pid++)
         {
             void *temp_data;
             if (temp_bp->pinPage(pid, &temp_data, &ctx) == Status::OK)
@@ -213,7 +215,8 @@ TEST(BtreeRightmostChildTest, Comprehensive) {
             auto *page = reinterpret_cast<PageHeader *>(page_data);
 
             // Check if it's a B-tree page and then filter to internal nodes
-            if (page->page_type == PAGE_TYPE_INDEX_BTREE)
+            if (page->page_type == PAGE_TYPE_BTREE_LEAF ||
+                page->page_type == PAGE_TYPE_BTREE_INTERNAL)
             {
                 auto *btree_page = reinterpret_cast<SBBTreePage *>(page_data);
                 const bool is_leaf =
@@ -270,7 +273,8 @@ TEST(BtreeRightmostChildTest, Comprehensive) {
         uint32_t corrupted_page_id = 0;
         uint32_t root_page = 0;
 
-        for (uint32_t pid = 0; pid < 100; pid++)
+        const uint32_t scan_limit = db.page_manager()->totalPages();
+        for (uint32_t pid = 0; pid < scan_limit; pid++)
         {
             void *temp_data;
             if (bp->pinPage(pid, &temp_data, &ctx) == Status::OK)

@@ -384,6 +384,8 @@ private:
     Expression* parseConcatExprWithLeft(Expression* left);
     Expression* parseBitOrExpr();
     Expression* parseBitOrExprWithLeft(Expression* left);
+    Expression* parseBitXorExpr();
+    Expression* parseBitXorExprWithLeft(Expression* left);
     Expression* parseBitAndExpr();
     Expression* parseBitAndExprWithLeft(Expression* left);
     Expression* parseShiftExpr();

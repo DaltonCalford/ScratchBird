@@ -1434,13 +1434,11 @@ namespace scratchbird::core
                             const uint8_t* col_data = tuple_data + current_offset + sizeof(uint32_t);
                             if (len == sizeof(ToastPointer))
                             {
-                                const auto* toast_ptr = reinterpret_cast<const ToastPointer*>(col_data);
-                                ToastStrategy strategy = static_cast<ToastStrategy>(toast_ptr->va_tag);
-                                if (strategy == ToastStrategy::EXTERNAL ||
-                                    strategy == ToastStrategy::EXTENDED ||
-                                    strategy == ToastStrategy::COMPRESSED)
+                                if (ToastManager::isToastPointer(col_data, len))
                                 {
-                                    referenced_value_ids.insert(toast_ptr->va_valueid);
+                                    const auto* toast_ptr =
+                                        reinterpret_cast<const ToastPointer*>(col_data);
+                                    referenced_value_ids.insert(toast_ptr->lob_uuid);
                                 }
                             }
                         }
@@ -1673,20 +1671,23 @@ namespace scratchbird::core
                 // Use TransactionManager::isTransactionVisible() which checks TIP
                 uint64_t current_xid = txn_manager_->getCurrentXid();
 
-                if (txn_manager_->isTransactionVisible(chunk_xmax, current_xid))
+                TransactionState xmax_state = TransactionState::ACTIVE;
+                Status state_status = txn_manager_->getTransactionState(chunk_xmax, xmax_state, nullptr);
+                if (state_status == Status::OK)
                 {
-                    // xmax transaction committed - chunk is deleted
-                    chunks_to_delete.push_back(toast_tuple.tid);
-                }
-                else
-                {
-                    // xmax transaction aborted or still active
-                    // Check if it's definitely aborted
-                    if (!txn_manager_->isXidInRange(chunk_xmax))
+                    if (xmax_state == TransactionState::COMMITTED)
                     {
-                        // Transaction ID out of range - treat as aborted
+                        chunks_to_delete.push_back(toast_tuple.tid);
+                    }
+                    else if (xmax_state == TransactionState::ABORTED)
+                    {
                         chunks_to_clear_xmax.push_back(toast_tuple.tid);
                     }
+                }
+                else if (!txn_manager_->isXidInRange(chunk_xmax))
+                {
+                    // Out-of-range XMAX cannot be a live transaction; clear marker.
+                    chunks_to_clear_xmax.push_back(toast_tuple.tid);
                 }
             }
         }
@@ -1708,6 +1709,43 @@ namespace scratchbird::core
             return delete_status;
         };
 
+        auto clearChunkXmax = [&](const TID& tid) -> Status {
+            void* page_buffer = nullptr;
+            Status pin_status = db_->buffer_pool()->pinPageGlobal(
+                tid.gpid, &page_buffer, ctx, BufferPool::AccessStrategy::Vacuum);
+            if (pin_status != Status::OK)
+            {
+                return pin_status;
+            }
+
+            bool dirty = false;
+            auto* page_data = static_cast<uint8_t*>(page_buffer);
+            HeapPage heap_page(page_data, db_->page_size());
+            const uint8_t* tuple_data = nullptr;
+            uint32_t tuple_size = 0;
+            Status tuple_status = heap_page.getTuple(tid.slot, &tuple_data, &tuple_size, ctx);
+            if (tuple_status == Status::OK)
+            {
+                if (tuple_size >= sizeof(TupleHeader))
+                {
+                    auto* tuple_hdr =
+                        const_cast<TupleHeader*>(reinterpret_cast<const TupleHeader*>(tuple_data));
+                    tuple_hdr->xmax = 0;
+                    tuple_hdr->infomask &= static_cast<uint16_t>(
+                        ~(TupleHeader::HEAP_XMAX_COMMITTED | TupleHeader::HEAP_XMAX_INVALID));
+                    tuple_hdr->setRecordFlag(TupleHeader::RHD_DELETED, false);
+                    dirty = true;
+                }
+                else
+                {
+                    tuple_status = Status::PAGE_CORRUPT;
+                }
+            }
+
+            db_->buffer_pool()->unpinPageGlobal(tid.gpid, dirty, ctx);
+            return tuple_status;
+        };
+
         // Physically delete chunks with committed xmax
         for (const auto& tid : chunks_to_delete)
         {
@@ -1723,14 +1761,25 @@ namespace scratchbird::core
             }
         }
 
-        // Phase 2 Enhancement: Clear xmax for chunks where delete transaction aborted
-        // Currently, chunks with aborted delete transactions retain their xmax marker,
-        // which is functionally correct (MGA visibility rules ignore aborted xmax).
-        // Clearing xmax would optimize future visibility checks and free the marker.
-        // For now, these chunks remain usable and will be fully cleaned on next vacuum pass.
+        uint64_t xmax_cleared = 0;
+        for (const auto& tid : chunks_to_clear_xmax)
+        {
+            Status clear_status = clearChunkXmax(tid);
+            if (clear_status == Status::OK)
+            {
+                ++xmax_cleared;
+            }
+            else
+            {
+                LOG_WARNING(VACUUM,
+                            "Failed to clear aborted TOAST xmax marker: gpid=%lu, item=%u",
+                            static_cast<unsigned long>(tid.gpid), tid.slot);
+            }
+        }
 
-        LOG_INFO(VACUUM, "TIP-based TOAST GC: deleted %lu chunks, found %zu with aborted xmax",
-                 *chunks_deleted, chunks_to_clear_xmax.size());
+        LOG_INFO(VACUUM,
+                 "TIP-based TOAST GC: deleted %lu chunks, cleared %lu aborted/out-of-range xmax markers",
+                 *chunks_deleted, xmax_cleared);
 
         return Status::OK;
     }

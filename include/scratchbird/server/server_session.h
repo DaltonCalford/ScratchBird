@@ -50,12 +50,6 @@ namespace sblr {
     class Executor;
     class ResultSet;
     class ExecutionResult;
-    class FirebirdQueryCompiler;
-    class PostgreSQLQueryCompiler;
-    class MySQLQueryCompiler;
-}
-namespace parser::v3 {
-    class Compiler;
 }
 
 // Query compilation uses the selected parser (ScratchBird or emulated dialects).
@@ -235,11 +229,6 @@ private:
     // ========================================================================
 
     /**
-     * Execute a SQL query and send results
-     */
-    core::Status executeQuery(const std::string& sql, core::ErrorContext* ctx);
-
-    /**
      * Execute an SBLR bytecode program and send results
      */
     core::Status executeBytecode(const std::vector<uint8_t>& bytecode,
@@ -313,12 +302,6 @@ private:
 
     // Executor for query execution
     std::unique_ptr<sblr::Executor> executor_;
-
-    // Query compilers
-    std::unique_ptr<parser::v3::Compiler> compiler_v3_;
-    std::unique_ptr<sblr::FirebirdQueryCompiler> compiler_firebird_;
-    std::unique_ptr<sblr::PostgreSQLQueryCompiler> compiler_postgresql_;
-    std::unique_ptr<sblr::MySQLQueryCompiler> compiler_mysql_;
 
     // Statistics
     SessionStats stats_;

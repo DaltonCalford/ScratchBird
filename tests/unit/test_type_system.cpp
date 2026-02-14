@@ -10,6 +10,7 @@
 #include <gtest/gtest.h>
 #include "scratchbird/core/types.h"
 #include "scratchbird/core/typed_value.h"
+#include "scratchbird/core/config.h"
 #include <cstring>
 
 using namespace scratchbird::core;
@@ -193,24 +194,24 @@ TEST(TypeSystemTest, ToBooleanConversion)
 TEST(TypeSystemTest, NumericComparisons)
 {
     auto v1 = TypedValue::makeInt32(10);
-    auto v2 = TypedValue::makeInt32(20);
+    auto value_two = TypedValue::makeInt32(20);
     auto v3 = TypedValue::makeInt32(10);
 
-    EXPECT_FALSE(v1 == v2);
+    EXPECT_FALSE(v1 == value_two);
     EXPECT_TRUE(v1 == v3);
-    EXPECT_TRUE(v1 < v2);
-    EXPECT_TRUE(v2 > v1);
+    EXPECT_TRUE(v1 < value_two);
+    EXPECT_TRUE(value_two > v1);
 }
 
 TEST(TypeSystemTest, StringComparisons)
 {
     auto v1 = TypedValue::makeVarchar("apple");
-    auto v2 = TypedValue::makeVarchar("banana");
+    auto value_two = TypedValue::makeVarchar("banana");
     auto v3 = TypedValue::makeVarchar("apple");
 
-    EXPECT_FALSE(v1 == v2);
+    EXPECT_FALSE(v1 == value_two);
     EXPECT_TRUE(v1 == v3);
-    EXPECT_TRUE(v1 < v2);
+    EXPECT_TRUE(v1 < value_two);
 }
 
 TEST(TypeSystemTest, NullComparisons)
@@ -252,4 +253,122 @@ TEST(TypeSystemTest, GetTypeName)
     EXPECT_EQ(TypeSystem::getTypeName(DataType::FLOAT64), "FLOAT64");
     EXPECT_EQ(TypeSystem::getTypeName(DataType::VARCHAR), "VARCHAR");
     EXPECT_EQ(TypeSystem::getTypeName(DataType::BOOLEAN), "BOOLEAN");
+}
+
+TEST(TypeSystemTest, GetTypeNameExtendedComplexTypes)
+{
+    EXPECT_EQ(TypeSystem::getTypeName(DataType::LIST), "LIST");
+    EXPECT_EQ(TypeSystem::getTypeName(DataType::MAP), "MAP");
+    EXPECT_EQ(TypeSystem::getTypeName(DataType::BSON), "BSON");
+    EXPECT_EQ(TypeSystem::getTypeName(DataType::TIME_WITH_ZONE), "TIME_WITH_ZONE");
+    EXPECT_EQ(TypeSystem::getTypeName(DataType::YEAR), "YEAR");
+    EXPECT_EQ(TypeSystem::getTypeName(DataType::DOMAIN), "DOMAIN");
+    EXPECT_EQ(TypeSystem::getTypeName(DataType::ROW), "ROW");
+    EXPECT_EQ(TypeSystem::getTypeName(DataType::SET), "SET");
+    EXPECT_EQ(TypeSystem::getTypeName(DataType::BLOB_SUB_TYPE_TEXT), "BLOB_SUB_TYPE_TEXT");
+}
+
+TEST(TypeSystemTest, CanonicalExplicitCastMatrixEnforcement)
+{
+    EXPECT_TRUE(TypeSystem::isExplicitlyConvertible(DataType::VARCHAR, DataType::UUID));
+    EXPECT_TRUE(TypeSystem::isExplicitlyConvertible(DataType::UUID, DataType::VARCHAR));
+    EXPECT_TRUE(TypeSystem::isExplicitlyConvertible(DataType::TEXT, DataType::BSON));
+    EXPECT_TRUE(TypeSystem::isExplicitlyConvertible(DataType::BSON, DataType::TEXT));
+
+    // Not part of canonical explicit cast matrix.
+    EXPECT_FALSE(TypeSystem::isExplicitlyConvertible(DataType::INT32, DataType::JSONB));
+    EXPECT_FALSE(TypeSystem::isExplicitlyConvertible(DataType::BSON, DataType::INT32));
+}
+
+TEST(TypeSystemTest, ConvertToRejectsDisallowedCast)
+{
+    auto value = TypedValue::makeInt32(7);
+    EXPECT_THROW(value.convertTo(DataType::JSONB), std::runtime_error);
+}
+
+TEST(TypeSystemTest, MoneyScaleIsConfigurable)
+{
+    Config& cfg = Config::getInstance();
+    cfg.set("types", "money_default_scale", "2");
+
+    auto money = TypedValue::makeMoney(12345);
+    EXPECT_EQ(money.toString(), "123.45");
+
+    cfg.set("types", "money_default_scale", "4");
+}
+
+TEST(TypeSystemTest, ResolveEmulatedTypeForCoreEngines)
+{
+    EmulatedTypeMapping mapping{};
+
+    ASSERT_TRUE(TypeSystem::resolveEmulatedType("postgresql", "serial", mapping));
+    EXPECT_EQ(mapping.storage_kind, EmulatedStorageKind::DOMAIN);
+    EXPECT_EQ(mapping.canonical_type, DataType::INT32);
+    EXPECT_STREQ(mapping.domain_hint, "[sb_pg_dom]serial");
+
+    ASSERT_TRUE(TypeSystem::resolveEmulatedType("mysql", "boolean", mapping));
+    EXPECT_EQ(mapping.storage_kind, EmulatedStorageKind::DOMAIN);
+    EXPECT_EQ(mapping.canonical_type, DataType::INT8);
+    EXPECT_STREQ(mapping.domain_hint, "[sb_my_dom]bool");
+
+    ASSERT_TRUE(TypeSystem::resolveEmulatedType("cassandra", "varint", mapping));
+    EXPECT_EQ(mapping.storage_kind, EmulatedStorageKind::DOMAIN);
+    EXPECT_EQ(mapping.canonical_type, DataType::DECIMAL);
+    EXPECT_STREQ(mapping.domain_hint, "[sb_cas_dom]varint");
+
+    ASSERT_TRUE(TypeSystem::resolveEmulatedType("mongodb", "ObjectId", mapping));
+    EXPECT_EQ(mapping.storage_kind, EmulatedStorageKind::DOMAIN);
+    EXPECT_EQ(mapping.canonical_type, DataType::BLOB);
+
+    ASSERT_TRUE(TypeSystem::resolveEmulatedType("redis", "stream", mapping));
+    EXPECT_EQ(mapping.storage_kind, EmulatedStorageKind::DOMAIN);
+    EXPECT_EQ(mapping.canonical_type, DataType::LIST);
+}
+
+TEST(TypeSystemTest, ResolveEmulatedTypeNormalizesAliasesAndParameters)
+{
+    EmulatedTypeMapping mapping{};
+
+    ASSERT_TRUE(TypeSystem::resolveEmulatedType("postgres", "character varying(128)", mapping));
+    EXPECT_EQ(mapping.canonical_type, DataType::VARCHAR);
+    EXPECT_EQ(mapping.storage_kind, EmulatedStorageKind::NATIVE);
+
+    ASSERT_TRUE(TypeSystem::resolveEmulatedType("postgresql", "timestamp with time zone", mapping));
+    EXPECT_EQ(mapping.canonical_type, DataType::TIMESTAMP_WITH_ZONE);
+
+    ASSERT_TRUE(TypeSystem::resolveEmulatedType("milvus", "arrayofvector<float32, 128>", mapping));
+    EXPECT_EQ(mapping.storage_kind, EmulatedStorageKind::DOMAIN);
+    EXPECT_EQ(mapping.canonical_type, DataType::ARRAY);
+}
+
+TEST(TypeSystemTest, ResolveEmulatedTypeRejectsUnknownMappings)
+{
+    EmulatedTypeMapping mapping{};
+    EXPECT_FALSE(TypeSystem::resolveEmulatedType("unknown_engine", "int32", mapping));
+    EXPECT_FALSE(TypeSystem::resolveEmulatedType("postgresql", "nonexistent_type", mapping));
+    EXPECT_FALSE(TypeSystem::resolveEmulatedType("", "serial", mapping));
+    EXPECT_FALSE(TypeSystem::resolveEmulatedType("postgresql", "", mapping));
+}
+
+TEST(TypeSystemTest, FrozenCollectionRequiresWholeValueUpdate)
+{
+    EXPECT_TRUE(TypeSystem::requiresWholeValueUpdate("cassandra", "frozen<list<int>>"));
+    EXPECT_FALSE(TypeSystem::allowsElementLevelMutation("cassandra", "frozen<list<int>>"));
+
+    EXPECT_FALSE(TypeSystem::requiresWholeValueUpdate("cassandra", "list<int>"));
+    EXPECT_TRUE(TypeSystem::allowsElementLevelMutation("cassandra", "list<int>"));
+}
+
+TEST(TypeSystemTest, ToastEligibilityTypeContract)
+{
+    EXPECT_TRUE(TypeSystem::isToastEligibleType(DataType::TEXT));
+    EXPECT_TRUE(TypeSystem::isToastEligibleType(DataType::BLOB));
+    EXPECT_TRUE(TypeSystem::isToastEligibleType(DataType::JSONB));
+    EXPECT_TRUE(TypeSystem::isToastEligibleType(DataType::ARRAY));
+    EXPECT_TRUE(TypeSystem::isToastEligibleType(DataType::COMPOSITE));
+
+    EXPECT_FALSE(TypeSystem::isToastEligibleType(DataType::INT32));
+    EXPECT_FALSE(TypeSystem::isToastEligibleType(DataType::INT64));
+    EXPECT_FALSE(TypeSystem::isToastEligibleType(DataType::BOOLEAN));
+    EXPECT_FALSE(TypeSystem::isToastEligibleType(DataType::UUID));
 }

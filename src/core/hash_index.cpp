@@ -81,7 +81,7 @@ namespace scratchbird
             // Initialize meta page header
             meta->hip_header.magic = K_MAGIC_SBRD;
             meta->hip_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
-            meta->hip_header.page_type = static_cast<uint16_t>(PageType::HASH_INDEX_META);
+            meta->hip_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_HASH_META);
             meta->hip_header.page_size = db->page_size();
             meta->hip_header.page_id = meta_page;
             meta->hip_header.generation = 1;
@@ -126,7 +126,7 @@ namespace scratchbird
 
             dir->hdp_header.magic = K_MAGIC_SBRD;
             dir->hdp_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
-            dir->hdp_header.page_type = static_cast<uint16_t>(PageType::HASH_INDEX_DIRECTORY);
+            dir->hdp_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_HASH_BITMAP);
             dir->hdp_header.page_size = db->page_size();
             dir->hdp_header.page_id = dir_page;
             dir->hdp_header.generation = 1;
@@ -169,7 +169,7 @@ namespace scratchbird
 
                 bucket->hbp_header.magic = K_MAGIC_SBRD;
                 bucket->hbp_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
-                bucket->hbp_header.page_type = static_cast<uint16_t>(PageType::HASH_INDEX_BUCKET);
+                bucket->hbp_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_HASH_BUCKET);
                 bucket->hbp_header.page_size = db->page_size();
                 bucket->hbp_header.page_id = bucket_page;
                 bucket->hbp_header.generation = 1;
@@ -219,7 +219,7 @@ namespace scratchbird
             }
 
             auto *meta = reinterpret_cast<SBHashIndexMetaPage *>(meta_data);
-            if (meta->hip_header.page_type != static_cast<uint16_t>(PageType::HASH_INDEX_META))
+            if (meta->hip_header.page_type != static_cast<uint16_t>(PageType::PAGE_TYPE_HASH_META))
             {
                 db->buffer_pool()->unpinPageGlobal(meta_gpid, false, ctx);
                 SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Invalid hash index meta page");
@@ -375,7 +375,7 @@ namespace scratchbird
 
             bucket->hbp_header.magic = K_MAGIC_SBRD;
             bucket->hbp_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
-            bucket->hbp_header.page_type = static_cast<uint16_t>(PageType::HASH_INDEX_BUCKET);
+            bucket->hbp_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_HASH_BUCKET);
             bucket->hbp_header.page_size = db_->page_size();
             bucket->hbp_header.page_id = page_num;
             bucket->hbp_header.generation = 1;
@@ -1194,7 +1194,7 @@ namespace scratchbird
                     std::memset(new_dir, 0, sizeof(SBHashDirectoryPage));
                     new_dir->hdp_header.magic = K_MAGIC_SBRD;
                     new_dir->hdp_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
-                    new_dir->hdp_header.page_type = static_cast<uint16_t>(PageType::HASH_INDEX_DIRECTORY);
+                    new_dir->hdp_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_HASH_BITMAP);
                     new_dir->hdp_header.page_size = db_->page_size();
                     new_dir->hdp_header.page_id = new_dir_page_num;
                     new_dir->hdp_header.generation = 1;

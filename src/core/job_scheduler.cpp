@@ -17,7 +17,6 @@
 #include "scratchbird/core/job_scheduler_utils.h"
 #include "scratchbird/core/telemetry.h"
 #include "scratchbird/sblr/executor.h"
-#include "scratchbird/parser/v3_compiler.h"
 
 #include <chrono>
 #include <algorithm>
@@ -1017,63 +1016,56 @@ void JobScheduler::executeJobRun(const CatalogManager::JobInfo& job,
                 conn_ctx->setSessionVariable("job_uuid", job.job_id.toString());
                 conn_ctx->setSessionVariable("job_run_uuid", run.job_run_id.toString());
 
-                std::string sql = job.job_sql;
-                if (sql.empty() && !isZeroId(job.procedure_uuid)) {
+                std::string procedure_name;
+                if (!isZeroId(job.procedure_uuid)) {
                     std::vector<CatalogManager::ProcedureInfo> procedures;
                     if (db_->catalog_manager()->listProcedures(procedures, &ctx) == Status::OK) {
                         for (const auto& proc : procedures) {
                             if (proc.procedure_id == job.procedure_uuid) {
-                                sql = "CALL " + proc.name + "()";
+                                procedure_name = proc.name;
                                 break;
                             }
                         }
                     }
                 }
 
-                if (sql.empty()) {
+                if (!procedure_name.empty()) {
+                    auto executor = std::make_shared<scratchbird::sblr::Executor>(db_);
+                    executor->setConnectionContext(conn_ctx.get());
+                    uint32_t timeout_seconds = job.timeout_seconds;
+                    if (timeout_seconds == 0) {
+                        timeout_seconds = cfg.job_timeout_seconds;
+                    }
+                    if (timeout_seconds > 0) {
+                        conn_ctx->set_statement_timeout(timeout_seconds);
+                        auto limits = executor->getQueryLimits();
+                        limits.max_execution_time_ms =
+                            static_cast<uint64_t>(timeout_seconds) * 1000ULL;
+                        executor->setQueryLimits(limits);
+                    }
+                    {
+                        std::lock_guard<std::mutex> lock(active_runs_mutex_);
+                        auto it = active_runs_.find(run_id);
+                        if (it != active_runs_.end()) {
+                            it->second.executor = executor;
+                        }
+                    }
+                    auto exec_result = executor->callProcedureByName(procedure_name);
+                    if (!exec_result.success()) {
+                        run_success = false;
+                        run_message = exec_result.error();
+                        run_error_code = -1;
+                    } else {
+                        rows_affected = executor->getLastAffectedRows();
+                    }
+                } else if (!job.job_sql.empty()) {
+                    run_success = false;
+                    run_message = "Job SQL text execution is disabled in engine; use stored procedure jobs";
+                    run_error_code = static_cast<int32_t>(Status::NOT_SUPPORTED);
+                } else {
                     run_success = false;
                     run_message = "Job has no SQL to execute";
                     run_error_code = -1;
-                } else {
-                    parser::v3::Compiler compiler;
-                    auto compile_result = compiler.compile(sql);
-                    if (!compile_result.ok) {
-                        run_success = false;
-                        run_message = compile_result.error.empty()
-                            ? "Compilation error"
-                            : compile_result.error;
-                        run_error_code = static_cast<int32_t>(Status::INVALID_ARGUMENT);
-                    } else {
-                        std::vector<uint8_t> bytecode = compile_result.bytecode;
-                        auto executor = std::make_shared<scratchbird::sblr::Executor>(db_);
-                        executor->setConnectionContext(conn_ctx.get());
-                        uint32_t timeout_seconds = job.timeout_seconds;
-                        if (timeout_seconds == 0) {
-                            timeout_seconds = cfg.job_timeout_seconds;
-                        }
-                        if (timeout_seconds > 0) {
-                            conn_ctx->set_statement_timeout(timeout_seconds);
-                            auto limits = executor->getQueryLimits();
-                            limits.max_execution_time_ms =
-                                static_cast<uint64_t>(timeout_seconds) * 1000ULL;
-                            executor->setQueryLimits(limits);
-                        }
-                        {
-                            std::lock_guard<std::mutex> lock(active_runs_mutex_);
-                            auto it = active_runs_.find(run_id);
-                            if (it != active_runs_.end()) {
-                                it->second.executor = executor;
-                            }
-                        }
-                        auto exec_result = executor->execute(bytecode);
-                        if (!exec_result.success()) {
-                            run_success = false;
-                            run_message = exec_result.error();
-                            run_error_code = -1;
-                        } else {
-                            rows_affected = executor->getLastAffectedRows();
-                        }
-                    }
                 }
             }
         }

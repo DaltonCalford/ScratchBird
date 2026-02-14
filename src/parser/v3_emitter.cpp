@@ -3866,6 +3866,7 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitBinary(parser::v3::BinaryExpr*
         case parser::v3::BinaryOp::LE: inst.opcode = op(Opcode::SBLR3_EXPR_LE); break;
         case parser::v3::BinaryOp::GT: inst.opcode = op(Opcode::SBLR3_EXPR_GT); break;
         case parser::v3::BinaryOp::GE: inst.opcode = op(Opcode::SBLR3_EXPR_GE); break;
+        case parser::v3::BinaryOp::NULL_SAFE_EQ: inst.opcode = op(Opcode::SBLR3_NULL_SAFE_EQ); break;
         case parser::v3::BinaryOp::AND: inst.opcode = op(Opcode::SBLR3_EXPR_AND); break;
         case parser::v3::BinaryOp::OR: inst.opcode = op(Opcode::SBLR3_EXPR_OR); break;
         case parser::v3::BinaryOp::BIT_AND: inst.opcode = op(Opcode::SBLR3_BIT_AND); break;

@@ -65,6 +65,58 @@ namespace scratchbird::core
         return proposed;
     }
 
+    static void applyCanonicalRecordContract(TupleHeader *tuple_hdr, const uint8_t *tuple_data,
+                                             uint32_t tuple_size, const ID *preferred_row_uuid = nullptr)
+    {
+        if (tuple_hdr == nullptr)
+        {
+            return;
+        }
+
+        // Populate stable row UUID if not explicitly present in the source tuple.
+        if (isZeroIdLocal(tuple_hdr->row_uuid))
+        {
+            if (preferred_row_uuid != nullptr && !isZeroIdLocal(*preferred_row_uuid))
+            {
+                tuple_hdr->row_uuid = *preferred_row_uuid;
+            }
+            else
+            {
+                tuple_hdr->row_uuid = generateUuidV7();
+            }
+        }
+
+        if (tuple_hdr->record_format == 0)
+        {
+            tuple_hdr->record_format = TupleHeader::RECORD_FORMAT_V1;
+        }
+
+        tuple_hdr->payload_len = (tuple_size > sizeof(TupleHeader))
+                                     ? (tuple_size - sizeof(TupleHeader))
+                                     : 0u;
+
+        // Keep canonical record flags aligned with MGA/heap infomask semantics.
+        tuple_hdr->record_flags &= ~(TupleHeader::RHD_DELETED |
+                                     TupleHeader::RHD_CHAINED |
+                                     TupleHeader::RHD_MOVED |
+                                     TupleHeader::RHD_TOAST_PTR);
+        tuple_hdr->setRecordFlag(TupleHeader::RHD_CHAINED,
+                                 (tuple_hdr->infomask & TupleHeader::HEAP_CHAIN) != 0u);
+        tuple_hdr->setRecordFlag(TupleHeader::RHD_DELETED,
+                                 (tuple_hdr->infomask & TupleHeader::HEAP_XMAX_COMMITTED) != 0u &&
+                                     (tuple_hdr->infomask & TupleHeader::HEAP_UPDATED) == 0u);
+        tuple_hdr->setRecordFlag(TupleHeader::RHD_MOVED,
+                                 (tuple_hdr->infomask & TupleHeader::HEAP_MOVED) != 0u);
+
+        bool has_toast_ptr = false;
+        if (tuple_data != nullptr && tuple_size >= sizeof(TupleHeader) + sizeof(ToastPointer))
+        {
+            const uint8_t *payload = tuple_data + sizeof(TupleHeader);
+            has_toast_ptr = isToastPointer(payload, sizeof(ToastPointer));
+        }
+        tuple_hdr->setRecordFlag(TupleHeader::RHD_TOAST_PTR, has_toast_ptr);
+    }
+
     HeapPage::HeapPage(uint8_t *page_data, uint32_t page_size)
         : page_data_(page_data), page_size_(page_size), toast_mgr_(nullptr), db_(nullptr)
     {
@@ -104,7 +156,7 @@ namespace scratchbird::core
             hdr->flags = 0;
             hdr->lsn = 0;
             setDatabaseUuid(*hdr, db_ ? db_->uuid() : ID{});
-            setTableId(*hdr, table_id_);
+            setObjectUuid(*hdr, table_id_);
             hdr->item_count = 0;
             pageSetLower(*hdr, sizeof(PageHeader));
             pageSetUpper(*hdr, page_size_ - sizeof(HeapPageSpecial));
@@ -320,6 +372,7 @@ namespace scratchbird::core
         // Preserve caller-provided session scope for temp tables.
         // StorageEngine stamps tuple header session_id before insert.
         tuple_hdr->session_id = normalizeSessionId(db_, table_id_, tuple_hdr->session_id);
+        applyCanonicalRecordContract(tuple_hdr, page_data_ + tuple_offset, actual_tuple_size);
 
         // Update item pointer
         if (item_id == getItemCount())
@@ -402,7 +455,7 @@ namespace scratchbird::core
             const uint8_t *data_ptr = raw_data + sizeof(TupleHeader);
 
             // Check if this is a TOAST pointer
-            if (isToastPointer(data_ptr))
+            if (isToastPointer(data_ptr, sizeof(ToastPointer)))
             {
                 // We have a TOAST pointer, need to detoast
                 if ((toast_mgr_ == nullptr) || (db_ == nullptr))
@@ -460,6 +513,36 @@ namespace scratchbird::core
         return Status::OK;
     }
 
+    auto HeapPage::extractSystemColumns(const uint8_t *tuple_data, uint32_t tuple_size,
+                                        ID *row_uuid_out, uint64_t *last_edit_txid_out,
+                                        ErrorContext *ctx) -> Status
+    {
+        if (tuple_data == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "tuple_data cannot be null");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        if (tuple_size < sizeof(TupleHeader))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "tuple_size must include TupleHeader");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        const auto *tuple_hdr = reinterpret_cast<const TupleHeader *>(tuple_data);
+        if (row_uuid_out != nullptr)
+        {
+            *row_uuid_out = tuple_hdr->row_uuid;
+        }
+        if (last_edit_txid_out != nullptr)
+        {
+            *last_edit_txid_out = tuple_hdr->getLastEditTxidSystem();
+        }
+
+        return Status::OK;
+    }
+
     auto HeapPage::deleteTuple(uint16_t item_id, uint64_t xmax, ErrorContext *ctx) -> Status
     {
         const bool force_delete = (xmax == UINT64_MAX);
@@ -501,12 +584,12 @@ namespace scratchbird::core
                 const uint8_t *data_ptr = page_data_ + offset + sizeof(TupleHeader);
 
                 // Check if this is a TOAST pointer
-                if (isToastPointer(data_ptr))
+                if (isToastPointer(data_ptr, sizeof(ToastPointer)))
                 {
                     const auto *toast_ptr = reinterpret_cast<const ToastPointer *>(data_ptr);
 
                     // Delete the TOAST data
-                    Status s = toast_mgr_->deleteToastValue(toast_ptr->va_valueid, xmax, ctx);
+                    Status s = toast_mgr_->deleteToastValue(toast_ptr->lob_uuid, xmax, ctx);
                     if (s != Status::OK && s != Status::NOT_FOUND)
                     {
                         return s;
@@ -527,6 +610,8 @@ namespace scratchbird::core
 
             tuple_hdr->xmax = xmax;
             tuple_hdr->infomask |= TupleHeader::FLAG_DELETED;
+            applyCanonicalRecordContract(tuple_hdr, page_data_ + items[item_id].offset,
+                                         items[item_id].length);
         }
 
         // Mark the line pointer deleted so scans skip the tuple and space can be reused.
@@ -716,6 +801,11 @@ namespace scratchbird::core
         uint32_t primary_offset = items[old_item_id].offset;
         uint32_t primary_length = items[old_item_id].length;
         auto *primary_tuple_hdr = reinterpret_cast<TupleHeader *>(page_data_ + primary_offset);
+        ID stable_row_uuid = primary_tuple_hdr->row_uuid;
+        if (isZeroIdLocal(stable_row_uuid))
+        {
+            stable_row_uuid = generateUuidV7();
+        }
 
         // ====================================================================
         // TOAST CLEANUP: Delete old TOAST data if present
@@ -728,14 +818,14 @@ namespace scratchbird::core
             {
                 const uint8_t *old_data_ptr = page_data_ + primary_offset + sizeof(TupleHeader);
 
-                if (isToastPointer(old_data_ptr))
+                if (isToastPointer(old_data_ptr, sizeof(ToastPointer)))
                 {
                     old_tuple_is_toasted = true;
                     const auto *old_toast_ptr =
                         reinterpret_cast<const ToastPointer *>(old_data_ptr);
 
                     Status toast_status =
-                        toast_mgr_->deleteToastValue(old_toast_ptr->va_valueid, xmax, ctx);
+                        toast_mgr_->deleteToastValue(old_toast_ptr->lob_uuid, xmax, ctx);
 
                     if (toast_status != Status::OK && toast_status != Status::NOT_FOUND)
                     {
@@ -848,6 +938,8 @@ namespace scratchbird::core
             // Back version keeps existing back_version_tid (continues chain)
             back_version_hdr->infomask |= TupleHeader::HEAP_CHAIN; // Mark as back version
             back_version_hdr->infomask |= TupleHeader::HEAP_UPDATED; // Mark as updated
+            applyCanonicalRecordContract(back_version_hdr, page_data_ + back_version_offset,
+                                         primary_length, &stable_row_uuid);
 
             // Update upper boundary to reflect back version allocation
             pageSetUpper(*hdr, back_version_offset);
@@ -870,6 +962,7 @@ namespace scratchbird::core
 
         // Check if new tuple fits in old tuple's space
         // If not, we need to allocate new space at primary location
+        bool primary_location_moved = false;
         if (final_new_tuple_size <= primary_length)
         {
             // New tuple fits in old space - overwrite in-place
@@ -908,6 +1001,7 @@ namespace scratchbird::core
             // Update item pointer to new primary location
             items[old_item_id].offset = new_primary_offset;
             items[old_item_id].length = final_new_tuple_size;
+            primary_location_moved = true;
 
             // Update upper boundary
             pageSetUpper(*hdr, new_primary_offset);
@@ -938,6 +1032,12 @@ namespace scratchbird::core
         // Preserve NULL bitmap flag from serialized tuple header.
         uint16_t preserved_infomask = new_primary_hdr->infomask & TupleHeader::HEAP_HAS_NULLS;
         new_primary_hdr->infomask = preserved_infomask; // Clear flags, keep NULL bitmap
+        if (primary_location_moved)
+        {
+            new_primary_hdr->infomask |= TupleHeader::HEAP_MOVED;
+        }
+        applyCanonicalRecordContract(new_primary_hdr, page_data_ + items[old_item_id].offset,
+                                     items[old_item_id].length, &stable_row_uuid);
         // Note: We don't set HEAP_HOT_UPDATED here - that's for index update optimization
         // MGA provides stable TIDs naturally, so indexes don't need updating regardless
 
@@ -1008,11 +1108,17 @@ namespace scratchbird::core
         uint32_t old_offset = item_ptr->offset;
         uint32_t old_length = item_ptr->length;
         ID old_session_id = reinterpret_cast<TupleHeader *>(page_data_ + old_offset)->session_id;
+        ID stable_row_uuid = reinterpret_cast<TupleHeader *>(page_data_ + old_offset)->row_uuid;
+        if (isZeroIdLocal(stable_row_uuid))
+        {
+            stable_row_uuid = generateUuidV7();
+        }
 
         // new_tuple_size already includes TupleHeader.
         uint32_t final_new_tuple_size = new_tuple_size;
 
         // Check if new tuple fits in old tuple's space
+        bool tuple_location_moved = false;
         if (final_new_tuple_size <= old_length)
         {
             // New tuple fits in old space - overwrite in-place
@@ -1051,6 +1157,7 @@ namespace scratchbird::core
             // Update item pointer to new location
             item_ptr->offset = new_offset;
             item_ptr->length = final_new_tuple_size;
+            tuple_location_moved = true;
 
             // Update upper boundary
             pageSetUpper(*hdr, new_offset);
@@ -1083,6 +1190,12 @@ namespace scratchbird::core
         uint16_t preserved_infomask = tuple_hdr->infomask & TupleHeader::HEAP_HAS_NULLS;
         tuple_hdr->infomask = preserved_infomask;
         tuple_hdr->infomask |= TupleHeader::HEAP_CHAIN;  // Part of version chain
+        if (tuple_location_moved)
+        {
+            tuple_hdr->infomask |= TupleHeader::HEAP_MOVED;
+        }
+        applyCanonicalRecordContract(tuple_hdr, page_data_ + item_ptr->offset,
+                                     item_ptr->length, &stable_row_uuid);
 
         // Update page statistics
         updateHeaderStats();

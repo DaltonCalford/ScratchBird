@@ -1989,7 +1989,19 @@ core::Status NativeAdapter::executeRemoteQuery(const std::string& sql,
     if (bytecode) {
         status = client_->executeBytecode(*bytecode, sql, &rs, &ctx);
     } else {
-        status = client_->executeQuery(sql, &rs, &ctx);
+        std::vector<uint8_t> compiled_bytecode;
+        std::string compile_error;
+        status = compileQuery(sql, compiled_bytecode, compile_error);
+        if (status != core::Status::OK) {
+            result.has_error = true;
+            result.error_code = static_cast<uint32_t>(status);
+            result.sqlstate = "42000";
+            result.error_message = compile_error.empty()
+                ? "Failed to compile query before submit"
+                : compile_error;
+            return status;
+        }
+        status = client_->executeBytecode(compiled_bytecode, sql, &rs, &ctx);
     }
 
     if (status != core::Status::OK) {
@@ -2204,16 +2216,15 @@ core::Status NativeAdapter::handleCopyDone(network::Connection* conn) {
 
     // Execute the COPY query with the accumulated data via remote client if available
     if (!config_.engine_endpoint.empty() && client_ && client_->isConnected()) {
-        core::ErrorContext ctx;
-        client::ResultSet rs;
-        // Note: In a full implementation, we would use a proper COPY API
-        // For now, we send a simplified version
+        // Note: In a full implementation, we would use a proper COPY API.
+        // For now we execute the statement through the regular remote bytecode path.
+        ResultContext copy_result;
         std::string copy_sql = copy_table_name_;
-        auto exec_status = client_->executeQuery(copy_sql, &rs, &ctx);
+        auto exec_status = executeRemoteQuery(copy_sql, nullptr, copy_result);
         if (exec_status != core::Status::OK) {
             recordCopyMetrics("in", copy_rows_processed_, copy_bytes_processed_, true, copy_start_time_);
             sendQueryError(conn, static_cast<uint32_t>(exec_status), "58000",
-                          ctx.message.empty() ? "COPY execution failed" : ctx.message);
+                           copy_result.error_message.empty() ? "COPY execution failed" : copy_result.error_message);
             native_state_ = NativeProtocolState::READY;
             copy_direction_ = CopyDirection::NONE;
             copy_buffer_.clear();

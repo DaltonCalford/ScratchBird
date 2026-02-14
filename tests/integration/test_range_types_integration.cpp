@@ -145,11 +145,11 @@ TEST(RangeTypesIntegration, Int4RangeWorkflow)
 
     // Store in TypedValue
     TypedValue v1 = TypedValue::makeInt4Range(r1);
-    TypedValue v2 = TypedValue::makeInt4Range(r2);
+    TypedValue value_two = TypedValue::makeInt4Range(r2);
 
     // Retrieve
     Int4Range retrieved1 = v1.getInt4Range();
-    Int4Range retrieved2 = v2.getInt4Range();
+    Int4Range retrieved2 = value_two.getInt4Range();
 
     // Use range operations
     EXPECT_TRUE(retrieved1.overlaps(retrieved2));
@@ -167,11 +167,11 @@ TEST(RangeTypesIntegration, NumRangeOperations)
     NumRange r2(3.0, 8.0, true, false);  // [3.0,8.0)
 
     TypedValue v1 = TypedValue::makeNumRange(r1);
-    TypedValue v2 = TypedValue::makeNumRange(r2);
+    TypedValue value_two = TypedValue::makeNumRange(r2);
 
     // Retrieve and check intersection
     NumRange range1 = v1.getNumRange();
-    NumRange range2 = v2.getNumRange();
+    NumRange range2 = value_two.getNumRange();
 
     auto intersection = range1.intersection(range2);
     EXPECT_FALSE(intersection.isEmpty());

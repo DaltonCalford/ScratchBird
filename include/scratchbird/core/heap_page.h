@@ -114,7 +114,12 @@ namespace scratchbird::core
         // Session scope for temporary tables (16 bytes, zero for permanent tables)
         ID session_id;
 
-        // Total: 60 bytes (includes session_id)
+        // Canonical record identity and layout contract fields.
+        // These fields are written by HeapPage so callers do not need to prefill them.
+        ID row_uuid;           // Stable logical row identity across all versions
+        uint32_t record_flags; // RHD_* flags below
+        uint32_t record_format; // Record format version (default 1)
+        uint32_t payload_len;   // Bytes stored after TupleHeader
 
         // Infomask flags (PostgreSQL-compatible)
         static constexpr uint16_t HEAP_HAS_NULLS = 0x0001;
@@ -128,6 +133,13 @@ namespace scratchbird::core
         static constexpr uint16_t HEAP_XMIN_FROZEN = 0x0100;   // xmin is frozen (FROZEN_XID)
         static constexpr uint16_t HEAP_HOT_UPDATED = 0x0200;   // HOT update (no index update needed)
         static constexpr uint16_t HEAP_CHAIN = 0x0400;         // Tuple is a back version in chain
+
+        // Canonical record flags (HEAP_PAGE_LAYOUT.md)
+        static constexpr uint32_t RHD_DELETED = 0x0001;
+        static constexpr uint32_t RHD_CHAINED = 0x0002;
+        static constexpr uint32_t RHD_MOVED = 0x0004;
+        static constexpr uint32_t RHD_TOAST_PTR = 0x0008;
+        static constexpr uint32_t RECORD_FORMAT_V1 = 1;
 
         // Backward compatibility
         static constexpr uint16_t FLAG_HAS_NULLS = HEAP_HAS_NULLS;
@@ -147,6 +159,43 @@ namespace scratchbird::core
         [[nodiscard]] auto isUpdated() const -> bool
         {
             return (infomask & HEAP_UPDATED) != 0;
+        }
+
+        [[nodiscard]] auto hasRecordFlag(uint32_t flag) const -> bool
+        {
+            return (record_flags & flag) != 0u;
+        }
+
+        void setRecordFlag(uint32_t flag, bool enabled)
+        {
+            if (enabled)
+            {
+                record_flags |= flag;
+            }
+            else
+            {
+                record_flags &= ~flag;
+            }
+        }
+
+        [[nodiscard]] auto getCreateTxid() const -> uint64_t
+        {
+            return xmin;
+        }
+
+        [[nodiscard]] auto getDeleteTxid() const -> uint64_t
+        {
+            return xmax;
+        }
+
+        [[nodiscard]] auto getLastEditTxidSystem() const -> uint64_t
+        {
+            // System visibility surfaces delete txid for tombstones.
+            if (hasRecordFlag(RHD_DELETED) && xmax != 0)
+            {
+                return xmax;
+            }
+            return xmin;
         }
 
         // PHASE 1, TASK 1.2.5: Updated for GPID-based TID
@@ -261,6 +310,13 @@ namespace scratchbird::core
         // Get tuple data by item ID with detoasting into provided buffer
         auto getTupleDetoasted(uint16_t item_id, std::vector<uint8_t> *buffer, uint64_t xmin,
                                ErrorContext *ctx = nullptr) -> Status;
+
+        // Extract hidden system column values from a serialized heap tuple.
+        // `row_uuid` maps to [sb_col]row_uuid.
+        // `last_edit_txid` maps to [sb_col]last_edit_txid.
+        static auto extractSystemColumns(const uint8_t *tuple_data, uint32_t tuple_size,
+                                         ID *row_uuid_out, uint64_t *last_edit_txid_out,
+                                         ErrorContext *ctx = nullptr) -> Status;
 
         // Mark tuple as deleted (and clean up TOAST if present)
         auto deleteTuple(uint16_t item_id, uint64_t xmax, ErrorContext *ctx = nullptr) -> Status;

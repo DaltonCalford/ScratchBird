@@ -13,6 +13,7 @@
 #include <array>
 #include <vector>
 #include <memory>
+#include <string>
 #include "scratchbird/core/uuidv7.h"
 
 namespace scratchbird::core
@@ -111,6 +112,9 @@ namespace scratchbird::core
         // Array and composite types (80-89)
         ARRAY = 80,      // Array of elements (homogeneous type)
         COMPOSITE = 81,  // Record/struct type (heterogeneous types)
+        LIST = 82,       // Ordered list container (domain-backed semantic type)
+        MAP = 83,        // Key/value container (domain-backed semantic type)
+        BSON = 84,       // BSON document (stored as binary canonical document)
 
         // Text search types (90-91)
         TSVECTOR = 90,   // Text search vector (document representation)
@@ -153,6 +157,23 @@ namespace scratchbird::core
         HEX = 1,
         BASE64 = 2,
         ESCAPE = 3,
+    };
+
+    enum class EmulatedStorageKind : uint8_t
+    {
+        NATIVE = 0,
+        DOMAIN = 1,
+        TRANSLATION = 2,
+    };
+
+    struct EmulatedTypeMapping
+    {
+        const char* engine_name;
+        const char* emulated_type;
+        EmulatedStorageKind storage_kind;
+        DataType canonical_type;
+        const char* domain_hint;
+        const char* parser_rule_hint;
     };
 
     /**
@@ -448,6 +469,23 @@ namespace scratchbird::core
 
         // Check if a type can be explicitly converted to another
         static bool isExplicitlyConvertible(DataType from, DataType to);
+
+        // Resolve emulated engine type name to canonical engine datatype contract.
+        static bool resolveEmulatedType(const std::string& engine_name,
+                                        const std::string& emulated_type,
+                                        EmulatedTypeMapping& out);
+
+        // True when emulated type semantics require whole-value replacement
+        // (for example Cassandra frozen collections).
+        static bool requiresWholeValueUpdate(const std::string& engine_name,
+                                             const std::string& emulated_type);
+
+        // Convenience predicate: inverse of requiresWholeValueUpdate().
+        static bool allowsElementLevelMutation(const std::string& engine_name,
+                                               const std::string& emulated_type);
+
+        // Type-level TOAST eligibility for canonical payload routing checks.
+        static bool isToastEligibleType(DataType type);
 
         // Check if a type is a string type
         static bool isString(DataType type)

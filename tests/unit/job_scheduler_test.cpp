@@ -102,6 +102,27 @@ bool waitForJobRuns(CatalogManager* catalog,
     return false;
 }
 
+bool waitForJobRunState(CatalogManager* catalog,
+                        const ID& job_run_id,
+                        CatalogManager::JobRunState expected_state,
+                        uint32_t timeout_ms,
+                        CatalogManager::JobRunInfo* run_out = nullptr) {
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
+    while (std::chrono::steady_clock::now() < deadline) {
+        CatalogManager::JobRunInfo run;
+        ErrorContext ctx;
+        if (catalog->getJobRun(job_run_id, run, &ctx) == Status::OK &&
+            run.state == expected_state) {
+            if (run_out) {
+                *run_out = run;
+            }
+            return true;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    return false;
+}
+
 CatalogManager::JobInfo buildSimpleJob(const std::string& name,
                                        const ID& system_user,
                                        uint64_t scheduled_time) {
@@ -230,7 +251,8 @@ TEST(JobSchedulerExecuteNow, ManualExecutionCreatesRun) {
     job.job_id = job_id;
 
     JobScheduler::Config config;
-    config.polling_interval_seconds = 10;
+    // Keep manual execution deterministic in CI by avoiding long poll windows.
+    config.polling_interval_seconds = 1;
 
     JobScheduler scheduler(&db, config);
     ASSERT_EQ(scheduler.start(&ctx), Status::OK);
@@ -238,17 +260,21 @@ TEST(JobSchedulerExecuteNow, ManualExecutionCreatesRun) {
     ID run_id;
     ASSERT_EQ(scheduler.executeJobNow(job, run_id, &ctx), Status::OK);
 
-    std::vector<CatalogManager::JobRunInfo> runs;
-    ASSERT_TRUE(waitForJobRuns(catalog, job_id, 1, 10000, &runs));
-
-    bool completed = false;
-    for (const auto& run : runs) {
-        if (run.job_run_id == run_id) {
-            completed = (run.state == CatalogManager::JobRunState::COMPLETED);
+    CatalogManager::JobRunInfo run;
+    auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(10000);
+    while (std::chrono::steady_clock::now() < deadline) {
+        ASSERT_EQ(catalog->getJobRun(run_id, run, &ctx), Status::OK);
+        if (run.state != CatalogManager::JobRunState::RUNNING &&
+            run.state != CatalogManager::JobRunState::PENDING) {
             break;
         }
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-    EXPECT_TRUE(completed);
+    EXPECT_NE(run.state, CatalogManager::JobRunState::RUNNING);
+    EXPECT_NE(run.state, CatalogManager::JobRunState::PENDING);
+    EXPECT_EQ(run.state, CatalogManager::JobRunState::FAILED);
+    EXPECT_NE(run.result_message.find("Job SQL text execution is disabled in engine"),
+              std::string::npos);
 
     scheduler.stop();
     db.close();
@@ -441,35 +467,18 @@ TEST(JobSchedulerDependencies, DependentJobWaitsForCompletion) {
     auto parent_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(10000);
     while (std::chrono::steady_clock::now() < parent_deadline) {
         ASSERT_EQ(catalog->getJobRun(parent_runs.front().job_run_id, parent_final, &ctx), Status::OK);
-        if (parent_final.state == CatalogManager::JobRunState::COMPLETED) {
+        if (parent_final.state != CatalogManager::JobRunState::PENDING &&
+            parent_final.state != CatalogManager::JobRunState::RUNNING) {
             break;
         }
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
-    ASSERT_EQ(parent_final.state, CatalogManager::JobRunState::COMPLETED);
+    ASSERT_EQ(parent_final.state, CatalogManager::JobRunState::FAILED);
+    EXPECT_NE(parent_final.result_message.find("Job SQL text execution is disabled in engine"),
+              std::string::npos);
 
-    // Now check if child ran before parent completed
-    // If the dependency mechanism works, child should NOT have run yet
-    std::vector<CatalogManager::JobRunInfo> early_child_runs;
-    ASSERT_EQ(catalog->listJobRuns(child_id, early_child_runs, &ctx), Status::OK);
-    bool child_ran_early = !early_child_runs.empty();
-    EXPECT_FALSE(child_ran_early);
-
-    std::vector<CatalogManager::JobRunInfo> child_runs;
-    ASSERT_TRUE(waitForJobRuns(catalog, child_id, 1, 10000, &child_runs));
-
-    CatalogManager::JobRunInfo child_final;
-    auto child_deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(10000);
-    while (std::chrono::steady_clock::now() < child_deadline) {
-        ASSERT_EQ(catalog->getJobRun(child_runs.front().job_run_id, child_final, &ctx), Status::OK);
-        if (child_final.state != CatalogManager::JobRunState::PENDING &&
-            child_final.started_at != 0) {
-            break;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(10));
-    }
-    EXPECT_NE(child_final.state, CatalogManager::JobRunState::PENDING);
-    EXPECT_GE(child_final.started_at, parent_final.completed_at);
+    // Dependency requires a COMPLETED upstream run. A FAILED parent must block child execution.
+    EXPECT_FALSE(waitForJobRuns(catalog, child_id, 1, 2000));
 
     scheduler.stop();
     db.close();
@@ -542,6 +551,9 @@ TEST(JobSchedulerTimeout, MarksRunFailedAfterTimeout) {
 
     ID system_user = catalog->getSystemUserId(&ctx);
     auto job = buildSimpleJob("timeout_job", system_user, nowMs());
+    job.job_type = CatalogManager::JobType::EXTERNAL;
+    job.job_sql.clear();
+    job.external_command = "/bin/sleep 2";
     job.timeout_seconds = 1;
 
     ID job_id;
@@ -550,6 +562,10 @@ TEST(JobSchedulerTimeout, MarksRunFailedAfterTimeout) {
     JobScheduler::Config config;
     config.polling_interval_seconds = 1;
     config.pre_execute_delay_ms = 1500;
+    config.external_jobs_enabled = true;
+    config.external_working_dir = "/tmp";
+    config.external_allowed_commands = {"/bin/sleep"};
+    config.external_env_allowlist = {"PATH"};
 
     JobScheduler scheduler(&db, config);
     ASSERT_EQ(scheduler.start(&ctx), Status::OK);

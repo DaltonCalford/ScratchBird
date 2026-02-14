@@ -67,21 +67,24 @@ TEST_F(Alpha101Test, CreateDatabase_8K)
 {
     ASSERT_EQ(Database::create(test_db_8k_->path(), 8192), Status::OK);
     ASSERT_TRUE(file_exists(test_db_8k_->path()));
-    ASSERT_EQ(get_file_size(test_db_8k_->path()), 8192 * 3); // 3 pages: header, catalog, FSM
+    ASSERT_EQ(get_file_size(test_db_8k_->path()),
+              8192 * BOOTSTRAP_FIXED_PAGE_COUNT); // fixed bootstrap pages 0..5
 }
 
 TEST_F(Alpha101Test, CreateDatabase_16K)
 {
     ASSERT_EQ(Database::create(test_db_16k_->path(), 16384), Status::OK);
     ASSERT_TRUE(file_exists(test_db_16k_->path()));
-    ASSERT_EQ(get_file_size(test_db_16k_->path()), 16384 * 3); // 3 pages: header, catalog, FSM
+    ASSERT_EQ(get_file_size(test_db_16k_->path()),
+              16384 * BOOTSTRAP_FIXED_PAGE_COUNT); // fixed bootstrap pages 0..5
 }
 
 TEST_F(Alpha101Test, CreateDatabase_32K)
 {
     ASSERT_EQ(Database::create(test_db_32k_->path(), 32768), Status::OK);
     ASSERT_TRUE(file_exists(test_db_32k_->path()));
-    ASSERT_EQ(get_file_size(test_db_32k_->path()), 32768 * 3); // 3 pages: header, catalog, FSM
+    ASSERT_EQ(get_file_size(test_db_32k_->path()),
+              32768 * BOOTSTRAP_FIXED_PAGE_COUNT); // fixed bootstrap pages 0..5
 }
 
 // Test header validation for each page size
@@ -146,12 +149,12 @@ TEST_F(Alpha101Test, ValidateHeader_32K)
     ASSERT_TRUE(validatePageChecksum(buffer, 32768));
 }
 
-// Test system catalog initialization
+// Test canonical bootstrap page map
 TEST_F(Alpha101Test, SystemCatalogInitialization)
 {
     Database::create(test_db_->path(), 16384);
 
-    // Read catalog page (Page 1)
+    // Read system state page (Page 1)
     std::ifstream file(test_db_->path(), std::ios::binary);
     ASSERT_TRUE(file.is_open());
 
@@ -160,42 +163,50 @@ TEST_F(Alpha101Test, SystemCatalogInitialization)
 
     uint8_t buffer[16384];
     file.read(reinterpret_cast<char *>(buffer), 16384);
-    file.close();
-
     PageHeader *header = reinterpret_cast<PageHeader *>(buffer);
     ASSERT_EQ(header->magic, 0x53425244);
-    ASSERT_EQ(header->page_type, PAGE_TYPE_SYSTEM_CATALOG);
+    ASSERT_EQ(header->page_type, PAGE_TYPE_SYSTEM_STATE);
     ASSERT_EQ(header->page_id, 1);
-    auto entry_count = static_cast<uint32_t>(
-        (pageLower(*header) - sizeof(PageHeader)) / sizeof(SystemCatalogEntry));
-    ASSERT_EQ(entry_count, static_cast<uint32_t>(config::NUM_BASE_SCHEMAS));
+    auto *system_state = reinterpret_cast<BootstrapSystemStatePage *>(buffer);
+    ASSERT_EQ(system_state->clean_shutdown, 1);
     ASSERT_TRUE(validatePageChecksum(buffer, 16384));
 
-    // Check catalog entries
-    SystemCatalogEntry *entries =
-        reinterpret_cast<SystemCatalogEntry *>(buffer + sizeof(PageHeader));
+    // Read catalog root page (Page 2)
+    file.seekg(16384 * 2);
+    file.read(reinterpret_cast<char *>(buffer), 16384);
+    header = reinterpret_cast<PageHeader *>(buffer);
+    ASSERT_EQ(header->magic, 0x53425244);
+    ASSERT_EQ(header->page_type, PAGE_TYPE_CATALOG_ROOT);
+    ASSERT_EQ(header->page_id, 2);
+    ASSERT_TRUE(validatePageChecksum(buffer, 16384));
 
-    // Verify schema names
-    const char *expected_names[] = {"[root]", "[sys]",    "[sec]",   "[agents]",
-                                    "[app]",  "[remote]", "[users]", "[roles]"};
+    // Read FSM root page (Page 3)
+    file.seekg(16384 * 3);
+    file.read(reinterpret_cast<char *>(buffer), 16384);
+    header = reinterpret_cast<PageHeader *>(buffer);
+    ASSERT_EQ(header->magic, 0x53425244);
+    ASSERT_EQ(header->page_type, PAGE_TYPE_FSM_ROOT);
+    ASSERT_EQ(header->page_id, 3);
+    ASSERT_TRUE(validatePageChecksum(buffer, 16384));
 
-    for (int i = 0; i < 8; i++)
-    {
-        ASSERT_STREQ(entries[i].name, expected_names[i]);
-        ASSERT_EQ(entries[i].object_type, 0); // Schema type
+    // Read transaction map root page (Page 4)
+    file.seekg(16384 * 4);
+    file.read(reinterpret_cast<char *>(buffer), 16384);
+    header = reinterpret_cast<PageHeader *>(buffer);
+    ASSERT_EQ(header->magic, 0x53425244);
+    ASSERT_EQ(header->page_type, PAGE_TYPE_TRANSACTION_MAP);
+    ASSERT_EQ(header->page_id, 4);
+    ASSERT_TRUE(validatePageChecksum(buffer, 16384));
 
-        // Root has no parent
-        if (i == 0)
-        {
-            uint8_t zero_uuid[16] = {0};
-            ASSERT_EQ(memcmp(entries[i].parent_uuid, zero_uuid, 16), 0);
-        }
-        else
-        {
-            // Others have root as parent
-            ASSERT_EQ(memcmp(entries[i].parent_uuid, entries[0].schema_uuid, 16), 0);
-        }
-    }
+    // Read reserved bootstrap page (Page 5)
+    file.seekg(16384 * 5);
+    file.read(reinterpret_cast<char *>(buffer), 16384);
+    file.close();
+    header = reinterpret_cast<PageHeader *>(buffer);
+    ASSERT_EQ(header->magic, 0x53425244);
+    ASSERT_EQ(header->page_type, PAGE_TYPE_BOOTSTRAP_RESERVED);
+    ASSERT_EQ(header->page_id, 5);
+    ASSERT_TRUE(validatePageChecksum(buffer, 16384));
 }
 
 // Test UUID v7 generation
@@ -295,6 +306,7 @@ TEST_F(Alpha101Test, PageReadWrite)
     header = reinterpret_cast<PageHeader *>(buffer);
     ASSERT_EQ(header->magic, 0x53425244);
     ASSERT_EQ(header->page_id, 1);
+    ASSERT_EQ(header->page_type, PAGE_TYPE_SYSTEM_STATE);
 }
 
 // Test CRC32C implementation

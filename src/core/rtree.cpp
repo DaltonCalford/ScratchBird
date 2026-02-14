@@ -101,7 +101,7 @@ Status RTree::create(Database* db,
     // Set page header
     rtree_page->rtree_header.magic = K_MAGIC_SBRD;
     rtree_page->rtree_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
-    rtree_page->rtree_header.page_type = PAGE_TYPE_RTREE_NODE;
+    rtree_page->rtree_header.page_type = PAGE_TYPE_SPATIAL_NODE;
     rtree_page->rtree_header.page_size = db->page_size();
     rtree_page->rtree_header.page_id = root_page;
     rtree_page->rtree_header.generation = 1;

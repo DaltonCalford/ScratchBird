@@ -109,6 +109,15 @@ private:
     Status queryPrimaryKeys(VirtualResultSet& results, ErrorContext* ctx);
     Status queryTypes(VirtualResultSet& results, ErrorContext* ctx);
     Status queryDomains(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryMigrationStatus(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryMigrationAuditSummary(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryReplicationChannelStatus(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryReplicationConflictQueue(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryReplicationCursorStatus(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryShardStatus(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryShardMigrations(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryPlugin(VirtualResultSet& results, ErrorContext* ctx);
+    Status queryPreparedStatements(VirtualResultSet& results, ErrorContext* ctx);
 };
 
 } // namespace scratchbird::catalog

@@ -303,8 +303,8 @@ TEST_F(EngineIPCSessionHandlerTest, onSimpleQuery_FirebirdProtocolIsNotRejectedA
     core::ErrorContext ctx;
     auto status = handler_->onSimpleQuery(2, "INVALID SQL", &ctx);
     EXPECT_EQ(status, core::Status::OK);
-    EXPECT_NE(handler_->lastSqlState(), "0A000");
-    EXPECT_EQ(handler_->lastError().find("not yet supported"), std::string::npos);
+    EXPECT_EQ(handler_->lastSqlState(), "0A000");
+    EXPECT_NE(handler_->lastError().find("disabled"), std::string::npos);
 
     handler_->onDetach(2, &ctx);
 }
@@ -334,7 +334,8 @@ TEST_F(EngineIPCSessionHandlerTest, onParse_Basic) {
     core::ErrorContext ctx;
     auto status = handler_->onParse(1, "stmt1", "SELECT 1 AS col", &ctx);
     EXPECT_EQ(status, core::Status::OK);
-    EXPECT_TRUE(handler_->parseCompleteCalled());
+    EXPECT_FALSE(handler_->parseCompleteCalled());
+    EXPECT_EQ(handler_->lastSqlState(), "0A000");
 }
 
 TEST_F(EngineIPCSessionHandlerTest, onParse_InvalidSQL) {
@@ -351,8 +352,8 @@ TEST_F(EngineIPCSessionHandlerTest, onParse_NativeProtocolCompilesInsteadOfUnsup
     core::ErrorContext ctx;
     auto status = handler_->onParse(3, "native_stmt", "SELECT 1", &ctx);
     EXPECT_EQ(status, core::Status::OK);
-    EXPECT_TRUE(handler_->parseCompleteCalled());
-    EXPECT_NE(handler_->lastSqlState(), "0A000");
+    EXPECT_FALSE(handler_->parseCompleteCalled());
+    EXPECT_EQ(handler_->lastSqlState(), "0A000");
 
     handler_->onDetach(3, &ctx);
 }

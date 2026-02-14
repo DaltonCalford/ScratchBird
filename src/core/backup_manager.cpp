@@ -91,7 +91,7 @@ static Status readTablespaceFilePageCount(const std::string& path,
         *pages_out = legacy->total_pages;
         return Status::OK;
     }
-    if (page_header->version == TABLESPACE_HEADER_VERSION_V2)
+    if (page_header->version == TABLESPACE_HEADER_VERSION_CURRENT)
     {
         const auto* header = reinterpret_cast<const TablespaceHeader*>(buffer.data());
         *pages_out = header->total_pages;

@@ -943,9 +943,23 @@ namespace scratchbird::core
 
         for (uint32_t attempt = 0; attempt < MAX_RETRIES; ++attempt)
         {
+            if (config_.pool_size == 0)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "Buffer pool has zero-sized frame array");
+                return Status::INVALID_ARGUMENT;
+            }
+
+            if (clock_hand_ >= config_.pool_size)
+            {
+                DEBUG_LOG_BP("Clock hand out of bounds at sweep start: " << clock_hand_
+                                                                          << " >= pool_size: " << config_.pool_size);
+                clock_hand_ = 0;
+            }
+
             uint32_t candidate_frame = UINT32_MAX;
             uint32_t passes = 0;
-            uint32_t start_hand = clock_hand_;
+            uint32_t scanned_in_pass = 0;
 
             // Clock sweep: search for victim page
             while (passes < MAX_PASSES)
@@ -1014,10 +1028,13 @@ namespace scratchbird::core
                     frame.usage_count.fetch_sub(1, std::memory_order_relaxed);
                 }
 
-                // Check if we've completed a full pass
-                if (clock_hand_ == start_hand)
+                // Count scanned frames deterministically. This avoids relying on start-hand
+                // comparisons that can fail when the hand was previously out of range.
+                scanned_in_pass++;
+                if (scanned_in_pass >= config_.pool_size)
                 {
                     passes++;
+                    scanned_in_pass = 0;
                     if (candidate_frame != UINT32_MAX)
                     {
                         // We found a dirty page candidate, use it

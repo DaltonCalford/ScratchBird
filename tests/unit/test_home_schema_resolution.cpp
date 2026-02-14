@@ -17,6 +17,8 @@
 #include "scratchbird/sblr/query_compiler_v3.h"
 #include "test_helpers.h"
 
+#include <cstring>
+
 using namespace scratchbird::core;
 using namespace scratchbird::sblr;
 using scratchbird::testing::TestDatabaseFile;
@@ -33,6 +35,11 @@ namespace
             }
         }
         return true;
+    }
+
+    int compareUuid(const ID& lhs, const ID& rhs)
+    {
+        return std::memcmp(lhs.bytes.data(), rhs.bytes.data(), lhs.bytes.size());
     }
 } // namespace
 
@@ -126,6 +133,123 @@ TEST_F(HomeSchemaResolutionTest, SessionUsesGroupHomeWhenUserDefaultMissing)
 
     auto session_info = createSessionForUser(user_id);
     EXPECT_EQ(session_info.current_schema_id, group_schema_id);
+}
+
+TEST_F(HomeSchemaResolutionTest, SessionUsesRoleHomeBeforeGroupHome)
+{
+    ErrorContext ctx;
+
+    ID role_schema_id;
+    ASSERT_EQ(catalog_->createSchemaPath("users.roles.admin_role_home",
+                                         CatalogManager::SchemaType::USER_HOME,
+                                         role_schema_id, &ctx),
+              Status::OK) << ctx.message;
+
+    ID group_schema_id;
+    ASSERT_EQ(catalog_->createSchemaPath("users.groups.developers_home",
+                                         CatalogManager::SchemaType::USER_HOME,
+                                         group_schema_id, &ctx),
+              Status::OK) << ctx.message;
+
+    ID role_id;
+    ASSERT_EQ(catalog_->createRole("admin_role", system_user_id_,
+                                   role_schema_id, role_id, &ctx),
+              Status::OK) << ctx.message;
+
+    ID group_id;
+    ASSERT_EQ(catalog_->createGroup("developers", CatalogManager::GroupType::LOCAL,
+                                    "", group_schema_id, group_id, &ctx),
+              Status::OK) << ctx.message;
+
+    ID user_id;
+    ASSERT_EQ(catalog_->createUser("carol", "", public_schema_id_, false, user_id, &ctx),
+              Status::OK) << ctx.message;
+    ASSERT_EQ(catalog_->updateUser(user_id, "", ID{}, true, false, &ctx),
+              Status::OK) << ctx.message;
+
+    ASSERT_EQ(catalog_->grantRole(role_id, user_id, system_user_id_, false, &ctx),
+              Status::OK) << ctx.message;
+    ASSERT_EQ(catalog_->addGroupMember(group_id, user_id, false, system_user_id_, &ctx),
+              Status::OK) << ctx.message;
+
+    auto session_info = createSessionForUser(user_id);
+    EXPECT_EQ(session_info.current_schema_id, role_schema_id);
+}
+
+TEST_F(HomeSchemaResolutionTest, SessionGroupTieBreakUsesGroupUuidAscending)
+{
+    ErrorContext ctx;
+
+    ID schema_a;
+    ASSERT_EQ(catalog_->createSchemaPath("users.groups.g_a_home",
+                                         CatalogManager::SchemaType::USER_HOME,
+                                         schema_a, &ctx),
+              Status::OK) << ctx.message;
+
+    ID schema_b;
+    ASSERT_EQ(catalog_->createSchemaPath("users.groups.g_b_home",
+                                         CatalogManager::SchemaType::USER_HOME,
+                                         schema_b, &ctx),
+              Status::OK) << ctx.message;
+
+    ID group_a;
+    ASSERT_EQ(catalog_->createGroup("z_group", CatalogManager::GroupType::LOCAL,
+                                    "", schema_a, group_a, &ctx),
+              Status::OK) << ctx.message;
+
+    ID group_b;
+    ASSERT_EQ(catalog_->createGroup("a_group", CatalogManager::GroupType::LOCAL,
+                                    "", schema_b, group_b, &ctx),
+              Status::OK) << ctx.message;
+
+    ID user_id;
+    ASSERT_EQ(catalog_->createUser("dave", "", public_schema_id_, false, user_id, &ctx),
+              Status::OK) << ctx.message;
+    ASSERT_EQ(catalog_->updateUser(user_id, "", ID{}, true, false, &ctx),
+              Status::OK) << ctx.message;
+
+    ASSERT_EQ(catalog_->addGroupMember(group_a, user_id, false, system_user_id_, &ctx),
+              Status::OK) << ctx.message;
+    ASSERT_EQ(catalog_->addGroupMember(group_b, user_id, false, system_user_id_, &ctx),
+              Status::OK) << ctx.message;
+
+    auto session_info = createSessionForUser(user_id);
+
+    ID expected_schema = compareUuid(group_a, group_b) < 0 ? schema_a : schema_b;
+    EXPECT_EQ(session_info.current_schema_id, expected_schema);
+}
+
+TEST_F(HomeSchemaResolutionTest, SessionSearchPathUsesPersistedProfile)
+{
+    ErrorContext ctx;
+
+    ID user_schema_id;
+    ASSERT_EQ(catalog_->createSchemaPath("users.eve",
+                                         CatalogManager::SchemaType::USER_HOME,
+                                         user_schema_id, &ctx),
+              Status::OK) << ctx.message;
+
+    ID user_id;
+    ASSERT_EQ(catalog_->createUser("eve", "", user_schema_id, false, user_id, &ctx),
+              Status::OK) << ctx.message;
+
+    auto session_1 = createSessionForUser(user_id);
+    ASSERT_FALSE(session_1.search_path.empty());
+    ASSERT_FALSE(isZeroUuid(session_1.search_path_profile_id));
+
+    std::string expected_user_path;
+    ASSERT_EQ(catalog_->getSchemaPath(user_schema_id, expected_user_path, &ctx), Status::OK)
+        << ctx.message;
+    ASSERT_FALSE(expected_user_path.empty());
+
+    EXPECT_EQ(session_1.search_path.front(), expected_user_path);
+    EXPECT_FALSE(session_1.search_path_schema_ids.empty());
+    EXPECT_EQ(session_1.search_path_schema_ids.front(), user_schema_id);
+
+    auto session_2 = createSessionForUser(user_id);
+    EXPECT_EQ(session_2.search_path_profile_id, session_1.search_path_profile_id);
+    EXPECT_EQ(session_2.search_path_schema_ids, session_1.search_path_schema_ids);
+    EXPECT_EQ(session_2.search_path, session_1.search_path);
 }
 
 TEST_F(HomeSchemaResolutionTest, SetRoleSwitchesSchemaToRoleHome)

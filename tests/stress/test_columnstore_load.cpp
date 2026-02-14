@@ -148,12 +148,12 @@ TEST_F(ColumnstoreLoadTest, MultiColumnInsertAndFlush) {
     for (uint32_t i = 0; i < total_rows; ++i) {
         TID tid{0, static_cast<uint64_t>(i), 0};
         int32_t v1 = static_cast<int32_t>(i);
-        int32_t v2 = static_cast<int32_t>(i % 10);
+        int32_t value_two = static_cast<int32_t>(i % 10);
         int32_t v3 = static_cast<int32_t>((i * 7919) % 1000);
 
         ASSERT_EQ(index->insert(column1, tid, &v1, sizeof(int32_t), false, &ctx),
                   Status::OK) << ctx.message;
-        ASSERT_EQ(index->insert(column2, tid, &v2, sizeof(int32_t), false, &ctx),
+        ASSERT_EQ(index->insert(column2, tid, &value_two, sizeof(int32_t), false, &ctx),
                   Status::OK) << ctx.message;
         ASSERT_EQ(index->insert(column3, tid, &v3, sizeof(int32_t), false, &ctx),
                   Status::OK) << ctx.message;

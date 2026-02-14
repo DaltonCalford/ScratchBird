@@ -16,6 +16,7 @@
 #include <unordered_map>
 #include <mutex>
 #include <functional>
+#include <optional>
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/types.h"
@@ -24,6 +25,7 @@
 #include "scratchbird/core/function_invoker.h"
 #include "scratchbird/core/encryption_key_manager.h"
 #include "scratchbird/core/data_masking.h"
+#include "scratchbird/core/domain_validation.h"
 
 namespace scratchbird::core
 {
@@ -301,6 +303,15 @@ struct DomainInfo
             std::string dialect_tag;
             std::string compat_name;
             bool enum_wrap = false;
+            std::optional<ID> fixed_domain_id;
+            bool allow_system_reserved_name = false;
+        };
+
+        struct DomainListOptions
+        {
+            bool include_system = false;
+            std::string dialect_tag;
+            bool enforce_emulation_profiles = true;
         };
 
         auto createBasicDomain(const ID& schema_id,
@@ -339,7 +350,13 @@ struct DomainInfo
                         std::vector<DomainInfo>& domains,
                         ErrorContext* ctx = nullptr) -> Status;
 
-        // Ensure SBDB$ system domains are present in the sys schema.
+        // List domains for parser/catalog visibility usage with profile gating.
+        auto listDomainsVisible(const ID& schema_id,
+                                const DomainListOptions& options,
+                                std::vector<DomainInfo>& domains,
+                                ErrorContext* ctx = nullptr) -> Status;
+
+        // Ensure [sb_dom] system domains are present in the sys schema.
         auto ensureSystemDomains(ErrorContext* ctx = nullptr) -> Status;
 
         // Drop domain
@@ -365,6 +382,11 @@ struct DomainInfo
         auto validateValue(const ID& domain_id,
                           const TypedValue& value,
                           ErrorContext* ctx = nullptr) -> Status;
+
+        // Validate partial-collection mutation policy (for frozen emulated domains).
+        auto validateCollectionMutation(const ID& domain_id,
+                                        CollectionMutationKind mutation,
+                                        ErrorContext* ctx = nullptr) -> Status;
 
         // Domain WITH block enforcement
         auto applyNormalization(const ID& domain_id,

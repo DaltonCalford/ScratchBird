@@ -18,6 +18,7 @@
 #include "scratchbird/server/ipc_server.h"
 #include "scratchbird/protocol/wire_protocol.h"
 #include "scratchbird/core/firebird_datetime.h"
+#include "scratchbird/parser/v3_compiler.h"
 
 #include <algorithm>
 #include <atomic>
@@ -1514,7 +1515,21 @@ public:
 
     core::Status doExecuteQuery(const std::string& sql, uint8_t flags, ResultSet* results,
                                 core::ErrorContext* ctx) {
-        auto query_msg = protocol::ProtocolCodec::buildQuery(session_id_, sql, flags);
+        parser::v3::Compiler compiler;
+        auto compile_result = compiler.compile(sql);
+        if (!compile_result.ok) {
+            last_error_ = compile_result.error.empty()
+                ? "Compilation failed before submit"
+                : compile_result.error;
+            if (ctx) {
+                ctx->set(core::Status::INVALID_ARGUMENT, last_error_.c_str(),
+                         __FILE__, __LINE__, __func__);
+            }
+            return core::Status::INVALID_ARGUMENT;
+        }
+
+        auto query_msg = protocol::ProtocolCodec::buildQueryBytecode(
+            session_id_, compile_result.bytecode, sql, flags);
         return doExecuteQueryMessage(query_msg, results, ctx);
     }
 

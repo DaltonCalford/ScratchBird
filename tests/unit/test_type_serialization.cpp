@@ -154,6 +154,39 @@ TEST(TypeSerializationTest, INTERVAL_Serialization)
     EXPECT_EQ(original_interval.microseconds, deserialized_interval.microseconds);
 }
 
+TEST(TypeSerializationTest, TIMESTAMP_NoDisplayOffsetSentinel_RoundTrip)
+{
+    auto value = TypedValue::makeTimestamp(1700000000123456LL);
+
+    auto serialized = TypeSerializer::serialize(value);
+    EXPECT_EQ(serialized.size(), 12u);
+
+    ErrorContext ctx;
+    auto deserialized = TypeSerializer::deserialize(DataType::TIMESTAMP,
+                                                    serialized.data(),
+                                                    static_cast<uint32_t>(serialized.size()),
+                                                    &ctx);
+    ASSERT_TRUE(deserialized.has_value()) << ctx.message;
+    EXPECT_EQ(deserialized->getTimezoneOffsetSeconds(),
+              TypedValue::kNoDisplayOffsetSeconds);
+}
+
+TEST(TypeSerializationTest, TIMESTAMP_ExplicitUtcOffset_RoundTrip)
+{
+    auto value = TypedValue::makeTimestamp(1700000000123456LL, 0);
+
+    auto serialized = TypeSerializer::serialize(value);
+    EXPECT_EQ(serialized.size(), 12u);
+
+    ErrorContext ctx;
+    auto deserialized = TypeSerializer::deserialize(DataType::TIMESTAMP,
+                                                    serialized.data(),
+                                                    static_cast<uint32_t>(serialized.size()),
+                                                    &ctx);
+    ASSERT_TRUE(deserialized.has_value()) << ctx.message;
+    EXPECT_EQ(deserialized->getTimezoneOffsetSeconds(), 0);
+}
+
 // ===== Spatial Type Serialization Tests =====
 
 TEST(TypeSerializationTest, POINT_Serialization)
@@ -562,6 +595,25 @@ TEST(TypeSerializationTest, JSONB_Serialization)
     EXPECT_GT(serialized.size(), 0u);
 }
 
+TEST(TypeSerializationTest, BSON_SerializationRoundTrip)
+{
+    auto source = TypedValue::makeVarchar(R"({"name":"alice","age":30})");
+    auto bson = source.convertTo(DataType::BSON);
+
+    auto serialized = TypeSerializer::serialize(bson);
+    EXPECT_GT(serialized.size(), 0u);
+
+    ErrorContext ctx;
+    auto deserialized = TypeSerializer::deserialize(DataType::BSON,
+                                                    serialized.data(),
+                                                    static_cast<uint32_t>(serialized.size()),
+                                                    &ctx);
+    ASSERT_TRUE(deserialized.has_value()) << ctx.message;
+    EXPECT_EQ(deserialized->type(), DataType::BSON);
+    EXPECT_NE(deserialized->toString().find("\"name\""), std::string::npos);
+    EXPECT_NE(deserialized->toString().find("\"age\""), std::string::npos);
+}
+
 TEST(TypeSerializationTest, XML_Serialization)
 {
     std::string xml_str = "<root><item id='1'>Value</item></root>";
@@ -766,6 +818,64 @@ TEST(TypeSerializationTest, ARRAY_3D_Serialization)
                                                     &ctx);
     ASSERT_TRUE(deserialized.has_value());
     EXPECT_EQ(deserialized->toString(), "{{{1, 2}, {3, 4}}, {{5, 6}, {7, 8}}}");
+}
+
+TEST(TypeSerializationTest, LIST_DeserializeAndSerialize)
+{
+    auto array_value = TypedValue::makeArray({
+        TypedValue::makeInt32(10),
+        TypedValue::makeInt32(20),
+        TypedValue::makeInt32(30)
+    });
+    auto array_serialized = TypeSerializer::serialize(array_value);
+
+    TypedValue list_value(DataType::LIST);
+    ErrorContext ctx;
+    ASSERT_EQ(list_value.deserializePlainValue(array_serialized, &ctx), Status::OK) << ctx.message;
+    EXPECT_EQ(list_value.toString(), "[10, 20, 30]");
+
+    auto list_serialized = TypeSerializer::serialize(list_value);
+    EXPECT_EQ(list_serialized, array_serialized);
+}
+
+TEST(TypeSerializationTest, MAP_DeserializeAndSerialize)
+{
+    auto map_payload = TypedValue::makeArray({
+        TypedValue::makeComposite({"k", "v"},
+                                  {TypedValue::makeVarchar("a"), TypedValue::makeInt32(1)}),
+        TypedValue::makeComposite({"k", "v"},
+                                  {TypedValue::makeVarchar("b"), TypedValue::makeInt32(2)})
+    });
+    auto payload_serialized = TypeSerializer::serialize(map_payload);
+
+    TypedValue map_value(DataType::MAP);
+    ErrorContext ctx;
+    ASSERT_EQ(map_value.deserializePlainValue(payload_serialized, &ctx), Status::OK) << ctx.message;
+    EXPECT_EQ(map_value.type(), DataType::MAP);
+    EXPECT_NE(map_value.toString().find("a"), std::string::npos);
+    EXPECT_NE(map_value.toString().find("b"), std::string::npos);
+
+    auto map_serialized = TypeSerializer::serialize(map_value);
+    EXPECT_EQ(map_serialized, payload_serialized);
+}
+
+TEST(TypeSerializationTest, DECIMAL_PrecisionZeroVariableWidthRoundTrip)
+{
+    auto decimal = TypedValue::makeDecimal(12345, 0, 0);
+    auto serialized = TypeSerializer::serialize(decimal);
+    EXPECT_LT(serialized.size(), 16u);
+    EXPECT_GT(serialized.size(), 0u);
+
+    ErrorContext ctx;
+    auto deserialized = TypeSerializer::deserialize(DataType::DECIMAL,
+                                                    serialized.data(),
+                                                    static_cast<uint32_t>(serialized.size()),
+                                                    &ctx);
+    ASSERT_TRUE(deserialized.has_value()) << ctx.message;
+    EXPECT_EQ(deserialized->type(), DataType::DECIMAL);
+    EXPECT_EQ(deserialized->getDecimalPrecision(), 0);
+    EXPECT_EQ(deserialized->getDecimalScale(), 0);
+    EXPECT_EQ(static_cast<int64_t>(deserialized->getDecimalUnscaled()), 12345);
 }
 
 // ===== Multi-Geometry Tests =====
@@ -980,8 +1090,8 @@ TEST(TypeSerializationTest, SizeValidation_FixedSizeTypes)
     EXPECT_EQ(TypeSerializer::getSerializedSize(v1), 1u);
 
     // UINT16: 2 bytes
-    auto v2 = TypedValue::makeUInt16(1000);
-    EXPECT_EQ(TypeSerializer::getSerializedSize(v2), 2u);
+    auto value_two = TypedValue::makeUInt16(1000);
+    EXPECT_EQ(TypeSerializer::getSerializedSize(value_two), 2u);
 
     // UINT32: 4 bytes
     auto v3 = TypedValue::makeUInt32(100000);

@@ -244,8 +244,8 @@ TEST_F(PageManagementEdgeTest, PageManager_FSMCorruption_PageType)
     // Create a valid database
     ASSERT_EQ(Database::create(db_corrupt_.c_str(), 16384), Status::OK);
 
-    // Corrupt the FSM page type
-    corrupt_page(db_corrupt_.c_str(), 2, offsetof(PageHeader, page_type));
+    // Corrupt the canonical FSM root page type
+    corrupt_page(db_corrupt_.c_str(), BOOTSTRAP_PAGE_FSM_ROOT, offsetof(PageHeader, page_type));
 
     // Try to open and use the database
     Database db;
@@ -296,8 +296,8 @@ TEST_F(PageManagementEdgeTest, PageManager_FSMCorruption_Bitmap)
         }
     }
 
-    // Corrupt the FSM bitmap area
-    corrupt_page(db_corrupt_.c_str(), 2, 128); // Corrupt bitmap data
+    // Corrupt the canonical FSM root bitmap area
+    corrupt_page(db_corrupt_.c_str(), BOOTSTRAP_PAGE_FSM_ROOT, 128); // Corrupt bitmap data
 
     // Reopen should detect corruption
     Database db;
@@ -312,29 +312,9 @@ TEST_F(PageManagementEdgeTest, PageManager_FSMCorruption_Bitmap)
         return;
     }
 
-    // If open succeeded, try operations that might reveal corruption
-    ASSERT_EQ(open_status, Status::OK)
-        << "Unexpected open failure: " << static_cast<uint32_t>(open_status);
-
-    PageManager *pm = db.page_manager();
-
-    // Try to get page count - might detect inconsistency
-    uint32_t total_pages = pm->totalPages();
-    uint32_t free_pages = pm->freePages();
-
-    // Allocate a page - might get a duplicate
-    uint32_t page_id1, page_id2;
-    Status status1 = pm->allocatePage(page_id1);
-    Status status2 = pm->allocatePage(page_id2);
-
-    // If both succeed, check for duplicates
-    if (status1 == Status::OK && status2 == Status::OK)
-    {
-        EXPECT_NE(page_id1, page_id2) << "FSM corruption led to duplicate page allocation";
-    }
-
-    // Note: Without checksums on FSM page, detection is limited
-    ADD_FAILURE() << "NOTE: FSM page should have checksums for corruption detection";
+    // Checksum protection is mandatory for canonical FSM pages.
+    ADD_FAILURE() << "FSM corruption was not detected during open/load (status="
+                  << static_cast<uint32_t>(open_status) << ")";
 }
 
 // ============================================================================

@@ -249,7 +249,7 @@ TEST(LSMTreeComprehensiveIntegrationTest, Updates)
     for (size_t i = 0; i < 10; i++)
     {
         std::vector<uint8_t> key = makeKey(i);
-        std::vector<uint8_t> value = makeValue(i, "v2");
+        std::vector<uint8_t> value = makeValue(i, "value_two");
         status = index.put(key, value, xid, nullptr);
         ASSERT_EQ(status, Status::OK);
     }
@@ -258,7 +258,7 @@ TEST(LSMTreeComprehensiveIntegrationTest, Updates)
     for (size_t i = 0; i < 10; i++)
     {
         std::vector<uint8_t> key = makeKey(i);
-        std::vector<uint8_t> expected_value = makeValue(i, "v2");
+        std::vector<uint8_t> expected_value = makeValue(i, "value_two");
         std::vector<uint8_t> actual_value;
         bool found = false;
 

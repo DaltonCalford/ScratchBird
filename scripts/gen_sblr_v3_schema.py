@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import re
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -7,6 +8,16 @@ SPEC = ROOT / "docs/specifications/parser/v3/SBLR_V3_OPCODE_PAYLOADS.md"
 OUT_CPP = ROOT / "src/sblr/v3_schema.generated.cpp"
 
 schema_blocks = {}
+
+if not SPEC.exists():
+    print("error: missing legacy schema source:", file=sys.stderr)
+    print(f"  {SPEC}", file=sys.stderr)
+    print("legacy schema regeneration is unavailable without this source.", file=sys.stderr)
+    print(
+        "for authoritative section-22 canonical rows, run scripts/gen_sblr_v3_canonical_feature_map.py",
+        file=sys.stderr,
+    )
+    sys.exit(2)
 
 lines = SPEC.read_text().splitlines()
 

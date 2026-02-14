@@ -212,8 +212,8 @@ namespace scratchbird::core
 
         // Check page type - some types compress better than others
         if (header->page_type == PAGE_TYPE_DATABASE_HEADER ||
-            header->page_type == PAGE_TYPE_SYSTEM_CATALOG ||
-            header->page_type == PAGE_TYPE_FREE_SPACE_MAP ||
+            header->page_type == PAGE_TYPE_CATALOG_ROOT ||
+            header->page_type == PAGE_TYPE_FSM_ROOT ||
             header->page_type == PAGE_TYPE_TRANSACTION_MAP)
         {
             // System pages typically don't compress well

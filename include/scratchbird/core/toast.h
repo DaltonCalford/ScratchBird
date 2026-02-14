@@ -144,24 +144,34 @@ namespace scratchbird::core
     };
 
     /**
-     * TOAST Pointer Structure
+     * TOAST Pointer Structure (canonical 32-byte format)
      *
-     * Stored in main tuple instead of actual data when value is TOASTed.
-     * Points to chunks stored in TOAST table.
+     * Field `lob_uuid`      u8[16]
+     * Field `total_len`     u64   (uncompressed byte length)
+     * Field `chunk_size`    u32
+     * Field `compression`   u16
+     * Field `flags`         u16
      *
-     * Magic Byte Detection: va_header == 0x01 indicates a TOAST pointer
+     * Compatibility aliases keep legacy code paths compiling while the source
+     * migrates to canonical naming.
      */
 #pragma pack(push, 1)
     struct ToastPointer
     {
-        uint8_t va_header;      // Varlena header byte (0x01 = TOAST magic byte)
-        uint8_t va_tag;         // Type tag and compression info
-        uint32_t va_rawsize;    // Original (uncompressed) data size
-        uint32_t va_extsize;    // External stored size (after compression if applicable)
-        ID va_valueid;          // Unique identifier for this TOAST value (UUID v7)
-        ID va_toastrelid;       // TOAST table ID (UUID)
+        ID lob_uuid;
+        uint64_t total_len;
+        uint32_t chunk_size;
+        uint16_t compression;
+        uint16_t flags;
+
+        static constexpr uint16_t TOAST_COMPRESSED = 0x0001;
+        static constexpr uint16_t TOAST_ENCRYPTED = 0x0002;
+        static constexpr uint16_t TOAST_INLINE_REF = 0x0004;
+        static constexpr uint16_t TOAST_FLAG_MASK =
+            TOAST_COMPRESSED | TOAST_ENCRYPTED | TOAST_INLINE_REF;
     };
 #pragma pack(pop)
+    static_assert(sizeof(ToastPointer) == 32, "ToastPointer must be 32 bytes");
 
     /**
      * TOAST Chunk Structure (TupleHeader + chunk metadata + data)
@@ -311,10 +321,10 @@ namespace scratchbird::core
         return size > threshold || size > max_inline;
     }
 
-    // Check if a varlena header indicates TOAST
-    inline auto isToastPointer(const uint8_t *data) -> bool
+    // Legacy compatibility helper routed to canonical pointer validation.
+    inline auto isToastPointer(const uint8_t *data, size_t size) -> bool
     {
-        return data[0] == 0x01; // Special TOAST marker
+        return ToastManager::isToastPointer(data, size);
     }
 
 } // namespace scratchbird::core

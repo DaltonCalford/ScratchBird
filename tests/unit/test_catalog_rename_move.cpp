@@ -121,6 +121,28 @@ protected:
         return info.schema_id;
     }
 
+    ID ensureSchemaPath(const std::string& path)
+    {
+        ErrorContext ctx;
+        CatalogManager::SchemaInfo info;
+        auto status = catalog_->getSchema(path, info, &ctx);
+        if (status == Status::OK)
+        {
+            return info.schema_id;
+        }
+
+        // Some catalog builds return INVALID_ARGUMENT with a "Schema not found"
+        // message for missing schemas.
+        if (status != Status::NOT_FOUND && status != Status::INVALID_ARGUMENT)
+        {
+            EXPECT_TRUE(status == Status::NOT_FOUND || status == Status::INVALID_ARGUMENT)
+                << ctx.message;
+            return ID{};
+        }
+
+        return createSchemaPath(path);
+    }
+
     ID createTable(const ID& schema_id, const std::string& table_name)
     {
         ErrorContext ctx;
@@ -377,7 +399,7 @@ TEST_F(CatalogRenameMoveTest, RenameTableUpdatesResolverAndPersists)
 TEST_F(CatalogRenameMoveTest, MoveTableUpdatesResolverAndColumnPaths)
 {
     ID source_schema = createSchemaPath("users.alice");
-    ID target_schema = schemaIdForPath("app");
+    ID target_schema = ensureSchemaPath("app");
     ID table_id = createTable(source_schema, "inventory");
     ID column_id = columnIdForName(table_id, "id");
 
@@ -537,7 +559,7 @@ TEST_F(CatalogRenameMoveTest, MoveTableScopedObjectsIsRejected)
     ID index_id = createIndex(table_id, "history_idx");
     ID trigger_id = createTrigger(table_id, "history", "history_trg");
     ID constraint_id = createConstraint(table_id, "pk_history");
-    ID target_schema = schemaIdForPath("app");
+    ID target_schema = ensureSchemaPath("app");
 
     ErrorContext ctx;
     EXPECT_EQ(catalog_->moveObject(ObjectType::INDEX, index_id, target_schema,
@@ -675,7 +697,7 @@ TEST_F(CatalogRenameMoveTest, RenameSequenceUpdatesResolverAndPersists)
 TEST_F(CatalogRenameMoveTest, MoveSequenceUpdatesResolver)
 {
     ID source_schema = createSchemaPath("users.alice");
-    ID target_schema = schemaIdForPath("app");
+    ID target_schema = ensureSchemaPath("app");
     ID sequence_id = createSequence(source_schema, "inventory_seq");
 
     ErrorContext ctx;
@@ -739,7 +761,7 @@ TEST_F(CatalogRenameMoveTest, RenameViewUpdatesResolverAndPersists)
 TEST_F(CatalogRenameMoveTest, MoveViewUpdatesResolver)
 {
     ID source_schema = createSchemaPath("users.alice");
-    ID target_schema = schemaIdForPath("app");
+    ID target_schema = ensureSchemaPath("app");
     ID view_id = createView(source_schema, "inventory_view");
 
     ErrorContext ctx;
@@ -789,7 +811,7 @@ TEST_F(CatalogRenameMoveTest, RenameSynonymUpdatesResolver)
 TEST_F(CatalogRenameMoveTest, MoveSynonymUpdatesResolver)
 {
     ID source_schema = createSchemaPath("users.alice");
-    ID target_schema = schemaIdForPath("app");
+    ID target_schema = ensureSchemaPath("app");
     createTable(source_schema, "syn_target");
     ID synonym_id = createSynonym(source_schema, "move_syn", "users.alice.syn_target");
 
@@ -839,7 +861,7 @@ TEST_F(CatalogRenameMoveTest, RenameForeignTableUpdatesResolver)
 TEST_F(CatalogRenameMoveTest, MoveForeignTableUpdatesResolver)
 {
     ID source_schema = createSchemaPath("users.alice");
-    ID target_schema = schemaIdForPath("app");
+    ID target_schema = ensureSchemaPath("app");
     ID table_id = createForeignTable(source_schema, "inventory_ft");
 
     ErrorContext ctx;
@@ -903,7 +925,7 @@ TEST_F(CatalogRenameMoveTest, RenameFunctionUpdatesResolverAndPersists)
 TEST_F(CatalogRenameMoveTest, MoveFunctionUpdatesResolver)
 {
     ID source_schema = createSchemaPath("users.alice");
-    ID target_schema = schemaIdForPath("app");
+    ID target_schema = ensureSchemaPath("app");
     ID func_id = createFunction(source_schema, "move_func");
 
     ErrorContext ctx;
@@ -952,7 +974,7 @@ TEST_F(CatalogRenameMoveTest, RenameProcedureUpdatesResolver)
 TEST_F(CatalogRenameMoveTest, MoveProcedureUpdatesResolver)
 {
     ID source_schema = createSchemaPath("users.alice");
-    ID target_schema = schemaIdForPath("app");
+    ID target_schema = ensureSchemaPath("app");
     ID proc_id = createProcedure(source_schema, "move_proc");
 
     ErrorContext ctx;
@@ -996,7 +1018,7 @@ TEST_F(CatalogRenameMoveTest, RenamePackageUpdatesResolver)
 TEST_F(CatalogRenameMoveTest, MovePackageUpdatesResolver)
 {
     ID source_schema = createSchemaPath("users.alice");
-    ID target_schema = schemaIdForPath("app");
+    ID target_schema = ensureSchemaPath("app");
     ID package_id = createPackage(source_schema, "move_pkg");
 
     ErrorContext ctx;
@@ -1040,7 +1062,7 @@ TEST_F(CatalogRenameMoveTest, RenameUDRUpdatesResolver)
 TEST_F(CatalogRenameMoveTest, MoveUDRUpdatesResolver)
 {
     ID source_schema = createSchemaPath("users.alice");
-    ID target_schema = schemaIdForPath("app");
+    ID target_schema = ensureSchemaPath("app");
     ID udr_id = createUDR(source_schema, "move_udr");
 
     ErrorContext ctx;
@@ -1084,7 +1106,7 @@ TEST_F(CatalogRenameMoveTest, RenameExceptionUpdatesResolver)
 TEST_F(CatalogRenameMoveTest, MoveExceptionUpdatesResolver)
 {
     ID source_schema = createSchemaPath("users.alice");
-    ID target_schema = schemaIdForPath("app");
+    ID target_schema = ensureSchemaPath("app");
     ID exception_id = createException(source_schema, "move_error");
 
     ErrorContext ctx;

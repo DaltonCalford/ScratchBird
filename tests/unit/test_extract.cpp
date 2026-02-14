@@ -78,6 +78,17 @@ TEST(ExtractElementTest, DateIsoWeekAndTimezone)
     EXPECT_EQ(ExtractChecked(date, ExtractField::TIMEZONE_HOUR).getInt32(), -5);
 }
 
+TEST(ExtractElementTest, TemporalNoOffsetDefaultsToZero)
+{
+    TypedValue date = TypedValue::makeDate(TypeExtractor::ymdToDays(2024, 5, 21));
+    TypedValue time = TypedValue::makeTime(12LL * 3600LL * kMicrosPerSecond);
+    TypedValue ts = TypedValue::makeTimestamp(1716292800000000LL);
+
+    EXPECT_EQ(ExtractChecked(date, ExtractField::TZ_OFFSET).getInt32(), 0);
+    EXPECT_EQ(ExtractChecked(time, ExtractField::TZ_OFFSET).getInt32(), 0);
+    EXPECT_EQ(ExtractChecked(ts, ExtractField::TZ_OFFSET).getInt32(), 0);
+}
+
 TEST(AlterElementTest, DateInvalidLeapYearChange)
 {
     int64_t days = TypeExtractor::ymdToDays(2024, 2, 29);
@@ -133,6 +144,27 @@ TEST(ExtractElementTest, Int128HiLo)
 
     EXPECT_EQ(ExtractChecked(tv, ExtractField::HI64).getUInt64(), 0x1122334455667788ULL);
     EXPECT_EQ(ExtractChecked(tv, ExtractField::LO64).getUInt64(), 0x99AABBCCDDEEFF00ULL);
+}
+
+TEST(ExtractElementTest, UuidTimestampNullForNonTimeVersions)
+{
+    std::vector<uint8_t> uuid_v4 = {
+        0x12, 0x34, 0x56, 0x78,
+        0x90, 0xAB,
+        0x4C, 0xDE, // version 4
+        0x80, 0x00,
+        0x01, 0x02, 0x03, 0x04, 0x05, 0x06};
+    TypedValue v4 = TypedValue::makeUUID(uuid_v4);
+    EXPECT_TRUE(ExtractChecked(v4, ExtractField::TIMESTAMP).isNull());
+
+    std::vector<uint8_t> uuid_v7 = {
+        0x01, 0x91, 0x85, 0xE4, 0xA0, 0x00, // timestamp bytes
+        0x7A, 0xBC,                         // version 7
+        0x80, 0x00,
+        0x10, 0x11, 0x12, 0x13, 0x14, 0x15};
+    TypedValue v7 = TypedValue::makeUUID(uuid_v7);
+    TypedValue ts = ExtractChecked(v7, ExtractField::TIMESTAMP);
+    EXPECT_FALSE(ts.isNull());
 }
 
 TEST(ExtractElementTest, FloatFlags)

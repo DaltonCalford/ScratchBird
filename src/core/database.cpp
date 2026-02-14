@@ -50,6 +50,7 @@
 #include <iostream>
 #include <fstream>
 #include <filesystem>
+#include <cerrno>
 #include <string>
 #include <vector>
 #include <iomanip>
@@ -66,6 +67,86 @@ namespace scratchbird::core
                 ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
             }
             return value;
+        }
+
+        bool preadFully(int fd, void* buffer, size_t size, off_t offset,
+                        size_t* transferred_out = nullptr)
+        {
+            auto* dst = static_cast<uint8_t*>(buffer);
+            size_t transferred = 0;
+            while (transferred < size)
+            {
+                ssize_t rc = ::pread(fd,
+                                     dst + transferred,
+                                     size - transferred,
+                                     offset + static_cast<off_t>(transferred));
+                if (rc < 0)
+                {
+                    if (errno == EINTR)
+                    {
+                        continue;
+                    }
+                    if (transferred_out != nullptr)
+                    {
+                        *transferred_out = transferred;
+                    }
+                    return false;
+                }
+                if (rc == 0)
+                {
+                    if (transferred_out != nullptr)
+                    {
+                        *transferred_out = transferred;
+                    }
+                    return false;
+                }
+                transferred += static_cast<size_t>(rc);
+            }
+            if (transferred_out != nullptr)
+            {
+                *transferred_out = transferred;
+            }
+            return true;
+        }
+
+        bool pwriteFully(int fd, const void* buffer, size_t size, off_t offset,
+                         size_t* transferred_out = nullptr)
+        {
+            const auto* src = static_cast<const uint8_t*>(buffer);
+            size_t transferred = 0;
+            while (transferred < size)
+            {
+                ssize_t rc = ::pwrite(fd,
+                                      src + transferred,
+                                      size - transferred,
+                                      offset + static_cast<off_t>(transferred));
+                if (rc < 0)
+                {
+                    if (errno == EINTR)
+                    {
+                        continue;
+                    }
+                    if (transferred_out != nullptr)
+                    {
+                        *transferred_out = transferred;
+                    }
+                    return false;
+                }
+                if (rc == 0)
+                {
+                    if (transferred_out != nullptr)
+                    {
+                        *transferred_out = transferred;
+                    }
+                    return false;
+                }
+                transferred += static_cast<size_t>(rc);
+            }
+            if (transferred_out != nullptr)
+            {
+                *transferred_out = transferred;
+            }
+            return true;
         }
 
         BufferPool::PoolLayout parseBufferPoolLayout(const std::string &value, bool *recognized)
@@ -885,7 +966,7 @@ namespace scratchbird::core
     }
 
     auto Database::create_catalog_page(int fd, uint32_t page_size, uint8_t *page_buffer,
-                                       const ID &db_uuid, uint64_t micros, ErrorContext *ctx)
+                                       const ID &db_uuid, uint64_t /*micros*/, ErrorContext *ctx)
         -> Status
     {
         memset(page_buffer, 0, page_size);
@@ -893,59 +974,42 @@ namespace scratchbird::core
 
         catalog_header->magic = K_MAGIC_SBRD;
         catalog_header->version = 1;
-        catalog_header->page_type = PAGE_TYPE_SYSTEM_CATALOG;
+        catalog_header->page_type = PAGE_TYPE_CATALOG_ROOT;
         catalog_header->page_size = page_size;
-        catalog_header->page_id = 1;
+        catalog_header->page_id = BOOTSTRAP_PAGE_CATALOG_ROOT;
         catalog_header->flags = 0;
         catalog_header->lsn = 0;
         catalog_header->generation = 1;
         setDatabaseUuid(*catalog_header, db_uuid);
-        setTableId(*catalog_header, ID{});
+        setObjectUuid(*catalog_header, ID{});
         catalog_header->item_count = 0;
-        pageSetLower(*catalog_header, sizeof(PageHeader) + sizeof(SystemCatalogEntry) * config::NUM_BASE_SCHEMAS);
+        pageSetLower(*catalog_header, sizeof(PageHeader));
         pageSetUpper(*catalog_header, page_size);
         pageSetSpecial(*catalog_header, page_size);
 
-        // Add system catalog entries for base schemas
-        auto *entries = reinterpret_cast<SystemCatalogEntry *>(page_buffer + sizeof(PageHeader));
+        // Bootstrap pages are written directly and must carry valid checksum metadata.
+        catalog_header->flags |= PAGE_FLAG_CHECKSUM_VALID;
+        catalog_header->checksum = calculatePageChecksum(page_buffer, page_size);
 
-        // Define base schemas as per spec
-        const char *schema_names[] = {"[root]", "[sys]",    "[sec]",   "[agents]",
-                                      "[app]",  "[remote]", "[users]", "[roles]"};
-
-        for (int i = 0; i < config::NUM_BASE_SCHEMAS; i++)
+        // Write catalog page with full-transfer semantics to avoid partial write races.
+        const off_t offset =
+            static_cast<off_t>(BOOTSTRAP_PAGE_CATALOG_ROOT) * static_cast<off_t>(page_size);
+        size_t bytes_written = 0;
+        errno = 0;
+        if (!pwriteFully(fd, page_buffer, page_size, offset, &bytes_written))
         {
-            SystemCatalogEntry &entry = entries[i];
-
-            // Root schema UUID aligns with the database UUID; others are generated per database.
-            ID schema_uuid = (i == 0) ? db_uuid : generateUuidV7();
-            memcpy(entry.schema_uuid, schema_uuid.bytes.data(), 16);
-
-            // Root has no parent, others have root as parent
-            if (i == 0)
+            char msg[256];
+            if (errno != 0)
             {
-                memset(entry.parent_uuid, 0, 16);
+                snprintf(msg, sizeof(msg), "Failed to write catalog page: %s", std::strerror(errno));
             }
             else
             {
-                memcpy(entry.parent_uuid, entries[0].schema_uuid, 16);
+                snprintf(msg, sizeof(msg),
+                         "Failed to write catalog page (partial write %zu/%u bytes)",
+                         bytes_written, page_size);
             }
-
-            strncpy(entry.name, schema_names[i], 63);
-            entry.name[63] = '\0';
-            entry.object_type = 0; // Schema
-            entry.object_count = 0;
-            entry.created_time = micros;
-        }
-
-        // Calculate checksum for catalog page
-        catalog_header->checksum = calculatePageChecksum(page_buffer, page_size);
-
-        // Write catalog page
-        ssize_t written = ::write(fd, page_buffer, page_size);
-        if (written != static_cast<ssize_t>(page_size))
-        {
-            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to write catalog page");
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, msg);
             return Status::IO_ERROR;
         }
 
@@ -960,14 +1024,14 @@ namespace scratchbird::core
 
         fsm_header->magic = K_MAGIC_SBRD;
         fsm_header->version = 1;
-        fsm_header->page_type = PAGE_TYPE_FREE_SPACE_MAP;
+        fsm_header->page_type = PAGE_TYPE_FSM_ROOT;
         fsm_header->page_size = page_size;
-        fsm_header->page_id = 2;
+        fsm_header->page_id = BOOTSTRAP_PAGE_FSM_ROOT;
         fsm_header->flags = 0;
         fsm_header->lsn = 0;
         fsm_header->generation = 1;
         setDatabaseUuid(*fsm_header, db_uuid);
-        setTableId(*fsm_header, ID{});
+        setObjectUuid(*fsm_header, ID{});
         fsm_header->item_count = 0;
 
         // Initialize FSM data
@@ -979,24 +1043,205 @@ namespace scratchbird::core
             uint8_t bitmap[1]; // First byte of bitmap
         } *fsm_data = reinterpret_cast<decltype(fsm_data)>(page_buffer + sizeof(PageHeader));
 
-        fsm_data->total_pages = 3; // Header, catalog, FSM
+        fsm_data->total_pages = BOOTSTRAP_FIXED_PAGE_COUNT;
         fsm_data->free_pages = 0;  // All system pages allocated
         fsm_data->next_fsm_page = 0;
-        fsm_data->bitmap[0] = 0x07; // First 3 bits set (pages 0,1,2 allocated)
+        fsm_data->bitmap[0] = 0x3F; // First 6 bits set (pages 0..5 allocated)
 
         // Update header fields
         pageSetLower(*fsm_header, sizeof(PageHeader) + sizeof(uint32_t) * 3 + 1);
         pageSetUpper(*fsm_header, page_size);
         pageSetSpecial(*fsm_header, page_size);
 
-        // Calculate checksum for FSM page
+        // Bootstrap pages are written directly and must carry valid checksum metadata.
+        fsm_header->flags |= PAGE_FLAG_CHECKSUM_VALID;
         fsm_header->checksum = calculatePageChecksum(page_buffer, page_size);
 
-        // Write FSM page
-        ssize_t written = ::write(fd, page_buffer, page_size);
-        if (written != static_cast<ssize_t>(page_size))
+        const off_t offset =
+            static_cast<off_t>(BOOTSTRAP_PAGE_FSM_ROOT) * static_cast<off_t>(page_size);
+        size_t bytes_written = 0;
+        errno = 0;
+        if (!pwriteFully(fd, page_buffer, page_size, offset, &bytes_written))
         {
-            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to write FSM page");
+            char msg[256];
+            if (errno != 0)
+            {
+                snprintf(msg, sizeof(msg), "Failed to write FSM page: %s", std::strerror(errno));
+            }
+            else
+            {
+                snprintf(msg, sizeof(msg), "Failed to write FSM page (partial write %zu/%u bytes)",
+                         bytes_written, page_size);
+            }
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, msg);
+            return Status::IO_ERROR;
+        }
+
+        return Status::OK;
+    }
+
+    auto Database::create_system_state_page(int fd, uint32_t page_size, uint8_t *page_buffer,
+                                            const ID &db_uuid, ErrorContext *ctx) -> Status
+    {
+        memset(page_buffer, 0, page_size);
+        auto *state_page = reinterpret_cast<BootstrapSystemStatePage *>(page_buffer);
+        auto &header = state_page->page_header;
+        header.magic = K_MAGIC_SBRD;
+        header.version = 1;
+        header.page_type = PAGE_TYPE_SYSTEM_STATE;
+        header.page_size = page_size;
+        header.page_id = BOOTSTRAP_PAGE_SYSTEM_STATE;
+        header.flags = 0;
+        header.lsn = 0;
+        header.generation = 1;
+        setDatabaseUuid(header, db_uuid);
+        setObjectUuid(header, ID{});
+        header.item_count = 0;
+        pageSetLower(header, sizeof(BootstrapSystemStatePage));
+        pageSetUpper(header, page_size);
+        pageSetSpecial(header, page_size);
+
+        state_page->clean_shutdown = 1;
+        state_page->engine_mode = 0;
+        state_page->cluster_state = 0;
+        state_page->startup_counter = 1;
+
+        header.flags |= PAGE_FLAG_CHECKSUM_VALID;
+        header.checksum = calculatePageChecksum(page_buffer, page_size);
+
+        const off_t offset =
+            static_cast<off_t>(BOOTSTRAP_PAGE_SYSTEM_STATE) * static_cast<off_t>(page_size);
+        size_t bytes_written = 0;
+        errno = 0;
+        if (!pwriteFully(fd, page_buffer, page_size, offset, &bytes_written))
+        {
+            char msg[256];
+            if (errno != 0)
+            {
+                snprintf(msg, sizeof(msg), "Failed to write system state page: %s",
+                         std::strerror(errno));
+            }
+            else
+            {
+                snprintf(msg, sizeof(msg),
+                         "Failed to write system state page (partial write %zu/%u bytes)",
+                         bytes_written, page_size);
+            }
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, msg);
+            return Status::IO_ERROR;
+        }
+
+        return Status::OK;
+    }
+
+    auto Database::create_tx_map_root_page(int fd, uint32_t page_size, uint8_t *page_buffer,
+                                           const ID &db_uuid, ErrorContext *ctx) -> Status
+    {
+        memset(page_buffer, 0, page_size);
+        auto *tx_root = reinterpret_cast<TIPPageHeader *>(page_buffer);
+        auto &header = tx_root->page_header;
+        header.magic = K_MAGIC_SBRD;
+        header.version = 1;
+        header.page_type = PAGE_TYPE_TRANSACTION_MAP;
+        header.page_size = page_size;
+        header.page_id = BOOTSTRAP_PAGE_TX_MAP_ROOT;
+        header.flags = 0;
+        header.lsn = 0;
+        header.generation = 1;
+        setDatabaseUuid(header, db_uuid);
+        setObjectUuid(header, ID{});
+        header.item_count = 0;
+        pageSetLower(header, sizeof(TIPPageHeader) + (2 * sizeof(TIPEntry)));
+        pageSetUpper(header, page_size);
+        pageSetSpecial(header, page_size);
+
+        tx_root->min_xid = config::DEFAULT_INITIAL_XID;
+        tx_root->max_xid = config::DEFAULT_INITIAL_XID + 1;
+        tx_root->num_transactions = 2;
+        tx_root->next_tip_page = 0;
+
+        auto *entries =
+            reinterpret_cast<TIPEntry *>(page_buffer + sizeof(TIPPageHeader));
+        entries[0].xid = config::DEFAULT_INITIAL_XID;
+        entries[0].state = static_cast<uint8_t>(TransactionState::COMMITTED);
+        entries[0].flags = 0;
+        entries[0].reserved = 0;
+        entries[0].commit_time = 0;
+        entries[1].xid = config::DEFAULT_INITIAL_XID + 1;
+        entries[1].state = static_cast<uint8_t>(TransactionState::COMMITTED);
+        entries[1].flags = 0;
+        entries[1].reserved = 0;
+        entries[1].commit_time = 0;
+
+        header.flags |= PAGE_FLAG_CHECKSUM_VALID;
+        header.checksum = calculatePageChecksum(page_buffer, page_size);
+
+        const off_t offset =
+            static_cast<off_t>(BOOTSTRAP_PAGE_TX_MAP_ROOT) * static_cast<off_t>(page_size);
+        size_t bytes_written = 0;
+        errno = 0;
+        if (!pwriteFully(fd, page_buffer, page_size, offset, &bytes_written))
+        {
+            char msg[256];
+            if (errno != 0)
+            {
+                snprintf(msg, sizeof(msg), "Failed to write transaction map root page: %s",
+                         std::strerror(errno));
+            }
+            else
+            {
+                snprintf(msg, sizeof(msg),
+                         "Failed to write transaction map root page (partial write %zu/%u bytes)",
+                         bytes_written, page_size);
+            }
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, msg);
+            return Status::IO_ERROR;
+        }
+
+        return Status::OK;
+    }
+
+    auto Database::create_reserved_bootstrap_page(int fd, uint32_t page_size, uint8_t *page_buffer,
+                                                  const ID &db_uuid, ErrorContext *ctx) -> Status
+    {
+        memset(page_buffer, 0, page_size);
+        auto *header = reinterpret_cast<PageHeader *>(page_buffer);
+        header->magic = K_MAGIC_SBRD;
+        header->version = 1;
+        header->page_type = PAGE_TYPE_BOOTSTRAP_RESERVED;
+        header->page_size = page_size;
+        header->page_id = BOOTSTRAP_PAGE_RESERVED;
+        header->flags = 0;
+        header->lsn = 0;
+        header->generation = 1;
+        setDatabaseUuid(*header, db_uuid);
+        setObjectUuid(*header, ID{});
+        header->item_count = 0;
+        pageSetLower(*header, sizeof(PageHeader));
+        pageSetUpper(*header, page_size);
+        pageSetSpecial(*header, page_size);
+        header->flags |= PAGE_FLAG_CHECKSUM_VALID;
+        header->checksum = calculatePageChecksum(page_buffer, page_size);
+
+        const off_t offset =
+            static_cast<off_t>(BOOTSTRAP_PAGE_RESERVED) * static_cast<off_t>(page_size);
+        size_t bytes_written = 0;
+        errno = 0;
+        if (!pwriteFully(fd, page_buffer, page_size, offset, &bytes_written))
+        {
+            char msg[256];
+            if (errno != 0)
+            {
+                snprintf(msg, sizeof(msg), "Failed to write reserved bootstrap page: %s",
+                         std::strerror(errno));
+            }
+            else
+            {
+                snprintf(msg, sizeof(msg),
+                         "Failed to write reserved bootstrap page (partial write %zu/%u bytes)",
+                         bytes_written, page_size);
+            }
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, msg);
             return Status::IO_ERROR;
         }
 
@@ -1022,7 +1267,7 @@ namespace scratchbird::core
         ID db_uuid = generateUuidV7();
         header->database_uuid = db_uuid;
         setDatabaseUuid(header->page_header, db_uuid);
-        setTableId(header->page_header, ID{});
+        setObjectUuid(header->page_header, ID{});
 
         // Set MVCC fields
         header->page_header.generation = 1;
@@ -1066,9 +1311,10 @@ namespace scratchbird::core
         header->timezone = 0;
 
         // Initialize file layout
-        header->total_pages = 2; // Start with header and catalog pages
+        header->total_pages = BOOTSTRAP_FIXED_PAGE_COUNT;
         header->free_pages = 0;
-        header->system_catalog_page = 1;
+        header->next_page_id = BOOTSTRAP_FIXED_PAGE_COUNT;
+        header->system_catalog_page = BOOTSTRAP_PAGE_CATALOG_ROOT;
 
         // Initialize transaction info
         // Use DEFAULT_INITIAL_XID + 1 for next_xid so that DEFAULT_INITIAL_XID is a valid fallback
@@ -1079,16 +1325,28 @@ namespace scratchbird::core
         header->oldest_active_xid = 0;     // OAT - 0 means no active transactions
         header->oldest_snapshot = 0;       // OST - 0 means no snapshot transactions
         header->latest_completed_xid = 0;
-        header->tip_root_page = 0; // 0 means no TIP pages allocated yet
+        header->tip_root_page = BOOTSTRAP_PAGE_TX_MAP_ROOT;
 
-        // Calculate and set checksum
+        // Bootstrap pages are written directly and must carry valid checksum metadata.
+        header->page_header.flags |= PAGE_FLAG_CHECKSUM_VALID;
         header->page_header.checksum = calculatePageChecksum(page_buffer, page_size);
 
-        // Write header page
-        ssize_t written = ::write(fd, page_buffer, page_size);
-        if (written != static_cast<ssize_t>(page_size))
+        // Write header page with full-transfer semantics.
+        size_t bytes_written = 0;
+        errno = 0;
+        if (!pwriteFully(fd, page_buffer, page_size, 0, &bytes_written))
         {
-            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to write header page");
+            char msg[256];
+            if (errno != 0)
+            {
+                snprintf(msg, sizeof(msg), "Failed to write header page: %s", std::strerror(errno));
+            }
+            else
+            {
+                snprintf(msg, sizeof(msg), "Failed to write header page (partial write %zu/%u bytes)",
+                         bytes_written, page_size);
+            }
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, msg);
             return Status::IO_ERROR;
         }
 
@@ -1165,6 +1423,14 @@ namespace scratchbird::core
         ID db_uuid = header->database_uuid;
         uint64_t micros = header->creation_time;
 
+        status = create_system_state_page(fd, page_size, page_buffer.get(), db_uuid, ctx);
+        if (status != Status::OK)
+        {
+            ::close(fd);
+            unlink(canonical_path.c_str());
+            return status;
+        }
+
         status = create_catalog_page(fd, page_size, page_buffer.get(), db_uuid, micros, ctx);
         if (status != Status::OK)
         {
@@ -1173,7 +1439,7 @@ namespace scratchbird::core
             return status;
         }
 
-        // Create FSM page (Page 2)
+        // Create FSM root page (Page 3)
         status = create_fsm_page(fd, page_size, page_buffer.get(), db_uuid, ctx);
         if (status != Status::OK)
         {
@@ -1182,26 +1448,64 @@ namespace scratchbird::core
             return status;
         }
 
-        // Update database header with correct page count
-        lseek(fd, 0, SEEK_SET);
-        ssize_t bytes_read = ::read(fd, page_buffer.get(), page_size);
-        if (bytes_read != static_cast<ssize_t>(page_size))
+        status = create_tx_map_root_page(fd, page_size, page_buffer.get(), db_uuid, ctx);
+        if (status != Status::OK)
         {
             ::close(fd);
             unlink(canonical_path.c_str());
-            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to read database header");
+            return status;
+        }
+
+        status = create_reserved_bootstrap_page(fd, page_size, page_buffer.get(), db_uuid, ctx);
+        if (status != Status::OK)
+        {
+            ::close(fd);
+            unlink(canonical_path.c_str());
+            return status;
+        }
+
+        // Update database header with canonical bootstrap page count.
+        size_t bytes_read = 0;
+        errno = 0;
+        if (!preadFully(fd, page_buffer.get(), page_size, 0, &bytes_read))
+        {
+            ::close(fd);
+            unlink(canonical_path.c_str());
+            if (errno != 0)
+            {
+                char msg[256];
+                snprintf(msg, sizeof(msg), "Failed to read database header: %s", std::strerror(errno));
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, msg);
+            }
+            else
+            {
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to read database header");
+            }
             return Status::IO_ERROR;
         }
         header = reinterpret_cast<DatabaseHeader *>(page_buffer.get());
-        header->total_pages = 3; // Now we have 3 pages
+        header->total_pages = BOOTSTRAP_FIXED_PAGE_COUNT;
+        header->next_page_id = BOOTSTRAP_FIXED_PAGE_COUNT;
+        header->system_catalog_page = BOOTSTRAP_PAGE_CATALOG_ROOT;
+        header->tip_root_page = BOOTSTRAP_PAGE_TX_MAP_ROOT;
+        header->page_header.flags |= PAGE_FLAG_CHECKSUM_VALID;
         header->page_header.checksum = calculatePageChecksum(page_buffer.get(), page_size);
-        lseek(fd, 0, SEEK_SET);
-        ssize_t bytes_written = ::write(fd, page_buffer.get(), page_size);
-        if (bytes_written != static_cast<ssize_t>(page_size))
+        size_t bytes_written = 0;
+        errno = 0;
+        if (!pwriteFully(fd, page_buffer.get(), page_size, 0, &bytes_written))
         {
             ::close(fd);
             unlink(canonical_path.c_str());
-            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to write database header");
+            if (errno != 0)
+            {
+                char msg[256];
+                snprintf(msg, sizeof(msg), "Failed to write database header: %s", std::strerror(errno));
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, msg);
+            }
+            else
+            {
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to write database header");
+            }
             return Status::IO_ERROR;
         }
 
@@ -1249,19 +1553,22 @@ namespace scratchbird::core
 
         // Read header to determine page size
         uint8_t temp_header[sizeof(PageHeader)];
-        ssize_t bytes_read = ::read(fd_, temp_header, sizeof(temp_header));
-        if (bytes_read < 0)
+        size_t bytes_read = 0;
+        errno = 0;
+        if (!preadFully(fd_, temp_header, sizeof(temp_header), 0, &bytes_read))
         {
             ::close(fd_);
             fd_ = -1;
-            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to read database header");
-            return Status::IO_ERROR;
-        }
-        if (bytes_read < static_cast<ssize_t>(sizeof(PageHeader)))
-        {
-            ::close(fd_);
-            fd_ = -1;
-            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Short read: database file truncated");
+            if (errno != 0)
+            {
+                char msg[256];
+                snprintf(msg, sizeof(msg), "Failed to read database header: %s", std::strerror(errno));
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, msg);
+            }
+            else
+            {
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Short read: database file truncated");
+            }
             return Status::IO_ERROR;
         }
 
@@ -1302,17 +1609,33 @@ namespace scratchbird::core
         header_ = reinterpret_cast<DatabaseHeader *>(header_buffer_.get());
 
         // Read full header page
-        lseek(fd_, 0, SEEK_SET);
-        bytes_read = ::read(fd_, header_, page_size_);
-        if (bytes_read != static_cast<ssize_t>(page_size_))
+        bytes_read = 0;
+        errno = 0;
+        if (!preadFully(fd_, header_, page_size_, 0, &bytes_read))
         {
             close();
-            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Short read on full header");
+            if (errno != 0)
+            {
+                char msg[256];
+                snprintf(msg, sizeof(msg), "Failed to read full header: %s", std::strerror(errno));
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, msg);
+            }
+            else
+            {
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Short read on full header");
+            }
             return Status::IO_ERROR;
         }
 
         // Validate header
         status = validate_header(ctx);
+        if (status != Status::OK)
+        {
+            close();
+            return status;
+        }
+
+        status = validate_bootstrap_page_map(ctx);
         if (status != Status::OK)
         {
             close();
@@ -1820,11 +2143,119 @@ namespace scratchbird::core
             return Status::PAGE_CORRUPT;
         }
 
+        if (header_->system_catalog_page != BOOTSTRAP_PAGE_CATALOG_ROOT)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                              "Database header system catalog root is not canonical page 2");
+            return Status::PAGE_CORRUPT;
+        }
+
+        if (header_->tip_root_page != BOOTSTRAP_PAGE_TX_MAP_ROOT)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                              "Database header transaction map root is not canonical page 4");
+            return Status::PAGE_CORRUPT;
+        }
+
+        if (header_->total_pages < BOOTSTRAP_FIXED_PAGE_COUNT)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                              "Database header total_pages below fixed bootstrap map");
+            return Status::PAGE_CORRUPT;
+        }
+
         // Validate checksum
         if (!validatePageChecksum(reinterpret_cast<uint8_t *>(header_), page_size_))
         {
             SET_ERROR_CONTEXT(ctx, Status::CHECKSUM_MISMATCH, "Database header checksum validation failed");
             return Status::CHECKSUM_MISMATCH;
+        }
+
+        return Status::OK;
+    }
+
+    auto Database::validate_bootstrap_page_map(ErrorContext *ctx) const -> Status
+    {
+        struct ExpectedPage
+        {
+            uint32_t page_id;
+            uint16_t page_type;
+        };
+
+        constexpr ExpectedPage kExpected[] = {
+            {BOOTSTRAP_PAGE_SYSTEM_STATE, PAGE_TYPE_SYSTEM_STATE},
+            {BOOTSTRAP_PAGE_CATALOG_ROOT, PAGE_TYPE_CATALOG_ROOT},
+            {BOOTSTRAP_PAGE_FSM_ROOT, PAGE_TYPE_FSM_ROOT},
+            {BOOTSTRAP_PAGE_TX_MAP_ROOT, PAGE_TYPE_TRANSACTION_MAP},
+            {BOOTSTRAP_PAGE_RESERVED, PAGE_TYPE_BOOTSTRAP_RESERVED},
+        };
+
+        auto page_buffer = std::make_unique<uint8_t[]>(page_size_);
+        if (!page_buffer)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::OOM,
+                              "Failed to allocate bootstrap validation buffer");
+            return Status::OOM;
+        }
+
+        for (const auto &expected : kExpected)
+        {
+            off_t offset = static_cast<off_t>(expected.page_id) * page_size_;
+            size_t bytes_read = 0;
+            if (!preadFully(fd_, page_buffer.get(), page_size_, offset, &bytes_read))
+            {
+                char msg[256];
+                snprintf(msg, sizeof(msg),
+                         "Failed to read bootstrap page %u (%zu/%u bytes)",
+                         expected.page_id,
+                         bytes_read,
+                         page_size_);
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, msg);
+                return Status::IO_ERROR;
+            }
+
+            auto *header = reinterpret_cast<PageHeader *>(page_buffer.get());
+            if (header->magic != K_MAGIC_SBRD)
+            {
+                char msg[256];
+                snprintf(msg, sizeof(msg),
+                         "Bootstrap page %u has invalid magic", expected.page_id);
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, msg);
+                return Status::PAGE_CORRUPT;
+            }
+            if (header->page_size != page_size_)
+            {
+                char msg[256];
+                snprintf(msg, sizeof(msg),
+                         "Bootstrap page %u has invalid page_size", expected.page_id);
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, msg);
+                return Status::PAGE_CORRUPT;
+            }
+            if (header->page_id != expected.page_id)
+            {
+                char msg[256];
+                snprintf(msg, sizeof(msg),
+                         "Bootstrap page id mismatch for page %u", expected.page_id);
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, msg);
+                return Status::PAGE_CORRUPT;
+            }
+            if (header->page_type != expected.page_type)
+            {
+                char msg[256];
+                snprintf(msg, sizeof(msg),
+                         "Bootstrap page %u has wrong type %u",
+                         expected.page_id, static_cast<unsigned>(header->page_type));
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, msg);
+                return Status::PAGE_CORRUPT;
+            }
+            if (!validatePageChecksum(page_buffer.get(), page_size_))
+            {
+                char msg[256];
+                snprintf(msg, sizeof(msg),
+                         "Bootstrap page %u checksum validation failed", expected.page_id);
+                SET_ERROR_CONTEXT(ctx, Status::CHECKSUM_MISMATCH, msg);
+                return Status::CHECKSUM_MISMATCH;
+            }
         }
 
         return Status::OK;
@@ -1842,10 +2273,23 @@ namespace scratchbird::core
         // pread() is atomic and doesn't modify the file offset, preventing race conditions
         // when multiple threads access different pages concurrently
         off_t offset = static_cast<off_t>(page_id) * page_size_;
-        ssize_t bytes_read = ::pread(fd_, buffer, page_size_, offset);
-        if (bytes_read != static_cast<ssize_t>(page_size_))
+        size_t bytes_read = 0;
+        errno = 0;
+        if (!preadFully(fd_, buffer, page_size_, offset, &bytes_read))
         {
-            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Short read on page");
+            char msg[256];
+            if (errno != 0)
+            {
+                snprintf(msg, sizeof(msg),
+                         "Read failed for page %u after %zu/%u bytes: %s",
+                         page_id, bytes_read, page_size_, std::strerror(errno));
+            }
+            else
+            {
+                snprintf(msg, sizeof(msg), "Short read on page (%zu/%u bytes)",
+                         bytes_read, page_size_);
+            }
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, msg);
             return Status::IO_ERROR;
         }
 
@@ -1884,19 +2328,31 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
-        // Update checksum before writing (const_cast is safe here as we own the buffer)
+        // Finalize page header contract before durable write.
         auto *page = const_cast<uint8_t *>(reinterpret_cast<const uint8_t *>(buffer));
-        auto *header = reinterpret_cast<PageHeader *>(page);
-        header->checksum = calculatePageChecksum(page, page_size_);
+        preparePageForWrite(page, page_size_, page_id);
 
         // NEW ISSUE FIX: Use pwrite() instead of lseek()+write() for thread-safe I/O
         // pwrite() is atomic and doesn't modify the file offset, preventing race conditions
         // when multiple threads write different pages concurrently (e.g., background flush + active writes)
         off_t offset = static_cast<off_t>(page_id) * page_size_;
-        ssize_t bytes_written = ::pwrite(fd_, buffer, page_size_, offset);
-        if (bytes_written != static_cast<ssize_t>(page_size_))
+        size_t bytes_written = 0;
+        errno = 0;
+        if (!pwriteFully(fd_, buffer, page_size_, offset, &bytes_written))
         {
-            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Short write on page");
+            char msg[256];
+            if (errno != 0)
+            {
+                snprintf(msg, sizeof(msg),
+                         "Write failed for page %u after %zu/%u bytes: %s",
+                         page_id, bytes_written, page_size_, std::strerror(errno));
+            }
+            else
+            {
+                snprintf(msg, sizeof(msg), "Short write on page (%zu/%u bytes)",
+                         bytes_written, page_size_);
+            }
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, msg);
             return Status::IO_ERROR;
         }
 
@@ -1937,16 +2393,21 @@ namespace scratchbird::core
         }
 
         off_t file_offset = (static_cast<off_t>(page_id) * page_size_) + offset;
-        if (lseek(fd_, file_offset, SEEK_SET) != file_offset)
+        size_t bytes_read = 0;
+        errno = 0;
+        if (!preadFully(fd_, buffer, size, file_offset, &bytes_read))
         {
-            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to seek to page for partial read");
-            return Status::IO_ERROR;
-        }
-
-        ssize_t bytes_read = ::read(fd_, buffer, size);
-        if (bytes_read != static_cast<ssize_t>(size))
-        {
-            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Short read on partial page");
+            if (errno != 0)
+            {
+                char msg[256];
+                snprintf(msg, sizeof(msg), "Failed partial read for page %u: %s",
+                         page_id, std::strerror(errno));
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, msg);
+            }
+            else
+            {
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Short read on partial page");
+            }
             return Status::IO_ERROR;
         }
 
@@ -2003,11 +2464,12 @@ namespace scratchbird::core
         off_t offset = static_cast<off_t>(page_number) * static_cast<off_t>(page_size_);
 
         // Read page from tablespace file
-        ssize_t bytes_read = ::pread(tablespace_fd, buffer, page_size_, offset);
-        if (bytes_read != static_cast<ssize_t>(page_size_))
+        errno = 0;
+        size_t bytes_read = 0;
+        if (!preadFully(tablespace_fd, buffer, page_size_, offset, &bytes_read))
         {
             char msg[256];
-            if (bytes_read < 0)
+            if (errno != 0)
             {
                 snprintf(msg, sizeof(msg),
                          "Failed to read page %lu from tablespace %u: %s",
@@ -2016,7 +2478,7 @@ namespace scratchbird::core
             else
             {
                 snprintf(msg, sizeof(msg),
-                         "Partial read: expected %u bytes, got %ld bytes for page %lu in tablespace %u",
+                         "Partial read: expected %u bytes, got %zu bytes for page %lu in tablespace %u",
                          page_size_, bytes_read, page_number, tablespace_id);
             }
             SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, msg);
@@ -2079,11 +2541,12 @@ namespace scratchbird::core
         off_t offset = static_cast<off_t>(page_number) * static_cast<off_t>(page_size_);
 
         // Write page to tablespace file
-        ssize_t bytes_written = ::pwrite(tablespace_fd, buffer, page_size_, offset);
-        if (bytes_written != static_cast<ssize_t>(page_size_))
+        errno = 0;
+        size_t bytes_written = 0;
+        if (!pwriteFully(tablespace_fd, buffer, page_size_, offset, &bytes_written))
         {
             char msg[256];
-            if (bytes_written < 0)
+            if (errno != 0)
             {
                 snprintf(msg, sizeof(msg),
                          "Failed to write page %lu to tablespace %u: %s",
@@ -2092,7 +2555,7 @@ namespace scratchbird::core
             else
             {
                 snprintf(msg, sizeof(msg),
-                         "Partial write: expected %u bytes, wrote %ld bytes for page %lu in tablespace %u",
+                         "Partial write: expected %u bytes, wrote %zu bytes for page %lu in tablespace %u",
                          page_size_, bytes_written, page_number, tablespace_id);
             }
             SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, msg);

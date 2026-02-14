@@ -362,8 +362,9 @@ TEST_F(HeapToastIntegrationTest, CompressedToastIntegration)
     const ToastPointer *toast_ptr =
         reinterpret_cast<const ToastPointer *>(raw_data + sizeof(TupleHeader));
 
-    // Check that compression was applied (external size should be less than raw size)
-    EXPECT_LT(toast_ptr->va_extsize, toast_ptr->va_rawsize);
+    // Check that compression was applied in canonical pointer flags.
+    EXPECT_NE(toast_ptr->flags & ToastPointer::TOAST_COMPRESSED, 0u);
+    EXPECT_GT(toast_ptr->total_len, 0u);
 
     // Detoast and verify
     std::vector<uint8_t> detoasted_buffer;

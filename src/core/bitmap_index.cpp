@@ -139,7 +139,7 @@ namespace scratchbird
 
             meta->bmp_header.magic = K_MAGIC_SBRD;
             meta->bmp_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
-            meta->bmp_header.page_type = static_cast<uint16_t>(PageType::BITMAP_INDEX_META);
+            meta->bmp_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_BITMAP_META);
             meta->bmp_header.page_size = db->page_size();
             meta->bmp_header.page_id = meta_page_num;
             meta->bmp_header.generation = 1;
@@ -239,7 +239,7 @@ namespace scratchbird
             auto *meta = reinterpret_cast<SBBitmapIndexMetaPage *>(meta_data);
 
             // Verify page type
-            if (meta->bmp_header.page_type != static_cast<uint16_t>(PageType::BITMAP_INDEX_META))
+            if (meta->bmp_header.page_type != static_cast<uint16_t>(PageType::PAGE_TYPE_BITMAP_META))
             {
                 unpinIndexPage(meta_page_, false, ctx);
                 SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Invalid bitmap index meta page type");
@@ -355,7 +355,7 @@ namespace scratchbird
 
                 dict_page->bmp_dict_header.magic = K_MAGIC_SBRD;
                 dict_page->bmp_dict_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
-                dict_page->bmp_dict_header.page_type = static_cast<uint16_t>(PageType::BITMAP_INDEX_DICT);
+                dict_page->bmp_dict_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_BITMAP_DICT);
                 dict_page->bmp_dict_header.page_size = db_->page_size();
                 dict_page->bmp_dict_header.page_id = page_num;
                 dict_page->bmp_dict_header.generation = 1;
@@ -423,7 +423,7 @@ namespace scratchbird
                 std::memset(new_dict, 0, sizeof(SBBitmapDictionaryPage));
                 new_dict->bmp_dict_header.magic = K_MAGIC_SBRD;
                 new_dict->bmp_dict_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
-                new_dict->bmp_dict_header.page_type = static_cast<uint16_t>(PageType::BITMAP_INDEX_DICT);
+                new_dict->bmp_dict_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_BITMAP_DICT);
                 new_dict->bmp_dict_header.page_size = db_->page_size();
                 new_dict->bmp_dict_header.page_id = new_dict_page;
                 new_dict->bmp_dict_header.generation = 1;
@@ -473,7 +473,7 @@ namespace scratchbird
             std::memset(root_page, 0, sizeof(SBRoaringBitmapRootPage));
             root_page->rbr_header.magic = K_MAGIC_SBRD;
             root_page->rbr_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
-            root_page->rbr_header.page_type = static_cast<uint16_t>(PageType::BITMAP_ROARING_ROOT);
+            root_page->rbr_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_BITMAP_META);
             root_page->rbr_header.page_size = db_->page_size();
             root_page->rbr_header.page_id = bitmap_root;
             root_page->rbr_header.generation = 1;
@@ -1928,7 +1928,7 @@ namespace scratchbird
             auto *page = reinterpret_cast<SBRoaringContainerPage *>(page_data);
             page->rcp_header.magic = K_MAGIC_SBRD;
             page->rcp_header.version = static_cast<uint16_t>(DB_VERSION_ALPHA_1_0_1 & 0xFFFF);
-            page->rcp_header.page_type = static_cast<uint16_t>(PageType::BITMAP_CONTAINER);
+            page->rcp_header.page_type = static_cast<uint16_t>(PageType::PAGE_TYPE_BITMAP_CONTAINER);
             page->rcp_header.page_size = db_->page_size();
             page->rcp_header.page_id = page_num;
             page->rcp_header.generation = 1;

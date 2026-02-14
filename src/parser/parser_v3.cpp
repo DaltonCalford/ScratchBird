@@ -7611,36 +7611,58 @@ Expression* Parser::parseComparisonExpr() {
             expr->negated = is_not;
             return expr;
         } else if (match(TokenType::KW_TRUE)) {
-            // IS [NOT] TRUE
-            auto* expr = arena_.create<BinaryExpr>();
-            expr->op = is_not ? BinaryOp::NE : BinaryOp::EQ;
-            expr->left = left;
+            auto* null_safe_eq = arena_.create<BinaryExpr>();
+            null_safe_eq->op = BinaryOp::NULL_SAFE_EQ;
+            null_safe_eq->left = left;
             auto* rhs = arena_.create<LiteralExpr>();
             rhs->literal_type = LiteralType::BOOLEAN;
             rhs->bool_value = true;
-            expr->right = rhs;
-            return expr;
+            null_safe_eq->right = rhs;
+            if (!is_not) {
+                return null_safe_eq;
+            }
+            auto* not_expr = arena_.create<UnaryExpr>();
+            not_expr->op = UnaryOp::NOT;
+            not_expr->operand = null_safe_eq;
+            return not_expr;
         } else if (match(TokenType::KW_FALSE)) {
-            // IS [NOT] FALSE
-            auto* expr = arena_.create<BinaryExpr>();
-            expr->op = is_not ? BinaryOp::NE : BinaryOp::EQ;
-            expr->left = left;
+            auto* null_safe_eq = arena_.create<BinaryExpr>();
+            null_safe_eq->op = BinaryOp::NULL_SAFE_EQ;
+            null_safe_eq->left = left;
             auto* rhs = arena_.create<LiteralExpr>();
             rhs->literal_type = LiteralType::BOOLEAN;
             rhs->bool_value = false;
-            expr->right = rhs;
-            return expr;
+            null_safe_eq->right = rhs;
+            if (!is_not) {
+                return null_safe_eq;
+            }
+            auto* not_expr = arena_.create<UnaryExpr>();
+            not_expr->op = UnaryOp::NOT;
+            not_expr->operand = null_safe_eq;
+            return not_expr;
         } else if (matchContextual("DISTINCT")) {
             // IS [NOT] DISTINCT FROM
-            expectContextual("FROM", "Expected FROM after DISTINCT");
-            auto* expr = arena_.create<BinaryExpr>();
-            expr->op = is_not ? BinaryOp::EQ : BinaryOp::NE;  // IS DISTINCT FROM = not equal (null-safe)
-            expr->left = left;
-            expr->right = parseConcatExpr();
+            expect(TokenType::KW_FROM, "Expected FROM after DISTINCT");
+            auto* null_safe_eq = arena_.create<BinaryExpr>();
+            null_safe_eq->op = BinaryOp::NULL_SAFE_EQ;
+            null_safe_eq->left = left;
+            null_safe_eq->right = parseConcatExpr();
+            if (is_not) {
+                return null_safe_eq;
+            }
+
+            auto* not_expr = arena_.create<UnaryExpr>();
+            not_expr->op = UnaryOp::NOT;
+            not_expr->operand = null_safe_eq;
+            return not_expr;
+        } else if (matchContextual("UNKNOWN")) {
+            auto* expr = arena_.create<IsNullExpr>();
+            expr->expr = left;
+            expr->negated = is_not;
             return expr;
         }
 
-        error("Expected NULL, TRUE, FALSE, or DISTINCT after IS");
+        error("Expected NULL, TRUE, FALSE, DISTINCT, or UNKNOWN after IS");
         return left;
     }
 
@@ -7866,33 +7888,57 @@ Expression* Parser::parseComparisonExprWithLeft(Expression* left) {
             expr->negated = is_not;
             return expr;
         } else if (match(TokenType::KW_TRUE)) {
-            auto* expr = arena_.create<BinaryExpr>();
-            expr->op = is_not ? BinaryOp::NE : BinaryOp::EQ;
-            expr->left = left;
+            auto* null_safe_eq = arena_.create<BinaryExpr>();
+            null_safe_eq->op = BinaryOp::NULL_SAFE_EQ;
+            null_safe_eq->left = left;
             auto* rhs = arena_.create<LiteralExpr>();
             rhs->literal_type = LiteralType::BOOLEAN;
             rhs->bool_value = true;
-            expr->right = rhs;
-            return expr;
+            null_safe_eq->right = rhs;
+            if (!is_not) {
+                return null_safe_eq;
+            }
+            auto* not_expr = arena_.create<UnaryExpr>();
+            not_expr->op = UnaryOp::NOT;
+            not_expr->operand = null_safe_eq;
+            return not_expr;
         } else if (match(TokenType::KW_FALSE)) {
-            auto* expr = arena_.create<BinaryExpr>();
-            expr->op = is_not ? BinaryOp::NE : BinaryOp::EQ;
-            expr->left = left;
+            auto* null_safe_eq = arena_.create<BinaryExpr>();
+            null_safe_eq->op = BinaryOp::NULL_SAFE_EQ;
+            null_safe_eq->left = left;
             auto* rhs = arena_.create<LiteralExpr>();
             rhs->literal_type = LiteralType::BOOLEAN;
             rhs->bool_value = false;
-            expr->right = rhs;
-            return expr;
+            null_safe_eq->right = rhs;
+            if (!is_not) {
+                return null_safe_eq;
+            }
+            auto* not_expr = arena_.create<UnaryExpr>();
+            not_expr->op = UnaryOp::NOT;
+            not_expr->operand = null_safe_eq;
+            return not_expr;
         } else if (matchContextual("DISTINCT")) {
-            expectContextual("FROM", "Expected FROM after DISTINCT");
-            auto* expr = arena_.create<BinaryExpr>();
-            expr->op = is_not ? BinaryOp::EQ : BinaryOp::NE;
-            expr->left = left;
-            expr->right = parseConcatExpr();
+            expect(TokenType::KW_FROM, "Expected FROM after DISTINCT");
+            auto* null_safe_eq = arena_.create<BinaryExpr>();
+            null_safe_eq->op = BinaryOp::NULL_SAFE_EQ;
+            null_safe_eq->left = left;
+            null_safe_eq->right = parseConcatExpr();
+            if (is_not) {
+                return null_safe_eq;
+            }
+
+            auto* not_expr = arena_.create<UnaryExpr>();
+            not_expr->op = UnaryOp::NOT;
+            not_expr->operand = null_safe_eq;
+            return not_expr;
+        } else if (matchContextual("UNKNOWN")) {
+            auto* expr = arena_.create<IsNullExpr>();
+            expr->expr = left;
+            expr->negated = is_not;
             return expr;
         }
 
-        error("Expected NULL, TRUE, FALSE, or DISTINCT after IS");
+        error("Expected NULL, TRUE, FALSE, DISTINCT, or UNKNOWN after IS");
         return left;
     }
 
@@ -8126,11 +8172,39 @@ Expression* Parser::parseConcatExprWithLeft(Expression* left) {
 }
 
 Expression* Parser::parseBitOrExpr() {
-    Expression* left = parseBitAndExpr();
+    Expression* left = parseBitXorExpr();
 
     while (match(TokenType::PIPE)) {
         auto* expr = arena_.create<BinaryExpr>();
         expr->op = BinaryOp::BIT_OR;
+        expr->left = left;
+        expr->right = parseBitXorExpr();
+        left = expr;
+    }
+
+    return left;
+}
+
+Expression* Parser::parseBitOrExprWithLeft(Expression* left) {
+    left = parseBitXorExprWithLeft(left);
+
+    while (match(TokenType::PIPE)) {
+        auto* expr = arena_.create<BinaryExpr>();
+        expr->op = BinaryOp::BIT_OR;
+        expr->left = left;
+        expr->right = parseBitXorExpr();
+        left = expr;
+    }
+
+    return left;
+}
+
+Expression* Parser::parseBitXorExpr() {
+    Expression* left = parseBitAndExpr();
+
+    while (match(TokenType::CARET)) {
+        auto* expr = arena_.create<BinaryExpr>();
+        expr->op = BinaryOp::BIT_XOR;
         expr->left = left;
         expr->right = parseBitAndExpr();
         left = expr;
@@ -8139,12 +8213,12 @@ Expression* Parser::parseBitOrExpr() {
     return left;
 }
 
-Expression* Parser::parseBitOrExprWithLeft(Expression* left) {
+Expression* Parser::parseBitXorExprWithLeft(Expression* left) {
     left = parseBitAndExprWithLeft(left);
 
-    while (match(TokenType::PIPE)) {
+    while (match(TokenType::CARET)) {
         auto* expr = arena_.create<BinaryExpr>();
-        expr->op = BinaryOp::BIT_OR;
+        expr->op = BinaryOp::BIT_XOR;
         expr->left = left;
         expr->right = parseBitAndExpr();
         left = expr;
@@ -8306,17 +8380,7 @@ Expression* Parser::parseMulExprWithLeft(Expression* left) {
 }
 
 Expression* Parser::parsePowerExpr() {
-    Expression* left = parseUnaryExpr();
-
-    if (match(TokenType::CARET)) {
-        auto* expr = arena_.create<BinaryExpr>();
-        expr->op = BinaryOp::POWER;
-        expr->left = left;
-        expr->right = parsePowerExpr();
-        return expr;
-    }
-
-    return left;
+    return parseUnaryExpr();
 }
 
 Expression* Parser::parseUnaryExpr() {
@@ -10045,6 +10109,25 @@ SetStmt* Parser::parseSet() {
         return stmt;
     };
 
+    auto parseVariableName = [&]() -> StringPool::StringId {
+        StringPool::StringId first =
+            expectIdentifier("Expected variable name");
+        if (first == StringPool::INVALID_ID) {
+            return first;
+        }
+        std::string name = std::string(stringPool().get(first));
+        while (match(TokenType::DOT)) {
+            StringPool::StringId next =
+                expectIdentifier("Expected identifier after '.' in variable name");
+            if (next == StringPool::INVALID_ID) {
+                return StringPool::INVALID_ID;
+            }
+            name.push_back('.');
+            name.append(stringPool().get(next));
+        }
+        return stringPool().intern(name);
+    };
+
     if (matchContextual("PARSER")) {
         if (matchContextual("VERSION")) {
             if (check(TokenType::INTEGER_LITERAL)) {
@@ -10058,13 +10141,32 @@ SetStmt* Parser::parseSet() {
     }
 
     // Regular SET name = value / SET name TO value
-    StringPool::StringId var_name = expectIdentifier("Expected variable name");
+    StringPool::StringId var_name = parseVariableName();
     return parseVariableAssignment(var_name);
 }
 
 ResetStmt* Parser::parseReset() {
     SourceLocation start = currentLocation();
     auto* stmt = arena_.create<ResetStmt>();
+
+    auto parseVariableName = [&]() -> StringPool::StringId {
+        StringPool::StringId first =
+            expectIdentifier("Expected variable name or ALL");
+        if (first == StringPool::INVALID_ID) {
+            return first;
+        }
+        std::string name = std::string(stringPool().get(first));
+        while (match(TokenType::DOT)) {
+            StringPool::StringId next =
+                expectIdentifier("Expected identifier after '.' in variable name");
+            if (next == StringPool::INVALID_ID) {
+                return StringPool::INVALID_ID;
+            }
+            name.push_back('.');
+            name.append(stringPool().get(next));
+        }
+        return stringPool().intern(name);
+    };
 
     // RESET name
     // RESET ALL
@@ -10079,7 +10181,7 @@ ResetStmt* Parser::parseReset() {
         expectContextual("ZONE", "Expected ZONE after RESET TIME");
         stmt->name = stringPool().intern("TIME_ZONE");
     } else {
-        stmt->name = expectIdentifier("Expected variable name or ALL");
+        stmt->name = parseVariableName();
     }
 
     stmt->span = makeSpan(start);
@@ -10107,6 +10209,24 @@ ShowStmt* Parser::parseShow() {
         if (match(TokenType::KW_FROM)) {
             stmt->from_name = expectIdentifier("Expected name after FROM");
         }
+    };
+
+    auto parseVariableName = [&](const char* error_message) -> StringPool::StringId {
+        StringPool::StringId first = expectIdentifier(error_message);
+        if (first == StringPool::INVALID_ID) {
+            return first;
+        }
+        std::string name = std::string(stringPool().get(first));
+        while (match(TokenType::DOT)) {
+            StringPool::StringId next =
+                expectIdentifier("Expected identifier after '.' in variable name");
+            if (next == StringPool::INVALID_ID) {
+                return StringPool::INVALID_ID;
+            }
+            name.push_back('.');
+            name.append(stringPool().get(next));
+        }
+        return stringPool().intern(name);
     };
 
     // SHOW ALL
@@ -10326,7 +10446,7 @@ ShowStmt* Parser::parseShow() {
     // Default: SHOW variable_name
     else {
         stmt->show_type = ShowStmt::ShowType::VARIABLE;
-        stmt->name = expectIdentifier("Expected variable name or SHOW keyword");
+        stmt->name = parseVariableName("Expected variable name or SHOW keyword");
     }
 
     stmt->span = makeSpan(start);
