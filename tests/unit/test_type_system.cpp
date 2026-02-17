@@ -248,24 +248,50 @@ TEST(TypeSystemTest, IsStringCheck)
 
 TEST(TypeSystemTest, GetTypeName)
 {
-    EXPECT_EQ(TypeSystem::getTypeName(DataType::INT32), "INT32");
-    EXPECT_EQ(TypeSystem::getTypeName(DataType::INT64), "INT64");
-    EXPECT_EQ(TypeSystem::getTypeName(DataType::FLOAT64), "FLOAT64");
-    EXPECT_EQ(TypeSystem::getTypeName(DataType::VARCHAR), "VARCHAR");
-    EXPECT_EQ(TypeSystem::getTypeName(DataType::BOOLEAN), "BOOLEAN");
+    EXPECT_STREQ(TypeSystem::getTypeName(DataType::INT32), "INT32");
+    EXPECT_STREQ(TypeSystem::getTypeName(DataType::INT64), "INT64");
+    EXPECT_STREQ(TypeSystem::getTypeName(DataType::FLOAT64), "FLOAT64");
+    EXPECT_STREQ(TypeSystem::getTypeName(DataType::VARCHAR), "VARCHAR");
+    EXPECT_STREQ(TypeSystem::getTypeName(DataType::BOOLEAN), "BOOLEAN");
 }
 
 TEST(TypeSystemTest, GetTypeNameExtendedComplexTypes)
 {
-    EXPECT_EQ(TypeSystem::getTypeName(DataType::LIST), "LIST");
-    EXPECT_EQ(TypeSystem::getTypeName(DataType::MAP), "MAP");
-    EXPECT_EQ(TypeSystem::getTypeName(DataType::BSON), "BSON");
-    EXPECT_EQ(TypeSystem::getTypeName(DataType::TIME_WITH_ZONE), "TIME_WITH_ZONE");
-    EXPECT_EQ(TypeSystem::getTypeName(DataType::YEAR), "YEAR");
-    EXPECT_EQ(TypeSystem::getTypeName(DataType::DOMAIN), "DOMAIN");
-    EXPECT_EQ(TypeSystem::getTypeName(DataType::ROW), "ROW");
-    EXPECT_EQ(TypeSystem::getTypeName(DataType::SET), "SET");
-    EXPECT_EQ(TypeSystem::getTypeName(DataType::BLOB_SUB_TYPE_TEXT), "BLOB_SUB_TYPE_TEXT");
+    EXPECT_STREQ(TypeSystem::getTypeName(DataType::LIST), "LIST");
+    EXPECT_STREQ(TypeSystem::getTypeName(DataType::MAP), "MAP");
+    EXPECT_STREQ(TypeSystem::getTypeName(DataType::BSON), "BSON");
+    EXPECT_STREQ(TypeSystem::getTypeName(DataType::TIME_WITH_ZONE), "TIME_WITH_ZONE");
+    EXPECT_STREQ(TypeSystem::getTypeName(DataType::YEAR), "YEAR");
+    EXPECT_STREQ(TypeSystem::getTypeName(DataType::DOMAIN), "DOMAIN");
+    EXPECT_STREQ(TypeSystem::getTypeName(DataType::ROW), "ROW");
+    EXPECT_STREQ(TypeSystem::getTypeName(DataType::SET), "SET");
+    EXPECT_STREQ(TypeSystem::getTypeName(DataType::BLOB_SUB_TYPE_TEXT), "BLOB_SUB_TYPE_TEXT");
+}
+
+TEST(TypeSystemTest, GetTypeNameVNextDatatypeCatalog)
+{
+    EXPECT_STREQ(TypeSystem::getTypeName(DataType::TIMESTAMP_NS), "TIMESTAMP_NS");
+    EXPECT_STREQ(TypeSystem::getTypeName(DataType::INT256), "INT256");
+    EXPECT_STREQ(TypeSystem::getTypeName(DataType::UINT256), "UINT256");
+    EXPECT_STREQ(TypeSystem::getTypeName(DataType::DECIMAL256), "DECIMAL256");
+    EXPECT_STREQ(TypeSystem::getTypeName(DataType::TAGGED_UNION), "TAGGED_UNION");
+    EXPECT_STREQ(TypeSystem::getTypeName(DataType::DICT_ENCODED), "DICT_ENCODED");
+    EXPECT_STREQ(TypeSystem::getTypeName(DataType::COMPLETION_FIELD), "COMPLETION_FIELD");
+    EXPECT_STREQ(TypeSystem::getTypeName(DataType::PREFIX_SEARCH_FIELD), "PREFIX_SEARCH_FIELD");
+    EXPECT_STREQ(TypeSystem::getTypeName(DataType::FLAT_OBJECT), "FLAT_OBJECT");
+}
+
+TEST(TypeSystemTest, VNextDatatypeTypeIds)
+{
+    EXPECT_EQ(static_cast<uint16_t>(DataType::TIMESTAMP_NS), 0x5101u);
+    EXPECT_EQ(static_cast<uint16_t>(DataType::INT256), 0x5102u);
+    EXPECT_EQ(static_cast<uint16_t>(DataType::UINT256), 0x5103u);
+    EXPECT_EQ(static_cast<uint16_t>(DataType::DECIMAL256), 0x5104u);
+    EXPECT_EQ(static_cast<uint16_t>(DataType::TAGGED_UNION), 0x5105u);
+    EXPECT_EQ(static_cast<uint16_t>(DataType::DICT_ENCODED), 0x5106u);
+    EXPECT_EQ(static_cast<uint16_t>(DataType::COMPLETION_FIELD), 0x5107u);
+    EXPECT_EQ(static_cast<uint16_t>(DataType::PREFIX_SEARCH_FIELD), 0x5108u);
+    EXPECT_EQ(static_cast<uint16_t>(DataType::FLAT_OBJECT), 0x5109u);
 }
 
 TEST(TypeSystemTest, CanonicalExplicitCastMatrixEnforcement)
@@ -323,6 +349,23 @@ TEST(TypeSystemTest, ResolveEmulatedTypeForCoreEngines)
     ASSERT_TRUE(TypeSystem::resolveEmulatedType("redis", "stream", mapping));
     EXPECT_EQ(mapping.storage_kind, EmulatedStorageKind::DOMAIN);
     EXPECT_EQ(mapping.canonical_type, DataType::LIST);
+
+    ASSERT_TRUE(TypeSystem::resolveEmulatedType("clickhouse", "int256", mapping));
+    EXPECT_EQ(mapping.storage_kind, EmulatedStorageKind::NATIVE);
+    EXPECT_EQ(mapping.canonical_type, DataType::INT256);
+
+    ASSERT_TRUE(TypeSystem::resolveEmulatedType("influxdb", "timestamp", mapping));
+    EXPECT_EQ(mapping.storage_kind, EmulatedStorageKind::NATIVE);
+    EXPECT_EQ(mapping.canonical_type, DataType::TIMESTAMP_NS);
+
+    ASSERT_TRUE(TypeSystem::resolveEmulatedType("duckdb", "union", mapping));
+    EXPECT_EQ(mapping.storage_kind, EmulatedStorageKind::NATIVE);
+    EXPECT_EQ(mapping.canonical_type, DataType::TAGGED_UNION);
+
+    ASSERT_TRUE(TypeSystem::resolveEmulatedType("opensearch", "completion", mapping));
+    EXPECT_EQ(mapping.storage_kind, EmulatedStorageKind::DOMAIN);
+    EXPECT_EQ(mapping.canonical_type, DataType::COMPLETION_FIELD);
+    EXPECT_STREQ(mapping.domain_hint, "[sb_dom]completion_field");
 }
 
 TEST(TypeSystemTest, ResolveEmulatedTypeNormalizesAliasesAndParameters)

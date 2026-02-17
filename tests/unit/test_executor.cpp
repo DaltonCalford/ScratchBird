@@ -1,5 +1,6 @@
 #include <gtest/gtest.h>
 #include <filesystem>
+#include <functional>
 #include <iostream>
 #include <sstream>
 #include "scratchbird/core/catalog_manager.h"
@@ -8,7 +9,10 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/proc_array.h"
+#define private public
 #include "scratchbird/sblr/executor.h"
+#undef private
+#include "scratchbird/sblr/opcodes.h"
 #include "scratchbird/sblr/query_compiler_v3.h"
 #include "test_helpers.h"
 
@@ -42,11 +46,16 @@ protected:
         ASSERT_EQ(conn_ctx_->initialize(&ctx), Status::OK)
             << ctx.message;
 
-        ID system_user = db_->catalog_manager()->getSystemUserId(&ctx);
-        conn_ctx_->setCurrentUser(system_user, true);
+        system_user_id_ = db_->catalog_manager()->getSystemUserId(&ctx);
+        conn_ctx_->setCurrentUser(system_user_id_, true);
 
         default_schema_id_ = resolveDefaultSchema(&ctx);
         ASSERT_NE(default_schema_id_, ID{});
+
+        CatalogManager::SchemaInfo schema_info;
+        ASSERT_EQ(db_->catalog_manager()->getSchema(default_schema_id_, schema_info, &ctx), Status::OK)
+            << ctx.message;
+        default_schema_name_ = schema_info.schema_name;
     }
     
     void TearDown() override {
@@ -72,16 +81,44 @@ protected:
     }
     
     ExecutionResult executeSQL(const std::string& sql) {
+        return executeSQLWithSchema(sql, true);
+    }
+
+    ExecutionResult executeSQLWithSchema(const std::string& sql, bool set_schema) {
         auto bytecode = compileSQL(sql);
         if (bytecode.empty()) {
             return ExecutionResult("Failed to compile SQL");
         }
-        
+
+        Executor executor(db_.get());
+        executor.setConnectionContext(conn_ctx_.get());
+        if (set_schema)
+        {
+            executor.setCurrentSchema(default_schema_id_);
+        }
+        auto result = executor.execute(bytecode);
+        if (!result.success()) {
+            std::cerr << "Executor error: " << result.error() << "\n";
+        }
+        return result;
+    }
+
+    ExecutionResult executeSQLConfigured(const std::string& sql,
+                                         const std::function<void(Executor&)>& configure)
+    {
+        auto bytecode = compileSQL(sql);
+        if (bytecode.empty())
+        {
+            return ExecutionResult("Failed to compile SQL");
+        }
+
         Executor executor(db_.get());
         executor.setConnectionContext(conn_ctx_.get());
         executor.setCurrentSchema(default_schema_id_);
+        configure(executor);
         auto result = executor.execute(bytecode);
-        if (!result.success()) {
+        if (!result.success())
+        {
             std::cerr << "Executor error: " << result.error() << "\n";
         }
         return result;
@@ -104,12 +141,75 @@ protected:
         }
         return ID{};
     }
+
+    std::string makeBinaryPolicyHex(const std::string& column,
+                                    Opcode op,
+                                    int32_t literal) const
+    {
+        std::vector<uint8_t> bytes;
+        bytes.push_back(static_cast<uint8_t>(Opcode::COLUMN_REF));
+
+        uint8_t len_buf[10];
+        size_t len_bytes = scratchbird::sblr::writeUVarint(len_buf, column.size());
+        bytes.insert(bytes.end(), len_buf, len_buf + len_bytes);
+        bytes.insert(bytes.end(), column.begin(), column.end());
+
+        bytes.push_back(static_cast<uint8_t>(Opcode::LITERAL_INT32));
+        uint8_t int_buf[4];
+        scratchbird::sblr::writeInt32(int_buf, static_cast<uint32_t>(literal));
+        bytes.insert(bytes.end(), int_buf, int_buf + 4);
+
+        bytes.push_back(static_cast<uint8_t>(op));
+
+        static const char hex_chars[] = "0123456789abcdef";
+        std::string hex;
+        hex.reserve(2 + bytes.size() * 2);
+        hex.append("0x");
+        for (uint8_t byte : bytes)
+        {
+            hex.push_back(hex_chars[(byte >> 4) & 0x0F]);
+            hex.push_back(hex_chars[byte & 0x0F]);
+        }
+        return hex;
+    }
+
+    ID createUdrFunction(const std::string& udr_name,
+                         const std::string& library_path,
+                         const std::string& entry_point = "udr_entry")
+    {
+        ErrorContext ctx;
+        ID udr_id;
+        Status status = db_->catalog_manager()->createUDR(
+            default_schema_id_,
+            udr_name,
+            library_path,
+            entry_point,
+            CatalogManager::UDRType::FUNCTION,
+            "",
+            udr_id,
+            &ctx);
+        EXPECT_EQ(status, Status::OK) << ctx.message;
+        return udr_id;
+    }
+
+    Status invokeUdrBoundary(Executor& executor,
+                             const ID& udr_id,
+                             Executor::UdrInvocationScope scope,
+                             const std::vector<Value>& args,
+                             ErrorContext* ctx)
+    {
+        executor.udr_invocation_scope_ = scope;
+        Value out;
+        return executor.callUDRFunctionById(udr_id, args, out, ctx);
+    }
     
 protected:
     std::string test_db_path_;
     std::unique_ptr<Database> db_;
     std::unique_ptr<ConnectionContext> conn_ctx_;
     ID default_schema_id_{};
+    ID system_user_id_{};
+    std::string default_schema_name_;
 };
 
 // ===== CREATE TABLE Tests =====
@@ -193,6 +293,200 @@ TEST_F(ExecutorTest, InsertNull) {
     EXPECT_TRUE(insert_result.success()) << insert_result.error();
 }
 
+TEST_F(ExecutorTest, TriggerBeforeInsertMissingProcedureFailsClosed) {
+    ASSERT_TRUE(executeSQL("CREATE TABLE trg_insert_missing_proc (id INTEGER)").success());
+
+    ErrorContext ctx;
+    CatalogManager::TableInfo table_info;
+    ASSERT_EQ(db_->catalog_manager()->getTable(default_schema_id_,
+                                               "trg_insert_missing_proc",
+                                               table_info,
+                                               &ctx),
+              Status::OK) << ctx.message;
+
+    CatalogManager::TriggerInfo trigger{};
+    trigger.trigger_name = "trg_before_insert_missing_proc";
+    trigger.table_id = table_info.table_id;
+    trigger.table_name = table_info.table_name;
+    trigger.timing = CatalogManager::TriggerTiming::BEFORE;
+    trigger.event_mask = 1u << static_cast<uint8_t>(CatalogManager::TriggerEvent::INSERT);
+    trigger.granularity = CatalogManager::TriggerGranularity::FOR_EACH_ROW;
+    trigger.procedure_name = "missing_insert_proc";
+    ASSERT_EQ(db_->catalog_manager()->createTrigger(trigger, &ctx), Status::OK) << ctx.message;
+
+    std::vector<CatalogManager::TriggerInfo> before_triggers;
+    ASSERT_EQ(db_->catalog_manager()->listTriggersForTable(
+                  table_info.table_id,
+                  CatalogManager::TriggerEvent::INSERT,
+                  CatalogManager::TriggerTiming::BEFORE,
+                  before_triggers,
+                  &ctx),
+              Status::OK) << ctx.message;
+    ASSERT_EQ(before_triggers.size(), 1u);
+    EXPECT_EQ(before_triggers[0].procedure_name, "missing_insert_proc");
+
+    auto insert_result = executeSQL("INSERT INTO trg_insert_missing_proc (id) VALUES (1)");
+    EXPECT_FALSE(insert_result.success());
+    EXPECT_NE(insert_result.error().find("not registered"), std::string::npos);
+
+    auto count_result = executeSQL("SELECT COUNT(*) FROM trg_insert_missing_proc");
+    ASSERT_TRUE(count_result.success()) << count_result.error();
+    auto* rs = count_result.resultSet();
+    ASSERT_NE(rs, nullptr);
+    ASSERT_EQ(rs->rowCount(), 1u);
+    EXPECT_EQ(rs->getValue(0, 0).toInt64(), 0);
+}
+
+TEST_F(ExecutorTest, TriggerBeforeUpdateVetoStopsFurtherCallbacks) {
+    ASSERT_TRUE(executeSQL("CREATE TABLE trg_update_veto (id INTEGER, value INTEGER)").success());
+    ASSERT_TRUE(executeSQL("INSERT INTO trg_update_veto (id, value) VALUES (1, 10)").success());
+
+    ErrorContext ctx;
+    CatalogManager::TableInfo table_info;
+    ASSERT_EQ(db_->catalog_manager()->getTable(default_schema_id_,
+                                               "trg_update_veto",
+                                               table_info,
+                                               &ctx),
+              Status::OK) << ctx.message;
+
+    CatalogManager::TriggerInfo trigger_a{};
+    trigger_a.trigger_name = "trg_before_update_a";
+    trigger_a.table_id = table_info.table_id;
+    trigger_a.table_name = table_info.table_name;
+    trigger_a.timing = CatalogManager::TriggerTiming::BEFORE;
+    trigger_a.event_mask = 1u << static_cast<uint8_t>(CatalogManager::TriggerEvent::UPDATE);
+    trigger_a.granularity = CatalogManager::TriggerGranularity::FOR_EACH_ROW;
+    trigger_a.procedure_name = "before_update_a";
+    ASSERT_EQ(db_->catalog_manager()->createTrigger(trigger_a, &ctx), Status::OK) << ctx.message;
+
+    CatalogManager::TriggerInfo trigger_b{};
+    trigger_b.trigger_name = "trg_before_update_b";
+    trigger_b.table_id = table_info.table_id;
+    trigger_b.table_name = table_info.table_name;
+    trigger_b.timing = CatalogManager::TriggerTiming::BEFORE;
+    trigger_b.event_mask = 1u << static_cast<uint8_t>(CatalogManager::TriggerEvent::UPDATE);
+    trigger_b.granularity = CatalogManager::TriggerGranularity::FOR_EACH_ROW;
+    trigger_b.procedure_name = "before_update_b";
+    ASSERT_EQ(db_->catalog_manager()->createTrigger(trigger_b, &ctx), Status::OK) << ctx.message;
+
+    int before_a_calls = 0;
+    int before_b_calls = 0;
+    auto update_result = executeSQLConfigured(
+        "UPDATE trg_update_veto SET value = value + 1 WHERE id = 1",
+        [&](Executor& executor) {
+            executor.registerTriggerProcedure(
+                "before_update_a",
+                [&](const Executor::TriggerContext&) {
+                    ++before_a_calls;
+                    return false;
+                });
+            executor.registerTriggerProcedure(
+                "before_update_b",
+                [&](const Executor::TriggerContext&) {
+                    ++before_b_calls;
+                    return true;
+                });
+        });
+    ASSERT_TRUE(update_result.success()) << update_result.error();
+    EXPECT_EQ(before_a_calls, 1);
+    EXPECT_EQ(before_b_calls, 0);
+
+    auto value_result = executeSQL("SELECT value FROM trg_update_veto WHERE id = 1");
+    ASSERT_TRUE(value_result.success()) << value_result.error();
+    auto* rs = value_result.resultSet();
+    ASSERT_NE(rs, nullptr);
+    ASSERT_EQ(rs->rowCount(), 1u);
+    EXPECT_EQ(rs->getValue(0, 0).toInt64(), 10);
+}
+
+TEST_F(ExecutorTest, TriggerBeforeDeleteVetoStopsFurtherCallbacks) {
+    ASSERT_TRUE(executeSQL("CREATE TABLE trg_delete_veto (id INTEGER, value INTEGER)").success());
+    ASSERT_TRUE(executeSQL("INSERT INTO trg_delete_veto (id, value) VALUES (1, 10)").success());
+
+    ErrorContext ctx;
+    CatalogManager::TableInfo table_info;
+    ASSERT_EQ(db_->catalog_manager()->getTable(default_schema_id_,
+                                               "trg_delete_veto",
+                                               table_info,
+                                               &ctx),
+              Status::OK) << ctx.message;
+
+    CatalogManager::TriggerInfo trigger_a{};
+    trigger_a.trigger_name = "trg_before_delete_a";
+    trigger_a.table_id = table_info.table_id;
+    trigger_a.table_name = table_info.table_name;
+    trigger_a.timing = CatalogManager::TriggerTiming::BEFORE;
+    trigger_a.event_mask = 1u << static_cast<uint8_t>(CatalogManager::TriggerEvent::DELETE);
+    trigger_a.granularity = CatalogManager::TriggerGranularity::FOR_EACH_ROW;
+    trigger_a.procedure_name = "before_delete_a";
+    ASSERT_EQ(db_->catalog_manager()->createTrigger(trigger_a, &ctx), Status::OK) << ctx.message;
+
+    CatalogManager::TriggerInfo trigger_b{};
+    trigger_b.trigger_name = "trg_before_delete_b";
+    trigger_b.table_id = table_info.table_id;
+    trigger_b.table_name = table_info.table_name;
+    trigger_b.timing = CatalogManager::TriggerTiming::BEFORE;
+    trigger_b.event_mask = 1u << static_cast<uint8_t>(CatalogManager::TriggerEvent::DELETE);
+    trigger_b.granularity = CatalogManager::TriggerGranularity::FOR_EACH_ROW;
+    trigger_b.procedure_name = "before_delete_b";
+    ASSERT_EQ(db_->catalog_manager()->createTrigger(trigger_b, &ctx), Status::OK) << ctx.message;
+
+    int before_a_calls = 0;
+    int before_b_calls = 0;
+    auto delete_result = executeSQLConfigured(
+        "DELETE FROM trg_delete_veto WHERE id = 1",
+        [&](Executor& executor) {
+            executor.registerTriggerProcedure(
+                "before_delete_a",
+                [&](const Executor::TriggerContext&) {
+                    ++before_a_calls;
+                    return false;
+                });
+            executor.registerTriggerProcedure(
+                "before_delete_b",
+                [&](const Executor::TriggerContext&) {
+                    ++before_b_calls;
+                    return true;
+                });
+        });
+    ASSERT_TRUE(delete_result.success()) << delete_result.error();
+    EXPECT_EQ(before_a_calls, 1);
+    EXPECT_EQ(before_b_calls, 0);
+
+    auto count_result = executeSQL("SELECT COUNT(*) FROM trg_delete_veto");
+    ASSERT_TRUE(count_result.success()) << count_result.error();
+    auto* rs = count_result.resultSet();
+    ASSERT_NE(rs, nullptr);
+    ASSERT_EQ(rs->rowCount(), 1u);
+    EXPECT_EQ(rs->getValue(0, 0).toInt64(), 1);
+}
+
+TEST_F(ExecutorTest, TriggerAfterInsertMissingProcedureFailsClosed) {
+    ASSERT_TRUE(executeSQL("CREATE TABLE trg_after_insert_missing_proc (id INTEGER)").success());
+
+    ErrorContext ctx;
+    CatalogManager::TableInfo table_info;
+    ASSERT_EQ(db_->catalog_manager()->getTable(default_schema_id_,
+                                               "trg_after_insert_missing_proc",
+                                               table_info,
+                                               &ctx),
+              Status::OK) << ctx.message;
+
+    CatalogManager::TriggerInfo trigger{};
+    trigger.trigger_name = "trg_after_insert_missing_proc";
+    trigger.table_id = table_info.table_id;
+    trigger.table_name = table_info.table_name;
+    trigger.timing = CatalogManager::TriggerTiming::AFTER;
+    trigger.event_mask = 1u << static_cast<uint8_t>(CatalogManager::TriggerEvent::INSERT);
+    trigger.granularity = CatalogManager::TriggerGranularity::FOR_EACH_ROW;
+    trigger.procedure_name = "missing_after_insert_proc";
+    ASSERT_EQ(db_->catalog_manager()->createTrigger(trigger, &ctx), Status::OK) << ctx.message;
+
+    auto insert_result = executeSQL("INSERT INTO trg_after_insert_missing_proc (id) VALUES (1)");
+    EXPECT_FALSE(insert_result.success());
+    EXPECT_NE(insert_result.error().find("not registered"), std::string::npos);
+}
+
 TEST_F(ExecutorTest, InsertExpressions) {
     auto create_result = executeSQL("CREATE TABLE calc (result INTEGER)");
     ASSERT_TRUE(create_result.success());
@@ -261,6 +555,142 @@ TEST_F(ExecutorTest, SelectSpecificColumns) {
     EXPECT_EQ(rs->columnName(1), "c");
     EXPECT_EQ(rs->getValue(0, 0).toInt64(), 1);
     EXPECT_EQ(rs->getValue(0, 1).toInt64(), 3);
+}
+
+TEST_F(ExecutorTest, SelectExpressionRequiresTableSelectWhenUsingColumnGrants) {
+    ASSERT_TRUE(executeSQL("CREATE TABLE docs_perm (id INTEGER, title TEXT, body TEXT)").success());
+    ASSERT_TRUE(executeSQL("INSERT INTO docs_perm (id, title, body) VALUES (1, 'Doc1', 'alpha beta')").success());
+
+    ErrorContext ctx;
+    CatalogManager::TableInfo table_info;
+    ASSERT_EQ(db_->catalog_manager()->getTable(default_schema_id_, "docs_perm", table_info, &ctx), Status::OK)
+        << ctx.message;
+
+    ID viewer_id;
+    ASSERT_EQ(db_->catalog_manager()->createUser("viewer_ft_perm", "", default_schema_id_, false,
+                                                 viewer_id, &ctx), Status::OK)
+        << ctx.message;
+    CatalogManager::BasicUserInfo viewer_info;
+    ASSERT_EQ(db_->catalog_manager()->getUserBasic(viewer_id, viewer_info, &ctx), Status::OK)
+        << ctx.message;
+    ASSERT_FALSE(viewer_info.is_superuser);
+
+    auto revoke_status = db_->catalog_manager()->revokePermission(
+        table_info.table_id, CatalogManager::PermissionObjectType::TABLE,
+        viewer_id, CatalogManager::GranteeType::USER,
+        static_cast<uint32_t>(CatalogManager::Privilege::SELECT), &ctx);
+    ASSERT_TRUE(revoke_status == Status::OK || revoke_status == Status::NOT_FOUND) << ctx.message;
+    revoke_status = db_->catalog_manager()->revokePermission(
+        table_info.table_id, CatalogManager::PermissionObjectType::TABLE,
+        ID{}, CatalogManager::GranteeType::PUBLIC,
+        static_cast<uint32_t>(CatalogManager::Privilege::SELECT), &ctx);
+    ASSERT_TRUE(revoke_status == Status::OK || revoke_status == Status::NOT_FOUND) << ctx.message;
+
+    auto status = db_->catalog_manager()->grantColumnPermission(
+        table_info.table_id, "title", viewer_id, CatalogManager::GranteeType::USER,
+        static_cast<uint32_t>(CatalogManager::Privilege::SELECT), false, system_user_id_, &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+
+    bool has_table_select = true;
+    ASSERT_EQ(db_->catalog_manager()->hasPermission(
+                  viewer_id, table_info.table_id, CatalogManager::PermissionObjectType::TABLE,
+                  CatalogManager::Privilege::SELECT, has_table_select, &ctx),
+              Status::OK)
+        << ctx.message;
+    EXPECT_FALSE(has_table_select);
+
+    conn_ctx_->setCurrentUser(viewer_id, false);
+    conn_ctx_->setCurrentSchemaId(default_schema_id_);
+
+    std::string sql = "SELECT title || '!' AS decorated FROM " + default_schema_name_ + ".docs_perm";
+    auto result = executeSQLWithSchema(sql, false);
+    EXPECT_FALSE(result.success());
+    EXPECT_NE(result.error().find(
+                  "Permission denied: SELECT expression requires table-level SELECT on table "),
+              std::string::npos);
+    EXPECT_NE(result.error().find("docs_perm"), std::string::npos);
+
+    conn_ctx_->setCurrentUser(system_user_id_, true);
+}
+
+TEST_F(ExecutorTest, IndexedSelectPathStillAppliesRlsPolicies) {
+    ASSERT_TRUE(executeSQL("CREATE TABLE docs_rls (id INTEGER, tenant_id INTEGER, body TEXT)").success());
+    ASSERT_TRUE(executeSQL("INSERT INTO docs_rls (id, tenant_id, body) VALUES (1, 1, 'alpha doc')").success());
+    ASSERT_TRUE(executeSQL("INSERT INTO docs_rls (id, tenant_id, body) VALUES (2, 2, 'alpha doc')").success());
+    ASSERT_TRUE(executeSQL("INSERT INTO docs_rls (id, tenant_id, body) VALUES (3, 1, 'beta doc')").success());
+    ASSERT_TRUE(executeSQL("CREATE INDEX idx_docs_rls_id ON docs_rls USING BTREE (id)").success());
+
+    ErrorContext ctx;
+    CatalogManager::TableInfo table_info;
+    ASSERT_EQ(db_->catalog_manager()->getTable(default_schema_id_, "docs_rls", table_info, &ctx), Status::OK)
+        << ctx.message;
+
+    ID viewer_id;
+    ASSERT_EQ(db_->catalog_manager()->createUser("viewer_ft_rls", "", default_schema_id_, false,
+                                                 viewer_id, &ctx), Status::OK)
+        << ctx.message;
+    CatalogManager::BasicUserInfo viewer_info;
+    ASSERT_EQ(db_->catalog_manager()->getUserBasic(viewer_id, viewer_info, &ctx), Status::OK)
+        << ctx.message;
+    ASSERT_FALSE(viewer_info.is_superuser);
+
+    auto revoke_status = db_->catalog_manager()->revokePermission(
+        table_info.table_id, CatalogManager::PermissionObjectType::TABLE,
+        viewer_id, CatalogManager::GranteeType::USER,
+        static_cast<uint32_t>(CatalogManager::Privilege::SELECT), &ctx);
+    ASSERT_TRUE(revoke_status == Status::OK || revoke_status == Status::NOT_FOUND) << ctx.message;
+    revoke_status = db_->catalog_manager()->revokePermission(
+        table_info.table_id, CatalogManager::PermissionObjectType::TABLE,
+        ID{}, CatalogManager::GranteeType::PUBLIC,
+        static_cast<uint32_t>(CatalogManager::Privilege::SELECT), &ctx);
+    ASSERT_TRUE(revoke_status == Status::OK || revoke_status == Status::NOT_FOUND) << ctx.message;
+
+    const uint32_t select_priv = static_cast<uint32_t>(CatalogManager::Privilege::SELECT);
+    ASSERT_EQ(db_->catalog_manager()->grantColumnPermission(
+                  table_info.table_id, "id", viewer_id, CatalogManager::GranteeType::USER,
+                  select_priv, false, system_user_id_, &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_EQ(db_->catalog_manager()->grantColumnPermission(
+                  table_info.table_id, "tenant_id", viewer_id, CatalogManager::GranteeType::USER,
+                  select_priv, false, system_user_id_, &ctx),
+              Status::OK)
+        << ctx.message;
+
+    bool has_table_select = true;
+    ASSERT_EQ(db_->catalog_manager()->hasPermission(
+                  viewer_id, table_info.table_id, CatalogManager::PermissionObjectType::TABLE,
+                  CatalogManager::Privilege::SELECT, has_table_select, &ctx),
+              Status::OK)
+        << ctx.message;
+    EXPECT_FALSE(has_table_select);
+
+    ASSERT_EQ(db_->catalog_manager()->setTableRLS(table_info.table_id, true, true, &ctx), Status::OK)
+        << ctx.message;
+
+    ID policy_id;
+    std::string policy_expr = makeBinaryPolicyHex("tenant_id", Opcode::EXPR_EQ, 1);
+    ASSERT_EQ(db_->catalog_manager()->createPolicy(
+                  table_info.table_id, "tenant_only", CatalogManager::PolicyType::ALL,
+                  {}, policy_expr, policy_expr, policy_id, &ctx),
+              Status::OK)
+        << ctx.message;
+
+    conn_ctx_->setCurrentUser(viewer_id, false);
+    conn_ctx_->setCurrentSchemaId(default_schema_id_);
+
+    std::string sql = "SELECT id, tenant_id FROM " + default_schema_name_ + ".docs_rls";
+    auto result = executeSQLWithSchema(sql, false);
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+
+    auto* rs = result.resultSet();
+    ASSERT_NE(rs, nullptr);
+    ASSERT_EQ(rs->rowCount(), 2u);
+    EXPECT_EQ(rs->getValue(0, 1).toInt64(), 1);
+    EXPECT_EQ(rs->getValue(1, 1).toInt64(), 1);
+
+    conn_ctx_->setCurrentUser(system_user_id_, true);
 }
 
 // ===== Integration Tests =====
@@ -514,4 +944,354 @@ TEST_F(ExecutorTest, OperatorStrictModeDisablesImplicitCasts) {
     auto* rs = relaxed.resultSet();
     ASSERT_EQ(rs->rowCount(), 1u);
     EXPECT_DOUBLE_EQ(rs->getValue(0, 0).toDouble(), 5.0);
+}
+
+TEST_F(ExecutorTest, OperatorStrictModeDisablesImplicitComparisonCasts) {
+    auto set_on = executeSQL("SET operator.strict_mode = TRUE");
+    ASSERT_TRUE(set_on.success()) << set_on.error();
+
+    auto strict_compare = executeSQL("SELECT '5' = 5 AS strict_compare");
+    EXPECT_FALSE(strict_compare.success());
+    EXPECT_NE(strict_compare.error().find("Implicit casts disabled"), std::string::npos);
+
+    auto set_off = executeSQL("SET operator.strict_mode = FALSE");
+    ASSERT_TRUE(set_off.success()) << set_off.error();
+
+    auto relaxed_compare = executeSQL("SELECT '5' = 5 AS relaxed_compare");
+    ASSERT_TRUE(relaxed_compare.success()) << relaxed_compare.error();
+    ASSERT_TRUE(relaxed_compare.hasResultSet());
+    auto* rs = relaxed_compare.resultSet();
+    ASSERT_EQ(rs->rowCount(), 1u);
+    EXPECT_TRUE(rs->getValue(0, 0).toBoolean());
+}
+
+TEST_F(ExecutorTest, FunctionCallRejectsSignatureMismatchDeterministically) {
+    CatalogManager::FunctionInfo fn{};
+    fn.function_id = generateUuidV7();
+    fn.schema_id = default_schema_id_;
+    fn.name = "fn_sig_mismatch";
+    fn.owner_id = system_user_id_;
+    fn.return_type = DataType::INT64;
+    fn.bytecode = {0x00, 0x00, static_cast<uint8_t>(Opcode::END)};
+    fn.parameters.push_back({
+        "p_value",
+        DataType::INT64,
+        0,
+        0,
+        CatalogManager::ParameterMode::IN,
+        false,
+        ""
+    });
+
+    ErrorContext reg_ctx;
+    ASSERT_EQ(db_->catalog_manager()->registerFunction(fn, &reg_ctx), Status::OK)
+        << reg_ctx.message;
+
+    Executor executor(db_.get());
+    executor.setConnectionContext(conn_ctx_.get());
+    executor.setCurrentSchema(default_schema_id_);
+
+    Value out;
+    ErrorContext call_ctx;
+    Status st = executor.callFunctionByName(
+        "fn_sig_mismatch",
+        {Value::makeVarchar("not_a_number")},
+        out,
+        &call_ctx);
+
+    EXPECT_EQ(st, Status::DATATYPE_MISMATCH);
+    EXPECT_EQ(call_ctx.code, Status::DATATYPE_MISMATCH);
+    EXPECT_NE(std::string(call_ctx.message).find("expected fn_sig_mismatch(INT64)"), std::string::npos);
+}
+
+TEST_F(ExecutorTest, FunctionCallAllowsDeterministicNumericWidening) {
+    CatalogManager::FunctionInfo fn{};
+    fn.function_id = generateUuidV7();
+    fn.schema_id = default_schema_id_;
+    fn.name = "fn_sig_widen";
+    fn.owner_id = system_user_id_;
+    fn.return_type = DataType::INT64;
+    fn.bytecode = {0x00, 0x00, static_cast<uint8_t>(Opcode::END)};
+    fn.parameters.push_back({
+        "p_value",
+        DataType::INT64,
+        0,
+        0,
+        CatalogManager::ParameterMode::IN,
+        false,
+        ""
+    });
+
+    ErrorContext reg_ctx;
+    ASSERT_EQ(db_->catalog_manager()->registerFunction(fn, &reg_ctx), Status::OK)
+        << reg_ctx.message;
+
+    Executor executor(db_.get());
+    executor.setConnectionContext(conn_ctx_.get());
+    executor.setCurrentSchema(default_schema_id_);
+
+    Value out;
+    ErrorContext call_ctx;
+    Status st = executor.callFunctionByName(
+        "fn_sig_widen",
+        {Value::makeInt32(42)},
+        out,
+        &call_ctx);
+
+    EXPECT_EQ(st, Status::OK) << call_ctx.message;
+}
+
+TEST_F(ExecutorTest, FunctionCallUnknownSymbolReturnsUndefinedFunction) {
+    Executor executor(db_.get());
+    executor.setConnectionContext(conn_ctx_.get());
+    executor.setCurrentSchema(default_schema_id_);
+
+    Value out;
+    ErrorContext call_ctx;
+    Status st = executor.callFunctionByName(
+        "fn_missing_symbol",
+        {Value::makeInt32(1)},
+        out,
+        &call_ctx);
+
+    EXPECT_EQ(st, Status::UNDEFINED_FUNCTION);
+    EXPECT_EQ(call_ctx.code, Status::UNDEFINED_FUNCTION);
+    EXPECT_NE(std::string(call_ctx.message).find("Function not found"), std::string::npos);
+}
+
+TEST_F(ExecutorTest, ProcedureCallRejectsSignatureMismatchDeterministically) {
+    CatalogManager::ProcedureInfo proc{};
+    proc.procedure_id = generateUuidV7();
+    proc.schema_id = default_schema_id_;
+    proc.name = "proc_sig_mismatch";
+    proc.owner_id = system_user_id_;
+    proc.bytecode = {0x00, 0x00, static_cast<uint8_t>(Opcode::END)};
+    proc.parameters.push_back({
+        "p_value",
+        DataType::INT64,
+        0,
+        0,
+        CatalogManager::ParameterMode::IN,
+        false,
+        ""
+    });
+
+    ErrorContext reg_ctx;
+    ASSERT_EQ(db_->catalog_manager()->registerProcedure(proc, &reg_ctx), Status::OK)
+        << reg_ctx.message;
+
+    Executor executor(db_.get());
+    executor.setConnectionContext(conn_ctx_.get());
+    executor.setCurrentSchema(default_schema_id_);
+
+    auto result = executor.callProcedureByName(
+        "proc_sig_mismatch",
+        {Value::makeVarchar("bad_input")});
+
+    EXPECT_FALSE(result.success());
+    EXPECT_NE(result.error().find("expected proc_sig_mismatch(INT64)"), std::string::npos);
+}
+
+TEST_F(ExecutorTest, ProcedureCallAllowsDeterministicNumericWidening) {
+    CatalogManager::ProcedureInfo proc{};
+    proc.procedure_id = generateUuidV7();
+    proc.schema_id = default_schema_id_;
+    proc.name = "proc_sig_widen";
+    proc.owner_id = system_user_id_;
+    proc.bytecode = {0x00, 0x00, static_cast<uint8_t>(Opcode::END)};
+    proc.parameters.push_back({
+        "p_value",
+        DataType::INT64,
+        0,
+        0,
+        CatalogManager::ParameterMode::IN,
+        false,
+        ""
+    });
+
+    ErrorContext reg_ctx;
+    ASSERT_EQ(db_->catalog_manager()->registerProcedure(proc, &reg_ctx), Status::OK)
+        << reg_ctx.message;
+
+    Executor executor(db_.get());
+    executor.setConnectionContext(conn_ctx_.get());
+    executor.setCurrentSchema(default_schema_id_);
+
+    auto result = executor.callProcedureByName(
+        "proc_sig_widen",
+        {Value::makeInt32(7)});
+
+    EXPECT_TRUE(result.success()) << result.error();
+}
+
+TEST_F(ExecutorTest, ProcedureCallRejectsArgumentCountMismatchDeterministically) {
+    CatalogManager::ProcedureInfo proc{};
+    proc.procedure_id = generateUuidV7();
+    proc.schema_id = default_schema_id_;
+    proc.name = "proc_sig_count";
+    proc.owner_id = system_user_id_;
+    proc.bytecode = {0x00, 0x00, static_cast<uint8_t>(Opcode::END)};
+    proc.parameters.push_back({
+        "p_first",
+        DataType::INT64,
+        0,
+        0,
+        CatalogManager::ParameterMode::IN,
+        false,
+        ""
+    });
+    proc.parameters.push_back({
+        "p_second",
+        DataType::INT64,
+        0,
+        0,
+        CatalogManager::ParameterMode::IN,
+        false,
+        ""
+    });
+
+    ErrorContext reg_ctx;
+    ASSERT_EQ(db_->catalog_manager()->registerProcedure(proc, &reg_ctx), Status::OK)
+        << reg_ctx.message;
+
+    Executor executor(db_.get());
+    executor.setConnectionContext(conn_ctx_.get());
+    executor.setCurrentSchema(default_schema_id_);
+
+    auto result = executor.callProcedureByName(
+        "proc_sig_count",
+        {Value::makeInt64(1)});
+
+    EXPECT_FALSE(result.success());
+    EXPECT_NE(result.error().find("expected proc_sig_count(INT64, INT64)"), std::string::npos);
+}
+
+TEST_F(ExecutorTest, UdrBoundaryRejectsMissingExecutePermissionDeterministically) {
+    const ID udr_id = createUdrFunction("udr_perm_reject", "udr/perm_reject.so");
+
+    ErrorContext ctx;
+    ID viewer_id{};
+    ASSERT_EQ(db_->catalog_manager()->createUser("udr_viewer_perm", "", default_schema_id_, false,
+                                                 viewer_id, &ctx),
+              Status::OK) << ctx.message;
+
+    // Remove every execute-grant row for this UDR (user/role/group/public)
+    // so the boundary test is deterministic.
+    for (int pass = 0; pass < 8; ++pass)
+    {
+        std::vector<CatalogManager::ObjectPermissionInfo> perms;
+        ASSERT_EQ(db_->catalog_manager()->getObjectPermissions(udr_id, perms, &ctx), Status::OK)
+            << ctx.message;
+        if (perms.empty())
+        {
+            break;
+        }
+
+        for (const auto& perm : perms)
+        {
+            auto revoke_status = db_->catalog_manager()->revokeObjectPermission(
+                udr_id, perm.grantee_id, &ctx);
+            ASSERT_TRUE(revoke_status == Status::OK || revoke_status == Status::NOT_FOUND)
+                << ctx.message;
+        }
+    }
+
+    const bool has_execute = db_->catalog_manager()->hasObjectPermission(
+        udr_id, viewer_id, CatalogManager::PERM_EXECUTE, &ctx);
+    EXPECT_FALSE(has_execute);
+
+    conn_ctx_->pushSecurityContext(
+        viewer_id,
+        ID{},
+        false,
+        ConnectionContext::SecurityMode::INVOKER,
+        udr_id);
+
+    Executor executor(db_.get());
+    executor.setConnectionContext(conn_ctx_.get());
+    executor.setCurrentSchema(default_schema_id_);
+
+    ErrorContext call_ctx;
+    Status st = invokeUdrBoundary(executor,
+                                  udr_id,
+                                  Executor::UdrInvocationScope::FUNCTION,
+                                  {},
+                                  &call_ctx);
+    EXPECT_EQ(st, Status::PERMISSION_DENIED);
+    EXPECT_EQ(call_ctx.code, Status::PERMISSION_DENIED);
+    EXPECT_EQ(call_ctx.vnext_code, "UDR_1507");
+    conn_ctx_->popSecurityContext();
+}
+
+TEST_F(ExecutorTest, UdrBoundaryRejectsSandboxPathDeterministically) {
+    const ID udr_id = createUdrFunction("udr_sandbox_reject", "../escape/udr.so");
+
+    Executor executor(db_.get());
+    executor.setConnectionContext(conn_ctx_.get());
+    executor.setCurrentSchema(default_schema_id_);
+
+    ErrorContext call_ctx;
+    Status st = invokeUdrBoundary(executor,
+                                  udr_id,
+                                  Executor::UdrInvocationScope::PROCEDURE,
+                                  {},
+                                  &call_ctx);
+    EXPECT_EQ(st, Status::PERMISSION_DENIED);
+    EXPECT_EQ(call_ctx.code, Status::PERMISSION_DENIED);
+    EXPECT_EQ(call_ctx.vnext_code, "UDR_1508");
+}
+
+TEST_F(ExecutorTest, UdrBoundaryRejectsInvocationQuotaDeterministically) {
+    const ID udr_id = createUdrFunction("udr_quota_reject", "udr/quota_reject.so");
+
+    Executor executor(db_.get());
+    executor.setConnectionContext(conn_ctx_.get());
+    executor.setCurrentSchema(default_schema_id_);
+
+    ErrorContext call_ctx;
+    std::vector<Value> args;
+    args.push_back(Value::makeVarchar(std::string(1024 * 1024 + 8, 'q')));
+
+    Status st = invokeUdrBoundary(executor,
+                                  udr_id,
+                                  Executor::UdrInvocationScope::TRIGGER,
+                                  args,
+                                  &call_ctx);
+    EXPECT_EQ(st, Status::CONFIGURATION_LIMIT_EXCEEDED);
+    EXPECT_EQ(call_ctx.code, Status::CONFIGURATION_LIMIT_EXCEEDED);
+    EXPECT_EQ(call_ctx.vnext_code, "UDR_1512");
+}
+
+TEST_F(ExecutorTest, UdrBoundaryUnsupportedRuntimeIncludesScopeAndKeepsTransactionUsable) {
+    const ID udr_id = createUdrFunction("udr_runtime_missing", "udr/runtime_missing.so");
+
+    Executor executor(db_.get());
+    executor.setConnectionContext(conn_ctx_.get());
+    executor.setCurrentSchema(default_schema_id_);
+
+    struct ScopeExpectation {
+        Executor::UdrInvocationScope scope;
+        const char* label;
+    };
+    const std::vector<ScopeExpectation> scopes{
+        {Executor::UdrInvocationScope::FUNCTION, "FUNCTION"},
+        {Executor::UdrInvocationScope::PROCEDURE, "PROCEDURE"},
+        {Executor::UdrInvocationScope::TRIGGER, "TRIGGER"},
+    };
+
+    for (size_t i = 0; i < scopes.size(); ++i)
+    {
+        ErrorContext call_ctx;
+        SCOPED_TRACE(scopes[i].label);
+        Status st = invokeUdrBoundary(executor, udr_id, scopes[i].scope, {}, &call_ctx);
+        EXPECT_EQ(st, Status::NOT_FOUND);
+        EXPECT_EQ(call_ctx.code, Status::NOT_FOUND);
+        EXPECT_EQ(call_ctx.vnext_code, "UDR_1502");
+        EXPECT_NE(call_ctx.message.find(std::string("scope=") + scopes[i].label), std::string::npos);
+
+        ErrorContext sp_ctx;
+        std::string savepoint_name = "post_udr_boundary_" + std::to_string(i);
+        EXPECT_EQ(conn_ctx_->createSavepoint(savepoint_name, &sp_ctx), Status::OK) << sp_ctx.message;
+        EXPECT_EQ(conn_ctx_->releaseSavepoint(savepoint_name, &sp_ctx), Status::OK) << sp_ctx.message;
+    }
 }

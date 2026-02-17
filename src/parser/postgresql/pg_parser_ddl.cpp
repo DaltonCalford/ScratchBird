@@ -1054,14 +1054,17 @@ parser::v3::CreateIndexStmt* Parser::parseCreateIndexV3(bool unique) {
         std::string method_name = parseIdentifier();
         std::string lower = method_name;
         std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-        if (lower == "hash") stmt->index_type = parser::v3::IndexType::HASH;
+        if (lower == "btree") stmt->index_type = parser::v3::IndexType::BTREE;
+        else if (lower == "hash") stmt->index_type = parser::v3::IndexType::HASH;
         else if (lower == "gin") stmt->index_type = parser::v3::IndexType::GIN;
         else if (lower == "gist") stmt->index_type = parser::v3::IndexType::GIST;
         else if (lower == "spgist") stmt->index_type = parser::v3::IndexType::SPGIST;
         else if (lower == "brin") stmt->index_type = parser::v3::IndexType::BRIN;
-        else if (lower == "rtree") stmt->index_type = parser::v3::IndexType::RTREE;
-        else if (lower == "hnsw") stmt->index_type = parser::v3::IndexType::HNSW;
-        else if (lower == "ivf") stmt->index_type = parser::v3::IndexType::IVF;
+        else error("PostgreSQL index method must be btree, hash, gin, gist, spgist, or brin");
+    }
+
+    if (stmt->unique && stmt->index_type == parser::v3::IndexType::HASH) {
+        error("CREATE UNIQUE INDEX USING hash is not supported in PostgreSQL dialect");
     }
 
     consume(TokenType::LEFT_PAREN, "Expected (");
@@ -3474,7 +3477,7 @@ void Parser::parseCreateIndex() {
     std::string table_path = schema + "/" + table;
 
     // USING method
-    uint8_t index_type = 0xFF;
+    uint8_t index_type = static_cast<uint8_t>(core::CatalogManager::IndexType::BTREE);
     if (matchKeyword(TokenType::KW_USING)) {
         std::string method_name = parseIdentifier();
         std::transform(method_name.begin(), method_name.end(), method_name.begin(), ::tolower);
@@ -3490,7 +3493,14 @@ void Parser::parseCreateIndex() {
             index_type = static_cast<uint8_t>(core::CatalogManager::IndexType::SPGIST);
         } else if (method_name == "brin") {
             index_type = static_cast<uint8_t>(core::CatalogManager::IndexType::BRIN);
+        } else {
+            error("PostgreSQL index method must be btree, hash, gin, gist, spgist, or brin");
         }
+    }
+
+    if (unique &&
+        index_type == static_cast<uint8_t>(core::CatalogManager::IndexType::HASH)) {
+        error("CREATE UNIQUE INDEX USING hash is not supported in PostgreSQL dialect");
     }
 
     // Column/expression list

@@ -31,6 +31,10 @@
 #include <cerrno>
 #include <cstdlib>
 #include <algorithm>
+#include <array>
+#include <mutex>
+#include <unordered_map>
+#include <boost/multiprecision/cpp_int.hpp>
 
 namespace scratchbird::core
 {
@@ -61,6 +65,20 @@ namespace scratchbird::core
             {
                 out.push_back(static_cast<uint8_t>((value >> (i * 8)) & 0xFF));
             }
+        }
+
+        void appendUleb128(std::vector<uint8_t>& out, size_t value)
+        {
+            do
+            {
+                uint8_t byte = static_cast<uint8_t>(value & 0x7Fu);
+                value >>= 7;
+                if (value != 0)
+                {
+                    byte |= 0x80u;
+                }
+                out.push_back(byte);
+            } while (value != 0);
         }
 
         void appendInt32(std::vector<uint8_t> &out, int32_t value)
@@ -481,14 +499,19 @@ namespace scratchbird::core
             return type == DataType::CHAR || type == DataType::VARCHAR ||
                    type == DataType::TEXT || type == DataType::JSON ||
                    type == DataType::JSONB || type == DataType::BSON ||
-                   type == DataType::XML;
+                   type == DataType::XML ||
+                   type == DataType::COMPLETION_FIELD;
         }
 
         bool isBinaryLike(DataType type)
         {
             return type == DataType::BINARY || type == DataType::VARBINARY ||
                    type == DataType::BLOB || type == DataType::BYTEA ||
-                   type == DataType::VECTOR;
+                   type == DataType::VECTOR || type == DataType::INT256 ||
+                   type == DataType::UINT256 || type == DataType::DECIMAL256 ||
+                   type == DataType::TAGGED_UNION || type == DataType::DICT_ENCODED ||
+                   type == DataType::PREFIX_SEARCH_FIELD ||
+                   type == DataType::FLAT_OBJECT;
         }
 
         bool isArrayLikeType(DataType type)
@@ -1821,6 +1844,608 @@ namespace scratchbird::core
             return true;
         }
 
+        bool readUleb128(const std::vector<uint8_t>& data, size_t& offset, uint64_t& value)
+        {
+            value = 0;
+            uint32_t shift = 0;
+            while (offset < data.size())
+            {
+                uint8_t byte = data[offset++];
+                uint64_t chunk = static_cast<uint64_t>(byte & 0x7Fu);
+                if (shift >= 64 || (chunk << shift) >> shift != chunk)
+                {
+                    return false;
+                }
+                value |= (chunk << shift);
+                if ((byte & 0x80u) == 0u)
+                {
+                    return true;
+                }
+                shift += 7;
+            }
+            return false;
+        }
+
+        bool validateTaggedUnionPayload(const std::vector<uint8_t>& payload, ErrorContext* ctx)
+        {
+            if (payload.size() < 3)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "TAGGED_UNION payload too small");
+                return false;
+            }
+            size_t offset = 0;
+            uint16_t variant_tag = 0;
+            if (!readUint16(payload, offset, variant_tag) || variant_tag == 0)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "TAGGED_UNION variant tag invalid");
+                return false;
+            }
+            uint64_t payload_len = 0;
+            if (!readUleb128(payload, offset, payload_len))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                  "TAGGED_UNION payload length encoding invalid");
+                return false;
+            }
+            const size_t remaining = payload.size() - offset;
+            if (payload_len != remaining)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                  "TAGGED_UNION payload length mismatch");
+                return false;
+            }
+            return true;
+        }
+
+        bool validateFlatObjectPayload(const std::vector<uint8_t>& payload, ErrorContext* ctx)
+        {
+            size_t offset = 0;
+            uint32_t pair_count = 0;
+            if (!readUint32(payload, offset, pair_count))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "FLAT_OBJECT pair_count missing");
+                return false;
+            }
+
+            for (uint32_t i = 0; i < pair_count; ++i)
+            {
+                uint32_t key_len = 0;
+                if (!readUint32(payload, offset, key_len))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                      "FLAT_OBJECT key length missing");
+                    return false;
+                }
+                std::vector<uint8_t> key_bytes;
+                if (!readBytes(payload, offset, key_len, key_bytes))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                      "FLAT_OBJECT key bytes truncated");
+                    return false;
+                }
+                std::string key(reinterpret_cast<const char*>(key_bytes.data()), key_bytes.size());
+                if (!UTF8Utils::isValidUTF8(key))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "FLAT_OBJECT key is not UTF-8");
+                    return false;
+                }
+
+                uint16_t value_type = 0;
+                uint32_t value_len = 0;
+                if (!readUint16(payload, offset, value_type) ||
+                    !readUint32(payload, offset, value_len))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                      "FLAT_OBJECT value header truncated");
+                    return false;
+                }
+                if (value_type == 0)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                      "FLAT_OBJECT value type cannot be UNKNOWN");
+                    return false;
+                }
+
+                std::vector<uint8_t> value_bytes;
+                if (!readBytes(payload, offset, value_len, value_bytes))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                      "FLAT_OBJECT value bytes truncated");
+                    return false;
+                }
+            }
+
+            if (offset != payload.size())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                  "FLAT_OBJECT trailing payload bytes detected");
+                return false;
+            }
+
+            return true;
+        }
+
+        bool validatePrefixSearchPayload(const std::vector<uint8_t>& payload,
+                                         std::string* token_out,
+                                         ErrorContext* ctx)
+        {
+            size_t offset = 0;
+            uint32_t token_len = 0;
+            if (!readUint32(payload, offset, token_len))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                  "PREFIX_SEARCH_FIELD token length missing");
+                return false;
+            }
+
+            std::vector<uint8_t> token_bytes;
+            if (!readBytes(payload, offset, token_len, token_bytes))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                  "PREFIX_SEARCH_FIELD token bytes truncated");
+                return false;
+            }
+
+            std::string token(reinterpret_cast<const char*>(token_bytes.data()), token_bytes.size());
+            if (!UTF8Utils::isValidUTF8(token))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                  "PREFIX_SEARCH_FIELD token is not UTF-8");
+                return false;
+            }
+
+            if (token.size() > 4096)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                  "PREFIX_SEARCH_FIELD token exceeds 4096 bytes");
+                return false;
+            }
+
+            uint64_t metadata_ptr = 0;
+            if (!readUint64(payload, offset, metadata_ptr))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                  "PREFIX_SEARCH_FIELD metadata pointer missing");
+                return false;
+            }
+            (void)metadata_ptr;
+
+            if (offset != payload.size())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                  "PREFIX_SEARCH_FIELD trailing payload bytes detected");
+                return false;
+            }
+
+            if (token_out)
+            {
+                *token_out = std::move(token);
+            }
+            return true;
+        }
+
+        enum class CoercionContextMode : uint8_t
+        {
+            STRICT = 0,
+            PERMISSIVE = 1,
+        };
+
+        CoercionContextMode coercionContextMode()
+        {
+            std::string configured =
+                Config::getInstance().getString("types", "coercion_context", "STRICT");
+            std::transform(configured.begin(), configured.end(), configured.begin(),
+                           [](unsigned char ch)
+                           {
+                               return static_cast<char>(std::toupper(ch));
+                           });
+            if (configured == "PERMISSIVE")
+            {
+                return CoercionContextMode::PERMISSIVE;
+            }
+            return CoercionContextMode::STRICT;
+        }
+
+        DecimalRoundingMode decimalRoundingModeFromConfig()
+        {
+            std::string configured =
+                Config::getInstance().getString("types", "decimal_rounding_mode", "HALF_EVEN");
+            std::transform(configured.begin(), configured.end(), configured.begin(),
+                           [](unsigned char ch)
+                           {
+                               return static_cast<char>(std::toupper(ch));
+                           });
+            if (configured == "HALF_UP")
+            {
+                return DecimalRoundingMode::HALF_UP;
+            }
+            if (configured == "TRUNCATE")
+            {
+                return DecimalRoundingMode::TRUNCATE;
+            }
+            return DecimalRoundingMode::HALF_EVEN;
+        }
+
+        using boost::multiprecision::cpp_int;
+
+        const cpp_int& pow2_255()
+        {
+            static const cpp_int value = cpp_int(1) << 255;
+            return value;
+        }
+
+        const cpp_int& pow2_256()
+        {
+            static const cpp_int value = cpp_int(1) << 256;
+            return value;
+        }
+
+        const cpp_int& signedI256Min()
+        {
+            static const cpp_int value = -pow2_255();
+            return value;
+        }
+
+        const cpp_int& signedI256Max()
+        {
+            static const cpp_int value = pow2_255() - 1;
+            return value;
+        }
+
+        const cpp_int& unsignedI256Max()
+        {
+            static const cpp_int value = pow2_256() - 1;
+            return value;
+        }
+
+        bool decodeUnsigned256(const std::vector<uint8_t>& bytes, cpp_int& out)
+        {
+            if (bytes.size() != 32)
+            {
+                return false;
+            }
+            out = 0;
+            for (int i = 31; i >= 0; --i)
+            {
+                out <<= 8;
+                out += bytes[static_cast<size_t>(i)];
+            }
+            return true;
+        }
+
+        bool decodeSigned256(const std::vector<uint8_t>& bytes, cpp_int& out)
+        {
+            cpp_int unsigned_value = 0;
+            if (!decodeUnsigned256(bytes, unsigned_value))
+            {
+                return false;
+            }
+            if ((bytes[31] & 0x80u) != 0u)
+            {
+                out = unsigned_value - pow2_256();
+            }
+            else
+            {
+                out = unsigned_value;
+            }
+            return true;
+        }
+
+        bool encodeUnsigned256(const cpp_int& value, std::vector<uint8_t>& out)
+        {
+            if (value < 0 || value > unsignedI256Max())
+            {
+                return false;
+            }
+            cpp_int temp = value;
+            out.assign(32, 0);
+            for (size_t i = 0; i < 32; ++i)
+            {
+                out[i] = static_cast<uint8_t>((temp & 0xFF).convert_to<unsigned int>());
+                temp >>= 8;
+            }
+            return true;
+        }
+
+        bool encodeSigned256(const cpp_int& value, std::vector<uint8_t>& out)
+        {
+            if (value < signedI256Min() || value > signedI256Max())
+            {
+                return false;
+            }
+            cpp_int temp = value;
+            if (temp < 0)
+            {
+                temp += pow2_256();
+            }
+            out.assign(32, 0);
+            for (size_t i = 0; i < 32; ++i)
+            {
+                out[i] = static_cast<uint8_t>((temp & 0xFF).convert_to<unsigned int>());
+                temp >>= 8;
+            }
+            return true;
+        }
+
+        cpp_int pow10Int(uint32_t exponent)
+        {
+            cpp_int result = 1;
+            for (uint32_t i = 0; i < exponent; ++i)
+            {
+                result *= 10;
+            }
+            return result;
+        }
+
+        cpp_int divideWithRounding(const cpp_int& numerator, const cpp_int& divisor,
+                                   DecimalRoundingMode mode)
+        {
+            if (divisor == 0)
+            {
+                return 0;
+            }
+            cpp_int quotient = numerator / divisor;
+            cpp_int remainder = numerator % divisor;
+            if (remainder == 0 || mode == DecimalRoundingMode::TRUNCATE)
+            {
+                return quotient;
+            }
+
+            cpp_int abs_remainder = remainder < 0 ? -remainder : remainder;
+            cpp_int threshold_twice = abs_remainder * 2;
+            int direction = numerator < 0 ? -1 : 1;
+
+            if (mode == DecimalRoundingMode::HALF_UP)
+            {
+                if (threshold_twice >= divisor)
+                {
+                    quotient += direction;
+                }
+                return quotient;
+            }
+
+            // HALF_EVEN default.
+            if (threshold_twice > divisor)
+            {
+                quotient += direction;
+                return quotient;
+            }
+            if (threshold_twice < divisor)
+            {
+                return quotient;
+            }
+
+            cpp_int qabs = quotient < 0 ? -quotient : quotient;
+            if ((qabs % 2) != 0)
+            {
+                quotient += direction;
+            }
+            return quotient;
+        }
+
+        bool isObjectLikeType(DataType type)
+        {
+            if (type == DataType::ARRAY || type == DataType::LIST || type == DataType::MAP ||
+                type == DataType::COMPOSITE || type == DataType::ROW ||
+                type == DataType::VARIANT || type == DataType::TAGGED_UNION ||
+                type == DataType::FLAT_OBJECT)
+            {
+                return true;
+            }
+            switch (type)
+            {
+                case DataType::POINT:
+                case DataType::LINESTRING:
+                case DataType::POLYGON:
+                case DataType::MULTIPOINT:
+                case DataType::MULTILINESTRING:
+                case DataType::MULTIPOLYGON:
+                case DataType::GEOMETRYCOLLECTION:
+                case DataType::GEOMETRY:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        bool isScalarLikeType(DataType type)
+        {
+            if (type == DataType::UNKNOWN || type == DataType::NULL_TYPE)
+            {
+                return false;
+            }
+            return !isObjectLikeType(type);
+        }
+
+        uint64_t dictionaryKey(uint32_t dict_id, uint32_t key_code)
+        {
+            return (static_cast<uint64_t>(dict_id) << 32) | static_cast<uint64_t>(key_code);
+        }
+
+        struct DictCacheEntry
+        {
+            DataType scalar_type = DataType::UNKNOWN;
+            std::vector<uint8_t> scalar_payload;
+        };
+
+        std::unordered_map<uint64_t, DictCacheEntry>& dictCache()
+        {
+            static std::unordered_map<uint64_t, DictCacheEntry> cache;
+            return cache;
+        }
+
+        std::mutex& dictCacheMutex()
+        {
+            static std::mutex mutex;
+            return mutex;
+        }
+
+        uint32_t fnv1a32(const std::vector<uint8_t>& payload, DataType scalar_type)
+        {
+            uint32_t hash = 2166136261u;
+            const uint16_t type_code = static_cast<uint16_t>(scalar_type);
+            hash ^= static_cast<uint8_t>(type_code & 0xFFu);
+            hash *= 16777619u;
+            hash ^= static_cast<uint8_t>((type_code >> 8) & 0xFFu);
+            hash *= 16777619u;
+            for (uint8_t byte : payload)
+            {
+                hash ^= byte;
+                hash *= 16777619u;
+            }
+            return hash;
+        }
+
+        uint32_t registerDictValue(uint32_t dict_id, DataType scalar_type,
+                                   const std::vector<uint8_t>& payload)
+        {
+            std::lock_guard<std::mutex> lock(dictCacheMutex());
+            auto& cache = dictCache();
+            uint32_t key_code = fnv1a32(payload, scalar_type);
+            while (true)
+            {
+                uint64_t key = dictionaryKey(dict_id, key_code);
+                auto it = cache.find(key);
+                if (it == cache.end())
+                {
+                    cache.emplace(key, DictCacheEntry{scalar_type, payload});
+                    return key_code;
+                }
+                if (it->second.scalar_type == scalar_type &&
+                    it->second.scalar_payload == payload)
+                {
+                    return key_code;
+                }
+                ++key_code;
+            }
+        }
+
+        bool resolveDictValue(uint32_t dict_id, uint32_t key_code, DataType expected_scalar_type,
+                              std::vector<uint8_t>& payload_out)
+        {
+            std::lock_guard<std::mutex> lock(dictCacheMutex());
+            auto& cache = dictCache();
+            auto it = cache.find(dictionaryKey(dict_id, key_code));
+            if (it == cache.end())
+            {
+                return false;
+            }
+            if (expected_scalar_type != DataType::UNKNOWN &&
+                it->second.scalar_type != expected_scalar_type)
+            {
+                return false;
+            }
+            payload_out = it->second.scalar_payload;
+            return true;
+        }
+
+        bool flatObjectToJsonText(const std::vector<uint8_t>& payload,
+                                  std::string& json_out, ErrorContext* ctx)
+        {
+            size_t offset = 0;
+            uint32_t pair_count = 0;
+            if (!readUint32(payload, offset, pair_count))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "FLAT_OBJECT pair_count missing");
+                return false;
+            }
+
+            Json object = Json::object();
+            for (uint32_t i = 0; i < pair_count; ++i)
+            {
+                uint32_t key_len = 0;
+                if (!readUint32(payload, offset, key_len))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                      "FLAT_OBJECT key length missing");
+                    return false;
+                }
+                std::vector<uint8_t> key_bytes;
+                if (!readBytes(payload, offset, key_len, key_bytes))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                      "FLAT_OBJECT key bytes truncated");
+                    return false;
+                }
+                std::string key(reinterpret_cast<const char*>(key_bytes.data()), key_bytes.size());
+                if (!UTF8Utils::isValidUTF8(key))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "FLAT_OBJECT key is not UTF-8");
+                    return false;
+                }
+
+                uint16_t value_type = 0;
+                uint32_t value_len = 0;
+                if (!readUint16(payload, offset, value_type) ||
+                    !readUint32(payload, offset, value_len))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                      "FLAT_OBJECT value header truncated");
+                    return false;
+                }
+                std::vector<uint8_t> value_bytes;
+                if (!readBytes(payload, offset, value_len, value_bytes))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                      "FLAT_OBJECT value bytes truncated");
+                    return false;
+                }
+
+                TypedValue value(static_cast<DataType>(value_type));
+                if (value.deserializePlainValue(value_bytes, ctx) != Status::OK)
+                {
+                    return false;
+                }
+
+                switch (value.type())
+                {
+                    case DataType::BOOLEAN:
+                        object[key] = value.getBool();
+                        break;
+                    case DataType::INT8:
+                    case DataType::INT16:
+                    case DataType::INT32:
+                    case DataType::INT64:
+                    case DataType::UINT8:
+                    case DataType::UINT16:
+                    case DataType::UINT32:
+                    case DataType::UINT64:
+                    case DataType::FLOAT32:
+                    case DataType::FLOAT64:
+                    case DataType::MONEY:
+                        object[key] = value.toString();
+                        break;
+                    case DataType::JSON:
+                    case DataType::JSONB:
+                    case DataType::BSON:
+                    {
+                        try
+                        {
+                            object[key] = Json::parse(value.toString());
+                        }
+                        catch (...)
+                        {
+                            object[key] = value.toString();
+                        }
+                        break;
+                    }
+                    default:
+                        object[key] = value.toString();
+                        break;
+                }
+            }
+
+            if (offset != payload.size())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                  "FLAT_OBJECT trailing payload bytes detected");
+                return false;
+            }
+
+            json_out = object.dump();
+            return true;
+        }
+
         void appendPoint(std::vector<uint8_t> &out, const Point &point)
         {
             appendInt32(out, point.srid);
@@ -2934,9 +3559,16 @@ namespace scratchbird::core
             case DataType::UUID:
             case DataType::INT128:
             case DataType::UINT128:
+            case DataType::INT256:
+            case DataType::UINT256:
+            case DataType::DECIMAL256:
             case DataType::JSONB:
             case DataType::BSON:
             case DataType::VECTOR:
+            case DataType::TAGGED_UNION:
+            case DataType::DICT_ENCODED:
+            case DataType::PREFIX_SEARCH_FIELD:
+            case DataType::FLAT_OBJECT:
                 return binary_data_;
             default:
                 throw std::runtime_error("Type mismatch: expected binary type");
@@ -2989,7 +3621,8 @@ namespace scratchbird::core
             throw std::runtime_error("Cannot get value from NULL");
         }
         ensureDecrypted();
-        if (type_ != DataType::TIMESTAMP) {
+        if (type_ != DataType::TIMESTAMP &&
+            type_ != DataType::TIMESTAMP_NS) {
             throw std::runtime_error("Type mismatch: expected TIMESTAMP");
         }
         return data_.int64_val;
@@ -3201,6 +3834,7 @@ namespace scratchbird::core
             case DataType::CHAR:
             case DataType::JSON:
             case DataType::XML:
+            case DataType::COMPLETION_FIELD:
                 return string_data_;
             case DataType::JSONB:
             case DataType::BSON:
@@ -3237,6 +3871,8 @@ namespace scratchbird::core
                 }
                 return result;
             }
+            case DataType::TIMESTAMP_NS:
+                return std::to_string(data_.int64_val);
             case DataType::TIME:
             {
                 int64_t micros = data_.int64_val;
@@ -3549,6 +4185,14 @@ namespace scratchbird::core
                     return "interval " + formatInterval(interval);
                 }
                 return "<empty interval>";
+            case DataType::PREFIX_SEARCH_FIELD:
+            case DataType::FLAT_OBJECT:
+            case DataType::INT256:
+            case DataType::UINT256:
+            case DataType::DECIMAL256:
+            case DataType::TAGGED_UNION:
+            case DataType::DICT_ENCODED:
+                return "<binary:" + std::to_string(binary_data_.size()) + ">";
             case DataType::ARRAY:
             case DataType::LIST:
             case DataType::MAP:
@@ -3879,6 +4523,16 @@ namespace scratchbird::core
                 return data_.uint64_val == other.data_.uint64_val;
             case DataType::UINT128:
                 return binary_data_ == other.binary_data_;
+            case DataType::INT256:
+            case DataType::UINT256:
+            case DataType::DECIMAL256:
+            case DataType::TAGGED_UNION:
+            case DataType::DICT_ENCODED:
+            case DataType::PREFIX_SEARCH_FIELD:
+            case DataType::FLAT_OBJECT:
+                return binary_data_ == other.binary_data_ &&
+                       decimal_precision_ == other.decimal_precision_ &&
+                       decimal_scale_ == other.decimal_scale_;
             case DataType::FLOAT32:
                 return data_.float32_val == other.data_.float32_val;
             case DataType::FLOAT64:
@@ -3914,10 +4568,12 @@ namespace scratchbird::core
             case DataType::VARCHAR:
             case DataType::TEXT:
             case DataType::CHAR:
+            case DataType::COMPLETION_FIELD:
                 return string_data_ == other.string_data_;
             case DataType::DATE:
             case DataType::TIME:
             case DataType::TIMESTAMP:
+            case DataType::TIMESTAMP_NS:
                 return data_.int64_val == other.data_.int64_val;
             case DataType::BINARY:
             case DataType::VARBINARY:
@@ -4012,6 +4668,14 @@ namespace scratchbird::core
                 }
                 return left_val < right_val;
             }
+            case DataType::INT256:
+            case DataType::UINT256:
+            case DataType::DECIMAL256:
+            case DataType::TAGGED_UNION:
+            case DataType::DICT_ENCODED:
+            case DataType::PREFIX_SEARCH_FIELD:
+            case DataType::FLAT_OBJECT:
+                return binary_data_ < other.binary_data_;
             case DataType::FLOAT32:
                 return data_.float32_val < other.data_.float32_val;
             case DataType::FLOAT64:
@@ -4047,10 +4711,12 @@ namespace scratchbird::core
             case DataType::VARCHAR:
             case DataType::TEXT:
             case DataType::CHAR:
+            case DataType::COMPLETION_FIELD:
                 return string_data_ < other.string_data_;
             case DataType::DATE:
             case DataType::TIME:
             case DataType::TIMESTAMP:
+            case DataType::TIMESTAMP_NS:
                 return data_.int64_val < other.data_.int64_val;
             case DataType::BINARY:
             case DataType::VARBINARY:
@@ -4284,7 +4950,23 @@ namespace scratchbird::core
             case DataType::TEXT:
             case DataType::JSON:
             case DataType::XML:
+            case DataType::COMPLETION_FIELD:
             {
+                if (type_ == DataType::COMPLETION_FIELD)
+                {
+                    if (!UTF8Utils::isValidUTF8(string_data_))
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                          "COMPLETION_FIELD is not UTF-8");
+                        return Status::INVALID_ARGUMENT;
+                    }
+                    if (string_data_.size() > 4096)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                          "COMPLETION_FIELD exceeds 4096 bytes");
+                        return Status::INVALID_ARGUMENT;
+                    }
+                }
                 Status status = appendLengthPrefixedString(string_data_);
                 if (status != Status::OK)
                 {
@@ -4348,6 +5030,26 @@ namespace scratchbird::core
                 }
 
                 appendInt128(out, decimal_unscaled_, width);
+                break;
+            }
+            case DataType::DECIMAL256:
+            {
+                if (decimal_precision_ == 0 || decimal_precision_ > 76 ||
+                    decimal_scale_ > decimal_precision_)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                      "Invalid DECIMAL256 precision/scale");
+                    return Status::INVALID_ARGUMENT;
+                }
+                if (binary_data_.size() != 32)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                      "DECIMAL256 mantissa must be 32 bytes");
+                    return Status::INVALID_ARGUMENT;
+                }
+                appendUint16(out, static_cast<uint16_t>(decimal_precision_));
+                appendUint16(out, static_cast<uint16_t>(decimal_scale_));
+                out.insert(out.end(), binary_data_.begin(), binary_data_.end());
                 break;
             }
             case DataType::DECFLOAT16:
@@ -4414,6 +5116,9 @@ namespace scratchbird::core
                 appendInt32(out, timezone_offset_seconds_);
                 break;
             }
+            case DataType::TIMESTAMP_NS:
+                appendInt64(out, data_.int64_val);
+                break;
             case DataType::TIMESTAMP:
             {
                 int64_t micros = data_.int64_val;
@@ -4447,6 +5152,18 @@ namespace scratchbird::core
                 out.insert(out.end(), binary_data_.begin(), binary_data_.end());
                 break;
             }
+            case DataType::INT256:
+            case DataType::UINT256:
+            {
+                if (binary_data_.size() != 32)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                      "INT256/UINT256 payload must be 32 bytes");
+                    return Status::INVALID_ARGUMENT;
+                }
+                out.insert(out.end(), binary_data_.begin(), binary_data_.end());
+                break;
+            }
             case DataType::VECTOR:
             {
                 Status status = appendLengthPrefixedBinary(binary_data_);
@@ -4454,6 +5171,65 @@ namespace scratchbird::core
                 {
                     return status;
                 }
+                break;
+            }
+            case DataType::TAGGED_UNION:
+            {
+                if (!validateTaggedUnionPayload(binary_data_, ctx))
+                {
+                    return Status::DATA_CORRUPTED;
+                }
+                out.insert(out.end(), binary_data_.begin(), binary_data_.end());
+                break;
+            }
+            case DataType::DICT_ENCODED:
+            {
+                if (binary_data_.size() != 8)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                      "DICT_ENCODED payload must be 8 bytes");
+                    return Status::INVALID_ARGUMENT;
+                }
+                out.insert(out.end(), binary_data_.begin(), binary_data_.end());
+                break;
+            }
+            case DataType::PREFIX_SEARCH_FIELD:
+            {
+                if (!binary_data_.empty())
+                {
+                    if (!validatePrefixSearchPayload(binary_data_, nullptr, ctx))
+                    {
+                        return Status::DATA_CORRUPTED;
+                    }
+                    out.insert(out.end(), binary_data_.begin(), binary_data_.end());
+                }
+                else
+                {
+                    if (!UTF8Utils::isValidUTF8(string_data_))
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                          "PREFIX_SEARCH_FIELD token is not UTF-8");
+                        return Status::INVALID_ARGUMENT;
+                    }
+                    if (string_data_.size() > 4096)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                          "PREFIX_SEARCH_FIELD token exceeds 4096 bytes");
+                        return Status::INVALID_ARGUMENT;
+                    }
+                    appendUint32(out, static_cast<uint32_t>(string_data_.size()));
+                    out.insert(out.end(), string_data_.begin(), string_data_.end());
+                    appendUint64(out, 0);
+                }
+                break;
+            }
+            case DataType::FLAT_OBJECT:
+            {
+                if (!validateFlatObjectPayload(binary_data_, ctx))
+                {
+                    return Status::DATA_CORRUPTED;
+                }
+                out.insert(out.end(), binary_data_.begin(), binary_data_.end());
                 break;
             }
             case DataType::POINT:
@@ -5236,11 +6012,27 @@ namespace scratchbird::core
             case DataType::TEXT:
             case DataType::JSON:
             case DataType::XML:
+            case DataType::COMPLETION_FIELD:
             {
                 status = readLengthPrefixedString(string_data_);
                 if (status != Status::OK)
                 {
                     return status;
+                }
+                if (type_ == DataType::COMPLETION_FIELD)
+                {
+                    if (!UTF8Utils::isValidUTF8(string_data_))
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                          "COMPLETION_FIELD payload is not UTF-8");
+                        return Status::DATA_CORRUPTED;
+                    }
+                    if (string_data_.size() > 4096)
+                    {
+                        SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                          "COMPLETION_FIELD exceeds 4096 bytes");
+                        return Status::DATA_CORRUPTED;
+                    }
                 }
                 break;
             }
@@ -5291,6 +6083,34 @@ namespace scratchbird::core
                 }
                 decimal_unscaled_ = value;
                 decimal_precision_ = precision;
+                break;
+            }
+            case DataType::DECIMAL256:
+            {
+                uint16_t precision = 0;
+                uint16_t scale = 0;
+                if (!readUint16(data, offset, precision) ||
+                    !readUint16(data, offset, scale))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                      "Invalid DECIMAL256 header");
+                    return Status::DATA_CORRUPTED;
+                }
+                if (precision == 0 || precision > 76 || scale > precision)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                      "Invalid DECIMAL256 precision/scale");
+                    return Status::DATA_CORRUPTED;
+                }
+                if (!readBytes(data, offset, 32, binary_data_))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                      "Invalid DECIMAL256 mantissa payload");
+                    return Status::DATA_CORRUPTED;
+                }
+                decimal_precision_ = static_cast<uint8_t>(precision);
+                decimal_scale_ = static_cast<uint8_t>(scale);
+                decimal_unscaled_ = 0;
                 break;
             }
             case DataType::DECFLOAT16:
@@ -5354,6 +6174,19 @@ namespace scratchbird::core
                 timezone_offset_seconds_ = offset_seconds;
                 break;
             }
+            case DataType::TIMESTAMP_NS:
+            {
+                int64_t nanos = 0;
+                if (!readInt64(data, offset, nanos))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                      "Invalid TIMESTAMP_NS payload");
+                    return Status::DATA_CORRUPTED;
+                }
+                data_.int64_val = nanos;
+                timezone_offset_seconds_ = kNoDisplayOffsetSeconds;
+                break;
+            }
             case DataType::TIMESTAMP:
             {
                 int64_t micros = 0;
@@ -5414,6 +6247,19 @@ namespace scratchbird::core
                 offset = data.size();
                 break;
             }
+            case DataType::INT256:
+            case DataType::UINT256:
+            {
+                if (data.size() != 32)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                      "Invalid INT256/UINT256 payload size");
+                    return Status::DATA_CORRUPTED;
+                }
+                binary_data_.assign(data.begin(), data.end());
+                offset = data.size();
+                break;
+            }
             case DataType::VECTOR:
             {
                 status = readLengthPrefixedBinary(binary_data_);
@@ -5426,6 +6272,50 @@ namespace scratchbird::core
                     SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Vector payload length is not float-aligned");
                     return Status::DATA_CORRUPTED;
                 }
+                break;
+            }
+            case DataType::TAGGED_UNION:
+            {
+                if (!validateTaggedUnionPayload(data, ctx))
+                {
+                    return Status::DATA_CORRUPTED;
+                }
+                binary_data_.assign(data.begin(), data.end());
+                offset = data.size();
+                break;
+            }
+            case DataType::DICT_ENCODED:
+            {
+                if (data.size() != 8)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                      "Invalid DICT_ENCODED payload size");
+                    return Status::DATA_CORRUPTED;
+                }
+                binary_data_.assign(data.begin(), data.end());
+                offset = data.size();
+                break;
+            }
+            case DataType::PREFIX_SEARCH_FIELD:
+            {
+                std::string token;
+                if (!validatePrefixSearchPayload(data, &token, ctx))
+                {
+                    return Status::DATA_CORRUPTED;
+                }
+                string_data_ = std::move(token);
+                binary_data_.assign(data.begin(), data.end());
+                offset = data.size();
+                break;
+            }
+            case DataType::FLAT_OBJECT:
+            {
+                if (!validateFlatObjectPayload(data, ctx))
+                {
+                    return Status::DATA_CORRUPTED;
+                }
+                binary_data_.assign(data.begin(), data.end());
+                offset = data.size();
                 break;
             }
             case DataType::POINT:
@@ -6803,6 +7693,462 @@ namespace scratchbird::core
             SET_ERROR_CONTEXT(ctx, Status::DATATYPE_MISMATCH, "Unsupported integer target");
             return wrapStatus(Status::DATATYPE_MISMATCH);
         };
+
+        const CoercionContextMode coercion_mode = coercionContextMode();
+        const bool permissive_coercion = coercion_mode == CoercionContextMode::PERMISSIVE;
+        const DecimalRoundingMode coercion_round_mode = decimalRoundingModeFromConfig();
+
+        auto rejectLossyStrict = [&](const char* message) -> Status
+        {
+            SET_ERROR_CONTEXT(ctx, Status::DATATYPE_MISMATCH, message);
+            return wrapStatus(Status::DATATYPE_MISMATCH);
+        };
+
+        auto int128ToCppInt = [&](cpp_int& out_value) -> bool
+        {
+            if (type_ == DataType::INT128)
+            {
+                int128_t v = 0;
+                if (!readInt128Value(v))
+                {
+                    return false;
+                }
+                out_value = v;
+                return true;
+            }
+            if (type_ == DataType::UINT128)
+            {
+                uint128_t v = 0;
+                if (!readUInt128Value(v))
+                {
+                    return false;
+                }
+                out_value = v;
+                return true;
+            }
+            if (isUnsignedType(type_))
+            {
+                switch (type_)
+                {
+                    case DataType::UINT8: out_value = data_.uint8_val; return true;
+                    case DataType::UINT16: out_value = data_.uint16_val; return true;
+                    case DataType::UINT32: out_value = data_.uint32_val; return true;
+                    case DataType::UINT64: out_value = data_.uint64_val; return true;
+                    default: break;
+                }
+            }
+            if (isIntegerType(type_))
+            {
+                out_value = toInt64();
+                return true;
+            }
+            if (type_ == DataType::BOOLEAN)
+            {
+                out_value = data_.bool_val ? 1 : 0;
+                return true;
+            }
+            return false;
+        };
+
+        if (target == DataType::TIMESTAMP_NS &&
+            (type_ == DataType::TIMESTAMP || type_ == DataType::TIMESTAMP_WITH_ZONE))
+        {
+            cpp_int nanos = cpp_int(data_.int64_val) * 1000;
+            if (nanos < std::numeric_limits<int64_t>::min() ||
+                nanos > std::numeric_limits<int64_t>::max())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                  "TIMESTAMP_NS value out of range");
+                return wrapStatus(Status::NUMERIC_VALUE_OUT_OF_RANGE);
+            }
+            result_out = TypedValue(DataType::TIMESTAMP_NS);
+            result_out.is_null_ = false;
+            result_out.data_.int64_val = static_cast<int64_t>(nanos);
+            result_out.timezone_offset_seconds_ = TypedValue::kNoDisplayOffsetSeconds;
+            return Status::OK;
+        }
+
+        if (type_ == DataType::TIMESTAMP_NS &&
+            (target == DataType::TIMESTAMP || target == DataType::TIMESTAMP_WITH_ZONE))
+        {
+            cpp_int nanos = data_.int64_val;
+            cpp_int divisor = 1000;
+            cpp_int micros = nanos / divisor;
+            cpp_int remainder = nanos % divisor;
+            if (remainder != 0 && !permissive_coercion)
+            {
+                return rejectLossyStrict(
+                    "TIMESTAMP_NS to TIMESTAMP is lossy in STRICT coercion context");
+            }
+            if (remainder != 0 && permissive_coercion)
+            {
+                micros = divideWithRounding(nanos, divisor, coercion_round_mode);
+            }
+            if (micros < std::numeric_limits<int64_t>::min() ||
+                micros > std::numeric_limits<int64_t>::max())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                  "TIMESTAMP value out of range");
+                return wrapStatus(Status::NUMERIC_VALUE_OUT_OF_RANGE);
+            }
+            int32_t stored_offset = (target == DataType::TIMESTAMP_WITH_ZONE)
+                                        ? (hasConcreteDisplayOffset(timezone_offset_seconds_)
+                                               ? timezone_offset_seconds_
+                                               : 0)
+                                        : (hasConcreteDisplayOffset(timezone_offset_seconds_)
+                                               ? timezone_offset_seconds_
+                                               : TypedValue::kNoDisplayOffsetSeconds);
+            result_out = makeTimestamp(static_cast<int64_t>(micros), stored_offset);
+            result_out.type_ = target;
+            return Status::OK;
+        }
+
+        if (target == DataType::DECIMAL256)
+        {
+            uint8_t precision = target_type.precision == 0
+                                    ? 76
+                                    : static_cast<uint8_t>(target_type.precision);
+            uint8_t scale = static_cast<uint8_t>(target_type.scale);
+            if (precision == 0 || precision > 76 || scale > precision)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "Invalid DECIMAL256 precision/scale");
+                return wrapStatus(Status::INVALID_ARGUMENT);
+            }
+
+            cpp_int mantissa;
+            if (type_ == DataType::INT256)
+            {
+                if (!decodeSigned256(binary_data_, mantissa))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid INT256 payload");
+                    return wrapStatus(Status::INVALID_ARGUMENT);
+                }
+                if (scale != 0)
+                {
+                    return rejectLossyStrict(
+                        "INT256 to DECIMAL256 requires scale 0 for exact mapping");
+                }
+            }
+            else if (type_ == DataType::UINT256)
+            {
+                cpp_int uvalue;
+                if (!decodeUnsigned256(binary_data_, uvalue))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid UINT256 payload");
+                    return wrapStatus(Status::INVALID_ARGUMENT);
+                }
+                if (uvalue > signedI256Max())
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                      "UINT256 exceeds DECIMAL256 signed mantissa range");
+                    return wrapStatus(Status::NUMERIC_VALUE_OUT_OF_RANGE);
+                }
+                if (scale != 0)
+                {
+                    return rejectLossyStrict(
+                        "UINT256 to DECIMAL256 requires scale 0 for exact mapping");
+                }
+                mantissa = uvalue;
+            }
+            else
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATATYPE_MISMATCH,
+                                  "Unsupported source for DECIMAL256 cast");
+                return wrapStatus(Status::DATATYPE_MISMATCH);
+            }
+
+            std::vector<uint8_t> mantissa_bytes;
+            if (!encodeSigned256(mantissa, mantissa_bytes))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                  "DECIMAL256 mantissa out of range");
+                return wrapStatus(Status::NUMERIC_VALUE_OUT_OF_RANGE);
+            }
+
+            result_out = TypedValue(DataType::DECIMAL256);
+            result_out.is_null_ = false;
+            result_out.decimal_precision_ = precision;
+            result_out.decimal_scale_ = scale;
+            result_out.binary_data_ = std::move(mantissa_bytes);
+            return Status::OK;
+        }
+
+        if (target == DataType::INT256 || target == DataType::UINT256)
+        {
+            cpp_int value = 0;
+            if (type_ == DataType::DECIMAL256)
+            {
+                if (!decodeSigned256(binary_data_, value))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                      "Invalid DECIMAL256 mantissa payload");
+                    return wrapStatus(Status::INVALID_ARGUMENT);
+                }
+                if (decimal_scale_ > 0)
+                {
+                    cpp_int divisor = pow10Int(decimal_scale_);
+                    cpp_int remainder = value % divisor;
+                    if (remainder != 0 && !permissive_coercion)
+                    {
+                        return rejectLossyStrict(
+                            "DECIMAL256 to integer cast is lossy in STRICT coercion context");
+                    }
+                    if (remainder != 0 && permissive_coercion)
+                    {
+                        value = divideWithRounding(value, divisor, coercion_round_mode);
+                    }
+                    else
+                    {
+                        value /= divisor;
+                    }
+                }
+            }
+            else if (type_ == DataType::UINT256)
+            {
+                if (!decodeUnsigned256(binary_data_, value))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid UINT256 payload");
+                    return wrapStatus(Status::INVALID_ARGUMENT);
+                }
+            }
+            else if (type_ == DataType::INT256)
+            {
+                if (target == DataType::UINT256)
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::DATATYPE_MISMATCH,
+                                      "INT256 to UINT256 is rejected by coercion matrix");
+                    return wrapStatus(Status::DATATYPE_MISMATCH);
+                }
+                if (!decodeSigned256(binary_data_, value))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Invalid INT256 payload");
+                    return wrapStatus(Status::INVALID_ARGUMENT);
+                }
+            }
+            else
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATATYPE_MISMATCH,
+                                  "Unsupported source for 256-bit integer cast");
+                return wrapStatus(Status::DATATYPE_MISMATCH);
+            }
+
+            if (target == DataType::INT256)
+            {
+                if (value < signedI256Min() || value > signedI256Max())
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                      "INT256 value out of range");
+                    return wrapStatus(Status::NUMERIC_VALUE_OUT_OF_RANGE);
+                }
+                std::vector<uint8_t> out_bytes;
+                if (!encodeSigned256(value, out_bytes))
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                      "INT256 encode failed");
+                    return wrapStatus(Status::NUMERIC_VALUE_OUT_OF_RANGE);
+                }
+                result_out = TypedValue(DataType::INT256);
+                result_out.is_null_ = false;
+                result_out.binary_data_ = std::move(out_bytes);
+                return Status::OK;
+            }
+
+            if (value < 0 || value > unsignedI256Max())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                  "UINT256 value out of range");
+                return wrapStatus(Status::NUMERIC_VALUE_OUT_OF_RANGE);
+            }
+            std::vector<uint8_t> out_bytes;
+            if (!encodeUnsigned256(value, out_bytes))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::NUMERIC_VALUE_OUT_OF_RANGE,
+                                  "UINT256 encode failed");
+                return wrapStatus(Status::NUMERIC_VALUE_OUT_OF_RANGE);
+            }
+            result_out = TypedValue(DataType::UINT256);
+            result_out.is_null_ = false;
+            result_out.binary_data_ = std::move(out_bytes);
+            return Status::OK;
+        }
+
+        if (target == DataType::TAGGED_UNION)
+        {
+            if (!isScalarLikeType(type_))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATATYPE_MISMATCH,
+                                  "Only scalar values can cast to TAGGED_UNION");
+                return wrapStatus(Status::DATATYPE_MISMATCH);
+            }
+            std::vector<uint8_t> scalar_payload;
+            Status st = serializePlainValue(scalar_payload, ctx);
+            if (st != Status::OK)
+            {
+                return st;
+            }
+            std::vector<uint8_t> encoded;
+            appendUint16(encoded, static_cast<uint16_t>(type_));
+            appendUleb128(encoded, scalar_payload.size());
+            encoded.insert(encoded.end(), scalar_payload.begin(), scalar_payload.end());
+            result_out = TypedValue(DataType::TAGGED_UNION);
+            result_out.is_null_ = false;
+            result_out.binary_data_ = std::move(encoded);
+            return Status::OK;
+        }
+
+        if (type_ == DataType::TAGGED_UNION && target != DataType::TAGGED_UNION)
+        {
+            if (!isScalarLikeType(target))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATATYPE_MISMATCH,
+                                  "TAGGED_UNION can only cast to scalar target");
+                return wrapStatus(Status::DATATYPE_MISMATCH);
+            }
+            if (!validateTaggedUnionPayload(binary_data_, ctx))
+            {
+                return Status::DATA_CORRUPTED;
+            }
+            size_t offset = 0;
+            uint16_t variant_tag = 0;
+            uint64_t payload_len = 0;
+            (void)readUint16(binary_data_, offset, variant_tag);
+            (void)readUleb128(binary_data_, offset, payload_len);
+            if (variant_tag != static_cast<uint16_t>(target))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATATYPE_MISMATCH,
+                                  "TAGGED_UNION active tag does not match target type");
+                return wrapStatus(Status::DATATYPE_MISMATCH);
+            }
+            std::vector<uint8_t> scalar_payload(binary_data_.begin() + static_cast<std::ptrdiff_t>(offset),
+                                                binary_data_.end());
+            TypedValue decoded(target);
+            Status st = decoded.deserializePlainValue(scalar_payload, ctx);
+            if (st != Status::OK)
+            {
+                return st;
+            }
+            result_out = std::move(decoded);
+            return Status::OK;
+        }
+
+        if (target == DataType::DICT_ENCODED)
+        {
+            if (!isScalarLikeType(type_))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATATYPE_MISMATCH,
+                                  "Only scalar values can cast to DICT_ENCODED");
+                return wrapStatus(Status::DATATYPE_MISMATCH);
+            }
+            std::vector<uint8_t> scalar_payload;
+            Status st = serializePlainValue(scalar_payload, ctx);
+            if (st != Status::OK)
+            {
+                return st;
+            }
+            constexpr uint32_t kDefaultDictId = 1u;
+            uint32_t key_code = registerDictValue(kDefaultDictId, type_, scalar_payload);
+            std::vector<uint8_t> encoded;
+            appendUint32(encoded, kDefaultDictId);
+            appendUint32(encoded, key_code);
+            result_out = TypedValue(DataType::DICT_ENCODED);
+            result_out.is_null_ = false;
+            result_out.binary_data_ = std::move(encoded);
+            return Status::OK;
+        }
+
+        if (type_ == DataType::DICT_ENCODED && target != DataType::DICT_ENCODED)
+        {
+            if (!isScalarLikeType(target))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATATYPE_MISMATCH,
+                                  "DICT_ENCODED can only cast to scalar target");
+                return wrapStatus(Status::DATATYPE_MISMATCH);
+            }
+            if (binary_data_.size() != 8)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid DICT_ENCODED payload");
+                return Status::DATA_CORRUPTED;
+            }
+            size_t offset = 0;
+            uint32_t dict_id = 0;
+            uint32_t key_code = 0;
+            if (!readUint32(binary_data_, offset, dict_id) ||
+                !readUint32(binary_data_, offset, key_code))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED, "Invalid DICT_ENCODED payload");
+                return Status::DATA_CORRUPTED;
+            }
+            std::vector<uint8_t> scalar_payload;
+            if (!resolveDictValue(dict_id, key_code, target, scalar_payload))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATA_CORRUPTED,
+                                  "DICT_ENCODED dictionary key not found");
+                return Status::DATA_CORRUPTED;
+            }
+            TypedValue decoded(target);
+            Status st = decoded.deserializePlainValue(scalar_payload, ctx);
+            if (st != Status::OK)
+            {
+                return st;
+            }
+            result_out = std::move(decoded);
+            return Status::OK;
+        }
+
+        if (target == DataType::COMPLETION_FIELD)
+        {
+            if (isObjectLikeType(type_))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::DATATYPE_MISMATCH,
+                                  "Object type cannot cast to COMPLETION_FIELD");
+                return wrapStatus(Status::DATATYPE_MISMATCH);
+            }
+
+            std::string token = isStringLike(type_) ? stringValueForParse() : toString();
+            if (!UTF8Utils::isValidUTF8(token))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_TEXT_REPRESENTATION,
+                                  "COMPLETION_FIELD requires UTF-8");
+                return wrapStatus(Status::INVALID_TEXT_REPRESENTATION);
+            }
+            if (token.size() > 4096)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::STRING_DATA_RIGHT_TRUNCATION,
+                                  "COMPLETION_FIELD exceeds 4096 bytes");
+                return wrapStatus(Status::STRING_DATA_RIGHT_TRUNCATION);
+            }
+            result_out = TypedValue(DataType::COMPLETION_FIELD);
+            result_out.is_null_ = false;
+            result_out.string_data_ = std::move(token);
+            return Status::OK;
+        }
+
+        if (type_ == DataType::FLAT_OBJECT &&
+            (target == DataType::JSON || target == DataType::JSONB || target == DataType::BSON))
+        {
+            std::string json_text;
+            if (!flatObjectToJsonText(binary_data_, json_text, ctx))
+            {
+                return Status::DATA_CORRUPTED;
+            }
+            if (target == DataType::JSON)
+            {
+                result_out = TypedValue(DataType::JSON);
+                result_out.is_null_ = false;
+                result_out.string_data_ = std::move(json_text);
+                return Status::OK;
+            }
+            std::vector<uint8_t> encoded;
+            if (!encodeJsonb(json_text, encoded, ctx))
+            {
+                return wrapStatus(Status::INVALID_TEXT_REPRESENTATION);
+            }
+            result_out = TypedValue(target);
+            result_out.is_null_ = false;
+            result_out.binary_data_ = std::move(encoded);
+            return Status::OK;
+        }
 
         switch (target)
         {

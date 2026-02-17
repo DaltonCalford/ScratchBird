@@ -11,6 +11,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/telemetry.h"
+#include "scratchbird/core/vnext_metrics_event_model.h"
 #include "scratchbird/core/debug.h"
 #include "scratchbird/core/logger.h"
 #include <cstring>
@@ -327,6 +328,8 @@ namespace scratchbird::core
                 {
                     metrics_->buffer_pool_hits_total->inc();
                 }
+                VNextMetricsEventModel::recordStorageEvent(
+                    "buffer_pool_pin", "hit", "NONE");
                 if (auto* conn_ctx = ConnectionContext::getCurrent())
                 {
                     conn_ctx->recordPageFetch();
@@ -346,6 +349,8 @@ namespace scratchbird::core
         {
             metrics_->buffer_pool_misses_total->inc();
         }
+        VNextMetricsEventModel::recordStorageEvent(
+            "buffer_pool_pin", "miss", "NONE");
 
         // Re-check partition in case another thread loaded the page while we waited
         {
@@ -370,6 +375,8 @@ namespace scratchbird::core
                 }
                 stats_.hits.fetch_add(1, std::memory_order_relaxed);
                 logStatsEvent("HIT", gpid);
+                VNextMetricsEventModel::recordStorageEvent(
+                    "buffer_pool_pin", "hit", "NONE");
                 if (auto* conn_ctx = ConnectionContext::getCurrent())
                 {
                     conn_ctx->recordPageFetch();
@@ -1180,6 +1187,17 @@ namespace scratchbird::core
         {
             metrics_->buffer_pool_reads_total->inc();
         }
+        if (status == Status::OK)
+        {
+            VNextMetricsEventModel::recordStorageEvent(
+                "buffer_pool_io_read", "ok", "NONE");
+        }
+        else
+        {
+            VNextMetricsEventModel::recordStorageEvent(
+                "buffer_pool_io_read", "error",
+                std::to_string(static_cast<int>(status)));
+        }
         return status;
     }
 
@@ -1200,6 +1218,14 @@ namespace scratchbird::core
             {
                 conn_ctx->recordPageWrite();
             }
+            VNextMetricsEventModel::recordStorageEvent(
+                "buffer_pool_io_write", "ok", "NONE");
+        }
+        else
+        {
+            VNextMetricsEventModel::recordStorageEvent(
+                "buffer_pool_io_write", "error",
+                std::to_string(static_cast<int>(status)));
         }
         return status;
     }

@@ -9085,9 +9085,25 @@ void Parser::parseCreateIndex() {
 
     std::string index_name = parseIdentifier();
 
-    uint8_t index_type = 0xFF;
-    if (matchKeyword(TokenType::KW_USING)) {
-        std::string algorithm = parseIdentifier();
+    uint8_t index_type = static_cast<uint8_t>(core::CatalogManager::IndexType::BTREE);
+    auto parse_index_algorithm = [&]() -> std::string {
+        if (check(TokenType::KW_BTREE)) {
+            advance();
+            return "BTREE";
+        }
+        if (check(TokenType::KW_HASH)) {
+            advance();
+            return "HASH";
+        }
+        if (check(TokenType::IDENTIFIER) || check(TokenType::BACKTICK_IDENTIFIER)) {
+            return parseIdentifier();
+        }
+        error("Expected index type");
+        return "";
+    };
+
+    if (matchKeyword(TokenType::KW_USING) || matchIdentifierKeyword("USING")) {
+        std::string algorithm = parse_index_algorithm();
         std::transform(algorithm.begin(), algorithm.end(), algorithm.begin(),
                        [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
         if (algorithm == "BTREE") {
@@ -9127,8 +9143,8 @@ void Parser::parseCreateIndex() {
     } while (match(TokenType::COMMA));
     consume(TokenType::RIGHT_PAREN, "Expected )");
 
-    if (matchKeyword(TokenType::KW_USING)) {
-        std::string algorithm = parseIdentifier();
+    if (matchKeyword(TokenType::KW_USING) || matchIdentifierKeyword("USING")) {
+        std::string algorithm = parse_index_algorithm();
         std::transform(algorithm.begin(), algorithm.end(), algorithm.begin(),
                        [](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
         if (algorithm == "BTREE") {

@@ -1058,6 +1058,10 @@ TEST_F(PostgreSQLParserTest, DialectGuardrails) {
     expectSuccess("CREATE DATABASE demo WITH TABLESPACE = ts1");
     expectSuccess("CREATE TABLE users (id INT) TABLESPACE ts1");
     expectSuccess("CREATE INDEX idx_users_id ON users (id) TABLESPACE ts1");
+    expectError("CREATE INDEX idx_users_hnsw ON users USING hnsw (id)");
+    expectError("CREATE INDEX idx_users_ivf ON users USING ivf (id)");
+    expectError("CREATE INDEX idx_users_redis ON users USING redis_hash (id)");
+    expectError("CREATE UNIQUE INDEX idx_users_hash_unique ON users USING hash (id)");
     expectError("CREATE TABLE a.b.c (id INT)");
     expectError("SELECT a.b.c.d FROM t");
 }

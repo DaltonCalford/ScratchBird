@@ -547,6 +547,10 @@ static const std::unordered_map<std::string, SchemaDef> kSchemas = {
     {"SCHEMA_DDL_ALTER_INDEX", SchemaDef{"SCHEMA_DDL_ALTER_INDEX", {
         FieldDef{"index", FieldType::SCHEMA_PATH, ""},
         FieldDef{"action", FieldType::U8, ""},
+        FieldDef{"defaults_scope", FieldType::OPT, "bool"},
+        FieldDef{"defaults_index_type", FieldType::OPT, "ident"},
+        FieldDef{"target_filespace", FieldType::OPT, "schema_path"},
+        FieldDef{"mode", FieldType::OPT, "u8"},
         FieldDef{"options", FieldType::SCHEMA, "OPTION_KV"},
     }}},
     {"SCHEMA_DDL_ALTER_SCHEMA", SchemaDef{"SCHEMA_DDL_ALTER_SCHEMA", {
@@ -657,6 +661,14 @@ static const std::unordered_map<std::string, SchemaDef> kSchemas = {
         FieldDef{"object_path", FieldType::SCHEMA_PATH, ""},
         FieldDef{"grantees", FieldType::LIST, "ident"},
         FieldDef{"with_grant_option", FieldType::BOOL, ""},
+    }}},
+    {"SCHEMA_ADMIN_ANALYZE", SchemaDef{"SCHEMA_ADMIN_ANALYZE", {
+        FieldDef{"target", FieldType::U8, ""},
+        FieldDef{"table_path", FieldType::OPT, "schema_path"},
+        FieldDef{"index_path", FieldType::OPT, "schema_path"},
+        FieldDef{"column", FieldType::OPT, "ident"},
+        FieldDef{"sample_rate", FieldType::OPT, "f64"},
+        FieldDef{"verbose", FieldType::BOOL, ""},
     }}},
     {"SCHEMA_SET_SHOW_RESET", SchemaDef{"SCHEMA_SET_SHOW_RESET", {
         FieldDef{"action", FieldType::U8, ""},
@@ -929,6 +941,40 @@ static const std::unordered_map<std::string, SchemaDef> kSchemas = {
         FieldDef{"vector", FieldType::EXPR, ""},
         FieldDef{"k", FieldType::U32, ""},
         FieldDef{"ef_search", FieldType::OPT, "u32"},
+    }}},
+    {"SCHEMA_DOC_PATH_FILTER", SchemaDef{"SCHEMA_DOC_PATH_FILTER", {
+        FieldDef{"path_id", FieldType::U32, ""},
+        FieldDef{"cmp", FieldType::U8, ""},
+        FieldDef{"value_ref", FieldType::U32, ""},
+    }}},
+    {"SCHEMA_TS_BUCKET_AGG", SchemaDef{"SCHEMA_TS_BUCKET_AGG", {
+        FieldDef{"bucket_ns", FieldType::U64, ""},
+        FieldDef{"agg_count", FieldType::U16, ""},
+        FieldDef{"agg_refs", FieldType::BYTES, ""},
+    }}},
+    {"SCHEMA_COL_SCAN", SchemaDef{"SCHEMA_COL_SCAN", {
+        FieldDef{"table_id", FieldType::U32, ""},
+        FieldDef{"proj_bitmap", FieldType::BYTES, ""},
+        FieldDef{"predicate_bitmap", FieldType::BYTES, ""},
+    }}},
+    {"SCHEMA_SEARCH_DSL_EVAL", SchemaDef{"SCHEMA_SEARCH_DSL_EVAL", {
+        FieldDef{"dsl_blob_ref", FieldType::U64, ""},
+        FieldDef{"scorer_id", FieldType::U16, ""},
+    }}},
+    {"SCHEMA_VECTOR_ANN", SchemaDef{"SCHEMA_VECTOR_ANN", {
+        FieldDef{"index_id", FieldType::U32, ""},
+        FieldDef{"metric", FieldType::U8, ""},
+        FieldDef{"topk", FieldType::U16, ""},
+        FieldDef{"ef", FieldType::U16, ""},
+    }}},
+    {"SCHEMA_HYBRID_BRIDGE_EXCHANGE", SchemaDef{"SCHEMA_HYBRID_BRIDGE_EXCHANGE", {
+        FieldDef{"src_track", FieldType::U8, ""},
+        FieldDef{"dst_track", FieldType::U8, ""},
+        FieldDef{"mode", FieldType::U8, ""},
+    }}},
+    {"SCHEMA_HYBRID_BRIDGE_MATERIALIZE", SchemaDef{"SCHEMA_HYBRID_BRIDGE_MATERIALIZE", {
+        FieldDef{"buffer_class", FieldType::U8, ""},
+        FieldDef{"row_shape_ref", FieldType::U32, ""},
     }}},
     {"SCHEMA_JOB_EXECUTE", SchemaDef{"SCHEMA_JOB_EXECUTE", {
         FieldDef{"job_name", FieldType::IDENT, ""},

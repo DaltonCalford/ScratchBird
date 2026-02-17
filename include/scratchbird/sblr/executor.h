@@ -285,7 +285,50 @@ namespace scratchbird
                                     Value& result_out,
                                     core::ErrorContext* ctx = nullptr) -> core::Status override;
 
+            // Canonical index type mapping used by SBLR3 payload handlers.
+            // Returns nullopt for unknown names (no implicit fallback).
+            static std::optional<core::CatalogManager::IndexType>
+            mapCanonicalIndexType(const std::string& name);
+
         private:
+            enum class UdrInvocationScope : uint8_t
+            {
+                NONE = 0,
+                FUNCTION = 1,
+                PROCEDURE = 2,
+                TRIGGER = 3
+            };
+
+            class UdrInvocationScopeGuard
+            {
+            public:
+                UdrInvocationScopeGuard(Executor* executor, UdrInvocationScope scope)
+                    : executor_(executor)
+                {
+                    if (executor_ == nullptr)
+                    {
+                        return;
+                    }
+                    previous_scope_ = executor_->udr_invocation_scope_;
+                    if (executor_->udr_invocation_scope_ == UdrInvocationScope::NONE)
+                    {
+                        executor_->udr_invocation_scope_ = scope;
+                    }
+                }
+
+                ~UdrInvocationScopeGuard()
+                {
+                    if (executor_ != nullptr)
+                    {
+                        executor_->udr_invocation_scope_ = previous_scope_;
+                    }
+                }
+
+            private:
+                Executor* executor_ = nullptr;
+                UdrInvocationScope previous_scope_ = UdrInvocationScope::NONE;
+            };
+
             ExecutionResult executeV3(const std::vector<uint8_t> &bytecode);
             auto callFunctionByInfo(const core::CatalogManager::FunctionInfo& function_info,
                                     const std::vector<Value>& args,
@@ -299,6 +342,12 @@ namespace scratchbird
                                      const std::vector<Value>& args,
                                      Value& result_out,
                                      core::ErrorContext* ctx = nullptr) -> core::Status;
+            auto estimateUdrArgumentBytes(const std::vector<Value>& args) const -> size_t;
+            auto isUdrSandboxPathAllowed(const std::string& path) const -> bool;
+            auto makeUdrInvocationSavepointName() -> std::string;
+            auto rollbackAndReleaseUdrSavepoint(const std::string& savepoint_name,
+                                                core::ConnectionContext* conn_ctx,
+                                                core::ErrorContext* ctx) -> core::Status;
             bool isEffectiveSuperuser() const;
             void recordObjectDefinition(core::CatalogManager::ObjectType object_type,
                                          const core::ID& object_id);
@@ -352,6 +401,8 @@ namespace scratchbird
             bool scalar_aggregate_filter_active_ = false;
             size_t scalar_aggregate_filter_start_ = 0;
             size_t scalar_aggregate_filter_end_ = 0;
+            UdrInvocationScope udr_invocation_scope_ = UdrInvocationScope::NONE;
+            uint64_t udr_invocation_savepoint_counter_ = 0;
 
             // Bound parameters for placeholders (prepared statements)
             std::vector<std::string> parameter_values_;
@@ -467,6 +518,35 @@ namespace scratchbird
                                      const core::ID &index_id);
 
             // Task 17 Phase 7: Index maintenance helpers
+            auto captureMaintenanceDeltaForIndex(const core::CatalogManager::IndexInfo& index_info,
+                                                 core::CatalogManager::IndexDeltaOp delta_op,
+                                                 const core::TID& tid,
+                                                 uint64_t commit_txid) -> bool;
+            auto runIndexMaintenanceStateMachine(
+                const core::CatalogManager::IndexInfo& index_info,
+                core::CatalogManager::IndexMaintenanceKind maintenance_kind,
+                core::CatalogManager::IndexMaintenanceMode maintenance_mode,
+                const core::ID& target_filespace_id,
+                bool has_target_fillfactor,
+                uint16_t target_fillfactor,
+                core::ErrorContext* ctx) -> core::Status;
+            auto runIndexHealthScan(
+                const core::CatalogManager::IndexInfo& index_info,
+                bool diagnostic_scan,
+                core::CatalogManager::IndexHealthCatalogInfo& health_out,
+                core::ErrorContext* ctx) -> core::Status;
+            auto updateIndexUsageMetrics(
+                const core::CatalogManager::IndexInfo& index_info,
+                uint64_t tuple_read,
+                uint64_t tuple_returned,
+                uint64_t blocks_read,
+                uint64_t blocks_hit,
+                uint64_t total_time_ns,
+                core::ErrorContext* ctx) -> core::Status;
+            auto refreshIndexStorageMetrics(
+                const core::CatalogManager::IndexInfo& index_info,
+                core::ErrorContext* ctx) -> core::Status;
+
             // Task 17 MGA Phase 1.1: Added xid parameter for transaction context
             void updateIndexesOnInsert(uint64_t xid,
                                       const core::ID &table_id,

@@ -150,6 +150,69 @@ TEST_F(CatalogParentageAndNameUniquenessTest, SameTriggerNameOnDifferentTablesIs
     EXPECT_EQ(table_triggers[0].trigger_id, trigger_a);
 }
 
+TEST_F(CatalogParentageAndNameUniquenessTest, TriggerListingOrderIsDeterministic)
+{
+    ID schema_id = createSchemaPath("root.users.public.catalog_parentage");
+    ID table_id = createTable(schema_id, "events_det");
+
+    ErrorContext ctx;
+    ID trigger_a{};
+    ASSERT_EQ(createTrigger(table_id, "events_det", "events_trg_a", trigger_a, &ctx), Status::OK)
+        << ctx.message;
+    ID trigger_b{};
+    ASSERT_EQ(createTrigger(table_id, "events_det", "events_trg_b", trigger_b, &ctx), Status::OK)
+        << ctx.message;
+    ID trigger_c{};
+    ASSERT_EQ(createTrigger(table_id, "events_det", "events_trg_c", trigger_c, &ctx), Status::OK)
+        << ctx.message;
+
+    std::vector<CatalogManager::TriggerInfo> triggers;
+    ASSERT_EQ(catalog_->listAllTriggersForTable(table_id, triggers, &ctx), Status::OK)
+        << ctx.message;
+    ASSERT_EQ(triggers.size(), 3u);
+
+    auto is_ordered = [](const CatalogManager::TriggerInfo& lhs,
+                         const CatalogManager::TriggerInfo& rhs) {
+        if (lhs.created_time != rhs.created_time)
+        {
+            return lhs.created_time <= rhs.created_time;
+        }
+        if (lhs.trigger_name != rhs.trigger_name)
+        {
+            return lhs.trigger_name <= rhs.trigger_name;
+        }
+        return !(rhs.trigger_id < lhs.trigger_id);
+    };
+
+    for (size_t i = 1; i < triggers.size(); ++i)
+    {
+        EXPECT_TRUE(is_ordered(triggers[i - 1], triggers[i]));
+    }
+
+    std::vector<ID> first_order;
+    first_order.reserve(triggers.size());
+    for (const auto& trigger : triggers)
+    {
+        first_order.push_back(trigger.trigger_id);
+    }
+
+    for (int pass = 0; pass < 5; ++pass)
+    {
+        std::vector<CatalogManager::TriggerInfo> pass_triggers;
+        ASSERT_EQ(catalog_->listTriggersForTable(table_id,
+                                                 CatalogManager::TriggerEvent::INSERT,
+                                                 CatalogManager::TriggerTiming::BEFORE,
+                                                 pass_triggers,
+                                                 &ctx),
+                  Status::OK) << ctx.message;
+        ASSERT_EQ(pass_triggers.size(), first_order.size());
+        for (size_t i = 0; i < pass_triggers.size(); ++i)
+        {
+            EXPECT_EQ(pass_triggers[i].trigger_id, first_order[i]);
+        }
+    }
+}
+
 TEST_F(CatalogParentageAndNameUniquenessTest, IndexNameCollisionIsParentScoped)
 {
     ID schema_id = createSchemaPath("root.users.public.catalog_parentage");

@@ -17,12 +17,89 @@
 // November 25, 2025
 
 #include "scratchbird/core/telemetry.h"
+#include <openssl/sha.h>
+#include <nlohmann/json.hpp>
 #include <sstream>
 #include <iomanip>
 #include <algorithm>
 #include <cmath>
 
 namespace scratchbird::core {
+
+namespace
+{
+using OrderedJson = nlohmann::ordered_json;
+
+auto splitKey(const std::string& key) -> std::vector<std::string>
+{
+    std::vector<std::string> parts;
+    if (key.empty())
+    {
+        return parts;
+    }
+
+    std::istringstream iss(key);
+    std::string part;
+    while (std::getline(iss, part, ','))
+    {
+        parts.push_back(part);
+    }
+    return parts;
+}
+
+auto labelsFromKey(const std::vector<std::string>& label_names,
+                   const std::string& key) -> std::vector<MetricLabel>
+{
+    std::vector<MetricLabel> labels;
+    const auto values = splitKey(key);
+    const size_t count = std::min(label_names.size(), values.size());
+    labels.reserve(count);
+    for (size_t i = 0; i < count; ++i)
+    {
+        labels.push_back(MetricLabel{label_names[i], values[i]});
+    }
+    return labels;
+}
+
+auto labelsSortKey(const std::vector<MetricLabel>& labels) -> std::string
+{
+    std::ostringstream oss;
+    for (size_t i = 0; i < labels.size(); ++i)
+    {
+        if (i > 0)
+        {
+            oss << "|";
+        }
+        oss << labels[i].name << "=" << labels[i].value;
+    }
+    return oss.str();
+}
+
+auto formatDoubleCanonical(double value) -> std::string
+{
+    std::ostringstream oss;
+    oss << std::fixed << std::setprecision(6) << value;
+    return oss.str();
+}
+
+auto comparatorToString(SloThresholdComparator cmp) -> const char*
+{
+    return cmp == SloThresholdComparator::GTE ? ">=" : "<=";
+}
+
+auto statusToString(SloBaselineStatus status) -> const char*
+{
+    switch (status)
+    {
+        case SloBaselineStatus::PASS:
+            return "PASS";
+        case SloBaselineStatus::FAIL:
+            return "FAIL";
+        default:
+            return "NO_DATA";
+    }
+}
+} // namespace
 
 // Default latency buckets (in seconds): 1ms, 5ms, 10ms, 25ms, 50ms, 100ms, 250ms, 500ms, 1s, 2.5s, 5s, 10s
 const std::vector<double> Histogram::DEFAULT_LATENCY_BUCKETS = {
@@ -113,7 +190,18 @@ std::string Counter::toPrometheus() const {
     if (values_.empty()) {
         ss << name_ << " 0\n";
     } else {
-        for (const auto& [key, value] : values_) {
+        std::vector<std::string> keys;
+        keys.reserve(values_.size());
+        for (const auto& entry : values_) {
+            keys.push_back(entry.first);
+        }
+        std::sort(keys.begin(), keys.end());
+
+        for (const auto& key : keys) {
+            const auto it = values_.find(key);
+            if (it == values_.end()) {
+                continue;
+            }
             ss << name_;
             if (!key.empty() && !label_names_.empty()) {
                 ss << "{";
@@ -129,7 +217,7 @@ std::string Counter::toPrometheus() const {
                 }
                 ss << "}";
             }
-            ss << " " << std::fixed << std::setprecision(6) << value.load() << "\n";
+            ss << " " << std::fixed << std::setprecision(6) << it->second.load() << "\n";
         }
     }
 
@@ -140,6 +228,30 @@ std::string Counter::toOpenMetrics() const {
     std::ostringstream ss;
     ss << toPrometheus();
     return ss.str();
+}
+
+void Counter::appendSamples(std::vector<MetricSampleRow>& out) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (values_.empty()) {
+        out.push_back(MetricSampleRow{name_, {}, 0.0});
+        return;
+    }
+
+    std::vector<std::string> keys;
+    keys.reserve(values_.size());
+    for (const auto& entry : values_) {
+        keys.push_back(entry.first);
+    }
+    std::sort(keys.begin(), keys.end());
+
+    for (const auto& key : keys) {
+        const auto it = values_.find(key);
+        if (it == values_.end()) {
+            continue;
+        }
+        out.push_back(MetricSampleRow{name_, labelsFromKey(label_names_, key), it->second.load()});
+    }
 }
 
 // ============================================================================
@@ -202,7 +314,18 @@ std::string Gauge::toPrometheus() const {
     if (values_.empty()) {
         ss << name_ << " 0\n";
     } else {
-        for (const auto& [key, value] : values_) {
+        std::vector<std::string> keys;
+        keys.reserve(values_.size());
+        for (const auto& entry : values_) {
+            keys.push_back(entry.first);
+        }
+        std::sort(keys.begin(), keys.end());
+
+        for (const auto& key : keys) {
+            const auto it = values_.find(key);
+            if (it == values_.end()) {
+                continue;
+            }
             ss << name_;
             if (!key.empty() && !label_names_.empty()) {
                 ss << "{";
@@ -218,7 +341,7 @@ std::string Gauge::toPrometheus() const {
                 }
                 ss << "}";
             }
-            ss << " " << std::fixed << std::setprecision(6) << value.load() << "\n";
+            ss << " " << std::fixed << std::setprecision(6) << it->second.load() << "\n";
         }
     }
 
@@ -227,6 +350,30 @@ std::string Gauge::toPrometheus() const {
 
 std::string Gauge::toOpenMetrics() const {
     return toPrometheus();
+}
+
+void Gauge::appendSamples(std::vector<MetricSampleRow>& out) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    if (values_.empty()) {
+        out.push_back(MetricSampleRow{name_, {}, 0.0});
+        return;
+    }
+
+    std::vector<std::string> keys;
+    keys.reserve(values_.size());
+    for (const auto& entry : values_) {
+        keys.push_back(entry.first);
+    }
+    std::sort(keys.begin(), keys.end());
+
+    for (const auto& key : keys) {
+        const auto it = values_.find(key);
+        if (it == values_.end()) {
+            continue;
+        }
+        out.push_back(MetricSampleRow{name_, labelsFromKey(label_names_, key), it->second.load()});
+    }
 }
 
 // ============================================================================
@@ -303,7 +450,19 @@ std::string Histogram::toPrometheus() const {
     ss << "# HELP " << name_ << " " << help_ << "\n";
     ss << "# TYPE " << name_ << " histogram\n";
 
-    for (const auto& [key, data] : data_) {
+    std::vector<std::string> keys;
+    keys.reserve(data_.size());
+    for (const auto& entry : data_) {
+        keys.push_back(entry.first);
+    }
+    std::sort(keys.begin(), keys.end());
+
+    for (const auto& key : keys) {
+        const auto it = data_.find(key);
+        if (it == data_.end()) {
+            continue;
+        }
+        const auto* data = it->second.get();
         std::string base_labels;
         if (!key.empty() && !label_names_.empty()) {
             std::vector<std::string> parts;
@@ -350,6 +509,43 @@ std::string Histogram::toPrometheus() const {
 
 std::string Histogram::toOpenMetrics() const {
     return toPrometheus();
+}
+
+void Histogram::appendSamples(std::vector<MetricSampleRow>& out) const {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    std::vector<std::string> keys;
+    keys.reserve(data_.size());
+    for (const auto& entry : data_) {
+        keys.push_back(entry.first);
+    }
+    std::sort(keys.begin(), keys.end());
+
+    for (const auto& key : keys) {
+        const auto it = data_.find(key);
+        if (it == data_.end()) {
+            continue;
+        }
+
+        const auto* data = it->second.get();
+        auto base_labels = labelsFromKey(label_names_, key);
+
+        uint64_t cumulative = 0;
+        for (size_t i = 0; i < buckets_.size(); ++i) {
+            cumulative += data->bucket_counts[i].load();
+            auto labels = base_labels;
+            labels.push_back(MetricLabel{"le", formatDoubleCanonical(buckets_[i])});
+            out.push_back(MetricSampleRow{name_ + "_bucket", std::move(labels), static_cast<double>(cumulative)});
+        }
+
+        auto inf_labels = base_labels;
+        inf_labels.push_back(MetricLabel{"le", "+Inf"});
+        out.push_back(MetricSampleRow{name_ + "_bucket", std::move(inf_labels),
+                                      static_cast<double>(data->count.load())});
+        out.push_back(MetricSampleRow{name_ + "_sum", base_labels, data->sum.load()});
+        out.push_back(MetricSampleRow{name_ + "_count", std::move(base_labels),
+                                      static_cast<double>(data->count.load())});
+    }
 }
 
 // ============================================================================
@@ -423,8 +619,19 @@ std::string MetricsRegistry::exportPrometheus() const {
     std::lock_guard<std::mutex> lock(mutex_);
     std::ostringstream ss;
 
-    for (const auto& [name, metric] : metrics_) {
-        ss << metric->toPrometheus();
+    std::vector<std::string> names;
+    names.reserve(metrics_.size());
+    for (const auto& entry : metrics_) {
+        names.push_back(entry.first);
+    }
+    std::sort(names.begin(), names.end());
+
+    for (const auto& name : names) {
+        auto it = metrics_.find(name);
+        if (it == metrics_.end()) {
+            continue;
+        }
+        ss << it->second->toPrometheus();
     }
 
     return ss.str();
@@ -434,8 +641,19 @@ std::string MetricsRegistry::exportOpenMetrics() const {
     std::lock_guard<std::mutex> lock(mutex_);
     std::ostringstream ss;
 
-    for (const auto& [name, metric] : metrics_) {
-        ss << metric->toOpenMetrics();
+    std::vector<std::string> names;
+    names.reserve(metrics_.size());
+    for (const auto& entry : metrics_) {
+        names.push_back(entry.first);
+    }
+    std::sort(names.begin(), names.end());
+
+    for (const auto& name : names) {
+        auto it = metrics_.find(name);
+        if (it == metrics_.end()) {
+            continue;
+        }
+        ss << it->second->toOpenMetrics();
     }
 
     // OpenMetrics requires EOF marker
@@ -447,6 +665,223 @@ std::string MetricsRegistry::exportOpenMetrics() const {
 void MetricsRegistry::clear() {
     std::lock_guard<std::mutex> lock(mutex_);
     metrics_.clear();
+}
+
+std::vector<MetricSampleRow> MetricsRegistry::snapshotSamples() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    std::vector<MetricSampleRow> rows;
+
+    std::vector<std::string> names;
+    names.reserve(metrics_.size());
+    for (const auto& entry : metrics_) {
+        names.push_back(entry.first);
+    }
+    std::sort(names.begin(), names.end());
+
+    for (const auto& name : names) {
+        auto it = metrics_.find(name);
+        if (it == metrics_.end()) {
+            continue;
+        }
+        it->second->appendSamples(rows);
+    }
+
+    std::sort(rows.begin(), rows.end(), [](const MetricSampleRow& lhs, const MetricSampleRow& rhs) {
+        if (lhs.metric_name != rhs.metric_name) {
+            return lhs.metric_name < rhs.metric_name;
+        }
+        const std::string lhs_labels = labelsSortKey(lhs.labels);
+        const std::string rhs_labels = labelsSortKey(rhs.labels);
+        if (lhs_labels != rhs_labels) {
+            return lhs_labels < rhs_labels;
+        }
+        return lhs.value < rhs.value;
+    });
+
+    return rows;
+}
+
+std::string MetricsRegistry::exportCanonicalJson(uint64_t generated_at_epoch_ms) const {
+    const auto rows = snapshotSamples();
+
+    OrderedJson doc = OrderedJson::object();
+    doc["schema"] = "ScratchBirdMetricSnapshotV1";
+    doc["generated_at_epoch_ms"] = generated_at_epoch_ms;
+    doc["sample_count"] = rows.size();
+    doc["samples"] = OrderedJson::array();
+
+    for (const auto& row : rows) {
+        OrderedJson sample = OrderedJson::object();
+        sample["metric_name"] = row.metric_name;
+        OrderedJson labels = OrderedJson::object();
+        for (const auto& label : row.labels) {
+            labels[label.name] = label.value;
+        }
+        sample["labels"] = std::move(labels);
+        sample["value"] = formatDoubleCanonical(row.value);
+        doc["samples"].push_back(std::move(sample));
+    }
+
+    return doc.dump();
+}
+
+const std::vector<SloBaselineThreshold>& ConformanceTelemetry::defaultSloBaselines() {
+    static const std::vector<SloBaselineThreshold> kBaselines{
+        {"Transaction commit", "p95 latency", SloThresholdComparator::LTE, 6.0, "ms"},
+        {"Transaction rollback", "p95 latency", SloThresholdComparator::LTE, 4.0, "ms"},
+        {"Optimizer planning", "p95 latency single-track", SloThresholdComparator::LTE, 15.0, "ms"},
+        {"Parser latency", "p95", SloThresholdComparator::LTE, 4.0, "ms"},
+        {"Time-series ingest", "throughput", SloThresholdComparator::GTE, 100000.0, "points/s"},
+        {"Columnar scan", "throughput", SloThresholdComparator::GTE, 1.0, "GB/s"},
+        {"Search query", "p95 latency", SloThresholdComparator::LTE, 25.0, "ms"},
+        {"Vector query", "p95 latency", SloThresholdComparator::LTE, 40.0, "ms"},
+    };
+    return kBaselines;
+}
+
+void ConformanceTelemetry::evaluateSloBaselines(const std::vector<SloObservation>& observations,
+                                                std::vector<SloBaselineEvaluation>& evaluations_out) {
+    evaluations_out.clear();
+    const auto& baselines = defaultSloBaselines();
+    evaluations_out.reserve(baselines.size());
+
+    for (const auto& baseline : baselines) {
+        SloBaselineEvaluation eval{};
+        eval.domain = baseline.domain;
+        eval.metric = baseline.metric;
+        eval.comparator = baseline.comparator;
+        eval.threshold = baseline.threshold;
+        eval.unit = baseline.unit;
+        eval.status = SloBaselineStatus::NO_DATA;
+
+        bool found = false;
+        for (const auto& obs : observations) {
+            if (obs.domain != baseline.domain || obs.metric != baseline.metric) {
+                continue;
+            }
+            if (!obs.unit.empty() && !baseline.unit.empty() && obs.unit != baseline.unit) {
+                continue;
+            }
+
+            if (!found) {
+                eval.observed_value = obs.value;
+                found = true;
+                continue;
+            }
+
+            if (baseline.comparator == SloThresholdComparator::LTE) {
+                eval.observed_value = std::max(eval.observed_value, obs.value);
+            } else {
+                eval.observed_value = std::min(eval.observed_value, obs.value);
+            }
+        }
+
+        if (found) {
+            eval.has_observed_value = true;
+            const bool pass = baseline.comparator == SloThresholdComparator::LTE
+                                  ? eval.observed_value <= baseline.threshold
+                                  : eval.observed_value >= baseline.threshold;
+            eval.status = pass ? SloBaselineStatus::PASS : SloBaselineStatus::FAIL;
+        }
+
+        evaluations_out.push_back(eval);
+    }
+
+    std::sort(evaluations_out.begin(), evaluations_out.end(),
+              [](const SloBaselineEvaluation& lhs, const SloBaselineEvaluation& rhs) {
+                  if (lhs.domain != rhs.domain) {
+                      return lhs.domain < rhs.domain;
+                  }
+                  return lhs.metric < rhs.metric;
+              });
+}
+
+std::string ConformanceTelemetry::buildBaselineReportJson(
+    const std::vector<SloObservation>& observations,
+    const std::string& reference_hardware_profile_id,
+    uint64_t generated_at_epoch_ms) {
+    std::vector<SloBaselineEvaluation> evaluations;
+    evaluateSloBaselines(observations, evaluations);
+
+    std::vector<SloObservation> sorted_observations = observations;
+    std::sort(sorted_observations.begin(), sorted_observations.end(),
+              [](const SloObservation& lhs, const SloObservation& rhs) {
+                  if (lhs.domain != rhs.domain) {
+                      return lhs.domain < rhs.domain;
+                  }
+                  if (lhs.metric != rhs.metric) {
+                      return lhs.metric < rhs.metric;
+                  }
+                  if (lhs.unit != rhs.unit) {
+                      return lhs.unit < rhs.unit;
+                  }
+                  return lhs.value < rhs.value;
+              });
+
+    OrderedJson doc = OrderedJson::object();
+    doc["schema"] = "ScratchBirdSloBaselineReportV1";
+    doc["reference_hardware_profile_id"] = reference_hardware_profile_id;
+    doc["generated_at_epoch_ms"] = generated_at_epoch_ms;
+
+    doc["baselines"] = OrderedJson::array();
+    for (const auto& baseline : defaultSloBaselines()) {
+        OrderedJson row = OrderedJson::object();
+        row["domain"] = baseline.domain;
+        row["metric"] = baseline.metric;
+        row["comparator"] = comparatorToString(baseline.comparator);
+        row["threshold"] = formatDoubleCanonical(baseline.threshold);
+        row["unit"] = baseline.unit;
+        doc["baselines"].push_back(std::move(row));
+    }
+
+    doc["observations"] = OrderedJson::array();
+    for (const auto& obs : sorted_observations) {
+        OrderedJson row = OrderedJson::object();
+        row["domain"] = obs.domain;
+        row["metric"] = obs.metric;
+        row["value"] = formatDoubleCanonical(obs.value);
+        row["unit"] = obs.unit;
+        doc["observations"].push_back(std::move(row));
+    }
+
+    bool has_fail = false;
+    bool has_no_data = false;
+    doc["evaluation"] = OrderedJson::array();
+    for (const auto& eval : evaluations) {
+        OrderedJson row = OrderedJson::object();
+        row["domain"] = eval.domain;
+        row["metric"] = eval.metric;
+        row["comparator"] = comparatorToString(eval.comparator);
+        row["threshold"] = formatDoubleCanonical(eval.threshold);
+        row["has_observed_value"] = eval.has_observed_value;
+        row["observed_value"] = eval.has_observed_value
+                                    ? formatDoubleCanonical(eval.observed_value)
+                                    : std::string();
+        row["status"] = statusToString(eval.status);
+        row["unit"] = eval.unit;
+        doc["evaluation"].push_back(std::move(row));
+
+        if (eval.status == SloBaselineStatus::FAIL) {
+            has_fail = true;
+        } else if (eval.status == SloBaselineStatus::NO_DATA) {
+            has_no_data = true;
+        }
+    }
+
+    doc["overall_status"] = has_fail ? "FAIL" : (has_no_data ? "NO_DATA" : "PASS");
+    return doc.dump();
+}
+
+std::string ConformanceTelemetry::sha256Hex(const std::string& payload) {
+    unsigned char digest[SHA256_DIGEST_LENGTH];
+    SHA256(reinterpret_cast<const unsigned char*>(payload.data()), payload.size(), digest);
+
+    std::ostringstream oss;
+    oss << std::hex << std::setfill('0');
+    for (unsigned char byte : digest) {
+        oss << std::setw(2) << static_cast<int>(byte);
+    }
+    return oss.str();
 }
 
 // ============================================================================

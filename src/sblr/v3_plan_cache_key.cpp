@@ -29,13 +29,25 @@ uint64_t stableHash64(std::string_view data) {
 
 std::string buildPlanCacheKey(const PlanCacheKeyInput& input) {
     std::ostringstream oss;
-    oss << "pc.v1";
+    oss << "pc.v2";
+    oss << "|profile_id=" << input.profile_id;
+    oss << "|profile_ver=" << input.profile_version;
+    oss << "|fmt=" << input.payload_format;
+    oss << "|payload=" << input.payload_hash;
+    oss << "|sess_sig=" << input.session_option_signature;
+    oss << "|role_sig=" << input.role_context_signature;
     oss << "|op=" << input.canonical_opcode_symbol;
     oss << "|cat=" << input.catalog_epoch;
     oss << "|sec=" << input.security_epoch;
+    oss << "|cap=" << input.capability_set_hash;
+    oss << "|mod_ver=" << input.module_version;
+    oss << "|rule_ver=" << input.translation_rule_version;
+    oss << "|abi=" << input.host_api_abi_version;
+    oss << "|triples=" << input.target_triples_hash;
+    oss << "|pref=" << input.artifact_preference;
+    oss << "|opt=" << input.optimization_level;
     oss << "|norm=" << input.normalization_rule_set_id;
     oss << "|obj=" << input.object_ref_digest;
-    oss << "|payload=" << input.payload_hash;
 
     const std::string prehash = oss.str();
     const uint64_t h = stableHash64(prehash);
@@ -44,4 +56,3 @@ std::string buildPlanCacheKey(const PlanCacheKeyInput& input) {
 }
 
 }  // namespace scratchbird::sblr::v3
-

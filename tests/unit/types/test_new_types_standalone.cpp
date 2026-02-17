@@ -88,11 +88,11 @@ TEST(NewTypesStandaloneTest, Comprehensive) {
 
     // Test TypeSystem utilities
     std::cout << "Testing TypeSystem utilities:\n";
-    ASSERT_EQ(TypeSystem::getTypeName(DataType::INT128), "INT128");
-    ASSERT_EQ(TypeSystem::getTypeName(DataType::UINT8), "UINT8");
-    ASSERT_EQ(TypeSystem::getTypeName(DataType::UINT16), "UINT16");
-    ASSERT_EQ(TypeSystem::getTypeName(DataType::UINT32), "UINT32");
-    ASSERT_EQ(TypeSystem::getTypeName(DataType::UINT64), "UINT64");
+    ASSERT_STREQ(TypeSystem::getTypeName(DataType::INT128), "INT128");
+    ASSERT_STREQ(TypeSystem::getTypeName(DataType::UINT8), "UINT8");
+    ASSERT_STREQ(TypeSystem::getTypeName(DataType::UINT16), "UINT16");
+    ASSERT_STREQ(TypeSystem::getTypeName(DataType::UINT32), "UINT32");
+    ASSERT_STREQ(TypeSystem::getTypeName(DataType::UINT64), "UINT64");
     std::cout << "  ✓ getTypeName() passed\n\n";
 
     std::cout << "========================================\n";

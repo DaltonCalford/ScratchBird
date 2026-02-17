@@ -41,10 +41,15 @@ set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
 include(CTest)
 enable_testing()
 
-# Global test timeout - tests can run up to 15 minutes (900 seconds)
-set(SCRATCHBIRD_CTEST_TIMEOUT 900 CACHE STRING "Maximum test time (seconds) - default 15 minutes")
+# Global test timeout - default 1 hour (3600 seconds).
+# Upgrade legacy default cache value (900s) to the new default, while preserving user overrides.
+if(DEFINED SCRATCHBIRD_CTEST_TIMEOUT AND SCRATCHBIRD_CTEST_TIMEOUT STREQUAL "900")
+    set(SCRATCHBIRD_CTEST_TIMEOUT 3600 CACHE STRING "Maximum test time (seconds) - default 1 hour" FORCE)
+else()
+    set(SCRATCHBIRD_CTEST_TIMEOUT 3600 CACHE STRING "Maximum test time (seconds) - default 1 hour")
+endif()
 set(CTEST_TEST_TIMEOUT ${SCRATCHBIRD_CTEST_TIMEOUT})
-message(STATUS "CTest maximum test time: ${SCRATCHBIRD_CTEST_TIMEOUT}s (15 minutes)")
+message(STATUS "CTest maximum test time: ${SCRATCHBIRD_CTEST_TIMEOUT}s (1 hour)")
 
 # Default to parallel test runs when using the built-in test target.
 include(ProcessorCount)

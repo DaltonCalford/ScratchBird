@@ -31,6 +31,7 @@
 #include "scratchbird/core/types.h"
 #include <string>
 #include <memory>
+#include <vector>
 
 namespace scratchbird
 {
@@ -56,6 +57,56 @@ class TransactionManager;
 class IndexFactory
 {
 public:
+    enum class IndexStorageModel : uint8_t
+    {
+        PAGE_BASED = 0,
+        FILE_BASED = 1
+    };
+
+    enum class IndexRuntimeClass : uint8_t
+    {
+        BTREE = 0,
+        HASH = 1,
+        LSM = 2,
+        GIN = 3,
+        GIST = 4,
+        BRIN = 5,
+        RTREE = 6,
+        SPGIST = 7,
+        BITMAP = 8,
+        COLUMNSTORE = 9,
+        HNSW = 10,
+        INVERTED = 11
+    };
+
+    struct IndexFamilyCapabilities
+    {
+        CatalogManager::IndexType index_type = CatalogManager::IndexType::BTREE;
+        const char *canonical_name = "";
+        IndexStorageModel storage_model = IndexStorageModel::PAGE_BASED;
+        IndexRuntimeClass runtime_class = IndexRuntimeClass::BTREE;
+        bool supports_create = true;
+        bool supports_open = true;
+        bool supports_close = true;
+        bool requires_primary_tablespace = false;
+        bool requires_indexed_columns = false;
+        bool requires_vector_dimensions = false;
+        bool requires_column_datatype = false;
+        bool supports_bloom_attach = false;
+    };
+
+    /**
+     * Lookup family capabilities by type.
+     *
+     * @return Pointer to registry entry, nullptr if type is not registered.
+     */
+    static const IndexFamilyCapabilities *lookupCapabilities(CatalogManager::IndexType index_type);
+
+    /**
+     * Return current factory capability matrix.
+     */
+    static std::vector<IndexFamilyCapabilities> listCapabilities();
+
     /**
      * Create new index
      *

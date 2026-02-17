@@ -20,6 +20,13 @@ public:
                                   scratchbird::sblr::v3::Container& out,
                                   std::string& err);
 
+    // vNext section-04 contract shim used by gate tests. This does not parse SQL.
+    static bool emitVNextContractInstruction(
+        parser::v3::ASTKind node_kind,
+        const scratchbird::sblr::v3::Value::Object& fields,
+        scratchbird::sblr::v3::Instruction& out,
+        std::string& err);
+
 private:
     parser::v3::StringPool& pool_;
     bool ok_ = true;

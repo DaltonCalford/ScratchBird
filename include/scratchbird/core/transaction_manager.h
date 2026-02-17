@@ -50,6 +50,15 @@ namespace scratchbird::core
         uint64_t end_time;   // Microseconds since epoch (0 if active)
     };
 
+    // Snapshot contract for vNext deterministic visibility checks.
+    // The active_txid_set is sorted ascending for binary-search membership tests.
+    struct TransactionSnapshot
+    {
+        uint64_t snapshot_txid_high = 0;
+        std::vector<uint64_t> active_txid_set;
+        uint64_t snapshot_commit_seqno_high = 0;
+    };
+
 // Transaction Inventory Page (TIP) format
 // TIP pages track transaction states for MVCC visibility
 #pragma pack(push, 1)
@@ -178,6 +187,22 @@ namespace scratchbird::core
         // which modifies the cache. This is part of the cache consistency fix.
         // LOCKING: Thread-safe. Acquires mutex_ internally via isXidInRange() and getTransactionState().
         auto isTransactionVisible(uint64_t xid, uint64_t current_xid) -> bool;
+
+        // Capture a deterministic transaction snapshot.
+        // LOCKING: Thread-safe. Uses internal synchronization for next_xid and TIP scan.
+        auto captureSnapshot(TransactionSnapshot &snapshot_out, ErrorContext *ctx = nullptr)
+            -> Status;
+
+        // Snapshot visibility helper for version creators.
+        // LOCKING: Thread-safe. Performs transaction-state lookups internally.
+        auto isCreateVisibleInSnapshot(uint64_t create_xid, uint64_t reader_xid,
+                                       const TransactionSnapshot &snapshot) -> bool;
+
+        // Snapshot visibility helper for create/delete tuple headers.
+        // LOCKING: Thread-safe. Performs transaction-state lookups internally.
+        auto isRecordVersionVisibleInSnapshot(uint64_t create_xid, uint64_t delete_xid,
+                                              uint64_t reader_xid,
+                                              const TransactionSnapshot &snapshot) -> bool;
 
         // Validate XID is structurally valid (not INVALID_XID)
         // LOCKING: No locks required (static method, no shared state access).
@@ -442,6 +467,21 @@ namespace scratchbird::core
         // LOCKING: Requires mutex_ held by caller.
         // Returns Status::OK if safe, Status::PAGE_FULL if critical, Status::PAGE_CORRUPT if blocked
         auto checkXIDWraparound(ErrorContext *ctx) -> Status;
+
+        // Startup normalization for unclean shutdown handling:
+        // any pre-existing ACTIVE TIP state is rewritten to ABORTED.
+        // LOCKING: Requires mutex_ held by caller.
+        auto normalizeStartupTipStates(ErrorContext *ctx) -> Status;
+
+        // Persist OAT/OST markers from current in-memory values.
+        // LOCKING: Requires mutex_ held by caller.
+        auto persistTransactionMarkersLocked(ErrorContext *ctx) -> Status;
+
+        // Convert raw TIP byte to a valid TransactionState.
+        static auto decodeTipState(uint8_t tip_state, TransactionState &state_out) -> bool;
+
+        static auto snapshotHasActiveXid(const TransactionSnapshot &snapshot, uint64_t xid)
+            -> bool;
 
         // Group commit methods
         // LOCKING: No locks required (performs batch TIP writes via writeTipEntry()).

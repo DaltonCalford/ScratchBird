@@ -31,6 +31,7 @@
 #include "scratchbird/core/index_params.h"
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <array>
 #include <cstring>
 
 namespace scratchbird
@@ -39,6 +40,150 @@ namespace core
 {
 
 namespace {
+
+using IndexType = CatalogManager::IndexType;
+using IndexCaps = IndexFactory::IndexFamilyCapabilities;
+using IndexStorageModel = IndexFactory::IndexStorageModel;
+using IndexRuntimeClass = IndexFactory::IndexRuntimeClass;
+
+constexpr std::array<IndexCaps, 57> kIndexFamilyRegistry = {{
+    {IndexType::BTREE, "BTREE", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::BTREE,
+     true, true, true, false, false, false, false, true},
+    {IndexType::HASH, "HASH", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::HASH,
+     true, true, true, false, false, false, false, true},
+    {IndexType::HNSW, "HNSW", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::HNSW,
+     true, true, true, false, true, true, false, false},
+    {IndexType::FULLTEXT, "FULLTEXT", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::INVERTED,
+     true, true, true, false, true, false, false, false},
+    {IndexType::GIN, "GIN", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::GIN,
+     true, true, true, false, false, false, false, true},
+    {IndexType::GIST, "GIST", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::GIST,
+     true, true, true, false, true, false, false, false},
+    {IndexType::BRIN, "BRIN", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::BRIN,
+     true, true, true, false, true, false, true, false},
+    {IndexType::RTREE, "RTREE", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::RTREE,
+     true, true, true, false, true, false, false, false},
+    {IndexType::SPGIST, "SPGIST", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::SPGIST,
+     true, true, true, false, true, false, false, false},
+    {IndexType::BITMAP, "BITMAP", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::BITMAP,
+     true, true, true, false, false, false, false, false},
+    {IndexType::COLUMNSTORE, "COLUMNSTORE", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::COLUMNSTORE,
+     true, true, true, false, false, false, false, false},
+    {IndexType::LSM, "LSM", IndexStorageModel::FILE_BASED, IndexRuntimeClass::LSM,
+     true, true, true, true, false, false, false, false},
+    {IndexType::IVF, "IVF", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::HNSW,
+     true, true, true, false, true, true, false, false},
+    {IndexType::ART, "ART", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::BTREE,
+     true, true, true, false, false, false, false, true},
+    {IndexType::BLOOM, "BLOOM", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::BRIN,
+     true, true, true, false, true, false, true, false},
+    {IndexType::VECTOR_FLAT, "VECTOR_FLAT", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::HNSW,
+     true, true, true, false, true, true, false, false},
+    {IndexType::VECTOR_BIN_FLAT, "VECTOR_BIN_FLAT", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::HNSW,
+     true, true, true, false, true, true, false, false},
+    {IndexType::IVF_FLAT, "IVF_FLAT", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::HNSW,
+     true, true, true, false, true, true, false, false},
+    {IndexType::BIN_IVF_FLAT, "BIN_IVF_FLAT", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::HNSW,
+     true, true, true, false, true, true, false, false},
+    {IndexType::IVF_PQ, "IVF_PQ", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::HNSW,
+     true, true, true, false, true, true, false, false},
+    {IndexType::IVF_SQ8, "IVF_SQ8", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::HNSW,
+     true, true, true, false, true, true, false, false},
+    {IndexType::IVF_SQ8_HYBRID, "IVF_SQ8_HYBRID", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::HNSW,
+     true, true, true, false, true, true, false, false},
+    {IndexType::RHNSW_PQ, "RHNSW_PQ", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::HNSW,
+     true, true, true, false, true, true, false, false},
+    {IndexType::RHNSW_SQ, "RHNSW_SQ", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::HNSW,
+     true, true, true, false, true, true, false, false},
+    {IndexType::ANNOY, "ANNOY", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::HNSW,
+     true, true, true, false, true, true, false, false},
+    {IndexType::NSG, "NSG", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::HNSW,
+     true, true, true, false, true, true, false, false},
+    {IndexType::DISKANN, "DISKANN", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::HNSW,
+     true, true, true, false, true, true, false, false},
+    {IndexType::SCANN, "SCANN", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::HNSW,
+     true, true, true, false, true, true, false, false},
+    {IndexType::GPU_CAGRA, "GPU_CAGRA", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::HNSW,
+     true, true, true, false, true, true, false, false},
+    {IndexType::MINHASH_LSH, "MINHASH_LSH", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::INVERTED,
+     true, true, true, false, false, false, false, false},
+    {IndexType::SPARSE_INVERTED, "SPARSE_INVERTED", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::INVERTED,
+     true, true, true, false, false, false, false, false},
+    {IndexType::SPARSE_WAND, "SPARSE_WAND", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::INVERTED,
+     true, true, true, false, false, false, false, false},
+    {IndexType::TRIE, "TRIE", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::INVERTED,
+     true, true, true, false, false, false, false, false},
+    {IndexType::NGRAM, "NGRAM", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::INVERTED,
+     true, true, true, false, false, false, false, false},
+    {IndexType::MONGODB_2D, "MONGODB_2D", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::RTREE,
+     true, true, true, false, true, false, false, false},
+    {IndexType::MONGODB_2DSPHERE, "MONGODB_2DSPHERE", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::RTREE,
+     true, true, true, false, true, false, false, false},
+    {IndexType::MONGODB_2DSPHERE_BUCKET, "MONGODB_2DSPHERE_BUCKET", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::RTREE,
+     true, true, true, false, true, false, false, false},
+    {IndexType::MONGODB_GEO_HAYSTACK, "MONGODB_GEO_HAYSTACK", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::BTREE,
+     true, true, true, false, true, false, false, true},
+    {IndexType::MONGODB_WILDCARD, "MONGODB_WILDCARD", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::INVERTED,
+     true, true, true, false, true, false, false, false},
+    {IndexType::MONGODB_ENCRYPTED_RANGE, "MONGODB_ENCRYPTED_RANGE", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::INVERTED,
+     true, true, true, false, true, false, false, false},
+    {IndexType::NEO4J_LOOKUP, "NEO4J_LOOKUP", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::BITMAP,
+     true, true, true, false, true, false, false, false},
+    {IndexType::NEO4J_TEXT, "NEO4J_TEXT", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::INVERTED,
+     true, true, true, false, true, false, false, false},
+    {IndexType::NEO4J_RANGE, "NEO4J_RANGE", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::BTREE,
+     true, true, true, false, true, false, false, true},
+    {IndexType::NEO4J_POINT, "NEO4J_POINT", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::BTREE,
+     true, true, true, false, true, false, false, true},
+    {IndexType::NEO4J_VECTOR, "NEO4J_VECTOR", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::HNSW,
+     true, true, true, false, true, true, false, false},
+    {IndexType::CASSANDRA_SASI, "CASSANDRA_SASI", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::INVERTED,
+     true, true, true, false, true, false, false, false},
+    {IndexType::CASSANDRA_SAI, "CASSANDRA_SAI", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::INVERTED,
+     true, true, true, false, true, false, false, false},
+    {IndexType::REDIS_STRING, "REDIS_STRING", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::HASH,
+     true, true, true, false, true, false, false, false},
+    {IndexType::REDIS_HASH, "REDIS_HASH", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::HASH,
+     true, true, true, false, true, false, false, false},
+    {IndexType::REDIS_LIST, "REDIS_LIST", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::BTREE,
+     true, true, true, false, true, false, false, true},
+    {IndexType::REDIS_SET, "REDIS_SET", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::HASH,
+     true, true, true, false, true, false, false, false},
+    {IndexType::REDIS_ZSET, "REDIS_ZSET", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::BTREE,
+     true, true, true, false, true, false, false, true},
+    {IndexType::REDIS_STREAM, "REDIS_STREAM", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::BTREE,
+     true, true, true, false, true, false, false, true},
+    {IndexType::REDIS_BITMAP, "REDIS_BITMAP", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::BITMAP,
+     true, true, true, false, true, false, false, false},
+    {IndexType::REDIS_HLL, "REDIS_HLL", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::HASH,
+     true, true, true, false, true, false, false, false},
+    {IndexType::REDIS_GEO, "REDIS_GEO", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::RTREE,
+     true, true, true, false, true, false, false, false},
+    {IndexType::ZONEMAP, "ZONEMAP", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::BRIN,
+     true, true, true, false, true, false, true, false}
+}};
+
+const IndexCaps *findIndexCaps(IndexType index_type)
+{
+    for (const auto &caps : kIndexFamilyRegistry)
+    {
+        if (caps.index_type == index_type)
+        {
+            return &caps;
+        }
+    }
+    return nullptr;
+}
+
+std::string indexTypeDebugString(IndexType index_type)
+{
+    const IndexCaps *caps = findIndexCaps(index_type);
+    if (caps)
+    {
+        return caps->canonical_name;
+    }
+    return std::to_string(static_cast<uint8_t>(index_type));
+}
 
 bool isZeroId(const ID& id)
 {
@@ -212,6 +357,17 @@ Status getVectorDimensions(Database* db,
 
 } // anonymous namespace
 
+const IndexFactory::IndexFamilyCapabilities *IndexFactory::lookupCapabilities(
+    CatalogManager::IndexType index_type)
+{
+    return findIndexCaps(index_type);
+}
+
+std::vector<IndexFactory::IndexFamilyCapabilities> IndexFactory::listCapabilities()
+{
+    return std::vector<IndexFamilyCapabilities>(kIndexFamilyRegistry.begin(), kIndexFamilyRegistry.end());
+}
+
 Status IndexFactory::createIndex(
     CatalogManager::IndexType index_type,
     Database *db,
@@ -227,9 +383,59 @@ Status IndexFactory::createIndex(
 
     *index_out = nullptr;
 
-    switch (index_type)
+    const IndexFamilyCapabilities *caps = lookupCapabilities(index_type);
+    if (!caps)
     {
-        case CatalogManager::IndexType::BTREE:
+        std::string error_msg = "IndexFactory type not registered: " +
+            std::to_string(static_cast<uint8_t>(index_type));
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, error_msg.c_str());
+        return Status::INVALID_ARGUMENT;
+    }
+    if (!caps->supports_create)
+    {
+        std::string error_msg = "IndexFactory create not supported for type: " + std::string(caps->canonical_name);
+        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, error_msg.c_str());
+        return Status::NOT_IMPLEMENTED;
+    }
+    if (caps->requires_primary_tablespace && index_info.tablespace_id != PRIMARY_TABLESPACE_ID)
+    {
+        std::string error_msg = std::string(caps->canonical_name) +
+            " indexes only supported in primary tablespace";
+        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, error_msg.c_str());
+        return Status::NOT_IMPLEMENTED;
+    }
+    if (caps->requires_indexed_columns && index_info.column_ids.empty())
+    {
+        std::string error_msg = std::string(caps->canonical_name) + " index requires at least one column";
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, error_msg.c_str());
+        return Status::INVALID_ARGUMENT;
+    }
+
+    uint32_t vector_dimensions = 0;
+    if (caps->requires_vector_dimensions)
+    {
+        Status status = getVectorDimensions(
+            db, index_info.table_id, index_info.column_ids[0], &vector_dimensions, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    uint16_t brin_value_type = 0;
+    if (caps->requires_column_datatype)
+    {
+        Status status = getColumnDataType(
+            db, index_info.table_id, index_info.column_ids[0], &brin_value_type, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    switch (caps->runtime_class)
+    {
+        case IndexRuntimeClass::BTREE:
         {
             // B-Tree uses page-based storage
             // Create new B-Tree index
@@ -255,19 +461,16 @@ Status IndexFactory::createIndex(
             }
 
             *index_out = btree.release();  // Transfer ownership to caller
-            attachBloomFilterIfConfigured(index_type, *index_out, db, index_info, ctx);
+            if (caps->supports_bloom_attach)
+            {
+                attachBloomFilterIfConfigured(index_type, *index_out, db, index_info, ctx);
+            }
             return Status::OK;
         }
 
-        case CatalogManager::IndexType::LSM:
+        case IndexRuntimeClass::LSM:
         {
             // LSM-Tree uses file-based storage
-            if (index_info.tablespace_id != PRIMARY_TABLESPACE_ID)
-            {
-                SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-                                 "LSM indexes only supported in primary tablespace");
-                return Status::NOT_IMPLEMENTED;
-            }
             std::string index_path = generateIndexPath(db->path(), index_info.index_id, index_type);
 
             // Ensure base indexes directory exists
@@ -312,11 +515,10 @@ Status IndexFactory::createIndex(
             }
 
             *index_out = static_cast<void*>(lsm);
-            attachBloomFilterIfConfigured(index_type, *index_out, db, index_info, ctx);
             return Status::OK;
         }
 
-        case CatalogManager::IndexType::HASH:
+        case IndexRuntimeClass::HASH:
         {
             // Hash index - page-based storage
             Status status = HashIndex::create(
@@ -339,11 +541,14 @@ Status IndexFactory::createIndex(
             }
 
             *index_out = hash.release();
-            attachBloomFilterIfConfigured(index_type, *index_out, db, index_info, ctx);
+            if (caps->supports_bloom_attach)
+            {
+                attachBloomFilterIfConfigured(index_type, *index_out, db, index_info, ctx);
+            }
             return Status::OK;
         }
 
-        case CatalogManager::IndexType::GIN:
+        case IndexRuntimeClass::GIN:
         {
             // GIN index - page-based storage
             Status status = GinIndex::create(
@@ -366,11 +571,14 @@ Status IndexFactory::createIndex(
             }
 
             *index_out = gin.release();
-            attachBloomFilterIfConfigured(index_type, *index_out, db, index_info, ctx);
+            if (caps->supports_bloom_attach)
+            {
+                attachBloomFilterIfConfigured(index_type, *index_out, db, index_info, ctx);
+            }
             return Status::OK;
         }
 
-        case CatalogManager::IndexType::BITMAP:
+        case IndexRuntimeClass::BITMAP:
         {
             // Bitmap index - page-based storage
             Status status = BitmapIndex::create(
@@ -393,11 +601,10 @@ Status IndexFactory::createIndex(
             }
 
             *index_out = bitmap.release();
-            attachBloomFilterIfConfigured(index_type, *index_out, db, index_info, ctx);
             return Status::OK;
         }
 
-        case CatalogManager::IndexType::RTREE:
+        case IndexRuntimeClass::RTREE:
         {
             // R-Tree spatial index - page-based storage
             // Use default max_entries from index_info or standard value
@@ -426,11 +633,10 @@ Status IndexFactory::createIndex(
             }
 
             *index_out = rtree.release();
-            attachBloomFilterIfConfigured(index_type, *index_out, db, index_info, ctx);
             return Status::OK;
         }
 
-        case CatalogManager::IndexType::COLUMNSTORE:
+        case IndexRuntimeClass::COLUMNSTORE:
         {
             // Columnstore - page-based storage with default segment size and RLE compression
             Status status = ColumnstoreIndex::create(
@@ -457,32 +663,17 @@ Status IndexFactory::createIndex(
             }
 
             *index_out = columnstore.release();
-            attachBloomFilterIfConfigured(index_type, *index_out, db, index_info, ctx);
             return Status::OK;
         }
 
-        case CatalogManager::IndexType::HNSW:
+        case IndexRuntimeClass::HNSW:
         {
-            // HNSW requires dimensions which must be determined from vector column type
-            if (index_info.column_ids.empty())
-            {
-                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "HNSW index requires at least one column");
-                return Status::INVALID_ARGUMENT;
-            }
-
-            uint32_t dimensions = 0;
-            Status status = getVectorDimensions(db, index_info.table_id, index_info.column_ids[0], &dimensions, ctx);
-            if (status != Status::OK)
-            {
-                return status;
-            }
-
-            status = HnswIndex::create(
+            Status status = HnswIndex::create(
                 db,
                 index_info.index_id,
                 index_info.table_id,
                 index_info.column_ids,
-                dimensions,
+                vector_dimensions,
                 DistanceMetric::EUCLIDEAN,  // Default distance metric
                 16,    // Default m (max connections)
                 200,   // Default ef_construction
@@ -499,85 +690,30 @@ Status IndexFactory::createIndex(
             auto hnsw = HnswIndex::open(db, index_info.index_id, index_info.root_gpid, ctx);
             if (!hnsw)
             {
-                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open newly created HNSW index");
+                std::string error_msg = "Failed to open newly created ";
+                error_msg += indexTypeDebugString(index_type);
+                error_msg += " index";
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, error_msg.c_str());
                 return Status::IO_ERROR;
             }
 
             *index_out = hnsw.release();
-            attachBloomFilterIfConfigured(index_type, *index_out, db, index_info, ctx);
             return Status::OK;
         }
 
-        case CatalogManager::IndexType::IVF:
+        case IndexRuntimeClass::BRIN:
         {
-            // IVF currently uses the HNSW backend for vector search.
-            if (index_info.column_ids.empty())
-            {
-                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "IVF index requires at least one column");
-                return Status::INVALID_ARGUMENT;
-            }
+            // BRIN and ZONEMAP share a common runtime. ZONEMAP uses smaller summary ranges.
+            const uint32_t range_size =
+                (index_type == CatalogManager::IndexType::ZONEMAP) ? 64 : 128;
 
-            uint32_t dimensions = 0;
-            Status status = getVectorDimensions(db, index_info.table_id, index_info.column_ids[0], &dimensions, ctx);
-            if (status != Status::OK)
-            {
-                return status;
-            }
-
-            status = HnswIndex::create(
+            Status status = BrinIndex::create(
                 db,
                 index_info.index_id,
                 index_info.table_id,
                 index_info.column_ids,
-                dimensions,
-                DistanceMetric::EUCLIDEAN,  // Default distance metric
-                16,    // Default m (max connections)
-                200,   // Default ef_construction
-                100,   // Default ef_search
-                index_info.root_gpid,
-                ctx);
-
-            if (status != Status::OK)
-            {
-                return status;
-            }
-
-            auto hnsw = HnswIndex::open(db, index_info.index_id, index_info.root_gpid, ctx);
-            if (!hnsw)
-            {
-                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open newly created IVF index");
-                return Status::IO_ERROR;
-            }
-
-            *index_out = hnsw.release();
-            attachBloomFilterIfConfigured(index_type, *index_out, db, index_info, ctx);
-            return Status::OK;
-        }
-
-        case CatalogManager::IndexType::BRIN:
-        {
-            // BRIN requires value_type (DataType enum) from indexed column
-            // Get the data type from the catalog
-            if (index_info.column_ids.empty())
-            {
-                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "BRIN index requires at least one column");
-                return Status::INVALID_ARGUMENT;
-            }
-
-            uint16_t value_type = 0;
-            Status status = getColumnDataType(db, index_info.table_id, index_info.column_ids[0], &value_type, ctx);
-            if (status != Status::OK)
-            {
-                return status;
-            }
-
-            status = BrinIndex::create(
-                db,
-                index_info.index_id,
-                index_info.table_id,
-                index_info.column_ids,
-                static_cast<uint8_t>(value_type),
-                128,  // Default range_size
+                static_cast<uint8_t>(brin_value_type),
+                range_size,
                 index_info.root_gpid,
                 ctx);
 
@@ -590,67 +726,20 @@ Status IndexFactory::createIndex(
             auto brin = BrinIndex::open(db, index_info.index_id, index_info.root_gpid, ctx);
             if (!brin)
             {
-                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open newly created BRIN index");
+                std::string error_msg = "Failed to open newly created ";
+                error_msg += indexTypeDebugString(index_type);
+                error_msg += " index";
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, error_msg.c_str());
                 return Status::IO_ERROR;
             }
 
             *index_out = brin.release();
-            attachBloomFilterIfConfigured(index_type, *index_out, db, index_info, ctx);
             return Status::OK;
         }
 
-        case CatalogManager::IndexType::ZONEMAP:
-        {
-            // Zone map uses BRIN-style range summaries under the hood.
-            if (index_info.column_ids.empty())
-            {
-                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "ZONEMAP index requires at least one column");
-                return Status::INVALID_ARGUMENT;
-            }
-
-            uint16_t value_type = 0;
-            Status status = getColumnDataType(db, index_info.table_id, index_info.column_ids[0], &value_type, ctx);
-            if (status != Status::OK)
-            {
-                return status;
-            }
-
-            status = BrinIndex::create(
-                db,
-                index_info.index_id,
-                index_info.table_id,
-                index_info.column_ids,
-                static_cast<uint8_t>(value_type),
-                64,  // Default extent size for zone maps
-                index_info.root_gpid,
-                ctx);
-
-            if (status != Status::OK)
-            {
-                return status;
-            }
-
-            auto brin = BrinIndex::open(db, index_info.index_id, index_info.root_gpid, ctx);
-            if (!brin)
-            {
-                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open newly created ZONEMAP index");
-                return Status::IO_ERROR;
-            }
-
-            *index_out = brin.release();
-            attachBloomFilterIfConfigured(index_type, *index_out, db, index_info, ctx);
-            return Status::OK;
-        }
-
-        case CatalogManager::IndexType::GIST:
+        case IndexRuntimeClass::GIST:
         {
             // GiST index with default operator class
-            if (index_info.column_ids.empty())
-            {
-                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "GiST index requires at least one column");
-                return Status::INVALID_ARGUMENT;
-            }
-
             // Get default operator class (ID 0)
             auto& registry = GiSTOperatorClassRegistry::instance();
             auto opclass = registry.getOperatorClass(0);
@@ -684,19 +773,12 @@ Status IndexFactory::createIndex(
             }
 
             *index_out = gist.release();
-            attachBloomFilterIfConfigured(index_type, *index_out, db, index_info, ctx);
             return Status::OK;
         }
 
-        case CatalogManager::IndexType::SPGIST:
+        case IndexRuntimeClass::SPGIST:
         {
             // SP-GiST index with default operator class
-            if (index_info.column_ids.empty())
-            {
-                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "SP-GiST index requires at least one column");
-                return Status::INVALID_ARGUMENT;
-            }
-
             // Get default operator class (ID 0)
             auto& registry = SPGiSTOperatorClassRegistry::instance();
             auto opclass = registry.getOperatorClass(0);
@@ -730,19 +812,12 @@ Status IndexFactory::createIndex(
             }
 
             *index_out = spgist.release();
-            attachBloomFilterIfConfigured(index_type, *index_out, db, index_info, ctx);
             return Status::OK;
         }
 
-        case CatalogManager::IndexType::FULLTEXT:
+        case IndexRuntimeClass::INVERTED:
         {
             // FULLTEXT index - standalone inverted index
-            if (index_info.column_ids.empty())
-            {
-                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "FULLTEXT index requires at least one column");
-                return Status::INVALID_ARGUMENT;
-            }
-
             InvertedIndexConfig config;
             Status status = InvertedIndex::create(
                 db,
@@ -768,15 +843,15 @@ Status IndexFactory::createIndex(
             }
 
             *index_out = inverted.release();
-            attachBloomFilterIfConfigured(index_type, *index_out, db, index_info, ctx);
             return Status::OK;
         }
 
         default:
         {
-            std::string error_msg = "Unknown index type: " + std::to_string(static_cast<uint8_t>(index_type));
-            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, error_msg.c_str());
-            return Status::INVALID_ARGUMENT;
+            std::string error_msg = "IndexFactory runtime class not implemented for type: " +
+                indexTypeDebugString(index_type);
+            SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, error_msg.c_str());
+            return Status::NOT_IMPLEMENTED;
         }
     }
 }
@@ -796,9 +871,37 @@ Status IndexFactory::openIndex(
 
     *index_out = nullptr;
 
-    switch (index_type)
+    const IndexFamilyCapabilities *caps = lookupCapabilities(index_type);
+    if (!caps)
     {
-        case CatalogManager::IndexType::BTREE:
+        std::string error_msg = "IndexFactory type not registered: " +
+            std::to_string(static_cast<uint8_t>(index_type));
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, error_msg.c_str());
+        return Status::INVALID_ARGUMENT;
+    }
+    if (!caps->supports_open)
+    {
+        std::string error_msg = "IndexFactory open not supported for type: " + std::string(caps->canonical_name);
+        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, error_msg.c_str());
+        return Status::NOT_IMPLEMENTED;
+    }
+    if (caps->requires_primary_tablespace && index_info.tablespace_id != PRIMARY_TABLESPACE_ID)
+    {
+        std::string error_msg = std::string(caps->canonical_name) +
+            " indexes only supported in primary tablespace";
+        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, error_msg.c_str());
+        return Status::NOT_IMPLEMENTED;
+    }
+    if (caps->requires_indexed_columns && index_info.column_ids.empty())
+    {
+        std::string error_msg = std::string(caps->canonical_name) + " index requires at least one column";
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, error_msg.c_str());
+        return Status::INVALID_ARGUMENT;
+    }
+
+    switch (caps->runtime_class)
+    {
+        case IndexRuntimeClass::BTREE:
         {
             // Open existing B-Tree
             auto btree = BTree::open(db, index_info.index_id, index_info.root_gpid, ctx);
@@ -812,15 +915,9 @@ Status IndexFactory::openIndex(
             return Status::OK;
         }
 
-        case CatalogManager::IndexType::LSM:
+        case IndexRuntimeClass::LSM:
         {
             // Open existing LSM-Tree
-            if (index_info.tablespace_id != PRIMARY_TABLESPACE_ID)
-            {
-                SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED,
-                                 "LSM indexes only supported in primary tablespace");
-                return Status::NOT_IMPLEMENTED;
-            }
             std::string index_path = generateIndexPath(db->path(), index_info.index_id, index_type);
 
             auto *lsm = new LSMTreeIndex(
@@ -841,7 +938,7 @@ Status IndexFactory::openIndex(
             return Status::OK;
         }
 
-        case CatalogManager::IndexType::HASH:
+        case IndexRuntimeClass::HASH:
         {
             // Open existing Hash index
             auto hash = HashIndex::open(db, index_info.index_id, index_info.root_gpid, ctx);
@@ -855,7 +952,7 @@ Status IndexFactory::openIndex(
             return Status::OK;
         }
 
-        case CatalogManager::IndexType::GIN:
+        case IndexRuntimeClass::GIN:
         {
             // Open existing GIN index
             auto gin = GinIndex::open(db, index_info.index_id, index_info.root_gpid, ctx);
@@ -869,7 +966,7 @@ Status IndexFactory::openIndex(
             return Status::OK;
         }
 
-        case CatalogManager::IndexType::BITMAP:
+        case IndexRuntimeClass::BITMAP:
         {
             // Open existing Bitmap index
             auto bitmap = BitmapIndex::open(db, index_info.index_id, index_info.root_gpid, ctx);
@@ -883,7 +980,7 @@ Status IndexFactory::openIndex(
             return Status::OK;
         }
 
-        case CatalogManager::IndexType::RTREE:
+        case IndexRuntimeClass::RTREE:
         {
             // Open existing R-Tree index with max_entries from IndexInfo
             uint32_t max_entries = index_info.rtree_max_entries;
@@ -898,7 +995,7 @@ Status IndexFactory::openIndex(
             return Status::OK;
         }
 
-        case CatalogManager::IndexType::COLUMNSTORE:
+        case IndexRuntimeClass::COLUMNSTORE:
         {
             // Open existing Columnstore index with default segment size
             auto columnstore = ColumnstoreIndex::open(db, index_info.index_id, index_info.root_gpid, 1024, ctx);
@@ -912,13 +1009,16 @@ Status IndexFactory::openIndex(
             return Status::OK;
         }
 
-        case CatalogManager::IndexType::HNSW:
+        case IndexRuntimeClass::HNSW:
         {
-            // HNSW open is simple but creation requires dimensions
+            // HNSW and IVF currently share the same runtime backend.
             auto hnsw = HnswIndex::open(db, index_info.index_id, index_info.root_gpid, ctx);
             if (!hnsw)
             {
-                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open HNSW index");
+                std::string error_msg = "Failed to open ";
+                error_msg += indexTypeDebugString(index_type);
+                error_msg += " index";
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, error_msg.c_str());
                 return Status::IO_ERROR;
             }
 
@@ -926,27 +1026,16 @@ Status IndexFactory::openIndex(
             return Status::OK;
         }
 
-        case CatalogManager::IndexType::IVF:
+        case IndexRuntimeClass::BRIN:
         {
-            // IVF currently uses the HNSW backend.
-            auto hnsw = HnswIndex::open(db, index_info.index_id, index_info.root_gpid, ctx);
-            if (!hnsw)
-            {
-                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open IVF index");
-                return Status::IO_ERROR;
-            }
-
-            *index_out = hnsw.release();
-            return Status::OK;
-        }
-
-        case CatalogManager::IndexType::BRIN:
-        {
-            // BRIN open is simple but creation requires value_type
+            // BRIN and ZONEMAP share the BRIN runtime backend.
             auto brin = BrinIndex::open(db, index_info.index_id, index_info.root_gpid, ctx);
             if (!brin)
             {
-                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open BRIN index");
+                std::string error_msg = "Failed to open ";
+                error_msg += indexTypeDebugString(index_type);
+                error_msg += " index";
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, error_msg.c_str());
                 return Status::IO_ERROR;
             }
 
@@ -954,21 +1043,7 @@ Status IndexFactory::openIndex(
             return Status::OK;
         }
 
-        case CatalogManager::IndexType::ZONEMAP:
-        {
-            // ZONEMAP currently uses the BRIN backend.
-            auto brin = BrinIndex::open(db, index_info.index_id, index_info.root_gpid, ctx);
-            if (!brin)
-            {
-                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open ZONEMAP index");
-                return Status::IO_ERROR;
-            }
-
-            *index_out = brin.release();
-            return Status::OK;
-        }
-
-        case CatalogManager::IndexType::GIST:
+        case IndexRuntimeClass::GIST:
         {
             // Open existing GiST index with default operator class
             auto& registry = GiSTOperatorClassRegistry::instance();
@@ -991,7 +1066,7 @@ Status IndexFactory::openIndex(
             return Status::OK;
         }
 
-        case CatalogManager::IndexType::SPGIST:
+        case IndexRuntimeClass::SPGIST:
         {
             // Open existing SP-GiST index with default operator class
             auto& registry = SPGiSTOperatorClassRegistry::instance();
@@ -1014,14 +1089,9 @@ Status IndexFactory::openIndex(
             return Status::OK;
         }
 
-        case CatalogManager::IndexType::FULLTEXT:
+        case IndexRuntimeClass::INVERTED:
         {
             // Open existing FULLTEXT index
-            if (index_info.column_ids.empty())
-            {
-                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "FULLTEXT index requires at least one column");
-                return Status::INVALID_ARGUMENT;
-            }
             auto inverted = InvertedIndex::open(db, index_info.index_id, index_info.table_id,
                                                index_info.column_ids.front(), index_info.root_gpid, ctx);
             if (!inverted)
@@ -1036,9 +1106,10 @@ Status IndexFactory::openIndex(
 
         default:
         {
-            std::string error_msg = "Unknown index type: " + std::to_string(static_cast<uint8_t>(index_type));
-            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, error_msg.c_str());
-            return Status::INVALID_ARGUMENT;
+            std::string error_msg = "IndexFactory runtime class not implemented for type: " +
+                indexTypeDebugString(index_type);
+            SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, error_msg.c_str());
+            return Status::NOT_IMPLEMENTED;
         }
     }
 }
@@ -1053,16 +1124,31 @@ Status IndexFactory::closeIndex(
         return Status::OK;  // Already closed/null
     }
 
-    switch (index_type)
+    const IndexFamilyCapabilities *caps = lookupCapabilities(index_type);
+    if (!caps)
     {
-        case CatalogManager::IndexType::BTREE:
+        std::string error_msg = "IndexFactory type not registered: " +
+            std::to_string(static_cast<uint8_t>(index_type));
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, error_msg.c_str());
+        return Status::INVALID_ARGUMENT;
+    }
+    if (!caps->supports_close)
+    {
+        std::string error_msg = "IndexFactory close not supported for type: " + std::string(caps->canonical_name);
+        SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, error_msg.c_str());
+        return Status::NOT_IMPLEMENTED;
+    }
+
+    switch (caps->runtime_class)
+    {
+        case IndexRuntimeClass::BTREE:
         {
             auto *btree = static_cast<BTree*>(index_ptr);
             delete btree;
             return Status::OK;
         }
 
-        case CatalogManager::IndexType::LSM:
+        case IndexRuntimeClass::LSM:
         {
             auto *lsm = static_cast<LSMTreeIndex*>(index_ptr);
             Status status = lsm->close(ctx);
@@ -1070,84 +1156,70 @@ Status IndexFactory::closeIndex(
             return status;
         }
 
-        case CatalogManager::IndexType::HASH:
+        case IndexRuntimeClass::HASH:
         {
             auto *hash = static_cast<HashIndex*>(index_ptr);
             delete hash;
             return Status::OK;
         }
 
-        case CatalogManager::IndexType::HNSW:
+        case IndexRuntimeClass::HNSW:
         {
             auto *hnsw = static_cast<HnswIndex*>(index_ptr);
             delete hnsw;
             return Status::OK;
         }
 
-        case CatalogManager::IndexType::IVF:
-        {
-            auto *hnsw = static_cast<HnswIndex*>(index_ptr);
-            delete hnsw;
-            return Status::OK;
-        }
-
-        case CatalogManager::IndexType::GIN:
+        case IndexRuntimeClass::GIN:
         {
             auto *gin = static_cast<GinIndex*>(index_ptr);
             delete gin;
             return Status::OK;
         }
 
-        case CatalogManager::IndexType::BRIN:
+        case IndexRuntimeClass::BRIN:
         {
             auto *brin = static_cast<BrinIndex*>(index_ptr);
             delete brin;
             return Status::OK;
         }
 
-        case CatalogManager::IndexType::ZONEMAP:
-        {
-            auto *brin = static_cast<BrinIndex*>(index_ptr);
-            delete brin;
-            return Status::OK;
-        }
-
-        case CatalogManager::IndexType::RTREE:
+        case IndexRuntimeClass::RTREE:
         {
             auto *rtree = static_cast<RTree*>(index_ptr);
             delete rtree;
             return Status::OK;
         }
 
-        case CatalogManager::IndexType::BITMAP:
+        case IndexRuntimeClass::BITMAP:
         {
             auto *bitmap = static_cast<BitmapIndex*>(index_ptr);
             delete bitmap;
             return Status::OK;
         }
 
-        case CatalogManager::IndexType::COLUMNSTORE:
+        case IndexRuntimeClass::COLUMNSTORE:
         {
             auto *columnstore = static_cast<ColumnstoreIndex*>(index_ptr);
             delete columnstore;
             return Status::OK;
         }
 
-        case CatalogManager::IndexType::GIST:
+        case IndexRuntimeClass::GIST:
         {
             auto *gist = static_cast<GiSTIndex*>(index_ptr);
             delete gist;
             return Status::OK;
         }
 
-        case CatalogManager::IndexType::SPGIST:
+        case IndexRuntimeClass::SPGIST:
         {
             auto *spgist = static_cast<SPGiSTIndex*>(index_ptr);
             delete spgist;
             return Status::OK;
         }
 
-        case CatalogManager::IndexType::FULLTEXT:
+        case IndexRuntimeClass::INVERTED:
         {
             auto *inverted = static_cast<InvertedIndex*>(index_ptr);
             delete inverted;
@@ -1155,7 +1227,12 @@ Status IndexFactory::closeIndex(
         }
 
         default:
-            return Status::OK;
+        {
+            std::string error_msg = "IndexFactory runtime class not implemented for type: " +
+                indexTypeDebugString(index_type);
+            SET_ERROR_CONTEXT(ctx, Status::NOT_IMPLEMENTED, error_msg.c_str());
+            return Status::NOT_IMPLEMENTED;
+        }
     }
 }
 
@@ -1165,8 +1242,8 @@ std::string IndexFactory::generateIndexPath(
     CatalogManager::IndexType index_type)
 {
     // File-based indexes need directory paths
-    if (index_type == CatalogManager::IndexType::LSM ||
-        index_type == CatalogManager::IndexType::COLUMNSTORE)
+    const IndexFamilyCapabilities *caps = lookupCapabilities(index_type);
+    if (caps && caps->storage_model == IndexStorageModel::FILE_BASED)
     {
         // Extract directory from database path
         size_t last_slash = db_path.find_last_of("/\\");

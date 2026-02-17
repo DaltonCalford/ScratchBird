@@ -18,6 +18,7 @@
 #include "scratchbird/core/config.h"
 #include "scratchbird/core/logger.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/index_factory.h"
 #include "scratchbird/core/index_gc_interface.h"
 #include "scratchbird/core/btree.h"
 #include "scratchbird/core/hash_index.h"
@@ -26,9 +27,9 @@
 #include "scratchbird/core/hnsw_index.h"
 #include "scratchbird/core/gist_index.h"
 #include "scratchbird/core/spgist_index.h"
-#include "scratchbird/core/rtree_index.h"
+#include "scratchbird/core/rtree.h"
 #include "scratchbird/core/bitmap_index.h"
-#include "scratchbird/core/fulltext_index.h"
+#include "scratchbird/core/inverted_index.h"
 #include "scratchbird/core/columnstore.h"
 #include "scratchbird/core/lsm_tree_index.h"
 #include "scratchbird/core/toast.h" // Phase 4: TOAST GC
@@ -86,6 +87,47 @@ namespace scratchbird::core
                 out.bytes[i] = static_cast<uint8_t>((hi << 4) | lo);
             }
             return true;
+        }
+    } // namespace
+    namespace
+    {
+        IndexGCInterface *asIndexGcInterface(void *index_ptr,
+                                             IndexFactory::IndexRuntimeClass runtime_class)
+        {
+            if (!index_ptr)
+            {
+                return nullptr;
+            }
+
+            switch (runtime_class)
+            {
+                case IndexFactory::IndexRuntimeClass::BTREE:
+                    return static_cast<BTree *>(index_ptr);
+                case IndexFactory::IndexRuntimeClass::HASH:
+                    return static_cast<HashIndex *>(index_ptr);
+                case IndexFactory::IndexRuntimeClass::LSM:
+                    return static_cast<LSMTreeIndex *>(index_ptr);
+                case IndexFactory::IndexRuntimeClass::GIN:
+                    return static_cast<GinIndex *>(index_ptr);
+                case IndexFactory::IndexRuntimeClass::GIST:
+                    return static_cast<GiSTIndex *>(index_ptr);
+                case IndexFactory::IndexRuntimeClass::BRIN:
+                    return static_cast<BrinIndex *>(index_ptr);
+                case IndexFactory::IndexRuntimeClass::RTREE:
+                    return static_cast<RTree *>(index_ptr);
+                case IndexFactory::IndexRuntimeClass::SPGIST:
+                    return static_cast<SPGiSTIndex *>(index_ptr);
+                case IndexFactory::IndexRuntimeClass::BITMAP:
+                    return static_cast<BitmapIndex *>(index_ptr);
+                case IndexFactory::IndexRuntimeClass::COLUMNSTORE:
+                    return static_cast<ColumnstoreIndex *>(index_ptr);
+                case IndexFactory::IndexRuntimeClass::HNSW:
+                    return static_cast<HnswIndex *>(index_ptr);
+                case IndexFactory::IndexRuntimeClass::INVERTED:
+                    return static_cast<InvertedIndex *>(index_ptr);
+                default:
+                    return nullptr;
+            }
         }
     } // namespace
     namespace
@@ -982,11 +1024,6 @@ namespace scratchbird::core
 
         for (const auto &table : tables)
         {
-            // Simple heuristic: assume pages are allocated sequentially for each table
-            // In a real system, we'd check the FSM or maintain explicit ownership records
-            // For now, we'll try to clean indexes for ALL tables (conservative approach)
-            // This ensures we don't miss any indexes, at the cost of some wasted work
-
             // Get indexes for this table
             std::vector<CatalogManager::IndexInfo> indexes;
             status = catalog->listIndexesForTable(table.table_id, indexes, ctx, false);
@@ -1007,156 +1044,54 @@ namespace scratchbird::core
             // even if the TIDs don't belong to this table's indexes
             for (const auto &index_info : indexes)
             {
-                // Open the index based on its type
+                void *index_handle = nullptr;
                 IndexGCInterface *index = nullptr;
-                std::unique_ptr<BTree> btree;
-                std::unique_ptr<HashIndex> hash_index;
-                std::unique_ptr<GinIndex> gin_index;
-                std::unique_ptr<BrinIndex> brin_index;
-                std::unique_ptr<HnswIndex> hnsw_index;
-                std::unique_ptr<GiSTIndex> gist_index;
-                std::unique_ptr<SPGiSTIndex> spgist_index;
-                std::unique_ptr<RTreeIndex> rtree_index;
-                std::unique_ptr<BitmapIndex> bitmap_index;
-                std::unique_ptr<FullTextIndex> fulltext_index;
-                std::unique_ptr<ColumnstoreIndex> columnstore_index;
-                std::unique_ptr<LSMTreeIndex> lsm_index;
 
-                switch (index_info.index_type)
+                auto closeIndexHandle = [&]() {
+                    if (!index_handle)
+                    {
+                        return;
+                    }
+
+                    ErrorContext close_ctx;
+                    Status close_status =
+                        IndexFactory::closeIndex(index_info.index_type, index_handle, &close_ctx);
+                    if (close_status != Status::OK)
+                    {
+                        LOG_WARNING(VACUUM, "Failed to close index %s after cleanup (status %d): %s",
+                                    index_info.index_name.c_str(), static_cast<int>(close_status),
+                                    close_ctx.message.c_str());
+                    }
+                    index_handle = nullptr;
+                };
+
+                Status open_status = IndexFactory::openIndex(
+                    index_info.index_type, db_, index_info, &index_handle, ctx);
+                if (open_status != Status::OK || !index_handle)
                 {
-                case CatalogManager::IndexType::BTREE:
-                    btree = BTree::open(db_, index_info.index_id, index_info.root_gpid, ctx);
-                    if (btree)
-                    {
-                        index = btree.get();
-                    }
-                    break;
-
-                case CatalogManager::IndexType::HASH:
-                    hash_index = HashIndex::open(db_, index_info.index_id, index_info.root_gpid, ctx);
-                    if (hash_index)
-                    {
-                        index = hash_index.get();
-                    }
-                    break;
-
-                case CatalogManager::IndexType::GIN:
-                    gin_index = GinIndex::open(db_, index_info.index_id, index_info.root_gpid, ctx);
-                    if (gin_index)
-                    {
-                        index = gin_index.get();
-                    }
-                    break;
-
-                case CatalogManager::IndexType::BRIN:
-                    // PHASE 4A.1.5: BRIN index support
-                    brin_index = BrinIndex::open(db_, index_info.index_id, index_info.root_gpid, ctx);
-                    if (brin_index)
-                    {
-                        index = brin_index.get();
-                    }
-                    break;
-
-                case CatalogManager::IndexType::ZONEMAP:
-                    // ZONEMAP uses BRIN backend
-                    brin_index = BrinIndex::open(db_, index_info.index_id, index_info.root_gpid, ctx);
-                    if (brin_index)
-                    {
-                        index = brin_index.get();
-                    }
-                    break;
-
-                case CatalogManager::IndexType::VECTOR:
-                    // PHASE 4A.2.6: HNSW (vector similarity) index support
-                    hnsw_index = HnswIndex::open(db_, index_info.index_id, index_info.root_gpid, ctx);
-                    if (hnsw_index)
-                    {
-                        index = hnsw_index.get();
-                    }
-                    break;
-
-                case CatalogManager::IndexType::IVF:
-                    // IVF uses HNSW backend
-                    hnsw_index = HnswIndex::open(db_, index_info.index_id, index_info.root_gpid, ctx);
-                    if (hnsw_index)
-                    {
-                        index = hnsw_index.get();
-                    }
-                    break;
-
-                case CatalogManager::IndexType::GIST:
-                    gist_index = GiSTIndex::open(db_, index_info.index_id, index_info.root_gpid, ctx);
-                    if (gist_index)
-                    {
-                        index = gist_index.get();
-                    }
-                    break;
-
-                case CatalogManager::IndexType::SPGIST:
-                    spgist_index = SPGiSTIndex::open(db_, index_info.index_id, index_info.root_gpid, ctx);
-                    if (spgist_index)
-                    {
-                        index = spgist_index.get();
-                    }
-                    break;
-
-                case CatalogManager::IndexType::RTREE:
-                    rtree_index = RTreeIndex::open(db_, index_info.index_id, index_info.root_gpid, ctx);
-                    if (rtree_index)
-                    {
-                        index = rtree_index.get();
-                    }
-                    break;
-
-                case CatalogManager::IndexType::BITMAP:
-                    bitmap_index = BitmapIndex::open(db_, index_info.index_id, index_info.root_gpid, ctx);
-                    if (bitmap_index)
-                    {
-                        index = bitmap_index.get();
-                    }
-                    break;
-
-                case CatalogManager::IndexType::FULLTEXT:
-                    fulltext_index = FullTextIndex::open(db_, index_info.index_id,
-                                                         index_info.table_id,
-                                                         index_info.column_ids,
-                                                         index_info.root_gpid,
-                                                         ctx);
-                    if (fulltext_index)
-                    {
-                        index = fulltext_index.get();
-                    }
-                    break;
-
-                case CatalogManager::IndexType::COLUMNSTORE:
-                    columnstore_index = ColumnstoreIndex::open(db_, index_info.index_id,
-                                                              index_info.root_gpid, 1024, ctx);
-                    if (columnstore_index)
-                    {
-                        index = columnstore_index.get();
-                    }
-                    break;
-
-                case CatalogManager::IndexType::LSM:
-                    lsm_index = LSMTreeIndex::open(db_, index_info.index_id,
-                                                   static_cast<uint32_t>(getPageNumber(index_info.root_gpid)),
-                                                   ctx);
-                    if (lsm_index)
-                    {
-                        index = lsm_index.get();
-                    }
-                    break;
-
-                default:
-                    LOG_WARNING(VACUUM, "Unsupported index type %d for index %s (GC not implemented)",
-                               static_cast<int>(index_info.index_type), index_info.index_name.c_str());
+                    LOG_WARNING(VACUUM, "Failed to open index %s for cleanup (status %d)",
+                                index_info.index_name.c_str(), static_cast<int>(open_status));
                     continue;
                 }
 
+                const auto *caps = IndexFactory::lookupCapabilities(index_info.index_type);
+                if (!caps)
+                {
+                    LOG_WARNING(VACUUM, "Missing capability metadata for index %s (type %d)",
+                                index_info.index_name.c_str(),
+                                static_cast<int>(index_info.index_type));
+                    closeIndexHandle();
+                    continue;
+                }
+
+                index = asIndexGcInterface(index_handle, caps->runtime_class);
                 if (!index)
                 {
-                    LOG_WARNING(VACUUM, "Failed to open index %s for cleanup",
-                               index_info.index_name.c_str());
+                    LOG_WARNING(VACUUM,
+                                "Runtime class %d for index %s does not implement GC cleanup",
+                                static_cast<int>(caps->runtime_class),
+                                index_info.index_name.c_str());
+                    closeIndexHandle();
                     continue;
                 }
 
@@ -1185,6 +1120,8 @@ namespace scratchbird::core
                                index->indexTypeName(), table.table_name.c_str(),
                                static_cast<int>(remove_status));
                 }
+
+                closeIndexHandle();
             }
         }
 

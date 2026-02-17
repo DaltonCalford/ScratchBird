@@ -11,6 +11,7 @@
 #include "scratchbird/core/types.h"
 #include "scratchbird/core/typed_value.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/config.h"
 
 using namespace scratchbird::core;
 
@@ -30,6 +31,29 @@ static TypedValue makeInt128Value(int128_t value)
     return TypedValue::makeInt128(int128ToBytes(value));
 }
 
+static void appendU16LE(std::vector<uint8_t>& out, uint16_t value)
+{
+    out.push_back(static_cast<uint8_t>(value & 0xFFu));
+    out.push_back(static_cast<uint8_t>((value >> 8) & 0xFFu));
+}
+
+static void appendU32LE(std::vector<uint8_t>& out, uint32_t value)
+{
+    out.push_back(static_cast<uint8_t>(value & 0xFFu));
+    out.push_back(static_cast<uint8_t>((value >> 8) & 0xFFu));
+    out.push_back(static_cast<uint8_t>((value >> 16) & 0xFFu));
+    out.push_back(static_cast<uint8_t>((value >> 24) & 0xFFu));
+}
+
+static void appendI64LE(std::vector<uint8_t>& out, int64_t value)
+{
+    uint64_t raw = static_cast<uint64_t>(value);
+    for (int i = 0; i < 8; ++i)
+    {
+        out.push_back(static_cast<uint8_t>((raw >> (i * 8)) & 0xFFu));
+    }
+}
+
 static Status convertValue(const TypedValue& src, DataType target, TypedValue& out, ErrorContext& ctx)
 {
     return src.convertTo(TypeInfo(target), out, CastFormat::DEFAULT, &ctx);
@@ -38,6 +62,12 @@ static Status convertValue(const TypedValue& src, DataType target, TypedValue& o
 class TypeConversionTest : public ::testing::Test {
 protected:
     ErrorContext ctx;
+
+    void SetUp() override
+    {
+        Config::getInstance().set("types", "coercion_context", "STRICT");
+        Config::getInstance().set("types", "decimal_rounding_mode", "HALF_EVEN");
+    }
 };
 
 // Test ARRAY to VARCHAR conversion (PostgreSQL format {1,2,3})
@@ -992,4 +1022,187 @@ TEST_F(TypeConversionTest, CastMatrix_BinaryToTimestamp_IsDatatypeMismatch) {
     Status status = convertValue(binary_val, DataType::TIMESTAMP, ts_val, ctx);
     EXPECT_EQ(status, Status::DATATYPE_MISMATCH);
     EXPECT_EQ(ctx.code, Status::DATATYPE_MISMATCH);
+}
+
+TEST_F(TypeConversionTest, VNextCoercion_INT256_To_DECIMAL256_Exact) {
+    std::vector<uint8_t> int256_payload(32, 0);
+    int256_payload[0] = 0x2A;
+    TypedValue int256(DataType::INT256);
+    ASSERT_EQ(int256.deserializePlainValue(int256_payload, &ctx), Status::OK) << ctx.message;
+
+    TypeInfo target(DataType::DECIMAL256);
+    target.precision = 76;
+    target.scale = 0;
+    TypedValue decimal256;
+    Status status = int256.convertTo(target, decimal256, CastFormat::DEFAULT, &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+    EXPECT_EQ(decimal256.type(), DataType::DECIMAL256);
+    EXPECT_EQ(decimal256.getDecimalScale(), 0u);
+    EXPECT_EQ(decimal256.getBinary(), int256_payload);
+}
+
+TEST_F(TypeConversionTest, VNextCoercion_UINT256_To_DECIMAL256_OverflowReject) {
+    std::vector<uint8_t> uint256_payload(32, 0);
+    uint256_payload[31] = 0x80; // >= 2^255, outside DECIMAL256 signed mantissa range.
+    TypedValue uint256(DataType::UINT256);
+    ASSERT_EQ(uint256.deserializePlainValue(uint256_payload, &ctx), Status::OK) << ctx.message;
+
+    TypeInfo target(DataType::DECIMAL256);
+    target.precision = 76;
+    target.scale = 0;
+    TypedValue decimal256;
+    Status status = uint256.convertTo(target, decimal256, CastFormat::DEFAULT, &ctx);
+    EXPECT_EQ(status, Status::NUMERIC_VALUE_OUT_OF_RANGE);
+    EXPECT_EQ(ctx.code, Status::NUMERIC_VALUE_OUT_OF_RANGE);
+}
+
+TEST_F(TypeConversionTest, VNextCoercion_DECIMAL256_To_INT256_StrictRejectsLossy) {
+    std::vector<uint8_t> dec_payload;
+    appendU16LE(dec_payload, 10u);
+    appendU16LE(dec_payload, 1u); // scale = 1 -> lossy to integer for 1.5
+    dec_payload.resize(4 + 32, 0);
+    dec_payload[4] = 15; // mantissa = 15 => 1.5
+
+    TypedValue decimal256(DataType::DECIMAL256);
+    ASSERT_EQ(decimal256.deserializePlainValue(dec_payload, &ctx), Status::OK) << ctx.message;
+
+    TypedValue int256;
+    Status status = decimal256.convertTo(TypeInfo(DataType::INT256), int256, CastFormat::DEFAULT, &ctx);
+    EXPECT_EQ(status, Status::DATATYPE_MISMATCH);
+    EXPECT_EQ(ctx.code, Status::DATATYPE_MISMATCH);
+}
+
+TEST_F(TypeConversionTest, VNextCoercion_DECIMAL256_To_INT256_PermissiveHalfUp) {
+    Config::getInstance().set("types", "coercion_context", "PERMISSIVE");
+    Config::getInstance().set("types", "decimal_rounding_mode", "HALF_UP");
+
+    std::vector<uint8_t> dec_payload;
+    appendU16LE(dec_payload, 10u);
+    appendU16LE(dec_payload, 1u); // scale = 1
+    dec_payload.resize(4 + 32, 0);
+    dec_payload[4] = 15; // 1.5 -> 2 in HALF_UP
+
+    TypedValue decimal256(DataType::DECIMAL256);
+    ASSERT_EQ(decimal256.deserializePlainValue(dec_payload, &ctx), Status::OK) << ctx.message;
+
+    TypedValue int256;
+    Status status = decimal256.convertTo(TypeInfo(DataType::INT256), int256, CastFormat::DEFAULT, &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+    ASSERT_EQ(int256.type(), DataType::INT256);
+    const auto& bytes = int256.getBinary();
+    ASSERT_EQ(bytes.size(), 32u);
+    EXPECT_EQ(bytes[0], 2u);
+    for (size_t i = 1; i < bytes.size(); ++i) {
+        EXPECT_EQ(bytes[i], 0u);
+    }
+}
+
+TEST_F(TypeConversionTest, VNextCoercion_INT256_To_UINT256_Rejected) {
+    std::vector<uint8_t> int256_payload(32, 0);
+    int256_payload[0] = 1;
+    TypedValue int256(DataType::INT256);
+    ASSERT_EQ(int256.deserializePlainValue(int256_payload, &ctx), Status::OK) << ctx.message;
+
+    TypedValue uint256;
+    Status status = int256.convertTo(TypeInfo(DataType::UINT256), uint256, CastFormat::DEFAULT, &ctx);
+    EXPECT_EQ(status, Status::DATATYPE_MISMATCH);
+    EXPECT_EQ(ctx.code, Status::DATATYPE_MISMATCH);
+}
+
+TEST_F(TypeConversionTest, VNextCoercion_UINT256_To_INT256_OverflowReject) {
+    std::vector<uint8_t> uint256_payload(32, 0);
+    uint256_payload[31] = 0xFF; // outside signed range
+    TypedValue uint256(DataType::UINT256);
+    ASSERT_EQ(uint256.deserializePlainValue(uint256_payload, &ctx), Status::OK) << ctx.message;
+
+    TypedValue int256;
+    Status status = uint256.convertTo(TypeInfo(DataType::INT256), int256, CastFormat::DEFAULT, &ctx);
+    EXPECT_EQ(status, Status::NUMERIC_VALUE_OUT_OF_RANGE);
+    EXPECT_EQ(ctx.code, Status::NUMERIC_VALUE_OUT_OF_RANGE);
+}
+
+TEST_F(TypeConversionTest, VNextCoercion_TIMESTAMP_NS_StrictRejectsLossyToTimestamp) {
+    std::vector<uint8_t> ns_payload;
+    appendI64LE(ns_payload, 1500); // 1.5us
+    TypedValue ts_ns(DataType::TIMESTAMP_NS);
+    ASSERT_EQ(ts_ns.deserializePlainValue(ns_payload, &ctx), Status::OK) << ctx.message;
+
+    TypedValue ts;
+    Status status = ts_ns.convertTo(TypeInfo(DataType::TIMESTAMP), ts, CastFormat::DEFAULT, &ctx);
+    EXPECT_EQ(status, Status::DATATYPE_MISMATCH);
+    EXPECT_EQ(ctx.code, Status::DATATYPE_MISMATCH);
+}
+
+TEST_F(TypeConversionTest, VNextCoercion_TIMESTAMP_NS_PermissiveHalfEvenToTimestamp) {
+    Config::getInstance().set("types", "coercion_context", "PERMISSIVE");
+    Config::getInstance().set("types", "decimal_rounding_mode", "HALF_EVEN");
+
+    std::vector<uint8_t> ns_payload;
+    appendI64LE(ns_payload, 1500); // 1.5us -> 2 with HALF_EVEN from odd quotient.
+    TypedValue ts_ns(DataType::TIMESTAMP_NS);
+    ASSERT_EQ(ts_ns.deserializePlainValue(ns_payload, &ctx), Status::OK) << ctx.message;
+
+    TypedValue ts;
+    Status status = ts_ns.convertTo(TypeInfo(DataType::TIMESTAMP), ts, CastFormat::DEFAULT, &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+    EXPECT_EQ(ts.type(), DataType::TIMESTAMP);
+    EXPECT_EQ(ts.getTimestamp(), 2);
+}
+
+TEST_F(TypeConversionTest, VNextCoercion_TAGGED_UNION_ScalarRoundTrip) {
+    TypedValue tagged;
+    Status status = convertValue(TypedValue::makeInt32(42), DataType::TAGGED_UNION, tagged, ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+    EXPECT_EQ(tagged.type(), DataType::TAGGED_UNION);
+
+    TypedValue back;
+    status = tagged.convertTo(TypeInfo(DataType::INT32), back, CastFormat::DEFAULT, &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+    EXPECT_EQ(back.getInt32(), 42);
+}
+
+TEST_F(TypeConversionTest, VNextCoercion_DICT_ENCODED_ScalarRoundTrip) {
+    TypedValue encoded;
+    Status status = convertValue(TypedValue::makeVarchar("dict-value"),
+                                 DataType::DICT_ENCODED, encoded, ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+    EXPECT_EQ(encoded.type(), DataType::DICT_ENCODED);
+
+    TypedValue decoded;
+    status = encoded.convertTo(TypeInfo(DataType::VARCHAR), decoded, CastFormat::DEFAULT, &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+    EXPECT_EQ(decoded.getVarchar(), "dict-value");
+}
+
+TEST_F(TypeConversionTest, VNextCoercion_COMPLETION_FIELD_RejectsObjectSource) {
+    std::vector<TypedValue> values = {TypedValue::makeInt32(1), TypedValue::makeInt32(2)};
+    auto array_val = TypedValue::makeArray(values);
+
+    TypedValue completion;
+    Status status = array_val.convertTo(TypeInfo(DataType::COMPLETION_FIELD),
+                                        completion, CastFormat::DEFAULT, &ctx);
+    EXPECT_EQ(status, Status::DATATYPE_MISMATCH);
+    EXPECT_EQ(ctx.code, Status::DATATYPE_MISMATCH);
+}
+
+TEST_F(TypeConversionTest, VNextCoercion_FLAT_OBJECT_ToJSON) {
+    std::vector<uint8_t> flat_payload;
+    appendU32LE(flat_payload, 1u); // pair_count
+    appendU32LE(flat_payload, 3u); // key len
+    flat_payload.push_back('f');
+    flat_payload.push_back('o');
+    flat_payload.push_back('o');
+    appendU16LE(flat_payload, static_cast<uint16_t>(DataType::INT32));
+    appendU32LE(flat_payload, 4u);
+    appendU32LE(flat_payload, 7u);
+
+    TypedValue flat(DataType::FLAT_OBJECT);
+    ASSERT_EQ(flat.deserializePlainValue(flat_payload, &ctx), Status::OK) << ctx.message;
+
+    TypedValue json_val;
+    Status status = flat.convertTo(TypeInfo(DataType::JSON), json_val, CastFormat::DEFAULT, &ctx);
+    ASSERT_EQ(status, Status::OK) << ctx.message;
+    const std::string json_text = json_val.toString();
+    EXPECT_NE(json_text.find("\"foo\""), std::string::npos);
+    EXPECT_NE(json_text.find("7"), std::string::npos);
 }

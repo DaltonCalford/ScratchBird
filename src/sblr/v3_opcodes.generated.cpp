@@ -750,6 +750,13 @@ static const std::unordered_map<uint16_t, const char*> kOpcodeNames = {
     {0x114A, "SBLR3_ST_WITHIN"},
     {0x1201, "SBLR3_CANCEL_JOB_RUN"},
     {0x1202, "SBLR3_EXECUTE_JOB"},
+    {0x6001, "SBLR3_OP_DOC_PATH_FILTER"},
+    {0x6002, "SBLR3_OP_TS_BUCKET_AGG"},
+    {0x6003, "SBLR3_OP_COL_SCAN"},
+    {0x6004, "SBLR3_OP_SEARCH_DSL_EVAL"},
+    {0x6005, "SBLR3_OP_VECTOR_ANN"},
+    {0x6006, "SBLR3_OP_HYBRID_BRIDGE_EXCHANGE"},
+    {0x6007, "SBLR3_OP_HYBRID_BRIDGE_MATERIALIZE"},
 };
 
 const char* opcodeName(uint16_t opcode) {

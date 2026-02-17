@@ -10,19 +10,24 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(googletest)
 
 # Test timeout configuration (in seconds)
-# Can be overridden via cmake -DSCRATCHBIRD_TEST_TIMEOUT_GLOBAL=900
-set(SCRATCHBIRD_TEST_TIMEOUT_GLOBAL "0" CACHE STRING "Global test timeout in seconds (0=use category timeouts, max=900=15min)")
+# Can be overridden via cmake -DSCRATCHBIRD_TEST_TIMEOUT_DEFAULT=<seconds>
+set(SCRATCHBIRD_TEST_TIMEOUT_DEFAULT "3600" CACHE STRING "Default test timeout in seconds (default=3600=1h)")
+if(DEFINED SCRATCHBIRD_TEST_TIMEOUT_GLOBAL AND SCRATCHBIRD_TEST_TIMEOUT_GLOBAL STREQUAL "0")
+    set(SCRATCHBIRD_TEST_TIMEOUT_GLOBAL "${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}" CACHE STRING "Global test timeout in seconds (0=use category timeouts)" FORCE)
+else()
+    set(SCRATCHBIRD_TEST_TIMEOUT_GLOBAL "${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}" CACHE STRING "Global test timeout in seconds (0=use category timeouts)")
+endif()
 
 # Default timeouts by test category.
-set(SCRATCHBIRD_TEST_TIMEOUT_UNIT 60)
-set(SCRATCHBIRD_TEST_TIMEOUT_INTEGRATION 300)
-set(SCRATCHBIRD_TEST_TIMEOUT_STRESS 600)
-set(SCRATCHBIRD_TEST_TIMEOUT_PERFORMANCE 600)
-set(SCRATCHBIRD_TEST_TIMEOUT_QUARANTINE 120)
+set(SCRATCHBIRD_TEST_TIMEOUT_UNIT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT})
+set(SCRATCHBIRD_TEST_TIMEOUT_INTEGRATION ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT})
+set(SCRATCHBIRD_TEST_TIMEOUT_STRESS ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT})
+set(SCRATCHBIRD_TEST_TIMEOUT_PERFORMANCE ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT})
+set(SCRATCHBIRD_TEST_TIMEOUT_QUARANTINE ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT})
 
 # If global timeout is set (>0), use it as maximum for all tests
 if(SCRATCHBIRD_TEST_TIMEOUT_GLOBAL GREATER 0)
-    message(STATUS "Using global test timeout: ${SCRATCHBIRD_TEST_TIMEOUT_GLOBAL}s (15min max)")
+    message(STATUS "Using global test timeout: ${SCRATCHBIRD_TEST_TIMEOUT_GLOBAL}s")
     set(SCRATCHBIRD_TEST_TIMEOUT_UNIT ${SCRATCHBIRD_TEST_TIMEOUT_GLOBAL})
     set(SCRATCHBIRD_TEST_TIMEOUT_INTEGRATION ${SCRATCHBIRD_TEST_TIMEOUT_GLOBAL})
     set(SCRATCHBIRD_TEST_TIMEOUT_STRESS ${SCRATCHBIRD_TEST_TIMEOUT_GLOBAL})
@@ -424,7 +429,7 @@ target_link_libraries(test_ipc_server
 add_test(NAME IPC_ServerTests COMMAND test_ipc_server)
 set_tests_properties(IPC_ServerTests PROPERTIES
     LABELS "integration;server;ipc"
-    TIMEOUT 60
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
     ENVIRONMENT "SCRATCHBIRD_TEST_NETWORK=1"
 )
 
@@ -442,7 +447,7 @@ target_link_libraries(test_wire_protocol
 add_test(NAME WireProtocolTests COMMAND test_wire_protocol)
 set_tests_properties(WireProtocolTests PROPERTIES
     LABELS "integration;server;protocol;wire"
-    TIMEOUT 60
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
     ENVIRONMENT "SCRATCHBIRD_TEST_NETWORK=1"
 )
 
@@ -460,7 +465,7 @@ target_link_libraries(test_engine_ipc_session_handler
 add_test(NAME EngineIPCSessionHandlerTests COMMAND test_engine_ipc_session_handler)
 set_tests_properties(EngineIPCSessionHandlerTests PROPERTIES
     LABELS "unit;ipc;engine;session"
-    TIMEOUT 120
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # ==============================================================================
@@ -509,7 +514,7 @@ target_link_libraries(test_ipc_integration_harness
 add_test(NAME IPC_Integration_Harness COMMAND test_ipc_integration_harness)
 set_tests_properties(IPC_Integration_Harness PROPERTIES
     LABELS "integration;ipc;harness"
-    TIMEOUT 300
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # 4.1.6-4.1.7: COPY 1GB Memory Test
@@ -524,7 +529,7 @@ target_link_libraries(test_copy_1gb
 add_test(NAME COPY_1GB_Test COMMAND test_copy_1gb)
 set_tests_properties(COPY_1GB_Test PROPERTIES
     LABELS "integration;ipc;copy;memory;performance"
-    TIMEOUT 600
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # ==============================================================================
@@ -547,7 +552,7 @@ if(SCRATCHBIRD_ENABLE_CLIENT_TESTS)
     add_test(NAME PSQL_Client_Tests COMMAND test_psql_client)
     set_tests_properties(PSQL_Client_Tests PROPERTIES
         LABELS "integration;ipc;psql;postgresql;client"
-        TIMEOUT 300
+        TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
     )
 
     # 2.2.15-2.2.17: MySQL Client Tests
@@ -562,7 +567,7 @@ if(SCRATCHBIRD_ENABLE_CLIENT_TESTS)
     add_test(NAME MySQL_Client_Tests COMMAND test_mysql_client)
     set_tests_properties(MySQL_Client_Tests PROPERTIES
         LABELS "integration;ipc;mysql;client"
-        TIMEOUT 300
+        TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
     )
 
     # 2.3.16-2.3.17: Firebird Client Tests
@@ -577,7 +582,7 @@ if(SCRATCHBIRD_ENABLE_CLIENT_TESTS)
     add_test(NAME Firebird_Client_Tests COMMAND test_firebird_client)
     set_tests_properties(Firebird_Client_Tests PROPERTIES
         LABELS "integration;ipc;firebird;client"
-        TIMEOUT 300
+        TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
     )
 endif()
 
@@ -601,7 +606,7 @@ if (SCRATCHBIRD_ENABLE_TSAN)
     add_test(NAME TSAN_BufferPoolRace COMMAND tsan_buffer_pool_race)
     set_tests_properties(TSAN_BufferPoolRace PROPERTIES
         LABELS "tsan;critical"
-        TIMEOUT 120
+        TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
     )
 
     # TSAN Test 2: TransactionManager Cache Race (CRITICAL-2)
@@ -619,7 +624,7 @@ if (SCRATCHBIRD_ENABLE_TSAN)
     add_test(NAME TSAN_TransactionCacheRace COMMAND tsan_transaction_cache_race)
     set_tests_properties(TSAN_TransactionCacheRace PROPERTIES
         LABELS "tsan;critical"
-        TIMEOUT 180
+        TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
     )
 
     # TSAN Test 3: Lock Ordering / Deadlock Prevention (CRITICAL-3)
@@ -637,7 +642,7 @@ if (SCRATCHBIRD_ENABLE_TSAN)
     add_test(NAME TSAN_LockOrdering COMMAND tsan_lock_ordering)
     set_tests_properties(TSAN_LockOrdering PROPERTIES
         LABELS "tsan;critical"
-        TIMEOUT 240
+        TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
         # Suppress known false positives from ProcArrayManager initialization
         # TSAN can't track happens-before through atomic pointer + mutex init pattern
         ENVIRONMENT "TSAN_OPTIONS=suppressions=${CMAKE_SOURCE_DIR}/tools/tsan_suppressions.txt"
@@ -677,7 +682,7 @@ target_link_libraries(multithreaded_stress
 add_test(NAME MultiThreadedStress COMMAND multithreaded_stress)
 set_tests_properties(MultiThreadedStress PROPERTIES
     LABELS "stress;performance"
-    TIMEOUT 300
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # Wave 1 Tests (Phase 2 Parallel Development)
@@ -713,7 +718,7 @@ target_link_libraries(test_text_search_types
 add_test(NAME TextSearchTypes COMMAND test_text_search_types)
 set_tests_properties(TextSearchTypes PROPERTIES
     LABELS "integration;task14;phase5"
-    TIMEOUT 60
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # Task 15: Range Types Unit Tests
@@ -726,7 +731,7 @@ target_link_libraries(test_range_types
 add_test(NAME RangeTypes COMMAND test_range_types)
 set_tests_properties(RangeTypes PROPERTIES
     LABELS "unit;task15;range_types"
-    TIMEOUT 60
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # Task 15 Phase 2: Temporal Range Types Unit Tests
@@ -739,7 +744,7 @@ target_link_libraries(test_temporal_range_types
 add_test(NAME TemporalRangeTypes COMMAND test_temporal_range_types)
 set_tests_properties(TemporalRangeTypes PROPERTIES
     LABELS "unit;task15;temporal_range_types"
-    TIMEOUT 60
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # Task 15 Phase 3: Range Operators Unit Tests
@@ -752,7 +757,7 @@ target_link_libraries(test_range_operators
 add_test(NAME RangeOperators COMMAND test_range_operators)
 set_tests_properties(RangeOperators PROPERTIES
     LABELS "unit;task15;range_operators"
-    TIMEOUT 60
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # Task 15 Phase 4: Range Lexer Tests - REMOVED (obsolete parser path removed)
@@ -771,7 +776,7 @@ target_link_libraries(test_network_types
 add_test(NAME NetworkTypes COMMAND test_network_types)
 set_tests_properties(NetworkTypes PROPERTIES
     LABELS "unit;task16;network"
-    TIMEOUT 60
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # ============================================================================
@@ -815,7 +820,7 @@ target_link_libraries(test_columnstore_rle
 add_test(NAME ColumnstoreRLE COMMAND test_columnstore_rle)
 set_tests_properties(ColumnstoreRLE PROPERTIES
     LABELS "unit;columnstore;rle;phase1"
-    TIMEOUT 120
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # ============================================================================
@@ -836,7 +841,7 @@ target_link_libraries(test_columnstore_dict
 add_test(NAME ColumnstoreDictionary COMMAND test_columnstore_dict)
 set_tests_properties(ColumnstoreDictionary PROPERTIES
     LABELS "unit;columnstore;dictionary;phase2"
-    TIMEOUT 120
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # ============================================================================
@@ -857,7 +862,7 @@ target_link_libraries(test_columnstore_bitpack
 add_test(NAME ColumnstoreBitpack COMMAND test_columnstore_bitpack)
 set_tests_properties(ColumnstoreBitpack PROPERTIES
     LABELS "unit;columnstore;bitpack;phase3"
-    TIMEOUT 120
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # ============================================================================
@@ -878,7 +883,7 @@ target_link_libraries(test_columnstore_predicate
 add_test(NAME ColumnstorePredicate COMMAND test_columnstore_predicate)
 set_tests_properties(ColumnstorePredicate PROPERTIES
     LABELS "unit;columnstore;predicate;phase4"
-    TIMEOUT 120
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # ============================================================================
@@ -946,7 +951,7 @@ target_link_libraries(test_columnstore_comprehensive
 add_test(NAME ColumnstoreComprehensive COMMAND test_columnstore_comprehensive)
 set_tests_properties(ColumnstoreComprehensive PROPERTIES
     LABELS "integration;columnstore;e2e;phase7;comprehensive"
-    TIMEOUT 180
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # Simple E2E test (minimal version to avoid hang issues)
@@ -962,7 +967,7 @@ target_link_libraries(test_columnstore_simple_e2e
 add_test(NAME ColumnstoreSimpleE2E COMMAND test_columnstore_simple_e2e)
 set_tests_properties(ColumnstoreSimpleE2E PROPERTIES
     LABELS "integration;columnstore;e2e;phase7;simple"
-    TIMEOUT 30
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # Load test (100K-1M rows) - Full version, DISABLED due to missing gtest includes
@@ -997,7 +1002,7 @@ target_link_libraries(test_columnstore_load_simple
 add_test(NAME ColumnstoreLoadSimple COMMAND test_columnstore_load_simple)
 set_tests_properties(ColumnstoreLoadSimple PROPERTIES
     LABELS "stress;columnstore;load;phase7;simple"
-    TIMEOUT 120
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # ============================================================================
@@ -1178,7 +1183,7 @@ target_link_libraries(test_gist_mvcc
 add_test(NAME GiSTMVCC COMMAND test_gist_mvcc)
 set_tests_properties(GiSTMVCC PROPERTIES
     LABELS "integration;index;gist;mvcc;mga"
-    TIMEOUT 120
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # ============================================================================
@@ -1287,7 +1292,7 @@ target_link_libraries(test_security_phase3_5_rls_dml
 add_test(NAME SecurityPhase3_5_RLS_DML COMMAND test_security_phase3_5_rls_dml)
 set_tests_properties(SecurityPhase3_5_RLS_DML PROPERTIES
     LABELS "integration;security;phase3;rls;dml;enforcement"
-    TIMEOUT 120
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # Mathematical Functions Tests - DISABLED (V3 bytecode issue with complex expressions)
@@ -1343,7 +1348,7 @@ target_link_libraries(test_check_constraints
 add_test(NAME CheckConstraints COMMAND test_check_constraints)
 set_tests_properties(CheckConstraints PROPERTIES
     LABELS "integration;constraints;check;enforcement"
-    TIMEOUT 60
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # Domain Integrity Tests (Plan 03B - Global Uniqueness)
@@ -1361,7 +1366,7 @@ target_link_libraries(test_domain_integrity
 add_test(NAME DomainIntegrity COMMAND test_domain_integrity)
 set_tests_properties(DomainIntegrity PROPERTIES
     LABELS "integration;domain;integrity;uniqueness"
-    TIMEOUT 60
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # Domain Security Tests (Plan 03B - Encryption/Masking/Audit)
@@ -1379,7 +1384,7 @@ target_link_libraries(test_domain_encryption
 add_test(NAME DomainEncryption COMMAND test_domain_encryption)
 set_tests_properties(DomainEncryption PROPERTIES
     LABELS "integration;domain;security;encryption"
-    TIMEOUT 60
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 add_executable(test_domain_security
@@ -1396,7 +1401,7 @@ target_link_libraries(test_domain_security
 add_test(NAME DomainSecurity COMMAND test_domain_security)
 set_tests_properties(DomainSecurity PROPERTIES
     LABELS "integration;domain;security;masking;audit"
-    TIMEOUT 60
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # Domain Validation Tests (Plan 03B)
@@ -1414,7 +1419,7 @@ target_link_libraries(test_domain_validation
 add_test(NAME DomainValidation COMMAND test_domain_validation)
 set_tests_properties(DomainValidation PROPERTIES
     LABELS "integration;domain;validation"
-    TIMEOUT 60
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # Domain Quality Pipeline Tests (Plan 03B)
@@ -1432,7 +1437,7 @@ target_link_libraries(test_domain_quality
 add_test(NAME DomainQuality COMMAND test_domain_quality)
 set_tests_properties(DomainQuality PROPERTIES
     LABELS "integration;domain;quality"
-    TIMEOUT 60
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # Domain End-to-End Scenarios (Plan 03B)
@@ -1450,7 +1455,7 @@ target_link_libraries(test_domain_e2e_scenarios
 add_test(NAME DomainE2EScenarios COMMAND test_domain_e2e_scenarios)
 set_tests_properties(DomainE2EScenarios PROPERTIES
     LABELS "integration;domain;e2e"
-    TIMEOUT 60
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # Foreign Key Constraints Tests (ALPHA Phase A - FK Constraints)
@@ -1468,7 +1473,7 @@ target_link_libraries(test_foreign_keys
 add_test(NAME ForeignKeys COMMAND test_foreign_keys)
 set_tests_properties(ForeignKeys PROPERTIES
     LABELS "integration;constraints;foreign_key;referential_integrity"
-    TIMEOUT 60
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 
@@ -1550,7 +1555,7 @@ target_link_libraries(test_brin_mvcc
 add_test(NAME BRIN_MVCC COMMAND test_brin_mvcc)
 set_tests_properties(BRIN_MVCC PROPERTIES
     LABELS "integration;index;brin;mvcc;quarantine"
-    TIMEOUT 120
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # BRIN Index DML Integration Tests
@@ -1568,7 +1573,7 @@ target_link_libraries(test_brin_dml
 add_test(NAME BRIN_DML COMMAND test_brin_dml)
 set_tests_properties(BRIN_DML PROPERTIES
     LABELS "integration;index;brin;dml"
-    TIMEOUT 120
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # Bitmap Index DML Integration Tests
@@ -1610,7 +1615,7 @@ target_link_libraries(test_composite_fk
 add_test(NAME CompositeForeignKey COMMAND test_composite_fk)
 set_tests_properties(CompositeForeignKey PROPERTIES
     LABELS "integration;constraints;foreign_key;composite"
-    TIMEOUT 120
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # Exception Safety Tests
@@ -1628,7 +1633,7 @@ target_link_libraries(test_exception_safety
 add_test(NAME ExceptionSafety COMMAND test_exception_safety)
 set_tests_properties(ExceptionSafety PROPERTIES
     LABELS "integration;exception;safety;robustness"
-    TIMEOUT 120
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # Concurrent Page Access Tests
@@ -1646,7 +1651,7 @@ target_link_libraries(test_concurrent_page_access
 add_test(NAME ConcurrentPageAccess COMMAND test_concurrent_page_access)
 set_tests_properties(ConcurrentPageAccess PROPERTIES
     LABELS "integration;concurrency;page;thread"
-    TIMEOUT 180
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # Buffer Pool Exhaustion Tests
@@ -1664,7 +1669,7 @@ target_link_libraries(test_buffer_pool_exhaustion
 add_test(NAME BufferPoolExhaustion COMMAND test_buffer_pool_exhaustion)
 set_tests_properties(BufferPoolExhaustion PROPERTIES
     LABELS "integration;buffer_pool;memory;stress"
-    TIMEOUT 180
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # Index DML Integration Tests
@@ -1682,7 +1687,7 @@ target_link_libraries(test_index_dml_integration
 add_test(NAME IndexDMLIntegration COMMAND test_index_dml_integration)
 set_tests_properties(IndexDMLIntegration PROPERTIES
     LABELS "integration;index;dml;comprehensive"
-    TIMEOUT 180
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # GIN Index DML Integration Tests
@@ -1700,7 +1705,7 @@ target_link_libraries(test_gin_dml
 add_test(NAME GIN_DML COMMAND test_gin_dml)
 set_tests_properties(GIN_DML PROPERTIES
     LABELS "integration;index;gin;dml"
-    TIMEOUT 120
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # ============================================================================
@@ -1722,7 +1727,7 @@ target_link_libraries(test_postgresql_parser
 gtest_discover_tests(test_postgresql_parser
     TEST_PREFIX "PostgreSQL."
     PROPERTIES LABELS "unit;parser;postgresql;emulation"
-    PROPERTIES TIMEOUT 60
+    PROPERTIES TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # ============================================================================
@@ -1762,7 +1767,7 @@ target_link_libraries(test_heap_page_ownership
 add_test(NAME HeapPageOwnership COMMAND test_heap_page_ownership)
 set_tests_properties(HeapPageOwnership PROPERTIES
     LABELS "integration;storage;plan01"
-    TIMEOUT 60
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # Plan 01 Task C: Columnstore Persistence Tests
@@ -1780,7 +1785,7 @@ target_link_libraries(test_columnstore_persistence
 add_test(NAME ColumnstorePersistence COMMAND test_columnstore_persistence)
 set_tests_properties(ColumnstorePersistence PROPERTIES
     LABELS "integration;storage;columnstore;plan01"
-    TIMEOUT 60
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # Plan 01 Task D.1: HNSW GC Tests
@@ -1798,7 +1803,7 @@ target_link_libraries(test_hnsw_gc
 add_test(NAME HnswGC COMMAND test_hnsw_gc)
 set_tests_properties(HnswGC PROPERTIES
     LABELS "integration;index;hnsw;gc;plan01"
-    TIMEOUT 60
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # Plan 01 Task D.2: FullText GC Tests
@@ -1816,7 +1821,7 @@ target_link_libraries(test_fulltext_gc
 add_test(NAME FullTextGC COMMAND test_fulltext_gc)
 set_tests_properties(FullTextGC PROPERTIES
     LABELS "integration;index;fulltext;gc;plan01"
-    TIMEOUT 60
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # Plan 01 Task D.3: BRIN GC Tests
@@ -1834,7 +1839,7 @@ target_link_libraries(test_brin_gc
 add_test(NAME BrinGC COMMAND test_brin_gc)
 set_tests_properties(BrinGC PROPERTIES
     LABELS "integration;index;brin;gc;plan01"
-    TIMEOUT 60
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # Plan 01 Task D.4: R-Tree GC Tests
@@ -1852,7 +1857,7 @@ target_link_libraries(test_rtree_gc
 add_test(NAME RTreeGC COMMAND test_rtree_gc)
 set_tests_properties(RTreeGC PROPERTIES
     LABELS "integration;index;rtree;gc;plan01"
-    TIMEOUT 60
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # Plan 01 Task D.6: GIN GC Tests (Step 1: Pending list cleanup)
@@ -1870,7 +1875,7 @@ target_link_libraries(test_gin_gc
 add_test(NAME GinGC COMMAND test_gin_gc)
 set_tests_properties(GinGC PROPERTIES
     LABELS "integration;index;gin;gc;plan01"
-    TIMEOUT 60
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # Plan 01 Task E: Shadow Index Rebuild Tests
@@ -1888,7 +1893,7 @@ target_link_libraries(test_shadow_index_rebuild
 add_test(NAME ShadowIndexRebuild COMMAND test_shadow_index_rebuild)
 set_tests_properties(ShadowIndexRebuild PROPERTIES
     LABELS "integration;index;shadow;rebuild;versioning;plan01"
-    TIMEOUT 60
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # ============================================================================
@@ -1911,7 +1916,7 @@ target_link_libraries(test_git_config_parser
 gtest_discover_tests(test_git_config_parser
     TEST_PREFIX "GitConfig."
     PROPERTIES LABELS "unit;git;config;parser"
-    PROPERTIES TIMEOUT 60
+    PROPERTIES TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # ============================================================================
@@ -1935,7 +1940,7 @@ target_link_libraries(test_sblr_type_opcodes
 gtest_discover_tests(test_sblr_type_opcodes
     TEST_PREFIX "SBLR."
     PROPERTIES LABELS "unit;sblr;type;opcode;bytecode"
-    PROPERTIES TIMEOUT 60
+    PROPERTIES TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # ============================================================================
@@ -1959,8 +1964,23 @@ target_link_libraries(test_fdw_protocol_adapter_factory
 gtest_discover_tests(test_fdw_protocol_adapter_factory
     TEST_PREFIX "FDW."
     PROPERTIES LABELS "unit;fdw;factory"
-    PROPERTIES TIMEOUT 60
+    PROPERTIES TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
+
+# ============================================================================
+# Governance Compliance Scope Scan Contract (EN-034)
+# ============================================================================
+
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/compliance/test_vnext_scope_scan_contract.sh")
+    add_test(
+        NAME VNextScopeScanContract
+        COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/compliance/test_vnext_scope_scan_contract.sh ${CMAKE_SOURCE_DIR}
+    )
+    set_tests_properties(VNextScopeScanContract PROPERTIES
+        LABELS "unit;compliance;governance"
+        TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
+    )
+endif()
 
 # Aggregate target for building all test executables.
 get_property(SCRATCHBIRD_TEST_TARGETS

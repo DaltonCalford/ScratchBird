@@ -102,6 +102,13 @@ namespace scratchbird::core
             switch (index_type)
             {
                 case CatalogManager::IndexType::BTREE:
+                case CatalogManager::IndexType::ART:
+                case CatalogManager::IndexType::MONGODB_GEO_HAYSTACK:
+                case CatalogManager::IndexType::NEO4J_RANGE:
+                case CatalogManager::IndexType::NEO4J_POINT:
+                case CatalogManager::IndexType::REDIS_LIST:
+                case CatalogManager::IndexType::REDIS_ZSET:
+                case CatalogManager::IndexType::REDIS_STREAM:
                 {
                     auto *btree = static_cast<BTree*>(index_ptr);
                     return btree->insert(key, tid, xid, ctx);
@@ -116,6 +123,10 @@ namespace scratchbird::core
                 }
 
                 case CatalogManager::IndexType::HASH:
+                case CatalogManager::IndexType::REDIS_STRING:
+                case CatalogManager::IndexType::REDIS_HASH:
+                case CatalogManager::IndexType::REDIS_SET:
+                case CatalogManager::IndexType::REDIS_HLL:
                 {
                     auto *hash = static_cast<HashIndex*>(index_ptr);
                     return hash->insert(key.data(), key.size(), tid, xid, ctx);
@@ -128,7 +139,18 @@ namespace scratchbird::core
                     return rtree->insert(key, tid, xid, ctx);
                 }
 
+                case CatalogManager::IndexType::MONGODB_2D:
+                case CatalogManager::IndexType::MONGODB_2DSPHERE:
+                case CatalogManager::IndexType::MONGODB_2DSPHERE_BUCKET:
+                case CatalogManager::IndexType::REDIS_GEO:
+                {
+                    auto *rtree = static_cast<RTreeIndex*>(index_ptr);
+                    return rtree->insert(key, tid, xid, ctx);
+                }
+
                 case CatalogManager::IndexType::BITMAP:
+                case CatalogManager::IndexType::NEO4J_LOOKUP:
+                case CatalogManager::IndexType::REDIS_BITMAP:
                 {
                     // TASK-DML-8: Bitmap Index DML Integration
                     // Bitmap indexes store value → bitmap mapping for low-cardinality columns
@@ -170,6 +192,7 @@ namespace scratchbird::core
                 }
 
                 case CatalogManager::IndexType::ZONEMAP:
+                case CatalogManager::IndexType::BLOOM:
                 {
                     auto *brin = static_cast<BrinIndex*>(index_ptr);
                     uint32_t block_number = static_cast<uint32_t>(getPageNumber(tid.gpid));
@@ -183,6 +206,7 @@ namespace scratchbird::core
                 }
 
                 case CatalogManager::IndexType::HNSW:
+                case CatalogManager::IndexType::NEO4J_VECTOR:
                 {
                     auto *hnsw = static_cast<HnswIndex*>(index_ptr);
                     if (key.empty())
@@ -200,6 +224,20 @@ namespace scratchbird::core
                 }
 
                 case CatalogManager::IndexType::IVF:
+                case CatalogManager::IndexType::VECTOR_FLAT:
+                case CatalogManager::IndexType::VECTOR_BIN_FLAT:
+                case CatalogManager::IndexType::IVF_FLAT:
+                case CatalogManager::IndexType::BIN_IVF_FLAT:
+                case CatalogManager::IndexType::IVF_PQ:
+                case CatalogManager::IndexType::IVF_SQ8:
+                case CatalogManager::IndexType::IVF_SQ8_HYBRID:
+                case CatalogManager::IndexType::RHNSW_PQ:
+                case CatalogManager::IndexType::RHNSW_SQ:
+                case CatalogManager::IndexType::ANNOY:
+                case CatalogManager::IndexType::NSG:
+                case CatalogManager::IndexType::DISKANN:
+                case CatalogManager::IndexType::SCANN:
+                case CatalogManager::IndexType::GPU_CAGRA:
                 {
                     auto *hnsw = static_cast<HnswIndex*>(index_ptr);
                     if (key.empty())
@@ -210,13 +248,23 @@ namespace scratchbird::core
                     if (!decoded)
                     {
                         SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                                          "Invalid vector encoding for IVF index");
+                                          "Invalid vector encoding for vector-family index");
                         return Status::INVALID_ARGUMENT;
                     }
                     return hnsw->insert(*decoded, tid, ctx);
                 }
 
                 case CatalogManager::IndexType::FULLTEXT:
+                case CatalogManager::IndexType::MONGODB_WILDCARD:
+                case CatalogManager::IndexType::MONGODB_ENCRYPTED_RANGE:
+                case CatalogManager::IndexType::NEO4J_TEXT:
+                case CatalogManager::IndexType::CASSANDRA_SASI:
+                case CatalogManager::IndexType::CASSANDRA_SAI:
+                case CatalogManager::IndexType::TRIE:
+                case CatalogManager::IndexType::NGRAM:
+                case CatalogManager::IndexType::SPARSE_INVERTED:
+                case CatalogManager::IndexType::SPARSE_WAND:
+                case CatalogManager::IndexType::MINHASH_LSH:
                 {
                     auto *inverted = static_cast<InvertedIndex*>(index_ptr);
                     std::string text;
@@ -269,6 +317,13 @@ namespace scratchbird::core
             switch (index_type)
             {
                 case CatalogManager::IndexType::BTREE:
+                case CatalogManager::IndexType::ART:
+                case CatalogManager::IndexType::MONGODB_GEO_HAYSTACK:
+                case CatalogManager::IndexType::NEO4J_RANGE:
+                case CatalogManager::IndexType::NEO4J_POINT:
+                case CatalogManager::IndexType::REDIS_LIST:
+                case CatalogManager::IndexType::REDIS_ZSET:
+                case CatalogManager::IndexType::REDIS_STREAM:
                 {
                     auto *btree = static_cast<BTree*>(index_ptr);
                     return btree->remove(key, tid, xid, ctx);
@@ -282,6 +337,10 @@ namespace scratchbird::core
                 }
 
                 case CatalogManager::IndexType::HASH:
+                case CatalogManager::IndexType::REDIS_STRING:
+                case CatalogManager::IndexType::REDIS_HASH:
+                case CatalogManager::IndexType::REDIS_SET:
+                case CatalogManager::IndexType::REDIS_HLL:
                 {
                     auto *hash = static_cast<HashIndex*>(index_ptr);
                     return hash->remove(key.data(), key.size(), tid, xid, ctx);
@@ -295,7 +354,18 @@ namespace scratchbird::core
                     return rtree->remove(key, tid, xid, ctx);
                 }
 
+                case CatalogManager::IndexType::MONGODB_2D:
+                case CatalogManager::IndexType::MONGODB_2DSPHERE:
+                case CatalogManager::IndexType::MONGODB_2DSPHERE_BUCKET:
+                case CatalogManager::IndexType::REDIS_GEO:
+                {
+                    auto *rtree = static_cast<RTreeIndex*>(index_ptr);
+                    return rtree->remove(key, tid, xid, ctx);
+                }
+
                 case CatalogManager::IndexType::BITMAP:
+                case CatalogManager::IndexType::NEO4J_LOOKUP:
+                case CatalogManager::IndexType::REDIS_BITMAP:
                 {
                     // TASK-DML-8: Bitmap Index DML Integration
                     // Bitmap remove marks tuple as deleted in ALL bitmaps (value-independent)
@@ -339,6 +409,7 @@ namespace scratchbird::core
                 }
 
                 case CatalogManager::IndexType::ZONEMAP:
+                case CatalogManager::IndexType::BLOOM:
                 {
                     auto *brin = static_cast<BrinIndex*>(index_ptr);
                     uint32_t block_number = static_cast<uint32_t>(getPageNumber(tid.gpid));
@@ -352,18 +423,43 @@ namespace scratchbird::core
                 }
 
                 case CatalogManager::IndexType::HNSW:
+                case CatalogManager::IndexType::NEO4J_VECTOR:
                 {
                     auto *hnsw = static_cast<HnswIndex*>(index_ptr);
                     return hnsw->remove(tid, ctx);
                 }
 
                 case CatalogManager::IndexType::IVF:
+                case CatalogManager::IndexType::VECTOR_FLAT:
+                case CatalogManager::IndexType::VECTOR_BIN_FLAT:
+                case CatalogManager::IndexType::IVF_FLAT:
+                case CatalogManager::IndexType::BIN_IVF_FLAT:
+                case CatalogManager::IndexType::IVF_PQ:
+                case CatalogManager::IndexType::IVF_SQ8:
+                case CatalogManager::IndexType::IVF_SQ8_HYBRID:
+                case CatalogManager::IndexType::RHNSW_PQ:
+                case CatalogManager::IndexType::RHNSW_SQ:
+                case CatalogManager::IndexType::ANNOY:
+                case CatalogManager::IndexType::NSG:
+                case CatalogManager::IndexType::DISKANN:
+                case CatalogManager::IndexType::SCANN:
+                case CatalogManager::IndexType::GPU_CAGRA:
                 {
                     auto *hnsw = static_cast<HnswIndex*>(index_ptr);
                     return hnsw->remove(tid, ctx);
                 }
 
                 case CatalogManager::IndexType::FULLTEXT:
+                case CatalogManager::IndexType::MONGODB_WILDCARD:
+                case CatalogManager::IndexType::MONGODB_ENCRYPTED_RANGE:
+                case CatalogManager::IndexType::NEO4J_TEXT:
+                case CatalogManager::IndexType::CASSANDRA_SASI:
+                case CatalogManager::IndexType::CASSANDRA_SAI:
+                case CatalogManager::IndexType::TRIE:
+                case CatalogManager::IndexType::NGRAM:
+                case CatalogManager::IndexType::SPARSE_INVERTED:
+                case CatalogManager::IndexType::SPARSE_WAND:
+                case CatalogManager::IndexType::MINHASH_LSH:
                 {
                     auto *inverted = static_cast<InvertedIndex*>(index_ptr);
                     std::string text;

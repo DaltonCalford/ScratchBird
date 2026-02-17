@@ -489,9 +489,9 @@ TEST(WKBSerializerTest, WKBRoundTripPolygonWithHole)
 
 TEST(TypeSystemTest, SpatialTypeNames)
 {
-    EXPECT_EQ(TypeSystem::getTypeName(DataType::POINT), "POINT");
-    EXPECT_EQ(TypeSystem::getTypeName(DataType::LINESTRING), "LINESTRING");
-    EXPECT_EQ(TypeSystem::getTypeName(DataType::POLYGON), "POLYGON");
+    EXPECT_STREQ(TypeSystem::getTypeName(DataType::POINT), "POINT");
+    EXPECT_STREQ(TypeSystem::getTypeName(DataType::LINESTRING), "LINESTRING");
+    EXPECT_STREQ(TypeSystem::getTypeName(DataType::POLYGON), "POLYGON");
 }
 
 // NOTE: TypeSystem::parseTypeName() was removed from the API

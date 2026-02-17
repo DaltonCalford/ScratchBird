@@ -18,6 +18,7 @@
 #include <exception>
 #include <functional>
 #include <iomanip>
+#include <limits>
 #include <optional>
 #include <iostream>
 #include <sstream>
@@ -51,8 +52,10 @@
 #include "scratchbird/core/utf8_utils.h"
 #include "scratchbird/core/array.h"  // For ARRAY extraction
 #include "scratchbird/core/page_manager.h"
+#include "scratchbird/core/index_page_diagnostics.h"
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/telemetry.h"
+#include "scratchbird/core/vnext_metrics_event_model.h"
 #include "scratchbird/core/password_hash.h"
 #include "scratchbird/core/password_policy.h"  // P0-1: Password policy enforcement
 #include "scratchbird/core/permission_cache.h"  // Security Phase 3.2.3: Global cache
@@ -113,6 +116,7 @@
 #include <cctype>
 #include <cmath>
 #include <limits>
+#include <boost/multiprecision/cpp_int.hpp>
 #include <openssl/md5.h>
 #include <openssl/sha.h>
 
@@ -970,6 +974,53 @@ namespace scratchbird
         }
 
         // ===== Numeric Type Coercion Helper =====
+        using boost::multiprecision::cpp_int;
+
+        static const cpp_int& pow2_256()
+        {
+            static const cpp_int value = cpp_int(1) << 256;
+            return value;
+        }
+
+        static bool decodeUnsigned256(const std::vector<uint8_t>& bytes, cpp_int& out)
+        {
+            if (bytes.size() != 32)
+            {
+                return false;
+            }
+            out = 0;
+            for (int i = 31; i >= 0; --i)
+            {
+                out <<= 8;
+                out += bytes[static_cast<size_t>(i)];
+            }
+            return true;
+        }
+
+        static bool decodeSigned256(const std::vector<uint8_t>& bytes, cpp_int& out)
+        {
+            cpp_int unsigned_value = 0;
+            if (!decodeUnsigned256(bytes, unsigned_value))
+            {
+                return false;
+            }
+            if ((bytes[31] & 0x80u) != 0u)
+            {
+                out = unsigned_value - pow2_256();
+            }
+            else
+            {
+                out = unsigned_value;
+            }
+            return true;
+        }
+
+        static bool isWideNumericType(core::DataType type)
+        {
+            return type == core::DataType::INT256 ||
+                   type == core::DataType::UINT256 ||
+                   type == core::DataType::DECIMAL256;
+        }
 
         // Helper function to coerce any numeric TypedValue to double.
         // Text values are accepted only through implicit operator coercion paths.
@@ -993,6 +1044,42 @@ namespace scratchbird
                     return static_cast<double>(val.getUInt64());
                 case core::DataType::UINT128:
                     return static_cast<double>(val.getUInt128());
+                case core::DataType::INT256:
+                {
+                    cpp_int parsed;
+                    if (!decodeSigned256(val.getBinary(), parsed))
+                    {
+                        throw std::runtime_error("INT256 payload decode failed");
+                    }
+                    return parsed.convert_to<double>();
+                }
+                case core::DataType::UINT256:
+                {
+                    cpp_int parsed;
+                    if (!decodeUnsigned256(val.getBinary(), parsed))
+                    {
+                        throw std::runtime_error("UINT256 payload decode failed");
+                    }
+                    return parsed.convert_to<double>();
+                }
+                case core::DataType::DECIMAL256:
+                {
+                    cpp_int parsed;
+                    if (!decodeSigned256(val.getBinary(), parsed))
+                    {
+                        throw std::runtime_error("DECIMAL256 payload decode failed");
+                    }
+                    double out = parsed.convert_to<double>();
+                    const uint8_t scale = val.getDecimalScale();
+                    if (scale > 0)
+                    {
+                        for (uint8_t i = 0; i < scale; ++i)
+                        {
+                            out /= 10.0;
+                        }
+                    }
+                    return out;
+                }
                 case core::DataType::FLOAT32:
                     return static_cast<double>(val.getFloat32());
                 case core::DataType::FLOAT64:
@@ -1062,6 +1149,7 @@ namespace scratchbird
 
         static bool isNumericType(core::DataType type) {
             return isIntegerType(type) ||
+                   isWideNumericType(type) ||
                    type == core::DataType::FLOAT32 ||
                    type == core::DataType::FLOAT64 ||
                    type == core::DataType::MONEY ||
@@ -1398,6 +1486,12 @@ namespace scratchbird
         static core::DataType implicitNumericTargetFor(core::DataType type)
         {
             if (isDecfloatType(type))
+            {
+                return type;
+            }
+            if (type == core::DataType::INT256 ||
+                type == core::DataType::UINT256 ||
+                type == core::DataType::DECIMAL256)
             {
                 return type;
             }
@@ -3044,6 +3138,16 @@ namespace scratchbird
         }
 
         Executor::~Executor() = default;
+
+        std::optional<core::CatalogManager::IndexType>
+        Executor::mapCanonicalIndexType(const std::string& name)
+        {
+            if (name.empty())
+            {
+                return core::CatalogManager::IndexType::BTREE;
+            }
+            return core::parseIndexType(name);
+        }
 
         void Executor::setParameters(const std::vector<std::string>& values,
                                      const std::vector<bool>& nulls)
@@ -7239,7 +7343,13 @@ namespace scratchbird
             core::CatalogManager::IndexType index_type = core::CatalogManager::IndexType::BTREE;  // Default
             if (index_type_byte != 0xFF)
             {
-                // Convert byte to enum (0xFF means use default BTREE)
+                // Convert byte to enum and reject unsupported values deterministically.
+                const uint8_t max_known =
+                    static_cast<uint8_t>(core::CatalogManager::IndexType::ZONEMAP);
+                if (index_type_byte > max_known)
+                {
+                    error("CREATE INDEX invalid index_type byte: " + std::to_string(index_type_byte));
+                }
                 index_type = static_cast<core::CatalogManager::IndexType>(index_type_byte);
             }
 
@@ -7765,6 +7875,643 @@ namespace scratchbird
         }
 
         // Task 17 Phase 7: Index maintenance helpers
+        auto Executor::captureMaintenanceDeltaForIndex(
+            const core::CatalogManager::IndexInfo& index_info,
+            core::CatalogManager::IndexDeltaOp delta_op,
+            const core::TID& tid,
+            uint64_t commit_txid) -> bool
+        {
+            if (!db_ || !db_->catalog_manager())
+            {
+                return false;
+            }
+
+            std::vector<core::CatalogManager::IndexMaintenanceCatalogInfo> maintenance_rows;
+            core::Status status = db_->catalog_manager()->listIndexMaintenanceCatalogEntries(
+                index_info.index_id, maintenance_rows, nullptr);
+            if (status != core::Status::OK)
+            {
+                return false;
+            }
+
+            auto is_active_state = [](core::CatalogManager::IndexMaintenanceState state) {
+                using IMS = core::CatalogManager::IndexMaintenanceState;
+                return state == IMS::BUILDING_SHADOW ||
+                       state == IMS::APPLYING_DELTAS ||
+                       state == IMS::SWAPPING;
+            };
+
+            const core::CatalogManager::IndexMaintenanceCatalogInfo* active_row = nullptr;
+            for (const auto& row : maintenance_rows)
+            {
+                if (!row.is_valid)
+                {
+                    continue;
+                }
+                if (row.maintenance_mode != core::CatalogManager::IndexMaintenanceMode::ONLINE)
+                {
+                    continue;
+                }
+                if (!is_active_state(row.maintenance_state))
+                {
+                    continue;
+                }
+                active_row = &row;
+                break;
+            }
+
+            if (!active_row)
+            {
+                return false;
+            }
+
+            constexpr uint32_t kMaxRetries = 8;
+            for (uint32_t attempt = 0; attempt < kMaxRetries; ++attempt)
+            {
+                std::vector<core::CatalogManager::IndexMaintenanceDeltaCatalogInfo> deltas;
+                status = db_->catalog_manager()->listIndexMaintenanceDeltaCatalogEntries(
+                    active_row->maintenance_id, deltas, nullptr);
+                if (status != core::Status::OK)
+                {
+                    return false;
+                }
+
+                uint64_t next_delta_id = 1;
+                for (const auto& row : deltas)
+                {
+                    if (row.delta_id >= next_delta_id)
+                    {
+                        next_delta_id = row.delta_id + 1;
+                    }
+                }
+
+                core::CatalogManager::IndexMaintenanceDeltaCatalogInfo delta{};
+                delta.maintenance_id = active_row->maintenance_id;
+                delta.delta_id = next_delta_id;
+                delta.delta_op = delta_op;
+                delta.tid_gpid = tid.gpid;
+                delta.tid_slot = tid.slot;
+                delta.commit_txid = commit_txid;
+
+                core::ID delta_id{};
+                core::ErrorContext delta_ctx;
+                status = db_->catalog_manager()->upsertIndexMaintenanceDeltaCatalogEntry(
+                    delta, delta_id, &delta_ctx);
+                if (status == core::Status::OK)
+                {
+                    return true;
+                }
+                if (status == core::Status::CONSTRAINT_VIOLATION)
+                {
+                    continue;
+                }
+
+                LOG_WARNING(
+                    CATALOG,
+                    "Failed to capture index maintenance delta (index=%s, maintenance=%s): %s",
+                    index_info.index_id.toString().c_str(),
+                    active_row->maintenance_id.toString().c_str(),
+                    delta_ctx.message.c_str());
+                return false;
+            }
+
+            LOG_WARNING(
+                CATALOG,
+                "Failed to capture index maintenance delta after retries (index=%s, maintenance=%s)",
+                index_info.index_id.toString().c_str(),
+                active_row->maintenance_id.toString().c_str());
+            return false;
+        }
+
+        auto Executor::runIndexMaintenanceStateMachine(
+            const core::CatalogManager::IndexInfo& index_info,
+            core::CatalogManager::IndexMaintenanceKind maintenance_kind,
+            core::CatalogManager::IndexMaintenanceMode maintenance_mode,
+            const core::ID& target_filespace_id,
+            bool has_target_fillfactor,
+            uint16_t target_fillfactor,
+            core::ErrorContext* ctx) -> core::Status
+        {
+            if (!db_ || !db_->catalog_manager())
+            {
+                SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                  "Database/catalog manager not available");
+                return core::Status::INVALID_ARGUMENT;
+            }
+
+            core::CatalogManager* catalog = db_->catalog_manager();
+            uint64_t current_xid = conn_ctx_ ? conn_ctx_->getCurrentXid()
+                                             : db_->storage_engine()->getCurrentXid();
+
+            core::CatalogManager::IndexMaintenanceCatalogInfo maintenance{};
+            maintenance.index_id = index_info.index_id;
+            maintenance.maintenance_kind = maintenance_kind;
+            maintenance.maintenance_mode = maintenance_mode;
+            maintenance.maintenance_state = core::CatalogManager::IndexMaintenanceState::BUILDING_SHADOW;
+            maintenance.shadow_root_page_id =
+                static_cast<uint32_t>(core::getPageNumber(index_info.root_gpid));
+            maintenance.shadow_meta_page_id = 0;
+            maintenance.target_filespace_id = target_filespace_id;
+            maintenance.has_target_fillfactor = has_target_fillfactor;
+            maintenance.target_fillfactor = target_fillfactor;
+            maintenance.started_txid = current_xid;
+
+            core::ID maintenance_id{};
+            core::Status status =
+                catalog->upsertIndexMaintenanceCatalogEntry(maintenance, maintenance_id, ctx);
+            if (status != core::Status::OK)
+            {
+                return status;
+            }
+
+            auto mark_state = [&](core::CatalogManager::IndexMaintenanceState state) -> core::Status {
+                maintenance.maintenance_id = maintenance_id;
+                maintenance.maintenance_state = state;
+                maintenance.last_modified_time = 0;
+                core::ID ignored{};
+                return catalog->upsertIndexMaintenanceCatalogEntry(maintenance, ignored, ctx);
+            };
+
+            auto mark_failed = [&]() {
+                maintenance.maintenance_id = maintenance_id;
+                maintenance.maintenance_state = core::CatalogManager::IndexMaintenanceState::FAILED;
+                maintenance.last_modified_time = 0;
+                core::ID ignored{};
+                catalog->upsertIndexMaintenanceCatalogEntry(maintenance, ignored, nullptr);
+            };
+
+            status = mark_state(core::CatalogManager::IndexMaintenanceState::APPLYING_DELTAS);
+            if (status != core::Status::OK)
+            {
+                mark_failed();
+                return status;
+            }
+
+            std::vector<core::CatalogManager::IndexMaintenanceDeltaCatalogInfo> deltas;
+            status = catalog->listIndexMaintenanceDeltaCatalogEntries(maintenance_id, deltas, ctx);
+            if (status != core::Status::OK)
+            {
+                mark_failed();
+                return status;
+            }
+
+            std::sort(deltas.begin(), deltas.end(),
+                      [](const auto& lhs, const auto& rhs) {
+                          if (lhs.commit_txid != rhs.commit_txid)
+                          {
+                              return lhs.commit_txid < rhs.commit_txid;
+                          }
+                          return lhs.delta_id < rhs.delta_id;
+                      });
+
+            uint64_t last_commit = 0;
+            uint64_t last_delta = 0;
+            bool first = true;
+            for (const auto& delta : deltas)
+            {
+                if (first)
+                {
+                    first = false;
+                }
+                else if (delta.commit_txid < last_commit ||
+                         (delta.commit_txid == last_commit && delta.delta_id < last_delta))
+                {
+                    SET_ERROR_CONTEXT(ctx, core::Status::CONSTRAINT_VIOLATION,
+                                      "index_maintenance_delta ordering is invalid");
+                    mark_failed();
+                    return core::Status::CONSTRAINT_VIOLATION;
+                }
+                last_commit = delta.commit_txid;
+                last_delta = delta.delta_id;
+            }
+
+            status = mark_state(core::CatalogManager::IndexMaintenanceState::SWAPPING);
+            if (status != core::Status::OK)
+            {
+                mark_failed();
+                return status;
+            }
+
+            for (const auto& delta : deltas)
+            {
+                catalog->deleteIndexMaintenanceDeltaCatalogEntry(delta.maintenance_delta_id, nullptr);
+            }
+
+            status = mark_state(core::CatalogManager::IndexMaintenanceState::COMPLETE);
+            if (status != core::Status::OK)
+            {
+                mark_failed();
+                return status;
+            }
+
+            return core::Status::OK;
+        }
+
+        auto Executor::updateIndexUsageMetrics(
+            const core::CatalogManager::IndexInfo& index_info,
+            uint64_t tuple_read,
+            uint64_t tuple_returned,
+            uint64_t blocks_read,
+            uint64_t blocks_hit,
+            uint64_t total_time_ns,
+            core::ErrorContext* ctx) -> core::Status
+        {
+            if (!db_ || !db_->catalog_manager())
+            {
+                SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                  "Database/catalog manager not available");
+                return core::Status::INVALID_ARGUMENT;
+            }
+
+            auto saturating_add = [](uint64_t base, uint64_t delta) -> uint64_t {
+                const uint64_t max = std::numeric_limits<uint64_t>::max();
+                if (base > max - delta)
+                {
+                    return max;
+                }
+                return base + delta;
+            };
+
+            core::CatalogManager::IndexUsageCatalogInfo usage{};
+            if (db_->catalog_manager()->getIndexUsageCatalogEntry(index_info.index_id, usage, nullptr) !=
+                core::Status::OK)
+            {
+                usage = core::CatalogManager::IndexUsageCatalogInfo{};
+                usage.index_id = index_info.index_id;
+            }
+
+            usage.scan_count = saturating_add(usage.scan_count, 1);
+            usage.tuple_read = saturating_add(usage.tuple_read, tuple_read);
+            usage.tuple_returned = saturating_add(usage.tuple_returned, tuple_returned);
+            usage.blocks_read = saturating_add(usage.blocks_read, blocks_read);
+            usage.blocks_hit = saturating_add(usage.blocks_hit, blocks_hit);
+            usage.total_time_ns = saturating_add(usage.total_time_ns, total_time_ns);
+            usage.last_used_time = static_cast<uint64_t>(
+                std::chrono::system_clock::now().time_since_epoch().count());
+            usage.is_valid = true;
+
+            return db_->catalog_manager()->upsertIndexUsageCatalogEntry(usage, ctx);
+        }
+
+        auto Executor::refreshIndexStorageMetrics(
+            const core::CatalogManager::IndexInfo& index_info,
+            core::ErrorContext* ctx) -> core::Status
+        {
+            if (!db_ || !db_->catalog_manager() || !db_->buffer_pool())
+            {
+                SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                  "Database components not available for storage metrics");
+                return core::Status::INVALID_ARGUMENT;
+            }
+
+            core::CatalogManager::IndexStorageCatalogInfo storage{};
+            if (db_->catalog_manager()->getIndexStorageCatalogEntry(index_info.index_id, storage, nullptr) !=
+                core::Status::OK)
+            {
+                storage = core::CatalogManager::IndexStorageCatalogInfo{};
+                storage.index_id = index_info.index_id;
+            }
+
+            storage.index_id = index_info.index_id;
+            storage.filespace_id = index_info.tablespace_uuid;
+
+            uint64_t page_count = 0;
+            uint64_t bytes_allocated = 0;
+            uint64_t bytes_used = 0;
+            if (index_info.root_gpid != 0)
+            {
+                constexpr size_t kMaxWalkPages = 4096;
+                std::unordered_set<core::GPID> visited_pages;
+                core::GPID current_gpid = index_info.root_gpid;
+                const uint16_t root_tablespace_id = core::getTablespaceID(current_gpid);
+
+                while (current_gpid != 0 && visited_pages.size() < kMaxWalkPages)
+                {
+                    if (!visited_pages.insert(current_gpid).second)
+                    {
+                        break;
+                    }
+
+                    void* page_buffer = nullptr;
+                    if (db_->buffer_pool()->pinPageGlobal(current_gpid, &page_buffer, nullptr) != core::Status::OK)
+                    {
+                        break;
+                    }
+
+                    const auto* page = static_cast<const uint8_t*>(page_buffer);
+                    const auto* header = reinterpret_cast<const core::PageHeader*>(page);
+                    ++page_count;
+                    bytes_allocated += db_->page_size();
+                    uint32_t lower = core::pageLower(*header);
+                    uint32_t upper = core::pageUpper(*header);
+                    if (upper > db_->page_size())
+                    {
+                        upper = db_->page_size();
+                    }
+                    if (lower > db_->page_size())
+                    {
+                        lower = db_->page_size();
+                    }
+                    const uint32_t free_bytes = (upper >= lower) ? (upper - lower) : 0;
+                    bytes_used += static_cast<uint64_t>(db_->page_size() - free_bytes);
+
+                    uint32_t right_sibling = 0;
+                    const uint32_t special_offset = core::pageSpecial(*header);
+                    if (special_offset <= db_->page_size() &&
+                        special_offset + sizeof(core::IndexPageHeader) <= db_->page_size())
+                    {
+                        const auto* index_header =
+                            reinterpret_cast<const core::IndexPageHeader*>(page + special_offset);
+                        right_sibling = index_header->right_sibling;
+                    }
+
+                    db_->buffer_pool()->unpinPageGlobal(current_gpid, false, nullptr);
+                    if (right_sibling == 0)
+                    {
+                        break;
+                    }
+                    current_gpid = core::makeGPID(root_tablespace_id, static_cast<uint64_t>(right_sibling));
+                }
+            }
+
+            storage.page_count = page_count;
+            storage.bytes_allocated = bytes_allocated;
+            storage.bytes_used = std::min(bytes_used, bytes_allocated);
+            storage.fragmentation_ratio =
+                (bytes_allocated == 0)
+                    ? 0.0f
+                    : static_cast<float>(bytes_allocated - storage.bytes_used) /
+                          static_cast<float>(bytes_allocated);
+            storage.is_valid = true;
+
+            return db_->catalog_manager()->upsertIndexStorageCatalogEntry(storage, ctx);
+        }
+
+        auto Executor::runIndexHealthScan(
+            const core::CatalogManager::IndexInfo& index_info,
+            bool diagnostic_scan,
+            core::CatalogManager::IndexHealthCatalogInfo& health_out,
+            core::ErrorContext* ctx) -> core::Status
+        {
+            const auto scan_start_time = std::chrono::steady_clock::now();
+
+            if (!db_ || !db_->catalog_manager() || !db_->buffer_pool())
+            {
+                SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                  "Database components not available for index health scan");
+                return core::Status::INVALID_ARGUMENT;
+            }
+
+            core::CatalogManager* catalog = db_->catalog_manager();
+
+            core::CatalogManager::IndexHealthCatalogInfo existing{};
+            if (catalog->getIndexHealthCatalogEntry(index_info.index_id, existing, nullptr) == core::Status::OK)
+            {
+                health_out = existing;
+            }
+            else
+            {
+                health_out = core::CatalogManager::IndexHealthCatalogInfo{};
+                health_out.index_id = index_info.index_id;
+                health_out.light_status = core::CatalogManager::IndexHealthStatus::HEALTHY;
+                health_out.diagnostic_status = core::CatalogManager::IndexHealthStatus::HEALTHY;
+                health_out.is_valid = true;
+            }
+
+            const uint64_t now_ticks = static_cast<uint64_t>(
+                std::chrono::system_clock::now().time_since_epoch().count());
+            const uint64_t current_xid = conn_ctx_ ? conn_ctx_->getCurrentXid()
+                                                   : db_->storage_engine()->getCurrentXid();
+
+            uint32_t checksum_errors = 0;
+            uint32_t order_errors = 0;
+            uint32_t pointer_errors = 0;
+            uint32_t orphan_pages = 0;
+            uint32_t duplicate_keys = 0;
+            uint32_t in_memory_errors = 0;
+            uint32_t error_count = 0;
+            uint64_t pages_scanned = 0;
+            uint64_t bytes_scanned = 0;
+
+            auto classify_issue = [&](core::IndexPageIssueCode issue_code) {
+                ++error_count;
+                switch (issue_code)
+                {
+                    case core::IndexPageIssueCode::INVALID_CHECKSUM:
+                        ++checksum_errors;
+                        break;
+                    case core::IndexPageIssueCode::INVALID_INDEX_PAGE_LEVEL:
+                        ++order_errors;
+                        break;
+                    case core::IndexPageIssueCode::INVALID_INDEX_SIBLING:
+                        ++pointer_errors;
+                        break;
+                    default:
+                        ++in_memory_errors;
+                        break;
+                }
+            };
+
+            auto scan_page = [&](core::GPID page_gpid, uint32_t& right_sibling_out) -> core::Status {
+                right_sibling_out = 0;
+
+                void* page_buffer = nullptr;
+                core::Status pin_status =
+                    db_->buffer_pool()->pinPageGlobal(page_gpid, &page_buffer, nullptr);
+                if (pin_status != core::Status::OK)
+                {
+                    ++error_count;
+                    ++in_memory_errors;
+                    return pin_status;
+                }
+
+                const auto* page = static_cast<const uint8_t*>(page_buffer);
+                const auto* header = reinterpret_cast<const core::PageHeader*>(page);
+
+                uint16_t expected_page_type = header->page_type;
+                uint16_t expected_opaque_len = 0;
+                bool has_index_header = false;
+                if (header->page_size == db_->page_size())
+                {
+                    const uint32_t special_offset = core::pageSpecial(*header);
+                    if (special_offset <= db_->page_size() &&
+                        special_offset + sizeof(core::IndexPageHeader) <= db_->page_size())
+                    {
+                        const auto* index_header =
+                            reinterpret_cast<const core::IndexPageHeader*>(page + special_offset);
+                        expected_opaque_len = index_header->opaque_len;
+                        right_sibling_out = index_header->right_sibling;
+                        has_index_header = true;
+                    }
+                }
+
+                core::IndexPageDiagnosticReport report{};
+                core::ErrorContext validate_ctx{};
+                core::Status validate_status = core::IndexPageDiagnostics::validatePage(
+                    page,
+                    db_->page_size(),
+                    expected_page_type,
+                    expected_opaque_len,
+                    nullptr,
+                    &report,
+                    &validate_ctx);
+
+                ++pages_scanned;
+                bytes_scanned += db_->page_size();
+                for (const auto& issue : report.issues)
+                {
+                    classify_issue(issue.code);
+                }
+                if (validate_status != core::Status::OK && report.issues.empty())
+                {
+                    ++error_count;
+                    ++in_memory_errors;
+                }
+                if (!has_index_header)
+                {
+                    right_sibling_out = 0;
+                }
+
+                core::Status unpin_status = db_->buffer_pool()->unpinPageGlobal(page_gpid, false, nullptr);
+                if (unpin_status != core::Status::OK)
+                {
+                    ++error_count;
+                    ++in_memory_errors;
+                    if (validate_status == core::Status::OK)
+                    {
+                        validate_status = unpin_status;
+                    }
+                }
+                return validate_status;
+            };
+
+            const auto* family_caps = core::IndexFactory::lookupCapabilities(index_info.index_type);
+            const bool page_based =
+                family_caps != nullptr &&
+                family_caps->storage_model == core::IndexFactory::IndexStorageModel::PAGE_BASED;
+            if (!page_based || index_info.root_gpid == 0)
+            {
+                ++error_count;
+                ++in_memory_errors;
+            }
+            else
+            {
+                constexpr size_t kMaxWalkPages = 4096;
+                std::unordered_set<core::GPID> visited_pages;
+                core::GPID current_gpid = index_info.root_gpid;
+                const uint16_t root_tablespace_id = core::getTablespaceID(current_gpid);
+
+                while (current_gpid != 0 && visited_pages.size() < kMaxWalkPages)
+                {
+                    if (!visited_pages.insert(current_gpid).second)
+                    {
+                        ++error_count;
+                        ++pointer_errors;
+                        break;
+                    }
+
+                    uint32_t right_sibling = 0;
+                    core::Status page_status = scan_page(current_gpid, right_sibling);
+                    if (!diagnostic_scan)
+                    {
+                        break;
+                    }
+
+                    if (page_status != core::Status::OK || right_sibling == 0)
+                    {
+                        break;
+                    }
+                    current_gpid = core::makeGPID(root_tablespace_id, static_cast<uint64_t>(right_sibling));
+                }
+
+                if (diagnostic_scan && visited_pages.size() >= kMaxWalkPages)
+                {
+                    ++error_count;
+                    ++in_memory_errors;
+                }
+            }
+
+            auto make_diag_status = [&]() -> core::CatalogManager::IndexHealthStatus {
+                if (error_count == 0)
+                {
+                    return core::CatalogManager::IndexHealthStatus::HEALTHY;
+                }
+                if (checksum_errors > 0 || pointer_errors > 0 || order_errors > 0)
+                {
+                    return core::CatalogManager::IndexHealthStatus::CORRUPT;
+                }
+                return core::CatalogManager::IndexHealthStatus::ERROR;
+            };
+
+            auto make_light_status = [&]() -> core::CatalogManager::IndexHealthStatus {
+                if (error_count == 0)
+                {
+                    return core::CatalogManager::IndexHealthStatus::HEALTHY;
+                }
+                if (checksum_errors > 0 || pointer_errors > 0 || order_errors > 0)
+                {
+                    return core::CatalogManager::IndexHealthStatus::ERROR;
+                }
+                return core::CatalogManager::IndexHealthStatus::WARNING;
+            };
+
+            if (diagnostic_scan)
+            {
+                health_out.last_diag_scan_txid = current_xid;
+                health_out.last_diag_scan_time = now_ticks;
+                health_out.diagnostic_status = make_diag_status();
+                health_out.diagnostic_error_count = error_count;
+            }
+            else
+            {
+                health_out.last_light_scan_txid = current_xid;
+                health_out.last_light_scan_time = now_ticks;
+                health_out.light_status = make_light_status();
+                health_out.light_error_count = error_count;
+            }
+
+            health_out.checksum_errors = checksum_errors;
+            health_out.order_errors = order_errors;
+            health_out.pointer_errors = pointer_errors;
+            health_out.orphan_pages = orphan_pages;
+            health_out.duplicate_keys = duplicate_keys;
+            health_out.in_memory_errors = in_memory_errors;
+            health_out.pages_scanned = pages_scanned;
+            health_out.bytes_scanned = bytes_scanned;
+            health_out.is_valid = true;
+
+            core::Status upsert_status = catalog->upsertIndexHealthCatalogEntry(health_out, ctx);
+            if (upsert_status != core::Status::OK)
+            {
+                return upsert_status;
+            }
+
+            uint64_t tuple_returned = (pages_scanned > error_count) ? (pages_scanned - error_count) : 0;
+            uint64_t elapsed_ns = static_cast<uint64_t>(
+                std::chrono::duration_cast<std::chrono::nanoseconds>(
+                    std::chrono::steady_clock::now() - scan_start_time)
+                    .count());
+            core::ErrorContext usage_ctx;
+            core::Status usage_status = updateIndexUsageMetrics(
+                index_info,
+                pages_scanned,
+                tuple_returned,
+                pages_scanned,
+                0,
+                elapsed_ns,
+                &usage_ctx);
+            if (usage_status != core::Status::OK)
+            {
+                LOG_WARNING(
+                    CATALOG,
+                    "Failed to update index usage metrics during health scan (index=%s): %s",
+                    index_info.index_id.toString().c_str(),
+                    usage_ctx.message.c_str());
+            }
+
+            return core::Status::OK;
+        }
+
         // Task 17 MGA Phase 1.1: Added xid parameter for transaction context
         void Executor::updateIndexesOnInsert(
             uint64_t xid,
@@ -7951,6 +8698,11 @@ namespace scratchbird
                     // Task 17 MGA Phase 2.2: Track statistics
                     index_stats_.entries_added++;
                     index_stats_.indexes_maintained++;
+                    captureMaintenanceDeltaForIndex(
+                        index_info,
+                        core::CatalogManager::IndexDeltaOp::INSERT,
+                        tid,
+                        xid);
                 }
 
                 // No manual cleanup needed - unique_ptr handles it automatically
@@ -8195,6 +8947,16 @@ namespace scratchbird
                     // Task 17 MGA Phase 2.2: Track statistics
                     index_stats_.entries_updated++;
                     index_stats_.indexes_maintained++;
+                    captureMaintenanceDeltaForIndex(
+                        index_info,
+                        core::CatalogManager::IndexDeltaOp::DELETE,
+                        old_tid,
+                        xid);
+                    captureMaintenanceDeltaForIndex(
+                        index_info,
+                        core::CatalogManager::IndexDeltaOp::INSERT,
+                        new_tid,
+                        xid);
                 }
                 else if (in_old && !in_new)
                 {
@@ -8207,6 +8969,11 @@ namespace scratchbird
                     // Task 17 MGA Phase 2.2: Track statistics
                     index_stats_.entries_removed++;
                     index_stats_.indexes_maintained++;
+                    captureMaintenanceDeltaForIndex(
+                        index_info,
+                        core::CatalogManager::IndexDeltaOp::DELETE,
+                        old_tid,
+                        xid);
                 }
                 else if (!in_old && in_new)
                 {
@@ -8219,6 +8986,11 @@ namespace scratchbird
                     // Task 17 MGA Phase 2.2: Track statistics
                     index_stats_.entries_added++;
                     index_stats_.indexes_maintained++;
+                    captureMaintenanceDeltaForIndex(
+                        index_info,
+                        core::CatalogManager::IndexDeltaOp::INSERT,
+                        new_tid,
+                        xid);
                 }
                 // else: neither in index - no change
 
@@ -8409,6 +9181,11 @@ namespace scratchbird
                         // Task 17 MGA Phase 2.2: Track statistics
                         index_stats_.entries_removed++;
                         index_stats_.indexes_maintained++;
+                        captureMaintenanceDeltaForIndex(
+                            index_info,
+                            core::CatalogManager::IndexDeltaOp::DELETE,
+                            tid,
+                            xid);
                     }
                 }
                 else
@@ -8427,6 +9204,11 @@ namespace scratchbird
                         // Task 17 MGA Phase 2.2: Track statistics
                         index_stats_.entries_removed++;
                         index_stats_.indexes_maintained++;
+                        captureMaintenanceDeltaForIndex(
+                            index_info,
+                            core::CatalogManager::IndexDeltaOp::DELETE,
+                            tid,
+                            xid);
                     }
                 }
 
@@ -16437,11 +17219,10 @@ namespace scratchbird
                                     if (!trig.enabled) continue;
 
                                     TriggerContext ctx(trig, &old_row_values, &conflict_row, table_info, all_columns);
-                                    should_continue = fireTrigger(ctx);
-
-                                    if (!should_continue)
+                                    if (!fireTrigger(ctx))
                                     {
-                                        continue;
+                                        should_continue = false;
+                                        break;
                                     }
                                 }
                             }
@@ -16536,7 +17317,10 @@ namespace scratchbird
                                     if (!trig.enabled) continue;
 
                                     TriggerContext ctx(trig, &old_row_values, &conflict_row, table_info, all_columns);
-                                    fireTrigger(ctx);
+                                    if (!fireTrigger(ctx))
+                                    {
+                                        return false;
+                                    }
                                 }
                             }
 
@@ -16904,7 +17688,10 @@ namespace scratchbird
                         if (!trigger.enabled) continue;
 
                         TriggerContext ctx(trigger, nullptr, &row_values, target_table_info, all_columns);
-                        fireTrigger(ctx);
+                        if (!fireTrigger(ctx))
+                        {
+                            return false;
+                        }
                     }
                 }
 
@@ -19386,12 +20173,11 @@ namespace scratchbird
                         if (!trig.enabled) continue;
 
                         TriggerContext ctx(trig, &old_row_values_full, &row_values_full, table_info, target_columns);
-                        should_continue = fireTrigger(ctx);
-
-                        if (!should_continue)
+                        if (!fireTrigger(ctx))
                         {
                             // BEFORE trigger prevented operation
-                            continue;  // Skip this row
+                            should_continue = false;
+                            break;
                         }
                     }
                 }
@@ -19544,7 +20330,11 @@ namespace scratchbird
                         if (!trig.enabled) continue;
 
                         TriggerContext ctx(trig, &old_row_values_full, &row_values_full, table_info, target_columns);
-                        fireTrigger(ctx);  // AFTER triggers don't prevent operation
+                        if (!fireTrigger(ctx))
+                        {
+                            error("AFTER UPDATE trigger '" + trig.trigger_name +
+                                  "' returned FALSE (fail-closed)");
+                        }
                     }
                 }
 
@@ -20607,12 +21397,11 @@ namespace scratchbird
                         if (!trig.enabled) continue;
 
                         TriggerContext ctx(trig, &row_values, nullptr, table_info, all_columns);
-                        should_continue = fireTrigger(ctx);
-
-                        if (!should_continue)
+                        if (!fireTrigger(ctx))
                         {
                             // BEFORE trigger prevented operation
-                            continue;  // Skip this row
+                            should_continue = false;
+                            break;
                         }
                     }
                 }
@@ -20697,7 +21486,11 @@ namespace scratchbird
                         if (!trig.enabled) continue;
 
                         TriggerContext ctx(trig, &row_values, nullptr, table_info, all_columns);
-                        fireTrigger(ctx);  // AFTER triggers don't prevent operation
+                        if (!fireTrigger(ctx))
+                        {
+                            error("AFTER DELETE trigger '" + trig.trigger_name +
+                                  "' returned FALSE (fail-closed)");
+                        }
                     }
                 }
 
@@ -26013,6 +26806,20 @@ namespace scratchbird
                         error("Permission denied: SELECT on table " + table_name);
                     }
                 }
+                std::unordered_set<std::string> accessible_column_set;
+                accessible_column_set.reserve(accessible_columns.size());
+                for (const auto& col_name : accessible_columns)
+                {
+                    accessible_column_set.insert(normalize_name(col_name));
+                }
+                auto has_column_select_access = [&](const std::string& col_name) -> bool {
+                    if (accessible_column_set.empty())
+                    {
+                        return true;
+                    }
+                    return accessible_column_set.find(normalize_name(col_name))
+                        != accessible_column_set.end();
+                };
 
                 std::vector<core::CatalogManager::ColumnInfo> all_columns;
                 if (db_->catalog_manager()->getColumns(table_info.table_id, all_columns, nullptr) != core::Status::OK)
@@ -26038,9 +26845,7 @@ namespace scratchbird
                 auto add_star_columns = [&](ProjectionItem& proj) {
                     for (size_t i = 0; i < all_columns.size(); ++i)
                     {
-                        if (!accessible_columns.empty() &&
-                            std::find(accessible_columns.begin(), accessible_columns.end(),
-                                      all_columns[i].column_name) == accessible_columns.end())
+                        if (!has_column_select_access(all_columns[i].column_name))
                         {
                             continue;
                         }
@@ -26082,9 +26887,26 @@ namespace scratchbird
                         proj.expr_end = item.expr_end;
 
                         std::string col_name;
+                        bool is_simple_column =
+                            infer_simple_column_ref(item.expr_start, item.expr_end, col_name);
+
+                        if (!accessible_column_set.empty())
+                        {
+                            if (!is_simple_column)
+                            {
+                                error("Permission denied: SELECT expression requires table-level SELECT on table "
+                                      + table_name);
+                            }
+                            if (!has_column_select_access(col_name))
+                            {
+                                error("Permission denied: SELECT on column " + col_name +
+                                      " of table " + table_name);
+                            }
+                        }
+
                         if (item.alias.empty())
                         {
-                            if (infer_simple_column_ref(item.expr_start, item.expr_end, col_name))
+                            if (is_simple_column)
                             {
                                 proj.alias = col_name;
                                 auto it = std::find_if(all_columns.begin(), all_columns.end(),
@@ -26102,7 +26924,7 @@ namespace scratchbird
                         else
                         {
                             proj.alias = item.alias;
-                            if (infer_simple_column_ref(item.expr_start, item.expr_end, col_name))
+                            if (is_simple_column)
                             {
                                 auto it = std::find_if(all_columns.begin(), all_columns.end(),
                                                        [&](const auto& c) { return c.column_name == col_name; });
@@ -26131,6 +26953,12 @@ namespace scratchbird
                     {
                         has_fulltext_predicate = true;
                     }
+                }
+                if (has_fulltext_predicate &&
+                    !has_column_select_access(ft_column))
+                {
+                    error("Permission denied: SELECT on column " + ft_column +
+                          " of table " + table_name);
                 }
 
                 auto expanded_tables = collectExpandedTables(db_->catalog_manager(), table_info, &err_ctx);
@@ -28343,37 +29171,33 @@ namespace scratchbird
         {
             // Wave 2: Trigger Executor Implementation
             const auto& trigger = ctx.trigger();
+            UdrInvocationScopeGuard scope_guard(this, UdrInvocationScope::TRIGGER);
 
             // Look up trigger procedure
             auto it = trigger_procedures_.find(trigger.procedure_name);
             if (it == trigger_procedures_.end())
             {
-                // For Phase 2, just log warning if procedure not found
-                std::cerr << "Warning: Trigger procedure '"
-                          << trigger.procedure_name << "' not registered\n";
-                return true;  // Continue operation
+                error("Trigger procedure '" + trigger.procedure_name +
+                      "' not registered for trigger '" + trigger.trigger_name + "'");
+                return false;
             }
 
             // Execute procedure
             try
             {
                 bool should_continue = it->second(ctx);
+                if (!should_continue &&
+                    trigger.timing == core::CatalogManager::TriggerTiming::AFTER)
+                {
+                    error("AFTER trigger '" + trigger.trigger_name +
+                          "' returned FALSE (fail-closed)");
+                }
                 return should_continue;
             }
             catch (const std::exception& e)
             {
-                std::cerr << "Trigger '" << trigger.trigger_name
-                          << "' failed: " << e.what() << "\n";
-
-                // BEFORE/INSTEAD OF triggers: failure prevents operation
-                if (trigger.timing == core::CatalogManager::TriggerTiming::BEFORE ||
-                    trigger.timing == core::CatalogManager::TriggerTiming::INSTEAD_OF)
-                {
-                    return false;
-                }
-
-                // AFTER triggers: log error but continue
-                return true;
+                error("Trigger '" + trigger.trigger_name + "' failed: " + e.what());
+                return false;
             }
         }
 
@@ -28396,37 +29220,33 @@ namespace scratchbird
         bool Executor::fireStatementTrigger(const StatementTriggerContext& ctx)
         {
             const auto& trigger = ctx.trigger();
+            UdrInvocationScopeGuard scope_guard(this, UdrInvocationScope::TRIGGER);
 
             // Look up statement-level trigger procedure
             auto it = statement_trigger_procedures_.find(trigger.procedure_name);
             if (it == statement_trigger_procedures_.end())
             {
-                // For Phase 2, just log warning if procedure not found
-                std::cerr << "Warning: Statement trigger procedure '"
-                          << trigger.procedure_name << "' not registered\n";
-                return true;  // Continue operation
+                error("Statement trigger procedure '" + trigger.procedure_name +
+                      "' not registered for trigger '" + trigger.trigger_name + "'");
+                return false;
             }
 
             // Execute procedure
             try
             {
                 bool should_continue = it->second(ctx);
+                if (!should_continue &&
+                    trigger.timing == core::CatalogManager::TriggerTiming::AFTER)
+                {
+                    error("AFTER statement trigger '" + trigger.trigger_name +
+                          "' returned FALSE (fail-closed)");
+                }
                 return should_continue;
             }
             catch (const std::exception& e)
             {
-                std::cerr << "Statement trigger '" << trigger.trigger_name
-                          << "' failed: " << e.what() << "\n";
-
-                // BEFORE/INSTEAD OF triggers: failure prevents operation
-                if (trigger.timing == core::CatalogManager::TriggerTiming::BEFORE ||
-                    trigger.timing == core::CatalogManager::TriggerTiming::INSTEAD_OF)
-                {
-                    return false;
-                }
-
-                // AFTER triggers: log error but continue
-                return true;
+                error("Statement trigger '" + trigger.trigger_name + "' failed: " + e.what());
+                return false;
             }
         }
 
@@ -38033,7 +38853,9 @@ namespace scratchbird
                         left.type() == core::DataType::DECIMAL ||
                         right.type() == core::DataType::DECIMAL ||
                         left.type() == core::DataType::MONEY ||
-                        right.type() == core::DataType::MONEY)
+                        right.type() == core::DataType::MONEY ||
+                        isWideNumericType(left.type()) ||
+                        isWideNumericType(right.type()))
                         push(Value::makeFloat64(coerceToDouble(left) + coerceToDouble(right)));
                     else if (use_integer128)
                         push(eval_integer128(op));
@@ -38070,7 +38892,9 @@ namespace scratchbird
                         left.type() == core::DataType::DECIMAL ||
                         right.type() == core::DataType::DECIMAL ||
                         left.type() == core::DataType::MONEY ||
-                        right.type() == core::DataType::MONEY)
+                        right.type() == core::DataType::MONEY ||
+                        isWideNumericType(left.type()) ||
+                        isWideNumericType(right.type()))
                         push(Value::makeFloat64(coerceToDouble(left) - coerceToDouble(right)));
                     else if (use_integer128)
                         push(eval_integer128(op));
@@ -38107,7 +38931,9 @@ namespace scratchbird
                         left.type() == core::DataType::DECIMAL ||
                         right.type() == core::DataType::DECIMAL ||
                         left.type() == core::DataType::MONEY ||
-                        right.type() == core::DataType::MONEY)
+                        right.type() == core::DataType::MONEY ||
+                        isWideNumericType(left.type()) ||
+                        isWideNumericType(right.type()))
                         push(Value::makeFloat64(coerceToDouble(left) * coerceToDouble(right)));
                     else if (use_integer128)
                         push(eval_integer128(op));
@@ -38147,7 +38973,9 @@ namespace scratchbird
                         left.type() == core::DataType::DECIMAL ||
                         right.type() == core::DataType::DECIMAL ||
                         left.type() == core::DataType::MONEY ||
-                        right.type() == core::DataType::MONEY)
+                        right.type() == core::DataType::MONEY ||
+                        isWideNumericType(left.type()) ||
+                        isWideNumericType(right.type()))
                         push(Value::makeFloat64(coerceToDouble(left) / right_val));
                     else if (use_integer128)
                         push(eval_integer128(op));
@@ -38157,6 +38985,10 @@ namespace scratchbird
                 }
                 case Opcode::EXPR_MODULO:
                 {
+                    if (isWideNumericType(left.type()) || isWideNumericType(right.type()))
+                    {
+                        error("Modulo is not supported for wide numeric types");
+                    }
                     if (use_integer128)
                     {
                         push(eval_integer128(op));
@@ -39452,6 +40284,8 @@ namespace scratchbird
 
         void Executor::executeFunction()
         {
+            UdrInvocationScopeGuard scope_guard(this, UdrInvocationScope::FUNCTION);
+
             // Read function name
             std::string function_name = readString();
 
@@ -39635,6 +40469,8 @@ namespace scratchbird
 
         void Executor::executeProcedure()
         {
+            UdrInvocationScopeGuard scope_guard(this, UdrInvocationScope::PROCEDURE);
+
             // Read procedure name
             std::string procedure_name = readString();
 
@@ -40591,24 +41427,6 @@ namespace scratchbird
                 return true;
             };
 
-            auto mapIndexType = [&](const std::string& name) -> core::CatalogManager::IndexType {
-                std::string upper = core::IdentifierUtils::toUpper(name);
-                if (upper == "HASH") return core::CatalogManager::IndexType::HASH;
-                if (upper == "GIN") return core::CatalogManager::IndexType::GIN;
-                if (upper == "GIST") return core::CatalogManager::IndexType::GIST;
-                if (upper == "SPGIST") return core::CatalogManager::IndexType::SPGIST;
-                if (upper == "BRIN") return core::CatalogManager::IndexType::BRIN;
-                if (upper == "RTREE") return core::CatalogManager::IndexType::RTREE;
-                if (upper == "HNSW") return core::CatalogManager::IndexType::HNSW;
-                if (upper == "BITMAP") return core::CatalogManager::IndexType::BITMAP;
-                if (upper == "COLUMNSTORE") return core::CatalogManager::IndexType::COLUMNSTORE;
-                if (upper == "LSM") return core::CatalogManager::IndexType::LSM;
-                if (upper == "FULLTEXT") return core::CatalogManager::IndexType::FULLTEXT;
-                if (upper == "IVF") return core::CatalogManager::IndexType::IVF;
-                if (upper == "ZONEMAP") return core::CatalogManager::IndexType::ZONEMAP;
-                return core::CatalogManager::IndexType::BTREE;
-            };
-
             auto resolveTableId = [&](const std::string& path,
                                       core::CatalogManager::TableInfo& table_info,
                                       std::string& err_out) -> bool {
@@ -41447,6 +42265,10 @@ namespace scratchbird
                         }
                         if (op == Opcode::SBLR3_EXPR_DIV_INT)
                         {
+                            if (isWideNumericType(lhs.type()) || isWideNumericType(rhs.type()))
+                            {
+                                error("DIV_INT is not supported for wide numeric types");
+                            }
                             if (rhs.toInt64() == 0)
                             {
                                 error("DIV by zero");
@@ -41455,6 +42277,10 @@ namespace scratchbird
                         }
                         if (op == Opcode::SBLR3_EXPR_MODULO)
                         {
+                            if (isWideNumericType(lhs.type()) || isWideNumericType(rhs.type()))
+                            {
+                                error("Modulo is not supported for wide numeric types");
+                            }
                             if (rhs.toInt64() == 0)
                             {
                                 error("Modulo by zero");
@@ -41463,18 +42289,34 @@ namespace scratchbird
                         }
                         if (op == Opcode::SBLR3_BIT_AND)
                         {
+                            if (isWideNumericType(lhs.type()) || isWideNumericType(rhs.type()))
+                            {
+                                error("Bitwise operators are not supported for wide numeric types");
+                            }
                             return Value::makeInt64(lhs.toInt64() & rhs.toInt64());
                         }
                         if (op == Opcode::SBLR3_BIT_OR)
                         {
+                            if (isWideNumericType(lhs.type()) || isWideNumericType(rhs.type()))
+                            {
+                                error("Bitwise operators are not supported for wide numeric types");
+                            }
                             return Value::makeInt64(lhs.toInt64() | rhs.toInt64());
                         }
                         if (op == Opcode::SBLR3_BIT_XOR)
                         {
+                            if (isWideNumericType(lhs.type()) || isWideNumericType(rhs.type()))
+                            {
+                                error("Bitwise operators are not supported for wide numeric types");
+                            }
                             return Value::makeInt64(lhs.toInt64() ^ rhs.toInt64());
                         }
                         if (op == Opcode::SBLR3_BIT_SHIFT_LEFT)
                         {
+                            if (isWideNumericType(lhs.type()) || isWideNumericType(rhs.type()))
+                            {
+                                error("Bitwise shift operators are not supported for wide numeric types");
+                            }
                             int64_t shift = rhs.toInt64();
                             if (shift < 0 || shift >= 64)
                             {
@@ -41486,6 +42328,10 @@ namespace scratchbird
                         }
                         if (op == Opcode::SBLR3_BIT_SHIFT_RIGHT)
                         {
+                            if (isWideNumericType(lhs.type()) || isWideNumericType(rhs.type()))
+                            {
+                                error("Bitwise shift operators are not supported for wide numeric types");
+                            }
                             int64_t shift = rhs.toInt64();
                             if (shift < 0 || shift >= 64)
                             {
@@ -43086,7 +43932,1447 @@ namespace scratchbird
                 {
                     index_type_name = core::IdentifierUtils::toUpper(index_type_name);
                 }
-                core::CatalogManager::IndexType index_type = mapIndexType(index_type_name);
+                auto mapped_index_type = Executor::mapCanonicalIndexType(index_type_name);
+                if (!mapped_index_type.has_value())
+                {
+                    return ExecutionResult("CREATE INDEX unsupported index_type: " + index_type_name);
+                }
+                core::CatalogManager::IndexType index_type = *mapped_index_type;
+
+                std::unordered_map<std::string, Value> create_options;
+                auto decodeCreateIndexOptionValue =
+                    [&](const scratchbird::sblr::v3::Value& raw,
+                        Value& out) -> bool {
+                    scratchbird::sblr::v3::Instruction inst;
+                    if (getInstrFromValue(raw, inst))
+                    {
+                        out = evalExpr(inst);
+                        return true;
+                    }
+                    if (raw.isNull())
+                    {
+                        out = Value::makeNull();
+                        return true;
+                    }
+                    const auto& data = raw.data;
+                    if (auto b = std::get_if<bool>(&data))
+                    {
+                        out = Value::makeBool(*b);
+                        return true;
+                    }
+                    if (auto i = std::get_if<int64_t>(&data))
+                    {
+                        out = Value::makeInt64(*i);
+                        return true;
+                    }
+                    if (auto u = std::get_if<uint64_t>(&data))
+                    {
+                        out = Value::makeUInt64(*u);
+                        return true;
+                    }
+                    if (auto d = std::get_if<double>(&data))
+                    {
+                        out = Value::makeFloat64(*d);
+                        return true;
+                    }
+                    if (auto s = std::get_if<std::string>(&data))
+                    {
+                        out = Value::makeVarchar(*s);
+                        return true;
+                    }
+                    return false;
+                };
+
+                auto it_options = payload.find("options");
+                if (it_options != payload.end() && !it_options->second.isNull())
+                {
+                    if (const auto* option_list =
+                            std::get_if<scratchbird::sblr::v3::Value::List>(&it_options->second.data))
+                    {
+                        for (const auto& option_entry : *option_list)
+                        {
+                            const auto* option_obj =
+                                std::get_if<scratchbird::sblr::v3::Value::Object>(&option_entry.data);
+                            if (!option_obj)
+                            {
+                                return ExecutionResult("CREATE INDEX option entry invalid");
+                            }
+                            std::string option_key;
+                            if (!getString(*option_obj, "key", option_key) || option_key.empty())
+                            {
+                                return ExecutionResult("CREATE INDEX option key missing");
+                            }
+                            option_key = core::IdentifierUtils::toUpper(option_key);
+                            if (create_options.find(option_key) != create_options.end())
+                            {
+                                return ExecutionResult("CREATE INDEX duplicate option key: " + option_key);
+                            }
+                            auto it_value = option_obj->find("value");
+                            if (it_value == option_obj->end())
+                            {
+                                return ExecutionResult("CREATE INDEX option value missing for key: " + option_key);
+                            }
+                            Value parsed = Value::makeNull();
+                            if (!decodeCreateIndexOptionValue(it_value->second, parsed))
+                            {
+                                return ExecutionResult("CREATE INDEX option value invalid for key: " + option_key);
+                            }
+                            create_options.emplace(option_key, std::move(parsed));
+                        }
+                    }
+                    else if (!std::holds_alternative<scratchbird::sblr::v3::Value::Object>(it_options->second.data))
+                    {
+                        return ExecutionResult("CREATE INDEX options invalid");
+                    }
+                }
+
+                auto isVectorFamilyType = [&](core::CatalogManager::IndexType t) -> bool {
+                    switch (t)
+                    {
+                        case core::CatalogManager::IndexType::HNSW:
+                        case core::CatalogManager::IndexType::IVF:
+                        case core::CatalogManager::IndexType::VECTOR_FLAT:
+                        case core::CatalogManager::IndexType::VECTOR_BIN_FLAT:
+                        case core::CatalogManager::IndexType::IVF_FLAT:
+                        case core::CatalogManager::IndexType::BIN_IVF_FLAT:
+                        case core::CatalogManager::IndexType::IVF_PQ:
+                        case core::CatalogManager::IndexType::IVF_SQ8:
+                        case core::CatalogManager::IndexType::IVF_SQ8_HYBRID:
+                        case core::CatalogManager::IndexType::RHNSW_PQ:
+                        case core::CatalogManager::IndexType::RHNSW_SQ:
+                            return true;
+                        default:
+                            return false;
+                    }
+                };
+                auto isIvfFamilyType = [&](core::CatalogManager::IndexType t) -> bool {
+                    switch (t)
+                    {
+                        case core::CatalogManager::IndexType::IVF:
+                        case core::CatalogManager::IndexType::IVF_FLAT:
+                        case core::CatalogManager::IndexType::BIN_IVF_FLAT:
+                        case core::CatalogManager::IndexType::IVF_PQ:
+                        case core::CatalogManager::IndexType::IVF_SQ8:
+                        case core::CatalogManager::IndexType::IVF_SQ8_HYBRID:
+                            return true;
+                        default:
+                            return false;
+                    }
+                };
+                auto isBinaryVectorFamilyType = [&](core::CatalogManager::IndexType t) -> bool {
+                    return t == core::CatalogManager::IndexType::VECTOR_BIN_FLAT ||
+                           t == core::CatalogManager::IndexType::BIN_IVF_FLAT;
+                };
+                auto isPqFamilyType = [&](core::CatalogManager::IndexType t) -> bool {
+                    return t == core::CatalogManager::IndexType::IVF_PQ ||
+                           t == core::CatalogManager::IndexType::RHNSW_PQ;
+                };
+                auto isSqFamilyType = [&](core::CatalogManager::IndexType t) -> bool {
+                    return t == core::CatalogManager::IndexType::IVF_SQ8 ||
+                           t == core::CatalogManager::IndexType::IVF_SQ8_HYBRID ||
+                           t == core::CatalogManager::IndexType::RHNSW_SQ;
+                };
+                auto isAdvancedAnnFamilyType = [&](core::CatalogManager::IndexType t) -> bool {
+                    switch (t)
+                    {
+                        case core::CatalogManager::IndexType::ANNOY:
+                        case core::CatalogManager::IndexType::NSG:
+                        case core::CatalogManager::IndexType::DISKANN:
+                        case core::CatalogManager::IndexType::SCANN:
+                        case core::CatalogManager::IndexType::GPU_CAGRA:
+                            return true;
+                        default:
+                            return false;
+                    }
+                };
+                auto isSymbolicSparseFamilyType = [&](core::CatalogManager::IndexType t) -> bool {
+                    switch (t)
+                    {
+                        case core::CatalogManager::IndexType::ART:
+                        case core::CatalogManager::IndexType::BLOOM:
+                        case core::CatalogManager::IndexType::TRIE:
+                        case core::CatalogManager::IndexType::NGRAM:
+                        case core::CatalogManager::IndexType::SPARSE_INVERTED:
+                        case core::CatalogManager::IndexType::SPARSE_WAND:
+                        case core::CatalogManager::IndexType::MINHASH_LSH:
+                            return true;
+                        default:
+                            return false;
+                    }
+                };
+                auto isMongoFamilyType = [&](core::CatalogManager::IndexType t) -> bool {
+                    switch (t)
+                    {
+                        case core::CatalogManager::IndexType::MONGODB_2D:
+                        case core::CatalogManager::IndexType::MONGODB_2DSPHERE:
+                        case core::CatalogManager::IndexType::MONGODB_2DSPHERE_BUCKET:
+                        case core::CatalogManager::IndexType::MONGODB_GEO_HAYSTACK:
+                        case core::CatalogManager::IndexType::MONGODB_WILDCARD:
+                        case core::CatalogManager::IndexType::MONGODB_ENCRYPTED_RANGE:
+                            return true;
+                        default:
+                            return false;
+                    }
+                };
+                auto isNeo4jFamilyType = [&](core::CatalogManager::IndexType t) -> bool {
+                    switch (t)
+                    {
+                        case core::CatalogManager::IndexType::NEO4J_LOOKUP:
+                        case core::CatalogManager::IndexType::NEO4J_TEXT:
+                        case core::CatalogManager::IndexType::NEO4J_RANGE:
+                        case core::CatalogManager::IndexType::NEO4J_POINT:
+                        case core::CatalogManager::IndexType::NEO4J_VECTOR:
+                            return true;
+                        default:
+                            return false;
+                    }
+                };
+                auto isCassandraFamilyType = [&](core::CatalogManager::IndexType t) -> bool {
+                    return t == core::CatalogManager::IndexType::CASSANDRA_SASI ||
+                           t == core::CatalogManager::IndexType::CASSANDRA_SAI;
+                };
+                auto isRedisFamilyType = [&](core::CatalogManager::IndexType t) -> bool {
+                    switch (t)
+                    {
+                        case core::CatalogManager::IndexType::REDIS_STRING:
+                        case core::CatalogManager::IndexType::REDIS_HASH:
+                        case core::CatalogManager::IndexType::REDIS_LIST:
+                        case core::CatalogManager::IndexType::REDIS_SET:
+                        case core::CatalogManager::IndexType::REDIS_ZSET:
+                        case core::CatalogManager::IndexType::REDIS_STREAM:
+                        case core::CatalogManager::IndexType::REDIS_BITMAP:
+                        case core::CatalogManager::IndexType::REDIS_HLL:
+                        case core::CatalogManager::IndexType::REDIS_GEO:
+                            return true;
+                        default:
+                            return false;
+                    }
+                };
+
+                auto readNumericOption =
+                    [&](const std::string& key,
+                        int64_t min_value,
+                        int64_t max_value,
+                        bool required,
+                        int64_t* out_value) -> std::optional<std::string> {
+                    auto it = create_options.find(key);
+                    if (it == create_options.end())
+                    {
+                        if (required)
+                        {
+                            return std::string("CREATE INDEX missing required option: ") + key;
+                        }
+                        return std::nullopt;
+                    }
+                    const Value& value = it->second;
+                    if (value.isNull() || !isNumericType(value.type()))
+                    {
+                        return std::string("CREATE INDEX option ") + key + " expects numeric value";
+                    }
+                    int64_t parsed = value.toInt64();
+                    if (parsed < min_value || parsed > max_value)
+                    {
+                        return std::string("CREATE INDEX option ") + key +
+                               " out of range [" + std::to_string(min_value) + "," +
+                               std::to_string(max_value) + "]";
+                    }
+                    if (out_value)
+                    {
+                        *out_value = parsed;
+                    }
+                    return std::nullopt;
+                };
+
+                auto readFloatingOption =
+                    [&](const std::string& key,
+                        double min_value,
+                        double max_value,
+                        bool required,
+                        double* out_value) -> std::optional<std::string> {
+                    auto it = create_options.find(key);
+                    if (it == create_options.end())
+                    {
+                        if (required)
+                        {
+                            return std::string("CREATE INDEX missing required option: ") + key;
+                        }
+                        return std::nullopt;
+                    }
+                    const Value& value = it->second;
+                    if (value.isNull() || !isNumericType(value.type()))
+                    {
+                        return std::string("CREATE INDEX option ") + key + " expects numeric value";
+                    }
+                    double parsed = value.toDouble();
+                    if (parsed < min_value || parsed > max_value)
+                    {
+                        return std::string("CREATE INDEX option ") + key +
+                               " out of range [" + std::to_string(min_value) + "," +
+                               std::to_string(max_value) + "]";
+                    }
+                    if (out_value)
+                    {
+                        *out_value = parsed;
+                    }
+                    return std::nullopt;
+                };
+
+                auto readStringOption =
+                    [&](const std::string& key,
+                        bool required,
+                        std::string* out_value) -> std::optional<std::string> {
+                    auto it = create_options.find(key);
+                    if (it == create_options.end())
+                    {
+                        if (required)
+                        {
+                            return std::string("CREATE INDEX missing required option: ") + key;
+                        }
+                        return std::nullopt;
+                    }
+                    const Value& value = it->second;
+                    if (value.isNull() || (value.type() != core::DataType::VARCHAR &&
+                                           value.type() != core::DataType::TEXT &&
+                                           value.type() != core::DataType::CHAR))
+                    {
+                        return std::string("CREATE INDEX option ") + key + " expects string value";
+                    }
+                    if (out_value)
+                    {
+                        *out_value = core::IdentifierUtils::toUpper(value.toVarchar());
+                    }
+                    return std::nullopt;
+                };
+
+                auto readBooleanOption =
+                    [&](const std::string& key,
+                        bool required,
+                        bool* out_value) -> std::optional<std::string> {
+                    auto it = create_options.find(key);
+                    if (it == create_options.end())
+                    {
+                        if (required)
+                        {
+                            return std::string("CREATE INDEX missing required option: ") + key;
+                        }
+                        return std::nullopt;
+                    }
+                    const Value& value = it->second;
+                    if (value.isNull() || value.type() != core::DataType::BOOLEAN)
+                    {
+                        return std::string("CREATE INDEX option ") + key + " expects boolean value";
+                    }
+                    if (out_value)
+                    {
+                        *out_value = value.getBool();
+                    }
+                    return std::nullopt;
+                };
+
+                auto validateMetricOption =
+                    [&](bool binary_allowed,
+                        const std::string& family_label) -> std::optional<std::string> {
+                    auto metric_it = create_options.find("METRIC");
+                    if (metric_it == create_options.end())
+                    {
+                        return std::nullopt;
+                    }
+                    std::string metric;
+                    if (auto err = readStringOption("METRIC", false, &metric))
+                    {
+                        return err;
+                    }
+                    if (binary_allowed)
+                    {
+                        if (metric != "HAMMING" && metric != "JACCARD" && metric != "TANIMOTO")
+                        {
+                            return std::string("CREATE INDEX option METRIC invalid for ") + family_label;
+                        }
+                    }
+                    else
+                    {
+                        if (metric != "L2" && metric != "COSINE" && metric != "INNER_PRODUCT")
+                        {
+                            return std::string("CREATE INDEX option METRIC invalid for ") + family_label;
+                        }
+                    }
+                    return std::nullopt;
+                };
+
+                if (isVectorFamilyType(index_type))
+                {
+                    static const std::unordered_set<std::string> kAllowedVectorOptions = {
+                        "METRIC", "VECTOR_DIM", "M", "EF_CONSTRUCTION", "EF_SEARCH",
+                        "NLIST", "NPROBE", "PQ_M", "PQ_BITS", "BITS_PER_CODE",
+                        "SQ_BITS", "GPU_SEARCH_THRESHOLD"
+                    };
+
+                    for (const auto& [option_key, _] : create_options)
+                    {
+                        if (kAllowedVectorOptions.find(option_key) == kAllowedVectorOptions.end())
+                        {
+                            return ExecutionResult(
+                                "CREATE INDEX unsupported option for " + index_type_name + ": " + option_key);
+                        }
+                    }
+                    if (auto err = validateMetricOption(isBinaryVectorFamilyType(index_type),
+                                                        isBinaryVectorFamilyType(index_type)
+                                                            ? "binary vector family"
+                                                            : "vector family"))
+                    {
+                        return ExecutionResult(*err);
+                    }
+
+                    if (isIvfFamilyType(index_type))
+                    {
+                        if (auto err = readNumericOption("NLIST", 1, std::numeric_limits<int32_t>::max(), false, nullptr))
+                        {
+                            return ExecutionResult(*err);
+                        }
+                        if (auto err = readNumericOption("NPROBE", 1, std::numeric_limits<int32_t>::max(), false, nullptr))
+                        {
+                            return ExecutionResult(*err);
+                        }
+                    }
+
+                    if (index_type == core::CatalogManager::IndexType::HNSW ||
+                        index_type == core::CatalogManager::IndexType::RHNSW_PQ ||
+                        index_type == core::CatalogManager::IndexType::RHNSW_SQ)
+                    {
+                        if (auto err = readNumericOption("M", 1, 1024, false, nullptr))
+                        {
+                            return ExecutionResult(*err);
+                        }
+                        if (auto err = readNumericOption("EF_CONSTRUCTION", 1, std::numeric_limits<int32_t>::max(), false, nullptr))
+                        {
+                            return ExecutionResult(*err);
+                        }
+                        if (auto err = readNumericOption("EF_SEARCH", 1, std::numeric_limits<int32_t>::max(), false, nullptr))
+                        {
+                            return ExecutionResult(*err);
+                        }
+                    }
+
+                    if (isPqFamilyType(index_type))
+                    {
+                        int64_t pq_m = 0;
+                        int64_t pq_bits = 0;
+                        auto err_pq_m = readNumericOption("PQ_M", 1, 64, false, &pq_m);
+                        if (err_pq_m)
+                        {
+                            return ExecutionResult(*err_pq_m);
+                        }
+                        if (pq_m == 0)
+                        {
+                            auto err_m = readNumericOption("M", 1, 64, true, &pq_m);
+                            if (err_m)
+                            {
+                                return ExecutionResult(*err_m);
+                            }
+                        }
+
+                        auto err_pq_bits = readNumericOption("PQ_BITS", 4, 8, false, &pq_bits);
+                        if (err_pq_bits)
+                        {
+                            return ExecutionResult(*err_pq_bits);
+                        }
+                        if (pq_bits == 0)
+                        {
+                            auto err_bits = readNumericOption("BITS_PER_CODE", 4, 8, true, &pq_bits);
+                            if (err_bits)
+                            {
+                                return ExecutionResult(*err_bits);
+                            }
+                        }
+                        if (pq_bits != 4 && pq_bits != 8)
+                        {
+                            return ExecutionResult(
+                                "CREATE INDEX option PQ_BITS/BITS_PER_CODE supports only values 4 or 8");
+                        }
+                    }
+
+                    if (isSqFamilyType(index_type))
+                    {
+                        int64_t sq_bits = 8;
+                        auto err = readNumericOption("SQ_BITS", 1, 64, false, &sq_bits);
+                        if (err)
+                        {
+                            return ExecutionResult(*err);
+                        }
+                        if (sq_bits != 8)
+                        {
+                            return ExecutionResult("CREATE INDEX option SQ_BITS must be 8 for SQ families");
+                        }
+                    }
+
+                    if (index_type == core::CatalogManager::IndexType::IVF_SQ8_HYBRID)
+                    {
+                        if (auto err = readNumericOption("GPU_SEARCH_THRESHOLD", 0,
+                                                         std::numeric_limits<int32_t>::max(),
+                                                         false, nullptr))
+                        {
+                            return ExecutionResult(*err);
+                        }
+                    }
+                }
+
+                if (isAdvancedAnnFamilyType(index_type))
+                {
+                    static const std::unordered_set<std::string> kAllowedAnnoyOptions = {
+                        "N_TREES", "LEAF_SIZE", "SEARCH_K", "METRIC", "VECTOR_DIM", "SEED"
+                    };
+                    static const std::unordered_set<std::string> kAllowedNsgOptions = {
+                        "R", "L", "C", "SEARCH_L", "METRIC", "VECTOR_DIM", "SEED"
+                    };
+                    static const std::unordered_set<std::string> kAllowedDiskannOptions = {
+                        "MAX_DEGREE", "BUILD_L", "SEARCH_L", "BEAM_WIDTH", "PQ_BYTES",
+                        "ALPHA", "TRAINING_SAMPLE_SIZE", "ENTRYPOINT_STRATEGY",
+                        "METRIC", "VECTOR_DIM", "SEED", "USE_DISK_STORAGE"
+                    };
+                    static const std::unordered_set<std::string> kAllowedScannOptions = {
+                        "NLIST", "NPROBE", "REORDER_K", "QUANTIZER", "METRIC", "VECTOR_DIM",
+                        "SEED", "PQ_M", "PQ_BITS", "TRAINING_SAMPLE_SIZE", "CENTROID_ITER"
+                    };
+                    static const std::unordered_set<std::string> kAllowedGpuCagraOptions = {
+                        "GRAPH_DEGREE", "INTERMEDIATE_GRAPH_DEGREE", "BUILD_ITERS", "METRIC",
+                        "VECTOR_DIM", "GPU_ID", "SEED", "ENTRYPOINT_STRATEGY", "FALLBACK_CPU"
+                    };
+
+                    const std::unordered_set<std::string>* allowed_options = nullptr;
+                    switch (index_type)
+                    {
+                        case core::CatalogManager::IndexType::ANNOY:
+                            allowed_options = &kAllowedAnnoyOptions;
+                            break;
+                        case core::CatalogManager::IndexType::NSG:
+                            allowed_options = &kAllowedNsgOptions;
+                            break;
+                        case core::CatalogManager::IndexType::DISKANN:
+                            allowed_options = &kAllowedDiskannOptions;
+                            break;
+                        case core::CatalogManager::IndexType::SCANN:
+                            allowed_options = &kAllowedScannOptions;
+                            break;
+                        case core::CatalogManager::IndexType::GPU_CAGRA:
+                            allowed_options = &kAllowedGpuCagraOptions;
+                            break;
+                        default:
+                            break;
+                    }
+
+                    for (const auto& [option_key, _] : create_options)
+                    {
+                        if (!allowed_options || allowed_options->find(option_key) == allowed_options->end())
+                        {
+                            return ExecutionResult(
+                                "CREATE INDEX unsupported option for " + index_type_name + ": " + option_key);
+                        }
+                    }
+
+                    if (auto err = validateMetricOption(false, "advanced ANN family"))
+                    {
+                        return ExecutionResult(*err);
+                    }
+                    if (auto err = readNumericOption("VECTOR_DIM", 1, 65535, false, nullptr))
+                    {
+                        return ExecutionResult(*err);
+                    }
+                    if (auto err = readNumericOption("SEED", 0, std::numeric_limits<int64_t>::max(), false, nullptr))
+                    {
+                        return ExecutionResult(*err);
+                    }
+
+                    switch (index_type)
+                    {
+                        case core::CatalogManager::IndexType::ANNOY:
+                        {
+                            if (auto err = readNumericOption("N_TREES", 1, 65535, false, nullptr)) return ExecutionResult(*err);
+                            if (auto err = readNumericOption("LEAF_SIZE", 1, 65535, false, nullptr)) return ExecutionResult(*err);
+                            if (auto err = readNumericOption("SEARCH_K", 1, std::numeric_limits<int32_t>::max(), false, nullptr)) return ExecutionResult(*err);
+                            break;
+                        }
+                        case core::CatalogManager::IndexType::NSG:
+                        {
+                            if (auto err = readNumericOption("R", 1, 65535, false, nullptr)) return ExecutionResult(*err);
+                            if (auto err = readNumericOption("L", 1, 65535, false, nullptr)) return ExecutionResult(*err);
+                            if (auto err = readNumericOption("C", 1, 65535, false, nullptr)) return ExecutionResult(*err);
+                            if (auto err = readNumericOption("SEARCH_L", 1, 65535, false, nullptr)) return ExecutionResult(*err);
+                            break;
+                        }
+                        case core::CatalogManager::IndexType::DISKANN:
+                        {
+                            if (auto err = readNumericOption("MAX_DEGREE", 1, 65535, false, nullptr)) return ExecutionResult(*err);
+                            if (auto err = readNumericOption("BUILD_L", 1, 65535, false, nullptr)) return ExecutionResult(*err);
+                            if (auto err = readNumericOption("SEARCH_L", 1, 65535, false, nullptr)) return ExecutionResult(*err);
+                            if (auto err = readNumericOption("BEAM_WIDTH", 1, 1024, false, nullptr)) return ExecutionResult(*err);
+                            if (auto err = readNumericOption("PQ_BYTES", 0, 4096, false, nullptr)) return ExecutionResult(*err);
+                            if (auto err = readFloatingOption("ALPHA", 0.001, 1000.0, false, nullptr)) return ExecutionResult(*err);
+                            if (auto err = readNumericOption("TRAINING_SAMPLE_SIZE", 1, std::numeric_limits<int32_t>::max(), false, nullptr)) return ExecutionResult(*err);
+                            std::string entrypoint_strategy;
+                            if (auto err = readStringOption("ENTRYPOINT_STRATEGY", false, &entrypoint_strategy))
+                            {
+                                return ExecutionResult(*err);
+                            }
+                            if (!entrypoint_strategy.empty() &&
+                                entrypoint_strategy != "MEDOID_SAMPLE" &&
+                                entrypoint_strategy != "FIRST_VECTOR")
+                            {
+                                return ExecutionResult(
+                                    "CREATE INDEX option ENTRYPOINT_STRATEGY invalid for DISKANN");
+                            }
+                            if (auto err = readBooleanOption("USE_DISK_STORAGE", false, nullptr))
+                            {
+                                return ExecutionResult(*err);
+                            }
+                            break;
+                        }
+                        case core::CatalogManager::IndexType::SCANN:
+                        {
+                            if (auto err = readNumericOption("NLIST", 1, std::numeric_limits<int32_t>::max(), false, nullptr)) return ExecutionResult(*err);
+                            if (auto err = readNumericOption("NPROBE", 1, 65535, false, nullptr)) return ExecutionResult(*err);
+                            if (auto err = readNumericOption("REORDER_K", 0, 65535, false, nullptr)) return ExecutionResult(*err);
+                            if (auto err = readNumericOption("TRAINING_SAMPLE_SIZE", 1, std::numeric_limits<int32_t>::max(), false, nullptr)) return ExecutionResult(*err);
+                            if (auto err = readNumericOption("CENTROID_ITER", 1, 65535, false, nullptr)) return ExecutionResult(*err);
+
+                            std::string quantizer = "NONE";
+                            if (auto err = readStringOption("QUANTIZER", false, &quantizer))
+                            {
+                                return ExecutionResult(*err);
+                            }
+                            if (quantizer != "NONE" && quantizer != "SQ8" && quantizer != "PQ")
+                            {
+                                return ExecutionResult("CREATE INDEX option QUANTIZER invalid for SCANN");
+                            }
+
+                            const bool has_pq_m = create_options.find("PQ_M") != create_options.end();
+                            const bool has_pq_bits = create_options.find("PQ_BITS") != create_options.end();
+                            if (quantizer == "PQ")
+                            {
+                                int64_t pq_bits = 0;
+                                if (auto err = readNumericOption("PQ_M", 1, 65535, true, nullptr)) return ExecutionResult(*err);
+                                if (auto err = readNumericOption("PQ_BITS", 4, 8, true, &pq_bits)) return ExecutionResult(*err);
+                                if (pq_bits != 4 && pq_bits != 8)
+                                {
+                                    return ExecutionResult("CREATE INDEX option PQ_BITS supports only values 4 or 8");
+                                }
+                            }
+                            else if (has_pq_m || has_pq_bits)
+                            {
+                                return ExecutionResult("CREATE INDEX options PQ_M/PQ_BITS require QUANTIZER=PQ");
+                            }
+                            break;
+                        }
+                        case core::CatalogManager::IndexType::GPU_CAGRA:
+                        {
+                            int64_t graph_degree = 0;
+                            int64_t intermediate_degree = 0;
+                            if (auto err = readNumericOption("GRAPH_DEGREE", 1, 65535, false, &graph_degree)) return ExecutionResult(*err);
+                            if (auto err = readNumericOption("INTERMEDIATE_GRAPH_DEGREE", 1, 65535, false, &intermediate_degree)) return ExecutionResult(*err);
+                            if (graph_degree > 0 && intermediate_degree > 0 && intermediate_degree < graph_degree)
+                            {
+                                return ExecutionResult("CREATE INDEX option INTERMEDIATE_GRAPH_DEGREE must be >= GRAPH_DEGREE");
+                            }
+                            if (auto err = readNumericOption("BUILD_ITERS", 1, 65535, false, nullptr)) return ExecutionResult(*err);
+                            if (auto err = readNumericOption("GPU_ID", 0, 65535, false, nullptr)) return ExecutionResult(*err);
+                            std::string entrypoint_strategy;
+                            if (auto err = readStringOption("ENTRYPOINT_STRATEGY", false, &entrypoint_strategy))
+                            {
+                                return ExecutionResult(*err);
+                            }
+                            if (!entrypoint_strategy.empty() &&
+                                entrypoint_strategy != "MEDOID_SAMPLE" &&
+                                entrypoint_strategy != "FIRST_VECTOR")
+                            {
+                                return ExecutionResult(
+                                    "CREATE INDEX option ENTRYPOINT_STRATEGY invalid for GPU_CAGRA");
+                            }
+                            if (auto err = readBooleanOption("FALLBACK_CPU", false, nullptr))
+                            {
+                                return ExecutionResult(*err);
+                            }
+                            break;
+                        }
+                        default:
+                            break;
+                    }
+                }
+
+                if (isSymbolicSparseFamilyType(index_type))
+                {
+                    static const std::unordered_set<std::string> kAllowedArtOptions = {
+                        "PREFIX_INLINE_BYTES"
+                    };
+                    static const std::unordered_set<std::string> kAllowedBloomOptions = {
+                        "PAGES_PER_RANGE", "EXPECTED_ITEMS_PER_RANGE", "FALSE_POSITIVE_RATE",
+                        "SEED1", "SEED2"
+                    };
+                    static const std::unordered_set<std::string> kAllowedTrieOptions = {
+                        "CASE_FOLD", "MAX_NODE_BYTES", "COMPRESS_CHAINS"
+                    };
+                    static const std::unordered_set<std::string> kAllowedNgramOptions = {
+                        "MIN_N", "MAX_N", "CASE_FOLD", "ANALYZER"
+                    };
+                    static const std::unordered_set<std::string> kAllowedSparseInvertedOptions = {
+                        "MAX_DF", "MIN_DF", "NORM", "TOPK_DEFAULT"
+                    };
+                    static const std::unordered_set<std::string> kAllowedSparseWandOptions = {
+                        "BLOCK_SIZE", "PIVOT_STRATEGY", "TOPK_DEFAULT"
+                    };
+                    static const std::unordered_set<std::string> kAllowedMinHashOptions = {
+                        "NUM_PERM", "BAND_COUNT", "ROWS_PER_BAND", "BLOOM_FP_RATE",
+                        "ELEMENT_BIT_WIDTH", "SEED"
+                    };
+
+                    const std::unordered_set<std::string>* allowed_options = nullptr;
+                    switch (index_type)
+                    {
+                        case core::CatalogManager::IndexType::ART:
+                            allowed_options = &kAllowedArtOptions;
+                            break;
+                        case core::CatalogManager::IndexType::BLOOM:
+                            allowed_options = &kAllowedBloomOptions;
+                            break;
+                        case core::CatalogManager::IndexType::TRIE:
+                            allowed_options = &kAllowedTrieOptions;
+                            break;
+                        case core::CatalogManager::IndexType::NGRAM:
+                            allowed_options = &kAllowedNgramOptions;
+                            break;
+                        case core::CatalogManager::IndexType::SPARSE_INVERTED:
+                            allowed_options = &kAllowedSparseInvertedOptions;
+                            break;
+                        case core::CatalogManager::IndexType::SPARSE_WAND:
+                            allowed_options = &kAllowedSparseWandOptions;
+                            break;
+                        case core::CatalogManager::IndexType::MINHASH_LSH:
+                            allowed_options = &kAllowedMinHashOptions;
+                            break;
+                        default:
+                            break;
+                    }
+
+                    for (const auto& [option_key, _] : create_options)
+                    {
+                        if (!allowed_options || allowed_options->find(option_key) == allowed_options->end())
+                        {
+                            return ExecutionResult(
+                                "CREATE INDEX unsupported option for " + index_type_name + ": " + option_key);
+                        }
+                    }
+
+                    switch (index_type)
+                    {
+                        case core::CatalogManager::IndexType::ART:
+                        {
+                            if (auto err = readNumericOption("PREFIX_INLINE_BYTES", 1, 1024, false, nullptr))
+                            {
+                                return ExecutionResult(*err);
+                            }
+                            break;
+                        }
+                        case core::CatalogManager::IndexType::BLOOM:
+                        {
+                            if (auto err = readNumericOption("PAGES_PER_RANGE", 1, std::numeric_limits<int32_t>::max(), false, nullptr)) return ExecutionResult(*err);
+                            if (auto err = readNumericOption("EXPECTED_ITEMS_PER_RANGE", 1, std::numeric_limits<int32_t>::max(), false, nullptr)) return ExecutionResult(*err);
+                            if (auto err = readFloatingOption("FALSE_POSITIVE_RATE", 0.000001, 1.0, false, nullptr)) return ExecutionResult(*err);
+                            if (auto err = readNumericOption("SEED1", 0, std::numeric_limits<int64_t>::max(), false, nullptr)) return ExecutionResult(*err);
+                            if (auto err = readNumericOption("SEED2", 0, std::numeric_limits<int64_t>::max(), false, nullptr)) return ExecutionResult(*err);
+                            break;
+                        }
+                        case core::CatalogManager::IndexType::TRIE:
+                        {
+                            if (auto err = readBooleanOption("CASE_FOLD", false, nullptr)) return ExecutionResult(*err);
+                            if (auto err = readNumericOption("MAX_NODE_BYTES", 1, std::numeric_limits<int32_t>::max(), false, nullptr)) return ExecutionResult(*err);
+                            if (auto err = readBooleanOption("COMPRESS_CHAINS", false, nullptr)) return ExecutionResult(*err);
+                            break;
+                        }
+                        case core::CatalogManager::IndexType::NGRAM:
+                        {
+                            int64_t min_n = 0;
+                            int64_t max_n = 0;
+                            if (auto err = readNumericOption("MIN_N", 1, 32, false, &min_n)) return ExecutionResult(*err);
+                            if (auto err = readNumericOption("MAX_N", 1, 32, false, &max_n)) return ExecutionResult(*err);
+                            if (min_n > 0 && max_n > 0 && min_n > max_n)
+                            {
+                                return ExecutionResult("CREATE INDEX option MIN_N must be <= MAX_N");
+                            }
+                            if (auto err = readBooleanOption("CASE_FOLD", false, nullptr)) return ExecutionResult(*err);
+                            std::string analyzer;
+                            if (auto err = readStringOption("ANALYZER", false, &analyzer))
+                            {
+                                return ExecutionResult(*err);
+                            }
+                            if (!analyzer.empty() && analyzer != "UNICODE" && analyzer != "ASCII")
+                            {
+                                return ExecutionResult("CREATE INDEX option ANALYZER invalid for NGRAM");
+                            }
+                            break;
+                        }
+                        case core::CatalogManager::IndexType::SPARSE_INVERTED:
+                        {
+                            int64_t min_df = 0;
+                            int64_t max_df = 0;
+                            if (auto err = readNumericOption("MAX_DF", 1, std::numeric_limits<int32_t>::max(), false, &max_df)) return ExecutionResult(*err);
+                            if (auto err = readNumericOption("MIN_DF", 1, std::numeric_limits<int32_t>::max(), false, &min_df)) return ExecutionResult(*err);
+                            if (max_df > 0 && min_df > 0 && min_df > max_df)
+                            {
+                                return ExecutionResult("CREATE INDEX option MIN_DF must be <= MAX_DF");
+                            }
+                            std::string norm;
+                            if (auto err = readStringOption("NORM", false, &norm))
+                            {
+                                return ExecutionResult(*err);
+                            }
+                            if (!norm.empty() && norm != "L1" && norm != "L2" && norm != "NONE")
+                            {
+                                return ExecutionResult("CREATE INDEX option NORM invalid for SPARSE_INVERTED");
+                            }
+                            if (auto err = readNumericOption("TOPK_DEFAULT", 1, 65535, false, nullptr)) return ExecutionResult(*err);
+                            break;
+                        }
+                        case core::CatalogManager::IndexType::SPARSE_WAND:
+                        {
+                            if (auto err = readNumericOption("BLOCK_SIZE", 1, 65535, false, nullptr)) return ExecutionResult(*err);
+                            if (auto err = readNumericOption("TOPK_DEFAULT", 1, 65535, false, nullptr)) return ExecutionResult(*err);
+                            std::string pivot_strategy;
+                            if (auto err = readStringOption("PIVOT_STRATEGY", false, &pivot_strategy))
+                            {
+                                return ExecutionResult(*err);
+                            }
+                            if (!pivot_strategy.empty() && pivot_strategy != "MAX" && pivot_strategy != "AVG")
+                            {
+                                return ExecutionResult("CREATE INDEX option PIVOT_STRATEGY invalid for SPARSE_WAND");
+                            }
+                            break;
+                        }
+                        case core::CatalogManager::IndexType::MINHASH_LSH:
+                        {
+                            int64_t num_perm = 0;
+                            int64_t band_count = 0;
+                            int64_t rows_per_band = 0;
+                            const bool has_num_perm = create_options.find("NUM_PERM") != create_options.end();
+                            const bool has_band_count = create_options.find("BAND_COUNT") != create_options.end();
+                            const bool has_rows_per_band = create_options.find("ROWS_PER_BAND") != create_options.end();
+
+                            if (auto err = readNumericOption("NUM_PERM", 1, 65535, false, &num_perm)) return ExecutionResult(*err);
+                            if (auto err = readNumericOption("BAND_COUNT", 1, 65535, false, &band_count)) return ExecutionResult(*err);
+                            if (auto err = readNumericOption("ROWS_PER_BAND", 1, 65535, false, &rows_per_band)) return ExecutionResult(*err);
+                            if ((has_num_perm || has_band_count || has_rows_per_band) &&
+                                !(has_num_perm && has_band_count && has_rows_per_band))
+                            {
+                                return ExecutionResult("CREATE INDEX options NUM_PERM/BAND_COUNT/ROWS_PER_BAND must be specified together");
+                            }
+                            if (num_perm > 0 && band_count > 0 && rows_per_band > 0 &&
+                                num_perm != (band_count * rows_per_band))
+                            {
+                                return ExecutionResult("CREATE INDEX option NUM_PERM must equal BAND_COUNT * ROWS_PER_BAND");
+                            }
+
+                            if (auto err = readFloatingOption("BLOOM_FP_RATE", 0.0, 1.0, false, nullptr)) return ExecutionResult(*err);
+                            if (auto err = readNumericOption("ELEMENT_BIT_WIDTH", 1, 64, false, nullptr)) return ExecutionResult(*err);
+                            if (auto err = readNumericOption("SEED", 0, std::numeric_limits<int64_t>::max(), false, nullptr)) return ExecutionResult(*err);
+                            break;
+                        }
+                        default:
+                            break;
+                    }
+                }
+
+                if (isMongoFamilyType(index_type))
+                {
+                    static const std::unordered_set<std::string> kAllowedMongo2dOptions = {
+                        "BITS", "MIN", "MAX", "BUCKET_SIZE"
+                    };
+                    static const std::unordered_set<std::string> kAllowedMongo2dsphereOptions = {
+                        "MAX_CELLS", "MAX_LEVEL", "MIN_LEVEL", "FINEST_LEVEL", "COARSEST_LEVEL"
+                    };
+                    static const std::unordered_set<std::string> kAllowedMongo2dsphereBucketOptions = {
+                        "MAX_CELLS", "MAX_LEVEL", "MIN_LEVEL", "FINEST_LEVEL", "COARSEST_LEVEL",
+                        "BUCKET_TIME_SPAN"
+                    };
+                    static const std::unordered_set<std::string> kAllowedMongoGeoHaystackOptions = {
+                        "BUCKET_SIZE", "SECONDARY_KEY", "MIN", "MAX"
+                    };
+                    static const std::unordered_set<std::string> kAllowedMongoWildcardOptions = {
+                        "INCLUDE_PATHS", "EXCLUDE_PATHS", "MAX_PATH_DEPTH"
+                    };
+                    static const std::unordered_set<std::string> kAllowedMongoEncryptedRangeOptions = {
+                        "RANGE_BITS", "TOKEN_LEVELS", "TOKEN_HMAC", "RANGE_BUCKET_POLICY"
+                    };
+
+                    const std::unordered_set<std::string>* allowed_options = nullptr;
+                    switch (index_type)
+                    {
+                        case core::CatalogManager::IndexType::MONGODB_2D:
+                            allowed_options = &kAllowedMongo2dOptions;
+                            break;
+                        case core::CatalogManager::IndexType::MONGODB_2DSPHERE:
+                            allowed_options = &kAllowedMongo2dsphereOptions;
+                            break;
+                        case core::CatalogManager::IndexType::MONGODB_2DSPHERE_BUCKET:
+                            allowed_options = &kAllowedMongo2dsphereBucketOptions;
+                            break;
+                        case core::CatalogManager::IndexType::MONGODB_GEO_HAYSTACK:
+                            allowed_options = &kAllowedMongoGeoHaystackOptions;
+                            break;
+                        case core::CatalogManager::IndexType::MONGODB_WILDCARD:
+                            allowed_options = &kAllowedMongoWildcardOptions;
+                            break;
+                        case core::CatalogManager::IndexType::MONGODB_ENCRYPTED_RANGE:
+                            allowed_options = &kAllowedMongoEncryptedRangeOptions;
+                            break;
+                        default:
+                            break;
+                    }
+
+                    for (const auto& [option_key, _] : create_options)
+                    {
+                        if (!allowed_options || allowed_options->find(option_key) == allowed_options->end())
+                        {
+                            return ExecutionResult(
+                                "CREATE INDEX unsupported option for " + index_type_name + ": " + option_key);
+                        }
+                    }
+
+                    switch (index_type)
+                    {
+                        case core::CatalogManager::IndexType::MONGODB_2D:
+                        {
+                            int64_t bits = 26;
+                            double min_v = -180.0;
+                            double max_v = 180.0;
+                            if (auto err = readNumericOption("BITS", 1, 32, false, &bits)) return ExecutionResult(*err);
+                            if (auto err = readFloatingOption("MIN", -1000000.0, 1000000.0, false, &min_v)) return ExecutionResult(*err);
+                            if (auto err = readFloatingOption("MAX", -1000000.0, 1000000.0, false, &max_v)) return ExecutionResult(*err);
+                            if (max_v <= min_v)
+                            {
+                                return ExecutionResult("CREATE INDEX option MAX must be greater than MIN");
+                            }
+                            if (auto err = readFloatingOption("BUCKET_SIZE", std::numeric_limits<double>::min(),
+                                                              1000000.0, false, nullptr)) return ExecutionResult(*err);
+                            break;
+                        }
+                        case core::CatalogManager::IndexType::MONGODB_2DSPHERE:
+                        {
+                            int64_t min_level = 4;
+                            int64_t max_level = 23;
+                            int64_t coarsest_level = -1;
+                            int64_t finest_level = -1;
+                            if (auto err = readNumericOption("MAX_CELLS", 1, 65535, false, nullptr)) return ExecutionResult(*err);
+                            if (auto err = readNumericOption("MIN_LEVEL", 0, 30, false, &min_level)) return ExecutionResult(*err);
+                            if (auto err = readNumericOption("MAX_LEVEL", 0, 30, false, &max_level)) return ExecutionResult(*err);
+                            if (auto err = readNumericOption("COARSEST_LEVEL", 0, 30, false, &coarsest_level)) return ExecutionResult(*err);
+                            if (auto err = readNumericOption("FINEST_LEVEL", 0, 30, false, &finest_level)) return ExecutionResult(*err);
+                            if (min_level > max_level)
+                            {
+                                return ExecutionResult("CREATE INDEX option MIN_LEVEL must be <= MAX_LEVEL");
+                            }
+                            if (coarsest_level >= 0 && finest_level >= 0 && coarsest_level > finest_level)
+                            {
+                                return ExecutionResult("CREATE INDEX option COARSEST_LEVEL must be <= FINEST_LEVEL");
+                            }
+                            break;
+                        }
+                        case core::CatalogManager::IndexType::MONGODB_2DSPHERE_BUCKET:
+                        {
+                            int64_t min_level = 4;
+                            int64_t max_level = 23;
+                            int64_t coarsest_level = -1;
+                            int64_t finest_level = -1;
+                            if (auto err = readNumericOption("MAX_CELLS", 1, 65535, false, nullptr)) return ExecutionResult(*err);
+                            if (auto err = readNumericOption("MIN_LEVEL", 0, 30, false, &min_level)) return ExecutionResult(*err);
+                            if (auto err = readNumericOption("MAX_LEVEL", 0, 30, false, &max_level)) return ExecutionResult(*err);
+                            if (auto err = readNumericOption("COARSEST_LEVEL", 0, 30, false, &coarsest_level)) return ExecutionResult(*err);
+                            if (auto err = readNumericOption("FINEST_LEVEL", 0, 30, false, &finest_level)) return ExecutionResult(*err);
+                            if (auto err = readNumericOption("BUCKET_TIME_SPAN", 1, std::numeric_limits<int32_t>::max(), false, nullptr))
+                                return ExecutionResult(*err);
+                            if (min_level > max_level)
+                            {
+                                return ExecutionResult("CREATE INDEX option MIN_LEVEL must be <= MAX_LEVEL");
+                            }
+                            if (coarsest_level >= 0 && finest_level >= 0 && coarsest_level > finest_level)
+                            {
+                                return ExecutionResult("CREATE INDEX option COARSEST_LEVEL must be <= FINEST_LEVEL");
+                            }
+                            break;
+                        }
+                        case core::CatalogManager::IndexType::MONGODB_GEO_HAYSTACK:
+                        {
+                            double min_v = -180.0;
+                            double max_v = 180.0;
+                            if (auto err = readFloatingOption("BUCKET_SIZE", std::numeric_limits<double>::min(),
+                                                              1000000.0, true, nullptr)) return ExecutionResult(*err);
+                            std::string secondary_key;
+                            if (auto err = readStringOption("SECONDARY_KEY", true, &secondary_key))
+                            {
+                                return ExecutionResult(*err);
+                            }
+                            if (secondary_key.empty())
+                            {
+                                return ExecutionResult("CREATE INDEX option SECONDARY_KEY must not be empty");
+                            }
+                            if (auto err = readFloatingOption("MIN", -1000000.0, 1000000.0, false, &min_v)) return ExecutionResult(*err);
+                            if (auto err = readFloatingOption("MAX", -1000000.0, 1000000.0, false, &max_v)) return ExecutionResult(*err);
+                            if (max_v <= min_v)
+                            {
+                                return ExecutionResult("CREATE INDEX option MAX must be greater than MIN");
+                            }
+                            break;
+                        }
+                        case core::CatalogManager::IndexType::MONGODB_WILDCARD:
+                        {
+                            if (auto err = readStringOption("INCLUDE_PATHS", false, nullptr)) return ExecutionResult(*err);
+                            if (auto err = readStringOption("EXCLUDE_PATHS", false, nullptr)) return ExecutionResult(*err);
+                            if (auto err = readNumericOption("MAX_PATH_DEPTH", 1, 255, false, nullptr)) return ExecutionResult(*err);
+                            break;
+                        }
+                        case core::CatalogManager::IndexType::MONGODB_ENCRYPTED_RANGE:
+                        {
+                            int64_t range_bits = 32;
+                            int64_t token_levels = 1;
+                            if (auto err = readNumericOption("RANGE_BITS", 1, 64, false, &range_bits)) return ExecutionResult(*err);
+                            if (auto err = readNumericOption("TOKEN_LEVELS", 1, 64, false, &token_levels)) return ExecutionResult(*err);
+                            if (token_levels > range_bits)
+                            {
+                                return ExecutionResult("CREATE INDEX option TOKEN_LEVELS must be <= RANGE_BITS");
+                            }
+                            std::string token_hmac;
+                            if (auto err = readStringOption("TOKEN_HMAC", false, &token_hmac))
+                            {
+                                return ExecutionResult(*err);
+                            }
+                            if (!token_hmac.empty() && token_hmac != "HMAC_SHA256")
+                            {
+                                return ExecutionResult("CREATE INDEX option TOKEN_HMAC invalid for MONGODB_ENCRYPTED_RANGE");
+                            }
+                            std::string bucket_policy;
+                            if (auto err = readStringOption("RANGE_BUCKET_POLICY", false, &bucket_policy))
+                            {
+                                return ExecutionResult(*err);
+                            }
+                            if (!bucket_policy.empty() &&
+                                bucket_policy != "EXACT" &&
+                                bucket_policy != "COARSE")
+                            {
+                                return ExecutionResult("CREATE INDEX option RANGE_BUCKET_POLICY invalid for MONGODB_ENCRYPTED_RANGE");
+                            }
+                            break;
+                        }
+                        default:
+                            break;
+                    }
+                }
+
+                if (isNeo4jFamilyType(index_type))
+                {
+                    static const std::unordered_set<std::string> kAllowedNeo4jLookupOptions = {
+                        "TOKEN_KIND", "CACHE_MB"
+                    };
+                    static const std::unordered_set<std::string> kAllowedNeo4jTextOptions = {
+                        "MIN_N", "MAX_N", "CASE_FOLD", "ANALYZER"
+                    };
+                    static const std::unordered_set<std::string> kAllowedNeo4jRangeOptions = {};
+                    static const std::unordered_set<std::string> kAllowedNeo4jPointOptions = {
+                        "SRID", "DIMS", "SPACE_FILLING_CURVE", "CELL_SEMANTICS", "CELL_CURVE",
+                        "BITS_PER_DIM", "HILBERT_VARIANT", "AXIS_INVERT_MASK"
+                    };
+                    static const std::unordered_set<std::string> kAllowedNeo4jVectorOptions = {
+                        "INDEX_IMPL", "METRIC", "VECTOR_DIM", "M", "EF_CONSTRUCTION", "EF_SEARCH",
+                        "PQ_M", "PQ_BITS", "BITS_PER_CODE", "SQ_BITS"
+                    };
+
+                    const std::unordered_set<std::string>* allowed_options = nullptr;
+                    switch (index_type)
+                    {
+                        case core::CatalogManager::IndexType::NEO4J_LOOKUP:
+                            allowed_options = &kAllowedNeo4jLookupOptions;
+                            break;
+                        case core::CatalogManager::IndexType::NEO4J_TEXT:
+                            allowed_options = &kAllowedNeo4jTextOptions;
+                            break;
+                        case core::CatalogManager::IndexType::NEO4J_RANGE:
+                            allowed_options = &kAllowedNeo4jRangeOptions;
+                            break;
+                        case core::CatalogManager::IndexType::NEO4J_POINT:
+                            allowed_options = &kAllowedNeo4jPointOptions;
+                            break;
+                        case core::CatalogManager::IndexType::NEO4J_VECTOR:
+                            allowed_options = &kAllowedNeo4jVectorOptions;
+                            break;
+                        default:
+                            break;
+                    }
+
+                    for (const auto& [option_key, _] : create_options)
+                    {
+                        if (!allowed_options || allowed_options->find(option_key) == allowed_options->end())
+                        {
+                            return ExecutionResult(
+                                "CREATE INDEX unsupported option for " + index_type_name + ": " + option_key);
+                        }
+                    }
+
+                    switch (index_type)
+                    {
+                        case core::CatalogManager::IndexType::NEO4J_LOOKUP:
+                        {
+                            std::string token_kind;
+                            if (auto err = readStringOption("TOKEN_KIND", false, &token_kind))
+                            {
+                                return ExecutionResult(*err);
+                            }
+                            if (!token_kind.empty() && token_kind != "LABEL" && token_kind != "RELTYPE")
+                            {
+                                return ExecutionResult("CREATE INDEX option TOKEN_KIND invalid for NEO4J_LOOKUP");
+                            }
+                            if (auto err = readNumericOption("CACHE_MB", 1, std::numeric_limits<int32_t>::max(),
+                                                             false, nullptr))
+                            {
+                                return ExecutionResult(*err);
+                            }
+                            break;
+                        }
+                        case core::CatalogManager::IndexType::NEO4J_TEXT:
+                        {
+                            int64_t min_n = 3;
+                            int64_t max_n = 3;
+                            if (auto err = readNumericOption("MIN_N", 1, 32, false, &min_n))
+                            {
+                                return ExecutionResult(*err);
+                            }
+                            if (auto err = readNumericOption("MAX_N", 1, 32, false, &max_n))
+                            {
+                                return ExecutionResult(*err);
+                            }
+                            if (min_n > max_n)
+                            {
+                                return ExecutionResult("CREATE INDEX option MIN_N must be <= MAX_N");
+                            }
+                            if (auto err = readBooleanOption("CASE_FOLD", false, nullptr))
+                            {
+                                return ExecutionResult(*err);
+                            }
+                            std::string analyzer;
+                            if (auto err = readStringOption("ANALYZER", false, &analyzer))
+                            {
+                                return ExecutionResult(*err);
+                            }
+                            if (!analyzer.empty() && analyzer != "UNICODE")
+                            {
+                                return ExecutionResult("CREATE INDEX option ANALYZER invalid for NEO4J_TEXT");
+                            }
+                            break;
+                        }
+                        case core::CatalogManager::IndexType::NEO4J_POINT:
+                        {
+                            int64_t dims = 2;
+                            int64_t bits_per_dim = 31;
+                            int64_t axis_invert_mask = 0;
+                            const bool has_bits_per_dim =
+                                create_options.find("BITS_PER_DIM") != create_options.end();
+                            if (auto err = readNumericOption("SRID", 0, std::numeric_limits<int32_t>::max(),
+                                                             false, nullptr))
+                            {
+                                return ExecutionResult(*err);
+                            }
+                            if (auto err = readNumericOption("DIMS", 2, 3, false, &dims))
+                            {
+                                return ExecutionResult(*err);
+                            }
+                            if (auto err = readNumericOption("BITS_PER_DIM", 1, 64, false, &bits_per_dim))
+                            {
+                                return ExecutionResult(*err);
+                            }
+                            const int64_t max_bits = (dims == 2) ? 31 : 21;
+                            if (has_bits_per_dim && bits_per_dim > max_bits)
+                            {
+                                return ExecutionResult("CREATE INDEX option BITS_PER_DIM exceeds limit for NEO4J_POINT");
+                            }
+                            std::string cell_semantics;
+                            if (auto err = readStringOption("CELL_SEMANTICS", false, &cell_semantics))
+                            {
+                                return ExecutionResult(*err);
+                            }
+                            if (!cell_semantics.empty() && cell_semantics != "SPACE_FILLING_CURVE")
+                            {
+                                return ExecutionResult("CREATE INDEX option CELL_SEMANTICS invalid for NEO4J_POINT");
+                            }
+                            std::string cell_curve;
+                            if (auto err = readStringOption("CELL_CURVE", false, &cell_curve))
+                            {
+                                return ExecutionResult(*err);
+                            }
+                            std::string space_filling_curve;
+                            if (auto err = readStringOption("SPACE_FILLING_CURVE", false, &space_filling_curve))
+                            {
+                                return ExecutionResult(*err);
+                            }
+                            if (!space_filling_curve.empty())
+                            {
+                                cell_curve = space_filling_curve;
+                            }
+                            if (!cell_curve.empty() && cell_curve != "ZORDER" && cell_curve != "HILBERT")
+                            {
+                                return ExecutionResult("CREATE INDEX option CELL_CURVE invalid for NEO4J_POINT");
+                            }
+                            std::string hilbert_variant;
+                            if (auto err = readStringOption("HILBERT_VARIANT", false, &hilbert_variant))
+                            {
+                                return ExecutionResult(*err);
+                            }
+                            if (!hilbert_variant.empty())
+                            {
+                                if (dims == 2)
+                                {
+                                    if (hilbert_variant != "SKILLING_XY" && hilbert_variant != "SKILLING_YX")
+                                    {
+                                        return ExecutionResult("CREATE INDEX option HILBERT_VARIANT invalid for NEO4J_POINT 2D");
+                                    }
+                                }
+                                else
+                                {
+                                    if (hilbert_variant != "SKILLING_XYZ" &&
+                                        hilbert_variant != "SKILLING_XZY" &&
+                                        hilbert_variant != "SKILLING_YXZ" &&
+                                        hilbert_variant != "SKILLING_YZX" &&
+                                        hilbert_variant != "SKILLING_ZXY" &&
+                                        hilbert_variant != "SKILLING_ZYX")
+                                    {
+                                        return ExecutionResult("CREATE INDEX option HILBERT_VARIANT invalid for NEO4J_POINT 3D");
+                                    }
+                                }
+                            }
+                            if (auto err = readNumericOption("AXIS_INVERT_MASK", 0, 7, false, &axis_invert_mask))
+                            {
+                                return ExecutionResult(*err);
+                            }
+                            const int64_t max_mask = (dims == 2) ? 3 : 7;
+                            if (axis_invert_mask > max_mask)
+                            {
+                                return ExecutionResult("CREATE INDEX option AXIS_INVERT_MASK invalid for NEO4J_POINT dimensions");
+                            }
+                            break;
+                        }
+                        case core::CatalogManager::IndexType::NEO4J_VECTOR:
+                        {
+                            std::string index_impl = "HNSW";
+                            if (auto err = readStringOption("INDEX_IMPL", false, &index_impl))
+                            {
+                                return ExecutionResult(*err);
+                            }
+                            if (index_impl != "HNSW" && index_impl != "RHNSW_PQ" && index_impl != "RHNSW_SQ")
+                            {
+                                return ExecutionResult("CREATE INDEX option INDEX_IMPL invalid for NEO4J_VECTOR");
+                            }
+                            if (auto err = validateMetricOption(false, "NEO4J_VECTOR"))
+                            {
+                                return ExecutionResult(*err);
+                            }
+                            if (auto err = readNumericOption("VECTOR_DIM", 1, 65535, false, nullptr))
+                            {
+                                return ExecutionResult(*err);
+                            }
+                            if (auto err = readNumericOption("M", 1, 1024, false, nullptr))
+                            {
+                                return ExecutionResult(*err);
+                            }
+                            if (auto err = readNumericOption("EF_CONSTRUCTION", 1,
+                                                             std::numeric_limits<int32_t>::max(), false, nullptr))
+                            {
+                                return ExecutionResult(*err);
+                            }
+                            if (auto err = readNumericOption("EF_SEARCH", 1,
+                                                             std::numeric_limits<int32_t>::max(), false, nullptr))
+                            {
+                                return ExecutionResult(*err);
+                            }
+                            if (index_impl == "RHNSW_PQ")
+                            {
+                                if (auto err = readNumericOption("PQ_M", 1, 64, false, nullptr))
+                                {
+                                    return ExecutionResult(*err);
+                                }
+                                int64_t pq_bits = 0;
+                                if (auto err = readNumericOption("PQ_BITS", 4, 8, false, &pq_bits))
+                                {
+                                    return ExecutionResult(*err);
+                                }
+                                if (pq_bits != 0 && pq_bits != 4 && pq_bits != 8)
+                                {
+                                    return ExecutionResult(
+                                        "CREATE INDEX option PQ_BITS invalid for NEO4J_VECTOR");
+                                }
+                            }
+                            if (index_impl == "RHNSW_SQ")
+                            {
+                                int64_t sq_bits = 8;
+                                if (auto err = readNumericOption("SQ_BITS", 1, 64, false, &sq_bits))
+                                {
+                                    return ExecutionResult(*err);
+                                }
+                                if (sq_bits != 8)
+                                {
+                                    return ExecutionResult(
+                                        "CREATE INDEX option SQ_BITS must be 8 for NEO4J_VECTOR RHNSW_SQ");
+                                }
+                            }
+                            break;
+                        }
+                        default:
+                            break;
+                    }
+                }
+
+                if (isCassandraFamilyType(index_type))
+                {
+                    static const std::unordered_set<std::string> kAllowedSasiOptions = {
+                        "MODE", "ANALYZER", "MAX_TERM_LEN", "SEGMENT_BYTES"
+                    };
+                    static const std::unordered_set<std::string> kAllowedSaiOptions = {
+                        "INDEX_KIND", "SEGMENT_BYTES", "POSTING_BLOCK_ROWS", "M", "EF_CONSTRUCTION"
+                    };
+
+                    const std::unordered_set<std::string>* allowed_options =
+                        (index_type == core::CatalogManager::IndexType::CASSANDRA_SASI)
+                            ? &kAllowedSasiOptions
+                            : &kAllowedSaiOptions;
+
+                    for (const auto& [option_key, _] : create_options)
+                    {
+                        if (allowed_options->find(option_key) == allowed_options->end())
+                        {
+                            return ExecutionResult(
+                                "CREATE INDEX unsupported option for " + index_type_name + ": " + option_key);
+                        }
+                    }
+
+                    if (index_type == core::CatalogManager::IndexType::CASSANDRA_SASI)
+                    {
+                        std::string mode;
+                        if (auto err = readStringOption("MODE", false, &mode))
+                        {
+                            return ExecutionResult(*err);
+                        }
+                        if (!mode.empty() && mode != "PREFIX" && mode != "CONTAINS" && mode != "SPARSE")
+                        {
+                            return ExecutionResult("CREATE INDEX option MODE invalid for CASSANDRA_SASI");
+                        }
+
+                        std::string analyzer;
+                        if (auto err = readStringOption("ANALYZER", false, &analyzer))
+                        {
+                            return ExecutionResult(*err);
+                        }
+                        if (!analyzer.empty() &&
+                            analyzer != "KEYWORD" &&
+                            analyzer != "WHITESPACE" &&
+                            analyzer != "SIMPLE" &&
+                            analyzer != "UNICODE")
+                        {
+                            return ExecutionResult("CREATE INDEX option ANALYZER invalid for CASSANDRA_SASI");
+                        }
+                        if (auto err = readNumericOption("MAX_TERM_LEN", 1, 65535, false, nullptr))
+                        {
+                            return ExecutionResult(*err);
+                        }
+                        if (auto err = readNumericOption("SEGMENT_BYTES", 1, std::numeric_limits<int32_t>::max(),
+                                                         false, nullptr))
+                        {
+                            return ExecutionResult(*err);
+                        }
+                    }
+                    else
+                    {
+                        std::string index_kind;
+                        if (auto err = readStringOption("INDEX_KIND", false, &index_kind))
+                        {
+                            return ExecutionResult(*err);
+                        }
+                        if (!index_kind.empty() &&
+                            index_kind != "STRING" &&
+                            index_kind != "NUMERIC" &&
+                            index_kind != "VECTOR")
+                        {
+                            return ExecutionResult("CREATE INDEX option INDEX_KIND invalid for CASSANDRA_SAI");
+                        }
+                        if (auto err = readNumericOption("SEGMENT_BYTES", 1, std::numeric_limits<int32_t>::max(),
+                                                         false, nullptr))
+                        {
+                            return ExecutionResult(*err);
+                        }
+                        if (auto err = readNumericOption("POSTING_BLOCK_ROWS", 1, 65535, false, nullptr))
+                        {
+                            return ExecutionResult(*err);
+                        }
+                        if (auto err = readNumericOption("M", 1, 1024, false, nullptr))
+                        {
+                            return ExecutionResult(*err);
+                        }
+                        if (auto err = readNumericOption("EF_CONSTRUCTION", 1,
+                                                         std::numeric_limits<int32_t>::max(), false, nullptr))
+                        {
+                            return ExecutionResult(*err);
+                        }
+                    }
+                }
+
+                if (isRedisFamilyType(index_type))
+                {
+                    static const std::unordered_set<std::string> kAllowedRedisOptions = {
+                        "REDIS.PERSISTENCE", "REDIS.FLUSH_POLICY", "REDIS.FLUSH_INTERVAL_MS", "TTL_POLICY"
+                    };
+
+                    for (const auto& [option_key, _] : create_options)
+                    {
+                        if (kAllowedRedisOptions.find(option_key) == kAllowedRedisOptions.end())
+                        {
+                            return ExecutionResult(
+                                "CREATE INDEX unsupported option for " + index_type_name + ": " + option_key);
+                        }
+                    }
+
+                    std::string persistence;
+                    if (auto err = readStringOption("REDIS.PERSISTENCE", false, &persistence))
+                    {
+                        return ExecutionResult(*err);
+                    }
+                    if (!persistence.empty() &&
+                        persistence != "ALWAYS" &&
+                        persistence != "SNAPSHOT" &&
+                        persistence != "NEVER")
+                    {
+                        return ExecutionResult("CREATE INDEX option REDIS.PERSISTENCE invalid for REDIS family");
+                    }
+
+                    std::string flush_policy;
+                    if (auto err = readStringOption("REDIS.FLUSH_POLICY", false, &flush_policy))
+                    {
+                        return ExecutionResult(*err);
+                    }
+                    if (!flush_policy.empty() &&
+                        flush_policy != "IMMEDIATE" &&
+                        flush_policy != "PERIODIC")
+                    {
+                        return ExecutionResult("CREATE INDEX option REDIS.FLUSH_POLICY invalid for REDIS family");
+                    }
+
+                    if (auto err = readNumericOption("REDIS.FLUSH_INTERVAL_MS", 1,
+                                                     std::numeric_limits<int32_t>::max(),
+                                                     false, nullptr))
+                    {
+                        return ExecutionResult(*err);
+                    }
+
+                    std::string ttl_policy;
+                    if (auto err = readStringOption("TTL_POLICY", false, &ttl_policy))
+                    {
+                        return ExecutionResult(*err);
+                    }
+                    if (!ttl_policy.empty() && ttl_policy != "LAZY" && ttl_policy != "EAGER")
+                    {
+                        return ExecutionResult("CREATE INDEX option TTL_POLICY invalid for REDIS family");
+                    }
+                }
 
                 std::vector<uint8_t> expression_data;
                 std::vector<std::string> expression_strings;
@@ -49978,6 +52264,48 @@ namespace scratchbird
                             return base_res;
                         }
 
+                        auto normalize_name = [](const std::string& name) {
+                            return core::IdentifierUtils::toUpper(name);
+                        };
+                        std::unordered_set<std::string> accessible_column_set;
+                        bool column_restricted_select = false;
+                        if (conn_ctx_ && !isEffectiveSuperuser())
+                        {
+                            bool has_table_select = checkPermission(
+                                base_table.info.table_id,
+                                core::CatalogManager::PermissionObjectType::TABLE,
+                                static_cast<uint32_t>(core::CatalogManager::Privilege::SELECT));
+                            if (!has_table_select)
+                            {
+                                core::ErrorContext perm_ctx;
+                                std::vector<std::string> accessible_columns;
+                                auto status = db_->catalog_manager()->getAccessibleColumns(
+                                    getCurrentUserID(),
+                                    base_table.info.table_id,
+                                    core::CatalogManager::Privilege::SELECT,
+                                    accessible_columns,
+                                    &perm_ctx);
+                                if (status != core::Status::OK || accessible_columns.empty())
+                                {
+                                    return ExecutionResult("Permission denied: SELECT on table " + table_path);
+                                }
+                                column_restricted_select = true;
+                                accessible_column_set.reserve(accessible_columns.size());
+                                for (const auto& col_name : accessible_columns)
+                                {
+                                    accessible_column_set.insert(normalize_name(col_name));
+                                }
+                            }
+                        }
+                        auto has_column_select_access = [&](const std::string& col_name) -> bool {
+                            if (!column_restricted_select)
+                            {
+                                return true;
+                            }
+                            return accessible_column_set.find(normalize_name(col_name))
+                                != accessible_column_set.end();
+                        };
+
                         struct JoinSpec {
                             TableData table;
                             parser::JoinType type = parser::JoinType::INNER;
@@ -50254,9 +52582,18 @@ namespace scratchbird
                                 proj.kind = ProjectionItem::Kind::STAR;
                                 for (size_t i = 0; i < all_columns.size(); ++i)
                                 {
+                                    if (!has_column_select_access(all_columns[i].column_name))
+                                    {
+                                        continue;
+                                    }
                                     proj.column_indices.push_back(i);
                                     rs->addColumn(all_columns[i].column_name,
                                                   static_cast<core::DataType>(all_columns[i].data_type));
+                                }
+                                if (proj.column_indices.empty())
+                                {
+                                    return ExecutionResult("Permission denied: No accessible columns in table "
+                                                           + table_path);
                                 }
                                 projections.push_back(std::move(proj));
                                 continue;
@@ -50267,9 +52604,18 @@ namespace scratchbird
                                 proj.kind = ProjectionItem::Kind::TABLE_STAR;
                                 for (size_t i = 0; i < all_columns.size(); ++i)
                                 {
+                                    if (!has_column_select_access(all_columns[i].column_name))
+                                    {
+                                        continue;
+                                    }
                                     proj.column_indices.push_back(i);
                                     rs->addColumn(all_columns[i].column_name,
                                                   static_cast<core::DataType>(all_columns[i].data_type));
+                                }
+                                if (proj.column_indices.empty())
+                                {
+                                    return ExecutionResult("Permission denied: No accessible columns in table "
+                                                           + table_path);
                                 }
                                 projections.push_back(std::move(proj));
                                 continue;
@@ -50279,7 +52625,21 @@ namespace scratchbird
                             proj.kind = ProjectionItem::Kind::EXPR;
                             proj.expr = expr_inst;
                             std::string col_name;
-                            if (getColumnRefName(expr_inst, col_name))
+                            bool is_simple_column = getColumnRefName(expr_inst, col_name);
+                            if (column_restricted_select)
+                            {
+                                if (!is_simple_column)
+                                {
+                                    return ExecutionResult("Permission denied: SELECT expression requires table-level "
+                                                           "SELECT on table " + table_path);
+                                }
+                                if (!has_column_select_access(col_name))
+                                {
+                                    return ExecutionResult("Permission denied: SELECT on column " + col_name +
+                                                           " of table " + table_path);
+                                }
+                            }
+                            if (is_simple_column)
                             {
                                 proj.alias = col_name;
                                 auto it = std::find_if(all_columns.begin(), all_columns.end(),
@@ -50393,8 +52753,22 @@ namespace scratchbird
                         for (size_t i = 0; i < combined_rows.size(); ++i)
                         {
                             const auto& row_values = combined_rows[i];
+                            if (!has_joins &&
+                                !checkRLSPolicies(base_table.info.table_id,
+                                                  row_values,
+                                                  base_table.columns,
+                                                  core::CatalogManager::PolicyType::SELECT,
+                                                  false /* is_with_check */))
+                            {
+                                continue;
+                            }
                             if (has_where_inst)
                             {
+                                if (column_restricted_select)
+                                {
+                                    return ExecutionResult("Permission denied: SELECT expression requires table-level "
+                                                           "SELECT on table " + table_path);
+                                }
                                 current_row_values_ = &row_values;
                                 current_row_columns_ = &all_columns;
                                 Value cond = evalExpr(where_inst);
@@ -51666,6 +54040,40 @@ namespace scratchbird
                             return ExecutionResult("Failed to get table columns");
                         }
 
+                        std::vector<core::CatalogManager::TriggerInfo> before_insert_triggers;
+                        std::vector<core::CatalogManager::TriggerInfo> after_insert_triggers;
+                        core::ErrorContext insert_trigger_ctx;
+                        auto before_insert_status = db_->catalog_manager()->listTriggersForTable(
+                            table_info.table_id,
+                            core::CatalogManager::TriggerEvent::INSERT,
+                            core::CatalogManager::TriggerTiming::BEFORE,
+                            before_insert_triggers,
+                            &insert_trigger_ctx);
+                        if (before_insert_status != core::Status::OK)
+                        {
+                            std::string err_msg = "Failed to list BEFORE INSERT triggers";
+                            if (!insert_trigger_ctx.message.empty())
+                            {
+                                err_msg += ": " + insert_trigger_ctx.message;
+                            }
+                            return ExecutionResult(err_msg);
+                        }
+                        auto after_insert_status = db_->catalog_manager()->listTriggersForTable(
+                            table_info.table_id,
+                            core::CatalogManager::TriggerEvent::INSERT,
+                            core::CatalogManager::TriggerTiming::AFTER,
+                            after_insert_triggers,
+                            &insert_trigger_ctx);
+                        if (after_insert_status != core::Status::OK)
+                        {
+                            std::string err_msg = "Failed to list AFTER INSERT triggers";
+                            if (!insert_trigger_ctx.message.empty())
+                            {
+                                err_msg += ": " + insert_trigger_ctx.message;
+                            }
+                            return ExecutionResult(err_msg);
+                        }
+
                         std::vector<std::string> column_names;
                         auto it_cols = payload.find("columns");
                         if (it_cols != payload.end())
@@ -52201,6 +54609,19 @@ namespace scratchbird
                             if (!domain_mgr)
                             {
                                 return ExecutionResult("Domain manager unavailable for domain enforcement");
+                            }
+
+                            for (const auto& trigger : before_insert_triggers)
+                            {
+                                if (!trigger.enabled)
+                                {
+                                    continue;
+                                }
+                                TriggerContext ctx(trigger, nullptr, &row_values, table_info, all_columns);
+                                if (!fireTrigger(ctx))
+                                {
+                                    return ExecutionResult();
+                                }
                             }
 
                             for (size_t i = 0; i < all_columns.size(); ++i)
@@ -53069,6 +55490,21 @@ namespace scratchbird
                                     return ExecutionResult(err_msg);
                                 }
                             }
+
+                            for (const auto& trigger : after_insert_triggers)
+                            {
+                                if (!trigger.enabled)
+                                {
+                                    continue;
+                                }
+                                TriggerContext ctx(trigger, nullptr, &row_values, table_info, all_columns);
+                                if (!fireTrigger(ctx))
+                                {
+                                    return ExecutionResult("AFTER INSERT trigger '" + trigger.trigger_name +
+                                                          "' returned FALSE (fail-closed)");
+                                }
+                            }
+
                             if (returning_rs)
                             {
                                 std::vector<Value> out_row;
@@ -53163,6 +55599,40 @@ namespace scratchbird
                         if (db_->catalog_manager()->getColumns(table_info.table_id, all_columns, nullptr) != core::Status::OK)
                         {
                             return ExecutionResult("Failed to get table columns");
+                        }
+
+                        std::vector<core::CatalogManager::TriggerInfo> before_update_triggers;
+                        std::vector<core::CatalogManager::TriggerInfo> after_update_triggers;
+                        core::ErrorContext update_trigger_ctx;
+                        auto before_update_status = db_->catalog_manager()->listTriggersForTable(
+                            table_info.table_id,
+                            core::CatalogManager::TriggerEvent::UPDATE,
+                            core::CatalogManager::TriggerTiming::BEFORE,
+                            before_update_triggers,
+                            &update_trigger_ctx);
+                        if (before_update_status != core::Status::OK)
+                        {
+                            std::string err_msg = "Failed to list BEFORE UPDATE triggers";
+                            if (!update_trigger_ctx.message.empty())
+                            {
+                                err_msg += ": " + update_trigger_ctx.message;
+                            }
+                            return ExecutionResult(err_msg);
+                        }
+                        auto after_update_status = db_->catalog_manager()->listTriggersForTable(
+                            table_info.table_id,
+                            core::CatalogManager::TriggerEvent::UPDATE,
+                            core::CatalogManager::TriggerTiming::AFTER,
+                            after_update_triggers,
+                            &update_trigger_ctx);
+                        if (after_update_status != core::Status::OK)
+                        {
+                            std::string err_msg = "Failed to list AFTER UPDATE triggers";
+                            if (!update_trigger_ctx.message.empty())
+                            {
+                                err_msg += ": " + update_trigger_ctx.message;
+                            }
+                            return ExecutionResult(err_msg);
                         }
 
                         auto it_sets = payload.find("set_items");
@@ -53730,6 +56200,26 @@ namespace scratchbird
                                     new_values[i] = std::move(generated_val);
                                 }
 
+                                bool skip_row_due_before_trigger = false;
+                                for (const auto& trigger : before_update_triggers)
+                                {
+                                    if (!trigger.enabled)
+                                    {
+                                        continue;
+                                    }
+                                    TriggerContext ctx(trigger, &row_values, &new_values, table_info, all_columns);
+                                    if (!fireTrigger(ctx))
+                                    {
+                                        skip_row_due_before_trigger = true;
+                                        break;
+                                    }
+                                }
+                                if (skip_row_due_before_trigger)
+                                {
+                                    matched = true;
+                                    break;
+                                }
+
                                 auto* domain_mgr = db_->domain_manager();
                                 if (!domain_mgr)
                                 {
@@ -54151,6 +56641,21 @@ namespace scratchbird
                                         return ExecutionResult(err_msg);
                                     }
                                 }
+
+                                for (const auto& trigger : after_update_triggers)
+                                {
+                                    if (!trigger.enabled)
+                                    {
+                                        continue;
+                                    }
+                                    TriggerContext ctx(trigger, &row_values, &new_values, table_info, all_columns);
+                                    if (!fireTrigger(ctx))
+                                    {
+                                        return ExecutionResult("AFTER UPDATE trigger '" + trigger.trigger_name +
+                                                              "' returned FALSE (fail-closed)");
+                                    }
+                                }
+
                                 updated++;
 
                                 if (returning_rs)
@@ -54206,6 +56711,40 @@ namespace scratchbird
                         if (db_->catalog_manager()->getColumns(table_info.table_id, all_columns, nullptr) != core::Status::OK)
                         {
                             return ExecutionResult("Failed to get table columns");
+                        }
+
+                        std::vector<core::CatalogManager::TriggerInfo> before_delete_triggers;
+                        std::vector<core::CatalogManager::TriggerInfo> after_delete_triggers;
+                        core::ErrorContext delete_trigger_ctx;
+                        auto before_delete_status = db_->catalog_manager()->listTriggersForTable(
+                            table_info.table_id,
+                            core::CatalogManager::TriggerEvent::DELETE,
+                            core::CatalogManager::TriggerTiming::BEFORE,
+                            before_delete_triggers,
+                            &delete_trigger_ctx);
+                        if (before_delete_status != core::Status::OK)
+                        {
+                            std::string err_msg = "Failed to list BEFORE DELETE triggers";
+                            if (!delete_trigger_ctx.message.empty())
+                            {
+                                err_msg += ": " + delete_trigger_ctx.message;
+                            }
+                            return ExecutionResult(err_msg);
+                        }
+                        auto after_delete_status = db_->catalog_manager()->listTriggersForTable(
+                            table_info.table_id,
+                            core::CatalogManager::TriggerEvent::DELETE,
+                            core::CatalogManager::TriggerTiming::AFTER,
+                            after_delete_triggers,
+                            &delete_trigger_ctx);
+                        if (after_delete_status != core::Status::OK)
+                        {
+                            std::string err_msg = "Failed to list AFTER DELETE triggers";
+                            if (!delete_trigger_ctx.message.empty())
+                            {
+                                err_msg += ": " + delete_trigger_ctx.message;
+                            }
+                            return ExecutionResult(err_msg);
                         }
 
                         struct TableData {
@@ -54640,6 +57179,26 @@ namespace scratchbird
                             {
                                 continue;
                             }
+
+                            bool skip_row_due_before_trigger = false;
+                            for (const auto& trigger : before_delete_triggers)
+                            {
+                                if (!trigger.enabled)
+                                {
+                                    continue;
+                                }
+                                TriggerContext ctx(trigger, &row_values, nullptr, table_info, all_columns);
+                                if (!fireTrigger(ctx))
+                                {
+                                    skip_row_due_before_trigger = true;
+                                    break;
+                                }
+                            }
+                            if (skip_row_due_before_trigger)
+                            {
+                                continue;
+                            }
+
                             auto status = db_->storage_engine()->deleteTuple(
                                 table_info.table_id,
                                 tuple.tid,
@@ -54680,6 +57239,21 @@ namespace scratchbird
                             }
                             updateIndexesOnDelete(xid, table_info.table_id, table_info,
                                                   all_columns, row_values, tuple.tid);
+
+                            for (const auto& trigger : after_delete_triggers)
+                            {
+                                if (!trigger.enabled)
+                                {
+                                    continue;
+                                }
+                                TriggerContext ctx(trigger, &row_values, nullptr, table_info, all_columns);
+                                if (!fireTrigger(ctx))
+                                {
+                                    return ExecutionResult("AFTER DELETE trigger '" + trigger.trigger_name +
+                                                          "' returned FALSE (fail-closed)");
+                                }
+                            }
+
                             deleted++;
 
                             if (returning_rs)
@@ -55405,6 +57979,39 @@ namespace scratchbird
 	                        break;
 	                }
 
+	                auto executeVNextOpcode =
+	                    [&](scratchbird::sblr::v3::Opcode opcode,
+	                        const scratchbird::sblr::v3::Value::Object& payload) -> ExecutionResult {
+	                    (void)payload;
+	                    const char* opcode_name = scratchbird::sblr::v3::opcodeName(
+	                        static_cast<uint16_t>(opcode));
+	                    const std::string symbol = opcode_name ? opcode_name : "UNKNOWN";
+
+	                    auto semanticBridgeReject = [&](const std::string& feature) -> ExecutionResult {
+                            core::VNextMetricsEventModel::recordExecutorEvent(
+                                "vnext_opcode_dispatch", "reject", "IRX_0406");
+	                        return ExecutionResult(
+	                            "IRX_0406: semantic class change requires explicit bridge for " + feature);
+	                    };
+
+	                    switch (opcode)
+	                    {
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_OP_DOC_PATH_FILTER:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_OP_TS_BUCKET_AGG:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_OP_COL_SCAN:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_OP_SEARCH_DSL_EVAL:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_OP_VECTOR_ANN:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_OP_HYBRID_BRIDGE_EXCHANGE:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_OP_HYBRID_BRIDGE_MATERIALIZE:
+	                            return semanticBridgeReject(symbol);
+	                        default:
+                                core::VNextMetricsEventModel::recordExecutorEvent(
+                                    "vnext_opcode_dispatch", "reject", "IRX_0403");
+	                            return ExecutionResult(
+	                                "IRX_0403: unknown SBLR vNext opcode in executor dispatch");
+	                    }
+	                };
+
 	                auto getPayloadStringValue = [&](const scratchbird::sblr::v3::Value::Object& obj,
 	                                                 const std::string& key,
 	                                                 std::string& out) -> bool {
@@ -55454,24 +58061,19 @@ namespace scratchbird
 	                    return false;
 	                };
 
-	                auto runLegacyShowHandler =
-	                    [&](void (Executor::*handler)(), const std::vector<std::string>& args) -> ExecutionResult {
-	                    std::vector<uint8_t> arg_stream;
-	                    arg_stream.reserve(64);
+	                auto appendLegacyStringArg = [&](std::vector<uint8_t>& arg_stream,
+	                                                 const std::string& value) {
+	                    uint8_t len_buf[10];
+	                    size_t len_written = scratchbird::sblr::writeUVarint(
+	                        len_buf, static_cast<uint64_t>(value.size()));
+	                    arg_stream.insert(arg_stream.end(), len_buf, len_buf + len_written);
+	                    arg_stream.insert(arg_stream.end(), value.begin(), value.end());
+	                };
 
-	                    auto appendString = [&](const std::string& value) {
-	                        uint8_t len_buf[10];
-	                        size_t len_written = scratchbird::sblr::writeUVarint(
-	                            len_buf, static_cast<uint64_t>(value.size()));
-	                        arg_stream.insert(arg_stream.end(), len_buf, len_buf + len_written);
-	                        arg_stream.insert(arg_stream.end(), value.begin(), value.end());
-	                    };
-
-	                    for (const auto& arg : args)
-	                    {
-	                        appendString(arg);
-	                    }
-
+	                auto runLegacyHandler =
+	                    [&](void (Executor::*handler)(),
+	                        std::vector<uint8_t> arg_stream,
+	                        bool expects_result_set) -> ExecutionResult {
 	                    const uint8_t* saved_bytecode = bytecode_;
 	                    size_t saved_bytecode_size = bytecode_size_;
 	                    size_t saved_pc = pc_;
@@ -55500,7 +58102,27 @@ namespace scratchbird
 	                    bytecode_size_ = saved_bytecode_size;
 	                    pc_ = saved_pc;
 	                    current_bytecode_vec_ = saved_bytecode_vec;
-	                    return ExecutionResult(std::move(current_result_set_));
+	                    if (expects_result_set)
+	                    {
+	                        return ExecutionResult(std::move(current_result_set_));
+	                    }
+	                    return ExecutionResult();
+	                };
+
+	                auto runLegacyShowHandler =
+	                    [&](void (Executor::*handler)(), const std::vector<std::string>& args) -> ExecutionResult {
+	                    std::vector<uint8_t> arg_stream;
+	                    arg_stream.reserve(64);
+	                    for (const auto& arg : args)
+	                    {
+	                        appendLegacyStringArg(arg_stream, arg);
+	                    }
+	                    return runLegacyHandler(handler, std::move(arg_stream), true);
+	                };
+
+	                auto runLegacyVoidHandler =
+	                    [&](void (Executor::*handler)(), std::vector<uint8_t> arg_stream) -> ExecutionResult {
+	                    return runLegacyHandler(handler, std::move(arg_stream), false);
 	                };
 
                     enum class LegacyShowArgProfile
@@ -55622,8 +58244,341 @@ namespace scratchbird
 	                        return runLegacyShowHandler(it->handler, args);
 	                    };
 
-                        auto executeLegacySetVariableOpcode =
-                            [&](const scratchbird::sblr::v3::Value::Object& payload) -> ExecutionResult {
+	                    auto executeV3ShowIndexOpcode =
+	                        [&](const scratchbird::sblr::v3::Value::Object& payload) -> ExecutionResult {
+	                        std::string index_path;
+	                        if (!getString(payload, "key", index_path) || index_path.empty())
+	                        {
+	                            return ExecutionResult("V3 SHOW INDEX missing key");
+	                        }
+
+	                        std::string profile;
+	                        getPayloadStringValue(payload, "value", profile);
+	                        profile = scratchbird::core::IdentifierUtils::toUpper(profile);
+
+	                        if (profile.empty())
+	                        {
+	                            return runLegacyShowHandler(&Executor::executeShowIndex, {index_path});
+	                        }
+
+	                        auto healthStatusToString =
+	                            [](core::CatalogManager::IndexHealthStatus status) -> std::string {
+	                            using IHS = core::CatalogManager::IndexHealthStatus;
+	                            switch (status)
+	                            {
+	                                case IHS::HEALTHY: return "HEALTHY";
+	                                case IHS::WARNING: return "WARNING";
+	                                case IHS::ERROR: return "ERROR";
+	                                case IHS::CORRUPT: return "CORRUPT";
+	                                default: return "UNKNOWN";
+	                            }
+	                        };
+
+	                        auto optionTypeToString =
+	                            [](core::CatalogManager::IndexOptionValueType type) -> std::string {
+	                            using IOVT = core::CatalogManager::IndexOptionValueType;
+	                            switch (type)
+	                            {
+	                                case IOVT::INT: return "INT";
+	                                case IOVT::FLOAT: return "FLOAT";
+	                                case IOVT::BOOL: return "BOOL";
+	                                case IOVT::STRING: return "STRING";
+	                                case IOVT::JSON: return "JSON";
+	                                default: return "UNKNOWN";
+	                            }
+	                        };
+
+	                        core::ErrorContext err_ctx;
+	                        core::ID index_id;
+	                        core::CatalogManager::ObjectType resolved_type;
+	                        auto resolve_status = resolveObjectIdForQualifiedName(
+	                            index_path,
+	                            core::CatalogManager::ObjectType::INDEX,
+	                            index_id,
+	                            resolved_type,
+	                            nullptr,
+	                            &err_ctx);
+	                        if (resolve_status != core::Status::OK)
+	                        {
+	                            const auto dot_pos = index_path.find_last_of('.');
+	                            if (dot_pos != std::string::npos && dot_pos + 1 < index_path.size())
+	                            {
+	                                const std::string unqualified_name = index_path.substr(dot_pos + 1);
+	                                resolve_status = resolveObjectIdForQualifiedName(
+	                                    unqualified_name,
+	                                    core::CatalogManager::ObjectType::INDEX,
+	                                    index_id,
+	                                    resolved_type,
+	                                    nullptr,
+	                                    &err_ctx);
+	                            }
+	                        }
+	                        if (resolve_status != core::Status::OK)
+	                        {
+	                            std::string err_msg = "Index '" + index_path + "' not found";
+	                            if (!err_ctx.message.empty())
+	                            {
+	                                err_msg += ": " + err_ctx.message;
+	                            }
+	                            return ExecutionResult(err_msg);
+	                        }
+
+	                        core::CatalogManager::IndexInfo index_info;
+	                        if (db_->catalog_manager()->getIndex(index_id, index_info, &err_ctx) !=
+	                            core::Status::OK)
+	                        {
+	                            return ExecutionResult(
+	                                err_ctx.message.empty()
+	                                    ? "Failed to load index metadata"
+	                                    : err_ctx.message);
+	                        }
+
+	                        current_result_set_ = std::make_unique<ResultSet>();
+
+	                        if (profile == "HEALTH")
+	                        {
+	                            core::CatalogManager::IndexHealthCatalogInfo health{};
+	                            if (db_->catalog_manager()->getIndexHealthCatalogEntry(index_id, health, &err_ctx) !=
+	                                core::Status::OK)
+	                            {
+	                                health = core::CatalogManager::IndexHealthCatalogInfo{};
+	                                health.index_id = index_id;
+	                                health.light_status = core::CatalogManager::IndexHealthStatus::HEALTHY;
+	                                health.diagnostic_status = core::CatalogManager::IndexHealthStatus::HEALTHY;
+	                            }
+
+	                            current_result_set_->addColumn("Index_Name", core::DataType::VARCHAR);
+	                            current_result_set_->addColumn("Index_ID", core::DataType::VARCHAR);
+	                            current_result_set_->addColumn("Light_Status", core::DataType::VARCHAR);
+	                            current_result_set_->addColumn("Light_Error_Count", core::DataType::INT64);
+	                            current_result_set_->addColumn("Last_Light_Scan_Txid", core::DataType::INT64);
+	                            current_result_set_->addColumn("Last_Light_Scan_Time", core::DataType::INT64);
+	                            current_result_set_->addColumn("Diagnostic_Status", core::DataType::VARCHAR);
+	                            current_result_set_->addColumn("Diagnostic_Error_Count", core::DataType::INT64);
+	                            current_result_set_->addColumn("Last_Diagnostic_Scan_Txid", core::DataType::INT64);
+	                            current_result_set_->addColumn("Last_Diagnostic_Scan_Time", core::DataType::INT64);
+	                            current_result_set_->addColumn("Checksum_Errors", core::DataType::INT64);
+	                            current_result_set_->addColumn("Order_Errors", core::DataType::INT64);
+	                            current_result_set_->addColumn("Pointer_Errors", core::DataType::INT64);
+	                            current_result_set_->addColumn("Orphan_Pages", core::DataType::INT64);
+	                            current_result_set_->addColumn("Duplicate_Keys", core::DataType::INT64);
+	                            current_result_set_->addColumn("In_Memory_Errors", core::DataType::INT64);
+	                            current_result_set_->addColumn("Pages_Scanned", core::DataType::INT64);
+	                            current_result_set_->addColumn("Bytes_Scanned", core::DataType::INT64);
+
+	                            current_result_set_->addRow({
+	                                Value::makeVarchar(index_info.index_name),
+	                                Value::makeVarchar(index_id.toString()),
+	                                Value::makeVarchar(healthStatusToString(health.light_status)),
+	                                Value::makeInt64(static_cast<int64_t>(health.light_error_count)),
+	                                Value::makeInt64(static_cast<int64_t>(health.last_light_scan_txid)),
+	                                Value::makeInt64(static_cast<int64_t>(health.last_light_scan_time)),
+	                                Value::makeVarchar(healthStatusToString(health.diagnostic_status)),
+	                                Value::makeInt64(static_cast<int64_t>(health.diagnostic_error_count)),
+	                                Value::makeInt64(static_cast<int64_t>(health.last_diag_scan_txid)),
+	                                Value::makeInt64(static_cast<int64_t>(health.last_diag_scan_time)),
+	                                Value::makeInt64(static_cast<int64_t>(health.checksum_errors)),
+	                                Value::makeInt64(static_cast<int64_t>(health.order_errors)),
+	                                Value::makeInt64(static_cast<int64_t>(health.pointer_errors)),
+	                                Value::makeInt64(static_cast<int64_t>(health.orphan_pages)),
+	                                Value::makeInt64(static_cast<int64_t>(health.duplicate_keys)),
+	                                Value::makeInt64(static_cast<int64_t>(health.in_memory_errors)),
+	                                Value::makeInt64(static_cast<int64_t>(health.pages_scanned)),
+	                                Value::makeInt64(static_cast<int64_t>(health.bytes_scanned)),
+	                            });
+	                            return ExecutionResult(std::move(current_result_set_));
+	                        }
+
+	                        if (profile == "USAGE")
+	                        {
+	                            core::CatalogManager::IndexUsageCatalogInfo usage{};
+	                            if (db_->catalog_manager()->getIndexUsageCatalogEntry(index_id, usage, &err_ctx) !=
+	                                core::Status::OK)
+	                            {
+	                                usage = core::CatalogManager::IndexUsageCatalogInfo{};
+	                                usage.index_id = index_id;
+	                            }
+
+	                            current_result_set_->addColumn("Index_Name", core::DataType::VARCHAR);
+	                            current_result_set_->addColumn("Index_ID", core::DataType::VARCHAR);
+	                            current_result_set_->addColumn("Scan_Count", core::DataType::INT64);
+	                            current_result_set_->addColumn("Tuple_Read", core::DataType::INT64);
+	                            current_result_set_->addColumn("Tuple_Returned", core::DataType::INT64);
+	                            current_result_set_->addColumn("Index_Only_Hits", core::DataType::INT64);
+	                            current_result_set_->addColumn("Blocks_Read", core::DataType::INT64);
+	                            current_result_set_->addColumn("Blocks_Hit", core::DataType::INT64);
+	                            current_result_set_->addColumn("Total_Time_Ns", core::DataType::INT64);
+	                            current_result_set_->addColumn("Last_Used_Time", core::DataType::INT64);
+
+	                            current_result_set_->addRow({
+	                                Value::makeVarchar(index_info.index_name),
+	                                Value::makeVarchar(index_id.toString()),
+	                                Value::makeInt64(static_cast<int64_t>(usage.scan_count)),
+	                                Value::makeInt64(static_cast<int64_t>(usage.tuple_read)),
+	                                Value::makeInt64(static_cast<int64_t>(usage.tuple_returned)),
+	                                Value::makeInt64(static_cast<int64_t>(usage.index_only_hits)),
+	                                Value::makeInt64(static_cast<int64_t>(usage.blocks_read)),
+	                                Value::makeInt64(static_cast<int64_t>(usage.blocks_hit)),
+	                                Value::makeInt64(static_cast<int64_t>(usage.total_time_ns)),
+	                                Value::makeInt64(static_cast<int64_t>(usage.last_used_time)),
+	                            });
+	                            return ExecutionResult(std::move(current_result_set_));
+	                        }
+
+	                        if (profile == "STORAGE")
+	                        {
+	                            core::CatalogManager::IndexStorageCatalogInfo storage{};
+	                            if (db_->catalog_manager()->getIndexStorageCatalogEntry(index_id, storage, &err_ctx) !=
+	                                core::Status::OK)
+	                            {
+	                                storage = core::CatalogManager::IndexStorageCatalogInfo{};
+	                                storage.index_id = index_id;
+	                                storage.filespace_id = index_info.tablespace_uuid;
+	                            }
+
+	                            current_result_set_->addColumn("Index_Name", core::DataType::VARCHAR);
+	                            current_result_set_->addColumn("Index_ID", core::DataType::VARCHAR);
+	                            current_result_set_->addColumn("Page_Count", core::DataType::INT64);
+	                            current_result_set_->addColumn("Bytes_Used", core::DataType::INT64);
+	                            current_result_set_->addColumn("Bytes_Allocated", core::DataType::INT64);
+	                            current_result_set_->addColumn("Fragmentation_Ratio", core::DataType::FLOAT32);
+	                            current_result_set_->addColumn("Filespace_ID", core::DataType::VARCHAR);
+
+	                            current_result_set_->addRow({
+	                                Value::makeVarchar(index_info.index_name),
+	                                Value::makeVarchar(index_id.toString()),
+	                                Value::makeInt64(static_cast<int64_t>(storage.page_count)),
+	                                Value::makeInt64(static_cast<int64_t>(storage.bytes_used)),
+	                                Value::makeInt64(static_cast<int64_t>(storage.bytes_allocated)),
+	                                Value::makeFloat32(storage.fragmentation_ratio),
+	                                Value::makeVarchar(storage.filespace_id.toString()),
+	                            });
+	                            return ExecutionResult(std::move(current_result_set_));
+	                        }
+
+	                        if (profile == "CONTENTION")
+	                        {
+	                            core::CatalogManager::IndexContentionCatalogInfo contention{};
+	                            if (db_->catalog_manager()->getIndexContentionCatalogEntry(
+	                                    index_id, contention, &err_ctx) != core::Status::OK)
+	                            {
+	                                contention = core::CatalogManager::IndexContentionCatalogInfo{};
+	                                contention.index_id = index_id;
+	                            }
+
+	                            current_result_set_->addColumn("Index_Name", core::DataType::VARCHAR);
+	                            current_result_set_->addColumn("Index_ID", core::DataType::VARCHAR);
+	                            current_result_set_->addColumn("Lock_Wait_Count", core::DataType::INT64);
+	                            current_result_set_->addColumn("Lock_Wait_Time_Ns", core::DataType::INT64);
+	                            current_result_set_->addColumn("Deadlock_Count", core::DataType::INT64);
+	                            current_result_set_->addColumn("Latch_Wait_Count", core::DataType::INT64);
+	                            current_result_set_->addColumn("Latch_Wait_Time_Ns", core::DataType::INT64);
+	                            current_result_set_->addColumn("Unique_Key_Conflict_Count", core::DataType::INT64);
+	                            current_result_set_->addColumn("Hot_Key_Count", core::DataType::INT64);
+
+	                            current_result_set_->addRow({
+	                                Value::makeVarchar(index_info.index_name),
+	                                Value::makeVarchar(index_id.toString()),
+	                                Value::makeInt64(static_cast<int64_t>(contention.lock_wait_count)),
+	                                Value::makeInt64(static_cast<int64_t>(contention.lock_wait_time_ns)),
+	                                Value::makeInt64(static_cast<int64_t>(contention.deadlock_count)),
+	                                Value::makeInt64(static_cast<int64_t>(contention.latch_wait_count)),
+	                                Value::makeInt64(static_cast<int64_t>(contention.latch_wait_time_ns)),
+	                                Value::makeInt64(static_cast<int64_t>(contention.unique_key_conflict_count)),
+	                                Value::makeInt64(static_cast<int64_t>(contention.hot_key_count)),
+	                            });
+	                            return ExecutionResult(std::move(current_result_set_));
+	                        }
+
+	                        if (profile == "OPTIONS")
+	                        {
+	                            std::vector<core::CatalogManager::IndexOptionCatalogInfo> options;
+	                            if (db_->catalog_manager()->listIndexOptionCatalogEntries(index_id, options, &err_ctx) !=
+	                                core::Status::OK)
+	                            {
+	                                return ExecutionResult(
+	                                    err_ctx.message.empty()
+	                                        ? "Failed to read index options"
+	                                        : err_ctx.message);
+	                            }
+
+	                            std::unordered_map<std::string, core::CatalogManager::IndexOptionCatalogInfo>
+	                                options_by_key;
+	                            for (const auto& row : options)
+	                            {
+	                                options_by_key[scratchbird::core::IdentifierUtils::toUpper(row.option_key)] = row;
+	                            }
+
+	                            current_result_set_->addColumn("Index_Name", core::DataType::VARCHAR);
+	                            current_result_set_->addColumn("Index_ID", core::DataType::VARCHAR);
+	                            current_result_set_->addColumn("Option_Key", core::DataType::VARCHAR);
+	                            current_result_set_->addColumn("Option_Value", core::DataType::VARCHAR);
+	                            current_result_set_->addColumn("Option_Type", core::DataType::VARCHAR);
+	                            current_result_set_->addColumn("Option_Source", core::DataType::VARCHAR);
+
+	                            auto add_option_row =
+	                                [&](const std::string& key,
+	                                    const std::string& value,
+	                                    const std::string& type,
+	                                    const std::string& source) {
+	                                current_result_set_->addRow({
+	                                    Value::makeVarchar(index_info.index_name),
+	                                    Value::makeVarchar(index_id.toString()),
+	                                    Value::makeVarchar(key),
+	                                    Value::makeVarchar(value),
+	                                    Value::makeVarchar(type),
+	                                    Value::makeVarchar(source),
+	                                });
+	                            };
+
+	                            const auto it_bloom = options_by_key.find("BLOOM_FILTER");
+	                            if (it_bloom != options_by_key.end())
+	                            {
+	                                add_option_row(
+	                                    "BLOOM_FILTER",
+	                                    it_bloom->second.option_value,
+	                                    optionTypeToString(it_bloom->second.option_type),
+	                                    "INDEX_OVERRIDE");
+	                            }
+	                            else
+	                            {
+	                                add_option_row("BLOOM_FILTER", "false", "BOOL", "SYSTEM_DEFAULT");
+	                            }
+
+	                            const auto it_fpr = options_by_key.find("BLOOM_FPR");
+	                            if (it_fpr != options_by_key.end())
+	                            {
+	                                add_option_row(
+	                                    "BLOOM_FPR",
+	                                    it_fpr->second.option_value,
+	                                    optionTypeToString(it_fpr->second.option_type),
+	                                    "INDEX_OVERRIDE");
+	                            }
+	                            else
+	                            {
+	                                add_option_row("BLOOM_FPR", "0.01", "FLOAT", "SYSTEM_DEFAULT");
+	                            }
+
+	                            for (const auto& entry : options_by_key)
+	                            {
+	                                if (entry.first == "BLOOM_FILTER" || entry.first == "BLOOM_FPR")
+	                                {
+	                                    continue;
+	                                }
+	                                add_option_row(
+	                                    entry.first,
+	                                    entry.second.option_value,
+	                                    optionTypeToString(entry.second.option_type),
+	                                    "INDEX_OVERRIDE");
+	                            }
+	                            return ExecutionResult(std::move(current_result_set_));
+	                        }
+
+	                        return ExecutionResult("V3 SHOW INDEX profile is invalid");
+	                    };
+
+	                        auto executeLegacySetVariableOpcode =
+	                            [&](const scratchbird::sblr::v3::Value::Object& payload) -> ExecutionResult {
                             std::string key;
                             if (!getString(payload, "key", key) || key.empty())
                             {
@@ -55808,17 +58763,782 @@ namespace scratchbird
                             bytecode_ = saved_bytecode;
                             bytecode_size_ = saved_bytecode_size;
                             pc_ = saved_pc;
-                            current_bytecode_vec_ = saved_bytecode_vec;
-                            return ExecutionResult();
+	                            current_bytecode_vec_ = saved_bytecode_vec;
+	                            return ExecutionResult();
+	                        };
+
+	                        auto executeV3AnalyzeOpcode =
+	                            [&](const scratchbird::sblr::v3::Value::Object& payload) -> ExecutionResult {
+	                            const auto analyze_start_time = std::chrono::steady_clock::now();
+	                            uint64_t target = 0;
+	                            if (!getU64(payload, "target", target))
+	                            {
+	                                return ExecutionResult("V3 ANALYZE missing target");
+	                            }
+
+	                            if (target != 1)
+	                            {
+	                                if (target != 2)
+	                                {
+	                                    return ExecutionResult("V3 ANALYZE target is invalid");
+	                                }
+	                            }
+
+	                            double sample_rate = 0.0;
+	                            auto it_sample = payload.find("sample_rate");
+	                            if (it_sample != payload.end() && !it_sample->second.isNull())
+                            {
+                                if (auto d = std::get_if<double>(&it_sample->second.data))
+                                {
+                                    sample_rate = *d;
+                                }
+                                else if (auto i = std::get_if<int64_t>(&it_sample->second.data))
+                                {
+                                    sample_rate = static_cast<double>(*i);
+                                }
+                                else if (auto u = std::get_if<uint64_t>(&it_sample->second.data))
+                                {
+                                    sample_rate = static_cast<double>(*u);
+                                }
+                                else
+                                {
+	                                    return ExecutionResult("V3 ANALYZE sample_rate must be numeric");
+	                                }
+	                            }
+
+	                            if (sample_rate < 0.0)
+	                            {
+	                                return ExecutionResult("V3 ANALYZE sample_rate must be non-negative");
+	                            }
+
+	                            if (target == 2)
+	                            {
+	                                std::string index_path;
+	                                if (!getSchemaPathString(payload, "index_path", index_path) || index_path.empty())
+	                                {
+	                                    return ExecutionResult("V3 ANALYZE missing index_path");
+	                                }
+
+	                                core::ErrorContext analyze_ctx;
+	                                core::ID index_id;
+	                                core::CatalogManager::ObjectType resolved_type;
+	                                auto resolve_status = resolveObjectIdForQualifiedName(
+	                                    index_path,
+	                                    core::CatalogManager::ObjectType::INDEX,
+	                                    index_id,
+	                                    resolved_type,
+	                                    nullptr,
+	                                    &analyze_ctx);
+	                                if (resolve_status != core::Status::OK)
+	                                {
+	                                    const auto dot_pos = index_path.find_last_of('.');
+	                                    if (dot_pos != std::string::npos && dot_pos + 1 < index_path.size())
+	                                    {
+	                                        const std::string unqualified_name =
+	                                            index_path.substr(dot_pos + 1);
+	                                        resolve_status = resolveObjectIdForQualifiedName(
+	                                            unqualified_name,
+	                                            core::CatalogManager::ObjectType::INDEX,
+	                                            index_id,
+	                                            resolved_type,
+	                                            nullptr,
+	                                            &analyze_ctx);
+	                                    }
+	                                }
+	                                if (resolve_status != core::Status::OK)
+	                                {
+	                                    std::string err_msg = "Index '" + index_path + "' not found";
+	                                    if (!analyze_ctx.message.empty())
+	                                    {
+	                                        err_msg += ": " + analyze_ctx.message;
+	                                    }
+	                                    return ExecutionResult(err_msg);
+	                                }
+
+	                                core::CatalogManager::IndexInfo index_info;
+	                                if (db_->catalog_manager()->getIndex(index_id, index_info, &analyze_ctx) !=
+	                                    core::Status::OK)
+	                                {
+	                                    return ExecutionResult(
+	                                        analyze_ctx.message.empty()
+	                                            ? "Failed to load index metadata for ANALYZE INDEX"
+	                                            : analyze_ctx.message);
+	                                }
+
+	                                core::CatalogManager::IndexStatsCatalogInfo stats{};
+	                                if (db_->catalog_manager()->getIndexStatsCatalogEntry(index_id, stats, &analyze_ctx) !=
+	                                    core::Status::OK)
+	                                {
+	                                    stats = core::CatalogManager::IndexStatsCatalogInfo{};
+	                                    stats.index_id = index_id;
+	                                }
+
+	                                const uint32_t previous_version = stats.stats_version;
+	                                stats.index_id = index_id;
+	                                stats.stats_version = (previous_version == std::numeric_limits<uint32_t>::max())
+	                                    ? previous_version
+	                                    : previous_version + 1;
+	                                stats.last_analyze_txid = conn_ctx_
+	                                    ? conn_ctx_->getCurrentXid()
+	                                    : db_->storage_engine()->getCurrentXid();
+
+	                                core::CatalogManager::IndexStorageCatalogInfo storage{};
+	                                if (db_->catalog_manager()->getIndexStorageCatalogEntry(index_id, storage, nullptr) ==
+	                                    core::Status::OK)
+	                                {
+	                                    if (storage.page_count > std::numeric_limits<uint32_t>::max())
+	                                    {
+	                                        stats.leaf_pages = std::numeric_limits<uint32_t>::max();
+	                                    }
+	                                    else
+	                                    {
+	                                        stats.leaf_pages = static_cast<uint32_t>(storage.page_count);
+	                                    }
+	                                    stats.bloat_ratio =
+	                                        std::clamp(storage.fragmentation_ratio, 0.0f, 1.0f);
+	                                }
+
+	                                if (stats.row_count_est == 0)
+	                                {
+	                                    stats.row_count_est = stats.leaf_pages;
+	                                }
+	                                if (sample_rate > 0.0 && sample_rate <= 1.0 && stats.row_count_est > 0)
+	                                {
+	                                    const double sampled_rows =
+	                                        static_cast<double>(stats.row_count_est) * sample_rate;
+	                                    stats.distinct_count_est = static_cast<uint64_t>(
+	                                        std::max(1.0, sampled_rows));
+	                                }
+	                                else if (stats.distinct_count_est == 0)
+	                                {
+	                                    stats.distinct_count_est = stats.row_count_est;
+	                                }
+
+	                                stats.is_valid = true;
+	                                auto upsert_status = db_->catalog_manager()->upsertIndexStatsCatalogEntry(
+	                                    stats, &analyze_ctx);
+	                                if (upsert_status != core::Status::OK)
+	                                {
+	                                    return ExecutionResult(
+	                                        analyze_ctx.message.empty()
+	                                            ? "Failed to persist ANALYZE INDEX statistics"
+	                                            : analyze_ctx.message);
+	                                }
+
+	                                core::ErrorContext usage_ctx;
+	                                const auto elapsed_ns = static_cast<uint64_t>(
+	                                    std::chrono::duration_cast<std::chrono::nanoseconds>(
+	                                        std::chrono::steady_clock::now() - analyze_start_time)
+	                                        .count());
+	                                auto usage_status = updateIndexUsageMetrics(
+	                                    index_info,
+	                                    0,
+	                                    0,
+	                                    0,
+	                                    0,
+	                                    elapsed_ns,
+	                                    &usage_ctx);
+	                                if (usage_status != core::Status::OK)
+	                                {
+	                                    LOG_WARNING(
+	                                        CATALOG,
+	                                        "Failed to update usage during ANALYZE INDEX (index=%s): %s",
+	                                        index_id.toString().c_str(),
+	                                        usage_ctx.message.c_str());
+	                                }
+
+	                                return ExecutionResult();
+	                            }
+
+	                            std::string table_path;
+	                            if (!getSchemaPathString(payload, "table_path", table_path) || table_path.empty())
+	                            {
+	                                return ExecutionResult("V3 ANALYZE missing table_path");
+	                            }
+
+	                            std::string column_name;
+	                            getString(payload, "column", column_name);
+
+	                            std::vector<uint8_t> arg_stream;
+	                            arg_stream.reserve(128);
+	                            appendLegacyStringArg(arg_stream, table_path);
+	                            appendLegacyStringArg(arg_stream, column_name);
+
+	                            uint64_t sample_bits = 0;
+	                            std::memcpy(&sample_bits, &sample_rate, sizeof(sample_bits));
+	                            for (unsigned shift = 0; shift < 64; shift += 8)
+	                            {
+	                                arg_stream.push_back(static_cast<uint8_t>((sample_bits >> shift) & 0xFF));
+	                            }
+
+	                            return runLegacyVoidHandler(&Executor::executeAnalyze, std::move(arg_stream));
+	                        };
+
+                        auto executeV3AlterIndexOpcode =
+                            [&](const scratchbird::sblr::v3::Value::Object& payload) -> ExecutionResult {
+                            bool defaults_scope = false;
+                            getBool(payload, "defaults_scope", defaults_scope);
+                            if (defaults_scope)
+                            {
+                                return ExecutionResult("ALTER INDEX DEFAULTS is not implemented in executor");
+                            }
+
+                            std::string index_path;
+                            if (!getSchemaPathString(payload, "index", index_path) || index_path.empty())
+                            {
+                                return ExecutionResult("V3 ALTER INDEX missing index");
+                            }
+
+                            uint64_t action_u64 = 0;
+                            if (!getU64(payload, "action", action_u64) || action_u64 > 255)
+                            {
+                                return ExecutionResult("V3 ALTER INDEX action is invalid");
+                            }
+                            uint8_t action = static_cast<uint8_t>(action_u64);
+
+                            auto actionName = [&](uint8_t v) -> const char* {
+                                switch (v)
+                                {
+                                    case 0: return "ACTIVE";
+                                    case 1: return "INACTIVE";
+                                    case 2: return "SET_OPTIONS";
+                                    case 3: return "RESET_OPTIONS";
+                                    case 4: return "REBUILD";
+                                    case 5: return "REBALANCE";
+                                    case 6: return "RELOCATE";
+                                    case 7: return "LIGHT_SCAN";
+                                    case 8: return "DIAGNOSTIC_SCAN";
+                                    default: return "UNKNOWN";
+                                }
+                            };
+
+                            auto decodeOptionValue =
+                                [&](const scratchbird::sblr::v3::Value& raw,
+                                    Value& out) -> bool {
+                                scratchbird::sblr::v3::Instruction inst;
+                                if (getInstrFromValue(raw, inst))
+                                {
+                                    out = evalExpr(inst);
+                                    return true;
+                                }
+                                if (raw.isNull())
+                                {
+                                    out = Value::makeNull();
+                                    return true;
+                                }
+                                const auto& data = raw.data;
+                                if (auto b = std::get_if<bool>(&data))
+                                {
+                                    out = Value::makeBool(*b);
+                                    return true;
+                                }
+                                if (auto i = std::get_if<int64_t>(&data))
+                                {
+                                    out = Value::makeInt64(*i);
+                                    return true;
+                                }
+                                if (auto u = std::get_if<uint64_t>(&data))
+                                {
+                                    out = Value::makeUInt64(*u);
+                                    return true;
+                                }
+                                if (auto d = std::get_if<double>(&data))
+                                {
+                                    out = Value::makeFloat64(*d);
+                                    return true;
+                                }
+                                if (auto s = std::get_if<std::string>(&data))
+                                {
+                                    out = Value::makeVarchar(*s);
+                                    return true;
+                                }
+                                return false;
+                            };
+
+                            auto appendU32LE = [&](std::vector<uint8_t>& bytes, uint32_t value) {
+                                bytes.push_back(static_cast<uint8_t>(value & 0xFF));
+                                bytes.push_back(static_cast<uint8_t>((value >> 8) & 0xFF));
+                                bytes.push_back(static_cast<uint8_t>((value >> 16) & 0xFF));
+                                bytes.push_back(static_cast<uint8_t>((value >> 24) & 0xFF));
+                            };
+
+                            auto appendDoubleLE = [&](std::vector<uint8_t>& bytes, double value) {
+                                uint64_t raw_bits = 0;
+                                std::memcpy(&raw_bits, &value, sizeof(raw_bits));
+                                for (unsigned shift = 0; shift < 64; shift += 8)
+                                {
+                                    bytes.push_back(static_cast<uint8_t>((raw_bits >> shift) & 0xFF));
+                                }
+                            };
+
+                            std::vector<uint8_t> arg_stream;
+                            arg_stream.reserve(128);
+                            appendLegacyStringArg(arg_stream, index_path);
+
+                            constexpr uint8_t kActionActive = 0;
+                            constexpr uint8_t kActionInactive = 1;
+                            constexpr uint8_t kActionSetOptions = 2;
+                            constexpr uint8_t kActionResetOptions = 3;
+                            constexpr uint8_t kActionRebuild = 4;
+                            constexpr uint8_t kActionRebalance = 5;
+                            constexpr uint8_t kActionRelocate = 6;
+                            constexpr uint8_t kActionLightScan = 7;
+                            constexpr uint8_t kActionDiagnosticScan = 8;
+
+                            if (action == kActionActive || action == kActionInactive)
+                            {
+                                arg_stream.push_back(action);
+                                return runLegacyVoidHandler(&Executor::executeAlterIndex, std::move(arg_stream));
+                            }
+
+                            auto parsePositiveUInt16 = [&](const Value& value,
+                                                           uint16_t& out) -> bool {
+                                if (value.isNull())
+                                {
+                                    return false;
+                                }
+
+                                int64_t as_int = 0;
+                                if (isNumericType(value.type()))
+                                {
+                                    as_int = value.toInt64();
+                                }
+                                else if (value.type() == core::DataType::FLOAT32 ||
+                                         value.type() == core::DataType::FLOAT64)
+                                {
+                                    as_int = static_cast<int64_t>(std::llround(value.toDouble()));
+                                }
+                                else
+                                {
+                                    return false;
+                                }
+
+                                if (as_int <= 0 || as_int > std::numeric_limits<uint16_t>::max())
+                                {
+                                    return false;
+                                }
+                                out = static_cast<uint16_t>(as_int);
+                                return true;
+                            };
+
+                            auto parseNonNegativeUInt64 = [&](const Value& value,
+                                                             uint64_t& out) -> bool {
+                                if (value.isNull())
+                                {
+                                    return false;
+                                }
+                                if (value.type() == core::DataType::FLOAT32 ||
+                                    value.type() == core::DataType::FLOAT64)
+                                {
+                                    double d = value.toDouble();
+                                    if (d < 0.0)
+                                    {
+                                        return false;
+                                    }
+                                    out = static_cast<uint64_t>(std::llround(d));
+                                    return true;
+                                }
+                                if (!isNumericType(value.type()))
+                                {
+                                    return false;
+                                }
+                                int64_t as_int = value.toInt64();
+                                if (as_int < 0)
+                                {
+                                    return false;
+                                }
+                                out = static_cast<uint64_t>(as_int);
+                                return true;
+                            };
+
+                            if (action == kActionRebuild ||
+                                action == kActionRebalance ||
+                                action == kActionRelocate)
+                            {
+                                uint64_t mode_u64 = 0;
+                                getU64(payload, "mode", mode_u64);
+
+                                core::CatalogManager::IndexMaintenanceMode maintenance_mode =
+                                    core::CatalogManager::IndexMaintenanceMode::ONLINE;
+                                constexpr uint64_t kModeDefault = 0;
+                                constexpr uint64_t kModeOnline = 1;
+                                constexpr uint64_t kModeOffline = 2;
+                                if (mode_u64 == kModeOffline)
+                                {
+                                    maintenance_mode = core::CatalogManager::IndexMaintenanceMode::OFFLINE;
+                                }
+                                else if (mode_u64 != kModeDefault && mode_u64 != kModeOnline)
+                                {
+                                    return ExecutionResult("V3 ALTER INDEX mode is invalid");
+                                }
+
+                                core::CatalogManager::IndexMaintenanceKind maintenance_kind =
+                                    core::CatalogManager::IndexMaintenanceKind::REBUILD;
+                                if (action == kActionRebalance)
+                                {
+                                    maintenance_kind = core::CatalogManager::IndexMaintenanceKind::REBALANCE;
+                                }
+                                else if (action == kActionRelocate)
+                                {
+                                    maintenance_kind = core::CatalogManager::IndexMaintenanceKind::RELOCATE;
+                                }
+
+                                core::ErrorContext resolve_ctx;
+                                core::ID index_id;
+                                core::CatalogManager::ObjectType resolved_type;
+                                auto resolve_status = resolveObjectIdForQualifiedName(
+                                    index_path,
+                                    core::CatalogManager::ObjectType::INDEX,
+                                    index_id,
+                                    resolved_type,
+                                    nullptr,
+                                    &resolve_ctx,
+                                    false);
+                                if (resolve_status != core::Status::OK)
+                                {
+                                    std::string err_msg = "Failed to resolve index '" + index_path + "'";
+                                    if (!resolve_ctx.message.empty())
+                                    {
+                                        err_msg += ": " + resolve_ctx.message;
+                                    }
+                                    return ExecutionResult(err_msg);
+                                }
+
+                                core::CatalogManager::IndexInfo index_info;
+                                if (db_->catalog_manager()->getIndex(index_id, index_info, &resolve_ctx) != core::Status::OK)
+                                {
+                                    return ExecutionResult(
+                                        resolve_ctx.message.empty()
+                                            ? "Failed to load index for ALTER INDEX maintenance"
+                                            : resolve_ctx.message);
+                                }
+
+                                core::ID target_filespace_id{};
+                                if (action == kActionRelocate)
+                                {
+                                    std::string target_filespace_name;
+                                    if (!getSchemaPathString(payload, "target_filespace", target_filespace_name) ||
+                                        target_filespace_name.empty())
+                                    {
+                                        return ExecutionResult("ALTER INDEX RELOCATE missing target_filespace");
+                                    }
+
+                                    uint16_t tablespace_id = 0;
+                                    std::string ts_err;
+                                    if (!resolveTablespaceId(target_filespace_name, tablespace_id, ts_err))
+                                    {
+                                        return ExecutionResult(ts_err);
+                                    }
+
+                                    core::TablespaceInfo tablespace_info;
+                                    if (db_->catalog_manager()->getTablespace(tablespace_id, tablespace_info, &resolve_ctx) != core::Status::OK)
+                                    {
+                                        return ExecutionResult(
+                                            resolve_ctx.message.empty()
+                                                ? "Failed to load target filespace"
+                                                : resolve_ctx.message);
+                                    }
+                                    target_filespace_id = tablespace_info.tablespace_uuid;
+                                }
+
+                                bool has_target_fillfactor = false;
+                                uint16_t target_fillfactor = 0;
+
+                                auto it_options = payload.find("options");
+                                if (it_options != payload.end() && !it_options->second.isNull())
+                                {
+                                    const auto* option_list =
+                                        std::get_if<scratchbird::sblr::v3::Value::List>(&it_options->second.data);
+                                    if (!option_list)
+                                    {
+                                        return ExecutionResult("V3 ALTER INDEX options are invalid");
+                                    }
+
+                                    for (const auto& option_entry : *option_list)
+                                    {
+                                        const auto* option_obj =
+                                            std::get_if<scratchbird::sblr::v3::Value::Object>(&option_entry.data);
+                                        if (!option_obj)
+                                        {
+                                            return ExecutionResult("V3 ALTER INDEX option entry is invalid");
+                                        }
+
+                                        std::string key;
+                                        if (!getString(*option_obj, "key", key) || key.empty())
+                                        {
+                                            return ExecutionResult("V3 ALTER INDEX option key is missing");
+                                        }
+                                        key = scratchbird::core::IdentifierUtils::toUpper(key);
+
+                                        auto it_value = option_obj->find("value");
+                                        if (it_value == option_obj->end())
+                                        {
+                                            return ExecutionResult("V3 ALTER INDEX option value is missing");
+                                        }
+
+                                        Value option_value = Value::makeNull();
+                                        if (!decodeOptionValue(it_value->second, option_value))
+                                        {
+                                            return ExecutionResult("V3 ALTER INDEX option value is invalid");
+                                        }
+
+                                        if (key == "TARGET_FILLFACTOR")
+                                        {
+                                            uint16_t parsed = 0;
+                                            if (!parsePositiveUInt16(option_value, parsed))
+                                            {
+                                                return ExecutionResult(
+                                                    "ALTER INDEX TARGET_FILLFACTOR must be a positive integer");
+                                            }
+                                            has_target_fillfactor = true;
+                                            target_fillfactor = parsed;
+                                        }
+                                        else if (key == "THROTTLE_MS" || key == "MAX_BYTES_PER_TXN")
+                                        {
+                                            uint64_t ignored = 0;
+                                            if (!parseNonNegativeUInt64(option_value, ignored))
+                                            {
+                                                return ExecutionResult(
+                                                    "ALTER INDEX option " + key + " must be a non-negative integer");
+                                            }
+                                        }
+                                        else
+                                        {
+                                            return ExecutionResult(
+                                                "ALTER INDEX option not implemented: " + key);
+                                        }
+                                    }
+                                }
+
+                                core::Status maintenance_status = runIndexMaintenanceStateMachine(
+                                    index_info,
+                                    maintenance_kind,
+                                    maintenance_mode,
+                                    target_filespace_id,
+                                    has_target_fillfactor,
+                                    target_fillfactor,
+                                    &resolve_ctx);
+                                if (maintenance_status != core::Status::OK)
+                                {
+                                    return ExecutionResult(
+                                        resolve_ctx.message.empty()
+                                            ? "ALTER INDEX maintenance failed"
+                                            : resolve_ctx.message);
+                                }
+
+                                core::CatalogManager::IndexInfo refreshed_index_info = index_info;
+                                db_->catalog_manager()->getIndex(index_info.index_id, refreshed_index_info, nullptr);
+                                core::ErrorContext storage_metrics_ctx;
+                                core::Status storage_metrics_status =
+                                    refreshIndexStorageMetrics(refreshed_index_info, &storage_metrics_ctx);
+                                if (storage_metrics_status != core::Status::OK)
+                                {
+                                    LOG_WARNING(
+                                        CATALOG,
+                                        "Failed to refresh index storage metrics (index=%s): %s",
+                                        refreshed_index_info.index_id.toString().c_str(),
+                                        storage_metrics_ctx.message.c_str());
+                                }
+                                return ExecutionResult();
+                            }
+
+                            if (action == kActionLightScan || action == kActionDiagnosticScan)
+                            {
+                                core::ErrorContext resolve_ctx;
+                                core::ID index_id;
+                                core::CatalogManager::ObjectType resolved_type;
+                                auto resolve_status = resolveObjectIdForQualifiedName(
+                                    index_path,
+                                    core::CatalogManager::ObjectType::INDEX,
+                                    index_id,
+                                    resolved_type,
+                                    nullptr,
+                                    &resolve_ctx,
+                                    false);
+                                if (resolve_status != core::Status::OK)
+                                {
+                                    std::string err_msg = "Failed to resolve index '" + index_path + "'";
+                                    if (!resolve_ctx.message.empty())
+                                    {
+                                        err_msg += ": " + resolve_ctx.message;
+                                    }
+                                    return ExecutionResult(err_msg);
+                                }
+
+                                core::CatalogManager::IndexInfo index_info;
+                                if (db_->catalog_manager()->getIndex(index_id, index_info, &resolve_ctx) !=
+                                    core::Status::OK)
+                                {
+                                    return ExecutionResult(
+                                        resolve_ctx.message.empty()
+                                            ? "Failed to load index for ALTER INDEX health scan"
+                                            : resolve_ctx.message);
+                                }
+
+                                core::CatalogManager::IndexHealthCatalogInfo health_info;
+                                core::Status scan_status = runIndexHealthScan(
+                                    index_info,
+                                    action == kActionDiagnosticScan,
+                                    health_info,
+                                    &resolve_ctx);
+                                if (scan_status != core::Status::OK)
+                                {
+                                    return ExecutionResult(
+                                        resolve_ctx.message.empty()
+                                            ? "ALTER INDEX health scan failed"
+                                            : resolve_ctx.message);
+                                }
+                                return ExecutionResult();
+                            }
+
+                            if (action != kActionSetOptions && action != kActionResetOptions)
+                            {
+                                return ExecutionResult(
+                                    "ALTER INDEX action not implemented: " +
+                                    std::string(actionName(action)));
+                            }
+
+                            bool bloom_set = false;
+                            bool bloom_enabled = false;
+                            bool bloom_fpr_set = false;
+                            double bloom_fpr = 0.01;
+                            bool saw_supported_option = false;
+
+                            auto it_options = payload.find("options");
+                            if (it_options != payload.end() && !it_options->second.isNull())
+                            {
+                                const auto* option_list =
+                                    std::get_if<scratchbird::sblr::v3::Value::List>(&it_options->second.data);
+                                if (!option_list)
+                                {
+                                    return ExecutionResult("V3 ALTER INDEX options are invalid");
+                                }
+
+                                for (const auto& option_entry : *option_list)
+                                {
+                                    const auto* option_obj =
+                                        std::get_if<scratchbird::sblr::v3::Value::Object>(&option_entry.data);
+                                    if (!option_obj)
+                                    {
+                                        return ExecutionResult("V3 ALTER INDEX option entry is invalid");
+                                    }
+
+                                    std::string key;
+                                    if (!getString(*option_obj, "key", key) || key.empty())
+                                    {
+                                        return ExecutionResult("V3 ALTER INDEX option key is missing");
+                                    }
+                                    key = scratchbird::core::IdentifierUtils::toUpper(key);
+
+                                    auto it_value = option_obj->find("value");
+                                    if (it_value == option_obj->end())
+                                    {
+                                        return ExecutionResult("V3 ALTER INDEX option value is missing");
+                                    }
+
+                                    Value option_value = Value::makeNull();
+                                    if (!decodeOptionValue(it_value->second, option_value))
+                                    {
+                                        return ExecutionResult("V3 ALTER INDEX option value is invalid");
+                                    }
+
+                                    if (key == "BLOOM_FILTER")
+                                    {
+                                        saw_supported_option = true;
+                                        bloom_set = true;
+                                        if (action == kActionResetOptions || option_value.isNull())
+                                        {
+                                            bloom_enabled = false;
+                                            continue;
+                                        }
+                                        if (option_value.type() == core::DataType::BOOLEAN)
+                                        {
+                                            bloom_enabled = option_value.getBool();
+                                        }
+                                        else if (isNumericType(option_value.type()))
+                                        {
+                                            bloom_enabled = (option_value.toInt64() != 0);
+                                        }
+                                        else
+                                        {
+                                            return ExecutionResult("ALTER INDEX BLOOM_FILTER expects boolean");
+                                        }
+                                    }
+                                    else if (key == "BLOOM_FPR")
+                                    {
+                                        saw_supported_option = true;
+                                        if (action == kActionResetOptions || option_value.isNull())
+                                        {
+                                            bloom_set = true;
+                                            bloom_enabled = false;
+                                            continue;
+                                        }
+                                        bloom_fpr_set = true;
+                                        bloom_set = true;
+                                        bloom_enabled = true;
+                                        if (option_value.type() == core::DataType::FLOAT32 ||
+                                            option_value.type() == core::DataType::FLOAT64)
+                                        {
+                                            bloom_fpr = option_value.toDouble();
+                                        }
+                                        else if (isNumericType(option_value.type()))
+                                        {
+                                            bloom_fpr = static_cast<double>(option_value.toInt64());
+                                        }
+                                        else
+                                        {
+                                            return ExecutionResult("ALTER INDEX BLOOM_FPR expects numeric value");
+                                        }
+                                    }
+                                    else
+                                    {
+                                        return ExecutionResult(
+                                            "ALTER INDEX option not implemented: " + key);
+                                    }
+                                }
+                            }
+
+                            if (action == kActionResetOptions && !saw_supported_option)
+                            {
+                                return ExecutionResult(
+                                    "ALTER INDEX RESET_OPTIONS requires at least one supported option");
+                            }
+
+                            arg_stream.push_back(kActionSetOptions);
+
+                            uint32_t options_flags = 0;
+                            if (bloom_set)
+                            {
+                                options_flags |= 0x01;
+                            }
+                            if (bloom_enabled)
+                            {
+                                options_flags |= 0x02;
+                            }
+                            if (bloom_fpr_set)
+                            {
+                                options_flags |= 0x04;
+                            }
+
+                            appendU32LE(arg_stream, options_flags);
+                            if (bloom_fpr_set)
+                            {
+                                appendDoubleLE(arg_stream, bloom_fpr);
+                            }
+                            return runLegacyVoidHandler(&Executor::executeAlterIndex, std::move(arg_stream));
                         };
 
 		                auto executeAdminControlOpcode =
 		                    [&](scratchbird::sblr::v3::Opcode opcode,
 		                        const scratchbird::sblr::v3::Value::Object& payload) -> ExecutionResult {
-		                    switch (opcode)
-		                    {
-                                case scratchbird::sblr::v3::Opcode::SBLR3_SET_VARIABLE:
-                                    return executeLegacySetVariableOpcode(payload);
+	                    switch (opcode)
+	                    {
+	                                case scratchbird::sblr::v3::Opcode::SBLR3_ANALYZE:
+	                                    return executeV3AnalyzeOpcode(payload);
+	                                case scratchbird::sblr::v3::Opcode::SBLR3_SHOW_INDEX:
+	                                    return executeV3ShowIndexOpcode(payload);
+	                                case scratchbird::sblr::v3::Opcode::SBLR3_SET_VARIABLE:
+	                                    return executeLegacySetVariableOpcode(payload);
 		                        case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_SYSTEM: {
 		                            if (!conn_ctx_ || !conn_ctx_->isSuperuser())
 		                            {
@@ -55946,6 +59666,8 @@ namespace scratchbird
 	                            return handleTruncate(payload);
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_TABLE:
 	                            return handleAlterTable(payload);
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_INDEX:
+	                            return executeV3AlterIndexOpcode(payload);
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_POLICY:
 	                            return handleAlterPolicyV3(payload);
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_TABLE_SET_TABLESPACE:
@@ -55969,6 +59691,7 @@ namespace scratchbird
 	                    case scratchbird::sblr::v3::Opcode::SBLR3_DROP_POLICY:
 	                    case scratchbird::sblr::v3::Opcode::SBLR3_TRUNCATE_TABLE:
 	                    case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_TABLE:
+	                    case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_INDEX:
 	                    case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_POLICY:
 	                    case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_TABLE_SET_TABLESPACE:
 	                    case scratchbird::sblr::v3::Opcode::SBLR3_COPY:
@@ -55999,6 +59722,16 @@ namespace scratchbird
                     case scratchbird::sblr::v3::Opcode::SBLR3_ROLLBACK_TO_SAVEPOINT:
                         return executeSimpleTxnOpcode(static_cast<scratchbird::sblr::v3::Opcode>(inst.opcode),
                                                       payload);
+                    case scratchbird::sblr::v3::Opcode::SBLR3_OP_DOC_PATH_FILTER:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_OP_TS_BUCKET_AGG:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_OP_COL_SCAN:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_OP_SEARCH_DSL_EVAL:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_OP_VECTOR_ANN:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_OP_HYBRID_BRIDGE_EXCHANGE:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_OP_HYBRID_BRIDGE_MATERIALIZE:
+                        return executeVNextOpcode(
+                            static_cast<scratchbird::sblr::v3::Opcode>(inst.opcode),
+                            payload);
                     default:
                         break;
 	                }
@@ -57187,6 +60920,65 @@ namespace scratchbird
         ExecutionResult Executor::callProcedureByName(const std::string& procedure_name,
                                                       const std::vector<Value>& args)
         {
+            UdrInvocationScopeGuard scope_guard(this, UdrInvocationScope::PROCEDURE);
+
+            auto renderType = [](core::DataType type,
+                                 uint32_t precision,
+                                 uint32_t scale) -> std::string
+            {
+                std::ostringstream out;
+                out << core::TypeSystem::getTypeName(type);
+                if (precision > 0)
+                {
+                    out << "(" << precision;
+                    if (scale > 0 || type == core::DataType::DECIMAL ||
+                        type == core::DataType::DECIMAL256)
+                    {
+                        out << "," << scale;
+                    }
+                    out << ")";
+                }
+                return out.str();
+            };
+
+            auto expectedSignature = [&](const core::CatalogManager::ProcedureInfo& info) -> std::string
+            {
+                std::ostringstream out;
+                out << info.name << "(";
+                bool first = true;
+                for (const auto& param : info.parameters)
+                {
+                    if (param.mode == core::CatalogManager::ParameterMode::OUT)
+                    {
+                        continue;
+                    }
+                    if (!first)
+                    {
+                        out << ", ";
+                    }
+                    out << renderType(param.type, param.type_precision, param.type_scale);
+                    first = false;
+                }
+                out << ")";
+                return out.str();
+            };
+
+            auto callSignature = [&](const core::CatalogManager::ProcedureInfo& info) -> std::string
+            {
+                std::ostringstream out;
+                out << info.name << "(";
+                for (size_t i = 0; i < args.size(); ++i)
+                {
+                    if (i > 0)
+                    {
+                        out << ", ";
+                    }
+                    out << core::TypeSystem::getTypeName(args[i].type());
+                }
+                out << ")";
+                return out.str();
+            };
+
             // Look up procedure in catalog
             core::CatalogManager::ProcedureInfo procedure_info;
             core::ErrorContext err_ctx;
@@ -57262,18 +61054,72 @@ namespace scratchbird
             // Push new frame for procedure
             variable_stack_->pushFrame();
 
+            size_t in_param_count = 0;
+            for (const auto& param : procedure_info.parameters)
+            {
+                if (param.mode != core::CatalogManager::ParameterMode::OUT)
+                {
+                    ++in_param_count;
+                }
+            }
+
+            if (args.size() != in_param_count)
+            {
+                variable_stack_->popFrame();
+                if (security_context_pushed && ctx)
+                {
+                    ctx->popSecurityContext();
+                }
+                return ExecutionResult("Procedure signature mismatch: expected " +
+                                       expectedSignature(procedure_info) + ", got " +
+                                       callSignature(procedure_info));
+            }
+
             std::vector<std::string> output_var_names;
             std::vector<core::DataType> output_var_types;
 
-            // Bind arguments to procedure parameters (if any)
-            // Database triggers typically have no arguments, but CALL statements might
-            for (size_t i = 0; i < args.size() && i < procedure_info.parameters.size(); ++i)
-            {
-                const auto& param = procedure_info.parameters[i];
-                variable_stack_->declareVariable(param.name, args[i]);
-            }
+            size_t arg_index = 0;
             for (const auto& param : procedure_info.parameters)
             {
+                if (param.mode == core::CatalogManager::ParameterMode::OUT)
+                {
+                    variable_stack_->declareVariable(param.name, Value::makeNull(param.type));
+                }
+                else
+                {
+                    const Value& arg_value = args[arg_index];
+                    Value bound_value;
+                    if (arg_value.isNull())
+                    {
+                        bound_value = Value::makeNull(param.type);
+                    }
+                    else
+                    {
+                        core::TypeInfo target_type(param.type, param.type_precision, param.type_scale);
+                        core::ErrorContext cast_ctx;
+                        core::Status cast_status = arg_value.convertTo(
+                            target_type, bound_value, core::CastFormat::DEFAULT, &cast_ctx);
+                        if (cast_status != core::Status::OK)
+                        {
+                            variable_stack_->popFrame();
+                            if (security_context_pushed && ctx)
+                            {
+                                ctx->popSecurityContext();
+                            }
+                            std::string msg = "Procedure signature mismatch: expected " +
+                                              expectedSignature(procedure_info) + ", got " +
+                                              callSignature(procedure_info);
+                            if (!cast_ctx.message.empty())
+                            {
+                                msg += " (" + cast_ctx.message + ")";
+                            }
+                            return ExecutionResult(msg);
+                        }
+                    }
+                    variable_stack_->declareVariable(param.name, std::move(bound_value));
+                    ++arg_index;
+                }
+
                 if (param.mode == core::CatalogManager::ParameterMode::OUT ||
                     param.mode == core::CatalogManager::ParameterMode::INOUT)
                 {
@@ -57288,11 +61134,28 @@ namespace scratchbird
             size_t saved_size = bytecode_size_;
             size_t saved_pc = pc_;
             bool saved_return_requested = return_requested_;
+            Value saved_return_value = return_value_;
+
+            struct StackGuard
+            {
+                Executor* exec;
+                std::stack<Value> saved;
+                explicit StackGuard(Executor* executor)
+                    : exec(executor), saved(std::move(executor->stack_))
+                {
+                    exec->stack_ = std::stack<Value>();
+                }
+                ~StackGuard()
+                {
+                    exec->stack_ = std::move(saved);
+                }
+            } stack_guard(this);
 
             bytecode_ = procedure_info.bytecode.data();
             bytecode_size_ = procedure_info.bytecode.size();
             pc_ = 0;
             return_requested_ = false;
+            return_value_ = Value();
 
             std::vector<std::string> saved_output_vars = psql_output_vars_;
             std::vector<core::DataType> saved_output_types = psql_output_types_;
@@ -57403,6 +61266,7 @@ namespace scratchbird
             bytecode_size_ = saved_size;
             pc_ = saved_pc;
             return_requested_ = saved_return_requested;
+            return_value_ = saved_return_value;
 
             // Pop procedure frame
             variable_stack_->popFrame();
@@ -57421,6 +61285,65 @@ namespace scratchbird
                                                   Value& result_out,
                                                   core::ErrorContext* ctx)
         {
+            UdrInvocationScopeGuard scope_guard(this, UdrInvocationScope::FUNCTION);
+
+            auto renderType = [](core::DataType type,
+                                 uint32_t precision,
+                                 uint32_t scale) -> std::string
+            {
+                std::ostringstream out;
+                out << core::TypeSystem::getTypeName(type);
+                if (precision > 0)
+                {
+                    out << "(" << precision;
+                    if (scale > 0 || type == core::DataType::DECIMAL ||
+                        type == core::DataType::DECIMAL256)
+                    {
+                        out << "," << scale;
+                    }
+                    out << ")";
+                }
+                return out.str();
+            };
+
+            auto expectedSignature = [&]() -> std::string
+            {
+                std::ostringstream out;
+                out << function_info.name << "(";
+                bool first = true;
+                for (const auto& param : function_info.parameters)
+                {
+                    if (param.mode == core::CatalogManager::ParameterMode::OUT)
+                    {
+                        continue;
+                    }
+                    if (!first)
+                    {
+                        out << ", ";
+                    }
+                    out << renderType(param.type, param.type_precision, param.type_scale);
+                    first = false;
+                }
+                out << ")";
+                return out.str();
+            };
+
+            auto callSignature = [&]() -> std::string
+            {
+                std::ostringstream out;
+                out << function_info.name << "(";
+                for (size_t i = 0; i < args.size(); ++i)
+                {
+                    if (i > 0)
+                    {
+                        out << ", ";
+                    }
+                    out << core::TypeSystem::getTypeName(args[i].type());
+                }
+                out << ")";
+                return out.str();
+            };
+
             core::ErrorContext err_ctx;
             if (function_info.bytecode.empty())
             {
@@ -57497,14 +61420,15 @@ namespace scratchbird
 
             if (args.size() != in_param_count)
             {
-                SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
-                                  "Function argument count mismatch");
+                std::string msg = "Function signature mismatch: expected " +
+                                  expectedSignature() + ", got " + callSignature();
+                SET_ERROR_CONTEXT(ctx, core::Status::DATATYPE_MISMATCH, msg.c_str());
                 variable_stack_->popFrame();
                 if (security_context_pushed && conn_ctx)
                 {
                     conn_ctx->popSecurityContext();
                 }
-                return core::Status::INVALID_ARGUMENT;
+                return core::Status::DATATYPE_MISMATCH;
             }
 
             size_t arg_index = 0;
@@ -57512,11 +61436,44 @@ namespace scratchbird
             {
                 if (param.mode == core::CatalogManager::ParameterMode::OUT)
                 {
-                    variable_stack_->declareVariable(param.name, Value());
+                    variable_stack_->declareVariable(param.name, Value::makeNull(param.type));
                 }
                 else
                 {
-                    variable_stack_->declareVariable(param.name, args[arg_index]);
+                    const Value& arg_value = args[arg_index];
+                    Value bound_value;
+                    if (arg_value.isNull())
+                    {
+                        bound_value = Value::makeNull(param.type);
+                    }
+                    else
+                    {
+                        core::TypeInfo target_type(param.type,
+                                                   param.type_precision,
+                                                   param.type_scale);
+                        core::ErrorContext cast_ctx;
+                        core::Status cast_status = arg_value.convertTo(
+                            target_type, bound_value, core::CastFormat::DEFAULT, &cast_ctx);
+                        if (cast_status != core::Status::OK)
+                        {
+                            std::string msg = "Function signature mismatch: expected " +
+                                              expectedSignature() + ", got " +
+                                              callSignature();
+                            if (!cast_ctx.message.empty())
+                            {
+                                msg += " (" + cast_ctx.message + ")";
+                            }
+                            SET_ERROR_CONTEXT(ctx, core::Status::DATATYPE_MISMATCH, msg.c_str());
+                            variable_stack_->popFrame();
+                            if (security_context_pushed && conn_ctx)
+                            {
+                                conn_ctx->popSecurityContext();
+                            }
+                            return core::Status::DATATYPE_MISMATCH;
+                        }
+                    }
+
+                    variable_stack_->declareVariable(param.name, std::move(bound_value));
                     ++arg_index;
                 }
             }
@@ -57632,9 +61589,9 @@ namespace scratchbird
                     {
                         msg += ": " + err_ctx.message;
                     }
-                    SET_ERROR_CONTEXT(ctx, core::Status::NOT_FOUND, msg.c_str());
+                    SET_ERROR_CONTEXT(ctx, core::Status::UNDEFINED_FUNCTION, msg.c_str());
                 }
-                return core::Status::NOT_FOUND;
+                return core::Status::UNDEFINED_FUNCTION;
             }
 
             return callFunctionByInfo(function_info, args, result_out, ctx);
@@ -57665,13 +61622,137 @@ namespace scratchbird
             return callFunctionByInfo(function_info, args, result_out, ctx);
         }
 
+        auto Executor::estimateUdrArgumentBytes(const std::vector<Value>& args) const -> size_t
+        {
+            constexpr size_t kPerArgumentOverheadBytes = 32;
+            constexpr size_t kFallbackArgumentBytes = 1024;
+
+            size_t total_bytes = 0;
+            for (const Value& arg : args)
+            {
+                total_bytes += kPerArgumentOverheadBytes;
+                if (arg.isNull())
+                {
+                    continue;
+                }
+
+                try
+                {
+                    total_bytes += arg.toString().size();
+                }
+                catch (...)
+                {
+                    total_bytes += kFallbackArgumentBytes;
+                }
+            }
+            return total_bytes;
+        }
+
+        auto Executor::isUdrSandboxPathAllowed(const std::string& path) const -> bool
+        {
+            auto is_ascii_space = [](unsigned char ch) -> bool
+            {
+                return ch == ' ' || ch == '\t' || ch == '\n' || ch == '\r' || ch == '\f' || ch == '\v';
+            };
+
+            size_t first = 0;
+            while (first < path.size() && is_ascii_space(static_cast<unsigned char>(path[first])))
+            {
+                ++first;
+            }
+            if (first >= path.size())
+            {
+                return false;
+            }
+
+            size_t last = path.size();
+            while (last > first && is_ascii_space(static_cast<unsigned char>(path[last - 1])))
+            {
+                --last;
+            }
+
+            std::string normalized = path.substr(first, last - first);
+            for (char& ch : normalized)
+            {
+                if (ch == '\\')
+                {
+                    ch = '/';
+                }
+            }
+
+            if (normalized.find("..") != std::string::npos)
+            {
+                return false;
+            }
+            if (normalized.find('\0') != std::string::npos ||
+                normalized.find('\n') != std::string::npos ||
+                normalized.find('\r') != std::string::npos)
+            {
+                return false;
+            }
+
+            std::string lower = toLowerAscii(normalized);
+            if (lower.rfind("file://", 0) == 0 ||
+                lower.rfind("http://", 0) == 0 ||
+                lower.rfind("https://", 0) == 0 ||
+                lower.rfind("ftp://", 0) == 0)
+            {
+                return false;
+            }
+
+            return true;
+        }
+
+        auto Executor::makeUdrInvocationSavepointName() -> std::string
+        {
+            return "udr_invocation_sp_" + std::to_string(++udr_invocation_savepoint_counter_);
+        }
+
+        auto Executor::rollbackAndReleaseUdrSavepoint(const std::string& savepoint_name,
+                                                      core::ConnectionContext* conn_ctx,
+                                                      core::ErrorContext* ctx) -> core::Status
+        {
+            if (conn_ctx == nullptr)
+            {
+                SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                  "Connection context unavailable for UDR savepoint cleanup");
+                return core::Status::INVALID_ARGUMENT;
+            }
+
+            core::ErrorContext local_ctx;
+            core::Status status = conn_ctx->rollbackToSavepoint(savepoint_name, &local_ctx);
+            if (status != core::Status::OK)
+            {
+                std::string msg = "UDR savepoint rollback failed";
+                if (!local_ctx.message.empty())
+                {
+                    msg += ": " + local_ctx.message;
+                }
+                SET_ERROR_CONTEXT(ctx, status, msg.c_str());
+                return status;
+            }
+
+            status = conn_ctx->releaseSavepoint(savepoint_name, &local_ctx);
+            if (status != core::Status::OK)
+            {
+                std::string msg = "UDR savepoint release failed";
+                if (!local_ctx.message.empty())
+                {
+                    msg += ": " + local_ctx.message;
+                }
+                SET_ERROR_CONTEXT(ctx, status, msg.c_str());
+                return status;
+            }
+
+            return core::Status::OK;
+        }
+
         core::Status Executor::callUDRFunctionById(const core::ID& udr_id,
                                                    const std::vector<Value>& args,
                                                    Value& result_out,
                                                    core::ErrorContext* ctx)
         {
-            (void)args;
-            (void)result_out;
+            result_out = Value();
 
             core::CatalogManager::UDRInfo udr_info;
             core::ErrorContext err_ctx;
@@ -57698,6 +61779,63 @@ namespace scratchbird
             }
 
             auto conn_ctx = core::ConnectionContext::getCurrent();
+            if (conn_ctx == nullptr || conn_ctx->getCurrentXid() == 0)
+            {
+                SET_ERROR_CONTEXT(ctx, core::Status::NO_ACTIVE_TRANSACTION,
+                                  "UDR invocation requires an active transaction");
+                return core::Status::NO_ACTIVE_TRANSACTION;
+            }
+
+            std::string savepoint_name = makeUdrInvocationSavepointName();
+            status = conn_ctx->createSavepoint(savepoint_name, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                std::string msg = "Failed to start UDR invocation savepoint";
+                if (!err_ctx.message.empty())
+                {
+                    msg += ": " + err_ctx.message;
+                }
+                SET_ERROR_CONTEXT(ctx, status, msg.c_str());
+                return status;
+            }
+
+            auto reject_with_boundary = [&](core::Status reject_status,
+                                            const char* vnext_code,
+                                            const std::string& message) -> core::Status
+            {
+                core::ErrorContext cleanup_ctx;
+                core::Status cleanup_status = rollbackAndReleaseUdrSavepoint(
+                    savepoint_name, conn_ctx, &cleanup_ctx);
+                if (cleanup_status != core::Status::OK)
+                {
+                    const std::string cleanup_message =
+                        cleanup_ctx.message.empty()
+                            ? "UDR boundary savepoint cleanup failed"
+                            : cleanup_ctx.message;
+                    SET_ERROR_CONTEXT(ctx, cleanup_status, cleanup_message.c_str());
+                    return cleanup_status;
+                }
+
+                SET_ERROR_CONTEXT_VNEXT(ctx, reject_status, vnext_code, message.c_str());
+                return reject_status;
+            };
+
+            auto scope_tag = [this]() -> const char*
+            {
+                switch (udr_invocation_scope_)
+                {
+                    case UdrInvocationScope::FUNCTION:
+                        return "FUNCTION";
+                    case UdrInvocationScope::PROCEDURE:
+                        return "PROCEDURE";
+                    case UdrInvocationScope::TRIGGER:
+                        return "TRIGGER";
+                    case UdrInvocationScope::NONE:
+                    default:
+                        return "DIRECT";
+                }
+            };
+
             if (conn_ctx)
             {
                 auto security_ctx = conn_ctx->getCurrentSecurityContext();
@@ -57706,19 +61844,46 @@ namespace scratchbird
                     if (!db_->catalog_manager()->hasObjectPermission(
                             udr_info.udr_id,
                             security_ctx.effective_user_id,
-                            0x0001,
+                            core::CatalogManager::PERM_EXECUTE,
                             &err_ctx))
                     {
-                        SET_ERROR_CONTEXT(ctx, core::Status::PERMISSION_DENIED,
-                                          "Permission denied: EXECUTE on UDR");
-                        return core::Status::PERMISSION_DENIED;
+                        return reject_with_boundary(core::Status::PERMISSION_DENIED,
+                                                    "UDR_1507",
+                                                    "Permission denied: EXECUTE on UDR");
                     }
                 }
             }
 
-            SET_ERROR_CONTEXT(ctx, core::Status::NOT_SUPPORTED,
-                              "UDR execution not supported in this build");
-            return core::Status::NOT_SUPPORTED;
+            if (!isUdrSandboxPathAllowed(udr_info.library_path))
+            {
+                return reject_with_boundary(core::Status::PERMISSION_DENIED,
+                                            "UDR_1508",
+                                            "UDR library path rejected by sandbox policy");
+            }
+
+            constexpr size_t kUdrMaxArgumentCount = 256;
+            constexpr size_t kUdrMaxArgumentBytes = 1024 * 1024;
+
+            if (args.size() > kUdrMaxArgumentCount)
+            {
+                return reject_with_boundary(core::Status::CONFIGURATION_LIMIT_EXCEEDED,
+                                            "UDR_1512",
+                                            "UDR invocation argument count exceeds runtime quota");
+            }
+
+            if (estimateUdrArgumentBytes(args) > kUdrMaxArgumentBytes)
+            {
+                return reject_with_boundary(core::Status::CONFIGURATION_LIMIT_EXCEEDED,
+                                            "UDR_1512",
+                                            "UDR invocation payload exceeds runtime quota");
+            }
+
+            std::string unsupported_message = "UDR execution not supported in this build (scope=";
+            unsupported_message += scope_tag();
+            unsupported_message += ")";
+            return reject_with_boundary(core::Status::NOT_FOUND,
+                                        "UDR_1502",
+                                        unsupported_message);
         }
 
         void Executor::executeBlock()
@@ -64293,6 +68458,72 @@ namespace scratchbird
                     case core::CatalogManager::IndexType::LSM:
                         index_type_str = "LSM";
                         break;
+                    case core::CatalogManager::IndexType::MONGODB_2D:
+                        index_type_str = "MONGODB_2D";
+                        break;
+                    case core::CatalogManager::IndexType::MONGODB_2DSPHERE:
+                        index_type_str = "MONGODB_2DSPHERE";
+                        break;
+                    case core::CatalogManager::IndexType::MONGODB_2DSPHERE_BUCKET:
+                        index_type_str = "MONGODB_2DSPHERE_BUCKET";
+                        break;
+                    case core::CatalogManager::IndexType::MONGODB_GEO_HAYSTACK:
+                        index_type_str = "MONGODB_GEO_HAYSTACK";
+                        break;
+                    case core::CatalogManager::IndexType::MONGODB_WILDCARD:
+                        index_type_str = "MONGODB_WILDCARD";
+                        break;
+                    case core::CatalogManager::IndexType::MONGODB_ENCRYPTED_RANGE:
+                        index_type_str = "MONGODB_ENCRYPTED_RANGE";
+                        break;
+                    case core::CatalogManager::IndexType::NEO4J_LOOKUP:
+                        index_type_str = "NEO4J_LOOKUP";
+                        break;
+                    case core::CatalogManager::IndexType::NEO4J_TEXT:
+                        index_type_str = "NEO4J_TEXT";
+                        break;
+                    case core::CatalogManager::IndexType::NEO4J_RANGE:
+                        index_type_str = "NEO4J_RANGE";
+                        break;
+                    case core::CatalogManager::IndexType::NEO4J_POINT:
+                        index_type_str = "NEO4J_POINT";
+                        break;
+                    case core::CatalogManager::IndexType::NEO4J_VECTOR:
+                        index_type_str = "NEO4J_VECTOR";
+                        break;
+                    case core::CatalogManager::IndexType::CASSANDRA_SASI:
+                        index_type_str = "CASSANDRA_SASI";
+                        break;
+                    case core::CatalogManager::IndexType::CASSANDRA_SAI:
+                        index_type_str = "CASSANDRA_SAI";
+                        break;
+                    case core::CatalogManager::IndexType::REDIS_STRING:
+                        index_type_str = "REDIS_STRING";
+                        break;
+                    case core::CatalogManager::IndexType::REDIS_HASH:
+                        index_type_str = "REDIS_HASH";
+                        break;
+                    case core::CatalogManager::IndexType::REDIS_LIST:
+                        index_type_str = "REDIS_LIST";
+                        break;
+                    case core::CatalogManager::IndexType::REDIS_SET:
+                        index_type_str = "REDIS_SET";
+                        break;
+                    case core::CatalogManager::IndexType::REDIS_ZSET:
+                        index_type_str = "REDIS_ZSET";
+                        break;
+                    case core::CatalogManager::IndexType::REDIS_STREAM:
+                        index_type_str = "REDIS_STREAM";
+                        break;
+                    case core::CatalogManager::IndexType::REDIS_BITMAP:
+                        index_type_str = "REDIS_BITMAP";
+                        break;
+                    case core::CatalogManager::IndexType::REDIS_HLL:
+                        index_type_str = "REDIS_HLL";
+                        break;
+                    case core::CatalogManager::IndexType::REDIS_GEO:
+                        index_type_str = "REDIS_GEO";
+                        break;
                     default:
                         index_type_str = "UNKNOWN";
                 }
@@ -67315,21 +71546,33 @@ namespace scratchbird
                 current_result_set_ = std::make_unique<ResultSet>();
             }
 
-            current_result_set_->addColumn("Metric", core::DataType::VARCHAR);
+            current_result_set_->addColumn("MetricName", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Labels", core::DataType::VARCHAR);
+            current_result_set_->addColumn("Value", core::DataType::VARCHAR);
 
             auto& metrics = core::ScratchBirdMetrics::getInstance();
             metrics.initialize();
-            std::string payload = core::MetricsRegistry::getInstance().exportPrometheus();
 
-            std::istringstream stream(payload);
-            std::string line;
-            while (std::getline(stream, line))
+            const auto rows = core::MetricsRegistry::getInstance().snapshotSamples();
+            for (const auto& row : rows)
             {
-                if (line.empty())
+                std::string labels;
+                for (size_t i = 0; i < row.labels.size(); ++i)
                 {
-                    continue;
+                    if (i > 0)
+                    {
+                        labels += ", ";
+                    }
+                    labels += row.labels[i].name;
+                    labels += "=";
+                    labels += row.labels[i].value;
                 }
-                current_result_set_->addRow({Value::makeVarchar(line)});
+
+                std::ostringstream value_stream;
+                value_stream << std::fixed << std::setprecision(6) << row.value;
+                current_result_set_->addRow({Value::makeVarchar(row.metric_name),
+                                             Value::makeVarchar(labels),
+                                             Value::makeVarchar(value_stream.str())});
             }
         }
 
@@ -69632,6 +73875,11 @@ namespace scratchbird
                             }
                             if (op == Opcode::SBLR3_EXPR_DIV_INT)
                             {
+                                if (isWideNumericType(lhs.type()) || isWideNumericType(rhs.type()))
+                                {
+                                    ok = false;
+                                    return Value::makeNull();
+                                }
                                 if (rhs.toInt64() == 0)
                                 {
                                     ok = false;
@@ -69641,6 +73889,11 @@ namespace scratchbird
                             }
                             if (op == Opcode::SBLR3_EXPR_MODULO)
                             {
+                                if (isWideNumericType(lhs.type()) || isWideNumericType(rhs.type()))
+                                {
+                                    ok = false;
+                                    return Value::makeNull();
+                                }
                                 if (rhs.toInt64() == 0)
                                 {
                                     ok = false;
@@ -69650,18 +73903,38 @@ namespace scratchbird
                             }
                             if (op == Opcode::SBLR3_BIT_AND)
                             {
+                                if (isWideNumericType(lhs.type()) || isWideNumericType(rhs.type()))
+                                {
+                                    ok = false;
+                                    return Value::makeNull();
+                                }
                                 return Value::makeInt64(lhs.toInt64() & rhs.toInt64());
                             }
                             if (op == Opcode::SBLR3_BIT_OR)
                             {
+                                if (isWideNumericType(lhs.type()) || isWideNumericType(rhs.type()))
+                                {
+                                    ok = false;
+                                    return Value::makeNull();
+                                }
                                 return Value::makeInt64(lhs.toInt64() | rhs.toInt64());
                             }
                             if (op == Opcode::SBLR3_BIT_XOR)
                             {
+                                if (isWideNumericType(lhs.type()) || isWideNumericType(rhs.type()))
+                                {
+                                    ok = false;
+                                    return Value::makeNull();
+                                }
                                 return Value::makeInt64(lhs.toInt64() ^ rhs.toInt64());
                             }
                             if (op == Opcode::SBLR3_BIT_SHIFT_LEFT)
                             {
+                                if (isWideNumericType(lhs.type()) || isWideNumericType(rhs.type()))
+                                {
+                                    ok = false;
+                                    return Value::makeNull();
+                                }
                                 int64_t shift = rhs.toInt64();
                                 if (shift < 0 || shift >= 64)
                                 {
@@ -69674,6 +73947,11 @@ namespace scratchbird
                             }
                             if (op == Opcode::SBLR3_BIT_SHIFT_RIGHT)
                             {
+                                if (isWideNumericType(lhs.type()) || isWideNumericType(rhs.type()))
+                                {
+                                    ok = false;
+                                    return Value::makeNull();
+                                }
                                 int64_t shift = rhs.toInt64();
                                 if (shift < 0 || shift >= 64)
                                 {
@@ -74526,6 +78804,12 @@ namespace scratchbird
             switch (type)
             {
                 case IndexType::BTREE:
+                case IndexType::MONGODB_GEO_HAYSTACK:
+                case IndexType::NEO4J_RANGE:
+                case IndexType::NEO4J_POINT:
+                case IndexType::REDIS_LIST:
+                case IndexType::REDIS_ZSET:
+                case IndexType::REDIS_STREAM:
                 {
                     auto btree = getOrOpenIndex<core::BTree>(index_uuid, type, index_info.root_gpid, ctx);
                     if (btree)
@@ -74536,6 +78820,10 @@ namespace scratchbird
                 }
 
                 case IndexType::HASH:
+                case IndexType::REDIS_STRING:
+                case IndexType::REDIS_HASH:
+                case IndexType::REDIS_SET:
+                case IndexType::REDIS_HLL:
                 {
                     auto hash_idx = getOrOpenIndex<core::HashIndex>(index_uuid, type, index_info.root_gpid, ctx);
                     if (hash_idx)
@@ -74547,6 +78835,10 @@ namespace scratchbird
                 }
 
                 case IndexType::RTREE:
+                case IndexType::MONGODB_2D:
+                case IndexType::MONGODB_2DSPHERE:
+                case IndexType::MONGODB_2DSPHERE_BUCKET:
+                case IndexType::REDIS_GEO:
                 {
                     auto rtree = getOrOpenIndex<core::RTreeIndex>(index_uuid, type, index_info.root_gpid, ctx);
                     if (rtree)
@@ -74594,6 +78886,8 @@ namespace scratchbird
                 }
 
                 case IndexType::BITMAP:
+                case IndexType::NEO4J_LOOKUP:
+                case IndexType::REDIS_BITMAP:
                 {
                     auto bitmap = getOrOpenIndex<core::BitmapIndex>(index_uuid, type, index_info.root_gpid, ctx);
                     if (bitmap)
@@ -74643,6 +78937,7 @@ namespace scratchbird
                 }
 
                 case IndexType::HNSW:
+                case IndexType::NEO4J_VECTOR:
                 {
                     auto hnsw = getOrOpenIndex<core::HnswIndex>(index_uuid, type, index_info.root_gpid, ctx);
                     if (hnsw)
@@ -74666,6 +78961,50 @@ namespace scratchbird
                     SET_ERROR_CONTEXT(ctx, core::Status::NOT_SUPPORTED,
                                           "Columnstore requires bulk load operations (use LOAD_COLUMNS opcode)");
                     return core::Status::NOT_SUPPORTED;
+
+                case IndexType::FULLTEXT:
+                case IndexType::MONGODB_WILDCARD:
+                case IndexType::MONGODB_ENCRYPTED_RANGE:
+                case IndexType::NEO4J_TEXT:
+                case IndexType::CASSANDRA_SASI:
+                case IndexType::CASSANDRA_SAI:
+                {
+                    void* index_ptr = nullptr;
+                    core::Status open_status = core::IndexFactory::openIndex(
+                        index_info.index_type, db_, index_info, &index_ptr, ctx);
+                    if (open_status != core::Status::OK || !index_ptr)
+                    {
+                        return open_status != core::Status::OK ? open_status : core::Status::INTERNAL_ERROR;
+                    }
+                    std::unique_ptr<core::InvertedIndex> inverted(
+                        static_cast<core::InvertedIndex*>(index_ptr));
+
+                    std::string text;
+                    size_t offset = 0;
+                    while (offset < key.size())
+                    {
+                        uint32_t len = 0;
+                        if (!core::readUint32LE(key.data(), key.size(), offset, len))
+                        {
+                            SET_ERROR_CONTEXT(ctx, core::Status::DATA_CORRUPTED,
+                                              "FULLTEXT key length prefix invalid");
+                            return core::Status::DATA_CORRUPTED;
+                        }
+                        if (offset + len > key.size())
+                        {
+                            SET_ERROR_CONTEXT(ctx, core::Status::DATA_CORRUPTED,
+                                              "FULLTEXT key length exceeds payload");
+                            return core::Status::DATA_CORRUPTED;
+                        }
+                        if (!text.empty())
+                        {
+                            text.push_back(' ');
+                        }
+                        text.append(reinterpret_cast<const char*>(key.data() + offset), len);
+                        offset += len;
+                    }
+                    return inverted->insert(text.data(), text.size(), tid, ctx);
+                }
 
                 default:
                     SET_ERROR_CONTEXT(ctx, core::Status::INTERNAL_ERROR, "Unknown index type");
@@ -74692,6 +79031,12 @@ namespace scratchbird
             switch (type)
             {
                 case IndexType::BTREE:
+                case IndexType::MONGODB_GEO_HAYSTACK:
+                case IndexType::NEO4J_RANGE:
+                case IndexType::NEO4J_POINT:
+                case IndexType::REDIS_LIST:
+                case IndexType::REDIS_ZSET:
+                case IndexType::REDIS_STREAM:
                 {
                     auto btree = getOrOpenIndex<core::BTree>(index_uuid, type, index_info.root_gpid, ctx);
                     if (btree)
@@ -74702,6 +79047,10 @@ namespace scratchbird
                 }
 
                 case IndexType::HASH:
+                case IndexType::REDIS_STRING:
+                case IndexType::REDIS_HASH:
+                case IndexType::REDIS_SET:
+                case IndexType::REDIS_HLL:
                 {
                     auto hash_idx = getOrOpenIndex<core::HashIndex>(index_uuid, type, index_info.root_gpid, ctx);
                     if (hash_idx)
@@ -74713,6 +79062,10 @@ namespace scratchbird
                 }
 
                 case IndexType::RTREE:
+                case IndexType::MONGODB_2D:
+                case IndexType::MONGODB_2DSPHERE:
+                case IndexType::MONGODB_2DSPHERE_BUCKET:
+                case IndexType::REDIS_GEO:
                 {
                     auto rtree = getOrOpenIndex<core::RTreeIndex>(index_uuid, type, index_info.root_gpid, ctx);
                     if (rtree)
@@ -74770,6 +79123,8 @@ namespace scratchbird
                 }
 
                 case IndexType::BITMAP:
+                case IndexType::NEO4J_LOOKUP:
+                case IndexType::REDIS_BITMAP:
                 {
                     auto bitmap = getOrOpenIndex<core::BitmapIndex>(index_uuid, type, index_info.root_gpid, ctx);
                     if (bitmap)
@@ -74821,10 +79176,15 @@ namespace scratchbird
                 }
 
                 case IndexType::FULLTEXT:
+                case IndexType::MONGODB_WILDCARD:
+                case IndexType::MONGODB_ENCRYPTED_RANGE:
+                case IndexType::NEO4J_TEXT:
+                case IndexType::CASSANDRA_SASI:
+                case IndexType::CASSANDRA_SAI:
                 {
                     void* index_ptr = nullptr;
                     core::Status open_status = core::IndexFactory::openIndex(
-                        core::CatalogManager::IndexType::FULLTEXT, db_, index_info, &index_ptr, ctx);
+                        index_info.index_type, db_, index_info, &index_ptr, ctx);
                     if (open_status != core::Status::OK || !index_ptr)
                     {
                         return open_status != core::Status::OK ? open_status : core::Status::INTERNAL_ERROR;
@@ -74868,6 +79228,7 @@ namespace scratchbird
                     return core::Status::NOT_SUPPORTED;
 
                 case IndexType::HNSW:
+                case IndexType::NEO4J_VECTOR:
                     // HNSW uses k-NN search, not exact key search
                     SET_ERROR_CONTEXT(ctx, core::Status::NOT_SUPPORTED,
                                           "HNSW requires k-NN search operator (<-> with LIMIT)");
@@ -74904,6 +79265,12 @@ namespace scratchbird
             switch (type)
             {
                 case IndexType::BTREE:
+                case IndexType::MONGODB_GEO_HAYSTACK:
+                case IndexType::NEO4J_RANGE:
+                case IndexType::NEO4J_POINT:
+                case IndexType::REDIS_LIST:
+                case IndexType::REDIS_ZSET:
+                case IndexType::REDIS_STREAM:
                 {
                     auto btree = getOrOpenIndex<core::BTree>(index_uuid, type, index_info.root_gpid, ctx);
                     if (btree)
@@ -74915,6 +79282,10 @@ namespace scratchbird
                 }
 
                 case IndexType::HASH:
+                case IndexType::REDIS_STRING:
+                case IndexType::REDIS_HASH:
+                case IndexType::REDIS_SET:
+                case IndexType::REDIS_HLL:
                 {
                     auto hash_idx = getOrOpenIndex<core::HashIndex>(index_uuid, type, index_info.root_gpid, ctx);
                     if (hash_idx)
@@ -74926,6 +79297,10 @@ namespace scratchbird
                 }
 
                 case IndexType::RTREE:
+                case IndexType::MONGODB_2D:
+                case IndexType::MONGODB_2DSPHERE:
+                case IndexType::MONGODB_2DSPHERE_BUCKET:
+                case IndexType::REDIS_GEO:
                 {
                     auto rtree = getOrOpenIndex<core::RTreeIndex>(index_uuid, type, index_info.root_gpid, ctx);
                     if (rtree)
@@ -74970,6 +79345,8 @@ namespace scratchbird
                 }
 
                 case IndexType::BITMAP:
+                case IndexType::NEO4J_LOOKUP:
+                case IndexType::REDIS_BITMAP:
                 {
                     auto bitmap = getOrOpenIndex<core::BitmapIndex>(index_uuid, type, index_info.root_gpid, ctx);
                     if (bitmap)
@@ -75014,6 +79391,7 @@ namespace scratchbird
                 }
 
                 case IndexType::HNSW:
+                case IndexType::NEO4J_VECTOR:
                 {
                     auto hnsw = getOrOpenIndex<core::HnswIndex>(index_uuid, type, index_info.root_gpid, ctx);
                     if (hnsw)
@@ -75030,6 +79408,50 @@ namespace scratchbird
                     SET_ERROR_CONTEXT(ctx, core::Status::NOT_SUPPORTED,
                                           "Columnstore requires bulk load operations");
                     return core::Status::NOT_SUPPORTED;
+
+                case IndexType::FULLTEXT:
+                case IndexType::MONGODB_WILDCARD:
+                case IndexType::MONGODB_ENCRYPTED_RANGE:
+                case IndexType::NEO4J_TEXT:
+                case IndexType::CASSANDRA_SASI:
+                case IndexType::CASSANDRA_SAI:
+                {
+                    void* index_ptr = nullptr;
+                    core::Status open_status = core::IndexFactory::openIndex(
+                        index_info.index_type, db_, index_info, &index_ptr, ctx);
+                    if (open_status != core::Status::OK || !index_ptr)
+                    {
+                        return open_status != core::Status::OK ? open_status : core::Status::INTERNAL_ERROR;
+                    }
+                    std::unique_ptr<core::InvertedIndex> inverted(
+                        static_cast<core::InvertedIndex*>(index_ptr));
+
+                    std::string text;
+                    size_t offset = 0;
+                    while (offset < key.size())
+                    {
+                        uint32_t len = 0;
+                        if (!core::readUint32LE(key.data(), key.size(), offset, len))
+                        {
+                            SET_ERROR_CONTEXT(ctx, core::Status::DATA_CORRUPTED,
+                                              "FULLTEXT key length prefix invalid");
+                            return core::Status::DATA_CORRUPTED;
+                        }
+                        if (offset + len > key.size())
+                        {
+                            SET_ERROR_CONTEXT(ctx, core::Status::DATA_CORRUPTED,
+                                              "FULLTEXT key length exceeds payload");
+                            return core::Status::DATA_CORRUPTED;
+                        }
+                        if (!text.empty())
+                        {
+                            text.push_back(' ');
+                        }
+                        text.append(reinterpret_cast<const char*>(key.data() + offset), len);
+                        offset += len;
+                    }
+                    return inverted->remove(text.data(), text.size(), tid, xmax, ctx);
+                }
 
                 default:
                     SET_ERROR_CONTEXT(ctx, core::Status::INTERNAL_ERROR, "Unknown index type");
@@ -75059,6 +79481,12 @@ namespace scratchbird
             switch (type)
             {
                 case IndexType::BTREE:
+                case IndexType::MONGODB_GEO_HAYSTACK:
+                case IndexType::NEO4J_RANGE:
+                case IndexType::NEO4J_POINT:
+                case IndexType::REDIS_LIST:
+                case IndexType::REDIS_ZSET:
+                case IndexType::REDIS_STREAM:
                 {
                     auto btree = getOrOpenIndex<core::BTree>(index_uuid, type, index_info.root_gpid, ctx);
                     if (btree)
@@ -75097,6 +79525,10 @@ namespace scratchbird
                 }
 
                 case IndexType::RTREE:
+                case IndexType::MONGODB_2D:
+                case IndexType::MONGODB_2DSPHERE:
+                case IndexType::MONGODB_2DSPHERE_BUCKET:
+                case IndexType::REDIS_GEO:
                 {
                     auto rtree = getOrOpenIndex<core::RTreeIndex>(index_uuid, type, index_info.root_gpid, ctx);
                     if (rtree)
@@ -75193,6 +79625,8 @@ namespace scratchbird
                 }
 
                 case IndexType::BITMAP:
+                case IndexType::NEO4J_LOOKUP:
+                case IndexType::REDIS_BITMAP:
                 {
                     auto bitmap = getOrOpenIndex<core::BitmapIndex>(index_uuid, type, index_info.root_gpid, ctx);
                     if (bitmap)
@@ -75265,6 +79699,11 @@ namespace scratchbird
                 }
 
                 case IndexType::FULLTEXT:
+                case IndexType::MONGODB_WILDCARD:
+                case IndexType::MONGODB_ENCRYPTED_RANGE:
+                case IndexType::NEO4J_TEXT:
+                case IndexType::CASSANDRA_SASI:
+                case IndexType::CASSANDRA_SAI:
                 {
                     if (ctx) {
                         ctx->set(core::Status::NOT_SUPPORTED, "FULLTEXT indexes require @@ search operator",
@@ -75274,6 +79713,10 @@ namespace scratchbird
                 }
 
                 case IndexType::HASH:
+                case IndexType::REDIS_STRING:
+                case IndexType::REDIS_HASH:
+                case IndexType::REDIS_SET:
+                case IndexType::REDIS_HLL:
                 {
                     // Hash indexes don't support range scans
                     if (ctx) {
@@ -75294,6 +79737,7 @@ namespace scratchbird
                 }
 
                 case IndexType::HNSW:
+                case IndexType::NEO4J_VECTOR:
                 {
                     // HNSW uses k-NN search, not range scans
                     if (ctx) {
@@ -80097,7 +84541,10 @@ namespace scratchbird
                             if (!trigger.enabled) continue;
 
                             TriggerContext ctx(trigger, nullptr, &row_values, table_info, all_columns);
-                            fireTrigger(ctx);
+                            if (!fireTrigger(ctx))
+                            {
+                                return false;
+                            }
                         }
                     }
 

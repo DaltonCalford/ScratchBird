@@ -65,6 +65,33 @@ bool checkAlignment(const std::vector<SectionEntry>& sections) {
     return true;
 }
 
+bool isVNextOpcodeRange(uint16_t opcode) {
+    return opcode >= 0x6000 && opcode <= 0x60FF;
+}
+
+const Value* findField(const Value::Object& payload, const char* field_name) {
+    auto it = payload.find(field_name);
+    return it == payload.end() ? nullptr : &it->second;
+}
+
+bool readU64Field(const Value::Object& payload,
+                  const char* field_name,
+                  uint64_t& out,
+                  std::string& err) {
+    const Value* value = findField(payload, field_name);
+    if (!value) {
+        err = std::string("missing required field: ") + field_name;
+        return false;
+    }
+    const auto* typed = std::get_if<uint64_t>(&value->data);
+    if (!typed) {
+        err = std::string("invalid field type for: ") + field_name;
+        return false;
+    }
+    out = *typed;
+    return true;
+}
+
 }  // namespace
 
 ValidationResult validateContainerDetailed(const uint8_t* data, size_t size) {
@@ -218,6 +245,130 @@ bool validateContainer(const uint8_t* data, size_t size, std::string& err) {
         err += "]";
     }
     return false;
+}
+
+ValidationResult validateVNextOpcodeContract(const Instruction& inst) {
+    if (!isVNextOpcodeRange(inst.opcode)) {
+        return makeSuccess();
+    }
+    if (!isKnownOpcode(inst.opcode)) {
+        return makeFailure("IRX_0403", "unknown SBLR vNext opcode", 0, inst.opcode);
+    }
+
+    const SchemaDef* schema = schemaForOpcode(inst.opcode);
+    if (!schema) {
+        return makeFailure("IRX_0404",
+                           "vNext opcode missing payload schema",
+                           0,
+                           inst.opcode);
+    }
+
+    const auto* payload = std::get_if<Value::Object>(&inst.payload.data);
+    if (!payload) {
+        return makeFailure("IRX_0404", "vNext payload must be an object", 0, inst.opcode);
+    }
+
+    uint64_t enum_value = 0;
+    std::string field_err;
+    switch (inst.opcode) {
+        case static_cast<uint16_t>(Opcode::SBLR3_OP_DOC_PATH_FILTER):
+            if (!readU64Field(*payload, "cmp", enum_value, field_err)) {
+                return makeFailure("IRX_0404", field_err, 0, inst.opcode);
+            }
+            if (enum_value > 7) {
+                return makeFailure("IRX_0407", "cmp enum out of range", 0, inst.opcode);
+            }
+            break;
+        case static_cast<uint16_t>(Opcode::SBLR3_OP_SEARCH_DSL_EVAL):
+            if (!readU64Field(*payload, "scorer_id", enum_value, field_err)) {
+                return makeFailure("IRX_0404", field_err, 0, inst.opcode);
+            }
+            if (enum_value < 1 || enum_value > 3) {
+                return makeFailure("IRX_0407", "scorer_id enum out of range", 0, inst.opcode);
+            }
+            break;
+        case static_cast<uint16_t>(Opcode::SBLR3_OP_VECTOR_ANN):
+            if (!readU64Field(*payload, "metric", enum_value, field_err)) {
+                return makeFailure("IRX_0404", field_err, 0, inst.opcode);
+            }
+            if (enum_value < 1 || enum_value > 3) {
+                return makeFailure("IRX_0407", "metric enum out of range", 0, inst.opcode);
+            }
+            break;
+        case static_cast<uint16_t>(Opcode::SBLR3_OP_HYBRID_BRIDGE_EXCHANGE):
+            if (!readU64Field(*payload, "mode", enum_value, field_err)) {
+                return makeFailure("IRX_0404", field_err, 0, inst.opcode);
+            }
+            if (enum_value < 1 || enum_value > 3) {
+                return makeFailure("IRX_0407", "mode enum out of range", 0, inst.opcode);
+            }
+            break;
+        case static_cast<uint16_t>(Opcode::SBLR3_OP_HYBRID_BRIDGE_MATERIALIZE):
+            if (!readU64Field(*payload, "buffer_class", enum_value, field_err)) {
+                return makeFailure("IRX_0404", field_err, 0, inst.opcode);
+            }
+            if (enum_value < 1 || enum_value > 4) {
+                return makeFailure("IRX_0407", "buffer_class enum out of range", 0, inst.opcode);
+            }
+            break;
+        default:
+            break;
+    }
+
+    return makeSuccess();
+}
+
+ValidationResult validateVNextEncodedInstructionContract(const uint8_t* data, size_t size) {
+    if (data == nullptr || size < 8) {
+        return makeFailure("IRX_0404", "instruction header too short");
+    }
+
+    const uint16_t opcode = static_cast<uint16_t>(data[0]) |
+                            (static_cast<uint16_t>(data[1]) << 8);
+    if (!isVNextOpcodeRange(opcode)) {
+        return makeSuccess();
+    }
+    if (!isKnownOpcode(opcode)) {
+        return makeFailure("IRX_0403", "unknown SBLR vNext opcode", 0, opcode);
+    }
+
+    Instruction decoded;
+    DecodeError err;
+    size_t offset = 0;
+    if (!decodeInstructionWithSchema(data, size, offset, decoded, err)) {
+        return makeFailure("IRX_0404",
+                           std::string("invalid opcode payload length: ") + err.message,
+                           0,
+                           opcode);
+    }
+    if (offset != size) {
+        return makeFailure("IRX_0404",
+                           "instruction payload has trailing bytes",
+                           0,
+                           opcode);
+    }
+
+    return validateVNextOpcodeContract(decoded);
+}
+
+ValidationResult validateVNextRewriteEvidenceContract(const Value::Object& evidence) {
+    auto hasString = [&](const char* field) -> bool {
+        auto it = evidence.find(field);
+        return it != evidence.end() && std::holds_alternative<std::string>(it->second.data);
+    };
+    auto hasU64 = [&](const char* field) -> bool {
+        auto it = evidence.find(field);
+        return it != evidence.end() && std::holds_alternative<uint64_t>(it->second.data);
+    };
+
+    if (!hasString("rewrite_rule_id") ||
+        !hasString("source_token_span") ||
+        !hasString("target_node_symbol") ||
+        !hasU64("deterministic_hash64")) {
+        return makeFailure("IRX_0405",
+                           "rewrite evidence missing required metadata fields");
+    }
+    return makeSuccess();
 }
 
 }  // namespace scratchbird::sblr::v3

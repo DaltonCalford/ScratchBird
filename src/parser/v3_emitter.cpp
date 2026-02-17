@@ -1,7 +1,10 @@
 #include "scratchbird/parser/v3_emitter.h"
 
 #include <algorithm>
+#include <charconv>
+#include <cerrno>
 #include <cctype>
+#include <cstdlib>
 #include <memory>
 #include <sstream>
 #include <string>
@@ -37,6 +40,118 @@ std::string toUpper(std::string_view s) {
         out.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
     }
     return out;
+}
+
+Instruction makeStringLiteralInstruction(std::string text) {
+    Instruction lit;
+    lit.opcode = op(Opcode::SBLR3_LITERAL_STRING);
+    lit.flags = 0;
+    lit.payload = Value(Value::Object{{"value", Value(std::move(text))}});
+    return lit;
+}
+
+Instruction makeBoolLiteralInstruction(bool value) {
+    Instruction lit;
+    lit.opcode = op(Opcode::SBLR3_LITERAL_BOOLEAN);
+    lit.flags = 0;
+    lit.payload = Value(Value::Object{{"value", Value(value)}});
+    return lit;
+}
+
+Instruction makeInt64LiteralInstruction(int64_t value) {
+    Instruction lit;
+    lit.opcode = op(Opcode::SBLR3_LITERAL_INT64);
+    lit.flags = 0;
+    lit.payload = Value(Value::Object{{"value", Value(value)}});
+    return lit;
+}
+
+Instruction makeDoubleLiteralInstruction(double value) {
+    Instruction lit;
+    lit.opcode = op(Opcode::SBLR3_LITERAL_DOUBLE);
+    lit.flags = 0;
+    lit.payload = Value(Value::Object{{"value", Value(value)}});
+    return lit;
+}
+
+bool parseBoolToken(std::string_view raw, bool& out) {
+    std::string normalized = toUpper(raw);
+    if (normalized == "TRUE" || normalized == "ON") {
+        out = true;
+        return true;
+    }
+    if (normalized == "FALSE" || normalized == "OFF") {
+        out = false;
+        return true;
+    }
+    return false;
+}
+
+bool parseInt64Token(std::string_view raw, int64_t& out) {
+    if (raw.empty()) {
+        return false;
+    }
+    const char* begin = raw.data();
+    const char* end = raw.data() + raw.size();
+    auto result = std::from_chars(begin, end, out, 10);
+    return result.ec == std::errc() && result.ptr == end;
+}
+
+bool parseDoubleToken(std::string_view raw, double& out) {
+    if (raw.empty()) {
+        return false;
+    }
+    std::string tmp(raw);
+    char* parse_end = nullptr;
+    errno = 0;
+    out = std::strtod(tmp.c_str(), &parse_end);
+    if (parse_end == tmp.c_str() || *parse_end != '\0' || errno == ERANGE) {
+        return false;
+    }
+    return true;
+}
+
+Instruction makeIndexOptionValueInstruction(std::string_view raw) {
+    bool bool_value = false;
+    if (parseBoolToken(raw, bool_value)) {
+        return makeBoolLiteralInstruction(bool_value);
+    }
+    int64_t int_value = 0;
+    if (parseInt64Token(raw, int_value)) {
+        return makeInt64LiteralInstruction(int_value);
+    }
+    double double_value = 0.0;
+    if (parseDoubleToken(raw, double_value)) {
+        return makeDoubleLiteralInstruction(double_value);
+    }
+    return makeStringLiteralInstruction(std::string(raw));
+}
+
+Value makeOptionKvFromAssignments(parser::v3::StringPool& pool,
+                                  const std::vector<parser::v3::IndexOptionAssignment>& assignments) {
+    Value::List options;
+    options.reserve(assignments.size());
+    for (const auto& assignment : assignments) {
+        Value::Object option;
+        option["key"] = Value(toUpper(pool.get(assignment.option_name)));
+        option["value"] = Value(makeInstr(makeIndexOptionValueInstruction(pool.get(assignment.option_value))));
+        options.push_back(Value(std::move(option)));
+    }
+    return Value(std::move(options));
+}
+
+Value makeOptionKvFromResetList(parser::v3::StringPool& pool,
+                                const std::vector<parser::v3::StringPool::StringId>& reset_options,
+                                const Instruction& default_value) {
+    Value::List options;
+    options.reserve(reset_options.size());
+    for (auto option_id : reset_options) {
+        Value::Object option;
+        option["key"] = Value(toUpper(pool.get(option_id)));
+        option["value"] = Value(makeInstr(default_value));
+        options.push_back(Value(std::move(option)));
+    }
+    return Value(std::move(options));
 }
 
 uint8_t mapJoinType(parser::JoinType type) {
@@ -89,6 +204,51 @@ std::string indexTypeName(parser::v3::IndexType type) {
         case parser::v3::IndexType::FULLTEXT: return "FULLTEXT";
         case parser::v3::IndexType::IVF: return "IVF";
         case parser::v3::IndexType::ZONEMAP: return "ZONEMAP";
+        case parser::v3::IndexType::ART: return "ART";
+        case parser::v3::IndexType::BLOOM: return "BLOOM";
+        case parser::v3::IndexType::VECTOR_FLAT: return "VECTOR_FLAT";
+        case parser::v3::IndexType::VECTOR_BIN_FLAT: return "VECTOR_BIN_FLAT";
+        case parser::v3::IndexType::IVF_FLAT: return "IVF_FLAT";
+        case parser::v3::IndexType::BIN_IVF_FLAT: return "BIN_IVF_FLAT";
+        case parser::v3::IndexType::IVF_PQ: return "IVF_PQ";
+        case parser::v3::IndexType::IVF_SQ8: return "IVF_SQ8";
+        case parser::v3::IndexType::IVF_SQ8_HYBRID: return "IVF_SQ8_HYBRID";
+        case parser::v3::IndexType::RHNSW_PQ: return "RHNSW_PQ";
+        case parser::v3::IndexType::RHNSW_SQ: return "RHNSW_SQ";
+        case parser::v3::IndexType::ANNOY: return "ANNOY";
+        case parser::v3::IndexType::NSG: return "NSG";
+        case parser::v3::IndexType::DISKANN: return "DISKANN";
+        case parser::v3::IndexType::SCANN: return "SCANN";
+        case parser::v3::IndexType::GPU_CAGRA: return "GPU_CAGRA";
+        case parser::v3::IndexType::MINHASH_LSH: return "MINHASH_LSH";
+        case parser::v3::IndexType::SPARSE_INVERTED: return "SPARSE_INVERTED";
+        case parser::v3::IndexType::SPARSE_WAND: return "SPARSE_WAND";
+        case parser::v3::IndexType::TRIE: return "TRIE";
+        case parser::v3::IndexType::INVERTED: return "INVERTED";
+        case parser::v3::IndexType::STL_SORT: return "STL_SORT";
+        case parser::v3::IndexType::NGRAM: return "NGRAM";
+        case parser::v3::IndexType::MONGODB_2D: return "MONGODB_2D";
+        case parser::v3::IndexType::MONGODB_2DSPHERE: return "MONGODB_2DSPHERE";
+        case parser::v3::IndexType::MONGODB_2DSPHERE_BUCKET: return "MONGODB_2DSPHERE_BUCKET";
+        case parser::v3::IndexType::MONGODB_GEO_HAYSTACK: return "MONGODB_GEO_HAYSTACK";
+        case parser::v3::IndexType::MONGODB_WILDCARD: return "MONGODB_WILDCARD";
+        case parser::v3::IndexType::MONGODB_ENCRYPTED_RANGE: return "MONGODB_ENCRYPTED_RANGE";
+        case parser::v3::IndexType::NEO4J_LOOKUP: return "NEO4J_LOOKUP";
+        case parser::v3::IndexType::NEO4J_TEXT: return "NEO4J_TEXT";
+        case parser::v3::IndexType::NEO4J_RANGE: return "NEO4J_RANGE";
+        case parser::v3::IndexType::NEO4J_POINT: return "NEO4J_POINT";
+        case parser::v3::IndexType::NEO4J_VECTOR: return "NEO4J_VECTOR";
+        case parser::v3::IndexType::CASSANDRA_SASI: return "CASSANDRA_SASI";
+        case parser::v3::IndexType::CASSANDRA_SAI: return "CASSANDRA_SAI";
+        case parser::v3::IndexType::REDIS_STRING: return "REDIS_STRING";
+        case parser::v3::IndexType::REDIS_HASH: return "REDIS_HASH";
+        case parser::v3::IndexType::REDIS_LIST: return "REDIS_LIST";
+        case parser::v3::IndexType::REDIS_SET: return "REDIS_SET";
+        case parser::v3::IndexType::REDIS_ZSET: return "REDIS_ZSET";
+        case parser::v3::IndexType::REDIS_STREAM: return "REDIS_STREAM";
+        case parser::v3::IndexType::REDIS_BITMAP: return "REDIS_BITMAP";
+        case parser::v3::IndexType::REDIS_HLL: return "REDIS_HLL";
+        case parser::v3::IndexType::REDIS_GEO: return "REDIS_GEO";
     }
     return "BTREE";
 }
@@ -258,6 +418,199 @@ std::string renderSimpleSelectDefinition(parser::v3::StringPool& pool,
 
 V3Emitter::V3Emitter(parser::v3::StringPool& pool)
     : pool_(pool) {}
+
+bool V3Emitter::emitVNextContractInstruction(
+    parser::v3::ASTKind node_kind,
+    const scratchbird::sblr::v3::Value::Object& fields,
+    scratchbird::sblr::v3::Instruction& out,
+    std::string& err) {
+    using scratchbird::sblr::v3::Opcode;
+
+    auto requireU64 = [&](const char* key, uint64_t& value_out) -> bool {
+        auto it = fields.find(key);
+        if (it == fields.end()) {
+            err = std::string("IRX_0402: missing required field ") + key;
+            return false;
+        }
+        const auto* value = std::get_if<uint64_t>(&it->second.data);
+        if (!value) {
+            err = std::string("IRX_0402: field type mismatch for ") + key;
+            return false;
+        }
+        value_out = *value;
+        return true;
+    };
+
+    auto requireString = [&](const char* key, std::string& value_out) -> bool {
+        auto it = fields.find(key);
+        if (it == fields.end()) {
+            err = std::string("IRX_0402: missing required field ") + key;
+            return false;
+        }
+        const auto* value = std::get_if<std::string>(&it->second.data);
+        if (!value) {
+            err = std::string("IRX_0402: field type mismatch for ") + key;
+            return false;
+        }
+        value_out = *value;
+        return true;
+    };
+
+    auto requireList = [&](const char* key, scratchbird::sblr::v3::Value::List& value_out) -> bool {
+        auto it = fields.find(key);
+        if (it == fields.end()) {
+            err = std::string("IRX_0402: missing required field ") + key;
+            return false;
+        }
+        const auto* value = std::get_if<scratchbird::sblr::v3::Value::List>(&it->second.data);
+        if (!value) {
+            err = std::string("IRX_0402: field type mismatch for ") + key;
+            return false;
+        }
+        value_out = *value;
+        return true;
+    };
+
+    auto requireBytes = [&](const char* key, scratchbird::sblr::v3::Value::Bytes& value_out) -> bool {
+        auto it = fields.find(key);
+        if (it == fields.end()) {
+            err = std::string("IRX_0402: missing required field ") + key;
+            return false;
+        }
+        const auto* value = std::get_if<scratchbird::sblr::v3::Value::Bytes>(&it->second.data);
+        if (!value) {
+            err = std::string("IRX_0402: field type mismatch for ") + key;
+            return false;
+        }
+        value_out = *value;
+        return true;
+    };
+
+    out.flags = 0;
+    scratchbird::sblr::v3::Value::Object payload;
+
+    switch (node_kind) {
+        case parser::v3::ASTKind::AST_DOC_PATH_FILTER: {
+            uint64_t path_expr = 0;
+            uint64_t compare_op = 0;
+            uint64_t value_expr = 0;
+            if (!requireU64("path_expr", path_expr) ||
+                !requireU64("operator", compare_op) ||
+                !requireU64("value_expr", value_expr)) {
+                return false;
+            }
+            out.opcode = op(Opcode::SBLR3_OP_DOC_PATH_FILTER);
+            payload["path_id"] = scratchbird::sblr::v3::Value(path_expr);
+            payload["cmp"] = scratchbird::sblr::v3::Value(compare_op);
+            payload["value_ref"] = scratchbird::sblr::v3::Value(value_expr);
+            break;
+        }
+        case parser::v3::ASTKind::AST_TS_BUCKET_AGG: {
+            uint64_t time_expr = 0;
+            uint64_t bucket_size = 0;
+            scratchbird::sblr::v3::Value::List agg_list;
+            if (!requireU64("time_expr", time_expr) ||
+                !requireU64("bucket_size", bucket_size) ||
+                !requireList("agg_list", agg_list)) {
+                return false;
+            }
+            scratchbird::sblr::v3::Value::Bytes agg_ref_bytes;
+            agg_ref_bytes.reserve(agg_list.size() * sizeof(uint32_t));
+            for (const auto& agg_ref : agg_list) {
+                const auto* id = std::get_if<uint64_t>(&agg_ref.data);
+                if (!id) {
+                    err = "IRX_0402: agg_list entries must be uint64";
+                    return false;
+                }
+                appendLE32(static_cast<uint32_t>(*id), agg_ref_bytes);
+            }
+            out.opcode = op(Opcode::SBLR3_OP_TS_BUCKET_AGG);
+            payload["time_expr"] = scratchbird::sblr::v3::Value(time_expr);
+            payload["bucket_ns"] = scratchbird::sblr::v3::Value(bucket_size);
+            payload["agg_count"] = scratchbird::sblr::v3::Value(static_cast<uint64_t>(agg_list.size()));
+            payload["agg_refs"] = scratchbird::sblr::v3::Value(std::move(agg_ref_bytes));
+            break;
+        }
+        case parser::v3::ASTKind::AST_COL_SCAN_HINT: {
+            uint64_t table_ref = 0;
+            scratchbird::sblr::v3::Value::Bytes projection_set;
+            scratchbird::sblr::v3::Value::Bytes predicate_set;
+            if (!requireU64("table_ref", table_ref) ||
+                !requireBytes("projection_set", projection_set) ||
+                !requireBytes("predicate_set", predicate_set)) {
+                return false;
+            }
+            out.opcode = op(Opcode::SBLR3_OP_COL_SCAN);
+            payload["table_id"] = scratchbird::sblr::v3::Value(table_ref);
+            payload["proj_bitmap"] = scratchbird::sblr::v3::Value(std::move(projection_set));
+            payload["predicate_bitmap"] = scratchbird::sblr::v3::Value(std::move(predicate_set));
+            break;
+        }
+        case parser::v3::ASTKind::AST_SEARCH_QUERY_DSL: {
+            std::string dsl_payload;
+            uint64_t target_index = 0;
+            uint64_t scorer_id = 1;  // BM25 default
+            if (!requireString("dsl_payload_json", dsl_payload) ||
+                !requireU64("target_index", target_index)) {
+                return false;
+            }
+            auto scorer_it = fields.find("scorer_id");
+            if (scorer_it != fields.end()) {
+                const auto* scorer_value = std::get_if<uint64_t>(&scorer_it->second.data);
+                if (!scorer_value) {
+                    err = "IRX_0402: field type mismatch for scorer_id";
+                    return false;
+                }
+                scorer_id = *scorer_value;
+            }
+            out.opcode = op(Opcode::SBLR3_OP_SEARCH_DSL_EVAL);
+            payload["dsl_payload_json"] = scratchbird::sblr::v3::Value(dsl_payload);
+            payload["target_index"] = scratchbird::sblr::v3::Value(target_index);
+            payload["dsl_blob_ref"] = scratchbird::sblr::v3::Value(target_index);
+            payload["scorer_id"] = scratchbird::sblr::v3::Value(scorer_id);
+            break;
+        }
+        case parser::v3::ASTKind::AST_VECTOR_ANN_QUERY: {
+            uint64_t vector_expr = 0;
+            uint64_t metric = 0;
+            uint64_t k = 0;
+            uint64_t ef_search = 0;
+            if (!requireU64("vector_expr", vector_expr) ||
+                !requireU64("metric", metric) ||
+                !requireU64("k", k) ||
+                !requireU64("ef_search", ef_search)) {
+                return false;
+            }
+            out.opcode = op(Opcode::SBLR3_OP_VECTOR_ANN);
+            payload["index_id"] = scratchbird::sblr::v3::Value(vector_expr);
+            payload["metric"] = scratchbird::sblr::v3::Value(metric);
+            payload["topk"] = scratchbird::sblr::v3::Value(k);
+            payload["ef"] = scratchbird::sblr::v3::Value(ef_search);
+            break;
+        }
+        case parser::v3::ASTKind::AST_HYBRID_BRIDGE: {
+            uint64_t source_track = 0;
+            uint64_t target_track = 0;
+            uint64_t bridge_mode = 0;
+            if (!requireU64("source_track", source_track) ||
+                !requireU64("target_track", target_track) ||
+                !requireU64("bridge_mode", bridge_mode)) {
+                return false;
+            }
+            out.opcode = op(Opcode::SBLR3_OP_HYBRID_BRIDGE_EXCHANGE);
+            payload["src_track"] = scratchbird::sblr::v3::Value(source_track);
+            payload["dst_track"] = scratchbird::sblr::v3::Value(target_track);
+            payload["mode"] = scratchbird::sblr::v3::Value(bridge_mode);
+            break;
+        }
+        default:
+            err = "IRX_0401: unknown AST vNext node";
+            return false;
+    }
+
+    out.payload = scratchbird::sblr::v3::Value(std::move(payload));
+    return true;
+}
 
 bool V3Emitter::emitStatementToContainer(parser::v3::Statement* stmt,
                                          scratchbird::sblr::v3::Container& out,
@@ -921,10 +1274,27 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlCreate(parser::v3::Statemen
             payload["include"] = Value(std::move(include));
             if (s->where_clause) payload["predicate"] = Value(makeInstr(emitExpression(s->where_clause)));
             payload["index_type"] = Value(indexTypeName(s->index_type));
-            payload["options"] = Value(Value::Object{
-                {"count", Value(uint64_t(0))},
-                {"key", Value(std::string())},
-                {"value", Value(makeInstr(emitLiteral(nullptr)))}});
+            if (!s->option_assignments.empty()) {
+                payload["options"] = makeOptionKvFromAssignments(pool_,
+                                                                 s->option_assignments);
+            } else {
+                uint64_t option_count = 0;
+                std::string option_key;
+                Instruction option_value = emitLiteral(nullptr);
+                if (s->options.bloom_filter_set) {
+                    option_count++;
+                    option_key = "BLOOM_FILTER";
+                    option_value = makeBoolLiteralInstruction(s->options.bloom_filter_enabled);
+                }
+                if (s->options.bloom_fpr_set) {
+                    if (option_count == 0) {
+                        option_key = "BLOOM_FPR";
+                        option_value = makeDoubleLiteralInstruction(s->options.bloom_fpr);
+                    }
+                    option_count++;
+                }
+                payload["options"] = makeOptionKvPlaceholder(option_count, option_key, option_value);
+            }
             inst.payload = Value(std::move(payload));
             return inst;
         }
@@ -1495,20 +1865,6 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlAlter(parser::v3::Statement
         lit.payload = Value(Value::Object{{"value", Value(text)}});
         return lit;
     };
-    auto makeBoolLiteralInstr = [&](bool value) {
-        Instruction lit;
-        lit.opcode = op(Opcode::SBLR3_LITERAL_BOOLEAN);
-        lit.flags = 0;
-        lit.payload = Value(Value::Object{{"value", Value(value)}});
-        return lit;
-    };
-    auto makeDoubleLiteralInstr = [&](double value) {
-        Instruction lit;
-        lit.opcode = op(Opcode::SBLR3_LITERAL_DOUBLE);
-        lit.flags = 0;
-        lit.payload = Value(Value::Object{{"value", Value(value)}});
-        return lit;
-    };
     auto makeOptionKvPlaceholder = [&](uint64_t count,
                                        const std::string& key,
                                        const Instruction& value_instr) {
@@ -1909,24 +2265,40 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlAlter(parser::v3::Statement
             Value::Object payload;
             payload["index"] = toSchemaPath(s->index_path);
             payload["action"] = Value(uint64_t(static_cast<uint8_t>(s->action)));
-            uint64_t option_count = 0;
-            std::string option_key;
-            Instruction option_value = emitLiteral(nullptr);
-            if (s->action == parser::v3::AlterIndexAction::SET_OPTIONS) {
+            payload["defaults_scope"] = Value(s->defaults_scope);
+            if (s->defaults_scope) {
+                payload["defaults_index_type"] = Value(indexTypeName(s->defaults_index_type));
+            }
+            if (s->has_target_filespace) {
+                payload["target_filespace"] = toSchemaPath(s->target_filespace);
+            }
+            payload["mode"] = Value(uint64_t(static_cast<uint8_t>(s->mode)));
+
+            if (!s->option_assignments.empty()) {
+                payload["options"] = makeOptionKvFromAssignments(pool_,
+                                                                 s->option_assignments);
+            } else if (!s->reset_options.empty()) {
+                payload["options"] = makeOptionKvFromResetList(pool_,
+                                                               s->reset_options,
+                                                               emitLiteral(nullptr));
+            } else {
+                uint64_t option_count = 0;
+                std::string option_key;
+                Instruction option_value = emitLiteral(nullptr);
                 if (s->options.bloom_filter_set) {
                     option_count++;
-                    option_key = "bloom_filter";
-                    option_value = makeBoolLiteralInstr(s->options.bloom_filter_enabled);
+                    option_key = "BLOOM_FILTER";
+                    option_value = makeBoolLiteralInstruction(s->options.bloom_filter_enabled);
                 }
                 if (s->options.bloom_fpr_set) {
                     if (option_count == 0) {
-                        option_key = "bloom_fpr";
-                        option_value = makeDoubleLiteralInstr(s->options.bloom_fpr);
+                        option_key = "BLOOM_FPR";
+                        option_value = makeDoubleLiteralInstruction(s->options.bloom_fpr);
                     }
                     option_count++;
                 }
+                payload["options"] = makeOptionKvPlaceholder(option_count, option_key, option_value);
             }
-            payload["options"] = makeOptionKvPlaceholder(option_count, option_key, option_value);
             inst.payload = Value(std::move(payload));
             return inst;
         }
@@ -2598,7 +2970,13 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitSetShowReset(parser::v3::State
     if (stmt->kind() == parser::v3::ASTKind::AnalyzeStmt) {
         inst.opcode = op(Opcode::SBLR3_ANALYZE);
         auto* s = static_cast<parser::v3::AnalyzeStmt*>(stmt);
-        payload["table_path"] = toSchemaPath(s->table_path);
+        payload["target"] = Value(uint64_t(
+            s->target == parser::v3::AnalyzeStmt::AnalyzeTarget::INDEX ? 2 : 1));
+        if (s->target == parser::v3::AnalyzeStmt::AnalyzeTarget::INDEX) {
+            payload["index_path"] = toSchemaPath(s->index_path);
+        } else {
+            payload["table_path"] = toSchemaPath(s->table_path);
+        }
         if (s->has_column) payload["column"] = toIdent(s->column_name);
         if (s->has_sample) payload["sample_rate"] = Value(s->sample_rate);
         payload["verbose"] = Value(s->verbose);
@@ -2749,6 +3127,31 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitSetShowReset(parser::v3::State
             case parser::v3::ShowStmt::ShowType::INDEX:
                 inst.opcode = op(Opcode::SBLR3_SHOW_INDEX);
                 setKeyFromName();
+                break;
+            case parser::v3::ShowStmt::ShowType::INDEX_HEALTH:
+                inst.opcode = op(Opcode::SBLR3_SHOW_INDEX);
+                setKeyFromName();
+                setValueInstr(makeStringLiteral("HEALTH"));
+                break;
+            case parser::v3::ShowStmt::ShowType::INDEX_USAGE:
+                inst.opcode = op(Opcode::SBLR3_SHOW_INDEX);
+                setKeyFromName();
+                setValueInstr(makeStringLiteral("USAGE"));
+                break;
+            case parser::v3::ShowStmt::ShowType::INDEX_STORAGE:
+                inst.opcode = op(Opcode::SBLR3_SHOW_INDEX);
+                setKeyFromName();
+                setValueInstr(makeStringLiteral("STORAGE"));
+                break;
+            case parser::v3::ShowStmt::ShowType::INDEX_CONTENTION:
+                inst.opcode = op(Opcode::SBLR3_SHOW_INDEX);
+                setKeyFromName();
+                setValueInstr(makeStringLiteral("CONTENTION"));
+                break;
+            case parser::v3::ShowStmt::ShowType::INDEX_OPTIONS:
+                inst.opcode = op(Opcode::SBLR3_SHOW_INDEX);
+                setKeyFromName();
+                setValueInstr(makeStringLiteral("OPTIONS"));
                 break;
             case parser::v3::ShowStmt::ShowType::TRIGGER:
                 inst.opcode = op(Opcode::SBLR3_SHOW_TRIGGER);

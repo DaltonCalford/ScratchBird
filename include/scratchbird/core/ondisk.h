@@ -145,8 +145,94 @@ namespace scratchbird::core
         PAGE_TYPE_REDIS_STREAM = 0x0455,
         PAGE_TYPE_REDIS_BITMAP = 0x0456,
         PAGE_TYPE_REDIS_HLL = 0x0457,
-        PAGE_TYPE_REDIS_GEO = 0x0458
+        PAGE_TYPE_REDIS_GEO = 0x0458,
+
+        // vNext multi-model reserved range (0x2000..0x20FF)
+        PAGE_TYPE_DOC_COLLECTION_ROOT = 0x2000,
+        PAGE_TYPE_DOC_HEAP = 0x2001,
+        PAGE_TYPE_DOC_PATH_DICTIONARY = 0x2002,
+        PAGE_TYPE_DOC_PATH_POSTINGS = 0x2003,
+        PAGE_TYPE_TS_MEASUREMENT_ROOT = 0x2004,
+        PAGE_TYPE_TS_SERIES_INDEX = 0x2005,
+        PAGE_TYPE_TS_CHUNK = 0x2006,
+        PAGE_TYPE_TS_AGG_CACHE = 0x2007,
+        PAGE_TYPE_COL_SEGMENT_HEADER = 0x2008,
+        PAGE_TYPE_COL_SEGMENT_DATA = 0x2009,
+        PAGE_TYPE_COL_ZONE_MAP = 0x200A,
+        PAGE_TYPE_COL_DICTIONARY = 0x200B,
+        PAGE_TYPE_SEARCH_TERM_DICT = 0x200C,
+        PAGE_TYPE_SEARCH_POSTINGS = 0x200D,
+        PAGE_TYPE_SEARCH_DOCVALUES = 0x200E,
+        PAGE_TYPE_VECTOR_GRAPH = 0x200F,
+        PAGE_TYPE_VECTOR_QUANTIZER = 0x2010,
+        PAGE_TYPE_VECTOR_POSTING = 0x2011,
+        PAGE_TYPE_LSM_RUN_MANIFEST = 0x2012,
+        PAGE_TYPE_LSM_RUN_DATA = 0x2013,
+        PAGE_TYPE_LSM_BLOOM = 0x2014,
+        PAGE_TYPE_RETENTION_MANIFEST = 0x2015
     };
+
+    constexpr uint16_t PAGE_TYPE_VNEXT_RANGE_START = 0x2000;
+    constexpr uint16_t PAGE_TYPE_VNEXT_RANGE_END = 0x20FF;
+
+    // vNext layout constants (section 01 vNext physical page contracts).
+    constexpr uint32_t VNEXT_PAGE_SIZE_BYTES = 16384u;
+    constexpr uint16_t VNEXT_PAGE_ALIGNMENT_BYTES = 8u;
+    constexpr uint16_t VNEXT_BASE_HEADER_BYTES = 64u;
+    constexpr uint16_t VNEXT_EXT_HEADER_BYTES = 32u;
+    constexpr uint16_t VNEXT_PAYLOAD_REGION_START = 96u; // 0x60
+    constexpr uint32_t K_MAGIC_SBPG = 0x53425047; // 'SBPG' little-endian
+
+    // CRC32C API (implemented in core).
+    auto crc32cCompute(const uint8_t *data, size_t length, uint32_t initial) -> uint32_t;
+
+    inline auto isVNextPageTypeRange(uint16_t page_type) -> bool
+    {
+        return page_type >= PAGE_TYPE_VNEXT_RANGE_START &&
+               page_type <= PAGE_TYPE_VNEXT_RANGE_END;
+    }
+
+    inline auto isKnownVNextPageType(uint16_t page_type) -> bool
+    {
+        switch (page_type)
+        {
+            case PAGE_TYPE_DOC_COLLECTION_ROOT:
+            case PAGE_TYPE_DOC_HEAP:
+            case PAGE_TYPE_DOC_PATH_DICTIONARY:
+            case PAGE_TYPE_DOC_PATH_POSTINGS:
+            case PAGE_TYPE_TS_MEASUREMENT_ROOT:
+            case PAGE_TYPE_TS_SERIES_INDEX:
+            case PAGE_TYPE_TS_CHUNK:
+            case PAGE_TYPE_TS_AGG_CACHE:
+            case PAGE_TYPE_COL_SEGMENT_HEADER:
+            case PAGE_TYPE_COL_SEGMENT_DATA:
+            case PAGE_TYPE_COL_ZONE_MAP:
+            case PAGE_TYPE_COL_DICTIONARY:
+            case PAGE_TYPE_SEARCH_TERM_DICT:
+            case PAGE_TYPE_SEARCH_POSTINGS:
+            case PAGE_TYPE_SEARCH_DOCVALUES:
+            case PAGE_TYPE_VECTOR_GRAPH:
+            case PAGE_TYPE_VECTOR_QUANTIZER:
+            case PAGE_TYPE_VECTOR_POSTING:
+            case PAGE_TYPE_LSM_RUN_MANIFEST:
+            case PAGE_TYPE_LSM_RUN_DATA:
+            case PAGE_TYPE_LSM_BLOOM:
+            case PAGE_TYPE_RETENTION_MANIFEST:
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    // Unknown page type in reserved vNext range must fail page read validation.
+    inline auto validateVNextPageTypeKnown(uint16_t page_type) -> Status
+    {
+        if (!isVNextPageTypeRange(page_type))
+        {
+            return Status::OK;
+        }
+        return isKnownVNextPageType(page_type) ? Status::OK : Status::PAGE_CORRUPT;
+    }
 
     // Page flags (bitwise OR)
     constexpr uint32_t PAGE_FLAG_DIRTY = 0x0001;          // Page has uncommitted changes
@@ -158,6 +244,64 @@ namespace scratchbird::core
 
 // Fixed 80-byte page header per ON_DISK_FORMAT.md; little-endian integers assumed
 #pragma pack(push, 1)
+    // vNext base header (64 bytes) and extension header (32 bytes).
+    struct VNextBasePageHeader
+    {
+        uint32_t magic;         // 0x00 'SBPG'
+        uint16_t page_type;     // 0x04 PageType
+        uint16_t layout_version;// 0x06
+        uint32_t page_id;       // 0x08
+        uint32_t object_id;     // 0x0C
+        uint64_t logical_epoch; // 0x10
+        uint64_t writer_txid;   // 0x18
+        uint16_t slot_count;    // 0x20
+        uint16_t payload_start; // 0x22 expected 0x60
+        uint16_t free_start;    // 0x24
+        uint16_t free_end;      // 0x26
+        uint16_t page_flags;    // 0x28
+        uint16_t reserved0;     // 0x2A must be zero
+        uint32_t header_crc32c; // 0x2C CRC32C over [0x00..0x2B]
+        uint32_t page_crc32c;   // 0x30 CRC32C over page with this field zeroed
+        uint32_t reserved1;     // 0x34 must be zero
+        uint64_t reserved2;     // 0x38 must be zero
+    };
+
+    struct VNextExtensionHeader
+    {
+        uint16_t ext_version;      // 0x40
+        uint16_t ext_flags;        // 0x42
+        uint64_t min_visible_txid; // 0x44
+        uint64_t max_visible_txid; // 0x4C
+        uint64_t owner_txid;       // 0x54
+        uint32_t payload_crc32c;   // 0x5C
+    };
+
+    struct VNextSlotDirectoryEntry
+    {
+        uint16_t slot_offset;
+        uint16_t slot_len;
+        uint16_t slot_flags;
+        uint16_t slot_reserved;
+    };
+
+    enum class VNextPointerSwapState : uint8_t
+    {
+        PREPARE = 0,
+        COMMITTED = 1
+    };
+
+    // Root/manifest slot record for atomic publish in vNext no-WAL flow.
+    struct VNextPointerSwapRecord
+    {
+        uint64_t swap_epoch;    // +0x00
+        uint32_t old_page_id;   // +0x08
+        uint32_t new_page_id;   // +0x0C
+        uint64_t owner_txid;    // +0x10
+        uint32_t record_crc32c; // +0x18
+        uint8_t state;          // +0x1C
+        uint8_t reserved[3];    // +0x1D
+    };
+
     struct PageHeader
     {
         uint32_t magic;        // 0x00 'SBRD'
@@ -178,7 +322,132 @@ namespace scratchbird::core
     };
 #pragma pack(pop)
 
+static_assert(sizeof(VNextBasePageHeader) == 64,
+              "VNextBasePageHeader must be exactly 64 bytes");
+static_assert(sizeof(VNextExtensionHeader) == 32,
+              "VNextExtensionHeader must be exactly 32 bytes");
+static_assert(sizeof(VNextSlotDirectoryEntry) == 8,
+              "VNextSlotDirectoryEntry must be exactly 8 bytes");
+static_assert(sizeof(VNextPointerSwapRecord) == 32,
+              "VNextPointerSwapRecord must be exactly 32 bytes");
 static_assert(sizeof(PageHeader) == 80, "PageHeader must be exactly 80 bytes per ON_DISK_FORMAT.md");
+
+    inline auto isValidVNextPageHeaderBounds(const VNextBasePageHeader &header,
+                                             uint32_t page_size = VNEXT_PAGE_SIZE_BYTES) -> bool
+    {
+        if (header.magic != K_MAGIC_SBPG)
+        {
+            return false;
+        }
+        if (header.payload_start != VNEXT_PAYLOAD_REGION_START)
+        {
+            return false;
+        }
+        if (header.free_start < header.payload_start)
+        {
+            return false;
+        }
+        if (header.free_start > header.free_end)
+        {
+            return false;
+        }
+        if (header.free_end > page_size)
+        {
+            return false;
+        }
+        if (header.reserved0 != 0u || header.reserved1 != 0u || header.reserved2 != 0u)
+        {
+            return false;
+        }
+        return true;
+    }
+
+    inline auto isValidVNextVisibilityRange(const VNextExtensionHeader &ext) -> bool
+    {
+        if (ext.min_visible_txid == 0u && ext.max_visible_txid == 0u)
+        {
+            return true;
+        }
+        return ext.min_visible_txid <= ext.max_visible_txid;
+    }
+
+    inline auto isValidVNextSlotDirectoryEntry(const VNextSlotDirectoryEntry &slot,
+                                               uint32_t page_size = VNEXT_PAGE_SIZE_BYTES) -> bool
+    {
+        if (slot.slot_reserved != 0u)
+        {
+            return false;
+        }
+        if ((slot.slot_offset % VNEXT_PAGE_ALIGNMENT_BYTES) != 0u)
+        {
+            return false;
+        }
+        if (slot.slot_offset < VNEXT_PAYLOAD_REGION_START)
+        {
+            return false;
+        }
+        const uint32_t end = static_cast<uint32_t>(slot.slot_offset) +
+                             static_cast<uint32_t>(slot.slot_len);
+        return end <= page_size;
+    }
+
+    inline auto computeVNextPointerSwapRecordCrc32c(const VNextPointerSwapRecord &record) -> uint32_t
+    {
+        VNextPointerSwapRecord copy = record;
+        copy.record_crc32c = 0u;
+        return crc32cCompute(reinterpret_cast<const uint8_t *>(&copy), sizeof(copy), 0u);
+    }
+
+    inline auto isValidVNextPointerSwapRecord(const VNextPointerSwapRecord &record) -> bool
+    {
+        if (record.state > static_cast<uint8_t>(VNextPointerSwapState::COMMITTED))
+        {
+            return false;
+        }
+        if (record.reserved[0] != 0u || record.reserved[1] != 0u || record.reserved[2] != 0u)
+        {
+            return false;
+        }
+        return record.record_crc32c == computeVNextPointerSwapRecordCrc32c(record);
+    }
+
+    inline auto selectVNextAuthoritativeSwapSlot(const VNextPointerSwapRecord &slot0,
+                                                 const VNextPointerSwapRecord &slot1,
+                                                 uint8_t &selected_slot) -> Status
+    {
+        const bool slot0_valid = isValidVNextPointerSwapRecord(slot0) &&
+                                 slot0.state == static_cast<uint8_t>(VNextPointerSwapState::COMMITTED);
+        const bool slot1_valid = isValidVNextPointerSwapRecord(slot1) &&
+                                 slot1.state == static_cast<uint8_t>(VNextPointerSwapState::COMMITTED);
+
+        if (slot0_valid && !slot1_valid)
+        {
+            selected_slot = 0u;
+            return Status::OK;
+        }
+        if (!slot0_valid && slot1_valid)
+        {
+            selected_slot = 1u;
+            return Status::OK;
+        }
+        if (!slot0_valid && !slot1_valid)
+        {
+            return Status::PAGE_CORRUPT;
+        }
+
+        if (slot0.swap_epoch > slot1.swap_epoch)
+        {
+            selected_slot = 0u;
+            return Status::OK;
+        }
+        if (slot1.swap_epoch > slot0.swap_epoch)
+        {
+            selected_slot = 1u;
+            return Status::OK;
+        }
+
+        return Status::PAGE_CORRUPT;
+    }
 
     // Canonical fixed bootstrap page map (section 06).
     constexpr uint32_t BOOTSTRAP_PAGE_DATABASE_HEADER = 0;

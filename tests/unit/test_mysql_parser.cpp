@@ -490,6 +490,9 @@ TEST_F(MySQLParserTest, IndexAlgorithmGuardrails) {
     expectSuccess("CREATE TABLE test (id INT, INDEX idx USING BTREE (id))");
     expectSuccess("CREATE TABLE test (id INT, INDEX idx (id) USING HASH)");
     expectError("CREATE TABLE test (id INT, INDEX idx (id) USING GIN)");
+    expectSuccess("CREATE INDEX idx_users_id ON users (id)");
+    expectError("CREATE INDEX idx_users_id_gin ON users (id) USING GIN");
+    expectError("CREATE INDEX idx_users_id_ivf ON users (id) USING IVF");
 }
 
 TEST_F(MySQLParserTest, RejectDomainStatements) {

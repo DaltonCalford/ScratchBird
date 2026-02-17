@@ -225,6 +225,32 @@ namespace scratchbird::core
             }
         }
 
+        status = normalizeStartupTipStates(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        if (!prepared_xids_.empty())
+        {
+            uint64_t prepared_min = UINT64_MAX;
+            for (const auto &prepared_xid : prepared_xids_)
+            {
+                prepared_min = std::min(prepared_min, prepared_xid);
+            }
+            oldest_active_xid_ = (prepared_min == UINT64_MAX) ? 0 : prepared_min;
+        }
+        else
+        {
+            oldest_active_xid_ = 0;
+        }
+        oldest_snapshot_ = 0;
+        status = persistTransactionMarkersLocked(ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
         return Status::OK;
     }
 
@@ -236,7 +262,7 @@ namespace scratchbird::core
         if (status != Status::OK)
         {
             // TIP page should exist if tip_root_page_ is non-zero
-            SET_ERROR_CONTEXT(ctx, status, "Failed to load TIP page");
+            SET_ERROR_CONTEXT_VNEXT(ctx, status, "TXN_0215", "Failed to load TIP page");
             return status;
         }
 
@@ -245,7 +271,8 @@ namespace scratchbird::core
         if (tip_header->page_header.page_type != PAGE_TYPE_TRANSACTION_MAP)
         {
             buffer_pool_->unpinPage(page_id, false, ctx);
-            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Invalid page type for TIP page");
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "TXN_0215",
+                                    "Invalid page type for TIP page");
             return Status::PAGE_CORRUPT;
         }
 
@@ -380,6 +407,34 @@ namespace scratchbird::core
     auto TransactionManager::commitTransaction(uint32_t proc_id, uint64_t xid, ErrorContext *ctx)
         -> Status
     {
+        TransactionState current_state = TransactionState::ACTIVE;
+        Status state_status = getTransactionState(xid, current_state, ctx);
+        if (state_status != Status::OK)
+        {
+            return state_status;
+        }
+        if (current_state != TransactionState::ACTIVE)
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_ARGUMENT, "TXN_0201",
+                                    "Commit requires ACTIVE transaction state");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        TIPEntry tip_entry{};
+        Status tip_status = findTipEntry(xid, tip_entry, ctx);
+        if (tip_status != Status::OK)
+        {
+            return tip_status;
+        }
+
+        TransactionState tip_state = TransactionState::ACTIVE;
+        if (!decodeTipState(tip_entry.state, tip_state) || tip_state != TransactionState::ACTIVE)
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_ARGUMENT, "TXN_0201",
+                                    "Commit requires TIP ACTIVE state");
+            return Status::INVALID_ARGUMENT;
+        }
+
         Status status;
 
         // Perform pre-commit work within mutex
@@ -558,8 +613,22 @@ namespace scratchbird::core
 
         if (state != TransactionState::ACTIVE)
         {
-            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                              "Transaction is not active; cannot prepare");
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_ARGUMENT, "TXN_0210",
+                                    "Transaction is not active; cannot prepare");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        TIPEntry tip_entry{};
+        status = findTipEntry(xid, tip_entry, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        TransactionState tip_state = TransactionState::ACTIVE;
+        if (!decodeTipState(tip_entry.state, tip_state) || tip_state != TransactionState::ACTIVE)
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_ARGUMENT, "TXN_0204",
+                                    "Prepare requires TIP ACTIVE state");
             return Status::INVALID_ARGUMENT;
         }
 
@@ -683,8 +752,22 @@ namespace scratchbird::core
         }
         if (state != TransactionState::PREPARED)
         {
-            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                              "Prepared transaction is not in PREPARED state");
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_ARGUMENT, "TXN_0212",
+                                    "Prepared transaction is not in PREPARED state");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        TIPEntry tip_entry{};
+        status = findTipEntry(info.txn_id, tip_entry, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        TransactionState tip_state = TransactionState::ACTIVE;
+        if (!decodeTipState(tip_entry.state, tip_state) || tip_state != TransactionState::PREPARED)
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_ARGUMENT, "TXN_0204",
+                                    "Commit prepared requires TIP PREPARED state");
             return Status::INVALID_ARGUMENT;
         }
 
@@ -789,8 +872,22 @@ namespace scratchbird::core
         }
         if (state != TransactionState::PREPARED)
         {
-            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                              "Prepared transaction is not in PREPARED state");
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_ARGUMENT, "TXN_0212",
+                                    "Prepared transaction is not in PREPARED state");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        TIPEntry tip_entry{};
+        status = findTipEntry(info.txn_id, tip_entry, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        TransactionState tip_state = TransactionState::ACTIVE;
+        if (!decodeTipState(tip_entry.state, tip_state) || tip_state != TransactionState::PREPARED)
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_ARGUMENT, "TXN_0204",
+                                    "Rollback prepared requires TIP PREPARED state");
             return Status::INVALID_ARGUMENT;
         }
 
@@ -865,6 +962,34 @@ namespace scratchbird::core
     auto TransactionManager::rollbackTransaction(uint32_t proc_id, uint64_t xid, ErrorContext *ctx)
         -> Status
     {
+        TransactionState current_state = TransactionState::ACTIVE;
+        Status state_status = getTransactionState(xid, current_state, ctx);
+        if (state_status != Status::OK)
+        {
+            return state_status;
+        }
+        if (current_state != TransactionState::ACTIVE)
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_ARGUMENT, "TXN_0201",
+                                    "Rollback requires ACTIVE transaction state");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        TIPEntry tip_entry{};
+        Status tip_status = findTipEntry(xid, tip_entry, ctx);
+        if (tip_status != Status::OK)
+        {
+            return tip_status;
+        }
+
+        TransactionState tip_state = TransactionState::ACTIVE;
+        if (!decodeTipState(tip_entry.state, tip_state) || tip_state != TransactionState::ACTIVE)
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_ARGUMENT, "TXN_0201",
+                                    "Rollback requires TIP ACTIVE state");
+            return Status::INVALID_ARGUMENT;
+        }
+
         Status status;
 
         // Perform pre-rollback work within mutex
@@ -1428,6 +1553,150 @@ namespace scratchbird::core
         return (state == TransactionState::COMMITTED);
     }
 
+    auto TransactionManager::captureSnapshot(TransactionSnapshot &snapshot_out, ErrorContext *ctx)
+        -> Status
+    {
+        snapshot_out.active_txid_set.clear();
+
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            snapshot_out.snapshot_txid_high = next_xid_.load(std::memory_order_acquire);
+        }
+        snapshot_out.snapshot_commit_seqno_high = 0;
+
+        std::lock_guard<std::mutex> tip_guard(tip_io_mutex_);
+        uint32_t current_page = tip_root_page_;
+
+        while (current_page != 0)
+        {
+            void *page_buffer = nullptr;
+            Status status = buffer_pool_->pinPage(current_page, &page_buffer, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            auto *tip_header = static_cast<TIPPageHeader *>(page_buffer);
+            if (tip_header->page_header.page_type != PAGE_TYPE_TRANSACTION_MAP)
+            {
+                buffer_pool_->unpinPage(current_page, false, ctx);
+                SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "TXN_0206",
+                                        "Invalid TIP page during snapshot");
+                return Status::PAGE_CORRUPT;
+            }
+
+            auto *entries = reinterpret_cast<TIPEntry *>(
+                reinterpret_cast<uint8_t *>(page_buffer) + sizeof(TIPPageHeader));
+
+            for (uint32_t i = 0; i < tip_header->num_transactions; ++i)
+            {
+                if (entries[i].xid >= snapshot_out.snapshot_txid_high)
+                {
+                    continue;
+                }
+                TransactionState state = TransactionState::ACTIVE;
+                if (!decodeTipState(entries[i].state, state))
+                {
+                    buffer_pool_->unpinPage(current_page, false, ctx);
+                    SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "TXN_0207",
+                                            "Invalid TIP state byte");
+                    return Status::PAGE_CORRUPT;
+                }
+                if (state == TransactionState::ACTIVE || state == TransactionState::PREPARED)
+                {
+                    snapshot_out.active_txid_set.push_back(entries[i].xid);
+                }
+            }
+
+            uint32_t page_to_unpin = current_page;
+            current_page = tip_header->next_tip_page;
+            buffer_pool_->unpinPage(page_to_unpin, false, ctx);
+        }
+
+        std::sort(snapshot_out.active_txid_set.begin(), snapshot_out.active_txid_set.end());
+        snapshot_out.active_txid_set.erase(
+            std::unique(snapshot_out.active_txid_set.begin(), snapshot_out.active_txid_set.end()),
+            snapshot_out.active_txid_set.end());
+
+        return Status::OK;
+    }
+
+    auto TransactionManager::isCreateVisibleInSnapshot(uint64_t create_xid, uint64_t reader_xid,
+                                                       const TransactionSnapshot &snapshot)
+        -> bool
+    {
+        if (create_xid == reader_xid)
+        {
+            return true;
+        }
+
+        if (create_xid <= FROZEN_XID)
+        {
+            return true;
+        }
+
+        if (create_xid >= snapshot.snapshot_txid_high)
+        {
+            return false;
+        }
+
+        TransactionState state = TransactionState::ACTIVE;
+        Status status = getTransactionState(create_xid, state, nullptr);
+        if (status != Status::OK || state != TransactionState::COMMITTED)
+        {
+            return false;
+        }
+
+        if (snapshotHasActiveXid(snapshot, create_xid))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    auto TransactionManager::isRecordVersionVisibleInSnapshot(uint64_t create_xid,
+                                                              uint64_t delete_xid,
+                                                              uint64_t reader_xid,
+                                                              const TransactionSnapshot &snapshot)
+        -> bool
+    {
+        if (!isCreateVisibleInSnapshot(create_xid, reader_xid, snapshot))
+        {
+            return false;
+        }
+
+        if (delete_xid == 0)
+        {
+            return true;
+        }
+
+        if (delete_xid == reader_xid)
+        {
+            return false;
+        }
+
+        if (delete_xid >= snapshot.snapshot_txid_high)
+        {
+            return true;
+        }
+
+        TransactionState delete_state = TransactionState::ACTIVE;
+        Status status = getTransactionState(delete_xid, delete_state, nullptr);
+        if (status != Status::OK)
+        {
+            return true;
+        }
+
+        if (delete_state == TransactionState::COMMITTED &&
+            !snapshotHasActiveXid(snapshot, delete_xid))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
     auto TransactionManager::isVersionVisible(uint64_t version_xid, uint64_t reader_xid) -> bool
     {
         // ===========================================================================================
@@ -1988,6 +2257,132 @@ namespace scratchbird::core
     {
         // Ensure all transaction state is persisted
         return db_->sync(ctx);
+    }
+
+    auto TransactionManager::normalizeStartupTipStates(ErrorContext *ctx) -> Status
+    {
+        std::lock_guard<std::mutex> tip_guard(tip_io_mutex_);
+
+        uint32_t current_page = tip_root_page_;
+        bool any_mutation = false;
+        const uint64_t next_xid = next_xid_.load(std::memory_order_acquire);
+
+        while (current_page != 0)
+        {
+            void *page_buffer = nullptr;
+            Status status = buffer_pool_->pinPage(current_page, &page_buffer, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            auto *tip_header = static_cast<TIPPageHeader *>(page_buffer);
+            if (tip_header->page_header.page_type != PAGE_TYPE_TRANSACTION_MAP)
+            {
+                buffer_pool_->unpinPage(current_page, false, ctx);
+                SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "TXN_0215",
+                                        "Invalid TIP page during startup normalization");
+                return Status::PAGE_CORRUPT;
+            }
+
+            bool page_mutation = false;
+            auto *entries = reinterpret_cast<TIPEntry *>(
+                reinterpret_cast<uint8_t *>(page_buffer) + sizeof(TIPPageHeader));
+
+            for (uint32_t i = 0; i < tip_header->num_transactions; ++i)
+            {
+                TransactionState state = TransactionState::ACTIVE;
+                if (!decodeTipState(entries[i].state, state))
+                {
+                    buffer_pool_->unpinPage(current_page, false, ctx);
+                    SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "TXN_0215",
+                                            "Invalid TIP state byte during startup normalization");
+                    return Status::PAGE_CORRUPT;
+                }
+
+                if (state == TransactionState::ACTIVE && entries[i].xid < next_xid)
+                {
+                    entries[i].state = static_cast<uint8_t>(TransactionState::ABORTED);
+                    entries[i].commit_time = nowMicros();
+                    page_mutation = true;
+                    any_mutation = true;
+
+                    auto cache_it = transaction_cache_.find(entries[i].xid);
+                    if (cache_it != transaction_cache_.end())
+                    {
+                        cache_it->second = TransactionState::ABORTED;
+                        touchCacheEntry(entries[i].xid);
+                    }
+                    else
+                    {
+                        addToCacheLRU(entries[i].xid, TransactionState::ABORTED);
+                    }
+                }
+            }
+
+            if (page_mutation)
+            {
+                tip_header->page_header.checksum = calculatePageChecksum(
+                    reinterpret_cast<uint8_t *>(page_buffer), db_->page_size());
+            }
+
+            uint32_t page_to_unpin = current_page;
+            current_page = tip_header->next_tip_page;
+            buffer_pool_->unpinPage(page_to_unpin, page_mutation, ctx);
+        }
+
+        if (any_mutation)
+        {
+            return db_->sync(ctx);
+        }
+        return Status::OK;
+    }
+
+    auto TransactionManager::persistTransactionMarkersLocked(ErrorContext *ctx) -> Status
+    {
+        void *header_buffer = nullptr;
+        Status status = buffer_pool_->pinPage(0, &header_buffer, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        auto *db_header = static_cast<DatabaseHeader *>(header_buffer);
+        db_header->oldest_active_xid = oldest_active_xid_;
+        db_header->oldest_snapshot = oldest_snapshot_;
+        db_header->page_header.checksum = calculatePageChecksum(
+            reinterpret_cast<uint8_t *>(db_header), db_->page_size());
+
+        buffer_pool_->unpinPage(0, true, ctx);
+        return Status::OK;
+    }
+
+    auto TransactionManager::decodeTipState(uint8_t tip_state, TransactionState &state_out) -> bool
+    {
+        switch (tip_state)
+        {
+            case static_cast<uint8_t>(TransactionState::ACTIVE):
+                state_out = TransactionState::ACTIVE;
+                return true;
+            case static_cast<uint8_t>(TransactionState::COMMITTED):
+                state_out = TransactionState::COMMITTED;
+                return true;
+            case static_cast<uint8_t>(TransactionState::ABORTED):
+                state_out = TransactionState::ABORTED;
+                return true;
+            case static_cast<uint8_t>(TransactionState::PREPARED):
+                state_out = TransactionState::PREPARED;
+                return true;
+            default:
+                return false;
+        }
+    }
+
+    auto TransactionManager::snapshotHasActiveXid(const TransactionSnapshot &snapshot,
+                                                  uint64_t xid) -> bool
+    {
+        return std::binary_search(snapshot.active_txid_set.begin(),
+                                  snapshot.active_txid_set.end(), xid);
     }
 
     void TransactionManager::touchCacheEntry(uint64_t xid) const

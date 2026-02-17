@@ -51,7 +51,7 @@ TEST(BytecodeOpcodesTest, AllIndexOpcodesAreDefined)
 }
 
 /**
- * Test IndexType enum has all 12 index types
+ * Test IndexType enum has all canonical index types used by the runtime
  */
 TEST(BytecodeOpcodesTest, AllIndexTypesAreDefined)
 {
@@ -67,6 +67,51 @@ TEST(BytecodeOpcodesTest, AllIndexTypesAreDefined)
     EXPECT_EQ(static_cast<uint8_t>(IndexType::BITMAP), 0x09);
     EXPECT_EQ(static_cast<uint8_t>(IndexType::COLUMNSTORE), 0x0A);
     EXPECT_EQ(static_cast<uint8_t>(IndexType::LSM), 0x0B);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::IVF), 0x0C);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::ZONEMAP), 0x0D);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::ART), 0x0E);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::BLOOM), 0x0F);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::VECTOR_FLAT), 0x10);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::VECTOR_BIN_FLAT), 0x11);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::IVF_FLAT), 0x12);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::BIN_IVF_FLAT), 0x13);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::IVF_PQ), 0x14);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::IVF_SQ8), 0x15);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::IVF_SQ8_HYBRID), 0x16);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::RHNSW_PQ), 0x17);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::RHNSW_SQ), 0x18);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::ANNOY), 0x19);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::NSG), 0x1A);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::DISKANN), 0x1B);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::SCANN), 0x1C);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::GPU_CAGRA), 0x1D);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::MINHASH_LSH), 0x1E);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::SPARSE_INVERTED), 0x1F);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::SPARSE_WAND), 0x20);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::TRIE), 0x21);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::NGRAM), 0x24);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::MONGODB_2D), 0x25);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::MONGODB_2DSPHERE), 0x26);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::MONGODB_2DSPHERE_BUCKET), 0x27);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::MONGODB_GEO_HAYSTACK), 0x28);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::MONGODB_WILDCARD), 0x29);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::MONGODB_ENCRYPTED_RANGE), 0x2A);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::NEO4J_LOOKUP), 0x2B);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::NEO4J_TEXT), 0x2C);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::NEO4J_RANGE), 0x2D);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::NEO4J_POINT), 0x2E);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::NEO4J_VECTOR), 0x2F);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::CASSANDRA_SASI), 0x30);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::CASSANDRA_SAI), 0x31);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::REDIS_STRING), 0x32);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::REDIS_HASH), 0x33);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::REDIS_LIST), 0x34);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::REDIS_SET), 0x35);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::REDIS_ZSET), 0x36);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::REDIS_STREAM), 0x37);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::REDIS_BITMAP), 0x38);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::REDIS_HLL), 0x39);
+    EXPECT_EQ(static_cast<uint8_t>(IndexType::REDIS_GEO), 0x3A);
 }
 
 /**

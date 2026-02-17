@@ -36,6 +36,47 @@ static std::vector<uint8_t> int128ToBytes(int128_t value)
     return bytes;
 }
 
+static void appendU16(std::vector<uint8_t>& out, uint16_t value)
+{
+    out.push_back(static_cast<uint8_t>(value & 0xFFu));
+    out.push_back(static_cast<uint8_t>((value >> 8) & 0xFFu));
+}
+
+static void appendU32(std::vector<uint8_t>& out, uint32_t value)
+{
+    out.push_back(static_cast<uint8_t>(value & 0xFFu));
+    out.push_back(static_cast<uint8_t>((value >> 8) & 0xFFu));
+    out.push_back(static_cast<uint8_t>((value >> 16) & 0xFFu));
+    out.push_back(static_cast<uint8_t>((value >> 24) & 0xFFu));
+}
+
+static void appendU64(std::vector<uint8_t>& out, uint64_t value)
+{
+    for (int i = 0; i < 8; ++i)
+    {
+        out.push_back(static_cast<uint8_t>((value >> (i * 8)) & 0xFFu));
+    }
+}
+
+static void appendI64(std::vector<uint8_t>& out, int64_t value)
+{
+    appendU64(out, static_cast<uint64_t>(value));
+}
+
+static void appendUleb128(std::vector<uint8_t>& out, uint64_t value)
+{
+    do
+    {
+        uint8_t byte = static_cast<uint8_t>(value & 0x7Fu);
+        value >>= 7;
+        if (value != 0)
+        {
+            byte |= 0x80u;
+        }
+        out.push_back(byte);
+    } while (value != 0);
+}
+
 template<typename T>
 void testSerializationRoundTrip(const TypedValue& original,
                                 DataType expected_type,
@@ -1050,6 +1091,198 @@ TEST(TypeSerializationTest, GEOMETRYCOLLECTION_Serialization)
     EXPECT_EQ(expected_size, static_cast<uint32_t>(serialized.size()));
 }
 
+TEST(TypeSerializationTest, VNext_TIMESTAMP_NS_RoundTrip)
+{
+    std::vector<uint8_t> payload;
+    appendI64(payload, -1234567890123456789LL);
+
+    ErrorContext ctx;
+    auto decoded = TypeSerializer::deserialize(DataType::TIMESTAMP_NS,
+                                               payload.data(),
+                                               static_cast<uint32_t>(payload.size()),
+                                               &ctx);
+    ASSERT_TRUE(decoded.has_value()) << ctx.message;
+    EXPECT_EQ(decoded->type(), DataType::TIMESTAMP_NS);
+    EXPECT_EQ(decoded->getTimestamp(), -1234567890123456789LL);
+
+    auto reserialized = TypeSerializer::serialize(*decoded);
+    EXPECT_EQ(reserialized, payload);
+}
+
+TEST(TypeSerializationTest, VNext_INT256_UINT256_RoundTrip)
+{
+    std::vector<uint8_t> int256_payload(32, 0xFFu);
+    int256_payload[0] = 0x2Au;
+    int256_payload[31] = 0x80u;
+
+    std::vector<uint8_t> uint256_payload(32, 0x00u);
+    for (size_t i = 0; i < uint256_payload.size(); ++i)
+    {
+        uint256_payload[i] = static_cast<uint8_t>(i);
+    }
+
+    ErrorContext ctx;
+    auto int256_decoded = TypeSerializer::deserialize(DataType::INT256,
+                                                      int256_payload.data(),
+                                                      static_cast<uint32_t>(int256_payload.size()),
+                                                      &ctx);
+    ASSERT_TRUE(int256_decoded.has_value()) << ctx.message;
+    EXPECT_EQ(TypeSerializer::serialize(*int256_decoded), int256_payload);
+
+    auto uint256_decoded = TypeSerializer::deserialize(DataType::UINT256,
+                                                       uint256_payload.data(),
+                                                       static_cast<uint32_t>(uint256_payload.size()),
+                                                       &ctx);
+    ASSERT_TRUE(uint256_decoded.has_value()) << ctx.message;
+    EXPECT_EQ(TypeSerializer::serialize(*uint256_decoded), uint256_payload);
+}
+
+TEST(TypeSerializationTest, VNext_DECIMAL256_RoundTrip)
+{
+    std::vector<uint8_t> payload;
+    appendU16(payload, 76);
+    appendU16(payload, 12);
+    for (size_t i = 0; i < 32; ++i)
+    {
+        payload.push_back(static_cast<uint8_t>(0xA0u + (i & 0x0Fu)));
+    }
+
+    ErrorContext ctx;
+    auto decoded = TypeSerializer::deserialize(DataType::DECIMAL256,
+                                               payload.data(),
+                                               static_cast<uint32_t>(payload.size()),
+                                               &ctx);
+    ASSERT_TRUE(decoded.has_value()) << ctx.message;
+    EXPECT_EQ(TypeSerializer::serialize(*decoded), payload);
+}
+
+TEST(TypeSerializationTest, VNext_TAGGED_UNION_RoundTrip_AndRejectBadLength)
+{
+    std::vector<uint8_t> payload;
+    appendU16(payload, 1);
+    appendUleb128(payload, 3);
+    payload.push_back(0xDEu);
+    payload.push_back(0xADu);
+    payload.push_back(0xBEu);
+
+    ErrorContext ctx;
+    auto decoded = TypeSerializer::deserialize(DataType::TAGGED_UNION,
+                                               payload.data(),
+                                               static_cast<uint32_t>(payload.size()),
+                                               &ctx);
+    ASSERT_TRUE(decoded.has_value()) << ctx.message;
+    EXPECT_EQ(TypeSerializer::serialize(*decoded), payload);
+
+    std::vector<uint8_t> invalid = payload;
+    invalid[2] = 4; // encoded length does not match payload bytes.
+    auto rejected = TypeSerializer::deserialize(DataType::TAGGED_UNION,
+                                                invalid.data(),
+                                                static_cast<uint32_t>(invalid.size()),
+                                                &ctx);
+    EXPECT_FALSE(rejected.has_value());
+    EXPECT_EQ(ctx.code, Status::DATA_CORRUPTED);
+}
+
+TEST(TypeSerializationTest, VNext_DICT_ENCODED_RoundTrip)
+{
+    std::vector<uint8_t> payload;
+    appendU32(payload, 0x11223344u);
+    appendU32(payload, 0x55667788u);
+
+    ErrorContext ctx;
+    auto decoded = TypeSerializer::deserialize(DataType::DICT_ENCODED,
+                                               payload.data(),
+                                               static_cast<uint32_t>(payload.size()),
+                                               &ctx);
+    ASSERT_TRUE(decoded.has_value()) << ctx.message;
+    EXPECT_EQ(TypeSerializer::serialize(*decoded), payload);
+}
+
+TEST(TypeSerializationTest, VNext_COMPLETION_FIELD_RoundTrip_AndRejectOversize)
+{
+    const std::string token = "prefix-token";
+    std::vector<uint8_t> payload;
+    appendU32(payload, static_cast<uint32_t>(token.size()));
+    payload.insert(payload.end(), token.begin(), token.end());
+
+    ErrorContext ctx;
+    auto decoded = TypeSerializer::deserialize(DataType::COMPLETION_FIELD,
+                                               payload.data(),
+                                               static_cast<uint32_t>(payload.size()),
+                                               &ctx);
+    ASSERT_TRUE(decoded.has_value()) << ctx.message;
+    EXPECT_EQ(decoded->toString(), token);
+    EXPECT_EQ(TypeSerializer::serialize(*decoded), payload);
+
+    std::vector<uint8_t> too_large;
+    appendU32(too_large, 4097u);
+    too_large.resize(too_large.size() + 4097u, static_cast<uint8_t>('a'));
+    auto rejected = TypeSerializer::deserialize(DataType::COMPLETION_FIELD,
+                                                too_large.data(),
+                                                static_cast<uint32_t>(too_large.size()),
+                                                &ctx);
+    EXPECT_FALSE(rejected.has_value());
+    EXPECT_EQ(ctx.code, Status::DATA_CORRUPTED);
+}
+
+TEST(TypeSerializationTest, VNext_PREFIX_SEARCH_FIELD_RoundTrip_AndRejectBadUtf8)
+{
+    const std::string token = "search-token";
+    std::vector<uint8_t> payload;
+    appendU32(payload, static_cast<uint32_t>(token.size()));
+    payload.insert(payload.end(), token.begin(), token.end());
+    appendU64(payload, 0xABCDEF0123456789ULL);
+
+    ErrorContext ctx;
+    auto decoded = TypeSerializer::deserialize(DataType::PREFIX_SEARCH_FIELD,
+                                               payload.data(),
+                                               static_cast<uint32_t>(payload.size()),
+                                               &ctx);
+    ASSERT_TRUE(decoded.has_value()) << ctx.message;
+    EXPECT_EQ(TypeSerializer::serialize(*decoded), payload);
+
+    std::vector<uint8_t> invalid_utf8;
+    appendU32(invalid_utf8, 1u);
+    invalid_utf8.push_back(0xFFu);
+    appendU64(invalid_utf8, 0u);
+    auto rejected = TypeSerializer::deserialize(DataType::PREFIX_SEARCH_FIELD,
+                                                invalid_utf8.data(),
+                                                static_cast<uint32_t>(invalid_utf8.size()),
+                                                &ctx);
+    EXPECT_FALSE(rejected.has_value());
+    EXPECT_EQ(ctx.code, Status::DATA_CORRUPTED);
+}
+
+TEST(TypeSerializationTest, VNext_FLAT_OBJECT_RoundTrip_AndRejectTruncated)
+{
+    std::vector<uint8_t> payload;
+    appendU32(payload, 1u);          // pair_count
+    appendU32(payload, 3u);          // key_len
+    payload.push_back('f');
+    payload.push_back('o');
+    payload.push_back('o');
+    appendU16(payload, static_cast<uint16_t>(DataType::INT32));
+    appendU32(payload, 4u);          // value_len
+    appendU32(payload, 7u);          // value payload
+
+    ErrorContext ctx;
+    auto decoded = TypeSerializer::deserialize(DataType::FLAT_OBJECT,
+                                               payload.data(),
+                                               static_cast<uint32_t>(payload.size()),
+                                               &ctx);
+    ASSERT_TRUE(decoded.has_value()) << ctx.message;
+    EXPECT_EQ(TypeSerializer::serialize(*decoded), payload);
+
+    std::vector<uint8_t> truncated = payload;
+    truncated.pop_back();
+    auto rejected = TypeSerializer::deserialize(DataType::FLAT_OBJECT,
+                                                truncated.data(),
+                                                static_cast<uint32_t>(truncated.size()),
+                                                &ctx);
+    EXPECT_FALSE(rejected.has_value());
+    EXPECT_EQ(ctx.code, Status::DATA_CORRUPTED);
+}
+
 // ===== Error Handling Tests =====
 
 TEST(TypeSerializationTest, Deserialize_NullData)
@@ -1068,6 +1301,28 @@ TEST(TypeSerializationTest, Deserialize_InsufficientData)
     // Try to deserialize INT32 with only 2 bytes (needs 4)
     auto result = TypeSerializer::deserialize(DataType::INT32, data, 2, &ctx);
     EXPECT_FALSE(result.has_value());
+    EXPECT_EQ(ctx.code, Status::INVALID_ARGUMENT);
+}
+
+TEST(TypeSerializationTest, Deserialize_InsufficientData_VNextMinSizePrecheck)
+{
+    uint8_t short_buf[35] = {0};
+    ErrorContext ctx;
+
+    auto ts_ns = TypeSerializer::deserialize(DataType::TIMESTAMP_NS, short_buf, 7, &ctx);
+    EXPECT_FALSE(ts_ns.has_value());
+    EXPECT_EQ(ctx.code, Status::INVALID_ARGUMENT);
+
+    auto decimal256 = TypeSerializer::deserialize(DataType::DECIMAL256, short_buf, 35, &ctx);
+    EXPECT_FALSE(decimal256.has_value());
+    EXPECT_EQ(ctx.code, Status::INVALID_ARGUMENT);
+
+    auto tagged = TypeSerializer::deserialize(DataType::TAGGED_UNION, short_buf, 2, &ctx);
+    EXPECT_FALSE(tagged.has_value());
+    EXPECT_EQ(ctx.code, Status::INVALID_ARGUMENT);
+
+    auto prefix = TypeSerializer::deserialize(DataType::PREFIX_SEARCH_FIELD, short_buf, 11, &ctx);
+    EXPECT_FALSE(prefix.has_value());
     EXPECT_EQ(ctx.code, Status::INVALID_ARGUMENT);
 }
 
@@ -1122,6 +1377,17 @@ TEST(TypeSerializationTest, SizeValidation_FixedSizeTypes)
     // MACADDR8: 8 bytes
     auto v9 = TypedValue::makeMacAddr8(MacAddr8::fromString("AA:BB:CC:DD:EE:FF:00:11").value());
     EXPECT_EQ(TypeSerializer::getSerializedSize(v9), 8u);
+
+    // TIMESTAMP_NS: 8 bytes
+    std::vector<uint8_t> ts_ns_payload;
+    appendI64(ts_ns_payload, 1234567890LL);
+    ErrorContext ctx;
+    auto ts_ns = TypeSerializer::deserialize(DataType::TIMESTAMP_NS,
+                                             ts_ns_payload.data(),
+                                             static_cast<uint32_t>(ts_ns_payload.size()),
+                                             &ctx);
+    ASSERT_TRUE(ts_ns.has_value()) << ctx.message;
+    EXPECT_EQ(TypeSerializer::getSerializedSize(*ts_ns), 8u);
 }
 
 // ===== End-to-End Integration Test =====

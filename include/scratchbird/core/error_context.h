@@ -14,6 +14,7 @@
 #include <string>
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/sqlstate.h"
+#include "scratchbird/core/vnext_error_codes.h"
 
 namespace scratchbird::core
 {
@@ -27,6 +28,7 @@ namespace scratchbird::core
         std::string sqlstate_text;     // Owned SQLSTATE when custom values are provided
         std::string message;           // Human-readable description
         std::string& error_message = message;  // Alias for legacy code
+        std::string vnext_code;        // Stable vNext deterministic code (e.g. TXN_0201)
         const char *file{nullptr};     // Source file
         int line{0};                   // Line number
         const char *function{nullptr}; // Function name
@@ -67,9 +69,20 @@ namespace scratchbird::core
             sqlstate = statusToSQLState(err_code); // Automatically map Status to SQLSTATE
             sqlstate_text.clear();
             message = (msg != nullptr) ? msg : "";
+            vnext_code.clear();
             file = f;
             line = l;
             function = func;
+        }
+
+        void setVNextCode(const char *stable_code)
+        {
+            vnext_code = (stable_code != nullptr) ? stable_code : "";
+        }
+
+        [[nodiscard]] auto hasVNextCode() const -> bool
+        {
+            return !vnext_code.empty();
         }
 
         // Optional: Override SQLSTATE manually (for specific cases)
@@ -94,6 +107,18 @@ namespace scratchbird::core
         {                                                                \
             (ctx)->set((err_code), (msg), __FILE__, __LINE__, __func__); \
         }                                                                \
+    } while (0)
+
+// Sets Status + message + stable vNext deterministic error code.
+// Use this for normative rejection paths tied to vNext registry contracts.
+#define SET_ERROR_CONTEXT_VNEXT(ctx, err_code, stable_code, msg)          \
+    do                                                                     \
+    {                                                                      \
+        if (ctx)                                                           \
+        {                                                                  \
+            (ctx)->set((err_code), (msg), __FILE__, __LINE__, __func__);  \
+            (ctx)->setVNextCode((stable_code));                            \
+        }                                                                  \
     } while (0)
 
 // Optional helper macros (Phase 0 - October 7, 2025)

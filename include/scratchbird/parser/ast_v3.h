@@ -251,6 +251,13 @@ enum class ASTKind : uint16_t {
     WindowSpec,
     OrderByItem,
     GroupByClause,
+    // vNext IR extension families (section 04)
+    AST_DOC_PATH_FILTER,
+    AST_TS_BUCKET_AGG,
+    AST_COL_SCAN_HINT,
+    AST_SEARCH_QUERY_DSL,
+    AST_VECTOR_ANN_QUERY,
+    AST_HYBRID_BRIDGE,
 };
 
 // =============================================================================
@@ -671,20 +678,65 @@ public:
  * Index type
  */
 enum class IndexType : uint8_t {
-    BTREE,
-    HASH,
-    GIN,
-    GIST,
-    SPGIST,
-    BRIN,
-    RTREE,
-    HNSW,
-    BITMAP,
-    COLUMNSTORE,
-    LSM,
-    FULLTEXT,
-    IVF,
-    ZONEMAP,
+    BTREE = 0x00,
+    HASH = 0x01,
+    HNSW = 0x02,
+    FULLTEXT = 0x03,
+    GIN = 0x04,
+    GIST = 0x05,
+    BRIN = 0x06,
+    RTREE = 0x07,
+    SPGIST = 0x08,
+    BITMAP = 0x09,
+    COLUMNSTORE = 0x0A,
+    LSM = 0x0B,
+    IVF = 0x0C,
+    ZONEMAP = 0x0D,
+    ART = 0x0E,
+    BLOOM = 0x0F,
+    VECTOR_FLAT = 0x10,
+    VECTOR_BIN_FLAT = 0x11,
+    IVF_FLAT = 0x12,
+    BIN_IVF_FLAT = 0x13,
+    IVF_PQ = 0x14,
+    IVF_SQ8 = 0x15,
+    IVF_SQ8_HYBRID = 0x16,
+    RHNSW_PQ = 0x17,
+    RHNSW_SQ = 0x18,
+    ANNOY = 0x19,
+    NSG = 0x1A,
+    DISKANN = 0x1B,
+    SCANN = 0x1C,
+    GPU_CAGRA = 0x1D,
+    MINHASH_LSH = 0x1E,
+    SPARSE_INVERTED = 0x1F,
+    SPARSE_WAND = 0x20,
+    TRIE = 0x21,
+    INVERTED = 0x22,
+    STL_SORT = 0x23,
+    NGRAM = 0x24,
+    MONGODB_2D = 0x25,
+    MONGODB_2DSPHERE = 0x26,
+    MONGODB_2DSPHERE_BUCKET = 0x27,
+    MONGODB_GEO_HAYSTACK = 0x28,
+    MONGODB_WILDCARD = 0x29,
+    MONGODB_ENCRYPTED_RANGE = 0x2A,
+    NEO4J_LOOKUP = 0x2B,
+    NEO4J_TEXT = 0x2C,
+    NEO4J_RANGE = 0x2D,
+    NEO4J_POINT = 0x2E,
+    NEO4J_VECTOR = 0x2F,
+    CASSANDRA_SASI = 0x30,
+    CASSANDRA_SAI = 0x31,
+    REDIS_STRING = 0x32,
+    REDIS_HASH = 0x33,
+    REDIS_LIST = 0x34,
+    REDIS_SET = 0x35,
+    REDIS_ZSET = 0x36,
+    REDIS_STREAM = 0x37,
+    REDIS_BITMAP = 0x38,
+    REDIS_HLL = 0x39,
+    REDIS_GEO = 0x3A,
 };
 
 /**
@@ -710,6 +762,15 @@ struct IndexOptions {
 };
 
 /**
+ * Generic index option assignment as parsed from SQL.
+ * Values are stored as normalized text for later emitter/runtime validation.
+ */
+struct IndexOptionAssignment {
+    StringPool::StringId option_name = StringPool::INVALID_ID;
+    StringPool::StringId option_value = StringPool::INVALID_ID;
+};
+
+/**
  * CREATE INDEX statement
  */
 class CreateIndexStmt : public Statement {
@@ -725,8 +786,10 @@ public:
     SchemaPath table_path;
 
     IndexType index_type = IndexType::BTREE;
+    StringPool::StringId index_method_name = StringPool::INVALID_ID;
     std::vector<IndexColumn> columns;
     IndexOptions options;
+    std::vector<IndexOptionAssignment> option_assignments;
 
     // Partial index
     Expression* where_clause = nullptr;
@@ -1790,6 +1853,18 @@ enum class AlterIndexAction : uint8_t {
     ACTIVE,
     INACTIVE,
     SET_OPTIONS,
+    RESET_OPTIONS,
+    REBUILD,
+    REBALANCE,
+    RELOCATE,
+    LIGHT_SCAN,
+    DIAGNOSTIC_SCAN,
+};
+
+enum class IndexMaintenanceMode : uint8_t {
+    DEFAULT,
+    ONLINE,
+    OFFLINE,
 };
 
 /**
@@ -1803,6 +1878,16 @@ public:
     SchemaPath index_path;
     AlterIndexAction action = AlterIndexAction::ACTIVE;
     IndexOptions options;
+    std::vector<IndexOptionAssignment> option_assignments;
+    std::vector<StringPool::StringId> reset_options;
+
+    bool defaults_scope = false;
+    IndexType defaults_index_type = IndexType::BTREE;
+    StringPool::StringId defaults_index_type_name = StringPool::INVALID_ID;
+
+    bool has_target_filespace = false;
+    SchemaPath target_filespace;
+    IndexMaintenanceMode mode = IndexMaintenanceMode::DEFAULT;
 };
 
 /**
@@ -2106,7 +2191,14 @@ public:
     ASTKind kind() const override { return ASTKind::AnalyzeStmt; }
     void accept(ASTVisitor& visitor) override;
 
+    enum class AnalyzeTarget : uint8_t {
+        TABLE,
+        INDEX,
+    };
+
+    AnalyzeTarget target = AnalyzeTarget::TABLE;
     SchemaPath table_path;
+    SchemaPath index_path;
     StringPool::StringId column_name = StringPool::INVALID_ID;
     bool has_column = false;
     bool has_sample = false;
@@ -3901,6 +3993,11 @@ public:
         // Firebird ISQL style (detailed object info)
         TABLE,              // SHOW TABLE name
         INDEX,              // SHOW INDEX name
+        INDEX_HEALTH,       // SHOW INDEX HEALTH name
+        INDEX_USAGE,        // SHOW INDEX USAGE name
+        INDEX_STORAGE,      // SHOW INDEX STORAGE name
+        INDEX_CONTENTION,   // SHOW INDEX CONTENTION name
+        INDEX_OPTIONS,      // SHOW INDEX OPTIONS name
         TRIGGER,            // SHOW TRIGGER name
         VIEW,               // SHOW VIEW name
         PROCEDURE,          // SHOW PROCEDURE name

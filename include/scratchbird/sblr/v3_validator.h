@@ -4,6 +4,8 @@
 #include <cstdint>
 #include <string>
 
+#include "scratchbird/sblr/v3_types.h"
+
 namespace scratchbird::sblr::v3 {
 
 struct ValidationResult {
@@ -17,5 +19,10 @@ struct ValidationResult {
 
 ValidationResult validateContainerDetailed(const uint8_t* data, size_t size);
 bool validateContainer(const uint8_t* data, size_t size, std::string& err);
+
+// Section-04 vNext IR contract validators.
+ValidationResult validateVNextOpcodeContract(const Instruction& inst);
+ValidationResult validateVNextEncodedInstructionContract(const uint8_t* data, size_t size);
+ValidationResult validateVNextRewriteEvidenceContract(const Value::Object& evidence);
 
 }  // namespace scratchbird::sblr::v3

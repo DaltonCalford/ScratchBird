@@ -638,7 +638,50 @@ public:
             COLUMNSTORE = 10, // Columnstore index
             LSM = 11,         // LSM-Tree (Log-Structured Merge-Tree)
             IVF = 12,         // IVF (Inverted File) vector index
-            ZONEMAP = 13      // Zone map (min/max) index
+            ZONEMAP = 13,     // Zone map (min/max) index
+            ART = 0x0E,              // Adaptive radix tree index
+            BLOOM = 0x0F,            // Bloom filter range index
+            VECTOR_FLAT = 0x10,       // Brute-force float vector index
+            VECTOR_BIN_FLAT = 0x11,   // Brute-force binary vector index
+            IVF_FLAT = 0x12,          // IVF flat vector variant
+            BIN_IVF_FLAT = 0x13,      // IVF flat binary variant
+            IVF_PQ = 0x14,            // IVF product quantization variant
+            IVF_SQ8 = 0x15,           // IVF scalar quantization variant
+            IVF_SQ8_HYBRID = 0x16,    // IVF SQ8 with deterministic hybrid routing
+            RHNSW_PQ = 0x17,          // HNSW with PQ payload variant
+            RHNSW_SQ = 0x18,          // HNSW with SQ payload variant
+            ANNOY = 0x19,             // ANNOY random projection forest ANN
+            NSG = 0x1A,               // NSG graph ANN index
+            DISKANN = 0x1B,           // DiskANN graph ANN index
+            SCANN = 0x1C,             // ScaNN partitioned ANN index
+            GPU_CAGRA = 0x1D,         // GPU CAGRA graph ANN index
+            MINHASH_LSH = 0x1E,       // MinHash LSH index
+            SPARSE_INVERTED = 0x1F,   // Sparse inverted index
+            SPARSE_WAND = 0x20,       // Sparse WAND index
+            TRIE = 0x21,              // Radix trie index
+            NGRAM = 0x24,             // N-gram index
+            MONGODB_2D = 0x25,                // MongoDB planar 2d geospatial index
+            MONGODB_2DSPHERE = 0x26,          // MongoDB spherical 2dsphere index
+            MONGODB_2DSPHERE_BUCKET = 0x27,   // MongoDB 2dsphere bucket (time-series) index
+            MONGODB_GEO_HAYSTACK = 0x28,      // MongoDB geoHaystack index
+            MONGODB_WILDCARD = 0x29,          // MongoDB wildcard path/value index
+            MONGODB_ENCRYPTED_RANGE = 0x2A,   // MongoDB encrypted range index
+            NEO4J_LOOKUP = 0x2B,              // Neo4j lookup index (label/reltype token map)
+            NEO4J_TEXT = 0x2C,                // Neo4j text index (contains/startsWith/endsWith)
+            NEO4J_RANGE = 0x2D,               // Neo4j range index
+            NEO4J_POINT = 0x2E,               // Neo4j point index (space-filling curve key)
+            NEO4J_VECTOR = 0x2F,              // Neo4j vector index
+            CASSANDRA_SASI = 0x30,            // Cassandra SASI index
+            CASSANDRA_SAI = 0x31,             // Cassandra SAI index
+            REDIS_STRING = 0x32,              // Redis string structure index
+            REDIS_HASH = 0x33,                // Redis hash structure index
+            REDIS_LIST = 0x34,                // Redis list structure index
+            REDIS_SET = 0x35,                 // Redis set structure index
+            REDIS_ZSET = 0x36,                // Redis sorted-set structure index
+            REDIS_STREAM = 0x37,              // Redis stream structure index
+            REDIS_BITMAP = 0x38,              // Redis bitmap structure index
+            REDIS_HLL = 0x39,                 // Redis HyperLogLog structure index
+            REDIS_GEO = 0x3A                  // Redis geo structure index
         };
 
         // Plan 01 Task E: Index states for shadow rebuild + versioning
@@ -3929,6 +3972,174 @@ public:
             PREPARED = 3
         };
 
+        enum class PrincipalKind : uint8_t
+        {
+            USER = 0,
+            SERVICE = 1
+        };
+
+        enum class SourceScopeKind : uint8_t
+        {
+            ANY = 0,
+            HOST_EXACT = 1,
+            HOST_WILDCARD = 2,
+            CIDR = 3,
+            UNIX_SOCKET = 4,
+            NODE_ID = 5
+        };
+
+        enum class CredentialKind : uint8_t
+        {
+            PASSWORD_ARGON2ID = 0,
+            PASSWORD_SCRAM_SHA256 = 1,
+            X509_SUBJECT = 2,
+            KERBEROS_PRINCIPAL = 3,
+            OIDC_SUBJECT = 4,
+            SAML_SUBJECT = 5,
+            API_TOKEN_HASH = 6
+        };
+
+        enum class AuthProviderKind : uint8_t
+        {
+            INTERNAL_ARGON2ID = 0,
+            INTERNAL_SCRAM_SHA256 = 1,
+            X509_MTLS = 2,
+            LDAP_SIMPLE_BIND = 3,
+            KERBEROS_GSSAPI = 4,
+            OIDC_JWT = 5,
+            SAML_ASSERTION = 6,
+            PAM_CONVERSATION = 7,
+            API_TOKEN = 8
+        };
+
+        enum class AuthProviderState : uint8_t
+        {
+            ENABLED = 0,
+            DISABLED = 1,
+            DEGRADED = 2
+        };
+
+        enum class AuthProviderFailMode : uint8_t
+        {
+            HARD_FAIL = 0,
+            TRY_NEXT = 1
+        };
+
+        enum class AuthAttemptOutcome : uint8_t
+        {
+            SUCCESS = 0,
+            FAIL = 1,
+            TIMEOUT = 2,
+            UNAVAILABLE = 3,
+            POLICY_DENY = 4
+        };
+
+        enum class ConnectionRuleTransportKind : uint8_t
+        {
+            TCP = 0,
+            TLS = 1,
+            MTLS = 2,
+            UNIX_SOCKET = 3,
+            IPC_LOCAL = 4
+        };
+
+        enum class ConnectionRuleTlsMode : uint8_t
+        {
+            NONE = 0,
+            TLS = 1,
+            MTLS = 2
+        };
+
+        enum class ConnectionRuleAction : uint8_t
+        {
+            ALLOW = 0,
+            DENY = 1
+        };
+
+        enum class AuthAdapterOutcome : uint8_t
+        {
+            ACCEPT = 0,
+            REJECT = 1,
+            UNAVAILABLE = 2,
+            TIMEOUT = 3
+        };
+
+        enum class AuthorizationSubjectType : uint8_t
+        {
+            USER = 0,
+            ROLE = 1,
+            GROUP = 2,
+            TOKEN_SUBJECT = 3
+        };
+
+        enum class PolicyEffect : uint8_t
+        {
+            ALLOW = 0,
+            DENY = 1
+        };
+
+        enum class AclCommandArityClass : uint8_t
+        {
+            FIXED = 0,
+            VARIADIC = 1
+        };
+
+        enum class DocumentEngineTag : uint8_t
+        {
+            OPENSEARCH = 0,
+            MONGODB = 1,
+            GENERIC_DOC = 2
+        };
+
+        enum class TokenKind : uint8_t
+        {
+            BEARER = 0,
+            API_KEY = 1,
+            SERVICE_TOKEN = 2
+        };
+
+        enum class TokenScopeModel : uint8_t
+        {
+            GENERIC = 0,
+            INFLUX = 1,
+            MILVUS = 2,
+            OPENSEARCH = 3,
+            CLICKHOUSE = 4
+        };
+
+        enum class TokenResourceKind : uint8_t
+        {
+            CLUSTER = 0,
+            DATABASE = 1,
+            SCHEMA = 2,
+            TABLE = 3,
+            INDEX = 4,
+            COLLECTION = 5,
+            BUCKET = 6,
+            MEASUREMENT = 7,
+            CHANNEL = 8,
+            GRAPH = 9,
+            VECTOR_SPACE = 10,
+            TENANT = 11
+        };
+
+        enum class BindingSubjectType : uint8_t
+        {
+            USER = 0,
+            ROLE = 1,
+            GROUP = 2,
+            TENANT = 3,
+            GLOBAL = 4
+        };
+
+        enum class BindingResourceScopeKind : uint8_t
+        {
+            GLOBAL = 0,
+            DATABASE = 1,
+            SCHEMA = 2,
+            RESOURCE_PATTERN = 3
+        };
+
         enum class CertKind : uint8_t
         {
             SERVER = 0,
@@ -4041,6 +4252,30 @@ public:
             SUCCESS = 1,
             FAILED = 2,
             TIMED_OUT = 3
+        };
+
+        enum class CryptoProfileId : uint8_t
+        {
+            MODERN_BASELINE = 0,
+            COMPAT_EMULATION = 1,
+            MIL_HARDENED = 2
+        };
+
+        enum class SecurityTierId : uint8_t
+        {
+            TIER_0_NONE = 0,
+            TIER_1_BASIC = 1,
+            TIER_2_STANDARD = 2,
+            TIER_3_HARDENED = 3,
+            TIER_4_MILITARY_CLUSTER = 4
+        };
+
+        enum class KeyProviderKind : uint8_t
+        {
+            LOCAL_FILE_KEYSTORE = 0,
+            OS_KEYRING = 1,
+            EXTERNAL_KMS = 2,
+            PKCS11_HSM = 3
         };
 
         struct IndexAccessMethodCatalogInfo
@@ -4383,6 +4618,564 @@ public:
             bool is_valid = true;
             uint64_t created_time = 0;
             uint64_t last_modified_time = 0;
+        };
+
+        struct PrincipalAccountCatalogInfo
+        {
+            ID account_id;
+            std::string principal_name;
+            PrincipalKind principal_kind = PrincipalKind::USER;
+            SourceScopeKind source_scope_kind = SourceScopeKind::ANY;
+            std::string source_scope_value;
+            bool has_source_scope_value = false;
+            std::string auth_database;
+            bool has_auth_database = false;
+            std::string tenant_scope;
+            bool has_tenant_scope = false;
+            ID auth_policy_id;
+            ID password_policy_id;
+            bool has_password_policy = false;
+            ID default_role_id;
+            bool has_default_role = false;
+            bool is_login_enabled = true;
+            bool is_locked = false;
+            std::string locked_reason;
+            bool has_locked_reason = false;
+            bool has_valid_from = false;
+            uint64_t valid_from_utc = 0;
+            bool has_valid_to = false;
+            uint64_t valid_to_utc = 0;
+            uint64_t created_txid = 0;
+            uint64_t last_modified_txid = 0;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct AccountCredentialCatalogInfo
+        {
+            ID credential_id;
+            ID account_id;
+            CredentialKind credential_kind = CredentialKind::PASSWORD_ARGON2ID;
+            ID credential_payload_id;
+            std::array<uint8_t, 32> credential_hash{};
+            bool has_credential_hash = false;
+            bool has_rotated_time = false;
+            uint64_t rotated_time_utc = 0;
+            bool has_expires_time = false;
+            uint64_t expires_time_utc = 0;
+            bool is_active = true;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct AccountProfileBindingCatalogInfo
+        {
+            ID binding_id;
+            ID account_id;
+            ID quota_profile_id;
+            bool has_quota_profile = false;
+            ID settings_profile_id;
+            bool has_settings_profile = false;
+            uint16_t priority_u16 = 0;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct PrincipalResolutionRequest
+        {
+            std::string presented_principal_name;
+            std::string source_host;
+            std::string source_ip;
+            std::string source_socket;
+            std::string source_node_id;
+            std::string auth_database_context;
+            bool has_auth_database_context = false;
+            std::string tenant_context;
+            bool has_tenant_context = false;
+            uint64_t now_utc = 0;
+        };
+
+        struct AuthProviderCatalogInfo
+        {
+            ID provider_id;
+            std::string provider_name;
+            AuthProviderKind provider_kind = AuthProviderKind::INTERNAL_ARGON2ID;
+            AuthProviderState provider_state = AuthProviderState::ENABLED;
+            uint16_t priority_rank = 0;
+            uint32_t timeout_ms = 0;
+            uint32_t cache_ttl_ms = 0;
+            AuthProviderFailMode fail_mode = AuthProviderFailMode::HARD_FAIL;
+            std::string config_payload;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct AuthPolicyCatalogInfo
+        {
+            ID policy_id;
+            std::string policy_name;
+            std::vector<ID> provider_chain;
+            bool mfa_required = false;
+            bool has_mfa_policy = false;
+            ID mfa_policy_id;
+            uint16_t lockout_threshold = 0;
+            uint32_t lockout_window_ms = 0;
+            uint32_t lockout_duration_ms = 0;
+            bool allow_password_fallback = false;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct AuthAttemptLogCatalogInfo
+        {
+            ID attempt_id;
+            ID connection_id;
+            bool has_account_id = false;
+            ID account_id;
+            bool has_provider_id = false;
+            ID provider_id;
+            AuthAttemptOutcome outcome = AuthAttemptOutcome::FAIL;
+            std::string failure_code;
+            bool has_failure_code = false;
+            uint64_t attempt_time_utc = 0;
+            uint64_t latency_us = 0;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct ConnectionRuleCatalogInfo
+        {
+            ID rule_id;
+            std::string profile_scope;
+            uint32_t rule_order = 0;
+            ConnectionRuleTransportKind transport_kind = ConnectionRuleTransportKind::TCP;
+            bool has_source_cidr = false;
+            std::string source_cidr;
+            bool has_source_host_pattern = false;
+            std::string source_host_pattern;
+            bool has_principal_pattern = false;
+            std::string principal_pattern;
+            bool has_auth_database_pattern = false;
+            std::string auth_database_pattern;
+            bool has_tenant_pattern = false;
+            std::string tenant_pattern;
+            bool has_target_db_pattern = false;
+            std::string target_db_pattern;
+            bool has_required_provider_kind = false;
+            AuthProviderKind required_provider_kind = AuthProviderKind::INTERNAL_ARGON2ID;
+            bool has_required_tls_mode = false;
+            ConnectionRuleTlsMode required_tls_mode = ConnectionRuleTlsMode::NONE;
+            ConnectionRuleAction action = ConnectionRuleAction::DENY;
+            bool has_mapped_auth_policy = false;
+            ID mapped_auth_policy_id;
+            bool has_mapped_default_role = false;
+            ID mapped_default_role_id;
+            bool has_reject_code_override = false;
+            std::string reject_code_override;
+            bool is_enabled = true;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+            bool has_expected_epoch = false;
+            uint64_t expected_epoch_u64 = 0;
+        };
+
+        struct ConnectionRuleEpochCatalogInfo
+        {
+            std::string profile_scope;
+            uint64_t rule_epoch_u64 = 0;
+            uint64_t last_modified_utc = 0;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct ConnectionRuleEvaluationRequest
+        {
+            std::string profile_scope;
+            ConnectionRuleTransportKind transport_kind = ConnectionRuleTransportKind::TCP;
+            std::string source_ip;
+            std::string source_host;
+            std::string source_socket;
+            std::string principal_name;
+            std::string auth_database;
+            std::string tenant;
+            std::string target_db;
+            std::string remote_address;
+            bool has_forwarded_identity = false;
+            bool trusted_proxy_channel = false;
+            std::string proxy_identity;
+            bool has_provider_kind = false;
+            AuthProviderKind provider_kind = AuthProviderKind::INTERNAL_ARGON2ID;
+        };
+
+        struct ConnectionRuleEvaluationDecision
+        {
+            bool matched = false;
+            ID matched_rule_id;
+            ConnectionRuleAction action = ConnectionRuleAction::DENY;
+            bool has_mapped_auth_policy = false;
+            ID mapped_auth_policy_id;
+            bool has_mapped_default_role = false;
+            ID mapped_default_role_id;
+            bool has_required_provider_kind = false;
+            AuthProviderKind required_provider_kind = AuthProviderKind::INTERNAL_ARGON2ID;
+            bool has_required_tls_mode = false;
+            ConnectionRuleTlsMode required_tls_mode = ConnectionRuleTlsMode::NONE;
+            std::string reject_code;
+        };
+
+        struct AuthProviderAdapterResult
+        {
+            ID provider_id;
+            AuthAdapterOutcome outcome = AuthAdapterOutcome::REJECT;
+        };
+
+        struct AuthProviderRuntimeRequest
+        {
+            ID account_id;
+            ID connection_id;
+            std::vector<CredentialKind> credential_kinds;
+            std::vector<AuthProviderKind> client_capabilities;
+            bool has_required_provider_kind = false;
+            AuthProviderKind required_provider_kind = AuthProviderKind::INTERNAL_ARGON2ID;
+            std::vector<AuthProviderAdapterResult> adapter_results;
+            bool mfa_completed = true;
+            uint64_t now_utc = 0;
+        };
+
+        struct AuthProviderRuntimeDecision
+        {
+            bool success = false;
+            bool lockout_applied = false;
+            bool policy_requires_mfa = false;
+            ID selected_provider_id;
+            std::vector<ID> attempted_provider_ids;
+            std::string reject_code;
+        };
+
+        struct EffectiveSubjectRef
+        {
+            ID subject_id;
+            AuthorizationSubjectType subject_type = AuthorizationSubjectType::USER;
+        };
+
+        struct AclCommandCatalogInfo
+        {
+            std::string command_name;
+            uint64_t category_bits = 0;
+            AclCommandArityClass arity_class = AclCommandArityClass::FIXED;
+            bool is_write = false;
+            bool is_admin = false;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct AclRuleCatalogInfo
+        {
+            ID acl_rule_id;
+            ID subject_id;
+            AuthorizationSubjectType subject_type = AuthorizationSubjectType::USER;
+            PolicyEffect effect = PolicyEffect::ALLOW;
+            std::string command_pattern;
+            bool has_category_mask = false;
+            uint64_t category_mask = 0;
+            bool has_key_pattern = false;
+            std::string key_pattern;
+            bool has_channel_pattern = false;
+            std::string channel_pattern;
+            uint16_t priority_u16 = 0;
+            bool is_enabled = true;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct AclEvaluationRequest
+        {
+            std::string command_name;
+            uint64_t command_category_bits = 0;
+            std::vector<std::string> keys;
+            std::vector<std::string> channels;
+            std::vector<EffectiveSubjectRef> effective_subjects;
+        };
+
+        struct AclEvaluationDecision
+        {
+            bool matched = false;
+            bool allowed = false;
+            ID matched_rule_id;
+            std::string reject_code;
+        };
+
+        struct DocumentPolicyCatalogInfo
+        {
+            ID policy_id;
+            DocumentEngineTag engine_tag = DocumentEngineTag::GENERIC_DOC;
+            std::string resource_pattern;
+            bool has_tenant_pattern = false;
+            std::string tenant_pattern;
+            PolicyEffect effect = PolicyEffect::ALLOW;
+            bool has_doc_filter_sblr_uuid = false;
+            ID doc_filter_sblr_uuid;
+            bool has_write_filter_sblr_uuid = false;
+            ID write_filter_sblr_uuid;
+            std::vector<std::string> field_allowlist;
+            std::vector<std::string> field_denylist;
+            uint16_t priority_u16 = 0;
+            bool is_enabled = true;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct TenantBindingCatalogInfo
+        {
+            ID binding_id;
+            ID subject_id;
+            AuthorizationSubjectType subject_type = AuthorizationSubjectType::USER;
+            std::string tenant_name;
+            uint16_t priority_u16 = 0;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct DocumentAuthorizationRequest
+        {
+            DocumentEngineTag engine_tag = DocumentEngineTag::GENERIC_DOC;
+            std::string resource_name;
+            std::string tenant_name;
+            std::vector<EffectiveSubjectRef> effective_subjects;
+            std::vector<std::string> candidate_fields;
+            std::vector<ID> predicate_matched_policy_ids;
+            bool require_model_policy = false;
+            bool require_non_empty_document = false;
+            bool is_write = false;
+        };
+
+        struct DocumentAuthorizationDecision
+        {
+            bool allowed = false;
+            bool filtered_to_empty = false;
+            std::vector<std::string> projected_fields;
+            std::vector<ID> matched_policy_ids;
+            std::string reject_code;
+        };
+
+        struct GraphPrivilegeCatalogInfo
+        {
+            ID graph_priv_id;
+            ID subject_id;
+            AuthorizationSubjectType subject_type = AuthorizationSubjectType::USER;
+            std::string graph_scope;
+            bool has_label_pattern = false;
+            std::string label_pattern;
+            bool has_relationship_pattern = false;
+            std::string relationship_pattern;
+            bool has_property_pattern = false;
+            std::string property_pattern;
+            uint64_t action_bits = 0;
+            PolicyEffect effect = PolicyEffect::ALLOW;
+            uint16_t priority_u16 = 0;
+            bool is_enabled = true;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct GraphAuthorizationRequest
+        {
+            std::string graph_scope;
+            std::string label_name;
+            std::string relationship_name;
+            std::string property_name;
+            uint64_t requested_action_bits = 0;
+            std::vector<EffectiveSubjectRef> effective_subjects;
+        };
+
+        struct GraphAuthorizationDecision
+        {
+            bool allowed = false;
+            ID matched_rule_id;
+            std::string reject_code;
+        };
+
+        struct TokenCatalogInfo
+        {
+            ID token_id;
+            TokenKind token_kind = TokenKind::BEARER;
+            std::array<uint8_t, 32> token_hash{};
+            std::string issuer;
+            ID subject_account_id;
+            TokenScopeModel scope_model = TokenScopeModel::GENERIC;
+            uint64_t not_before_utc = 0;
+            uint64_t not_after_utc = 0;
+            bool has_revoked_time_utc = false;
+            uint64_t revoked_time_utc = 0;
+            bool has_rotation_group = false;
+            ID rotation_group_id;
+            bool has_last_used_time_utc = false;
+            uint64_t last_used_time_utc = 0;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct TokenScopeEntryCatalogInfo
+        {
+            ID scope_id;
+            ID token_id;
+            PolicyEffect effect = PolicyEffect::ALLOW;
+            TokenResourceKind resource_kind = TokenResourceKind::DATABASE;
+            std::string resource_pattern;
+            uint64_t action_bits = 0;
+            uint16_t priority_u16 = 0;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct TokenValidationRequest
+        {
+            std::array<uint8_t, 32> presented_token_hash{};
+            TokenResourceKind resource_kind = TokenResourceKind::DATABASE;
+            std::string resource_name;
+            uint64_t requested_action_bits = 0;
+            uint64_t now_utc = 0;
+        };
+
+        struct TokenValidationDecision
+        {
+            bool allowed = false;
+            ID token_id;
+            ID subject_account_id;
+            TokenScopeModel scope_model = TokenScopeModel::GENERIC;
+            std::vector<ID> matched_scope_ids;
+            std::string reject_code;
+        };
+
+        struct QuotaProfileCatalogInfo
+        {
+            ID quota_profile_id;
+            std::string profile_name;
+            uint32_t max_requests_per_sec = 0;
+            uint32_t max_concurrent_requests = 0;
+            uint64_t max_read_bytes_per_sec = 0;
+            uint64_t max_write_bytes_per_sec = 0;
+            uint64_t max_result_rows = 0;
+            uint64_t max_cpu_ms_per_min = 0;
+            uint32_t window_ms = 0;
+            bool is_enabled = true;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct QuotaBindingCatalogInfo
+        {
+            ID binding_id;
+            BindingSubjectType subject_type = BindingSubjectType::GLOBAL;
+            bool has_subject_id = false;
+            ID subject_id;
+            bool has_tenant_scope = false;
+            std::string tenant_scope;
+            BindingResourceScopeKind resource_scope_kind = BindingResourceScopeKind::GLOBAL;
+            bool has_resource_scope_value = false;
+            std::string resource_scope_value;
+            ID quota_profile_id;
+            uint16_t priority_u16 = 0;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct SettingsProfileCatalogInfo
+        {
+            ID settings_profile_id;
+            std::string profile_name;
+            std::string settings_payload;
+            bool strict_mode = false;
+            bool is_enabled = true;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct SettingsBindingCatalogInfo
+        {
+            ID binding_id;
+            BindingSubjectType subject_type = BindingSubjectType::GLOBAL;
+            bool has_subject_id = false;
+            ID subject_id;
+            bool has_tenant_scope = false;
+            std::string tenant_scope;
+            BindingResourceScopeKind resource_scope_kind = BindingResourceScopeKind::GLOBAL;
+            bool has_resource_scope_value = false;
+            std::string resource_scope_value;
+            ID settings_profile_id;
+            uint16_t priority_u16 = 0;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct ProfileResolutionRequest
+        {
+            bool has_user_id = false;
+            ID user_id;
+            std::vector<ID> role_ids;
+            std::vector<ID> group_ids;
+            std::string tenant_scope;
+            bool has_database_scope = false;
+            ID database_scope_id;
+            std::string schema_scope_name;
+            std::string resource_scope_name;
+        };
+
+        struct QuotaEvaluationRequest
+        {
+            ProfileResolutionRequest profile_context;
+            bool require_profile = false;
+            uint32_t concurrent_requests = 0;
+            uint32_t window_request_count = 0;
+            uint64_t window_read_bytes = 0;
+            uint64_t window_write_bytes = 0;
+            uint64_t estimated_result_rows = 0;
+            uint64_t estimated_cpu_ms = 0;
+        };
+
+        struct QuotaEvaluationDecision
+        {
+            bool allowed = false;
+            bool profile_resolved = false;
+            ID quota_profile_id;
+            std::string profile_name;
+            std::string reject_code;
+        };
+
+        struct SettingsResolutionRequest
+        {
+            ProfileResolutionRequest profile_context;
+            bool require_profile = false;
+            std::unordered_map<std::string, std::string> session_overrides;
+        };
+
+        struct SettingsResolutionDecision
+        {
+            bool applied = false;
+            bool profile_resolved = false;
+            ID settings_profile_id;
+            std::string profile_name;
+            std::unordered_map<std::string, std::string> merged_settings;
+            std::string reject_code;
         };
 
         struct AuthMappingCatalogInfo
@@ -5754,6 +6547,77 @@ public:
             bool is_valid = true;
         };
 
+        struct CryptoBaselineEvaluationRequest
+        {
+            CryptoProfileId crypto_profile_id = CryptoProfileId::MODERN_BASELINE;
+            SecurityTierId security_tier = SecurityTierId::TIER_2_STANDARD;
+
+            bool is_network_session = false;
+            bool is_mtls = false;
+            TlsVersion tls_version = TlsVersion::TLS_1_2;
+            std::string tls_cipher_suite;
+
+            CredentialKind credential_kind = CredentialKind::PASSWORD_ARGON2ID;
+            bool is_privileged_account = false;
+            bool require_password_rehash_check = false;
+            uint32_t argon2_memory_kib = 0;
+            uint32_t argon2_iterations = 0;
+            uint32_t argon2_parallelism = 0;
+
+            bool artifact_signed = true;
+            std::string artifact_signature_algorithm;
+            bool debug_unsigned_override = false;
+            bool listener_enabled = true;
+
+            EncryptionAlgorithm at_rest_algorithm = EncryptionAlgorithm::AES_256_GCM;
+            uint16_t nonce_len_bytes = 12;
+            bool aes_gcm_hw_available = true;
+            bool chacha_fallback_explicit = false;
+
+            KeyProviderKind primary_provider = KeyProviderKind::LOCAL_FILE_KEYSTORE;
+            bool primary_provider_available = true;
+            bool primary_provider_authorized = true;
+            bool has_escrow_provider = false;
+            KeyProviderKind escrow_provider = KeyProviderKind::EXTERNAL_KMS;
+            bool escrow_provider_available = true;
+            bool escrow_provider_authorized = true;
+
+            bool evaluate_rotation_window = false;
+            bool privileged_operation = false;
+            bool has_encryption_profile_id = false;
+            ID encryption_profile_id;
+            bool has_active_key_id = false;
+            ID active_key_id;
+            uint64_t now_utc = 0;
+        };
+
+        struct CryptoBaselineEvaluationDecision
+        {
+            bool allowed = false;
+            bool require_password_rehash = false;
+            bool gate_pass = false;
+            bool rotation_overdue = false;
+            ID active_key_id;
+            std::string reject_code;
+        };
+
+        struct EncryptionKeyLifecycleTransitionRequest
+        {
+            ID key_id;
+            EncryptionKeyStatus target_status = EncryptionKeyStatus::STAGED;
+            uint64_t event_time_utc = 0;
+            bool retire_existing_active = false;
+        };
+
+        struct EncryptionKeyLifecycleTransitionDecision
+        {
+            bool applied = false;
+            bool rotated_existing_active = false;
+            ID retired_key_id;
+            uint32_t resulting_key_version = 0;
+            std::string reject_code;
+        };
+
         // Emulation type information (Phase 4 - Emulation Tables)
         struct EmulationTypeInfo
         {
@@ -7052,6 +7916,229 @@ public:
         // ============================================================================
         // Canonical security extension and PKI/crypto catalog operations (CAT-020)
         // ============================================================================
+
+        auto upsertPrincipalAccountCatalogEntry(const PrincipalAccountCatalogInfo& info,
+                                                ErrorContext* ctx = nullptr) -> Status;
+        auto getPrincipalAccountCatalogEntry(const ID& account_id,
+                                             PrincipalAccountCatalogInfo& info_out,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto listPrincipalAccountCatalogEntries(std::vector<PrincipalAccountCatalogInfo>& rows_out,
+                                                ErrorContext* ctx = nullptr) -> Status;
+        auto deletePrincipalAccountCatalogEntry(const ID& account_id,
+                                                ErrorContext* ctx = nullptr) -> Status;
+        auto resolvePrincipalAccount(const PrincipalResolutionRequest& request,
+                                     PrincipalAccountCatalogInfo& info_out,
+                                     ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertAccountCredentialCatalogEntry(const AccountCredentialCatalogInfo& info,
+                                                 ErrorContext* ctx = nullptr) -> Status;
+        auto getAccountCredentialCatalogEntry(const ID& credential_id,
+                                              AccountCredentialCatalogInfo& info_out,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto listAccountCredentialCatalogEntries(const ID& account_id,
+                                                 std::vector<AccountCredentialCatalogInfo>& rows_out,
+                                                 ErrorContext* ctx = nullptr) -> Status;
+        auto deleteAccountCredentialCatalogEntry(const ID& credential_id,
+                                                 ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertAccountProfileBindingCatalogEntry(const AccountProfileBindingCatalogInfo& info,
+                                                     ErrorContext* ctx = nullptr) -> Status;
+        auto getAccountProfileBindingCatalogEntry(const ID& binding_id,
+                                                  AccountProfileBindingCatalogInfo& info_out,
+                                                  ErrorContext* ctx = nullptr) -> Status;
+        auto listAccountProfileBindingCatalogEntries(
+            const ID& account_id,
+            std::vector<AccountProfileBindingCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteAccountProfileBindingCatalogEntry(const ID& binding_id,
+                                                     ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertAuthProviderCatalogEntry(const AuthProviderCatalogInfo& info,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto getAuthProviderCatalogEntry(const ID& provider_id,
+                                         AuthProviderCatalogInfo& info_out,
+                                         ErrorContext* ctx = nullptr) -> Status;
+        auto listAuthProviderCatalogEntries(std::vector<AuthProviderCatalogInfo>& rows_out,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteAuthProviderCatalogEntry(const ID& provider_id,
+                                            ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertAuthPolicyCatalogEntry(const AuthPolicyCatalogInfo& info,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto getAuthPolicyCatalogEntry(const ID& policy_id,
+                                       AuthPolicyCatalogInfo& info_out,
+                                       ErrorContext* ctx = nullptr) -> Status;
+        auto listAuthPolicyCatalogEntries(std::vector<AuthPolicyCatalogInfo>& rows_out,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto deleteAuthPolicyCatalogEntry(const ID& policy_id,
+                                          ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertAuthAttemptLogCatalogEntry(const AuthAttemptLogCatalogInfo& info,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto getAuthAttemptLogCatalogEntry(const ID& attempt_id,
+                                           AuthAttemptLogCatalogInfo& info_out,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto listAuthAttemptLogCatalogEntries(
+            const ID& account_id,
+            std::vector<AuthAttemptLogCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteAuthAttemptLogCatalogEntry(const ID& attempt_id,
+                                              ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertConnectionRuleCatalogEntry(const ConnectionRuleCatalogInfo& info,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto getConnectionRuleCatalogEntry(const ID& rule_id,
+                                           ConnectionRuleCatalogInfo& info_out,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto listConnectionRuleCatalogEntries(
+            const std::string& profile_scope,
+            std::vector<ConnectionRuleCatalogInfo>& rows_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteConnectionRuleCatalogEntry(const ID& rule_id,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto getConnectionRuleEpochCatalogEntry(
+            const std::string& profile_scope,
+            ConnectionRuleEpochCatalogInfo& info_out,
+            ErrorContext* ctx = nullptr) -> Status;
+        auto evaluateConnectionRuleChain(const ConnectionRuleEvaluationRequest& request,
+                                         ConnectionRuleEvaluationDecision& decision_out,
+                                         ErrorContext* ctx = nullptr) -> Status;
+        auto evaluateAuthProviderRuntime(const AuthProviderRuntimeRequest& request,
+                                         AuthProviderRuntimeDecision& decision_out,
+                                         ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertAclCommandCatalogEntry(const AclCommandCatalogInfo& info,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto getAclCommandCatalogEntry(const std::string& command_name,
+                                       AclCommandCatalogInfo& info_out,
+                                       ErrorContext* ctx = nullptr) -> Status;
+        auto listAclCommandCatalogEntries(std::vector<AclCommandCatalogInfo>& rows_out,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto deleteAclCommandCatalogEntry(const std::string& command_name,
+                                          ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertAclRuleCatalogEntry(const AclRuleCatalogInfo& info,
+                                       ErrorContext* ctx = nullptr) -> Status;
+        auto getAclRuleCatalogEntry(const ID& acl_rule_id,
+                                    AclRuleCatalogInfo& info_out,
+                                    ErrorContext* ctx = nullptr) -> Status;
+        auto listAclRuleCatalogEntries(std::vector<AclRuleCatalogInfo>& rows_out,
+                                       ErrorContext* ctx = nullptr) -> Status;
+        auto deleteAclRuleCatalogEntry(const ID& acl_rule_id,
+                                       ErrorContext* ctx = nullptr) -> Status;
+        auto evaluateAclCommandPolicy(const AclEvaluationRequest& request,
+                                      AclEvaluationDecision& decision_out,
+                                      ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertDocumentPolicyCatalogEntry(const DocumentPolicyCatalogInfo& info,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto getDocumentPolicyCatalogEntry(const ID& policy_id,
+                                           DocumentPolicyCatalogInfo& info_out,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto listDocumentPolicyCatalogEntries(std::vector<DocumentPolicyCatalogInfo>& rows_out,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto deleteDocumentPolicyCatalogEntry(const ID& policy_id,
+                                              ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertTenantBindingCatalogEntry(const TenantBindingCatalogInfo& info,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto getTenantBindingCatalogEntry(const ID& binding_id,
+                                          TenantBindingCatalogInfo& info_out,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto listTenantBindingCatalogEntries(std::vector<TenantBindingCatalogInfo>& rows_out,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto deleteTenantBindingCatalogEntry(const ID& binding_id,
+                                             ErrorContext* ctx = nullptr) -> Status;
+
+        auto evaluateDocumentReadPolicy(const DocumentAuthorizationRequest& request,
+                                        DocumentAuthorizationDecision& decision_out,
+                                        ErrorContext* ctx = nullptr) -> Status;
+        auto evaluateDocumentWritePolicy(const DocumentAuthorizationRequest& request,
+                                         DocumentAuthorizationDecision& decision_out,
+                                         ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertGraphPrivilegeCatalogEntry(const GraphPrivilegeCatalogInfo& info,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto getGraphPrivilegeCatalogEntry(const ID& graph_priv_id,
+                                           GraphPrivilegeCatalogInfo& info_out,
+                                           ErrorContext* ctx = nullptr) -> Status;
+        auto listGraphPrivilegeCatalogEntries(std::vector<GraphPrivilegeCatalogInfo>& rows_out,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto deleteGraphPrivilegeCatalogEntry(const ID& graph_priv_id,
+                                              ErrorContext* ctx = nullptr) -> Status;
+        auto evaluateGraphPrivilegePolicy(const GraphAuthorizationRequest& request,
+                                          GraphAuthorizationDecision& decision_out,
+                                          ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertTokenCatalogEntry(const TokenCatalogInfo& info,
+                                     ErrorContext* ctx = nullptr) -> Status;
+        auto getTokenCatalogEntry(const ID& token_id,
+                                  TokenCatalogInfo& info_out,
+                                  ErrorContext* ctx = nullptr) -> Status;
+        auto listTokenCatalogEntries(std::vector<TokenCatalogInfo>& rows_out,
+                                     ErrorContext* ctx = nullptr) -> Status;
+        auto deleteTokenCatalogEntry(const ID& token_id,
+                                     ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertTokenScopeEntryCatalogEntry(const TokenScopeEntryCatalogInfo& info,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto getTokenScopeEntryCatalogEntry(const ID& scope_id,
+                                            TokenScopeEntryCatalogInfo& info_out,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto listTokenScopeEntryCatalogEntries(const ID& token_id,
+                                               std::vector<TokenScopeEntryCatalogInfo>& rows_out,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto deleteTokenScopeEntryCatalogEntry(const ID& scope_id,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto validateTokenScope(const TokenValidationRequest& request,
+                                TokenValidationDecision& decision_out,
+                                ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertQuotaProfileCatalogEntry(const QuotaProfileCatalogInfo& info,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto getQuotaProfileCatalogEntry(const ID& quota_profile_id,
+                                         QuotaProfileCatalogInfo& info_out,
+                                         ErrorContext* ctx = nullptr) -> Status;
+        auto listQuotaProfileCatalogEntries(std::vector<QuotaProfileCatalogInfo>& rows_out,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteQuotaProfileCatalogEntry(const ID& quota_profile_id,
+                                            ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertQuotaBindingCatalogEntry(const QuotaBindingCatalogInfo& info,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto getQuotaBindingCatalogEntry(const ID& binding_id,
+                                         QuotaBindingCatalogInfo& info_out,
+                                         ErrorContext* ctx = nullptr) -> Status;
+        auto listQuotaBindingCatalogEntries(std::vector<QuotaBindingCatalogInfo>& rows_out,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto deleteQuotaBindingCatalogEntry(const ID& binding_id,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto evaluateQuotaPolicy(const QuotaEvaluationRequest& request,
+                                 QuotaEvaluationDecision& decision_out,
+                                 ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertSettingsProfileCatalogEntry(const SettingsProfileCatalogInfo& info,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto getSettingsProfileCatalogEntry(const ID& settings_profile_id,
+                                            SettingsProfileCatalogInfo& info_out,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto listSettingsProfileCatalogEntries(std::vector<SettingsProfileCatalogInfo>& rows_out,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto deleteSettingsProfileCatalogEntry(const ID& settings_profile_id,
+                                               ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertSettingsBindingCatalogEntry(const SettingsBindingCatalogInfo& info,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto getSettingsBindingCatalogEntry(const ID& binding_id,
+                                            SettingsBindingCatalogInfo& info_out,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto listSettingsBindingCatalogEntries(std::vector<SettingsBindingCatalogInfo>& rows_out,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto deleteSettingsBindingCatalogEntry(const ID& binding_id,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto resolveSettingsPolicy(const SettingsResolutionRequest& request,
+                                   SettingsResolutionDecision& decision_out,
+                                   ErrorContext* ctx = nullptr) -> Status;
 
         auto upsertAuthMappingCatalogEntry(const AuthMappingCatalogInfo& info,
                                            ErrorContext* ctx = nullptr) -> Status;
@@ -8504,6 +9591,17 @@ public:
             ErrorContext* ctx = nullptr) -> Status;
         auto deleteEncryptionBootstrapInfoCatalogEntry(const ID& database_id,
                                                        ErrorContext* ctx = nullptr) -> Status;
+
+        auto evaluateCryptoBaselinePolicy(const CryptoBaselineEvaluationRequest& request,
+                                          CryptoBaselineEvaluationDecision& decision_out,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto evaluateCryptoBaselineConformanceGate(const CryptoBaselineEvaluationRequest& request,
+                                                   CryptoBaselineEvaluationDecision& decision_out,
+                                                   ErrorContext* ctx = nullptr) -> Status;
+        auto transitionEncryptionKeyLifecycle(
+            const EncryptionKeyLifecycleTransitionRequest& request,
+            EncryptionKeyLifecycleTransitionDecision& decision_out,
+            ErrorContext* ctx = nullptr) -> Status;
 
         // ========================================================================
         // UDR Operations (Phase A CRUD - Catalog Cleanup)
@@ -10584,6 +11682,26 @@ public:
         {
             return auth_mapping_table_page_;
         }
+        auto authProviderTablePage() const -> uint32_t
+        {
+            return auth_provider_table_page_;
+        }
+        auto authPolicyTablePage() const -> uint32_t
+        {
+            return auth_policy_table_page_;
+        }
+        auto authAttemptLogTablePage() const -> uint32_t
+        {
+            return auth_attempt_log_table_page_;
+        }
+        auto connectionRuleTablePage() const -> uint32_t
+        {
+            return connection_rule_table_page_;
+        }
+        auto connectionRuleEpochTablePage() const -> uint32_t
+        {
+            return connection_rule_epoch_table_page_;
+        }
         auto roleSettingTablePage() const -> uint32_t
         {
             return role_setting_table_page_;
@@ -11612,6 +12730,25 @@ public:
         uint32_t backup_history_table_page_ = 0; // Backup history catalog (CAT-018)
         uint32_t connection_table_page_ = 0; // Runtime connection attribution catalog (CAT-019)
         uint32_t transaction_table_page_ = 0; // Runtime transaction attribution catalog (CAT-019)
+        uint32_t principal_account_table_page_ = 0; // Principal account catalog (CAT-020)
+        uint32_t account_credential_table_page_ = 0; // Account credential catalog (CAT-020)
+        uint32_t account_profile_binding_table_page_ = 0; // Account profile binding catalog (CAT-020)
+        uint32_t auth_provider_table_page_ = 0; // Auth provider catalog (EN-018)
+        uint32_t auth_policy_table_page_ = 0; // Auth policy catalog (EN-018)
+        uint32_t auth_attempt_log_table_page_ = 0; // Auth attempt log catalog (EN-018)
+        uint32_t connection_rule_table_page_ = 0; // Connection rule catalog (EN-018)
+        uint32_t connection_rule_epoch_table_page_ = 0; // Connection rule epoch catalog (EN-018)
+        uint32_t acl_command_catalog_table_page_ = 0; // ACL command catalog (EN-019)
+        uint32_t acl_rule_table_page_ = 0; // ACL rule catalog (EN-019)
+        uint32_t document_policy_table_page_ = 0; // Document ABAC policy catalog (EN-019)
+        uint32_t tenant_binding_table_page_ = 0; // Tenant binding catalog (EN-019)
+        uint32_t graph_privilege_table_page_ = 0; // Graph privilege catalog (EN-019)
+        uint32_t token_table_page_ = 0; // Token catalog (EN-019)
+        uint32_t token_scope_entry_table_page_ = 0; // Token scope entry catalog (EN-019)
+        uint32_t quota_profile_table_page_ = 0; // Quota profile catalog (EN-019)
+        uint32_t quota_binding_table_page_ = 0; // Quota binding catalog (EN-019)
+        uint32_t settings_profile_table_page_ = 0; // Settings profile catalog (EN-019)
+        uint32_t settings_binding_table_page_ = 0; // Settings binding catalog (EN-019)
         uint32_t auth_mapping_table_page_ = 0; // Auth mapping catalog (CAT-020)
         uint32_t role_setting_table_page_ = 0; // Role setting catalog (CAT-020)
         uint32_t security_label_table_page_ = 0; // Security label catalog (CAT-020)

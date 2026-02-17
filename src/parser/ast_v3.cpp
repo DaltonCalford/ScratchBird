@@ -452,6 +452,12 @@ const char* astKindToString(ASTKind kind) {
         case ASTKind::WindowSpec: return "WindowSpec";
         case ASTKind::OrderByItem: return "OrderByItem";
         case ASTKind::GroupByClause: return "GroupByClause";
+        case ASTKind::AST_DOC_PATH_FILTER: return "AST_DOC_PATH_FILTER";
+        case ASTKind::AST_TS_BUCKET_AGG: return "AST_TS_BUCKET_AGG";
+        case ASTKind::AST_COL_SCAN_HINT: return "AST_COL_SCAN_HINT";
+        case ASTKind::AST_SEARCH_QUERY_DSL: return "AST_SEARCH_QUERY_DSL";
+        case ASTKind::AST_VECTOR_ANN_QUERY: return "AST_VECTOR_ANN_QUERY";
+        case ASTKind::AST_HYBRID_BRIDGE: return "AST_HYBRID_BRIDGE";
     }
     return "UNKNOWN";
 }

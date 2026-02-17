@@ -111,7 +111,7 @@ TEST(IntervalTypeTest, Comprehensive) {
 
     // Test 10: TypeSystem utilities
     std::cout << "Test 10: TypeSystem utilities\n";
-    ASSERT_EQ(TypeSystem::getTypeName(DataType::INTERVAL), "INTERVAL");
+    ASSERT_STREQ(TypeSystem::getTypeName(DataType::INTERVAL), "INTERVAL");
     std::cout << "  ✓ getTypeName() passed\n";
     std::cout << "  ✓ All TypeSystem utilities passed\n\n";
 

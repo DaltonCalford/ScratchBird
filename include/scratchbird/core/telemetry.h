@@ -52,6 +52,13 @@ struct MetricLabel {
     std::string value;
 };
 
+// Canonical metric sample row for deterministic telemetry reporting.
+struct MetricSampleRow {
+    std::string metric_name;
+    std::vector<MetricLabel> labels;
+    double value = 0.0;
+};
+
 // Base metric class
 class Metric {
 public:
@@ -67,6 +74,9 @@ public:
 
     // Export to OpenMetrics format
     virtual std::string toOpenMetrics() const = 0;
+
+    // Append canonical samples in deterministic order.
+    virtual void appendSamples(std::vector<MetricSampleRow>& out) const = 0;
 
 protected:
     std::string name_;
@@ -92,6 +102,7 @@ public:
 
     std::string toPrometheus() const override;
     std::string toOpenMetrics() const override;
+    void appendSamples(std::vector<MetricSampleRow>& out) const override;
 
 private:
     std::vector<std::string> label_names_;
@@ -113,6 +124,7 @@ public:
 
     std::string toPrometheus() const override;
     std::string toOpenMetrics() const override;
+    void appendSamples(std::vector<MetricSampleRow>& out) const override;
 
 private:
     std::vector<std::string> label_names_;
@@ -142,6 +154,7 @@ public:
 
     std::string toPrometheus() const override;
     std::string toOpenMetrics() const override;
+    void appendSamples(std::vector<MetricSampleRow>& out) const override;
 
 private:
     struct HistogramData {
@@ -201,6 +214,8 @@ public:
     // Export all metrics
     std::string exportPrometheus() const;
     std::string exportOpenMetrics() const;
+    std::vector<MetricSampleRow> snapshotSamples() const;
+    std::string exportCanonicalJson(uint64_t generated_at_epoch_ms = 0) const;
 
     // Clear all metrics (for testing)
     void clear();
@@ -209,6 +224,57 @@ private:
     MetricsRegistry() = default;
     mutable std::mutex mutex_;
     std::unordered_map<std::string, std::unique_ptr<Metric>> metrics_;
+};
+
+enum class SloThresholdComparator : uint8_t {
+    LTE = 0,
+    GTE = 1
+};
+
+enum class SloBaselineStatus : uint8_t {
+    PASS = 0,
+    FAIL = 1,
+    NO_DATA = 2
+};
+
+struct SloBaselineThreshold {
+    std::string domain;
+    std::string metric;
+    SloThresholdComparator comparator = SloThresholdComparator::LTE;
+    double threshold = 0.0;
+    std::string unit;
+};
+
+struct SloObservation {
+    std::string domain;
+    std::string metric;
+    double value = 0.0;
+    std::string unit;
+};
+
+struct SloBaselineEvaluation {
+    std::string domain;
+    std::string metric;
+    SloThresholdComparator comparator = SloThresholdComparator::LTE;
+    double threshold = 0.0;
+    bool has_observed_value = false;
+    double observed_value = 0.0;
+    SloBaselineStatus status = SloBaselineStatus::NO_DATA;
+    std::string unit;
+};
+
+class ConformanceTelemetry {
+public:
+    static const std::vector<SloBaselineThreshold>& defaultSloBaselines();
+
+    static void evaluateSloBaselines(const std::vector<SloObservation>& observations,
+                                     std::vector<SloBaselineEvaluation>& evaluations_out);
+
+    static std::string buildBaselineReportJson(const std::vector<SloObservation>& observations,
+                                               const std::string& reference_hardware_profile_id,
+                                               uint64_t generated_at_epoch_ms = 0);
+
+    static std::string sha256Hex(const std::string& payload);
 };
 
 // Pre-defined ScratchBird metrics

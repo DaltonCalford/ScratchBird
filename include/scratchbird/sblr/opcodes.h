@@ -1539,7 +1539,7 @@ namespace scratchbird
          *
          * MGA COMPLIANCE:
          * --------------
-         * All 11 index types MUST maintain xmin/xmax for MGA visibility tracking.
+         * All index types MUST maintain xmin/xmax for MGA visibility tracking.
          * See MGA_RULES.md for detailed requirements.
          */
         enum class IndexType : uint8_t
@@ -1556,6 +1556,51 @@ namespace scratchbird
             BITMAP = 0x09,         // Bitmap index - Low cardinality columns
             COLUMNSTORE = 0x0A,    // Columnstore index - Column-oriented storage
             LSM = 0x0B,            // LSM-Tree index - Write-optimized, append-heavy workloads
+            IVF = 0x0C,            // IVF index - Inverted file vector index
+            ZONEMAP = 0x0D,        // Zone map index - Block metadata pruning
+            ART = 0x0E,            // Adaptive radix tree index
+            BLOOM = 0x0F,          // Bloom filter range index
+            VECTOR_FLAT = 0x10,    // Vector FLAT index - brute-force float vectors
+            VECTOR_BIN_FLAT = 0x11,// Vector BIN FLAT index - brute-force bit vectors
+            IVF_FLAT = 0x12,       // IVF FLAT variant
+            BIN_IVF_FLAT = 0x13,   // Binary IVF FLAT variant
+            IVF_PQ = 0x14,         // IVF product quantization variant
+            IVF_SQ8 = 0x15,        // IVF scalar quantization variant
+            IVF_SQ8_HYBRID = 0x16, // IVF SQ8 hybrid variant
+            RHNSW_PQ = 0x17,       // RHNSW product quantization variant
+            RHNSW_SQ = 0x18,       // RHNSW scalar quantization variant
+            ANNOY = 0x19,          // ANNOY random projection forest ANN
+            NSG = 0x1A,            // NSG graph ANN index
+            DISKANN = 0x1B,        // DiskANN graph ANN index
+            SCANN = 0x1C,          // ScaNN partitioned ANN index
+            GPU_CAGRA = 0x1D,      // GPU CAGRA graph ANN index
+            MINHASH_LSH = 0x1E,    // MinHash LSH index
+            SPARSE_INVERTED = 0x1F,// Sparse inverted index
+            SPARSE_WAND = 0x20,    // Sparse WAND index
+            TRIE = 0x21,           // Trie index
+            NGRAM = 0x24,          // N-gram index
+            MONGODB_2D = 0x25,              // MongoDB planar 2d geospatial index
+            MONGODB_2DSPHERE = 0x26,        // MongoDB spherical 2dsphere index
+            MONGODB_2DSPHERE_BUCKET = 0x27, // MongoDB 2dsphere bucket index
+            MONGODB_GEO_HAYSTACK = 0x28,    // MongoDB geoHaystack index
+            MONGODB_WILDCARD = 0x29,        // MongoDB wildcard path/value index
+            MONGODB_ENCRYPTED_RANGE = 0x2A, // MongoDB encrypted range index
+            NEO4J_LOOKUP = 0x2B,            // Neo4j lookup index
+            NEO4J_TEXT = 0x2C,              // Neo4j text index
+            NEO4J_RANGE = 0x2D,             // Neo4j range index
+            NEO4J_POINT = 0x2E,             // Neo4j point index
+            NEO4J_VECTOR = 0x2F,            // Neo4j vector index
+            CASSANDRA_SASI = 0x30,          // Cassandra SASI index
+            CASSANDRA_SAI = 0x31,           // Cassandra SAI index
+            REDIS_STRING = 0x32,            // Redis string structure index
+            REDIS_HASH = 0x33,              // Redis hash structure index
+            REDIS_LIST = 0x34,              // Redis list structure index
+            REDIS_SET = 0x35,               // Redis set structure index
+            REDIS_ZSET = 0x36,              // Redis sorted-set structure index
+            REDIS_STREAM = 0x37,            // Redis stream structure index
+            REDIS_BITMAP = 0x38,            // Redis bitmap structure index
+            REDIS_HLL = 0x39,               // Redis HyperLogLog structure index
+            REDIS_GEO = 0x3A,               // Redis geo structure index
         };
 
         /**

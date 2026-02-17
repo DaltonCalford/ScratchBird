@@ -203,6 +203,9 @@ endif()
 # Optimizer runtime library: scratchbird_optimizer_runtime
 set(SCRATCHBIRD_OPTIMIZER_RUNTIME_SOURCES
     optimizer/cost_model.cpp
+    optimizer/multi_track_classifier.cpp
+    optimizer/vnext_plan_cache.cpp
+    optimizer/vnext_plan_selection.cpp
     optimizer/statistics_manager.cpp
     optimizer/cse.cpp
     optimizer/expression_matcher.cpp

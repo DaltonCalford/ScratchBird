@@ -92,12 +92,15 @@ protected:
         catalog_ = db_.catalog_manager();
         ASSERT_NE(catalog_, nullptr);
 
-        EnsureUser(catalog_, "test_user");
+        EnsureUser(catalog_, "test_user", core::ID{}, true);
         ASSERT_EQ(catalog_->createSchema("test", "test_user", test_schema_id_, &ctx),
                   core::Status::OK)
             << ctx.message;
 
         ASSERT_EQ(db_.connect(conn_, &ctx), core::Status::OK) << ctx.message;
+        const core::ID system_user_id = catalog_->getSystemUserId(&ctx);
+        conn_->setCurrentUser(system_user_id, true);
+        conn_->applyStagedSecurityContext();
         core::ConnectionContext::setCurrent(conn_.get());
         conn_->setCurrentSchemaId(test_schema_id_);
 

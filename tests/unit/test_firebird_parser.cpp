@@ -214,6 +214,7 @@ TEST_F(FirebirdParserTest, DialectGuardrails) {
     expectError("CREATE TABLE a.b (id INTEGER)");
     expectError("SELECT a.b.c FROM t");
     expectError("ALTER DATABASE testdb RENAME TO otherdb");
+    expectError("CREATE INDEX idx_fb_bad ON employees USING GIN (name)");
 }
 
 // =============================================================================

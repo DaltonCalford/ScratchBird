@@ -132,11 +132,11 @@ TEST(NewIntegerTypesTest, UINT64_BasicOperations)
 
 TEST(NewIntegerTypesTest, TypeSystem_GetTypeName)
 {
-    EXPECT_EQ(TypeSystem::getTypeName(DataType::INT128), "INT128");
-    EXPECT_EQ(TypeSystem::getTypeName(DataType::UINT8), "UINT8");
-    EXPECT_EQ(TypeSystem::getTypeName(DataType::UINT16), "UINT16");
-    EXPECT_EQ(TypeSystem::getTypeName(DataType::UINT32), "UINT32");
-    EXPECT_EQ(TypeSystem::getTypeName(DataType::UINT64), "UINT64");
+    EXPECT_STREQ(TypeSystem::getTypeName(DataType::INT128), "INT128");
+    EXPECT_STREQ(TypeSystem::getTypeName(DataType::UINT8), "UINT8");
+    EXPECT_STREQ(TypeSystem::getTypeName(DataType::UINT16), "UINT16");
+    EXPECT_STREQ(TypeSystem::getTypeName(DataType::UINT32), "UINT32");
+    EXPECT_STREQ(TypeSystem::getTypeName(DataType::UINT64), "UINT64");
 }
 
 // Test type mismatch errors

@@ -25,6 +25,7 @@ namespace scratchbird::core
                 case DataType::UINT64:
                 case DataType::FLOAT64:
                 case DataType::MONEY:
+                case DataType::TIMESTAMP_NS:
                     return 8;
                 case DataType::DATE:
                     return 8;
@@ -39,6 +40,20 @@ namespace scratchbird::core
                 case DataType::INT128:
                 case DataType::UINT128:
                     return 16;
+                case DataType::INT256:
+                case DataType::UINT256:
+                    return 32;
+                case DataType::DECIMAL256:
+                    return 36;
+                case DataType::TAGGED_UNION:
+                    return 3; // u16 tag + 1-byte minimum ULEB128 length
+                case DataType::DICT_ENCODED:
+                    return 8;
+                case DataType::COMPLETION_FIELD:
+                case DataType::FLAT_OBJECT:
+                    return 4; // length prefix or pair_count
+                case DataType::PREFIX_SEARCH_FIELD:
+                    return 12; // u32 token_len + u64 metadata pointer
                 case DataType::MACADDR:
                     return 6;
                 case DataType::MACADDR8:

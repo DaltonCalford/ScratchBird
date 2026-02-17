@@ -18,6 +18,7 @@
 #include <cctype>
 #include <cstring>
 #include <algorithm>
+#include <set>
 
 namespace {
 
@@ -281,6 +282,69 @@ static void storeU128LE(unsigned __int128 value, scratchbird::parser::v3::U128& 
 
 namespace scratchbird::parser::v3 {
 
+static std::optional<IndexType> indexTypeFromName(std::string_view name) {
+    if (caseInsensitiveEquals(name, "BTREE")) return IndexType::BTREE;
+    if (caseInsensitiveEquals(name, "HASH")) return IndexType::HASH;
+    if (caseInsensitiveEquals(name, "HNSW") || caseInsensitiveEquals(name, "VECTOR")) return IndexType::HNSW;
+    if (caseInsensitiveEquals(name, "FULLTEXT")) return IndexType::FULLTEXT;
+    if (caseInsensitiveEquals(name, "GIN")) return IndexType::GIN;
+    if (caseInsensitiveEquals(name, "GIST")) return IndexType::GIST;
+    if (caseInsensitiveEquals(name, "BRIN")) return IndexType::BRIN;
+    if (caseInsensitiveEquals(name, "RTREE") || caseInsensitiveEquals(name, "SPATIAL")) return IndexType::RTREE;
+    if (caseInsensitiveEquals(name, "SPGIST") || caseInsensitiveEquals(name, "SP-GIST")) return IndexType::SPGIST;
+    if (caseInsensitiveEquals(name, "BITMAP")) return IndexType::BITMAP;
+    if (caseInsensitiveEquals(name, "COLUMNSTORE")) return IndexType::COLUMNSTORE;
+    if (caseInsensitiveEquals(name, "LSM")) return IndexType::LSM;
+    if (caseInsensitiveEquals(name, "IVF")) return IndexType::IVF;
+    if (caseInsensitiveEquals(name, "ZONEMAP") || caseInsensitiveEquals(name, "ZONE_MAP")) return IndexType::ZONEMAP;
+    if (caseInsensitiveEquals(name, "ART")) return IndexType::ART;
+    if (caseInsensitiveEquals(name, "BLOOM")) return IndexType::BLOOM;
+    if (caseInsensitiveEquals(name, "VECTOR_FLAT")) return IndexType::VECTOR_FLAT;
+    if (caseInsensitiveEquals(name, "VECTOR_BIN_FLAT")) return IndexType::VECTOR_BIN_FLAT;
+    if (caseInsensitiveEquals(name, "IVF_FLAT")) return IndexType::IVF_FLAT;
+    if (caseInsensitiveEquals(name, "BIN_IVF_FLAT")) return IndexType::BIN_IVF_FLAT;
+    if (caseInsensitiveEquals(name, "IVF_PQ")) return IndexType::IVF_PQ;
+    if (caseInsensitiveEquals(name, "IVF_SQ8")) return IndexType::IVF_SQ8;
+    if (caseInsensitiveEquals(name, "IVF_SQ8_HYBRID")) return IndexType::IVF_SQ8_HYBRID;
+    if (caseInsensitiveEquals(name, "RHNSW_PQ")) return IndexType::RHNSW_PQ;
+    if (caseInsensitiveEquals(name, "RHNSW_SQ")) return IndexType::RHNSW_SQ;
+    if (caseInsensitiveEquals(name, "ANNOY")) return IndexType::ANNOY;
+    if (caseInsensitiveEquals(name, "NSG")) return IndexType::NSG;
+    if (caseInsensitiveEquals(name, "DISKANN")) return IndexType::DISKANN;
+    if (caseInsensitiveEquals(name, "SCANN")) return IndexType::SCANN;
+    if (caseInsensitiveEquals(name, "GPU_CAGRA")) return IndexType::GPU_CAGRA;
+    if (caseInsensitiveEquals(name, "MINHASH_LSH")) return IndexType::MINHASH_LSH;
+    if (caseInsensitiveEquals(name, "SPARSE_INVERTED")) return IndexType::SPARSE_INVERTED;
+    if (caseInsensitiveEquals(name, "SPARSE_WAND")) return IndexType::SPARSE_WAND;
+    if (caseInsensitiveEquals(name, "TRIE")) return IndexType::TRIE;
+    if (caseInsensitiveEquals(name, "INVERTED")) return IndexType::INVERTED;
+    if (caseInsensitiveEquals(name, "STL_SORT")) return IndexType::STL_SORT;
+    if (caseInsensitiveEquals(name, "NGRAM")) return IndexType::NGRAM;
+    if (caseInsensitiveEquals(name, "MONGODB_2D")) return IndexType::MONGODB_2D;
+    if (caseInsensitiveEquals(name, "MONGODB_2DSPHERE")) return IndexType::MONGODB_2DSPHERE;
+    if (caseInsensitiveEquals(name, "MONGODB_2DSPHERE_BUCKET")) return IndexType::MONGODB_2DSPHERE_BUCKET;
+    if (caseInsensitiveEquals(name, "MONGODB_GEO_HAYSTACK")) return IndexType::MONGODB_GEO_HAYSTACK;
+    if (caseInsensitiveEquals(name, "MONGODB_WILDCARD")) return IndexType::MONGODB_WILDCARD;
+    if (caseInsensitiveEquals(name, "MONGODB_ENCRYPTED_RANGE")) return IndexType::MONGODB_ENCRYPTED_RANGE;
+    if (caseInsensitiveEquals(name, "NEO4J_LOOKUP")) return IndexType::NEO4J_LOOKUP;
+    if (caseInsensitiveEquals(name, "NEO4J_TEXT")) return IndexType::NEO4J_TEXT;
+    if (caseInsensitiveEquals(name, "NEO4J_RANGE")) return IndexType::NEO4J_RANGE;
+    if (caseInsensitiveEquals(name, "NEO4J_POINT")) return IndexType::NEO4J_POINT;
+    if (caseInsensitiveEquals(name, "NEO4J_VECTOR")) return IndexType::NEO4J_VECTOR;
+    if (caseInsensitiveEquals(name, "CASSANDRA_SASI")) return IndexType::CASSANDRA_SASI;
+    if (caseInsensitiveEquals(name, "CASSANDRA_SAI")) return IndexType::CASSANDRA_SAI;
+    if (caseInsensitiveEquals(name, "REDIS_STRING")) return IndexType::REDIS_STRING;
+    if (caseInsensitiveEquals(name, "REDIS_HASH")) return IndexType::REDIS_HASH;
+    if (caseInsensitiveEquals(name, "REDIS_LIST")) return IndexType::REDIS_LIST;
+    if (caseInsensitiveEquals(name, "REDIS_SET")) return IndexType::REDIS_SET;
+    if (caseInsensitiveEquals(name, "REDIS_ZSET")) return IndexType::REDIS_ZSET;
+    if (caseInsensitiveEquals(name, "REDIS_STREAM")) return IndexType::REDIS_STREAM;
+    if (caseInsensitiveEquals(name, "REDIS_BITMAP")) return IndexType::REDIS_BITMAP;
+    if (caseInsensitiveEquals(name, "REDIS_HLL")) return IndexType::REDIS_HLL;
+    if (caseInsensitiveEquals(name, "REDIS_GEO")) return IndexType::REDIS_GEO;
+    return std::nullopt;
+}
+
 // =============================================================================
 // Constructor / Destructor
 // =============================================================================
@@ -304,6 +368,15 @@ void Parser::error(const std::string& message) {
 
 void Parser::error(const std::string& message, const std::string& hint) {
     errorAt(SourceSpan(currentLocation(), 1), message, hint);
+}
+
+void Parser::errorCode(const char* code, const std::string& message) {
+    std::string coded;
+    coded.reserve(std::char_traits<char>::length(code) + 2 + message.size());
+    coded.append(code);
+    coded.append(": ");
+    coded.append(message);
+    error(coded);
 }
 
 void Parser::errorAt(SourceSpan span, const std::string& message, const std::string& hint) {
@@ -514,6 +587,7 @@ Statement* Parser::parseStatementInternal() {
     // Utility statements
     if (match(TokenType::KW_EXPLAIN))   return parseExplain();
     if (match(TokenType::KW_ANALYZE))   return parseAnalyze();
+    if (matchContextual("VALIDATE"))    return parseValidateIndex();
     if (matchContextual("SWEEP"))       return parseSweep();
     if (matchContextual("CANCEL")) {
         if (matchContextual("JOB")) {
@@ -535,6 +609,28 @@ Statement* Parser::parseStatementInternal() {
 
     // DCL statements
     if (match(TokenType::KW_GRANT))     return parseGrant();
+    if (check(TokenType::KW_REVOKE)) {
+        Token lookahead = state_.lexer().peekToken();
+        if (lookahead.type == TokenType::IDENTIFIER) {
+            std::string_view next_text = state_.lexer().getTokenText(lookahead.span);
+            auto eq_ci = [&](std::string_view a, std::string_view b) {
+                if (a.size() != b.size()) {
+                    return false;
+                }
+                for (size_t i = 0; i < a.size(); ++i) {
+                    if (std::toupper(static_cast<unsigned char>(a[i])) !=
+                        std::toupper(static_cast<unsigned char>(b[i]))) {
+                        return false;
+                    }
+                }
+                return true;
+            };
+            if (eq_ci(next_text, "TOKEN")) {
+                match(TokenType::KW_REVOKE);
+                return parseRevokeToken();
+            }
+        }
+    }
     if (match(TokenType::KW_REVOKE))    return parseRevoke();
 
     // Connection statements
@@ -612,6 +708,71 @@ Statement* Parser::parseCreate() {
     }
 
     // Dispatch based on object type
+    if (matchContextual("SEARCH")) {
+        if (!matchContextual("INDEX")) {
+            errorCode("PRS_0505", "Expected INDEX after CREATE SEARCH");
+            return nullptr;
+        }
+        if (or_alter) {
+            errorCode("PRS_0505", "CREATE OR ALTER is not supported for SEARCH INDEX");
+        }
+        return parseCreateSearchIndex();
+    }
+
+    if (matchContextual("VECTOR")) {
+        if (!matchContextual("INDEX")) {
+            errorCode("PRS_0505", "Expected INDEX after CREATE VECTOR");
+            return nullptr;
+        }
+        if (or_alter) {
+            errorCode("PRS_0505", "CREATE OR ALTER is not supported for VECTOR INDEX");
+        }
+        return parseCreateVectorIndex();
+    }
+
+    if (matchContextual("MEASUREMENT")) {
+        if (or_alter) {
+            errorCode("PRS_0505", "CREATE OR ALTER is not supported for MEASUREMENT");
+        }
+        return parseCreateMeasurement();
+    }
+
+    if (matchContextual("SCHEDULE")) {
+        if (or_alter) {
+            errorCode("PRS_0505", "CREATE OR ALTER is not supported for SCHEDULE");
+        }
+        return parseCreateSchedule();
+    }
+
+    if (matchContextual("CONNECTION")) {
+        if (!matchContextual("RULE")) {
+            errorCode("PRS_0505", "Expected RULE after CREATE CONNECTION");
+            return nullptr;
+        }
+        if (or_alter) {
+            errorCode("PRS_0505", "CREATE OR ALTER is not supported for CONNECTION RULE");
+        }
+        return parseCreateConnectionRule();
+    }
+
+    if (matchContextual("TOKEN")) {
+        if (or_alter) {
+            errorCode("PRS_0505", "CREATE OR ALTER is not supported for TOKEN");
+        }
+        return parseCreateToken();
+    }
+
+    if (matchContextual("QUOTA")) {
+        if (!matchContextual("PROFILE")) {
+            errorCode("PRS_0505", "Expected PROFILE after CREATE QUOTA");
+            return nullptr;
+        }
+        if (or_alter) {
+            errorCode("PRS_0505", "CREATE OR ALTER is not supported for QUOTA PROFILE");
+        }
+        return parseCreateQuotaProfile();
+    }
+
     if (matchContextual("SCHEMA")) {
         if (or_alter) {
             error("CREATE OR ALTER is only supported for JOB");
@@ -1183,6 +1344,613 @@ CreateJobStmt* Parser::parseCreateJob(bool or_alter, bool recreate) {
         error("Expected AS, CALL, or EXEC for job definition");
     }
 
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+CreateIndexStmt* Parser::parseCreateSearchIndex() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<CreateIndexStmt>();
+    stmt->index_type = IndexType::FULLTEXT;
+    stmt->index_method_name = stringPool().intern("SEARCH");
+
+    stmt->index_name = expectIdentifier("Expected index name");
+    expect(TokenType::KW_ON, "Expected ON after index name");
+    stmt->table_path = parseSchemaPath(state_);
+    if (stmt->table_path.isEmpty()) {
+        error("Expected table name after ON");
+    }
+
+    expect(TokenType::LEFT_PAREN, "Expected '(' after table name");
+    if (check(TokenType::RIGHT_PAREN)) {
+        errorCode("PRS_0504", "CREATE SEARCH INDEX field list must not be empty");
+    }
+
+    while (!check(TokenType::RIGHT_PAREN) &&
+           !check(TokenType::SEMICOLON) &&
+           !check(TokenType::END_OF_FILE)) {
+        if (!isIdentifier()) {
+            errorCode("PRS_0504", "Expected field identifier in CREATE SEARCH INDEX");
+            break;
+        }
+        IndexColumn col;
+        col.column = currentIdentifier();
+        stmt->columns.push_back(col);
+        if (!match(TokenType::COMMA)) {
+            break;
+        }
+    }
+    expect(TokenType::RIGHT_PAREN, "Expected ')' after field list");
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+CreateIndexStmt* Parser::parseCreateVectorIndex() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<CreateIndexStmt>();
+    stmt->index_type = IndexType::HNSW;
+    stmt->index_method_name = stringPool().intern("VECTOR");
+
+    stmt->index_name = expectIdentifier("Expected index name");
+    expect(TokenType::KW_ON, "Expected ON after index name");
+    stmt->table_path = parseSchemaPath(state_);
+    if (stmt->table_path.isEmpty()) {
+        error("Expected table name after ON");
+    }
+
+    expect(TokenType::LEFT_PAREN, "Expected '(' after table name");
+    if (!isIdentifier()) {
+        errorCode("PRS_0504", "CREATE VECTOR INDEX requires one vector field");
+    } else {
+        IndexColumn col;
+        col.column = currentIdentifier();
+        stmt->columns.push_back(col);
+    }
+    if (match(TokenType::COMMA)) {
+        errorCode("PRS_0504", "CREATE VECTOR INDEX accepts exactly one field");
+        while (!check(TokenType::RIGHT_PAREN) &&
+               !check(TokenType::SEMICOLON) &&
+               !check(TokenType::END_OF_FILE)) {
+            advance();
+        }
+    }
+    expect(TokenType::RIGHT_PAREN, "Expected ')' after vector field");
+
+    if (!matchContextual("METRIC")) {
+        errorCode("PRS_0505", "CREATE VECTOR INDEX requires METRIC");
+    }
+
+    StringPool::StringId metric_id = StringPool::INVALID_ID;
+    if (!isIdentifier()) {
+        errorCode("PRS_0504", "Expected metric symbol after METRIC");
+    } else {
+        metric_id = currentIdentifier();
+        std::string metric = std::string(stringPool().get(metric_id));
+        for (char& c : metric) {
+            c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        }
+        if (!(metric == "L2" || metric == "COSINE" || metric == "DOT")) {
+            errorCode("PRS_0504", "Unknown VECTOR METRIC symbol");
+        }
+        metric_id = stringPool().intern(metric);
+    }
+
+    if (!matchContextual("TOPK_DEFAULT")) {
+        errorCode("PRS_0505", "CREATE VECTOR INDEX requires TOPK_DEFAULT");
+    }
+
+    StringPool::StringId topk_id = StringPool::INVALID_ID;
+    if (!check(TokenType::INTEGER_LITERAL)) {
+        errorCode("PRS_0504", "Expected integer literal for TOPK_DEFAULT");
+    } else {
+        int64_t topk = current().value.int_value;
+        advance();
+        if (topk <= 0) {
+            errorCode("PRS_0504", "TOPK_DEFAULT must be > 0");
+        }
+        topk_id = stringPool().intern(std::to_string(topk));
+    }
+
+    if (metric_id != StringPool::INVALID_ID) {
+        stmt->option_assignments.push_back({stringPool().intern("metric"), metric_id});
+    }
+    if (topk_id != StringPool::INVALID_ID) {
+        stmt->option_assignments.push_back({stringPool().intern("topk_default"), topk_id});
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseCreateMeasurement() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<CreateTableStmt>();
+    stmt->table_path = parseSchemaPath(state_);
+    if (stmt->table_path.isEmpty()) {
+        error("Expected measurement name");
+    }
+
+    expect(TokenType::LEFT_PAREN, "Expected '(' after measurement name");
+    if (check(TokenType::RIGHT_PAREN)) {
+        errorCode("PRS_0504", "CREATE MEASUREMENT field list must not be empty");
+    }
+
+    bool first = true;
+    while (!check(TokenType::RIGHT_PAREN) &&
+           !check(TokenType::SEMICOLON) &&
+           !check(TokenType::END_OF_FILE)) {
+        if (!first) {
+            expect(TokenType::COMMA, "Expected ',' between measurement fields");
+        }
+        first = false;
+        auto* column = parseColumnDef();
+        if (column) {
+            stmt->columns.push_back(column);
+        } else {
+            break;
+        }
+    }
+    expect(TokenType::RIGHT_PAREN, "Expected ')' after measurement fields");
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseCreateSchedule() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<CreateJobStmt>();
+    stmt->job_name = expectIdentifier("Expected schedule name");
+    stmt->job_type = JobType::SQL;
+    stmt->job_sql = stringPool().intern("SELECT 1");
+
+    auto trim = [](std::string_view s) -> std::string_view {
+        size_t b = 0;
+        while (b < s.size() && std::isspace(static_cast<unsigned char>(s[b]))) {
+            ++b;
+        }
+        size_t e = s.size();
+        while (e > b && std::isspace(static_cast<unsigned char>(s[e - 1]))) {
+            --e;
+        }
+        return s.substr(b, e - b);
+    };
+
+    auto parse_string_lit = [&](const char* context) -> std::string {
+        if (!check(TokenType::STRING_LITERAL)) {
+            errorCode("PRS_0507", std::string("Expected string literal for ") + context);
+            return {};
+        }
+        auto value = std::string(stringPool().get(current().value.string_id));
+        advance();
+        return value;
+    };
+
+    auto parse_rrule = [&](const std::string& raw_in, std::string& canonical_out) -> bool {
+        std::set<std::string> seen_keys;
+        std::vector<std::pair<std::string, std::string>> kv_pairs;
+
+        std::string raw(raw_in);
+        size_t pos = 0;
+        while (pos < raw.size()) {
+            size_t next = raw.find(';', pos);
+            std::string token = std::string(trim(std::string_view(raw).substr(
+                pos, next == std::string::npos ? std::string::npos : next - pos)));
+            if (token.empty()) {
+                errorCode("PRS_0507", "Invalid RRULE token");
+                return false;
+            }
+            size_t eq = token.find('=');
+            if (eq == std::string::npos || eq == 0 || eq + 1 >= token.size()) {
+                errorCode("PRS_0507", "Invalid RRULE key/value contract");
+                return false;
+            }
+            std::string key = token.substr(0, eq);
+            std::string value = token.substr(eq + 1);
+            key = std::string(trim(key));
+            value = std::string(trim(value));
+            for (char& c : key) {
+                c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+            }
+
+            static const char* kAllowed[] = {
+                "FREQ", "INTERVAL", "COUNT", "UNTIL", "BYSECOND", "BYMINUTE", "BYHOUR",
+                "BYDAY", "BYMONTHDAY", "BYYEARDAY", "BYWEEKNO", "BYMONTH", "BYSETPOS", "WKST"
+            };
+            bool allowed = false;
+            for (const char* candidate : kAllowed) {
+                if (key == candidate) {
+                    allowed = true;
+                    break;
+                }
+            }
+            if (!allowed) {
+                errorCode("PRS_0507", "Invalid RRULE key");
+                return false;
+            }
+            if (!seen_keys.insert(key).second) {
+                errorCode("PRS_0507", "Duplicate RRULE key");
+                return false;
+            }
+            kv_pairs.push_back({std::move(key), std::move(value)});
+
+            if (next == std::string::npos) {
+                break;
+            }
+            pos = next + 1;
+        }
+
+        if (seen_keys.find("FREQ") == seen_keys.end()) {
+            errorCode("PRS_0507", "RRULE requires FREQ");
+            return false;
+        }
+
+        std::sort(kv_pairs.begin(), kv_pairs.end(),
+                  [](const auto& lhs, const auto& rhs) { return lhs.first < rhs.first; });
+
+        std::string canonical;
+        for (size_t i = 0; i < kv_pairs.size(); ++i) {
+            if (i != 0) {
+                canonical.push_back(';');
+            }
+            canonical.append(kv_pairs[i].first);
+            canonical.push_back('=');
+            canonical.append(kv_pairs[i].second);
+        }
+        canonical_out = std::move(canonical);
+        return true;
+    };
+
+    auto parse_local_ts_list = [&](const char* context, std::vector<std::string>& out) -> bool {
+        if (!expect(TokenType::LEFT_PAREN, std::string("Expected '(' after ").append(context))) {
+            return false;
+        }
+        if (check(TokenType::RIGHT_PAREN)) {
+            errorCode("PRS_0507", std::string(context) + " list must not be empty");
+            advance();
+            return false;
+        }
+        while (!check(TokenType::RIGHT_PAREN) &&
+               !check(TokenType::SEMICOLON) &&
+               !check(TokenType::END_OF_FILE)) {
+            out.push_back(parse_string_lit(context));
+            if (!match(TokenType::COMMA)) {
+                break;
+            }
+        }
+        expect(TokenType::RIGHT_PAREN, std::string("Expected ')' after ").append(context));
+        return !out.empty();
+    };
+
+    std::string recurrence;
+    if (matchContextual("RRULE")) {
+        std::string raw_rrule = parse_string_lit("RRULE");
+        std::string canonical_rrule;
+        if (parse_rrule(raw_rrule, canonical_rrule)) {
+            recurrence = "RRULE " + canonical_rrule;
+        }
+    } else if (matchContextual("RRULE_SET")) {
+        if (!expect(TokenType::LEFT_PAREN, "Expected '(' after RRULE_SET")) {
+            stmt->span = makeSpan(start);
+            return stmt;
+        }
+        std::set<std::string> unique_rules;
+        while (!check(TokenType::RIGHT_PAREN) &&
+               !check(TokenType::SEMICOLON) &&
+               !check(TokenType::END_OF_FILE)) {
+            std::string raw_rrule = parse_string_lit("RRULE_SET item");
+            std::string canonical_rrule;
+            if (parse_rrule(raw_rrule, canonical_rrule)) {
+                unique_rules.insert(canonical_rrule);
+            }
+            if (!match(TokenType::COMMA)) {
+                break;
+            }
+        }
+        expect(TokenType::RIGHT_PAREN, "Expected ')' after RRULE_SET");
+        if (unique_rules.size() < 2) {
+            errorCode("PRS_0507", "RRULE_SET requires at least two unique RRULE members");
+        }
+        recurrence = "RRULE_SET(";
+        bool first = true;
+        for (const auto& member : unique_rules) {
+            if (!first) {
+                recurrence.push_back(',');
+            }
+            recurrence.append(member);
+            first = false;
+        }
+        recurrence.push_back(')');
+    } else {
+        errorCode("PRS_0507", "Expected RRULE or RRULE_SET");
+    }
+
+    if (!matchContextual("DTSTART")) {
+        errorCode("PRS_0507", "Missing DTSTART");
+    }
+    std::string dtstart = parse_string_lit("DTSTART");
+
+    if (!matchContextual("TZ")) {
+        errorCode("PRS_0507", "Missing TZ");
+    }
+    std::string timezone = parse_string_lit("TZ");
+
+    std::vector<std::string> rdate_list;
+    std::vector<std::string> exdate_list;
+    while (!check(TokenType::SEMICOLON) && !check(TokenType::END_OF_FILE)) {
+        if (matchContextual("RDATE")) {
+            parse_local_ts_list("RDATE", rdate_list);
+            continue;
+        }
+        if (matchContextual("EXDATE")) {
+            parse_local_ts_list("EXDATE", exdate_list);
+            continue;
+        }
+        errorCode("PRS_0508", "Unsupported recurrence-source token");
+        break;
+    }
+
+    std::string payload = recurrence;
+    payload.append(" DTSTART=");
+    payload.append(dtstart);
+    payload.append(" TZ=");
+    payload.append(timezone);
+    if (!rdate_list.empty()) {
+        payload.append(" RDATE=(");
+        for (size_t i = 0; i < rdate_list.size(); ++i) {
+            if (i != 0) payload.push_back(',');
+            payload.append(rdate_list[i]);
+        }
+        payload.push_back(')');
+    }
+    if (!exdate_list.empty()) {
+        payload.append(" EXDATE=(");
+        for (size_t i = 0; i < exdate_list.size(); ++i) {
+            if (i != 0) payload.push_back(',');
+            payload.append(exdate_list[i]);
+        }
+        payload.push_back(')');
+    }
+
+    stmt->schedule_kind = JobScheduleKind::CRON;
+    stmt->cron_expression = stringPool().intern(payload);
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseCreateConnectionRule() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    StringPool::StringId rule_name = expectIdentifier("Expected connection rule name");
+    std::string rule = std::string(stringPool().get(rule_name));
+    auto match_word = [&](TokenType token, const char* word) {
+        return match(token) || matchContextual(word);
+    };
+
+    auto parse_block = [&](const char* context) -> std::string {
+        if (!expect(TokenType::LEFT_PAREN, std::string("Expected '(' after ").append(context))) {
+            return {};
+        }
+        std::string_view input = state_.lexer().input();
+        size_t block_start = current().span.start.offset;
+        size_t block_end = block_start;
+        int depth = 1;
+        Token last = current();
+        bool saw_token = false;
+        while (!isAtEnd()) {
+            if (check(TokenType::LEFT_PAREN)) {
+                ++depth;
+            } else if (check(TokenType::RIGHT_PAREN)) {
+                --depth;
+                if (depth == 0) {
+                    break;
+                }
+            }
+            last = current();
+            saw_token = true;
+            advance();
+        }
+        expect(TokenType::RIGHT_PAREN, std::string("Expected ')' after ").append(context));
+        if (!saw_token) {
+            return {};
+        }
+        block_end = last.span.start.offset + last.span.length;
+        if (block_end > input.size()) {
+            block_end = input.size();
+        }
+        return std::string(input.substr(block_start, block_end - block_start));
+    };
+
+    if (!match_word(TokenType::KW_ORDER, "ORDER") || !check(TokenType::INTEGER_LITERAL)) {
+        errorCode("SEC_1235", "CREATE CONNECTION RULE requires ORDER <uint32>");
+    } else {
+        advance();
+    }
+
+    if (!matchContextual("MATCH")) {
+        errorCode("SEC_1235", "CREATE CONNECTION RULE requires MATCH (...)");
+    }
+    std::string match_block = parse_block("MATCH");
+
+    if (!matchContextual("REQUIRE")) {
+        errorCode("SEC_1235", "CREATE CONNECTION RULE requires REQUIRE (...)");
+    }
+    std::string require_block = parse_block("REQUIRE");
+
+    if (!matchContextual("ACTION")) {
+        errorCode("SEC_1235", "CREATE CONNECTION RULE requires ACTION");
+    } else if (!(matchContextual("ALLOW") || matchContextual("DENY"))) {
+        errorCode("SEC_1235", "ACTION must be ALLOW or DENY");
+    }
+
+    if (matchContextual("MAP")) {
+        if (matchContextual("AUTH")) {
+            expectContextual("POLICY", "Expected POLICY after MAP AUTH");
+            expectIdentifier("Expected policy name");
+        } else if (matchContextual("DEFAULT")) {
+            expectContextual("ROLE", "Expected ROLE after MAP DEFAULT");
+            expectIdentifier("Expected role name");
+        } else {
+            errorCode("SEC_1235", "Unsupported MAP clause in CREATE CONNECTION RULE");
+        }
+    }
+
+    if (matchContextual("REJECT")) {
+        expectContextual("CODE", "Expected CODE after REJECT");
+        expectIdentifier("Expected reject code");
+    }
+
+    if (!matchContextual("EXPECT") ||
+        !matchContextual("VERSION") ||
+        !check(TokenType::INTEGER_LITERAL)) {
+        errorCode("SEC_1235", "CREATE CONNECTION RULE requires EXPECT VERSION <uint64>");
+    } else {
+        advance();
+    }
+
+    stmt->name = stringPool().intern("security.connection_rule.create." + rule);
+    auto* lit = arena_.create<LiteralExpr>();
+    lit->literal_type = LiteralType::STRING;
+    lit->string_value = stringPool().intern("MATCH(" + match_block + ") REQUIRE(" + require_block + ")");
+    stmt->value = lit;
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseCreateToken() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    StringPool::StringId token_name = expectIdentifier("Expected token name");
+    std::string token = std::string(stringPool().get(token_name));
+
+    if (match(TokenType::KW_WITH) || matchContextual("WITH")) {
+        // optional WITH
+    }
+
+    std::string scope_model = "GENERIC";
+    if (matchContextual("SCOPE_MODEL")) {
+        if (!isIdentifier()) {
+            errorCode("SEC_1256", "Expected SCOPE_MODEL identifier");
+        } else {
+            scope_model = std::string(stringPool().get(currentIdentifier()));
+            std::string normalized = scope_model;
+            for (char& c : normalized) {
+                c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+            }
+            if (!(normalized == "GENERIC" ||
+                  normalized == "INFLUX" ||
+                  normalized == "MILVUS" ||
+                  normalized == "OPENSEARCH" ||
+                  normalized == "CLICKHOUSE")) {
+                errorCode("SEC_1256", "Invalid token scope model");
+            }
+            scope_model = normalized;
+        }
+    }
+
+    if (!matchContextual("SCOPE")) {
+        errorCode("SEC_1256", "CREATE TOKEN requires SCOPE clause");
+    }
+
+    if (!expect(TokenType::LEFT_PAREN, "Expected '(' after SCOPE")) {
+        stmt->span = makeSpan(start);
+        return stmt;
+    }
+    std::string_view input = state_.lexer().input();
+    size_t block_start = current().span.start.offset;
+    size_t block_end = block_start;
+    int depth = 1;
+    bool saw_token = false;
+    Token last = current();
+    while (!isAtEnd()) {
+        if (check(TokenType::LEFT_PAREN)) {
+            ++depth;
+        } else if (check(TokenType::RIGHT_PAREN)) {
+            --depth;
+            if (depth == 0) {
+                break;
+            }
+        }
+        last = current();
+        saw_token = true;
+        advance();
+    }
+    expect(TokenType::RIGHT_PAREN, "Expected ')' after token scope");
+    if (!saw_token) {
+        errorCode("SEC_1256", "Token scope payload must not be empty");
+    }
+    block_end = last.span.start.offset + last.span.length;
+    if (block_end > input.size()) {
+        block_end = input.size();
+    }
+
+    std::string payload = "SCOPE_MODEL=" + scope_model + " SCOPE(";
+    if (block_end > block_start) {
+        payload.append(input.substr(block_start, block_end - block_start));
+    }
+    payload.push_back(')');
+
+    stmt->name = stringPool().intern("security.token.create." + token);
+    auto* lit = arena_.create<LiteralExpr>();
+    lit->literal_type = LiteralType::STRING;
+    lit->string_value = stringPool().intern(payload);
+    stmt->value = lit;
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseCreateQuotaProfile() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    StringPool::StringId profile_name = expectIdentifier("Expected quota profile name");
+    std::string profile = std::string(stringPool().get(profile_name));
+
+    if (!expect(TokenType::LEFT_PAREN, "Expected '(' after quota profile name")) {
+        stmt->span = makeSpan(start);
+        return stmt;
+    }
+    std::string_view input = state_.lexer().input();
+    size_t block_start = current().span.start.offset;
+    size_t block_end = block_start;
+    int depth = 1;
+    bool saw_token = false;
+    Token last = current();
+    while (!isAtEnd()) {
+        if (check(TokenType::LEFT_PAREN)) {
+            ++depth;
+        } else if (check(TokenType::RIGHT_PAREN)) {
+            --depth;
+            if (depth == 0) {
+                break;
+            }
+        }
+        last = current();
+        saw_token = true;
+        advance();
+    }
+    expect(TokenType::RIGHT_PAREN, "Expected ')' after quota profile options");
+    if (!saw_token) {
+        errorCode("PRS_0504", "CREATE QUOTA PROFILE option list must not be empty");
+    }
+    block_end = last.span.start.offset + last.span.length;
+    if (block_end > input.size()) {
+        block_end = input.size();
+    }
+
+    stmt->name = stringPool().intern("security.quota_profile.create." + profile);
+    auto* lit = arena_.create<LiteralExpr>();
+    lit->literal_type = LiteralType::STRING;
+    lit->string_value = stringPool().intern(
+        block_end > block_start ? std::string(input.substr(block_start, block_end - block_start))
+                                : std::string());
+    stmt->value = lit;
     stmt->span = makeSpan(start);
     return stmt;
 }
@@ -2136,25 +2904,18 @@ CreateIndexStmt* Parser::parseCreateIndex() {
 
     // Optional USING method (USING is a Gatekeeper keyword)
     if (match(TokenType::KW_USING)) {
-        if (matchContextual("BTREE")) stmt->index_type = IndexType::BTREE;
-        else if (matchContextual("HASH")) stmt->index_type = IndexType::HASH;
-        else if (matchContextual("GIN")) stmt->index_type = IndexType::GIN;
-        else if (matchContextual("GIST")) stmt->index_type = IndexType::GIST;
-        else if (matchContextual("SPGIST")) stmt->index_type = IndexType::SPGIST;
-        else if (matchContextual("BRIN")) stmt->index_type = IndexType::BRIN;
-        else if (matchContextual("RTREE")) stmt->index_type = IndexType::RTREE;
-        else if (matchContextual("HNSW")) stmt->index_type = IndexType::HNSW;
-        else if (matchContextual("BITMAP")) stmt->index_type = IndexType::BITMAP;
-        else if (matchContextual("COLUMNSTORE")) stmt->index_type = IndexType::COLUMNSTORE;
-        else if (matchContextual("LSM")) stmt->index_type = IndexType::LSM;
-        else if (matchContextual("IVF")) stmt->index_type = IndexType::IVF;
-        else if (matchContextual("ZONEMAP") || matchContextual("ZONE_MAP"))
-            stmt->index_type = IndexType::ZONEMAP;
-        else if (matchContextual("FULLTEXT") || matchContextual("INVERTED"))
-        {
-            stmt->index_type = IndexType::FULLTEXT;
+        if (!isIdentifier()) {
+            error("Expected index type after USING");
+        } else {
+            stmt->index_method_name = current().value.string_id;
+            auto parsed = indexTypeFromName(stringPool().get(stmt->index_method_name));
+            if (!parsed.has_value()) {
+                error("Unknown index type");
+            } else {
+                stmt->index_type = *parsed;
+            }
+            advance();
         }
-        else error("Unknown index type");
     }
 
     // Column list
@@ -2208,41 +2969,26 @@ CreateIndexStmt* Parser::parseCreateIndex() {
     if (match(TokenType::KW_WITH)) {
         expect(TokenType::LEFT_PAREN, "Expected '(' after WITH");
 
-        auto parse_bool = [&]() -> bool {
-            if (match(TokenType::KW_TRUE)) return true;
-            if (match(TokenType::KW_FALSE)) return false;
+        auto parse_option_value = [&]() -> StringPool::StringId {
+            if (match(TokenType::KW_TRUE)) return stringPool().intern("true");
+            if (match(TokenType::KW_FALSE)) return stringPool().intern("false");
             if (check(TokenType::INTEGER_LITERAL)) {
-                bool value = current().value.int_value != 0;
+                auto id = stringPool().intern(std::to_string(current().value.int_value));
                 advance();
-                return value;
+                return id;
             }
-            if (isIdentifier()) {
-                auto text = stringPool().get(current().value.string_id);
-                advance();
-                if (caseInsensitiveEquals(text, "TRUE")) {
-                    return true;
-                }
-                if (caseInsensitiveEquals(text, "FALSE")) {
-                    return false;
-                }
-            }
-            error("Expected boolean value for index option");
-            return false;
-        };
-
-        auto parse_double = [&]() -> double {
             if (check(TokenType::FLOAT_LITERAL)) {
-                double value = current().value.float_value;
+                auto id = stringPool().intern(std::to_string(current().value.float_value));
                 advance();
-                return value;
+                return id;
             }
-            if (check(TokenType::INTEGER_LITERAL)) {
-                double value = static_cast<double>(current().value.int_value);
+            if (check(TokenType::STRING_LITERAL) || isIdentifier()) {
+                auto id = current().value.string_id;
                 advance();
-                return value;
+                return id;
             }
-            error("Expected numeric value for index option");
-            return 0.0;
+            error("Expected scalar value for index option");
+            return StringPool::INVALID_ID;
         };
 
         while (!check(TokenType::RIGHT_PAREN) &&
@@ -2254,18 +3000,28 @@ CreateIndexStmt* Parser::parseCreateIndex() {
             }
 
             auto opt_name = stringPool().get(current().value.string_id);
+            auto opt_name_id = current().value.string_id;
             advance();
             expect(TokenType::EQUAL, "Expected '=' after index option name");
+            auto opt_value_id = parse_option_value();
+            if (opt_value_id == StringPool::INVALID_ID) {
+                break;
+            }
+
+            stmt->option_assignments.push_back({opt_name_id, opt_value_id});
+            auto opt_value = stringPool().get(opt_value_id);
 
             if (caseInsensitiveEquals(opt_name, "BLOOM_FILTER")) {
-                stmt->options.bloom_filter_enabled = parse_bool();
+                stmt->options.bloom_filter_enabled =
+                    caseInsensitiveEquals(opt_value, "true") || opt_value == "1";
                 stmt->options.bloom_filter_set = true;
             } else if (caseInsensitiveEquals(opt_name, "BLOOM_FPR")) {
-                stmt->options.bloom_fpr = parse_double();
-                stmt->options.bloom_fpr_set = true;
-            } else {
-                error("Unknown index option");
-                return stmt;
+                try {
+                    stmt->options.bloom_fpr = std::stod(std::string(opt_value));
+                    stmt->options.bloom_fpr_set = true;
+                } catch (...) {
+                    error("Expected numeric value for BLOOM_FPR");
+                }
             }
 
             if (!match(TokenType::COMMA)) {
@@ -2540,6 +3296,34 @@ CreateDatabaseStmt* Parser::parseCreateDatabase() {
             return value;
         };
         dialect = normalize_lower(dialect);
+        {
+            static const char* kKnownProfiles[] = {
+                "mysql",
+                "postgresql",
+                "firebird",
+                "firebirdsql",
+                "cassandra",
+                "milvus",
+                "mongodb",
+                "neo4j",
+                "redis",
+                "mariadb",
+                "influxdb",
+                "clickhouse",
+                "opensearch",
+                "duckdb"
+            };
+            bool known_profile = false;
+            for (const char* profile : kKnownProfiles) {
+                if (dialect == profile) {
+                    known_profile = true;
+                    break;
+                }
+            }
+            if (!known_profile) {
+                errorCode("PRS_0503", "Feature not enabled for active profile");
+            }
+        }
 
         std::string server;
         bool server_set = false;
@@ -4258,8 +5042,346 @@ CreateTypeStmt* Parser::parseCreateType(bool /*or_replace*/) {
 // ALTER Statements
 // =============================================================================
 
+Statement* Parser::parseAlterSearchIndex() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<AlterIndexStmt>();
+    stmt->index_path = parseSchemaPath(state_);
+    if (stmt->index_path.isEmpty()) {
+        error("Expected index name");
+    }
+
+    if (!matchContextual("REBUILD")) {
+        errorCode("PRS_0505", "ALTER SEARCH INDEX supports only REBUILD");
+    }
+    stmt->action = AlterIndexAction::REBUILD;
+    if (matchContextual("ONLINE")) {
+        stmt->mode = IndexMaintenanceMode::ONLINE;
+    } else if (matchContextual("OFFLINE")) {
+        stmt->mode = IndexMaintenanceMode::OFFLINE;
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseAlterVectorIndex() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<AlterIndexStmt>();
+    stmt->index_path = parseSchemaPath(state_);
+    if (stmt->index_path.isEmpty()) {
+        error("Expected index name");
+    }
+
+    if (!matchContextual("REBUILD")) {
+        errorCode("PRS_0505", "ALTER VECTOR INDEX supports only REBUILD");
+    }
+    stmt->action = AlterIndexAction::REBUILD;
+    if (matchContextual("ONLINE")) {
+        stmt->mode = IndexMaintenanceMode::ONLINE;
+    } else if (matchContextual("OFFLINE")) {
+        stmt->mode = IndexMaintenanceMode::OFFLINE;
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseAlterMeasurement() {
+    SourceLocation start = currentLocation();
+
+    auto path = parseSchemaPath(state_);
+    if (path.isEmpty()) {
+        error("Expected measurement name");
+    }
+
+    if (!matchContextual("RETENTION")) {
+        errorCode("PRS_0505", "ALTER MEASUREMENT requires RETENTION");
+    }
+
+    std::string duration;
+    if (check(TokenType::STRING_LITERAL)) {
+        duration = std::string(stringPool().get(current().value.string_id));
+        advance();
+    } else if (check(TokenType::INTEGER_LITERAL)) {
+        duration = std::to_string(current().value.int_value);
+        advance();
+        if (isIdentifier()) {
+            duration.push_back(' ');
+            duration.append(stringPool().get(current().value.string_id));
+            advance();
+        }
+    } else {
+        errorCode("PRS_0504", "Expected duration literal after RETENTION");
+    }
+
+    auto* stmt = arena_.create<AlterSystemStmt>();
+    stmt->name = stringPool().intern("measurement.retention." + schemaPathToString(path, stringPool()));
+    auto* lit = arena_.create<LiteralExpr>();
+    lit->literal_type = LiteralType::STRING;
+    lit->string_value = stringPool().intern(duration);
+    stmt->value = lit;
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseAlterSchedule() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<AlterJobStmt>();
+    stmt->job_name = expectIdentifier("Expected schedule name");
+
+    if (!(match(TokenType::KW_SET) || matchContextual("SET"))) {
+        errorCode("PRS_0507", "Expected SET after ALTER SCHEDULE");
+    }
+
+    auto parse_string_lit = [&](const char* context) -> std::string {
+        if (!check(TokenType::STRING_LITERAL)) {
+            errorCode("PRS_0507", std::string("Expected string literal for ") + context);
+            return {};
+        }
+        auto value = std::string(stringPool().get(current().value.string_id));
+        advance();
+        return value;
+    };
+
+    std::string recurrence;
+    if (matchContextual("RRULE")) {
+        recurrence = "RRULE " + parse_string_lit("RRULE");
+    } else if (matchContextual("RRULE_SET")) {
+        recurrence = "RRULE_SET(";
+        expect(TokenType::LEFT_PAREN, "Expected '(' after RRULE_SET");
+        bool first = true;
+        while (!check(TokenType::RIGHT_PAREN) &&
+               !check(TokenType::SEMICOLON) &&
+               !check(TokenType::END_OF_FILE)) {
+            if (!first) recurrence.push_back(',');
+            recurrence.append(parse_string_lit("RRULE_SET item"));
+            first = false;
+            if (!match(TokenType::COMMA)) {
+                break;
+            }
+        }
+        expect(TokenType::RIGHT_PAREN, "Expected ')' after RRULE_SET");
+        recurrence.push_back(')');
+    } else {
+        errorCode("PRS_0507", "Expected RRULE or RRULE_SET");
+    }
+
+    if (!matchContextual("DTSTART")) {
+        errorCode("PRS_0507", "Missing DTSTART");
+    }
+    std::string dtstart = parse_string_lit("DTSTART");
+    if (!matchContextual("TZ")) {
+        errorCode("PRS_0507", "Missing TZ");
+    }
+    std::string timezone = parse_string_lit("TZ");
+
+    stmt->has_schedule = true;
+    stmt->schedule_kind = JobScheduleKind::CRON;
+    stmt->cron_expression = stringPool().intern(recurrence + " DTSTART=" + dtstart + " TZ=" + timezone);
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseAlterConnectionRule() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<AlterSystemStmt>();
+    auto match_word = [&](TokenType token, const char* word) {
+        return match(token) || matchContextual(word);
+    };
+
+    StringPool::StringId rule_name = expectIdentifier("Expected connection rule name");
+    std::string rule = std::string(stringPool().get(rule_name));
+
+    if (!(match(TokenType::KW_SET) || matchContextual("SET"))) {
+        errorCode("SEC_1235", "ALTER CONNECTION RULE requires SET clause");
+    }
+    if (!expect(TokenType::LEFT_PAREN, "Expected '(' after SET")) {
+        stmt->span = makeSpan(start);
+        return stmt;
+    }
+
+    std::string_view input = state_.lexer().input();
+    size_t block_start = current().span.start.offset;
+    size_t block_end = block_start;
+    int depth = 1;
+    Token last = current();
+    bool saw_token = false;
+    while (!isAtEnd()) {
+        if (check(TokenType::LEFT_PAREN)) {
+            ++depth;
+        } else if (check(TokenType::RIGHT_PAREN)) {
+            --depth;
+            if (depth == 0) {
+                break;
+            }
+        }
+        last = current();
+        saw_token = true;
+        advance();
+    }
+    expect(TokenType::RIGHT_PAREN, "Expected ')' after SET clause");
+    block_end = last.span.start.offset + last.span.length;
+    if (block_end > input.size()) {
+        block_end = input.size();
+    }
+
+    if (!matchContextual("EXPECT") ||
+        !matchContextual("VERSION") ||
+        !check(TokenType::INTEGER_LITERAL)) {
+        errorCode("SEC_1237", "ALTER CONNECTION RULE requires EXPECT VERSION <uint64>");
+    } else {
+        advance();
+    }
+
+    stmt->name = stringPool().intern("security.connection_rule.alter." + rule);
+    auto* lit = arena_.create<LiteralExpr>();
+    lit->literal_type = LiteralType::STRING;
+    lit->string_value = stringPool().intern(
+        saw_token && block_end > block_start ? std::string(input.substr(block_start, block_end - block_start))
+                                             : std::string());
+    stmt->value = lit;
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseAlterToken() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    StringPool::StringId token_name = expectIdentifier("Expected token name");
+    std::string token = std::string(stringPool().get(token_name));
+
+    if (!(match(TokenType::KW_SET) || matchContextual("SET"))) {
+        errorCode("PRS_0505", "ALTER TOKEN requires SET clause");
+    }
+
+    std::string payload;
+    if (expect(TokenType::LEFT_PAREN, "Expected '(' after ALTER TOKEN ... SET")) {
+        std::string_view input = state_.lexer().input();
+        size_t block_start = current().span.start.offset;
+        size_t block_end = block_start;
+        int depth = 1;
+        bool saw_token = false;
+        Token last = current();
+        while (!isAtEnd()) {
+            if (check(TokenType::LEFT_PAREN)) {
+                ++depth;
+            } else if (check(TokenType::RIGHT_PAREN)) {
+                --depth;
+                if (depth == 0) {
+                    break;
+                }
+            }
+            last = current();
+            saw_token = true;
+            advance();
+        }
+        expect(TokenType::RIGHT_PAREN, "Expected ')' after ALTER TOKEN SET");
+        block_end = last.span.start.offset + last.span.length;
+        if (block_end > input.size()) {
+            block_end = input.size();
+        }
+        if (saw_token && block_end > block_start) {
+            payload = std::string(input.substr(block_start, block_end - block_start));
+        }
+    }
+
+    stmt->name = stringPool().intern("security.token.alter." + token);
+    auto* lit = arena_.create<LiteralExpr>();
+    lit->literal_type = LiteralType::STRING;
+    lit->string_value = stringPool().intern(payload);
+    stmt->value = lit;
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseAlterQuotaProfile() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    StringPool::StringId profile_name = expectIdentifier("Expected quota profile name");
+    std::string profile = std::string(stringPool().get(profile_name));
+
+    if (!(match(TokenType::KW_SET) || matchContextual("SET"))) {
+        errorCode("PRS_0505", "ALTER QUOTA PROFILE requires SET");
+    }
+
+    std::string payload;
+    if (expect(TokenType::LEFT_PAREN, "Expected '(' after ALTER QUOTA PROFILE ... SET")) {
+        std::string_view input = state_.lexer().input();
+        size_t block_start = current().span.start.offset;
+        size_t block_end = block_start;
+        int depth = 1;
+        bool saw_token = false;
+        Token last = current();
+        while (!isAtEnd()) {
+            if (check(TokenType::LEFT_PAREN)) {
+                ++depth;
+            } else if (check(TokenType::RIGHT_PAREN)) {
+                --depth;
+                if (depth == 0) {
+                    break;
+                }
+            }
+            last = current();
+            saw_token = true;
+            advance();
+        }
+        expect(TokenType::RIGHT_PAREN, "Expected ')' after ALTER QUOTA PROFILE SET");
+        block_end = last.span.start.offset + last.span.length;
+        if (block_end > input.size()) {
+            block_end = input.size();
+        }
+        if (saw_token && block_end > block_start) {
+            payload = std::string(input.substr(block_start, block_end - block_start));
+        }
+    }
+
+    stmt->name = stringPool().intern("security.quota_profile.alter." + profile);
+    auto* lit = arena_.create<LiteralExpr>();
+    lit->literal_type = LiteralType::STRING;
+    lit->string_value = stringPool().intern(payload);
+    stmt->value = lit;
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
 Statement* Parser::parseAlter() {
     ParseModeGuard guard(state_, ParseMode::DDL);
+
+    if (matchContextual("SEARCH")) {
+        if (!matchContextual("INDEX")) {
+            errorCode("PRS_0505", "Expected INDEX after ALTER SEARCH");
+            return nullptr;
+        }
+        return parseAlterSearchIndex();
+    }
+    if (matchContextual("VECTOR")) {
+        if (!matchContextual("INDEX")) {
+            errorCode("PRS_0505", "Expected INDEX after ALTER VECTOR");
+            return nullptr;
+        }
+        return parseAlterVectorIndex();
+    }
+    if (matchContextual("MEASUREMENT")) return parseAlterMeasurement();
+    if (matchContextual("SCHEDULE")) return parseAlterSchedule();
+    if (matchContextual("CONNECTION")) {
+        if (!matchContextual("RULE")) {
+            errorCode("PRS_0505", "Expected RULE after ALTER CONNECTION");
+            return nullptr;
+        }
+        return parseAlterConnectionRule();
+    }
+    if (matchContextual("TOKEN")) return parseAlterToken();
+    if (matchContextual("QUOTA")) {
+        if (!matchContextual("PROFILE")) {
+            errorCode("PRS_0505", "Expected PROFILE after ALTER QUOTA");
+            return nullptr;
+        }
+        return parseAlterQuotaProfile();
+    }
 
     if (matchContextual("TABLE")) return parseAlterTable();
     if (matchContextual("SCHEMA")) return parseAlterSchema();
@@ -4312,6 +5434,118 @@ Statement* Parser::parseAlter() {
     if (matchContextual("VIEW")) return parse_rename_move(DdlObjectType::VIEW);
     if (matchContextual("INDEX")) {
         SourceLocation start = currentLocation();
+
+        auto parse_option_value = [&]() -> StringPool::StringId {
+            if (match(TokenType::KW_TRUE)) return stringPool().intern("true");
+            if (match(TokenType::KW_FALSE)) return stringPool().intern("false");
+            if (check(TokenType::INTEGER_LITERAL)) {
+                auto id = stringPool().intern(std::to_string(current().value.int_value));
+                advance();
+                return id;
+            }
+            if (check(TokenType::FLOAT_LITERAL)) {
+                auto id = stringPool().intern(std::to_string(current().value.float_value));
+                advance();
+                return id;
+            }
+            if (check(TokenType::STRING_LITERAL) || isIdentifier()) {
+                auto id = current().value.string_id;
+                advance();
+                return id;
+            }
+            error("Expected scalar value for index option");
+            return StringPool::INVALID_ID;
+        };
+
+        auto parse_option_set_list = [&](AlterIndexStmt* stmt, const std::string& action_label) {
+            expect(TokenType::LEFT_PAREN, "Expected '(' after " + action_label);
+            while (!check(TokenType::RIGHT_PAREN) &&
+                   !check(TokenType::SEMICOLON) &&
+                   !check(TokenType::END_OF_FILE)) {
+                if (!isIdentifier()) {
+                    error("Expected index option name");
+                    break;
+                }
+
+                auto opt_name_id = current().value.string_id;
+                auto opt_name = stringPool().get(opt_name_id);
+                advance();
+                expect(TokenType::EQUAL, "Expected '=' after index option name");
+                auto opt_value_id = parse_option_value();
+                if (opt_value_id == StringPool::INVALID_ID) {
+                    break;
+                }
+                stmt->option_assignments.push_back({opt_name_id, opt_value_id});
+
+                auto opt_value = stringPool().get(opt_value_id);
+                if (caseInsensitiveEquals(opt_name, "BLOOM_FILTER")) {
+                    stmt->options.bloom_filter_enabled =
+                        caseInsensitiveEquals(opt_value, "true") || opt_value == "1";
+                    stmt->options.bloom_filter_set = true;
+                } else if (caseInsensitiveEquals(opt_name, "BLOOM_FPR")) {
+                    try {
+                        stmt->options.bloom_fpr = std::stod(std::string(opt_value));
+                        stmt->options.bloom_fpr_set = true;
+                    } catch (...) {
+                        error("Expected numeric value for BLOOM_FPR");
+                    }
+                }
+
+                if (!match(TokenType::COMMA)) {
+                    break;
+                }
+            }
+            expect(TokenType::RIGHT_PAREN, "Expected ')' after index options");
+        };
+
+        auto parse_option_reset_list = [&](AlterIndexStmt* stmt, const std::string& action_label) {
+            expect(TokenType::LEFT_PAREN, "Expected '(' after " + action_label);
+            do {
+                stmt->reset_options.push_back(expectIdentifier("Expected index option name"));
+            } while (match(TokenType::COMMA));
+            expect(TokenType::RIGHT_PAREN, "Expected ')' after index option list");
+        };
+
+        auto parse_maintenance_mode = [&](AlterIndexStmt* stmt) {
+            if (matchContextual("ONLINE")) {
+                stmt->mode = IndexMaintenanceMode::ONLINE;
+            } else if (matchContextual("OFFLINE")) {
+                stmt->mode = IndexMaintenanceMode::OFFLINE;
+            }
+        };
+
+        if (matchContextual("DEFAULTS")) {
+            auto* stmt = arena_.create<AlterIndexStmt>();
+            stmt->defaults_scope = true;
+
+            expectContextual("FOR", "Expected FOR after ALTER INDEX DEFAULTS");
+            if (!isIdentifier()) {
+                error("Expected index type after ALTER INDEX DEFAULTS FOR");
+            } else {
+                stmt->defaults_index_type_name = current().value.string_id;
+                auto parsed = indexTypeFromName(stringPool().get(stmt->defaults_index_type_name));
+                if (!parsed.has_value()) {
+                    error("Unknown index type");
+                } else {
+                    stmt->defaults_index_type = *parsed;
+                }
+                advance();
+            }
+
+            if (match(TokenType::KW_SET)) {
+                stmt->action = AlterIndexAction::SET_OPTIONS;
+                parse_option_set_list(stmt, "SET");
+            } else if (matchContextual("RESET")) {
+                stmt->action = AlterIndexAction::RESET_OPTIONS;
+                parse_option_reset_list(stmt, "RESET");
+            } else {
+                error("Expected SET or RESET after ALTER INDEX DEFAULTS FOR <index_type>");
+            }
+
+            stmt->span = makeSpan(start);
+            return stmt;
+        }
+
         bool if_exists = false;
         if (match(TokenType::KW_IF)) {
             expect(TokenType::KW_EXISTS, "Expected EXISTS after IF");
@@ -4349,80 +5583,87 @@ Statement* Parser::parseAlter() {
             auto* stmt = arena_.create<AlterIndexStmt>();
             stmt->index_path = index_path;
             stmt->action = AlterIndexAction::SET_OPTIONS;
-
-            expect(TokenType::LEFT_PAREN, "Expected '(' after SET in ALTER INDEX");
-
-            auto parse_bool = [&]() -> bool {
-                if (match(TokenType::KW_TRUE)) return true;
-                if (match(TokenType::KW_FALSE)) return false;
-                if (check(TokenType::INTEGER_LITERAL)) {
-                    bool value = current().value.int_value != 0;
-                    advance();
-                    return value;
-                }
-                if (isIdentifier()) {
-                    auto text = stringPool().get(current().value.string_id);
-                    advance();
-                    if (caseInsensitiveEquals(text, "TRUE")) {
-                        return true;
-                    }
-                    if (caseInsensitiveEquals(text, "FALSE")) {
-                        return false;
-                    }
-                }
-                error("Expected boolean value for index option");
-                return false;
-            };
-
-            auto parse_double = [&]() -> double {
-                if (check(TokenType::FLOAT_LITERAL)) {
-                    double value = current().value.float_value;
-                    advance();
-                    return value;
-                }
-                if (check(TokenType::INTEGER_LITERAL)) {
-                    double value = static_cast<double>(current().value.int_value);
-                    advance();
-                    return value;
-                }
-                error("Expected numeric value for index option");
-                return 0.0;
-            };
-
-            while (!check(TokenType::RIGHT_PAREN) &&
-                   !check(TokenType::SEMICOLON) &&
-                   !check(TokenType::END_OF_FILE)) {
-                if (!isIdentifier()) {
-                    error("Expected index option name");
-                    break;
-                }
-
-                auto opt_name = stringPool().get(current().value.string_id);
-                advance();
-                expect(TokenType::EQUAL, "Expected '=' after index option name");
-
-                if (caseInsensitiveEquals(opt_name, "BLOOM_FILTER")) {
-                    stmt->options.bloom_filter_enabled = parse_bool();
-                    stmt->options.bloom_filter_set = true;
-                } else if (caseInsensitiveEquals(opt_name, "BLOOM_FPR")) {
-                    stmt->options.bloom_fpr = parse_double();
-                    stmt->options.bloom_fpr_set = true;
-                } else {
-                    error("Unknown index option");
-                    return stmt;
-                }
-
-                if (!match(TokenType::COMMA)) {
-                    break;
-                }
-            }
-
-            expect(TokenType::RIGHT_PAREN, "Expected ')' after index options");
+            parse_option_set_list(stmt, "SET");
             stmt->span = makeSpan(start);
             return stmt;
         }
 
-        error("Expected RENAME TO or SET after index name");
+        if (matchContextual("RESET")) {
+            auto* stmt = arena_.create<AlterIndexStmt>();
+            stmt->index_path = index_path;
+            stmt->action = AlterIndexAction::RESET_OPTIONS;
+            parse_option_reset_list(stmt, "RESET");
+            stmt->span = makeSpan(start);
+            return stmt;
+        }
+
+        if (matchContextual("REBUILD")) {
+            auto* stmt = arena_.create<AlterIndexStmt>();
+            stmt->index_path = index_path;
+            stmt->action = AlterIndexAction::REBUILD;
+            parse_maintenance_mode(stmt);
+            if (match(TokenType::KW_WITH)) {
+                parse_option_set_list(stmt, "WITH");
+            }
+            stmt->span = makeSpan(start);
+            return stmt;
+        }
+
+        if (matchContextual("REBALANCE")) {
+            auto* stmt = arena_.create<AlterIndexStmt>();
+            stmt->index_path = index_path;
+            stmt->action = AlterIndexAction::REBALANCE;
+            parse_maintenance_mode(stmt);
+            if (match(TokenType::KW_WITH)) {
+                parse_option_set_list(stmt, "WITH");
+            }
+            stmt->span = makeSpan(start);
+            return stmt;
+        }
+
+        if (matchContextual("RELOCATE")) {
+            auto* stmt = arena_.create<AlterIndexStmt>();
+            stmt->index_path = index_path;
+            stmt->action = AlterIndexAction::RELOCATE;
+            expectContextual("TO", "Expected TO after RELOCATE");
+            if (!matchContextual("FILESPACE") && !matchContextual("TABLESPACE")) {
+                error("Expected FILESPACE after RELOCATE TO");
+            }
+            stmt->target_filespace = parseSchemaPath(state_);
+            stmt->has_target_filespace = !stmt->target_filespace.isEmpty();
+            parse_maintenance_mode(stmt);
+            if (match(TokenType::KW_WITH)) {
+                parse_option_set_list(stmt, "WITH");
+            }
+            stmt->span = makeSpan(start);
+            return stmt;
+        }
+
+        if (matchContextual("LIGHT")) {
+            auto* stmt = arena_.create<AlterIndexStmt>();
+            stmt->index_path = index_path;
+            stmt->action = AlterIndexAction::LIGHT_SCAN;
+            expectContextual("SCAN", "Expected SCAN after LIGHT");
+            if (match(TokenType::KW_WITH)) {
+                parse_option_set_list(stmt, "WITH");
+            }
+            stmt->span = makeSpan(start);
+            return stmt;
+        }
+
+        if (matchContextual("DIAGNOSTIC")) {
+            auto* stmt = arena_.create<AlterIndexStmt>();
+            stmt->index_path = index_path;
+            stmt->action = AlterIndexAction::DIAGNOSTIC_SCAN;
+            expectContextual("SCAN", "Expected SCAN after DIAGNOSTIC");
+            if (match(TokenType::KW_WITH)) {
+                parse_option_set_list(stmt, "WITH");
+            }
+            stmt->span = makeSpan(start);
+            return stmt;
+        }
+
+        error("Expected RENAME TO, SET, RESET, REBUILD, REBALANCE, RELOCATE, LIGHT SCAN, or DIAGNOSTIC SCAN");
         return nullptr;
     }
     if (matchContextual("SEQUENCE")) return parse_rename_move(DdlObjectType::SEQUENCE);
@@ -5489,6 +6730,37 @@ AlterTableStmt* Parser::parseAlterTable() {
 Statement* Parser::parseDrop() {
     ParseModeGuard guard(state_, ParseMode::DDL);
 
+    if (matchContextual("SEARCH")) {
+        if (!matchContextual("INDEX")) {
+            errorCode("PRS_0505", "Expected INDEX after DROP SEARCH");
+            return nullptr;
+        }
+        return parseDropSearchIndex();
+    }
+    if (matchContextual("VECTOR")) {
+        if (!matchContextual("INDEX")) {
+            errorCode("PRS_0505", "Expected INDEX after DROP VECTOR");
+            return nullptr;
+        }
+        return parseDropVectorIndex();
+    }
+    if (matchContextual("SCHEDULE")) return parseDropSchedule();
+    if (matchContextual("CONNECTION")) {
+        if (!matchContextual("RULE")) {
+            errorCode("PRS_0505", "Expected RULE after DROP CONNECTION");
+            return nullptr;
+        }
+        return parseDropConnectionRule();
+    }
+    if (matchContextual("TOKEN")) return parseDropToken();
+    if (matchContextual("QUOTA")) {
+        if (!matchContextual("PROFILE")) {
+            errorCode("PRS_0505", "Expected PROFILE after DROP QUOTA");
+            return nullptr;
+        }
+        return parseDropQuotaProfile();
+    }
+
     if (matchContextual("SCHEMA")) return parseDropSchema();
     if (matchContextual("DATABASE")) return parseDropDatabase();
     if (matchContextual("TABLESPACE")) return parseDropTablespace();
@@ -5530,6 +6802,96 @@ Statement* Parser::parseDrop() {
 
     error("Expected object type after DROP");
     return nullptr;
+}
+
+Statement* Parser::parseDropSearchIndex() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<DropIndexStmt>();
+    if (match(TokenType::KW_IF)) {
+        expect(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+        stmt->if_exists = true;
+    }
+    stmt->indexes.push_back(parseSchemaPath(state_));
+    if (stmt->indexes.back().isEmpty()) {
+        error("Expected search index name");
+    }
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseDropVectorIndex() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<DropIndexStmt>();
+    if (match(TokenType::KW_IF)) {
+        expect(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+        stmt->if_exists = true;
+    }
+    stmt->indexes.push_back(parseSchemaPath(state_));
+    if (stmt->indexes.back().isEmpty()) {
+        error("Expected vector index name");
+    }
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseDropSchedule() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<DropJobStmt>();
+    stmt->job_name = expectIdentifier("Expected schedule name");
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseDropConnectionRule() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<AlterSystemStmt>();
+    auto match_word = [&](TokenType token, const char* word) {
+        return match(token) || matchContextual(word);
+    };
+    StringPool::StringId rule_name = expectIdentifier("Expected connection rule name");
+    std::string rule = std::string(stringPool().get(rule_name));
+    if (!matchContextual("EXPECT") ||
+        !matchContextual("VERSION") ||
+        !check(TokenType::INTEGER_LITERAL)) {
+        errorCode("SEC_1237", "DROP CONNECTION RULE requires EXPECT VERSION <uint64>");
+    } else {
+        advance();
+    }
+    stmt->name = stringPool().intern("security.connection_rule.drop." + rule);
+    auto* lit = arena_.create<LiteralExpr>();
+    lit->literal_type = LiteralType::STRING;
+    lit->string_value = stringPool().intern("");
+    stmt->value = lit;
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseDropToken() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<AlterSystemStmt>();
+    StringPool::StringId token_name = expectIdentifier("Expected token name");
+    std::string token = std::string(stringPool().get(token_name));
+    stmt->name = stringPool().intern("security.token.drop." + token);
+    auto* lit = arena_.create<LiteralExpr>();
+    lit->literal_type = LiteralType::STRING;
+    lit->string_value = stringPool().intern("");
+    stmt->value = lit;
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseDropQuotaProfile() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<AlterSystemStmt>();
+    StringPool::StringId profile_name = expectIdentifier("Expected quota profile name");
+    std::string profile = std::string(stringPool().get(profile_name));
+    stmt->name = stringPool().intern("security.quota_profile.drop." + profile);
+    auto* lit = arena_.create<LiteralExpr>();
+    lit->literal_type = LiteralType::STRING;
+    lit->string_value = stringPool().intern("");
+    stmt->value = lit;
+    stmt->span = makeSpan(start);
+    return stmt;
 }
 
 // =============================================================================
@@ -9222,6 +10584,58 @@ Expression* Parser::parseFunctionCall(SchemaPath path) {
         }
     }
 
+    auto require_arity = [&](const char* name, size_t expected) {
+        if (expr->arguments.size() != expected) {
+            errorCode("PRS_0504",
+                      std::string(name) + " requires exactly " + std::to_string(expected) + " argument(s)");
+        }
+    };
+
+    if (upper_name == "DOC_PATH_EXISTS") {
+        require_arity("DOC_PATH_EXISTS", 2);
+    } else if (upper_name == "DOC_PATH_GET_TEXT") {
+        require_arity("DOC_PATH_GET_TEXT", 2);
+    } else if (upper_name == "DOC_PATH_GET_DOUBLE") {
+        require_arity("DOC_PATH_GET_DOUBLE", 2);
+    } else if (upper_name == "DOC_PATH_GET_BOOL") {
+        require_arity("DOC_PATH_GET_BOOL", 2);
+    } else if (upper_name == "TIME_BUCKET") {
+        require_arity("TIME_BUCKET", 2);
+    } else if (upper_name == "TS_INTERPOLATE_LINEAR") {
+        require_arity("TS_INTERPOLATE_LINEAR", 5);
+    } else if (upper_name == "TS_RATE_PER_SEC") {
+        require_arity("TS_RATE_PER_SEC", 4);
+    } else if (upper_name == "SEARCH_BM25") {
+        require_arity("SEARCH_BM25", 6);
+    } else if (upper_name == "SEARCH_SCORE_FUSION") {
+        require_arity("SEARCH_SCORE_FUSION", 4);
+    } else if (upper_name == "VECTOR_L2_DISTANCE") {
+        require_arity("VECTOR_L2_DISTANCE", 2);
+    } else if (upper_name == "VECTOR_COSINE_DISTANCE") {
+        require_arity("VECTOR_COSINE_DISTANCE", 2);
+    } else if (upper_name == "VECTOR_DOT_SIMILARITY") {
+        require_arity("VECTOR_DOT_SIMILARITY", 2);
+    } else if (upper_name == "VECTOR_L2_NORM") {
+        require_arity("VECTOR_L2_NORM", 1);
+    } else if (upper_name == "COMPILE_EMBEDDED_PAYLOAD") {
+        require_arity("COMPILE_EMBEDDED_PAYLOAD", 4);
+    } else if (upper_name == "VALIDATE_EMBEDDED_PAYLOAD") {
+        require_arity("VALIDATE_EMBEDDED_PAYLOAD", 4);
+    } else {
+        auto starts_with = [&](const char* prefix) {
+            const size_t n = std::strlen(prefix);
+            return upper_name.size() >= n &&
+                   std::equal(prefix, prefix + n, upper_name.begin());
+        };
+
+        if (starts_with("DOC_PATH_") ||
+            starts_with("TS_") ||
+            starts_with("SEARCH_") ||
+            starts_with("VECTOR_")) {
+            errorCode("PRS_0506", "Unknown builtin function symbol");
+        }
+    }
+
     return expr;
 }
 
@@ -10257,10 +11671,30 @@ ShowStmt* Parser::parseShow() {
         stmt->from_name = expectIdentifier("Expected table name after FROM");
         parseLikeClause();
     }
-    // SHOW INDEXES FROM table
-    else if (matchContextual("INDEXES") || matchContextual("INDEX")) {
-        // Check if this is "SHOW INDEX name" (Firebird) or "SHOW INDEXES FROM table"
+    // SHOW INDEX... family
+    else if (matchContextual("INDEXES")) {
+        stmt->show_type = ShowStmt::ShowType::INDEXES;
         if (check(TokenType::KW_FROM)) {
+            advance();  // consume FROM
+            stmt->from_name = expectIdentifier("Expected table name after FROM");
+        }
+    } else if (matchContextual("INDEX")) {
+        if (matchContextual("HEALTH")) {
+            stmt->show_type = ShowStmt::ShowType::INDEX_HEALTH;
+            stmt->name = expectIdentifier("Expected index name after SHOW INDEX HEALTH");
+        } else if (matchContextual("USAGE")) {
+            stmt->show_type = ShowStmt::ShowType::INDEX_USAGE;
+            stmt->name = expectIdentifier("Expected index name after SHOW INDEX USAGE");
+        } else if (matchContextual("STORAGE")) {
+            stmt->show_type = ShowStmt::ShowType::INDEX_STORAGE;
+            stmt->name = expectIdentifier("Expected index name after SHOW INDEX STORAGE");
+        } else if (matchContextual("CONTENTION")) {
+            stmt->show_type = ShowStmt::ShowType::INDEX_CONTENTION;
+            stmt->name = expectIdentifier("Expected index name after SHOW INDEX CONTENTION");
+        } else if (matchContextual("OPTIONS")) {
+            stmt->show_type = ShowStmt::ShowType::INDEX_OPTIONS;
+            stmt->name = expectIdentifier("Expected index name after SHOW INDEX OPTIONS");
+        } else if (check(TokenType::KW_FROM)) {
             stmt->show_type = ShowStmt::ShowType::INDEXES;
             advance();  // consume FROM
             stmt->from_name = expectIdentifier("Expected table name after FROM");
@@ -10269,7 +11703,7 @@ ShowStmt* Parser::parseShow() {
             stmt->show_type = ShowStmt::ShowType::INDEX;
             stmt->name = expectIdentifier("Expected index name");
         } else {
-            // SHOW INDEXES (list all)
+            // SHOW INDEX (list all)
             stmt->show_type = ShowStmt::ShowType::INDEXES;
         }
     }
@@ -10570,6 +12004,61 @@ AnalyzeStmt* Parser::parseAnalyze() {
         stmt->verbose = true;
     }
 
+    auto parse_sample_rate = [&](const char* error_prefix) {
+        if (check(TokenType::INTEGER_LITERAL)) {
+            stmt->sample_rate = static_cast<double>(current().value.int_value);
+            advance();
+            stmt->has_sample = true;
+            return;
+        }
+        if (check(TokenType::FLOAT_LITERAL)) {
+            stmt->sample_rate = current().value.float_value;
+            advance();
+            stmt->has_sample = true;
+            return;
+        }
+        error(std::string(error_prefix) + " sample rate");
+    };
+
+    if (matchContextual("INDEX")) {
+        stmt->target = AnalyzeStmt::AnalyzeTarget::INDEX;
+        stmt->index_path = parseSchemaPath(state_);
+        if (stmt->index_path.isEmpty()) {
+            error("Expected index name after ANALYZE INDEX");
+        }
+
+        if (match(TokenType::KW_WITH)) {
+            expect(TokenType::LEFT_PAREN, "Expected '(' after WITH");
+            while (!check(TokenType::RIGHT_PAREN) &&
+                   !check(TokenType::SEMICOLON) &&
+                   !check(TokenType::END_OF_FILE)) {
+                if (!isIdentifier()) {
+                    error("Expected option name in ANALYZE INDEX WITH clause");
+                    break;
+                }
+                auto option_name = stringPool().get(current().value.string_id);
+                advance();
+                expect(TokenType::EQUAL, "Expected '=' after option name");
+                if (caseInsensitiveEquals(option_name, "SAMPLE_RATE")) {
+                    parse_sample_rate("Expected numeric");
+                } else {
+                    error("Unknown ANALYZE INDEX option");
+                    break;
+                }
+                if (!match(TokenType::COMMA)) {
+                    break;
+                }
+            }
+            expect(TokenType::RIGHT_PAREN, "Expected ')' after ANALYZE INDEX options");
+        } else if (matchContextual("SAMPLE")) {
+            parse_sample_rate("Expected numeric");
+        }
+
+        stmt->span = makeSpan(start);
+        return stmt;
+    }
+
+    stmt->target = AnalyzeStmt::AnalyzeTarget::TABLE;
     stmt->table_path = parseSchemaPath(state_);
     if (stmt->table_path.isEmpty()) {
         error("Expected table name after ANALYZE");
@@ -10611,20 +12100,70 @@ AnalyzeStmt* Parser::parseAnalyze() {
             if (stmt->has_sample) {
                 error("SAMPLE specified more than once");
             }
-            if (check(TokenType::INTEGER_LITERAL)) {
-                stmt->sample_rate = static_cast<double>(current().value.int_value);
-                advance();
-            } else if (check(TokenType::FLOAT_LITERAL)) {
-                stmt->sample_rate = current().value.float_value;
-                advance();
-            } else {
-                error("Expected numeric sample rate after SAMPLE");
-            }
-            stmt->has_sample = true;
+            parse_sample_rate("Expected numeric");
             continue;
         }
 
         break;
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+AlterIndexStmt* Parser::parseValidateIndex() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<AlterIndexStmt>();
+    stmt->action = AlterIndexAction::DIAGNOSTIC_SCAN;
+
+    if (!matchContextual("INDEX")) {
+        error("Expected INDEX after VALIDATE");
+        stmt->span = makeSpan(start);
+        return stmt;
+    }
+
+    stmt->index_path = parseSchemaPath(state_);
+    if (stmt->index_path.isEmpty()) {
+        error("Expected index name after VALIDATE INDEX");
+        stmt->span = makeSpan(start);
+        return stmt;
+    }
+
+    if (match(TokenType::KW_WITH)) {
+        expect(TokenType::LEFT_PAREN, "Expected '(' after WITH");
+        while (!check(TokenType::RIGHT_PAREN) &&
+               !check(TokenType::SEMICOLON) &&
+               !check(TokenType::END_OF_FILE)) {
+            auto option_name = expectIdentifier("Expected index option name");
+            expect(TokenType::EQUAL, "Expected '=' after index option name");
+
+            StringPool::StringId option_value = StringPool::INVALID_ID;
+            if (check(TokenType::INTEGER_LITERAL)) {
+                option_value = stringPool().intern(std::to_string(current().value.int_value));
+                advance();
+            } else if (check(TokenType::FLOAT_LITERAL)) {
+                option_value = stringPool().intern(std::to_string(current().value.float_value));
+                advance();
+            } else if (check(TokenType::STRING_LITERAL) || isIdentifier()) {
+                option_value = current().value.string_id;
+                advance();
+            } else if (match(TokenType::KW_TRUE)) {
+                option_value = stringPool().intern("true");
+            } else if (match(TokenType::KW_FALSE)) {
+                option_value = stringPool().intern("false");
+            } else {
+                error("Expected scalar value for index option");
+            }
+
+            if (option_name != StringPool::INVALID_ID && option_value != StringPool::INVALID_ID) {
+                stmt->option_assignments.push_back({option_name, option_value});
+            }
+
+            if (!match(TokenType::COMMA)) {
+                break;
+            }
+        }
+        expect(TokenType::RIGHT_PAREN, "Expected ')' after index options");
     }
 
     stmt->span = makeSpan(start);
@@ -10651,6 +12190,26 @@ SweepDatabaseStmt* Parser::parseSweep() {
 // =============================================================================
 // DCL Statement Parsing (GRANT/REVOKE)
 // =============================================================================
+
+Statement* Parser::parseRevokeToken() {
+    SourceLocation start = currentLocation();
+
+    if (!matchContextual("TOKEN")) {
+        errorCode("PRS_0505", "Expected TOKEN after REVOKE");
+        return nullptr;
+    }
+
+    auto* stmt = arena_.create<AlterSystemStmt>();
+    StringPool::StringId token_name = expectIdentifier("Expected token name");
+    std::string token = std::string(stringPool().get(token_name));
+    stmt->name = stringPool().intern("security.token.revoke." + token);
+    auto* lit = arena_.create<LiteralExpr>();
+    lit->literal_type = LiteralType::STRING;
+    lit->string_value = stringPool().intern("");
+    stmt->value = lit;
+    stmt->span = makeSpan(start);
+    return stmt;
+}
 
 GrantStmt* Parser::parseGrant() {
     SourceLocation start = currentLocation();

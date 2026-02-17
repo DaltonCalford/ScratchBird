@@ -126,6 +126,7 @@ private:
     void error(const std::string& message);
     void error(const std::string& message, const std::string& hint);
     void errorAt(SourceSpan span, const std::string& message, const std::string& hint = "");
+    void errorCode(const char* code, const std::string& message);
 
     // Synchronization for error recovery
     void synchronize();
@@ -143,6 +144,13 @@ private:
     Statement* parseTruncate();
 
     // CREATE statements
+    CreateIndexStmt* parseCreateSearchIndex();
+    CreateIndexStmt* parseCreateVectorIndex();
+    Statement* parseCreateMeasurement();
+    Statement* parseCreateSchedule();
+    Statement* parseCreateConnectionRule();
+    Statement* parseCreateToken();
+    Statement* parseCreateQuotaProfile();
     CreateTableStmt* parseCreateTable(bool or_replace = false,
                                       TempTableType temp_type = TempTableType::NONE);
     CreateIndexStmt* parseCreateIndex();
@@ -171,6 +179,13 @@ private:
     CreateJobStmt* parseCreateJob(bool or_alter = false, bool recreate = false);
 
     // ALTER statements
+    Statement* parseAlterSearchIndex();
+    Statement* parseAlterVectorIndex();
+    Statement* parseAlterMeasurement();
+    Statement* parseAlterSchedule();
+    Statement* parseAlterConnectionRule();
+    Statement* parseAlterToken();
+    Statement* parseAlterQuotaProfile();
     AlterTableStmt* parseAlterTable();
     AlterSchemaStmt* parseAlterSchema();
     AlterDatabaseStmt* parseAlterDatabase();
@@ -182,6 +197,12 @@ private:
     AlterSystemStmt* parseAlterSystem();
 
     // DROP statements
+    Statement* parseDropSearchIndex();
+    Statement* parseDropVectorIndex();
+    Statement* parseDropSchedule();
+    Statement* parseDropConnectionRule();
+    Statement* parseDropToken();
+    Statement* parseDropQuotaProfile();
     DropTableStmt* parseDropTable();
     DropIndexStmt* parseDropIndex();
     DropViewStmt* parseDropView();
@@ -279,6 +300,7 @@ private:
     ShowStmt* parseDescribe();
     ExplainStmt* parseExplain();
     AnalyzeStmt* parseAnalyze();
+    AlterIndexStmt* parseValidateIndex();
     SweepDatabaseStmt* parseSweep();
     ExecuteJobStmt* parseExecuteJob();
     CancelJobRunStmt* parseCancelJobRun();
@@ -290,6 +312,7 @@ private:
 
     GrantStmt* parseGrant();
     RevokeStmt* parseRevoke();
+    Statement* parseRevokeToken();
 
     // ==========================================================================
     // Connection Statements

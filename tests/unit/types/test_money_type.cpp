@@ -70,7 +70,7 @@ TEST(MoneyTypeTest, Comprehensive) {
 
     // Test 7: TypeSystem utilities
     std::cout << "Test 7: TypeSystem utilities\n";
-    ASSERT_EQ(TypeSystem::getTypeName(DataType::MONEY), "MONEY");
+    ASSERT_STREQ(TypeSystem::getTypeName(DataType::MONEY), "MONEY");
     std::cout << "  ✓ getTypeName() passed\n";
     std::cout << "  ✓ All TypeSystem utilities passed\n\n";
 

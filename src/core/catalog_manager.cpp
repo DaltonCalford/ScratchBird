@@ -32,11 +32,13 @@
 #include "scratchbird/core/lsm_tree_index.h"
 #include "scratchbird/core/index_factory.h"  // LSM Integration Phase 3: Index factory
 #include "scratchbird/core/config.h"
+#include "scratchbird/core/vnext_metrics_event_model.h"
 #include <cstring>
 #include "scratchbird/core/toast.h"       // Phase 5 Task 5.1.3: TOAST migration
 #include <algorithm>
 #include <sstream>  // Phase 1: Dependency error messages
 #include <cctype>
+#include <cstdlib>
 #include <array>
 #include <limits>
 #include "scratchbird/sblr/opcodes.h"
@@ -48,6 +50,7 @@
 #include "scratchbird/core/tid_resolver.h"  // Sprint 5: ONLINE migration
 #include <fcntl.h>   // Phase 6: For open(), O_RDWR
 #include <unistd.h>  // Phase 6: For pread(), close()
+#include <arpa/inet.h> // EN-017: CIDR and IP scope matching
 #include "scratchbird/core/utf8_utils.h"  // Phase 3: SQL Identifier UTF-8 Fix
 #include <queue>  // Phase 1.4: BFS for group transitive closure
 #include <unordered_set>  // Phase 1.4: Visited set for group transitive closure
@@ -65,6 +68,7 @@ bool isReasonableSequenceName(const std::string& name);
 void parseDefaultExprSequenceNames(const std::vector<uint8_t>& bytecode,
                                    std::vector<std::string>& names_out);
 bool isZeroUuidLocal(const ID& id);
+bool isValidSourceScopeKind(CatalogManager::SourceScopeKind kind);
 bool isUuidV7Local(const ID& id)
 {
     std::vector<uint8_t> bytes;
@@ -1286,6 +1290,714 @@ bool isValidRuntimeTransactionState(CatalogManager::RuntimeTransactionState stat
            state == RTS::PREPARED;
 }
 
+bool isValidPrincipalKind(CatalogManager::PrincipalKind kind)
+{
+    using PK = CatalogManager::PrincipalKind;
+    return kind == PK::USER || kind == PK::SERVICE;
+}
+
+bool isValidSourceScopeKind(CatalogManager::SourceScopeKind kind)
+{
+    using SK = CatalogManager::SourceScopeKind;
+    return kind == SK::ANY ||
+           kind == SK::HOST_EXACT ||
+           kind == SK::HOST_WILDCARD ||
+           kind == SK::CIDR ||
+           kind == SK::UNIX_SOCKET ||
+           kind == SK::NODE_ID;
+}
+
+bool isValidCredentialKind(CatalogManager::CredentialKind kind)
+{
+    using CK = CatalogManager::CredentialKind;
+    return kind == CK::PASSWORD_ARGON2ID ||
+           kind == CK::PASSWORD_SCRAM_SHA256 ||
+           kind == CK::X509_SUBJECT ||
+           kind == CK::KERBEROS_PRINCIPAL ||
+           kind == CK::OIDC_SUBJECT ||
+           kind == CK::SAML_SUBJECT ||
+           kind == CK::API_TOKEN_HASH;
+}
+
+bool isPrimaryPasswordCredentialKind(CatalogManager::CredentialKind kind)
+{
+    return kind == CatalogManager::CredentialKind::PASSWORD_ARGON2ID ||
+           kind == CatalogManager::CredentialKind::PASSWORD_SCRAM_SHA256;
+}
+
+bool isValidAuthProviderKind(CatalogManager::AuthProviderKind kind)
+{
+    using AK = CatalogManager::AuthProviderKind;
+    return kind == AK::INTERNAL_ARGON2ID ||
+           kind == AK::INTERNAL_SCRAM_SHA256 ||
+           kind == AK::X509_MTLS ||
+           kind == AK::LDAP_SIMPLE_BIND ||
+           kind == AK::KERBEROS_GSSAPI ||
+           kind == AK::OIDC_JWT ||
+           kind == AK::SAML_ASSERTION ||
+           kind == AK::PAM_CONVERSATION ||
+           kind == AK::API_TOKEN;
+}
+
+bool isValidAuthProviderState(CatalogManager::AuthProviderState state)
+{
+    using AS = CatalogManager::AuthProviderState;
+    return state == AS::ENABLED ||
+           state == AS::DISABLED ||
+           state == AS::DEGRADED;
+}
+
+bool isValidAuthProviderFailMode(CatalogManager::AuthProviderFailMode mode)
+{
+    using AF = CatalogManager::AuthProviderFailMode;
+    return mode == AF::HARD_FAIL || mode == AF::TRY_NEXT;
+}
+
+bool isValidAuthAttemptOutcome(CatalogManager::AuthAttemptOutcome outcome)
+{
+    using AO = CatalogManager::AuthAttemptOutcome;
+    return outcome == AO::SUCCESS ||
+           outcome == AO::FAIL ||
+           outcome == AO::TIMEOUT ||
+           outcome == AO::UNAVAILABLE ||
+           outcome == AO::POLICY_DENY;
+}
+
+bool isValidConnectionRuleTransportKind(CatalogManager::ConnectionRuleTransportKind kind)
+{
+    using RK = CatalogManager::ConnectionRuleTransportKind;
+    return kind == RK::TCP ||
+           kind == RK::TLS ||
+           kind == RK::MTLS ||
+           kind == RK::UNIX_SOCKET ||
+           kind == RK::IPC_LOCAL;
+}
+
+bool isValidConnectionRuleTlsMode(CatalogManager::ConnectionRuleTlsMode mode)
+{
+    using TM = CatalogManager::ConnectionRuleTlsMode;
+    return mode == TM::NONE || mode == TM::TLS || mode == TM::MTLS;
+}
+
+bool isValidConnectionRuleAction(CatalogManager::ConnectionRuleAction action)
+{
+    using RA = CatalogManager::ConnectionRuleAction;
+    return action == RA::ALLOW || action == RA::DENY;
+}
+
+bool isValidAuthAdapterOutcome(CatalogManager::AuthAdapterOutcome outcome)
+{
+    using AO = CatalogManager::AuthAdapterOutcome;
+    return outcome == AO::ACCEPT ||
+           outcome == AO::REJECT ||
+           outcome == AO::UNAVAILABLE ||
+           outcome == AO::TIMEOUT;
+}
+
+bool isValidAuthorizationSubjectType(CatalogManager::AuthorizationSubjectType type)
+{
+    using ST = CatalogManager::AuthorizationSubjectType;
+    return type == ST::USER || type == ST::ROLE || type == ST::GROUP || type == ST::TOKEN_SUBJECT;
+}
+
+bool isValidPolicyEffect(CatalogManager::PolicyEffect effect)
+{
+    using PE = CatalogManager::PolicyEffect;
+    return effect == PE::ALLOW || effect == PE::DENY;
+}
+
+bool isValidAclCommandArityClass(CatalogManager::AclCommandArityClass arity_class)
+{
+    using AC = CatalogManager::AclCommandArityClass;
+    return arity_class == AC::FIXED || arity_class == AC::VARIADIC;
+}
+
+bool isValidDocumentEngineTag(CatalogManager::DocumentEngineTag engine_tag)
+{
+    using DE = CatalogManager::DocumentEngineTag;
+    return engine_tag == DE::OPENSEARCH ||
+           engine_tag == DE::MONGODB ||
+           engine_tag == DE::GENERIC_DOC;
+}
+
+bool isValidTokenKind(CatalogManager::TokenKind kind)
+{
+    using TK = CatalogManager::TokenKind;
+    return kind == TK::BEARER || kind == TK::API_KEY || kind == TK::SERVICE_TOKEN;
+}
+
+bool isValidTokenScopeModel(CatalogManager::TokenScopeModel scope_model)
+{
+    using SM = CatalogManager::TokenScopeModel;
+    return scope_model == SM::GENERIC ||
+           scope_model == SM::INFLUX ||
+           scope_model == SM::MILVUS ||
+           scope_model == SM::OPENSEARCH ||
+           scope_model == SM::CLICKHOUSE;
+}
+
+bool isValidTokenResourceKind(CatalogManager::TokenResourceKind resource_kind)
+{
+    using RK = CatalogManager::TokenResourceKind;
+    return resource_kind == RK::CLUSTER ||
+           resource_kind == RK::DATABASE ||
+           resource_kind == RK::SCHEMA ||
+           resource_kind == RK::TABLE ||
+           resource_kind == RK::INDEX ||
+           resource_kind == RK::COLLECTION ||
+           resource_kind == RK::BUCKET ||
+           resource_kind == RK::MEASUREMENT ||
+           resource_kind == RK::CHANNEL ||
+           resource_kind == RK::GRAPH ||
+           resource_kind == RK::VECTOR_SPACE ||
+           resource_kind == RK::TENANT;
+}
+
+bool isValidBindingSubjectType(CatalogManager::BindingSubjectType type)
+{
+    using ST = CatalogManager::BindingSubjectType;
+    return type == ST::USER ||
+           type == ST::ROLE ||
+           type == ST::GROUP ||
+           type == ST::TENANT ||
+           type == ST::GLOBAL;
+}
+
+bool isValidBindingResourceScopeKind(CatalogManager::BindingResourceScopeKind scope_kind)
+{
+    using SK = CatalogManager::BindingResourceScopeKind;
+    return scope_kind == SK::GLOBAL ||
+           scope_kind == SK::DATABASE ||
+           scope_kind == SK::SCHEMA ||
+           scope_kind == SK::RESOURCE_PATTERN;
+}
+
+constexpr uint64_t kGraphActionKnownMask =
+    (1ULL << 0) | // TRAVERSE
+    (1ULL << 1) | // MATCH_NODE
+    (1ULL << 2) | // MATCH_REL
+    (1ULL << 3) | // READ_PROPERTY
+    (1ULL << 4) | // SET_PROPERTY
+    (1ULL << 5) | // CREATE_NODE
+    (1ULL << 6) | // DELETE_NODE
+    (1ULL << 7) | // CREATE_REL
+    (1ULL << 8);  // DELETE_REL
+
+bool hasUnknownGraphActionBits(uint64_t action_bits)
+{
+    return (action_bits & ~kGraphActionKnownMask) != 0;
+}
+
+bool providerSupportsCredentialKind(CatalogManager::AuthProviderKind provider_kind,
+                                    CatalogManager::CredentialKind credential_kind)
+{
+    using AK = CatalogManager::AuthProviderKind;
+    using CK = CatalogManager::CredentialKind;
+    switch (provider_kind)
+    {
+        case AK::INTERNAL_ARGON2ID:
+            return credential_kind == CK::PASSWORD_ARGON2ID;
+        case AK::INTERNAL_SCRAM_SHA256:
+            return credential_kind == CK::PASSWORD_SCRAM_SHA256;
+        case AK::X509_MTLS:
+            return credential_kind == CK::X509_SUBJECT;
+        case AK::LDAP_SIMPLE_BIND:
+        case AK::PAM_CONVERSATION:
+            return credential_kind == CK::PASSWORD_ARGON2ID ||
+                   credential_kind == CK::PASSWORD_SCRAM_SHA256;
+        case AK::KERBEROS_GSSAPI:
+            return credential_kind == CK::KERBEROS_PRINCIPAL;
+        case AK::OIDC_JWT:
+            return credential_kind == CK::OIDC_SUBJECT;
+        case AK::SAML_ASSERTION:
+            return credential_kind == CK::SAML_SUBJECT;
+        case AK::API_TOKEN:
+            return credential_kind == CK::API_TOKEN_HASH;
+    }
+    return false;
+}
+
+bool providerInCapabilities(CatalogManager::AuthProviderKind provider_kind,
+                            const std::vector<CatalogManager::AuthProviderKind>& capabilities)
+{
+    return std::find(capabilities.begin(), capabilities.end(), provider_kind) != capabilities.end();
+}
+
+bool equalsIgnoreCase(const std::string& lhs, const std::string& rhs)
+{
+    return toLowerCopy(lhs) == toLowerCopy(rhs);
+}
+
+bool wildcardMatchNoRegexCaseInsensitive(const std::string& pattern,
+                                         const std::string& value)
+{
+    const std::string p = toLowerCopy(pattern);
+    const std::string v = toLowerCopy(value);
+    size_t pi = 0;
+    size_t vi = 0;
+    size_t star = std::string::npos;
+    size_t match = 0;
+
+    while (vi < v.size())
+    {
+        if (pi < p.size() && p[pi] == '*')
+        {
+            star = pi++;
+            match = vi;
+            continue;
+        }
+        if (pi < p.size() && p[pi] == '?')
+        {
+            ++pi;
+            ++vi;
+            continue;
+        }
+        if (pi < p.size() && p[pi] == v[vi])
+        {
+            ++pi;
+            ++vi;
+            continue;
+        }
+        if (star != std::string::npos)
+        {
+            pi = star + 1;
+            vi = ++match;
+            continue;
+        }
+        return false;
+    }
+
+    while (pi < p.size() && p[pi] == '*')
+    {
+        ++pi;
+    }
+    return pi == p.size();
+}
+
+auto validateWildcardPatternNoRegexWithCode(const std::string& pattern,
+                                            const char* vnext_code,
+                                            ErrorContext* ctx) -> Status
+{
+    if (pattern.empty())
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_ARGUMENT, vnext_code,
+                                "Wildcard pattern cannot be empty");
+        return Status::INVALID_ARGUMENT;
+    }
+    for (unsigned char ch : pattern)
+    {
+        if (ch == '\n' || ch == '\r' || ch == '\t' || ch == '%' ||
+            ch == '[' || ch == ']' || ch == '(' || ch == ')' ||
+            ch == '{' || ch == '}' || ch == '|' || ch == '\\')
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_ARGUMENT, vnext_code,
+                                    "Wildcard pattern contains unsupported characters");
+            return Status::INVALID_ARGUMENT;
+        }
+    }
+    return Status::OK;
+}
+
+auto validateWildcardPatternNoRegex(const std::string& pattern, ErrorContext* ctx) -> Status
+{
+    return validateWildcardPatternNoRegexWithCode(pattern, "SEC_1235", ctx);
+}
+
+bool configPayloadHasToken(const std::string& payload, const std::string& token)
+{
+    return toLowerCopy(payload).find(toLowerCopy(token)) != std::string::npos;
+}
+
+auto validateProviderConfigPayload(CatalogManager::AuthProviderKind provider_kind,
+                                   const std::string& payload,
+                                   ErrorContext* ctx) -> Status
+{
+    using AK = CatalogManager::AuthProviderKind;
+    switch (provider_kind)
+    {
+        case AK::LDAP_SIMPLE_BIND:
+            if (!configPayloadHasToken(payload, "server_uri") ||
+                !configPayloadHasToken(payload, "bind_dn_template") ||
+                !configPayloadHasToken(payload, "tls_mode"))
+            {
+                SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_ARGUMENT, "SEC_1216",
+                                        "LDAP_SIMPLE_BIND requires server_uri, bind_dn_template, tls_mode");
+                return Status::INVALID_ARGUMENT;
+            }
+            if (configPayloadHasToken(payload, "plaintext"))
+            {
+                SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_ARGUMENT, "SEC_1217",
+                                        "LDAP_SIMPLE_BIND PLAINTEXT tls_mode is forbidden");
+                return Status::INVALID_ARGUMENT;
+            }
+            return Status::OK;
+        case AK::KERBEROS_GSSAPI:
+            if (!configPayloadHasToken(payload, "realm") ||
+                !configPayloadHasToken(payload, "service_principal") ||
+                !configPayloadHasToken(payload, "keytab_ref"))
+            {
+                SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_ARGUMENT, "SEC_1216",
+                                        "KERBEROS_GSSAPI requires realm, service_principal, keytab_ref");
+                return Status::INVALID_ARGUMENT;
+            }
+            if (configPayloadHasToken(payload, "clock_skew_ms="))
+            {
+                const size_t pos = toLowerCopy(payload).find("clock_skew_ms=");
+                if (pos != std::string::npos)
+                {
+                    const std::string suffix = payload.substr(pos + 14);
+                    char* end_ptr = nullptr;
+                    unsigned long value = std::strtoul(suffix.c_str(), &end_ptr, 10);
+                    if (end_ptr != nullptr && end_ptr != suffix.c_str() && value > 300000UL)
+                    {
+                        SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_ARGUMENT, "SEC_1218",
+                                                "KERBEROS_GSSAPI clock skew exceeds 300000ms");
+                        return Status::INVALID_ARGUMENT;
+                    }
+                }
+            }
+            return Status::OK;
+        case AK::OIDC_JWT:
+            if (!configPayloadHasToken(payload, "iss") ||
+                !configPayloadHasToken(payload, "sub") ||
+                !configPayloadHasToken(payload, "exp"))
+            {
+                SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_ARGUMENT, "SEC_1216",
+                                        "OIDC_JWT requires iss, sub, exp claim contract");
+                return Status::INVALID_ARGUMENT;
+            }
+            return Status::OK;
+        case AK::SAML_ASSERTION:
+            if (!configPayloadHasToken(payload, "signed") ||
+                !configPayloadHasToken(payload, "audience"))
+            {
+                SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_ARGUMENT, "SEC_1216",
+                                        "SAML_ASSERTION requires signed assertion and audience checks");
+                return Status::INVALID_ARGUMENT;
+            }
+            return Status::OK;
+        case AK::PAM_CONVERSATION:
+            if (configPayloadHasToken(payload, "interactive_rounds="))
+            {
+                const size_t pos = toLowerCopy(payload).find("interactive_rounds=");
+                if (pos != std::string::npos)
+                {
+                    const std::string suffix = payload.substr(pos + 19);
+                    char* end_ptr = nullptr;
+                    unsigned long rounds = std::strtoul(suffix.c_str(), &end_ptr, 10);
+                    if (end_ptr != nullptr && end_ptr != suffix.c_str() && rounds > 1UL)
+                    {
+                        SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_ARGUMENT, "SEC_1221",
+                                                "PAM_CONVERSATION interactive chains beyond one round are forbidden");
+                        return Status::INVALID_ARGUMENT;
+                    }
+                }
+            }
+            return Status::OK;
+        case AK::API_TOKEN:
+            if (!configPayloadHasToken(payload, "constant_time_compare"))
+            {
+                SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_ARGUMENT, "SEC_1216",
+                                        "API_TOKEN requires constant_time_compare contract");
+                return Status::INVALID_ARGUMENT;
+            }
+            return Status::OK;
+        case AK::INTERNAL_ARGON2ID:
+        case AK::INTERNAL_SCRAM_SHA256:
+        case AK::X509_MTLS:
+            return Status::OK;
+    }
+    SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_ARGUMENT, "SEC_1223",
+                            "Unknown auth provider kind");
+    return Status::INVALID_ARGUMENT;
+}
+
+auto parseAccountLockoutDeadline(const std::string& reason, uint64_t& deadline_out) -> bool
+{
+    const std::string marker = "LOCKOUT_UNTIL=";
+    const std::string lowered = toLowerCopy(reason);
+    const size_t pos = lowered.find(toLowerCopy(marker));
+    if (pos == std::string::npos)
+    {
+        return false;
+    }
+    const std::string suffix = reason.substr(pos + marker.size());
+    char* end_ptr = nullptr;
+    unsigned long long value = std::strtoull(suffix.c_str(), &end_ptr, 10);
+    if (end_ptr == nullptr || end_ptr == suffix.c_str())
+    {
+        return false;
+    }
+    deadline_out = static_cast<uint64_t>(value);
+    return true;
+}
+
+bool parseIpBytes(const std::string& ip_text, std::array<uint8_t, 16>& bytes_out, int& family_out)
+{
+    std::array<uint8_t, 16> buffer{};
+    if (inet_pton(AF_INET, ip_text.c_str(), buffer.data()) == 1)
+    {
+        bytes_out = buffer;
+        family_out = AF_INET;
+        return true;
+    }
+    buffer.fill(0);
+    if (inet_pton(AF_INET6, ip_text.c_str(), buffer.data()) == 1)
+    {
+        bytes_out = buffer;
+        family_out = AF_INET6;
+        return true;
+    }
+    return false;
+}
+
+bool parseCidr(const std::string& cidr_text,
+               std::array<uint8_t, 16>& network_out,
+               int& family_out,
+               uint8_t& prefix_len_out)
+{
+    size_t slash = cidr_text.find('/');
+    if (slash == std::string::npos || slash == 0 || slash == cidr_text.size() - 1)
+    {
+        return false;
+    }
+    const std::string ip_part = cidr_text.substr(0, slash);
+    const std::string prefix_part = cidr_text.substr(slash + 1);
+    char* end_ptr = nullptr;
+    unsigned long prefix = std::strtoul(prefix_part.c_str(), &end_ptr, 10);
+    if (end_ptr == nullptr || *end_ptr != '\0')
+    {
+        return false;
+    }
+
+    std::array<uint8_t, 16> ip_bytes{};
+    int ip_family = 0;
+    if (!parseIpBytes(ip_part, ip_bytes, ip_family))
+    {
+        return false;
+    }
+
+    const uint8_t max_prefix = (ip_family == AF_INET) ? 32 : 128;
+    if (prefix > max_prefix)
+    {
+        return false;
+    }
+
+    network_out = ip_bytes;
+    family_out = ip_family;
+    prefix_len_out = static_cast<uint8_t>(prefix);
+    return true;
+}
+
+bool ipMatchesCidr(const std::array<uint8_t, 16>& ip_bytes,
+                   int ip_family,
+                   const std::array<uint8_t, 16>& network_bytes,
+                   int network_family,
+                   uint8_t prefix_len)
+{
+    if (ip_family != network_family)
+    {
+        return false;
+    }
+    const size_t byte_count = (ip_family == AF_INET) ? 4u : 16u;
+    const uint8_t full_bytes = static_cast<uint8_t>(prefix_len / 8);
+    const uint8_t rem_bits = static_cast<uint8_t>(prefix_len % 8);
+
+    for (uint8_t i = 0; i < full_bytes; ++i)
+    {
+        if (ip_bytes[i] != network_bytes[i])
+        {
+            return false;
+        }
+    }
+    if (rem_bits == 0)
+    {
+        return true;
+    }
+    const uint8_t mask = static_cast<uint8_t>(0xFFu << (8u - rem_bits));
+    if ((ip_bytes[full_bytes] & mask) != (network_bytes[full_bytes] & mask))
+    {
+        return false;
+    }
+
+    // Beyond masked bytes everything is considered matched.
+    (void)byte_count;
+    return true;
+}
+
+auto validateSourceScopeFormat(CatalogManager::SourceScopeKind scope_kind,
+                               bool has_scope_value,
+                               const std::string& scope_value,
+                               ErrorContext* ctx) -> Status
+{
+    if (!isValidSourceScopeKind(scope_kind))
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_ARGUMENT, "SEC_1204",
+                                "Unsupported source scope kind");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    if (scope_kind == CatalogManager::SourceScopeKind::ANY)
+    {
+        if (has_scope_value && !scope_value.empty())
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_ARGUMENT, "SEC_1203",
+                                    "source_scope_value must be NULL/empty when source_scope_kind=ANY");
+            return Status::INVALID_ARGUMENT;
+        }
+        return Status::OK;
+    }
+
+    if (!has_scope_value || scope_value.empty())
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_ARGUMENT, "SEC_1203",
+                                "source_scope_value is required for non-ANY scope");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    if (scope_kind == CatalogManager::SourceScopeKind::CIDR)
+    {
+        std::array<uint8_t, 16> network{};
+        int family = 0;
+        uint8_t prefix = 0;
+        if (!parseCidr(scope_value, network, family, prefix))
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_ARGUMENT, "SEC_1203",
+                                    "Invalid CIDR source scope format");
+            return Status::INVALID_ARGUMENT;
+        }
+        return Status::OK;
+    }
+
+    if (scope_kind == CatalogManager::SourceScopeKind::UNIX_SOCKET)
+    {
+        if (scope_value.empty() || scope_value.front() != '/')
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_ARGUMENT, "SEC_1203",
+                                    "UNIX_SOCKET source scope must be an absolute path");
+            return Status::INVALID_ARGUMENT;
+        }
+        return Status::OK;
+    }
+
+    if (scope_kind == CatalogManager::SourceScopeKind::HOST_EXACT ||
+        scope_kind == CatalogManager::SourceScopeKind::HOST_WILDCARD ||
+        scope_kind == CatalogManager::SourceScopeKind::NODE_ID)
+    {
+        return Status::OK;
+    }
+
+    SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_ARGUMENT, "SEC_1204",
+                            "Unsupported source scope kind");
+    return Status::INVALID_ARGUMENT;
+}
+
+struct SourceScopeMatchResult
+{
+    bool matched = false;
+    uint8_t source_rank = 255;
+    uint16_t cidr_order = std::numeric_limits<uint16_t>::max();
+    Status status = Status::OK;
+};
+
+auto evaluateSourceScopeMatch(CatalogManager::SourceScopeKind scope_kind,
+                              const std::string& scope_value,
+                              const CatalogManager::PrincipalResolutionRequest& request,
+                              ErrorContext* ctx) -> SourceScopeMatchResult
+{
+    SourceScopeMatchResult result{};
+    result.status = validateSourceScopeFormat(scope_kind,
+                                              scope_kind != CatalogManager::SourceScopeKind::ANY,
+                                              scope_value,
+                                              ctx);
+    if (result.status != Status::OK)
+    {
+        return result;
+    }
+
+    switch (scope_kind)
+    {
+        case CatalogManager::SourceScopeKind::ANY:
+            result.matched = true;
+            result.source_rank = 5;
+            result.cidr_order = std::numeric_limits<uint16_t>::max();
+            return result;
+        case CatalogManager::SourceScopeKind::HOST_EXACT:
+            result.source_rank = 0;
+            result.matched =
+                (!request.source_host.empty() && equalsIgnoreCase(scope_value, request.source_host)) ||
+                (!request.source_ip.empty() && equalsIgnoreCase(scope_value, request.source_ip));
+            return result;
+        case CatalogManager::SourceScopeKind::HOST_WILDCARD:
+            result.source_rank = 2;
+            result.matched =
+                (!request.source_host.empty() &&
+                 wildcardMatchNoRegexCaseInsensitive(scope_value, request.source_host)) ||
+                (!request.source_ip.empty() &&
+                 wildcardMatchNoRegexCaseInsensitive(scope_value, request.source_ip));
+            return result;
+        case CatalogManager::SourceScopeKind::CIDR:
+        {
+            std::array<uint8_t, 16> network{};
+            int network_family = 0;
+            uint8_t prefix = 0;
+            if (!parseCidr(scope_value, network, network_family, prefix))
+            {
+                SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_ARGUMENT, "SEC_1203",
+                                        "Invalid CIDR source scope format");
+                result.status = Status::INVALID_ARGUMENT;
+                return result;
+            }
+
+            std::string ip_text = request.source_ip;
+            if (ip_text.empty())
+            {
+                std::array<uint8_t, 16> tmp{};
+                int fam = 0;
+                if (parseIpBytes(request.source_host, tmp, fam))
+                {
+                    ip_text = request.source_host;
+                }
+            }
+            if (ip_text.empty())
+            {
+                result.source_rank = 1;
+                result.cidr_order = static_cast<uint16_t>(128u - prefix);
+                result.matched = false;
+                return result;
+            }
+
+            std::array<uint8_t, 16> ip_bytes{};
+            int ip_family = 0;
+            if (!parseIpBytes(ip_text, ip_bytes, ip_family))
+            {
+                result.source_rank = 1;
+                result.cidr_order = static_cast<uint16_t>(128u - prefix);
+                result.matched = false;
+                return result;
+            }
+
+            result.source_rank = 1;
+            result.cidr_order = static_cast<uint16_t>(128u - prefix);
+            result.matched = ipMatchesCidr(ip_bytes, ip_family, network, network_family, prefix);
+            return result;
+        }
+        case CatalogManager::SourceScopeKind::UNIX_SOCKET:
+            result.source_rank = 3;
+            result.matched = !request.source_socket.empty() && request.source_socket == scope_value;
+            return result;
+        case CatalogManager::SourceScopeKind::NODE_ID:
+            result.source_rank = 4;
+            result.matched = !request.source_node_id.empty() && request.source_node_id == scope_value;
+            return result;
+    }
+
+    SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_ARGUMENT, "SEC_1204",
+                            "Unsupported source scope kind");
+    result.status = Status::INVALID_ARGUMENT;
+    return result;
+}
+
 bool isValidCertKind(CatalogManager::CertKind kind)
 {
     using CK = CatalogManager::CertKind;
@@ -1358,6 +2070,33 @@ bool isValidUnlockResult(CatalogManager::UnlockResult result)
            result == UR::SUCCESS ||
            result == UR::FAILED ||
            result == UR::TIMED_OUT;
+}
+
+bool isValidCryptoProfileId(CatalogManager::CryptoProfileId profile)
+{
+    using CP = CatalogManager::CryptoProfileId;
+    return profile == CP::MODERN_BASELINE ||
+           profile == CP::COMPAT_EMULATION ||
+           profile == CP::MIL_HARDENED;
+}
+
+bool isValidSecurityTierId(CatalogManager::SecurityTierId tier)
+{
+    using ST = CatalogManager::SecurityTierId;
+    return tier == ST::TIER_0_NONE ||
+           tier == ST::TIER_1_BASIC ||
+           tier == ST::TIER_2_STANDARD ||
+           tier == ST::TIER_3_HARDENED ||
+           tier == ST::TIER_4_MILITARY_CLUSTER;
+}
+
+bool isValidKeyProviderKind(CatalogManager::KeyProviderKind provider)
+{
+    using KP = CatalogManager::KeyProviderKind;
+    return provider == KP::LOCAL_FILE_KEYSTORE ||
+           provider == KP::OS_KEYRING ||
+           provider == KP::EXTERNAL_KMS ||
+           provider == KP::PKCS11_HSM;
 }
 
 bool isValidRevocationSource(CatalogManager::RevocationSource source)
@@ -2771,6 +3510,330 @@ bool decodeUuidList(const std::string& blob, std::vector<ID>& out) {
     return true;
 }
 
+bool constantTimeEqualHash32(const std::array<uint8_t, 32>& lhs,
+                             const std::array<uint8_t, 32>& rhs)
+{
+    uint8_t diff = 0;
+    for (size_t i = 0; i < lhs.size(); ++i)
+    {
+        diff |= static_cast<uint8_t>(lhs[i] ^ rhs[i]);
+    }
+    return diff == 0;
+}
+
+bool subjectRefMatches(const ID& subject_id,
+                       CatalogManager::AuthorizationSubjectType subject_type,
+                       const std::vector<CatalogManager::EffectiveSubjectRef>& effective_subjects)
+{
+    for (const auto& entry : effective_subjects)
+    {
+        if (entry.subject_type == subject_type && entry.subject_id == subject_id)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool parseSettingsPayload(const std::string& payload,
+                          std::unordered_map<std::string, std::string>& settings_out)
+{
+    settings_out.clear();
+    if (payload.empty())
+    {
+        return true;
+    }
+    std::stringstream stream(payload);
+    std::string line;
+    while (std::getline(stream, line))
+    {
+        if (line.empty())
+        {
+            continue;
+        }
+        const size_t eq = line.find('=');
+        if (eq == std::string::npos || eq == 0 || eq + 1 >= line.size())
+        {
+            return false;
+        }
+        std::string key = line.substr(0, eq);
+        std::string value = line.substr(eq + 1);
+        if (key.empty())
+        {
+            return false;
+        }
+        settings_out[key] = value;
+    }
+    return true;
+}
+
+std::string encodeSettingsPayload(const std::unordered_map<std::string, std::string>& settings)
+{
+    std::vector<std::pair<std::string, std::string>> rows;
+    rows.reserve(settings.size());
+    for (const auto& kv : settings)
+    {
+        rows.emplace_back(kv.first, kv.second);
+    }
+    std::sort(rows.begin(), rows.end(),
+              [](const auto& lhs, const auto& rhs) { return lhs.first < rhs.first; });
+    std::string payload;
+    for (size_t i = 0; i < rows.size(); ++i)
+    {
+        payload.append(rows[i].first);
+        payload.push_back('=');
+        payload.append(rows[i].second);
+        if (i + 1 < rows.size())
+        {
+            payload.push_back('\n');
+        }
+    }
+    return payload;
+}
+
+int bindingSubjectRank(CatalogManager::BindingSubjectType subject_type)
+{
+    using BST = CatalogManager::BindingSubjectType;
+    switch (subject_type)
+    {
+        case BST::USER:
+            return 0;
+        case BST::ROLE:
+            return 1;
+        case BST::GROUP:
+            return 2;
+        case BST::TENANT:
+            return 3;
+        case BST::GLOBAL:
+            return 4;
+    }
+    return 5;
+}
+
+bool idInVector(const std::vector<ID>& ids, const ID& id)
+{
+    return std::find(ids.begin(), ids.end(), id) != ids.end();
+}
+
+auto evaluateDocumentPoliciesInternal(const CatalogManager::DocumentAuthorizationRequest& request,
+                                      const std::vector<CatalogManager::DocumentPolicyCatalogInfo>& policies,
+                                      bool write_mode,
+                                      CatalogManager::DocumentAuthorizationDecision& decision_out,
+                                      ErrorContext* ctx) -> Status
+{
+    std::vector<CatalogManager::DocumentPolicyCatalogInfo> matched;
+    auto predicate_matched = [&request](const ID& policy_id) {
+        return std::find(request.predicate_matched_policy_ids.begin(),
+                         request.predicate_matched_policy_ids.end(),
+                         policy_id) != request.predicate_matched_policy_ids.end();
+    };
+
+    for (const auto& policy : policies)
+    {
+        if (!policy.is_enabled || policy.engine_tag != request.engine_tag)
+        {
+            continue;
+        }
+        if (!wildcardMatchNoRegexCaseInsensitive(policy.resource_pattern, request.resource_name))
+        {
+            continue;
+        }
+        if (policy.has_tenant_pattern &&
+            (request.tenant_name.empty() ||
+             !wildcardMatchNoRegexCaseInsensitive(policy.tenant_pattern, request.tenant_name)))
+        {
+            continue;
+        }
+        const bool has_filter = write_mode ? policy.has_write_filter_sblr_uuid
+                                           : policy.has_doc_filter_sblr_uuid;
+        if (has_filter && !predicate_matched(policy.policy_id))
+        {
+            continue;
+        }
+        matched.push_back(policy);
+    }
+
+    std::sort(matched.begin(), matched.end(),
+              [](const CatalogManager::DocumentPolicyCatalogInfo& lhs,
+                 const CatalogManager::DocumentPolicyCatalogInfo& rhs) {
+                  if (lhs.priority_u16 != rhs.priority_u16)
+                  {
+                      return lhs.priority_u16 < rhs.priority_u16;
+                  }
+                  return compareUuidBytesLocal(lhs.policy_id, rhs.policy_id) < 0;
+              });
+
+    if (matched.empty())
+    {
+        if (request.require_model_policy)
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1247",
+                                    "Model-bound profile has no matching policy");
+            decision_out.reject_code = "SEC_1247";
+            return Status::INVALID_AUTHORIZATION;
+        }
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1241",
+                                "No document allow policy matched request");
+        decision_out.reject_code = "SEC_1241";
+        return Status::INVALID_AUTHORIZATION;
+    }
+
+    for (const auto& policy : matched)
+    {
+        if (policy.effect == CatalogManager::PolicyEffect::DENY)
+        {
+            const char* code = write_mode ? "SEC_1243" : "SEC_1240";
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, code,
+                                    "Document policy denied request");
+            decision_out.reject_code = code;
+            return Status::INVALID_AUTHORIZATION;
+        }
+    }
+
+    bool has_allow = false;
+    std::unordered_set<std::string> deny_fields;
+    std::optional<std::unordered_set<std::string>> allow_fields;
+    for (const auto& policy : matched)
+    {
+        if (policy.effect != CatalogManager::PolicyEffect::ALLOW)
+        {
+            continue;
+        }
+        has_allow = true;
+        decision_out.matched_policy_ids.push_back(policy.policy_id);
+        for (const auto& field : policy.field_denylist)
+        {
+            deny_fields.insert(toLowerCopy(field));
+        }
+        if (!policy.field_allowlist.empty())
+        {
+            std::unordered_set<std::string> policy_allow;
+            for (const auto& field : policy.field_allowlist)
+            {
+                policy_allow.insert(toLowerCopy(field));
+            }
+            if (!allow_fields.has_value())
+            {
+                allow_fields = std::move(policy_allow);
+            }
+            else
+            {
+                std::unordered_set<std::string> intersection;
+                for (const auto& key : *allow_fields)
+                {
+                    if (policy_allow.find(key) != policy_allow.end())
+                    {
+                        intersection.insert(key);
+                    }
+                }
+                allow_fields = std::move(intersection);
+            }
+        }
+    }
+
+    if (!has_allow)
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1241",
+                                "No document allow policy matched request");
+        decision_out.reject_code = "SEC_1241";
+        return Status::INVALID_AUTHORIZATION;
+    }
+
+    decision_out.projected_fields.clear();
+    for (const auto& field : request.candidate_fields)
+    {
+        const std::string field_key = toLowerCopy(field);
+        if (deny_fields.find(field_key) != deny_fields.end())
+        {
+            continue;
+        }
+        if (allow_fields.has_value() && allow_fields->find(field_key) == allow_fields->end())
+        {
+            continue;
+        }
+        decision_out.projected_fields.push_back(field);
+    }
+    if (decision_out.projected_fields.empty() && request.require_non_empty_document)
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1242",
+                                "Document policy filtered all fields");
+        decision_out.reject_code = "SEC_1242";
+        return Status::INVALID_AUTHORIZATION;
+    }
+    decision_out.allowed = true;
+    decision_out.filtered_to_empty = decision_out.projected_fields.empty();
+    return Status::OK;
+}
+
+bool bindingSubjectMatches(const CatalogManager::ProfileResolutionRequest& request,
+                           CatalogManager::BindingSubjectType subject_type,
+                           bool has_subject_id,
+                           const ID& subject_id)
+{
+    using BST = CatalogManager::BindingSubjectType;
+    switch (subject_type)
+    {
+        case BST::USER:
+            return has_subject_id && request.has_user_id && subject_id == request.user_id;
+        case BST::ROLE:
+            return has_subject_id && idInVector(request.role_ids, subject_id);
+        case BST::GROUP:
+            return has_subject_id && idInVector(request.group_ids, subject_id);
+        case BST::TENANT:
+            return !request.tenant_scope.empty();
+        case BST::GLOBAL:
+            return true;
+    }
+    return false;
+}
+
+bool bindingTenantMatches(const std::string& request_tenant,
+                         bool has_tenant_scope,
+                         const std::string& tenant_scope_pattern)
+{
+    if (!has_tenant_scope)
+    {
+        return true;
+    }
+    if (request_tenant.empty())
+    {
+        return false;
+    }
+    return wildcardMatchNoRegexCaseInsensitive(tenant_scope_pattern, request_tenant);
+}
+
+bool bindingResourceScopeMatches(const CatalogManager::ProfileResolutionRequest& request,
+                                 CatalogManager::BindingResourceScopeKind scope_kind,
+                                 bool has_resource_scope_value,
+                                 const std::string& resource_scope_value)
+{
+    using RSK = CatalogManager::BindingResourceScopeKind;
+    switch (scope_kind)
+    {
+        case RSK::GLOBAL:
+            return true;
+        case RSK::DATABASE:
+            if (!has_resource_scope_value || !request.has_database_scope)
+            {
+                return false;
+            }
+            return toLowerCopy(resource_scope_value) == toLowerCopy(request.database_scope_id.toString());
+        case RSK::SCHEMA:
+            if (!has_resource_scope_value || request.schema_scope_name.empty())
+            {
+                return false;
+            }
+            return toLowerCopy(resource_scope_value) == toLowerCopy(request.schema_scope_name);
+        case RSK::RESOURCE_PATTERN:
+            if (!has_resource_scope_value || request.resource_scope_name.empty())
+            {
+                return false;
+            }
+            return wildcardMatchNoRegexCaseInsensitive(resource_scope_value, request.resource_scope_name);
+    }
+    return false;
+}
+
 std::pair<ID, std::string> makeSequenceNameKey(const ID& schema_id,
                                                const std::string& name,
                                                bool name_is_delimited) {
@@ -3172,8 +4235,27 @@ bool hasTriggerNameConflictInTable(
         uint32_t sblr_artifact_stats_page; // Page containing sblr_artifact_stats table
         uint32_t sblr_compiler_target_page; // Page containing sblr_compiler_target table
         uint32_t sblr_compile_queue_page; // Page containing sblr_compile_queue table
+        uint32_t principal_account_page; // Page containing principal_account table
+        uint32_t account_credential_page; // Page containing account_credential table
+        uint32_t account_profile_binding_page; // Page containing account_profile_binding table
+        uint32_t auth_provider_page; // Page containing auth_provider table
+        uint32_t auth_policy_page; // Page containing auth_policy table
+        uint32_t auth_attempt_log_page; // Page containing auth_attempt_log table
+        uint32_t connection_rule_page; // Page containing connection_rule table
+        uint32_t connection_rule_epoch_page; // Page containing connection_rule_epoch table
+        uint32_t acl_command_catalog_page; // Page containing acl_command_catalog table
+        uint32_t acl_rule_page; // Page containing acl_rule table
+        uint32_t document_policy_page; // Page containing document_policy table
+        uint32_t tenant_binding_page; // Page containing tenant_binding table
+        uint32_t graph_privilege_page; // Page containing graph_privilege table
+        uint32_t token_page; // Page containing token table
+        uint32_t token_scope_entry_page; // Page containing token_scope_entry table
+        uint32_t quota_profile_page; // Page containing quota_profile table
+        uint32_t quota_binding_page; // Page containing quota_binding table
+        uint32_t settings_profile_page; // Page containing settings_profile table
+        uint32_t settings_binding_page; // Page containing settings_binding table
 
-        uint8_t reserved[3008];       // Padding for 4KB page
+        uint8_t reserved[2932];       // Padding for 4KB page
     };
 
     // Database record on disk
@@ -4009,6 +5091,393 @@ bool hasTriggerNameConflictInTable(
         uint8_t reserved1;
         uint64_t created_time;
         uint64_t last_modified_time;
+    };
+
+    struct PrincipalAccountRecord
+    {
+        ID account_id;
+        char principal_name[256];
+        uint8_t principal_kind;       // PrincipalKind
+        uint8_t source_scope_kind;    // SourceScopeKind
+        uint8_t has_source_scope_value;
+        uint8_t has_auth_database;
+        uint8_t has_tenant_scope;
+        uint8_t has_password_policy;
+        uint8_t has_default_role;
+        uint8_t is_login_enabled;
+        uint8_t is_locked;
+        uint8_t has_locked_reason;
+        uint8_t has_valid_from;
+        uint8_t has_valid_to;
+        uint8_t is_valid;
+        uint8_t reserved0;
+        char source_scope_value[256];
+        char auth_database[256];
+        char tenant_scope[256];
+        ID auth_policy_id;
+        ID password_policy_id;
+        ID default_role_id;
+        char locked_reason[512];
+        uint64_t valid_from_utc;
+        uint64_t valid_to_utc;
+        uint64_t created_txid;
+        uint64_t last_modified_txid;
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t padding;
+    };
+
+    struct AccountCredentialRecord
+    {
+        ID credential_id;
+        ID account_id;
+        uint8_t credential_kind;      // CredentialKind
+        uint8_t has_credential_hash;
+        uint8_t has_rotated_time;
+        uint8_t has_expires_time;
+        uint8_t is_active;
+        uint8_t is_valid;
+        uint8_t reserved0[2];
+        ID credential_payload_id;
+        uint8_t credential_hash[32];
+        uint64_t rotated_time_utc;
+        uint64_t expires_time_utc;
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t padding;
+    };
+
+    struct AccountProfileBindingRecord
+    {
+        ID binding_id;
+        ID account_id;
+        ID quota_profile_id;
+        ID settings_profile_id;
+        uint16_t priority_u16;
+        uint8_t has_quota_profile;
+        uint8_t has_settings_profile;
+        uint8_t is_valid;
+        uint8_t reserved0[3];
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t padding;
+    };
+
+    struct AuthProviderRecord
+    {
+        ID provider_id;
+        char provider_name[128];
+        uint8_t provider_kind;       // AuthProviderKind
+        uint8_t provider_state;      // AuthProviderState
+        uint16_t priority_rank;
+        uint32_t timeout_ms;
+        uint32_t cache_ttl_ms;
+        uint8_t fail_mode;           // AuthProviderFailMode
+        uint8_t is_valid;
+        uint8_t reserved0[6];
+        ID config_payload_oid;
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t padding;
+    };
+
+    struct AuthPolicyRecord
+    {
+        ID policy_id;
+        char policy_name[128];
+        ID provider_chain_oid;
+        uint8_t mfa_required;
+        uint8_t has_mfa_policy;
+        uint8_t allow_password_fallback;
+        uint8_t is_valid;
+        uint16_t lockout_threshold;
+        uint16_t reserved0;
+        uint32_t lockout_window_ms;
+        uint32_t lockout_duration_ms;
+        ID mfa_policy_id;
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t padding;
+    };
+
+    struct AuthAttemptLogRecord
+    {
+        ID attempt_id;
+        ID connection_id;
+        ID account_id;
+        ID provider_id;
+        uint8_t has_account_id;
+        uint8_t has_provider_id;
+        uint8_t outcome;             // AuthAttemptOutcome
+        uint8_t has_failure_code;
+        uint8_t is_valid;
+        uint8_t reserved0[3];
+        ID failure_code_oid;
+        uint64_t attempt_time_utc;
+        uint64_t latency_us;
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t padding;
+    };
+
+    struct ConnectionRuleRecord
+    {
+        ID rule_id;
+        char profile_scope[128];
+        uint32_t rule_order;
+        uint8_t transport_kind;      // ConnectionRuleTransportKind
+        uint8_t action;              // ConnectionRuleAction
+        uint8_t has_source_cidr;
+        uint8_t has_source_host_pattern;
+        uint8_t has_principal_pattern;
+        uint8_t has_auth_database_pattern;
+        uint8_t has_tenant_pattern;
+        uint8_t has_target_db_pattern;
+        uint8_t has_required_provider_kind;
+        uint8_t required_provider_kind; // AuthProviderKind
+        uint8_t has_required_tls_mode;
+        uint8_t required_tls_mode;   // ConnectionRuleTlsMode
+        uint8_t has_mapped_auth_policy;
+        uint8_t has_mapped_default_role;
+        uint8_t has_reject_code_override;
+        uint8_t is_enabled;
+        uint8_t is_valid;
+        uint8_t reserved0[3];
+        ID source_cidr_oid;
+        ID source_host_pattern_oid;
+        ID principal_pattern_oid;
+        ID auth_database_pattern_oid;
+        ID tenant_pattern_oid;
+        ID target_db_pattern_oid;
+        ID mapped_auth_policy_id;
+        ID mapped_default_role_id;
+        ID reject_code_override_oid;
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t padding;
+    };
+
+    struct ConnectionRuleEpochRecord
+    {
+        char profile_scope[128];
+        uint64_t rule_epoch_u64;
+        uint64_t last_modified_utc;
+        uint8_t is_valid;
+        uint8_t reserved0[7];
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t padding;
+    };
+
+    struct AclCommandCatalogRecord
+    {
+        char command_name[128];
+        uint64_t category_bits;
+        uint8_t arity_class; // AclCommandArityClass
+        uint8_t is_write;
+        uint8_t is_admin;
+        uint8_t is_valid;
+        uint8_t reserved0[4];
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t padding;
+    };
+
+    struct AclRuleRecord
+    {
+        ID acl_rule_id;
+        ID subject_id;
+        uint8_t subject_type; // AuthorizationSubjectType
+        uint8_t effect; // PolicyEffect
+        uint8_t has_category_mask;
+        uint8_t has_key_pattern;
+        uint8_t has_channel_pattern;
+        uint8_t is_enabled;
+        uint8_t is_valid;
+        uint8_t reserved0;
+        uint16_t priority_u16;
+        uint64_t category_mask;
+        ID command_pattern_oid;
+        ID key_pattern_oid;
+        ID channel_pattern_oid;
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t padding;
+    };
+
+    struct DocumentPolicyRecord
+    {
+        ID policy_id;
+        uint8_t engine_tag; // DocumentEngineTag
+        uint8_t effect; // PolicyEffect
+        uint8_t has_tenant_pattern;
+        uint8_t has_doc_filter_sblr;
+        uint8_t has_write_filter_sblr;
+        uint8_t is_enabled;
+        uint8_t is_valid;
+        uint16_t priority_u16;
+        uint16_t reserved0;
+        ID resource_pattern_oid;
+        ID tenant_pattern_oid;
+        ID doc_filter_sblr_uuid;
+        ID write_filter_sblr_uuid;
+        ID field_allowlist_oid;
+        ID field_denylist_oid;
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t padding;
+    };
+
+    struct TenantBindingRecord
+    {
+        ID binding_id;
+        ID subject_id;
+        uint8_t subject_type; // AuthorizationSubjectType
+        uint8_t is_valid;
+        uint16_t priority_u16;
+        uint16_t reserved0;
+        ID tenant_name_oid;
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t padding;
+    };
+
+    struct GraphPrivilegeRecord
+    {
+        ID graph_priv_id;
+        ID subject_id;
+        uint8_t subject_type; // AuthorizationSubjectType
+        uint8_t effect; // PolicyEffect
+        uint8_t has_label_pattern;
+        uint8_t has_relationship_pattern;
+        uint8_t has_property_pattern;
+        uint8_t is_enabled;
+        uint8_t is_valid;
+        uint8_t reserved0;
+        uint16_t priority_u16;
+        uint64_t action_bits;
+        ID graph_scope_oid;
+        ID label_pattern_oid;
+        ID relationship_pattern_oid;
+        ID property_pattern_oid;
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t padding;
+    };
+
+    struct TokenRecord
+    {
+        ID token_id;
+        uint8_t token_kind; // TokenKind
+        uint8_t scope_model; // TokenScopeModel
+        uint8_t has_revoked_time;
+        uint8_t has_rotation_group;
+        uint8_t has_last_used_time;
+        uint8_t is_valid;
+        uint8_t reserved0[2];
+        std::array<uint8_t, 32> token_hash;
+        ID subject_account_id;
+        ID issuer_oid;
+        ID rotation_group_id;
+        uint64_t not_before_utc;
+        uint64_t not_after_utc;
+        uint64_t revoked_time_utc;
+        uint64_t last_used_time_utc;
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t padding;
+    };
+
+    struct TokenScopeEntryRecord
+    {
+        ID scope_id;
+        ID token_id;
+        uint8_t effect; // PolicyEffect
+        uint8_t resource_kind; // TokenResourceKind
+        uint8_t is_valid;
+        uint8_t reserved0;
+        uint16_t priority_u16;
+        uint16_t reserved1;
+        uint64_t action_bits;
+        ID resource_pattern_oid;
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t padding;
+    };
+
+    struct QuotaProfileRecord
+    {
+        ID quota_profile_id;
+        char profile_name[128];
+        uint32_t max_requests_per_sec;
+        uint32_t max_concurrent_requests;
+        uint64_t max_read_bytes_per_sec;
+        uint64_t max_write_bytes_per_sec;
+        uint64_t max_result_rows;
+        uint64_t max_cpu_ms_per_min;
+        uint32_t window_ms;
+        uint8_t is_enabled;
+        uint8_t is_valid;
+        uint8_t reserved0[6];
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t padding;
+    };
+
+    struct QuotaBindingRecord
+    {
+        ID binding_id;
+        uint8_t subject_type; // BindingSubjectType
+        uint8_t has_subject_id;
+        uint8_t has_tenant_scope;
+        uint8_t resource_scope_kind; // BindingResourceScopeKind
+        uint8_t has_resource_scope_value;
+        uint8_t is_valid;
+        uint8_t reserved0[2];
+        uint16_t priority_u16;
+        uint16_t reserved1;
+        ID subject_id;
+        ID tenant_scope_oid;
+        ID resource_scope_value_oid;
+        ID quota_profile_id;
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t padding;
+    };
+
+    struct SettingsProfileRecord
+    {
+        ID settings_profile_id;
+        char profile_name[128];
+        ID settings_payload_oid;
+        uint8_t strict_mode;
+        uint8_t is_enabled;
+        uint8_t is_valid;
+        uint8_t reserved0[5];
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t padding;
+    };
+
+    struct SettingsBindingRecord
+    {
+        ID binding_id;
+        uint8_t subject_type; // BindingSubjectType
+        uint8_t has_subject_id;
+        uint8_t has_tenant_scope;
+        uint8_t resource_scope_kind; // BindingResourceScopeKind
+        uint8_t has_resource_scope_value;
+        uint8_t is_valid;
+        uint8_t reserved0[2];
+        uint16_t priority_u16;
+        uint16_t reserved1;
+        ID subject_id;
+        ID tenant_scope_oid;
+        ID resource_scope_value_oid;
+        ID settings_profile_id;
+        uint64_t created_time;
+        uint64_t last_modified_time;
+        uint32_t padding;
     };
 
     struct AuthMappingRecord
@@ -7798,6 +9267,52 @@ bool hasTriggerNameConflictInTable(
             {"HNSW", CatalogManager::IndexType::HNSW},
             {"VECTOR", CatalogManager::IndexType::HNSW},  // Alias
             {"IVF", CatalogManager::IndexType::IVF},
+            {"ART", CatalogManager::IndexType::ART},
+            {"BLOOM", CatalogManager::IndexType::BLOOM},
+            {"VECTOR_FLAT", CatalogManager::IndexType::VECTOR_FLAT},
+            {"VECTOR_BIN_FLAT", CatalogManager::IndexType::VECTOR_BIN_FLAT},
+            {"IVF_FLAT", CatalogManager::IndexType::IVF_FLAT},
+            {"BIN_IVF_FLAT", CatalogManager::IndexType::BIN_IVF_FLAT},
+            {"IVF_PQ", CatalogManager::IndexType::IVF_PQ},
+            {"IVF_SQ8", CatalogManager::IndexType::IVF_SQ8},
+            {"IVF_SQ8_HYBRID", CatalogManager::IndexType::IVF_SQ8_HYBRID},
+            {"RHNSW_PQ", CatalogManager::IndexType::RHNSW_PQ},
+            {"RHNSW_SQ", CatalogManager::IndexType::RHNSW_SQ},
+            {"ANNOY", CatalogManager::IndexType::ANNOY},
+            {"NSG", CatalogManager::IndexType::NSG},
+            {"DISKANN", CatalogManager::IndexType::DISKANN},
+            {"SCANN", CatalogManager::IndexType::SCANN},
+            {"GPU_CAGRA", CatalogManager::IndexType::GPU_CAGRA},
+            {"MINHASH_LSH", CatalogManager::IndexType::MINHASH_LSH},
+            {"SPARSE_INVERTED", CatalogManager::IndexType::SPARSE_INVERTED},
+            {"SPARSE_WAND", CatalogManager::IndexType::SPARSE_WAND},
+            {"TRIE", CatalogManager::IndexType::TRIE},
+            {"NGRAM", CatalogManager::IndexType::NGRAM},
+            {"MONGODB_2D", CatalogManager::IndexType::MONGODB_2D},
+            {"MONGODB_2DSPHERE", CatalogManager::IndexType::MONGODB_2DSPHERE},
+            {"MONGODB_2DSPHERE_BUCKET", CatalogManager::IndexType::MONGODB_2DSPHERE_BUCKET},
+            {"MONGODB_GEO_HAYSTACK", CatalogManager::IndexType::MONGODB_GEO_HAYSTACK},
+            {"MONGODB_WILDCARD", CatalogManager::IndexType::MONGODB_WILDCARD},
+            {"MONGODB_ENCRYPTED_RANGE", CatalogManager::IndexType::MONGODB_ENCRYPTED_RANGE},
+            {"NEO4J_LOOKUP", CatalogManager::IndexType::NEO4J_LOOKUP},
+            {"NEO4J_TEXT", CatalogManager::IndexType::NEO4J_TEXT},
+            {"NEO4J_RANGE", CatalogManager::IndexType::NEO4J_RANGE},
+            {"NEO4J_POINT", CatalogManager::IndexType::NEO4J_POINT},
+            {"NEO4J_VECTOR", CatalogManager::IndexType::NEO4J_VECTOR},
+            {"CASSANDRA_SASI", CatalogManager::IndexType::CASSANDRA_SASI},
+            {"CASSANDRA_SAI", CatalogManager::IndexType::CASSANDRA_SAI},
+            {"REDIS_STRING", CatalogManager::IndexType::REDIS_STRING},
+            {"REDIS_HASH", CatalogManager::IndexType::REDIS_HASH},
+            {"REDIS_LIST", CatalogManager::IndexType::REDIS_LIST},
+            {"REDIS_SET", CatalogManager::IndexType::REDIS_SET},
+            {"REDIS_ZSET", CatalogManager::IndexType::REDIS_ZSET},
+            {"REDIS_STREAM", CatalogManager::IndexType::REDIS_STREAM},
+            {"REDIS_BITMAP", CatalogManager::IndexType::REDIS_BITMAP},
+            {"REDIS_HLL", CatalogManager::IndexType::REDIS_HLL},
+            {"REDIS_GEO", CatalogManager::IndexType::REDIS_GEO},
+            {"2D", CatalogManager::IndexType::MONGODB_2D},
+            {"2DSPHERE", CatalogManager::IndexType::MONGODB_2DSPHERE},
+            {"GEOHAYSTACK", CatalogManager::IndexType::MONGODB_GEO_HAYSTACK},
             {"FULLTEXT", CatalogManager::IndexType::FULLTEXT},
             {"GIN", CatalogManager::IndexType::GIN},
             {"GIST", CatalogManager::IndexType::GIST},
@@ -7835,6 +9350,8 @@ bool hasTriggerNameConflictInTable(
             case CatalogManager::IndexType::HASH: return "HASH";
             case CatalogManager::IndexType::HNSW: return "HNSW";
             case CatalogManager::IndexType::IVF: return "IVF";
+            case CatalogManager::IndexType::ART: return "ART";
+            case CatalogManager::IndexType::BLOOM: return "BLOOM";
             case CatalogManager::IndexType::FULLTEXT: return "FULLTEXT";
             case CatalogManager::IndexType::GIN: return "GIN";
             case CatalogManager::IndexType::GIST: return "GIST";
@@ -7845,6 +9362,47 @@ bool hasTriggerNameConflictInTable(
             case CatalogManager::IndexType::BITMAP: return "BITMAP";
             case CatalogManager::IndexType::COLUMNSTORE: return "COLUMNSTORE";
             case CatalogManager::IndexType::LSM: return "LSM";
+            case CatalogManager::IndexType::VECTOR_FLAT: return "VECTOR_FLAT";
+            case CatalogManager::IndexType::VECTOR_BIN_FLAT: return "VECTOR_BIN_FLAT";
+            case CatalogManager::IndexType::IVF_FLAT: return "IVF_FLAT";
+            case CatalogManager::IndexType::BIN_IVF_FLAT: return "BIN_IVF_FLAT";
+            case CatalogManager::IndexType::IVF_PQ: return "IVF_PQ";
+            case CatalogManager::IndexType::IVF_SQ8: return "IVF_SQ8";
+            case CatalogManager::IndexType::IVF_SQ8_HYBRID: return "IVF_SQ8_HYBRID";
+            case CatalogManager::IndexType::RHNSW_PQ: return "RHNSW_PQ";
+            case CatalogManager::IndexType::RHNSW_SQ: return "RHNSW_SQ";
+            case CatalogManager::IndexType::ANNOY: return "ANNOY";
+            case CatalogManager::IndexType::NSG: return "NSG";
+            case CatalogManager::IndexType::DISKANN: return "DISKANN";
+            case CatalogManager::IndexType::SCANN: return "SCANN";
+            case CatalogManager::IndexType::GPU_CAGRA: return "GPU_CAGRA";
+            case CatalogManager::IndexType::MINHASH_LSH: return "MINHASH_LSH";
+            case CatalogManager::IndexType::SPARSE_INVERTED: return "SPARSE_INVERTED";
+            case CatalogManager::IndexType::SPARSE_WAND: return "SPARSE_WAND";
+            case CatalogManager::IndexType::TRIE: return "TRIE";
+            case CatalogManager::IndexType::NGRAM: return "NGRAM";
+            case CatalogManager::IndexType::MONGODB_2D: return "MONGODB_2D";
+            case CatalogManager::IndexType::MONGODB_2DSPHERE: return "MONGODB_2DSPHERE";
+            case CatalogManager::IndexType::MONGODB_2DSPHERE_BUCKET: return "MONGODB_2DSPHERE_BUCKET";
+            case CatalogManager::IndexType::MONGODB_GEO_HAYSTACK: return "MONGODB_GEO_HAYSTACK";
+            case CatalogManager::IndexType::MONGODB_WILDCARD: return "MONGODB_WILDCARD";
+            case CatalogManager::IndexType::MONGODB_ENCRYPTED_RANGE: return "MONGODB_ENCRYPTED_RANGE";
+            case CatalogManager::IndexType::NEO4J_LOOKUP: return "NEO4J_LOOKUP";
+            case CatalogManager::IndexType::NEO4J_TEXT: return "NEO4J_TEXT";
+            case CatalogManager::IndexType::NEO4J_RANGE: return "NEO4J_RANGE";
+            case CatalogManager::IndexType::NEO4J_POINT: return "NEO4J_POINT";
+            case CatalogManager::IndexType::NEO4J_VECTOR: return "NEO4J_VECTOR";
+            case CatalogManager::IndexType::CASSANDRA_SASI: return "CASSANDRA_SASI";
+            case CatalogManager::IndexType::CASSANDRA_SAI: return "CASSANDRA_SAI";
+            case CatalogManager::IndexType::REDIS_STRING: return "REDIS_STRING";
+            case CatalogManager::IndexType::REDIS_HASH: return "REDIS_HASH";
+            case CatalogManager::IndexType::REDIS_LIST: return "REDIS_LIST";
+            case CatalogManager::IndexType::REDIS_SET: return "REDIS_SET";
+            case CatalogManager::IndexType::REDIS_ZSET: return "REDIS_ZSET";
+            case CatalogManager::IndexType::REDIS_STREAM: return "REDIS_STREAM";
+            case CatalogManager::IndexType::REDIS_BITMAP: return "REDIS_BITMAP";
+            case CatalogManager::IndexType::REDIS_HLL: return "REDIS_HLL";
+            case CatalogManager::IndexType::REDIS_GEO: return "REDIS_GEO";
             default: return "UNKNOWN";
         }
     }
@@ -8638,6 +10196,120 @@ bool hasTriggerNameConflictInTable(
         if (status != Status::OK) return status;
 
         // CAT-020: Security extension and PKI/crypto catalog families
+        status = pm->allocatePage(principal_account_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = principal_account_table_page_;
+        status = db_->write_page(principal_account_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        status = pm->allocatePage(account_credential_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = account_credential_table_page_;
+        status = db_->write_page(account_credential_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        status = pm->allocatePage(account_profile_binding_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = account_profile_binding_table_page_;
+        status = db_->write_page(account_profile_binding_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        status = pm->allocatePage(auth_provider_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = auth_provider_table_page_;
+        status = db_->write_page(auth_provider_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        status = pm->allocatePage(auth_policy_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = auth_policy_table_page_;
+        status = db_->write_page(auth_policy_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        status = pm->allocatePage(auth_attempt_log_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = auth_attempt_log_table_page_;
+        status = db_->write_page(auth_attempt_log_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        status = pm->allocatePage(connection_rule_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = connection_rule_table_page_;
+        status = db_->write_page(connection_rule_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        status = pm->allocatePage(connection_rule_epoch_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = connection_rule_epoch_table_page_;
+        status = db_->write_page(connection_rule_epoch_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        status = pm->allocatePage(acl_command_catalog_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = acl_command_catalog_table_page_;
+        status = db_->write_page(acl_command_catalog_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        status = pm->allocatePage(acl_rule_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = acl_rule_table_page_;
+        status = db_->write_page(acl_rule_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        status = pm->allocatePage(document_policy_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = document_policy_table_page_;
+        status = db_->write_page(document_policy_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        status = pm->allocatePage(tenant_binding_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = tenant_binding_table_page_;
+        status = db_->write_page(tenant_binding_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        status = pm->allocatePage(graph_privilege_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = graph_privilege_table_page_;
+        status = db_->write_page(graph_privilege_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        status = pm->allocatePage(token_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = token_table_page_;
+        status = db_->write_page(token_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        status = pm->allocatePage(token_scope_entry_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = token_scope_entry_table_page_;
+        status = db_->write_page(token_scope_entry_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        status = pm->allocatePage(quota_profile_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = quota_profile_table_page_;
+        status = db_->write_page(quota_profile_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        status = pm->allocatePage(quota_binding_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = quota_binding_table_page_;
+        status = db_->write_page(quota_binding_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        status = pm->allocatePage(settings_profile_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = settings_profile_table_page_;
+        status = db_->write_page(settings_profile_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
+        status = pm->allocatePage(settings_binding_table_page_, ctx);
+        if (status != Status::OK) return status;
+        heap->header.page_id = settings_binding_table_page_;
+        status = db_->write_page(settings_binding_table_page_, page_buffer.get(), ctx);
+        if (status != Status::OK) return status;
+
         status = pm->allocatePage(auth_mapping_table_page_, ctx);
         if (status != Status::OK) return status;
         heap->header.page_id = auth_mapping_table_page_;
@@ -9878,6 +11550,7 @@ bool hasTriggerNameConflictInTable(
     auto CatalogManager::load(ErrorContext *ctx) -> Status
     {
         bool needs_toast_init = false;
+        std::vector<ID> index_metadata_backfill_ids;
 
         // Use scoped block for mutex to allow TOAST init outside lock
         {
@@ -10375,6 +12048,101 @@ bool hasTriggerNameConflictInTable(
                     return status;
                 }
                 status = backfill_catalog_page(transaction_table_page_, "transaction");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(principal_account_table_page_, "principal_account");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(account_credential_table_page_, "account_credential");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(account_profile_binding_table_page_, "account_profile_binding");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(auth_provider_table_page_, "auth_provider");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(auth_policy_table_page_, "auth_policy");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(auth_attempt_log_table_page_, "auth_attempt_log");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(connection_rule_table_page_, "connection_rule");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(connection_rule_epoch_table_page_, "connection_rule_epoch");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(acl_command_catalog_table_page_, "acl_command_catalog");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(acl_rule_table_page_, "acl_rule");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(document_policy_table_page_, "document_policy");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(tenant_binding_table_page_, "tenant_binding");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(graph_privilege_table_page_, "graph_privilege");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(token_table_page_, "token");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(token_scope_entry_table_page_, "token_scope_entry");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(quota_profile_table_page_, "quota_profile");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(quota_binding_table_page_, "quota_binding");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(settings_profile_table_page_, "settings_profile");
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+                status = backfill_catalog_page(settings_binding_table_page_, "settings_binding");
                 if (status != Status::OK)
                 {
                     return status;
@@ -11481,6 +13249,13 @@ bool hasTriggerNameConflictInTable(
                 {
                     return status;
                 }
+                index_metadata_backfill_ids.clear();
+                index_metadata_backfill_ids.reserve(index_cache_.size());
+                for (const auto& [index_id, index_info] : index_cache_)
+                {
+                    (void)index_info;
+                    index_metadata_backfill_ids.push_back(index_id);
+                }
 
                 // Load tablespaces
                 status = readTablespaceRecords(ctx);
@@ -11735,6 +13510,219 @@ bool hasTriggerNameConflictInTable(
                 needs_toast_init = true;
             }
         } // mutex released here
+
+        if (!index_metadata_backfill_ids.empty())
+        {
+            bool metadata_backfilled = false;
+            auto ensure_index_metadata_backfill = [&](const ID& index_id) -> Status {
+                IndexInfo index_info{};
+                Status status = getIndex(index_id, index_info, ctx);
+                if (status == Status::NOT_FOUND)
+                {
+                    return Status::OK;
+                }
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                std::vector<IndexColumnCatalogInfo> existing_columns;
+                status = listIndexColumnCatalogEntries(index_id, existing_columns, ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                std::unordered_set<uint16_t> existing_positions;
+                existing_positions.reserve(existing_columns.size());
+                for (const auto& row : existing_columns)
+                {
+                    existing_positions.insert(row.position);
+                }
+
+                auto insert_index_column = [&](uint16_t position,
+                                               const ID& column_id,
+                                               bool is_include,
+                                               const ID& expression_sblr_id) -> Status {
+                    IndexColumnCatalogInfo info{};
+                    info.index_id = index_id;
+                    info.position = position;
+                    info.column_id = column_id;
+                    info.expression_sblr_id = expression_sblr_id;
+                    info.sort_order = IndexSortOrder::ASC;
+                    info.null_order = IndexNullOrder::LAST;
+                    info.is_include = is_include;
+                    info.is_valid = true;
+                    ID index_column_id{};
+                    Status insert_status = upsertIndexColumnCatalogEntry(info, index_column_id, ctx);
+                    if (insert_status == Status::OK)
+                    {
+                        metadata_backfilled = true;
+                    }
+                    return insert_status;
+                };
+
+                uint16_t position = 1;
+                for (const ID& column_id : index_info.column_ids)
+                {
+                    if (existing_positions.find(position) == existing_positions.end())
+                    {
+                        status = insert_index_column(position, column_id, false, ID{});
+                        if (status != Status::OK)
+                        {
+                            return status;
+                        }
+                    }
+                    ++position;
+                }
+                for (const ID& column_id : index_info.include_column_ids)
+                {
+                    if (existing_positions.find(position) == existing_positions.end())
+                    {
+                        status = insert_index_column(position, column_id, true, ID{});
+                        if (status != Status::OK)
+                        {
+                            return status;
+                        }
+                    }
+                    ++position;
+                }
+
+                if (position == 1 && index_info.is_expression_index &&
+                    !isZeroUuidLocal(index_info.expression_oid) &&
+                    existing_positions.find(1) == existing_positions.end())
+                {
+                    status = insert_index_column(1, ID{}, false, index_info.expression_oid);
+                    if (status != Status::OK)
+                    {
+                        return status;
+                    }
+                }
+
+                IndexStatsCatalogInfo stats_info{};
+                status = getIndexStatsCatalogEntry(index_id, stats_info, ctx);
+                if (status == Status::NOT_FOUND)
+                {
+                    IndexStatsCatalogInfo defaults{};
+                    defaults.index_id = index_id;
+                    defaults.stats_version = 1;
+                    status = upsertIndexStatsCatalogEntry(defaults, ctx);
+                    if (status != Status::OK)
+                    {
+                        return status;
+                    }
+                    metadata_backfilled = true;
+                }
+                else if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                IndexUsageCatalogInfo usage_info{};
+                status = getIndexUsageCatalogEntry(index_id, usage_info, ctx);
+                if (status == Status::NOT_FOUND)
+                {
+                    IndexUsageCatalogInfo defaults{};
+                    defaults.index_id = index_id;
+                    status = upsertIndexUsageCatalogEntry(defaults, ctx);
+                    if (status != Status::OK)
+                    {
+                        return status;
+                    }
+                    metadata_backfilled = true;
+                }
+                else if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                IndexContentionCatalogInfo contention_info{};
+                status = getIndexContentionCatalogEntry(index_id, contention_info, ctx);
+                if (status == Status::NOT_FOUND)
+                {
+                    IndexContentionCatalogInfo defaults{};
+                    defaults.index_id = index_id;
+                    status = upsertIndexContentionCatalogEntry(defaults, ctx);
+                    if (status != Status::OK)
+                    {
+                        return status;
+                    }
+                    metadata_backfilled = true;
+                }
+                else if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                IndexStorageCatalogInfo storage_info{};
+                status = getIndexStorageCatalogEntry(index_id, storage_info, ctx);
+                if (status == Status::NOT_FOUND)
+                {
+                    IndexStorageCatalogInfo defaults{};
+                    defaults.index_id = index_id;
+                    defaults.page_count = 1;
+                    defaults.bytes_allocated = static_cast<uint64_t>(db_->page_size());
+                    defaults.bytes_used = static_cast<uint64_t>(db_->page_size());
+                    defaults.fragmentation_ratio = 0.0f;
+                    defaults.filespace_id = index_info.tablespace_uuid;
+                    status = upsertIndexStorageCatalogEntry(defaults, ctx);
+                    if (status == Status::NOT_FOUND && !isZeroUuidLocal(defaults.filespace_id))
+                    {
+                        defaults.filespace_id = ID{};
+                        status = upsertIndexStorageCatalogEntry(defaults, ctx);
+                    }
+                    if (status != Status::OK)
+                    {
+                        return status;
+                    }
+                    metadata_backfilled = true;
+                }
+                else if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                IndexHealthCatalogInfo health_info{};
+                status = getIndexHealthCatalogEntry(index_id, health_info, ctx);
+                if (status == Status::NOT_FOUND)
+                {
+                    IndexHealthCatalogInfo defaults{};
+                    defaults.index_id = index_id;
+                    defaults.light_status = IndexHealthStatus::HEALTHY;
+                    defaults.diagnostic_status = IndexHealthStatus::HEALTHY;
+                    status = upsertIndexHealthCatalogEntry(defaults, ctx);
+                    if (status != Status::OK)
+                    {
+                        return status;
+                    }
+                    metadata_backfilled = true;
+                }
+                else if (status != Status::OK)
+                {
+                    return status;
+                }
+
+                return Status::OK;
+            };
+
+            for (const ID& index_id : index_metadata_backfill_ids)
+            {
+                Status status = ensure_index_metadata_backfill(index_id);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+            }
+
+            if (metadata_backfilled)
+            {
+                Status sync_status = db_->sync(ctx);
+                if (sync_status != Status::OK)
+                {
+                    return sync_status;
+                }
+            }
+        }
 
         // Initialize TOAST outside mutex to avoid deadlock
         // (ToastManager::initialize calls getTable which needs mutex)
@@ -16909,6 +18897,25 @@ bool hasTriggerNameConflictInTable(
         root->backup_history_page = backup_history_table_page_;
         root->connection_page = connection_table_page_;
         root->transaction_page = transaction_table_page_;
+        root->principal_account_page = principal_account_table_page_;
+        root->account_credential_page = account_credential_table_page_;
+        root->account_profile_binding_page = account_profile_binding_table_page_;
+        root->auth_provider_page = auth_provider_table_page_;
+        root->auth_policy_page = auth_policy_table_page_;
+        root->auth_attempt_log_page = auth_attempt_log_table_page_;
+        root->connection_rule_page = connection_rule_table_page_;
+        root->connection_rule_epoch_page = connection_rule_epoch_table_page_;
+        root->acl_command_catalog_page = acl_command_catalog_table_page_;
+        root->acl_rule_page = acl_rule_table_page_;
+        root->document_policy_page = document_policy_table_page_;
+        root->tenant_binding_page = tenant_binding_table_page_;
+        root->graph_privilege_page = graph_privilege_table_page_;
+        root->token_page = token_table_page_;
+        root->token_scope_entry_page = token_scope_entry_table_page_;
+        root->quota_profile_page = quota_profile_table_page_;
+        root->quota_binding_page = quota_binding_table_page_;
+        root->settings_profile_page = settings_profile_table_page_;
+        root->settings_binding_page = settings_binding_table_page_;
         root->auth_mapping_page = auth_mapping_table_page_;
         root->role_setting_page = role_setting_table_page_;
         root->security_label_page = security_label_table_page_;
@@ -17213,6 +19220,25 @@ bool hasTriggerNameConflictInTable(
         backup_history_table_page_ = root->backup_history_page;
         connection_table_page_ = root->connection_page;
         transaction_table_page_ = root->transaction_page;
+        principal_account_table_page_ = root->principal_account_page;
+        account_credential_table_page_ = root->account_credential_page;
+        account_profile_binding_table_page_ = root->account_profile_binding_page;
+        auth_provider_table_page_ = root->auth_provider_page;
+        auth_policy_table_page_ = root->auth_policy_page;
+        auth_attempt_log_table_page_ = root->auth_attempt_log_page;
+        connection_rule_table_page_ = root->connection_rule_page;
+        connection_rule_epoch_table_page_ = root->connection_rule_epoch_page;
+        acl_command_catalog_table_page_ = root->acl_command_catalog_page;
+        acl_rule_table_page_ = root->acl_rule_page;
+        document_policy_table_page_ = root->document_policy_page;
+        tenant_binding_table_page_ = root->tenant_binding_page;
+        graph_privilege_table_page_ = root->graph_privilege_page;
+        token_table_page_ = root->token_page;
+        token_scope_entry_table_page_ = root->token_scope_entry_page;
+        quota_profile_table_page_ = root->quota_profile_page;
+        quota_binding_table_page_ = root->quota_binding_page;
+        settings_profile_table_page_ = root->settings_profile_page;
+        settings_binding_table_page_ = root->settings_binding_page;
         auth_mapping_table_page_ = root->auth_mapping_page;
         role_setting_table_page_ = root->role_setting_page;
         security_label_table_page_ = root->security_label_page;
@@ -23033,6 +25059,13 @@ bool hasTriggerNameConflictInTable(
             switch (index_info.index_type)
             {
             case IndexType::BTREE:
+            case IndexType::ART:
+            case IndexType::MONGODB_GEO_HAYSTACK:
+            case IndexType::NEO4J_RANGE:
+            case IndexType::NEO4J_POINT:
+            case IndexType::REDIS_LIST:
+            case IndexType::REDIS_ZSET:
+            case IndexType::REDIS_STREAM:
                 {
                     // PHASE 5 TASK 5.2: B-Tree TID updates implemented
                     LOG_INFO(CATALOG, "Index '%s': B-Tree index - updating TIDs",
@@ -23088,6 +25121,10 @@ bool hasTriggerNameConflictInTable(
                 break;
 
             case IndexType::HASH:
+            case IndexType::REDIS_STRING:
+            case IndexType::REDIS_HASH:
+            case IndexType::REDIS_SET:
+            case IndexType::REDIS_HLL:
                 {
                     // PHASE 5 TASK 5.3.1: Hash index TID updates implemented
                     LOG_INFO(CATALOG, "Index '%s': Hash index - updating TIDs",
@@ -23130,6 +25167,7 @@ bool hasTriggerNameConflictInTable(
                 break;
 
             case IndexType::VECTOR:
+            case IndexType::NEO4J_VECTOR:
                 {
                     LOG_INFO(CATALOG, "Index '%s': Vector/HNSW index - updating TIDs",
                             index_info.index_name.c_str());
@@ -23169,8 +25207,22 @@ bool hasTriggerNameConflictInTable(
                 break;
 
             case IndexType::IVF:
+            case IndexType::VECTOR_FLAT:
+            case IndexType::VECTOR_BIN_FLAT:
+            case IndexType::IVF_FLAT:
+            case IndexType::BIN_IVF_FLAT:
+            case IndexType::IVF_PQ:
+            case IndexType::IVF_SQ8:
+            case IndexType::IVF_SQ8_HYBRID:
+            case IndexType::RHNSW_PQ:
+            case IndexType::RHNSW_SQ:
+            case IndexType::ANNOY:
+            case IndexType::NSG:
+            case IndexType::DISKANN:
+            case IndexType::SCANN:
+            case IndexType::GPU_CAGRA:
                 {
-                    LOG_INFO(CATALOG, "Index '%s': IVF index - updating TIDs",
+                    LOG_INFO(CATALOG, "Index '%s': IVF/vector-family index - updating TIDs",
                             index_info.index_name.c_str());
 
                     std::unique_ptr<HnswIndex> hnsw_index = HnswIndex::open(db_, index_info.index_id,
@@ -23178,8 +25230,8 @@ bool hasTriggerNameConflictInTable(
                     if (!hnsw_index)
                     {
                         SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
-                                        "Failed to open IVF index");
-                        LOG_ERROR(CATALOG, "Failed to open IVF index '%s' (root page %u)",
+                                        "Failed to open vector-family index");
+                        LOG_ERROR(CATALOG, "Failed to open vector-family index '%s' (root page %u)",
                                  index_info.index_name.c_str(), root_page);
                         return Status::INVALID_ARGUMENT;
                     }
@@ -23193,8 +25245,8 @@ bool hasTriggerNameConflictInTable(
                     if (update_status != Status::OK)
                     {
                         SET_ERROR_CONTEXT(ctx, update_status,
-                                        "Failed to update TIDs in IVF index");
-                        LOG_ERROR(CATALOG, "IVF TID update failed for index '%s': %d",
+                                        "Failed to update TIDs in vector-family index");
+                        LOG_ERROR(CATALOG, "Vector-family TID update failed for index '%s': %d",
                                  index_info.index_name.c_str(),
                                  static_cast<int>(update_status));
                         return update_status;
@@ -23208,6 +25260,16 @@ bool hasTriggerNameConflictInTable(
                 break;
 
             case IndexType::FULLTEXT:
+            case IndexType::MONGODB_WILDCARD:
+            case IndexType::MONGODB_ENCRYPTED_RANGE:
+            case IndexType::NEO4J_TEXT:
+            case IndexType::CASSANDRA_SASI:
+            case IndexType::CASSANDRA_SAI:
+            case IndexType::TRIE:
+            case IndexType::NGRAM:
+            case IndexType::SPARSE_INVERTED:
+            case IndexType::SPARSE_WAND:
+            case IndexType::MINHASH_LSH:
                 {
                     LOG_INFO(CATALOG, "Index '%s': Full-text index (GIN) - updating TIDs",
                             index_info.index_name.c_str());
@@ -23325,6 +25387,7 @@ bool hasTriggerNameConflictInTable(
                 break;
 
             case IndexType::BRIN:
+            case IndexType::BLOOM:
                 {
                     LOG_INFO(CATALOG, "Index '%s': BRIN index - updating TIDs",
                             index_info.index_name.c_str());
@@ -23401,6 +25464,10 @@ bool hasTriggerNameConflictInTable(
                 break;
 
             case IndexType::RTREE:
+            case IndexType::MONGODB_2D:
+            case IndexType::MONGODB_2DSPHERE:
+            case IndexType::MONGODB_2DSPHERE_BUCKET:
+            case IndexType::REDIS_GEO:
                 {
                     LOG_INFO(CATALOG, "Index '%s': R-tree index - updating TIDs",
                             index_info.index_name.c_str());
@@ -23480,6 +25547,8 @@ bool hasTriggerNameConflictInTable(
                 break;
 
             case IndexType::BITMAP:
+            case IndexType::NEO4J_LOOKUP:
+            case IndexType::REDIS_BITMAP:
                 {
                     LOG_INFO(CATALOG, "Index '%s': Bitmap index - updating TIDs",
                             index_info.index_name.c_str());
@@ -25682,15 +27751,15 @@ auto CatalogManager::listTriggersForTable(const ID &table_id, TriggerEvent event
                                           ErrorContext *ctx) -> Status
 {
     std::lock_guard<std::mutex> lock(trigger_mutex_);
-    
+
     triggers.clear();
-    
+
     // Find all triggers for this table
     auto range = table_triggers_.equal_range(table_id);
     for (auto it = range.first; it != range.second; ++it)
     {
         const auto& trigger = trigger_cache_[it->second];
-        
+
         // Filter by event, timing, and enabled status
         uint8_t mask = static_cast<uint8_t>(1u << static_cast<uint8_t>(event));
         if ((trigger.event_mask & mask) != 0 &&
@@ -25700,7 +27769,23 @@ auto CatalogManager::listTriggersForTable(const ID &table_id, TriggerEvent event
             triggers.push_back(trigger);
         }
     }
-    
+
+    // Deterministic contract: table trigger listing must not depend on unordered container
+    // iteration order. Use creation time as primary ordering key and trigger identity as stable
+    // tiebreakers.
+    std::sort(triggers.begin(), triggers.end(),
+              [](const TriggerInfo& lhs, const TriggerInfo& rhs) {
+                  if (lhs.created_time != rhs.created_time)
+                  {
+                      return lhs.created_time < rhs.created_time;
+                  }
+                  if (lhs.trigger_name != rhs.trigger_name)
+                  {
+                      return lhs.trigger_name < rhs.trigger_name;
+                  }
+                  return lhs.trigger_id < rhs.trigger_id;
+              });
+
     return Status::OK;
 }
 
@@ -25709,9 +27794,9 @@ auto CatalogManager::listAllTriggersForTable(const ID &table_id,
                                              ErrorContext *ctx) -> Status
 {
     std::lock_guard<std::mutex> lock(trigger_mutex_);
-    
+
     triggers.clear();
-    
+
     // Find all triggers for this table (regardless of event/timing)
     auto range = table_triggers_.equal_range(table_id);
     for (auto it = range.first; it != range.second; ++it)
@@ -25719,7 +27804,20 @@ auto CatalogManager::listAllTriggersForTable(const ID &table_id,
         const auto& trigger = trigger_cache_[it->second];
         triggers.push_back(trigger);
     }
-    
+
+    std::sort(triggers.begin(), triggers.end(),
+              [](const TriggerInfo& lhs, const TriggerInfo& rhs) {
+                  if (lhs.created_time != rhs.created_time)
+                  {
+                      return lhs.created_time < rhs.created_time;
+                  }
+                  if (lhs.trigger_name != rhs.trigger_name)
+                  {
+                      return lhs.trigger_name < rhs.trigger_name;
+                  }
+                  return lhs.trigger_id < rhs.trigger_id;
+              });
+
     return Status::OK;
 }
 
@@ -57612,6 +59710,6051 @@ auto CatalogManager::deleteRuntimeTransactionCatalogEntry(uint64_t txid,
 // Canonical security extension and PKI/crypto catalog CRUD operations (CAT-020)
 // ============================================================================
 
+auto CatalogManager::upsertPrincipalAccountCatalogEntry(const PrincipalAccountCatalogInfo& info,
+                                                        ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (isZeroUuidLocal(info.account_id) || info.principal_name.empty() || isZeroUuidLocal(info.auth_policy_id))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "principal_account.account_uuid/principal_name/auth_policy_uuid are required");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (!isValidPrincipalKind(info.principal_kind))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "principal_account.principal_kind is invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (!isValidSourceScopeKind(info.source_scope_kind))
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_ARGUMENT, "SEC_1204",
+                                "principal_account.source_scope_kind is unsupported");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    const bool has_source_scope_value =
+        info.source_scope_kind == SourceScopeKind::ANY
+            ? false
+            : (info.has_source_scope_value || !info.source_scope_value.empty());
+    const bool has_auth_database = info.has_auth_database || !info.auth_database.empty();
+    const bool has_tenant_scope = info.has_tenant_scope || !info.tenant_scope.empty();
+    const bool has_password_policy = info.has_password_policy || !isZeroUuidLocal(info.password_policy_id);
+    const bool has_default_role = info.has_default_role || !isZeroUuidLocal(info.default_role_id);
+    const bool has_locked_reason = info.has_locked_reason || !info.locked_reason.empty();
+
+    Status status = validateSourceScopeFormat(info.source_scope_kind,
+                                              has_source_scope_value,
+                                              info.source_scope_value,
+                                              ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    if (info.has_valid_from && info.has_valid_to && info.valid_from_utc > info.valid_to_utc)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "principal_account validity window is invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    auto validate_capacity = [ctx](const std::string& value, size_t cap, const char* field) -> Status {
+        ErrorContext local_ctx;
+        Status validate = UTF8Utils::validateStorageCapacity(value, cap, cap, &local_ctx);
+        if (validate != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, validate, field);
+            return validate;
+        }
+        return Status::OK;
+    };
+
+    status = validate_capacity(info.principal_name,
+                               sizeof(PrincipalAccountRecord{}.principal_name),
+                               "principal_account.principal_name too long");
+    if (status != Status::OK) return status;
+    if (has_source_scope_value)
+    {
+        status = validate_capacity(info.source_scope_value,
+                                   sizeof(PrincipalAccountRecord{}.source_scope_value),
+                                   "principal_account.source_scope_value too long");
+        if (status != Status::OK) return status;
+    }
+    if (has_auth_database)
+    {
+        status = validate_capacity(info.auth_database,
+                                   sizeof(PrincipalAccountRecord{}.auth_database),
+                                   "principal_account.auth_database too long");
+        if (status != Status::OK) return status;
+    }
+    if (has_tenant_scope)
+    {
+        status = validate_capacity(info.tenant_scope,
+                                   sizeof(PrincipalAccountRecord{}.tenant_scope),
+                                   "principal_account.tenant_scope too long");
+        if (status != Status::OK) return status;
+    }
+    if (has_locked_reason)
+    {
+        status = validate_capacity(info.locked_reason,
+                                   sizeof(PrincipalAccountRecord{}.locked_reason),
+                                   "principal_account.locked_reason too long");
+        if (status != Status::OK) return status;
+    }
+
+    const std::string principal_name = info.principal_name;
+    const std::string source_scope_value = has_source_scope_value ? info.source_scope_value : "";
+    const std::string auth_database = has_auth_database ? info.auth_database : "";
+    const std::string tenant_scope = has_tenant_scope ? info.tenant_scope : "";
+
+    auto duplicate_predicate = [&](const PrincipalAccountRecord& row) {
+        if (row.is_valid != 1 || row.account_id == info.account_id)
+        {
+            return false;
+        }
+        if (!equalsIgnoreCase(fixedNameFromBuffer(row.principal_name, sizeof(row.principal_name)),
+                              principal_name))
+        {
+            return false;
+        }
+        if (row.source_scope_kind != static_cast<uint8_t>(info.source_scope_kind))
+        {
+            return false;
+        }
+        const bool row_has_scope = row.has_source_scope_value != 0;
+        if (row_has_scope != has_source_scope_value)
+        {
+            return false;
+        }
+        if (row_has_scope &&
+            !equalsIgnoreCase(fixedNameFromBuffer(row.source_scope_value, sizeof(row.source_scope_value)),
+                              source_scope_value))
+        {
+            return false;
+        }
+        const bool row_has_auth = row.has_auth_database != 0;
+        if (row_has_auth != has_auth_database)
+        {
+            return false;
+        }
+        if (row_has_auth &&
+            !equalsIgnoreCase(fixedNameFromBuffer(row.auth_database, sizeof(row.auth_database)),
+                              auth_database))
+        {
+            return false;
+        }
+        const bool row_has_tenant = row.has_tenant_scope != 0;
+        if (row_has_tenant != has_tenant_scope)
+        {
+            return false;
+        }
+        if (row_has_tenant &&
+            !equalsIgnoreCase(fixedNameFromBuffer(row.tenant_scope, sizeof(row.tenant_scope)),
+                              tenant_scope))
+        {
+            return false;
+        }
+        return true;
+    };
+    auto duplicate = findRecordInHeapPage<PrincipalAccountRecord>(
+        principal_account_table_page_, duplicate_predicate, ctx);
+    if (duplicate.status == Status::OK)
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::CONSTRAINT_VIOLATION, "SEC_1205",
+                                "UNIQUE(principal_name, source_scope_kind, source_scope_value, auth_database, tenant_scope) violated");
+        return Status::CONSTRAINT_VIOLATION;
+    }
+    if (duplicate.status != Status::NOT_FOUND)
+    {
+        return duplicate.status;
+    }
+
+    const uint64_t now = catalogNowTicks();
+    PrincipalAccountRecord rec{};
+    rec.account_id = info.account_id;
+    rec.principal_kind = static_cast<uint8_t>(info.principal_kind);
+    rec.source_scope_kind = static_cast<uint8_t>(info.source_scope_kind);
+    rec.has_source_scope_value = has_source_scope_value ? 1 : 0;
+    rec.has_auth_database = has_auth_database ? 1 : 0;
+    rec.has_tenant_scope = has_tenant_scope ? 1 : 0;
+    rec.has_password_policy = has_password_policy ? 1 : 0;
+    rec.has_default_role = has_default_role ? 1 : 0;
+    rec.is_login_enabled = info.is_login_enabled ? 1 : 0;
+    rec.is_locked = info.is_locked ? 1 : 0;
+    rec.has_locked_reason = has_locked_reason ? 1 : 0;
+    rec.has_valid_from = info.has_valid_from ? 1 : 0;
+    rec.has_valid_to = info.has_valid_to ? 1 : 0;
+    rec.is_valid = info.is_valid ? 1 : 0;
+    rec.auth_policy_id = info.auth_policy_id;
+    rec.password_policy_id = has_password_policy ? info.password_policy_id : ID{};
+    rec.default_role_id = has_default_role ? info.default_role_id : ID{};
+    rec.valid_from_utc = info.has_valid_from ? info.valid_from_utc : 0;
+    rec.valid_to_utc = info.has_valid_to ? info.valid_to_utc : 0;
+    rec.created_txid = info.created_txid;
+    rec.last_modified_txid = info.last_modified_txid;
+    rec.created_time = (info.created_time == 0) ? now : info.created_time;
+    rec.last_modified_time = (info.last_modified_time == 0) ? now : info.last_modified_time;
+    std::strncpy(rec.principal_name,
+                 UTF8Utils::truncateToBytes(principal_name, sizeof(rec.principal_name)).c_str(),
+                 sizeof(rec.principal_name) - 1);
+    if (has_source_scope_value)
+    {
+        std::strncpy(rec.source_scope_value,
+                     UTF8Utils::truncateToBytes(source_scope_value, sizeof(rec.source_scope_value)).c_str(),
+                     sizeof(rec.source_scope_value) - 1);
+    }
+    if (has_auth_database)
+    {
+        std::strncpy(rec.auth_database,
+                     UTF8Utils::truncateToBytes(auth_database, sizeof(rec.auth_database)).c_str(),
+                     sizeof(rec.auth_database) - 1);
+    }
+    if (has_tenant_scope)
+    {
+        std::strncpy(rec.tenant_scope,
+                     UTF8Utils::truncateToBytes(tenant_scope, sizeof(rec.tenant_scope)).c_str(),
+                     sizeof(rec.tenant_scope) - 1);
+    }
+    if (has_locked_reason)
+    {
+        std::strncpy(rec.locked_reason,
+                     UTF8Utils::truncateToBytes(info.locked_reason, sizeof(rec.locked_reason)).c_str(),
+                     sizeof(rec.locked_reason) - 1);
+    }
+
+    auto existing_predicate = [&info](const PrincipalAccountRecord& row) {
+        return row.account_id == info.account_id && row.is_valid == 1;
+    };
+    auto existing = findRecordInHeapPage<PrincipalAccountRecord>(
+        principal_account_table_page_, existing_predicate, ctx);
+    if (existing.status == Status::OK)
+    {
+        rec.created_time = existing.record.created_time;
+        rec.created_txid = existing.record.created_txid;
+    }
+    else if (existing.status != Status::NOT_FOUND)
+    {
+        return existing.status;
+    }
+
+    auto matcher = [&info](const PrincipalAccountRecord& row) {
+        return row.account_id == info.account_id && row.is_valid == 1;
+    };
+    return updateRecordInHeapPage(principal_account_table_page_, matcher, rec, ctx);
+}
+
+auto CatalogManager::getPrincipalAccountCatalogEntry(const ID& account_id,
+                                                     PrincipalAccountCatalogInfo& info_out,
+                                                     ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto predicate = [&account_id](const PrincipalAccountRecord& row) {
+        return row.account_id == account_id && row.is_valid == 1;
+    };
+    auto result = findRecordInHeapPage<PrincipalAccountRecord>(
+        principal_account_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    if (!isValidPrincipalKind(static_cast<PrincipalKind>(result.record.principal_kind)) ||
+        !isValidSourceScopeKind(static_cast<SourceScopeKind>(result.record.source_scope_kind)))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "principal_account enum value is invalid");
+        return Status::PAGE_CORRUPT;
+    }
+
+    info_out = PrincipalAccountCatalogInfo{};
+    info_out.account_id = result.record.account_id;
+    info_out.principal_name =
+        fixedNameFromBuffer(result.record.principal_name, sizeof(result.record.principal_name));
+    info_out.principal_kind = static_cast<PrincipalKind>(result.record.principal_kind);
+    info_out.source_scope_kind = static_cast<SourceScopeKind>(result.record.source_scope_kind);
+    info_out.has_source_scope_value = result.record.has_source_scope_value != 0;
+    info_out.source_scope_value =
+        fixedNameFromBuffer(result.record.source_scope_value, sizeof(result.record.source_scope_value));
+    info_out.has_auth_database = result.record.has_auth_database != 0;
+    info_out.auth_database =
+        fixedNameFromBuffer(result.record.auth_database, sizeof(result.record.auth_database));
+    info_out.has_tenant_scope = result.record.has_tenant_scope != 0;
+    info_out.tenant_scope =
+        fixedNameFromBuffer(result.record.tenant_scope, sizeof(result.record.tenant_scope));
+    info_out.auth_policy_id = result.record.auth_policy_id;
+    info_out.has_password_policy = result.record.has_password_policy != 0;
+    info_out.password_policy_id = result.record.password_policy_id;
+    info_out.has_default_role = result.record.has_default_role != 0;
+    info_out.default_role_id = result.record.default_role_id;
+    info_out.is_login_enabled = result.record.is_login_enabled != 0;
+    info_out.is_locked = result.record.is_locked != 0;
+    info_out.has_locked_reason = result.record.has_locked_reason != 0;
+    info_out.locked_reason =
+        fixedNameFromBuffer(result.record.locked_reason, sizeof(result.record.locked_reason));
+    info_out.has_valid_from = result.record.has_valid_from != 0;
+    info_out.valid_from_utc = result.record.valid_from_utc;
+    info_out.has_valid_to = result.record.has_valid_to != 0;
+    info_out.valid_to_utc = result.record.valid_to_utc;
+    info_out.created_txid = result.record.created_txid;
+    info_out.last_modified_txid = result.record.last_modified_txid;
+    info_out.is_valid = result.record.is_valid == 1;
+    info_out.created_time = result.record.created_time;
+    info_out.last_modified_time = result.record.last_modified_time;
+    return Status::OK;
+}
+
+auto CatalogManager::listPrincipalAccountCatalogEntries(
+    std::vector<PrincipalAccountCatalogInfo>& rows_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+    auto filter = [](const PrincipalAccountRecord& row) { return row.is_valid == 1; };
+    auto converter = [](const PrincipalAccountRecord& row, PrincipalAccountCatalogInfo& info) {
+        info = PrincipalAccountCatalogInfo{};
+        info.account_id = row.account_id;
+        info.principal_name = fixedNameFromBuffer(row.principal_name, sizeof(row.principal_name));
+        info.principal_kind = static_cast<PrincipalKind>(row.principal_kind);
+        info.source_scope_kind = static_cast<SourceScopeKind>(row.source_scope_kind);
+        info.has_source_scope_value = row.has_source_scope_value != 0;
+        info.source_scope_value = fixedNameFromBuffer(row.source_scope_value, sizeof(row.source_scope_value));
+        info.has_auth_database = row.has_auth_database != 0;
+        info.auth_database = fixedNameFromBuffer(row.auth_database, sizeof(row.auth_database));
+        info.has_tenant_scope = row.has_tenant_scope != 0;
+        info.tenant_scope = fixedNameFromBuffer(row.tenant_scope, sizeof(row.tenant_scope));
+        info.auth_policy_id = row.auth_policy_id;
+        info.has_password_policy = row.has_password_policy != 0;
+        info.password_policy_id = row.password_policy_id;
+        info.has_default_role = row.has_default_role != 0;
+        info.default_role_id = row.default_role_id;
+        info.is_login_enabled = row.is_login_enabled != 0;
+        info.is_locked = row.is_locked != 0;
+        info.has_locked_reason = row.has_locked_reason != 0;
+        info.locked_reason = fixedNameFromBuffer(row.locked_reason, sizeof(row.locked_reason));
+        info.has_valid_from = row.has_valid_from != 0;
+        info.valid_from_utc = row.valid_from_utc;
+        info.has_valid_to = row.has_valid_to != 0;
+        info.valid_to_utc = row.valid_to_utc;
+        info.created_txid = row.created_txid;
+        info.last_modified_txid = row.last_modified_txid;
+        info.is_valid = row.is_valid == 1;
+        info.created_time = row.created_time;
+        info.last_modified_time = row.last_modified_time;
+    };
+    Status status = readRecordsToVector<PrincipalAccountRecord, PrincipalAccountCatalogInfo>(
+        principal_account_table_page_, rows_out, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    std::sort(rows_out.begin(), rows_out.end(),
+              [](const PrincipalAccountCatalogInfo& lhs, const PrincipalAccountCatalogInfo& rhs) {
+                  if (lhs.created_time != rhs.created_time)
+                  {
+                      return lhs.created_time < rhs.created_time;
+                  }
+                  return compareUuidBytesLocal(lhs.account_id, rhs.account_id) < 0;
+              });
+    return Status::OK;
+}
+
+auto CatalogManager::deletePrincipalAccountCatalogEntry(const ID& account_id,
+                                                        ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto predicate = [&account_id](const PrincipalAccountRecord& row) {
+        return row.account_id == account_id && row.is_valid == 1;
+    };
+    auto result = findRecordInHeapPage<PrincipalAccountRecord>(
+        principal_account_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+    PrincipalAccountRecord updated = result.record;
+    updated.is_valid = 0;
+    updated.last_modified_time = catalogNowTicks();
+    return updateRecordInHeapPage(principal_account_table_page_, result.slot_index, updated, ctx);
+}
+
+auto CatalogManager::resolvePrincipalAccount(const PrincipalResolutionRequest& request,
+                                             PrincipalAccountCatalogInfo& info_out,
+                                             ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (request.presented_principal_name.empty())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "presented_principal_name is required");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    struct RankedCandidate
+    {
+        PrincipalAccountCatalogInfo info;
+        uint8_t source_rank = 255;
+        uint16_t cidr_order = std::numeric_limits<uint16_t>::max();
+        uint8_t auth_rank = 1;
+        uint8_t tenant_rank = 1;
+    };
+
+    const uint64_t now = request.now_utc == 0 ? catalogNowTicks() : request.now_utc;
+    std::vector<RankedCandidate> candidates;
+    auto filter = [](const PrincipalAccountRecord& row) { return row.is_valid == 1; };
+    auto converter = [](const PrincipalAccountRecord& row, PrincipalAccountCatalogInfo& info) {
+        info = PrincipalAccountCatalogInfo{};
+        info.account_id = row.account_id;
+        info.principal_name = fixedNameFromBuffer(row.principal_name, sizeof(row.principal_name));
+        info.principal_kind = static_cast<PrincipalKind>(row.principal_kind);
+        info.source_scope_kind = static_cast<SourceScopeKind>(row.source_scope_kind);
+        info.has_source_scope_value = row.has_source_scope_value != 0;
+        info.source_scope_value = fixedNameFromBuffer(row.source_scope_value, sizeof(row.source_scope_value));
+        info.has_auth_database = row.has_auth_database != 0;
+        info.auth_database = fixedNameFromBuffer(row.auth_database, sizeof(row.auth_database));
+        info.has_tenant_scope = row.has_tenant_scope != 0;
+        info.tenant_scope = fixedNameFromBuffer(row.tenant_scope, sizeof(row.tenant_scope));
+        info.auth_policy_id = row.auth_policy_id;
+        info.has_password_policy = row.has_password_policy != 0;
+        info.password_policy_id = row.password_policy_id;
+        info.has_default_role = row.has_default_role != 0;
+        info.default_role_id = row.default_role_id;
+        info.is_login_enabled = row.is_login_enabled != 0;
+        info.is_locked = row.is_locked != 0;
+        info.has_valid_from = row.has_valid_from != 0;
+        info.valid_from_utc = row.valid_from_utc;
+        info.has_valid_to = row.has_valid_to != 0;
+        info.valid_to_utc = row.valid_to_utc;
+        info.created_txid = row.created_txid;
+        info.last_modified_txid = row.last_modified_txid;
+        info.is_valid = row.is_valid == 1;
+        info.created_time = row.created_time;
+        info.last_modified_time = row.last_modified_time;
+    };
+
+    std::vector<PrincipalAccountCatalogInfo> rows;
+    Status status = readRecordsToVector<PrincipalAccountRecord, PrincipalAccountCatalogInfo>(
+        principal_account_table_page_, rows, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    for (const auto& row : rows)
+    {
+        if (!equalsIgnoreCase(row.principal_name, request.presented_principal_name))
+        {
+            continue;
+        }
+        if (!row.is_login_enabled || row.is_locked)
+        {
+            continue;
+        }
+        if (row.has_valid_from && now < row.valid_from_utc)
+        {
+            continue;
+        }
+        if (row.has_valid_to && now > row.valid_to_utc)
+        {
+            continue;
+        }
+
+        SourceScopeMatchResult source_match = evaluateSourceScopeMatch(row.source_scope_kind,
+                                                                       row.source_scope_value,
+                                                                       request,
+                                                                       ctx);
+        if (source_match.status != Status::OK)
+        {
+            return source_match.status;
+        }
+        if (!source_match.matched)
+        {
+            continue;
+        }
+
+        uint8_t auth_rank = 0;
+        if (row.has_auth_database)
+        {
+            if (!request.has_auth_database_context ||
+                !equalsIgnoreCase(row.auth_database, request.auth_database_context))
+            {
+                continue;
+            }
+            auth_rank = 0;
+        }
+        else
+        {
+            auth_rank = request.has_auth_database_context ? 1 : 0;
+        }
+
+        uint8_t tenant_rank = 0;
+        if (row.has_tenant_scope)
+        {
+            if (!request.has_tenant_context || row.tenant_scope != request.tenant_context)
+            {
+                continue;
+            }
+            tenant_rank = 0;
+        }
+        else
+        {
+            tenant_rank = request.has_tenant_context ? 1 : 0;
+        }
+
+        RankedCandidate candidate{};
+        candidate.info = row;
+        candidate.source_rank = source_match.source_rank;
+        candidate.cidr_order = source_match.cidr_order;
+        candidate.auth_rank = auth_rank;
+        candidate.tenant_rank = tenant_rank;
+        candidates.push_back(std::move(candidate));
+    }
+
+    if (candidates.empty())
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1201",
+                                "No account tuple matched");
+        return Status::INVALID_AUTHORIZATION;
+    }
+
+    std::sort(candidates.begin(), candidates.end(),
+              [](const RankedCandidate& lhs, const RankedCandidate& rhs) {
+                  if (lhs.source_rank != rhs.source_rank)
+                  {
+                      return lhs.source_rank < rhs.source_rank;
+                  }
+                  if (lhs.cidr_order != rhs.cidr_order)
+                  {
+                      return lhs.cidr_order < rhs.cidr_order;
+                  }
+                  if (lhs.auth_rank != rhs.auth_rank)
+                  {
+                      return lhs.auth_rank < rhs.auth_rank;
+                  }
+                  if (lhs.tenant_rank != rhs.tenant_rank)
+                  {
+                      return lhs.tenant_rank < rhs.tenant_rank;
+                  }
+                  return compareUuidBytesLocal(lhs.info.account_id, rhs.info.account_id) < 0;
+              });
+
+    if (candidates.size() > 1)
+    {
+        const RankedCandidate& first = candidates[0];
+        const RankedCandidate& second = candidates[1];
+        if (first.source_rank == second.source_rank &&
+            first.cidr_order == second.cidr_order &&
+            first.auth_rank == second.auth_rank &&
+            first.tenant_rank == second.tenant_rank)
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1202",
+                                    "Account tuple resolution is ambiguous");
+            return Status::INVALID_AUTHORIZATION;
+        }
+    }
+
+    info_out = candidates.front().info;
+    return Status::OK;
+}
+
+auto CatalogManager::upsertAccountCredentialCatalogEntry(const AccountCredentialCatalogInfo& info,
+                                                         ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (isZeroUuidLocal(info.credential_id) || isZeroUuidLocal(info.account_id) ||
+        isZeroUuidLocal(info.credential_payload_id))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "account_credential ids are required");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (!isValidCredentialKind(info.credential_kind))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "account_credential.credential_kind is invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (info.has_rotated_time && info.has_expires_time && info.expires_time_utc < info.rotated_time_utc)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "account_credential expiry is before rotate time");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    if (info.is_active && isPrimaryPasswordCredentialKind(info.credential_kind))
+    {
+        auto duplicate_primary = [&info](const AccountCredentialRecord& row) {
+            if (row.is_valid != 1 || row.credential_id == info.credential_id || row.is_active != 1)
+            {
+                return false;
+            }
+            if (row.account_id != info.account_id)
+            {
+                return false;
+            }
+            return row.credential_kind == static_cast<uint8_t>(CredentialKind::PASSWORD_ARGON2ID) ||
+                   row.credential_kind == static_cast<uint8_t>(CredentialKind::PASSWORD_SCRAM_SHA256);
+        };
+        auto duplicate = findRecordInHeapPage<AccountCredentialRecord>(
+            account_credential_table_page_, duplicate_primary, ctx);
+        if (duplicate.status == Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
+                              "Only one active primary password credential is allowed per account");
+            return Status::CONSTRAINT_VIOLATION;
+        }
+        if (duplicate.status != Status::NOT_FOUND)
+        {
+            return duplicate.status;
+        }
+    }
+
+    const uint64_t now = catalogNowTicks();
+    AccountCredentialRecord rec{};
+    rec.credential_id = info.credential_id;
+    rec.account_id = info.account_id;
+    rec.credential_kind = static_cast<uint8_t>(info.credential_kind);
+    rec.has_credential_hash = info.has_credential_hash ? 1 : 0;
+    rec.has_rotated_time = info.has_rotated_time ? 1 : 0;
+    rec.has_expires_time = info.has_expires_time ? 1 : 0;
+    rec.is_active = info.is_active ? 1 : 0;
+    rec.is_valid = info.is_valid ? 1 : 0;
+    rec.credential_payload_id = info.credential_payload_id;
+    if (info.has_credential_hash)
+    {
+        std::memcpy(rec.credential_hash, info.credential_hash.data(), sizeof(rec.credential_hash));
+    }
+    rec.rotated_time_utc = info.has_rotated_time ? info.rotated_time_utc : 0;
+    rec.expires_time_utc = info.has_expires_time ? info.expires_time_utc : 0;
+    rec.created_time = (info.created_time == 0) ? now : info.created_time;
+    rec.last_modified_time = (info.last_modified_time == 0) ? now : info.last_modified_time;
+
+    auto existing_predicate = [&info](const AccountCredentialRecord& row) {
+        return row.credential_id == info.credential_id && row.is_valid == 1;
+    };
+    auto existing = findRecordInHeapPage<AccountCredentialRecord>(
+        account_credential_table_page_, existing_predicate, ctx);
+    if (existing.status == Status::OK)
+    {
+        rec.created_time = existing.record.created_time;
+    }
+    else if (existing.status != Status::NOT_FOUND)
+    {
+        return existing.status;
+    }
+
+    auto matcher = [&info](const AccountCredentialRecord& row) {
+        return row.credential_id == info.credential_id && row.is_valid == 1;
+    };
+    return updateRecordInHeapPage(account_credential_table_page_, matcher, rec, ctx);
+}
+
+auto CatalogManager::getAccountCredentialCatalogEntry(const ID& credential_id,
+                                                      AccountCredentialCatalogInfo& info_out,
+                                                      ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto predicate = [&credential_id](const AccountCredentialRecord& row) {
+        return row.credential_id == credential_id && row.is_valid == 1;
+    };
+    auto result = findRecordInHeapPage<AccountCredentialRecord>(
+        account_credential_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+    if (!isValidCredentialKind(static_cast<CredentialKind>(result.record.credential_kind)))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "account_credential.credential_kind is invalid on disk");
+        return Status::PAGE_CORRUPT;
+    }
+
+    info_out = AccountCredentialCatalogInfo{};
+    info_out.credential_id = result.record.credential_id;
+    info_out.account_id = result.record.account_id;
+    info_out.credential_kind = static_cast<CredentialKind>(result.record.credential_kind);
+    info_out.credential_payload_id = result.record.credential_payload_id;
+    info_out.has_credential_hash = result.record.has_credential_hash != 0;
+    if (info_out.has_credential_hash)
+    {
+        std::copy(std::begin(result.record.credential_hash),
+                  std::end(result.record.credential_hash),
+                  info_out.credential_hash.begin());
+    }
+    info_out.has_rotated_time = result.record.has_rotated_time != 0;
+    info_out.rotated_time_utc = result.record.rotated_time_utc;
+    info_out.has_expires_time = result.record.has_expires_time != 0;
+    info_out.expires_time_utc = result.record.expires_time_utc;
+    info_out.is_active = result.record.is_active != 0;
+    info_out.is_valid = result.record.is_valid == 1;
+    info_out.created_time = result.record.created_time;
+    info_out.last_modified_time = result.record.last_modified_time;
+    return Status::OK;
+}
+
+auto CatalogManager::listAccountCredentialCatalogEntries(
+    const ID& account_id,
+    std::vector<AccountCredentialCatalogInfo>& rows_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+    auto filter = [&account_id](const AccountCredentialRecord& row) {
+        if (row.is_valid != 1)
+        {
+            return false;
+        }
+        return isZeroUuidLocal(account_id) || row.account_id == account_id;
+    };
+    auto converter = [](const AccountCredentialRecord& row, AccountCredentialCatalogInfo& info) {
+        info = AccountCredentialCatalogInfo{};
+        info.credential_id = row.credential_id;
+        info.account_id = row.account_id;
+        info.credential_kind = static_cast<CredentialKind>(row.credential_kind);
+        info.credential_payload_id = row.credential_payload_id;
+        info.has_credential_hash = row.has_credential_hash != 0;
+        if (info.has_credential_hash)
+        {
+            std::copy(std::begin(row.credential_hash), std::end(row.credential_hash),
+                      info.credential_hash.begin());
+        }
+        info.has_rotated_time = row.has_rotated_time != 0;
+        info.rotated_time_utc = row.rotated_time_utc;
+        info.has_expires_time = row.has_expires_time != 0;
+        info.expires_time_utc = row.expires_time_utc;
+        info.is_active = row.is_active != 0;
+        info.is_valid = row.is_valid == 1;
+        info.created_time = row.created_time;
+        info.last_modified_time = row.last_modified_time;
+    };
+    Status status = readRecordsToVector<AccountCredentialRecord, AccountCredentialCatalogInfo>(
+        account_credential_table_page_, rows_out, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    std::sort(rows_out.begin(), rows_out.end(),
+              [](const AccountCredentialCatalogInfo& lhs, const AccountCredentialCatalogInfo& rhs) {
+                  if (lhs.created_time != rhs.created_time)
+                  {
+                      return lhs.created_time < rhs.created_time;
+                  }
+                  return compareUuidBytesLocal(lhs.credential_id, rhs.credential_id) < 0;
+              });
+    return Status::OK;
+}
+
+auto CatalogManager::deleteAccountCredentialCatalogEntry(const ID& credential_id,
+                                                         ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto predicate = [&credential_id](const AccountCredentialRecord& row) {
+        return row.credential_id == credential_id && row.is_valid == 1;
+    };
+    auto result = findRecordInHeapPage<AccountCredentialRecord>(
+        account_credential_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+    AccountCredentialRecord updated = result.record;
+    updated.is_valid = 0;
+    updated.last_modified_time = catalogNowTicks();
+    return updateRecordInHeapPage(account_credential_table_page_, result.slot_index, updated, ctx);
+}
+
+auto CatalogManager::upsertAccountProfileBindingCatalogEntry(const AccountProfileBindingCatalogInfo& info,
+                                                             ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (isZeroUuidLocal(info.binding_id) || isZeroUuidLocal(info.account_id))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "account_profile_binding ids are required");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    const bool has_quota_profile = info.has_quota_profile || !isZeroUuidLocal(info.quota_profile_id);
+    const bool has_settings_profile = info.has_settings_profile || !isZeroUuidLocal(info.settings_profile_id);
+
+    auto duplicate_predicate = [&](const AccountProfileBindingRecord& row) {
+        return row.is_valid == 1 &&
+               row.binding_id != info.binding_id &&
+               row.account_id == info.account_id &&
+               row.priority_u16 == info.priority_u16;
+    };
+    auto duplicate = findRecordInHeapPage<AccountProfileBindingRecord>(
+        account_profile_binding_table_page_, duplicate_predicate, ctx);
+    if (duplicate.status == Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
+                          "UNIQUE(account_uuid, priority_u16) violated");
+        return Status::CONSTRAINT_VIOLATION;
+    }
+    if (duplicate.status != Status::NOT_FOUND)
+    {
+        return duplicate.status;
+    }
+
+    const uint64_t now = catalogNowTicks();
+    AccountProfileBindingRecord rec{};
+    rec.binding_id = info.binding_id;
+    rec.account_id = info.account_id;
+    rec.quota_profile_id = has_quota_profile ? info.quota_profile_id : ID{};
+    rec.settings_profile_id = has_settings_profile ? info.settings_profile_id : ID{};
+    rec.priority_u16 = info.priority_u16;
+    rec.has_quota_profile = has_quota_profile ? 1 : 0;
+    rec.has_settings_profile = has_settings_profile ? 1 : 0;
+    rec.is_valid = info.is_valid ? 1 : 0;
+    rec.created_time = (info.created_time == 0) ? now : info.created_time;
+    rec.last_modified_time = (info.last_modified_time == 0) ? now : info.last_modified_time;
+
+    auto existing_predicate = [&info](const AccountProfileBindingRecord& row) {
+        return row.binding_id == info.binding_id && row.is_valid == 1;
+    };
+    auto existing = findRecordInHeapPage<AccountProfileBindingRecord>(
+        account_profile_binding_table_page_, existing_predicate, ctx);
+    if (existing.status == Status::OK)
+    {
+        rec.created_time = existing.record.created_time;
+    }
+    else if (existing.status != Status::NOT_FOUND)
+    {
+        return existing.status;
+    }
+
+    auto matcher = [&info](const AccountProfileBindingRecord& row) {
+        return row.binding_id == info.binding_id && row.is_valid == 1;
+    };
+    return updateRecordInHeapPage(account_profile_binding_table_page_, matcher, rec, ctx);
+}
+
+auto CatalogManager::getAccountProfileBindingCatalogEntry(
+    const ID& binding_id,
+    AccountProfileBindingCatalogInfo& info_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto predicate = [&binding_id](const AccountProfileBindingRecord& row) {
+        return row.binding_id == binding_id && row.is_valid == 1;
+    };
+    auto result = findRecordInHeapPage<AccountProfileBindingRecord>(
+        account_profile_binding_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    info_out = AccountProfileBindingCatalogInfo{};
+    info_out.binding_id = result.record.binding_id;
+    info_out.account_id = result.record.account_id;
+    info_out.has_quota_profile = result.record.has_quota_profile != 0;
+    info_out.quota_profile_id = result.record.quota_profile_id;
+    info_out.has_settings_profile = result.record.has_settings_profile != 0;
+    info_out.settings_profile_id = result.record.settings_profile_id;
+    info_out.priority_u16 = result.record.priority_u16;
+    info_out.is_valid = result.record.is_valid == 1;
+    info_out.created_time = result.record.created_time;
+    info_out.last_modified_time = result.record.last_modified_time;
+    return Status::OK;
+}
+
+auto CatalogManager::listAccountProfileBindingCatalogEntries(
+    const ID& account_id,
+    std::vector<AccountProfileBindingCatalogInfo>& rows_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+    auto filter = [&account_id](const AccountProfileBindingRecord& row) {
+        if (row.is_valid != 1)
+        {
+            return false;
+        }
+        return isZeroUuidLocal(account_id) || row.account_id == account_id;
+    };
+    auto converter = [](const AccountProfileBindingRecord& row, AccountProfileBindingCatalogInfo& info) {
+        info = AccountProfileBindingCatalogInfo{};
+        info.binding_id = row.binding_id;
+        info.account_id = row.account_id;
+        info.has_quota_profile = row.has_quota_profile != 0;
+        info.quota_profile_id = row.quota_profile_id;
+        info.has_settings_profile = row.has_settings_profile != 0;
+        info.settings_profile_id = row.settings_profile_id;
+        info.priority_u16 = row.priority_u16;
+        info.is_valid = row.is_valid == 1;
+        info.created_time = row.created_time;
+        info.last_modified_time = row.last_modified_time;
+    };
+    Status status = readRecordsToVector<AccountProfileBindingRecord, AccountProfileBindingCatalogInfo>(
+        account_profile_binding_table_page_, rows_out, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    std::sort(rows_out.begin(), rows_out.end(),
+              [](const AccountProfileBindingCatalogInfo& lhs, const AccountProfileBindingCatalogInfo& rhs) {
+                  if (lhs.priority_u16 != rhs.priority_u16)
+                  {
+                      return lhs.priority_u16 < rhs.priority_u16;
+                  }
+                  return compareUuidBytesLocal(lhs.binding_id, rhs.binding_id) < 0;
+              });
+    return Status::OK;
+}
+
+auto CatalogManager::deleteAccountProfileBindingCatalogEntry(const ID& binding_id,
+                                                             ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto predicate = [&binding_id](const AccountProfileBindingRecord& row) {
+        return row.binding_id == binding_id && row.is_valid == 1;
+    };
+    auto result = findRecordInHeapPage<AccountProfileBindingRecord>(
+        account_profile_binding_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+    AccountProfileBindingRecord updated = result.record;
+    updated.is_valid = 0;
+    updated.last_modified_time = catalogNowTicks();
+    return updateRecordInHeapPage(account_profile_binding_table_page_, result.slot_index, updated, ctx);
+}
+
+auto CatalogManager::upsertAuthProviderCatalogEntry(const AuthProviderCatalogInfo& info,
+                                                    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (isZeroUuidLocal(info.provider_id) || info.provider_name.empty())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "auth_provider.provider_uuid and provider_name are required");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (!isValidAuthProviderKind(info.provider_kind))
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_ARGUMENT, "SEC_1223",
+                                "auth_provider.provider_kind is invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (!isValidAuthProviderState(info.provider_state))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "auth_provider.provider_state is invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (!isValidAuthProviderFailMode(info.fail_mode))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "auth_provider.fail_mode is invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    ErrorContext local_ctx;
+    Status status = UTF8Utils::validateStorageCapacity(
+        info.provider_name,
+        sizeof(AuthProviderRecord{}.provider_name),
+        sizeof(AuthProviderRecord{}.provider_name),
+        &local_ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "auth_provider.provider_name too long");
+        return status;
+    }
+
+    status = validateProviderConfigPayload(info.provider_kind, info.config_payload, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    auto duplicate_predicate = [&info](const AuthProviderRecord& row) {
+        if (row.is_valid != 1 || row.provider_id == info.provider_id)
+        {
+            return false;
+        }
+        return equalsIgnoreCase(
+            fixedNameFromBuffer(row.provider_name, sizeof(row.provider_name)),
+            info.provider_name);
+    };
+    auto duplicate = findRecordInHeapPage<AuthProviderRecord>(
+        auth_provider_table_page_, duplicate_predicate, ctx);
+    if (duplicate.status == Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
+                          "UNIQUE(provider_name) violated");
+        return Status::CONSTRAINT_VIOLATION;
+    }
+    if (duplicate.status != Status::NOT_FOUND)
+    {
+        return duplicate.status;
+    }
+
+    AuthProviderRecord rec{};
+    rec.provider_id = info.provider_id;
+    rec.provider_kind = static_cast<uint8_t>(info.provider_kind);
+    rec.provider_state = static_cast<uint8_t>(info.provider_state);
+    rec.priority_rank = info.priority_rank;
+    rec.timeout_ms = info.timeout_ms;
+    rec.cache_ttl_ms = info.cache_ttl_ms;
+    rec.fail_mode = static_cast<uint8_t>(info.fail_mode);
+    rec.is_valid = info.is_valid ? 1 : 0;
+    rec.created_time = (info.created_time == 0) ? catalogNowTicks() : info.created_time;
+    rec.last_modified_time = (info.last_modified_time == 0) ? catalogNowTicks() : info.last_modified_time;
+    std::strncpy(rec.provider_name,
+                 UTF8Utils::truncateToBytes(info.provider_name, sizeof(rec.provider_name)).c_str(),
+                 sizeof(rec.provider_name) - 1);
+
+    if (!info.config_payload.empty())
+    {
+        uint64_t xmin = 0;
+        status = storeStringInToast(info.config_payload, xmin, rec.config_payload_oid, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    auto existing_predicate = [&info](const AuthProviderRecord& row) {
+        return row.provider_id == info.provider_id && row.is_valid == 1;
+    };
+    auto existing = findRecordInHeapPage<AuthProviderRecord>(
+        auth_provider_table_page_, existing_predicate, ctx);
+    if (existing.status == Status::OK)
+    {
+        rec.created_time = existing.record.created_time;
+    }
+    else if (existing.status != Status::NOT_FOUND)
+    {
+        return existing.status;
+    }
+
+    auto matcher = [&info](const AuthProviderRecord& row) {
+        return row.provider_id == info.provider_id && row.is_valid == 1;
+    };
+    return updateRecordInHeapPage(auth_provider_table_page_, matcher, rec, ctx);
+}
+
+auto CatalogManager::getAuthProviderCatalogEntry(const ID& provider_id,
+                                                 AuthProviderCatalogInfo& info_out,
+                                                 ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto predicate = [&provider_id](const AuthProviderRecord& row) {
+        return row.provider_id == provider_id && row.is_valid == 1;
+    };
+    auto result = findRecordInHeapPage<AuthProviderRecord>(
+        auth_provider_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+    if (!isValidAuthProviderKind(static_cast<AuthProviderKind>(result.record.provider_kind)))
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1223",
+                                "auth_provider.provider_kind invalid on disk");
+        return Status::PAGE_CORRUPT;
+    }
+    if (!isValidAuthProviderState(static_cast<AuthProviderState>(result.record.provider_state)) ||
+        !isValidAuthProviderFailMode(static_cast<AuthProviderFailMode>(result.record.fail_mode)))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "auth_provider enum invalid on disk");
+        return Status::PAGE_CORRUPT;
+    }
+
+    info_out = AuthProviderCatalogInfo{};
+    info_out.provider_id = result.record.provider_id;
+    info_out.provider_name =
+        fixedNameFromBuffer(result.record.provider_name, sizeof(result.record.provider_name));
+    info_out.provider_kind = static_cast<AuthProviderKind>(result.record.provider_kind);
+    info_out.provider_state = static_cast<AuthProviderState>(result.record.provider_state);
+    info_out.priority_rank = result.record.priority_rank;
+    info_out.timeout_ms = result.record.timeout_ms;
+    info_out.cache_ttl_ms = result.record.cache_ttl_ms;
+    info_out.fail_mode = static_cast<AuthProviderFailMode>(result.record.fail_mode);
+    info_out.is_valid = result.record.is_valid == 1;
+    info_out.created_time = result.record.created_time;
+    info_out.last_modified_time = result.record.last_modified_time;
+    if (!isZeroUuidLocal(result.record.config_payload_oid))
+    {
+        uint64_t xmin = 0;
+        Status status = loadStringFromToast(result.record.config_payload_oid, xmin, info_out.config_payload, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+    return Status::OK;
+}
+
+auto CatalogManager::listAuthProviderCatalogEntries(std::vector<AuthProviderCatalogInfo>& rows_out,
+                                                    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+    auto filter = [](const AuthProviderRecord& row) { return row.is_valid == 1; };
+    auto converter = [](const AuthProviderRecord& row, AuthProviderCatalogInfo& info) {
+        info = AuthProviderCatalogInfo{};
+        info.provider_id = row.provider_id;
+        info.provider_name = fixedNameFromBuffer(row.provider_name, sizeof(row.provider_name));
+        info.provider_kind = static_cast<AuthProviderKind>(row.provider_kind);
+        info.provider_state = static_cast<AuthProviderState>(row.provider_state);
+        info.priority_rank = row.priority_rank;
+        info.timeout_ms = row.timeout_ms;
+        info.cache_ttl_ms = row.cache_ttl_ms;
+        info.fail_mode = static_cast<AuthProviderFailMode>(row.fail_mode);
+        info.is_valid = row.is_valid == 1;
+        info.created_time = row.created_time;
+        info.last_modified_time = row.last_modified_time;
+    };
+    Status status = readRecordsToVector<AuthProviderRecord, AuthProviderCatalogInfo>(
+        auth_provider_table_page_, rows_out, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    for (auto& row : rows_out)
+    {
+        if (!isValidAuthProviderKind(row.provider_kind) ||
+            !isValidAuthProviderState(row.provider_state) ||
+            !isValidAuthProviderFailMode(row.fail_mode))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "auth_provider enum invalid on disk");
+            return Status::PAGE_CORRUPT;
+        }
+        auto predicate = [&row](const AuthProviderRecord& rec) {
+            return rec.provider_id == row.provider_id && rec.is_valid == 1;
+        };
+        auto found = findRecordInHeapPage<AuthProviderRecord>(auth_provider_table_page_, predicate, ctx);
+        if (found.status == Status::OK && !isZeroUuidLocal(found.record.config_payload_oid))
+        {
+            uint64_t xmin = 0;
+            if (loadStringFromToast(found.record.config_payload_oid, xmin, row.config_payload, ctx) != Status::OK)
+            {
+                return Status::DATA_CORRUPTED;
+            }
+        }
+    }
+    std::sort(rows_out.begin(), rows_out.end(),
+              [](const AuthProviderCatalogInfo& lhs, const AuthProviderCatalogInfo& rhs) {
+                  if (lhs.priority_rank != rhs.priority_rank)
+                  {
+                      return lhs.priority_rank < rhs.priority_rank;
+                  }
+                  return compareUuidBytesLocal(lhs.provider_id, rhs.provider_id) < 0;
+              });
+    return Status::OK;
+}
+
+auto CatalogManager::deleteAuthProviderCatalogEntry(const ID& provider_id,
+                                                    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto predicate = [&provider_id](const AuthProviderRecord& row) {
+        return row.provider_id == provider_id && row.is_valid == 1;
+    };
+    auto result = findRecordInHeapPage<AuthProviderRecord>(auth_provider_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+    AuthProviderRecord updated = result.record;
+    updated.is_valid = 0;
+    updated.last_modified_time = catalogNowTicks();
+    return updateRecordInHeapPage(auth_provider_table_page_, result.slot_index, updated, ctx);
+}
+
+auto CatalogManager::upsertAuthPolicyCatalogEntry(const AuthPolicyCatalogInfo& info,
+                                                  ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (isZeroUuidLocal(info.policy_id) || info.policy_name.empty())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "auth_policy.policy_uuid and policy_name are required");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (info.provider_chain.empty())
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_ARGUMENT, "SEC_1225",
+                                "auth_policy.provider_chain must not be empty");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    ErrorContext local_ctx;
+    Status status = UTF8Utils::validateStorageCapacity(
+        info.policy_name,
+        sizeof(AuthPolicyRecord{}.policy_name),
+        sizeof(AuthPolicyRecord{}.policy_name),
+        &local_ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "auth_policy.policy_name too long");
+        return status;
+    }
+
+    std::unordered_set<ID, IDHash> chain_set;
+    for (const auto& provider_id : info.provider_chain)
+    {
+        if (isZeroUuidLocal(provider_id) || !chain_set.insert(provider_id).second)
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_ARGUMENT, "SEC_1225",
+                                    "auth_policy.provider_chain contains invalid or duplicate provider");
+            return Status::INVALID_ARGUMENT;
+        }
+    }
+
+    auto duplicate_predicate = [&info](const AuthPolicyRecord& row) {
+        if (row.is_valid != 1 || row.policy_id == info.policy_id)
+        {
+            return false;
+        }
+        return equalsIgnoreCase(
+            fixedNameFromBuffer(row.policy_name, sizeof(row.policy_name)),
+            info.policy_name);
+    };
+    auto duplicate = findRecordInHeapPage<AuthPolicyRecord>(
+        auth_policy_table_page_, duplicate_predicate, ctx);
+    if (duplicate.status == Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, "UNIQUE(policy_name) violated");
+        return Status::CONSTRAINT_VIOLATION;
+    }
+    if (duplicate.status != Status::NOT_FOUND)
+    {
+        return duplicate.status;
+    }
+
+    AuthPolicyRecord rec{};
+    rec.policy_id = info.policy_id;
+    rec.mfa_required = info.mfa_required ? 1 : 0;
+    rec.has_mfa_policy = info.has_mfa_policy ? 1 : 0;
+    rec.allow_password_fallback = info.allow_password_fallback ? 1 : 0;
+    rec.is_valid = info.is_valid ? 1 : 0;
+    rec.lockout_threshold = info.lockout_threshold;
+    rec.lockout_window_ms = info.lockout_window_ms;
+    rec.lockout_duration_ms = info.lockout_duration_ms;
+    rec.mfa_policy_id = info.has_mfa_policy ? info.mfa_policy_id : ID{};
+    rec.created_time = (info.created_time == 0) ? catalogNowTicks() : info.created_time;
+    rec.last_modified_time = (info.last_modified_time == 0) ? catalogNowTicks() : info.last_modified_time;
+    std::strncpy(rec.policy_name,
+                 UTF8Utils::truncateToBytes(info.policy_name, sizeof(rec.policy_name)).c_str(),
+                 sizeof(rec.policy_name) - 1);
+
+    uint64_t xmin = 0;
+    std::string chain_blob = encodeUuidList(info.provider_chain);
+    status = storeStringInToast(chain_blob, xmin, rec.provider_chain_oid, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    auto existing_predicate = [&info](const AuthPolicyRecord& row) {
+        return row.policy_id == info.policy_id && row.is_valid == 1;
+    };
+    auto existing = findRecordInHeapPage<AuthPolicyRecord>(auth_policy_table_page_, existing_predicate, ctx);
+    if (existing.status == Status::OK)
+    {
+        rec.created_time = existing.record.created_time;
+    }
+    else if (existing.status != Status::NOT_FOUND)
+    {
+        return existing.status;
+    }
+
+    auto matcher = [&info](const AuthPolicyRecord& row) {
+        return row.policy_id == info.policy_id && row.is_valid == 1;
+    };
+    return updateRecordInHeapPage(auth_policy_table_page_, matcher, rec, ctx);
+}
+
+auto CatalogManager::getAuthPolicyCatalogEntry(const ID& policy_id,
+                                               AuthPolicyCatalogInfo& info_out,
+                                               ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto predicate = [&policy_id](const AuthPolicyRecord& row) {
+        return row.policy_id == policy_id && row.is_valid == 1;
+    };
+    auto result = findRecordInHeapPage<AuthPolicyRecord>(auth_policy_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    info_out = AuthPolicyCatalogInfo{};
+    info_out.policy_id = result.record.policy_id;
+    info_out.policy_name = fixedNameFromBuffer(result.record.policy_name, sizeof(result.record.policy_name));
+    info_out.mfa_required = result.record.mfa_required != 0;
+    info_out.has_mfa_policy = result.record.has_mfa_policy != 0;
+    info_out.mfa_policy_id = result.record.mfa_policy_id;
+    info_out.lockout_threshold = result.record.lockout_threshold;
+    info_out.lockout_window_ms = result.record.lockout_window_ms;
+    info_out.lockout_duration_ms = result.record.lockout_duration_ms;
+    info_out.allow_password_fallback = result.record.allow_password_fallback != 0;
+    info_out.is_valid = result.record.is_valid == 1;
+    info_out.created_time = result.record.created_time;
+    info_out.last_modified_time = result.record.last_modified_time;
+
+    if (!isZeroUuidLocal(result.record.provider_chain_oid))
+    {
+        uint64_t xmin = 0;
+        std::string chain_blob;
+        Status status = loadStringFromToast(result.record.provider_chain_oid, xmin, chain_blob, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        if (!decodeUuidList(chain_blob, info_out.provider_chain))
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1225",
+                                    "auth_policy.provider_chain payload is invalid");
+            return Status::PAGE_CORRUPT;
+        }
+    }
+    return Status::OK;
+}
+
+auto CatalogManager::listAuthPolicyCatalogEntries(std::vector<AuthPolicyCatalogInfo>& rows_out,
+                                                  ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+    auto filter = [](const AuthPolicyRecord& row) { return row.is_valid == 1; };
+    auto converter = [](const AuthPolicyRecord& row, AuthPolicyCatalogInfo& info) {
+        info = AuthPolicyCatalogInfo{};
+        info.policy_id = row.policy_id;
+        info.policy_name = fixedNameFromBuffer(row.policy_name, sizeof(row.policy_name));
+        info.mfa_required = row.mfa_required != 0;
+        info.has_mfa_policy = row.has_mfa_policy != 0;
+        info.mfa_policy_id = row.mfa_policy_id;
+        info.lockout_threshold = row.lockout_threshold;
+        info.lockout_window_ms = row.lockout_window_ms;
+        info.lockout_duration_ms = row.lockout_duration_ms;
+        info.allow_password_fallback = row.allow_password_fallback != 0;
+        info.is_valid = row.is_valid == 1;
+        info.created_time = row.created_time;
+        info.last_modified_time = row.last_modified_time;
+    };
+    Status status = readRecordsToVector<AuthPolicyRecord, AuthPolicyCatalogInfo>(
+        auth_policy_table_page_, rows_out, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    for (auto& row : rows_out)
+    {
+        auto predicate = [&row](const AuthPolicyRecord& rec) {
+            return rec.policy_id == row.policy_id && rec.is_valid == 1;
+        };
+        auto found = findRecordInHeapPage<AuthPolicyRecord>(auth_policy_table_page_, predicate, ctx);
+        if (found.status != Status::OK)
+        {
+            return found.status;
+        }
+        if (!isZeroUuidLocal(found.record.provider_chain_oid))
+        {
+            uint64_t xmin = 0;
+            std::string chain_blob;
+            status = loadStringFromToast(found.record.provider_chain_oid, xmin, chain_blob, ctx);
+            if (status != Status::OK || !decodeUuidList(chain_blob, row.provider_chain))
+            {
+                SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1225",
+                                        "auth_policy.provider_chain payload is invalid");
+                return Status::PAGE_CORRUPT;
+            }
+        }
+    }
+    std::sort(rows_out.begin(), rows_out.end(),
+              [](const AuthPolicyCatalogInfo& lhs, const AuthPolicyCatalogInfo& rhs) {
+                  return compareUuidBytesLocal(lhs.policy_id, rhs.policy_id) < 0;
+              });
+    return Status::OK;
+}
+
+auto CatalogManager::deleteAuthPolicyCatalogEntry(const ID& policy_id,
+                                                  ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto predicate = [&policy_id](const AuthPolicyRecord& row) {
+        return row.policy_id == policy_id && row.is_valid == 1;
+    };
+    auto result = findRecordInHeapPage<AuthPolicyRecord>(auth_policy_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+    AuthPolicyRecord updated = result.record;
+    updated.is_valid = 0;
+    updated.last_modified_time = catalogNowTicks();
+    return updateRecordInHeapPage(auth_policy_table_page_, result.slot_index, updated, ctx);
+}
+
+auto CatalogManager::upsertAuthAttemptLogCatalogEntry(const AuthAttemptLogCatalogInfo& info,
+                                                      ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (isZeroUuidLocal(info.attempt_id) || isZeroUuidLocal(info.connection_id))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "auth_attempt_log.attempt_uuid and connection_uuid are required");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (!isValidAuthAttemptOutcome(info.outcome))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "auth_attempt_log.outcome is invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+    const bool has_failure_code = info.has_failure_code || !info.failure_code.empty();
+
+    AuthAttemptLogRecord rec{};
+    rec.attempt_id = info.attempt_id;
+    rec.connection_id = info.connection_id;
+    rec.has_account_id = info.has_account_id ? 1 : 0;
+    rec.account_id = info.has_account_id ? info.account_id : ID{};
+    rec.has_provider_id = info.has_provider_id ? 1 : 0;
+    rec.provider_id = info.has_provider_id ? info.provider_id : ID{};
+    rec.outcome = static_cast<uint8_t>(info.outcome);
+    rec.has_failure_code = has_failure_code ? 1 : 0;
+    rec.is_valid = info.is_valid ? 1 : 0;
+    rec.attempt_time_utc = info.attempt_time_utc;
+    rec.latency_us = info.latency_us;
+    rec.created_time = (info.created_time == 0) ? catalogNowTicks() : info.created_time;
+    rec.last_modified_time = (info.last_modified_time == 0) ? catalogNowTicks() : info.last_modified_time;
+
+    if (has_failure_code)
+    {
+        uint64_t xmin = 0;
+        Status status = storeStringInToast(info.failure_code, xmin, rec.failure_code_oid, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    auto existing_predicate = [&info](const AuthAttemptLogRecord& row) {
+        return row.attempt_id == info.attempt_id && row.is_valid == 1;
+    };
+    auto existing = findRecordInHeapPage<AuthAttemptLogRecord>(
+        auth_attempt_log_table_page_, existing_predicate, ctx);
+    if (existing.status == Status::OK)
+    {
+        rec.created_time = existing.record.created_time;
+    }
+    else if (existing.status != Status::NOT_FOUND)
+    {
+        return existing.status;
+    }
+
+    auto matcher = [&info](const AuthAttemptLogRecord& row) {
+        return row.attempt_id == info.attempt_id && row.is_valid == 1;
+    };
+    return updateRecordInHeapPage(auth_attempt_log_table_page_, matcher, rec, ctx);
+}
+
+auto CatalogManager::getAuthAttemptLogCatalogEntry(const ID& attempt_id,
+                                                   AuthAttemptLogCatalogInfo& info_out,
+                                                   ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto predicate = [&attempt_id](const AuthAttemptLogRecord& row) {
+        return row.attempt_id == attempt_id && row.is_valid == 1;
+    };
+    auto result = findRecordInHeapPage<AuthAttemptLogRecord>(
+        auth_attempt_log_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+    if (!isValidAuthAttemptOutcome(static_cast<AuthAttemptOutcome>(result.record.outcome)))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "auth_attempt_log.outcome invalid on disk");
+        return Status::PAGE_CORRUPT;
+    }
+
+    info_out = AuthAttemptLogCatalogInfo{};
+    info_out.attempt_id = result.record.attempt_id;
+    info_out.connection_id = result.record.connection_id;
+    info_out.has_account_id = result.record.has_account_id != 0;
+    info_out.account_id = result.record.account_id;
+    info_out.has_provider_id = result.record.has_provider_id != 0;
+    info_out.provider_id = result.record.provider_id;
+    info_out.outcome = static_cast<AuthAttemptOutcome>(result.record.outcome);
+    info_out.has_failure_code = result.record.has_failure_code != 0;
+    info_out.attempt_time_utc = result.record.attempt_time_utc;
+    info_out.latency_us = result.record.latency_us;
+    info_out.is_valid = result.record.is_valid == 1;
+    info_out.created_time = result.record.created_time;
+    info_out.last_modified_time = result.record.last_modified_time;
+    if (!isZeroUuidLocal(result.record.failure_code_oid))
+    {
+        uint64_t xmin = 0;
+        Status status = loadStringFromToast(result.record.failure_code_oid, xmin, info_out.failure_code, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+    return Status::OK;
+}
+
+auto CatalogManager::listAuthAttemptLogCatalogEntries(
+    const ID& account_id,
+    std::vector<AuthAttemptLogCatalogInfo>& rows_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+    auto filter = [&account_id](const AuthAttemptLogRecord& row) {
+        if (row.is_valid != 1)
+        {
+            return false;
+        }
+        if (isZeroUuidLocal(account_id))
+        {
+            return true;
+        }
+        return row.has_account_id != 0 && row.account_id == account_id;
+    };
+    auto converter = [](const AuthAttemptLogRecord& row, AuthAttemptLogCatalogInfo& info) {
+        info = AuthAttemptLogCatalogInfo{};
+        info.attempt_id = row.attempt_id;
+        info.connection_id = row.connection_id;
+        info.has_account_id = row.has_account_id != 0;
+        info.account_id = row.account_id;
+        info.has_provider_id = row.has_provider_id != 0;
+        info.provider_id = row.provider_id;
+        info.outcome = static_cast<AuthAttemptOutcome>(row.outcome);
+        info.has_failure_code = row.has_failure_code != 0;
+        info.attempt_time_utc = row.attempt_time_utc;
+        info.latency_us = row.latency_us;
+        info.is_valid = row.is_valid == 1;
+        info.created_time = row.created_time;
+        info.last_modified_time = row.last_modified_time;
+    };
+    Status status = readRecordsToVector<AuthAttemptLogRecord, AuthAttemptLogCatalogInfo>(
+        auth_attempt_log_table_page_, rows_out, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    for (auto& row : rows_out)
+    {
+        auto predicate = [&row](const AuthAttemptLogRecord& rec) {
+            return rec.attempt_id == row.attempt_id && rec.is_valid == 1;
+        };
+        auto found = findRecordInHeapPage<AuthAttemptLogRecord>(auth_attempt_log_table_page_, predicate, ctx);
+        if (found.status == Status::OK && !isZeroUuidLocal(found.record.failure_code_oid))
+        {
+            uint64_t xmin = 0;
+            if (loadStringFromToast(found.record.failure_code_oid, xmin, row.failure_code, ctx) != Status::OK)
+            {
+                return Status::DATA_CORRUPTED;
+            }
+        }
+    }
+    std::sort(rows_out.begin(), rows_out.end(),
+              [](const AuthAttemptLogCatalogInfo& lhs, const AuthAttemptLogCatalogInfo& rhs) {
+                  if (lhs.attempt_time_utc != rhs.attempt_time_utc)
+                  {
+                      return lhs.attempt_time_utc < rhs.attempt_time_utc;
+                  }
+                  return compareUuidBytesLocal(lhs.attempt_id, rhs.attempt_id) < 0;
+              });
+    return Status::OK;
+}
+
+auto CatalogManager::deleteAuthAttemptLogCatalogEntry(const ID& attempt_id,
+                                                      ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto predicate = [&attempt_id](const AuthAttemptLogRecord& row) {
+        return row.attempt_id == attempt_id && row.is_valid == 1;
+    };
+    auto result = findRecordInHeapPage<AuthAttemptLogRecord>(
+        auth_attempt_log_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+    AuthAttemptLogRecord updated = result.record;
+    updated.is_valid = 0;
+    updated.last_modified_time = catalogNowTicks();
+    return updateRecordInHeapPage(auth_attempt_log_table_page_, result.slot_index, updated, ctx);
+}
+
+auto CatalogManager::upsertConnectionRuleCatalogEntry(const ConnectionRuleCatalogInfo& info,
+                                                      ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (isZeroUuidLocal(info.rule_id) || info.profile_scope.empty() || info.rule_order == 0)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "connection_rule.rule_uuid/profile_scope/rule_order are required");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (!isValidConnectionRuleTransportKind(info.transport_kind) ||
+        !isValidConnectionRuleAction(info.action) ||
+        (info.has_required_tls_mode && !isValidConnectionRuleTlsMode(info.required_tls_mode)) ||
+        (info.has_required_provider_kind && !isValidAuthProviderKind(info.required_provider_kind)))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "connection_rule enum value is invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    const bool has_source_cidr = info.has_source_cidr || !info.source_cidr.empty();
+    const bool has_source_host_pattern = info.has_source_host_pattern || !info.source_host_pattern.empty();
+    const bool has_principal_pattern = info.has_principal_pattern || !info.principal_pattern.empty();
+    const bool has_auth_database_pattern =
+        info.has_auth_database_pattern || !info.auth_database_pattern.empty();
+    const bool has_tenant_pattern = info.has_tenant_pattern || !info.tenant_pattern.empty();
+    const bool has_target_db_pattern = info.has_target_db_pattern || !info.target_db_pattern.empty();
+    const bool has_reject_code_override = info.has_reject_code_override || !info.reject_code_override.empty();
+
+    ErrorContext local_ctx;
+    Status status = UTF8Utils::validateStorageCapacity(
+        info.profile_scope,
+        sizeof(ConnectionRuleRecord{}.profile_scope),
+        sizeof(ConnectionRuleRecord{}.profile_scope),
+        &local_ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "connection_rule.profile_scope too long");
+        return status;
+    }
+    if (has_source_cidr)
+    {
+        std::array<uint8_t, 16> network{};
+        int family = 0;
+        uint8_t prefix = 0;
+        if (!parseCidr(info.source_cidr, network, family, prefix))
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_ARGUMENT, "SEC_1235",
+                                    "connection_rule.source_cidr format invalid");
+            return Status::INVALID_ARGUMENT;
+        }
+    }
+    if (has_source_host_pattern)
+    {
+        status = validateWildcardPatternNoRegex(info.source_host_pattern, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+    if (has_principal_pattern)
+    {
+        status = validateWildcardPatternNoRegex(info.principal_pattern, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+    if (has_auth_database_pattern)
+    {
+        status = validateWildcardPatternNoRegex(info.auth_database_pattern, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+    if (has_tenant_pattern)
+    {
+        status = validateWildcardPatternNoRegex(info.tenant_pattern, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+    if (has_target_db_pattern)
+    {
+        status = validateWildcardPatternNoRegex(info.target_db_pattern, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    auto duplicate_predicate = [&info](const ConnectionRuleRecord& row) {
+        return row.is_valid == 1 &&
+               row.rule_id != info.rule_id &&
+               equalsIgnoreCase(
+                   fixedNameFromBuffer(row.profile_scope, sizeof(row.profile_scope)),
+                   info.profile_scope) &&
+               row.rule_order == info.rule_order;
+    };
+    auto duplicate = findRecordInHeapPage<ConnectionRuleRecord>(
+        connection_rule_table_page_, duplicate_predicate, ctx);
+    if (duplicate.status == Status::OK)
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::CONSTRAINT_VIOLATION, "SEC_1234",
+                                "Duplicate rule_order in profile scope");
+        return Status::CONSTRAINT_VIOLATION;
+    }
+    if (duplicate.status != Status::NOT_FOUND)
+    {
+        return duplicate.status;
+    }
+
+    uint64_t current_epoch = 0;
+    auto epoch_predicate = [&info](const ConnectionRuleEpochRecord& row) {
+        return row.is_valid == 1 &&
+               equalsIgnoreCase(
+                   fixedNameFromBuffer(row.profile_scope, sizeof(row.profile_scope)),
+                   info.profile_scope);
+    };
+    auto epoch_row = findRecordInHeapPage<ConnectionRuleEpochRecord>(
+        connection_rule_epoch_table_page_, epoch_predicate, ctx);
+    if (epoch_row.status == Status::OK)
+    {
+        current_epoch = epoch_row.record.rule_epoch_u64;
+    }
+    else if (epoch_row.status != Status::NOT_FOUND)
+    {
+        return epoch_row.status;
+    }
+    if (info.has_expected_epoch && info.expected_epoch_u64 != current_epoch)
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::CONSTRAINT_VIOLATION, "SEC_1237",
+                                "Connection-rule epoch guard mismatch");
+        return Status::CONSTRAINT_VIOLATION;
+    }
+
+    std::vector<ConnectionRuleCatalogInfo> scope_rules;
+    auto scope_filter = [&info](const ConnectionRuleRecord& row) {
+        return row.is_valid == 1 &&
+               equalsIgnoreCase(
+                   fixedNameFromBuffer(row.profile_scope, sizeof(row.profile_scope)),
+                   info.profile_scope);
+    };
+    auto scope_converter = [](const ConnectionRuleRecord& row, ConnectionRuleCatalogInfo& out) {
+        out = ConnectionRuleCatalogInfo{};
+        out.rule_id = row.rule_id;
+        out.profile_scope = fixedNameFromBuffer(row.profile_scope, sizeof(row.profile_scope));
+        out.rule_order = row.rule_order;
+        out.transport_kind = static_cast<ConnectionRuleTransportKind>(row.transport_kind);
+        out.action = static_cast<ConnectionRuleAction>(row.action);
+        out.is_enabled = row.is_enabled != 0;
+    };
+    status = readRecordsToVector<ConnectionRuleRecord, ConnectionRuleCatalogInfo>(
+        connection_rule_table_page_, scope_rules, scope_filter, scope_converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    bool replaced = false;
+    for (auto& row : scope_rules)
+    {
+        if (row.rule_id == info.rule_id)
+        {
+            row.rule_order = info.rule_order;
+            row.action = info.action;
+            row.is_enabled = info.is_enabled;
+            replaced = true;
+            break;
+        }
+    }
+    if (!replaced)
+    {
+        ConnectionRuleCatalogInfo projected{};
+        projected.rule_id = info.rule_id;
+        projected.rule_order = info.rule_order;
+        projected.action = info.action;
+        projected.is_enabled = info.is_enabled;
+        scope_rules.push_back(projected);
+    }
+    std::vector<ConnectionRuleCatalogInfo> enabled_rules;
+    for (const auto& row : scope_rules)
+    {
+        if (row.is_enabled)
+        {
+            enabled_rules.push_back(row);
+        }
+    }
+    std::sort(enabled_rules.begin(), enabled_rules.end(),
+              [](const ConnectionRuleCatalogInfo& lhs, const ConnectionRuleCatalogInfo& rhs) {
+                  if (lhs.rule_order != rhs.rule_order)
+                  {
+                      return lhs.rule_order < rhs.rule_order;
+                  }
+                  return compareUuidBytesLocal(lhs.rule_id, rhs.rule_id) < 0;
+              });
+    if (!enabled_rules.empty())
+    {
+        uint32_t expected_order = 1;
+        for (const auto& row : enabled_rules)
+        {
+            if (row.rule_order != expected_order)
+            {
+                SET_ERROR_CONTEXT_VNEXT(ctx, Status::CONSTRAINT_VIOLATION, "SEC_1236",
+                                        "Rule order must be dense and monotonic");
+                return Status::CONSTRAINT_VIOLATION;
+            }
+            ++expected_order;
+        }
+    }
+
+    ConnectionRuleRecord rec{};
+    rec.rule_id = info.rule_id;
+    rec.rule_order = info.rule_order;
+    rec.transport_kind = static_cast<uint8_t>(info.transport_kind);
+    rec.action = static_cast<uint8_t>(info.action);
+    rec.has_source_cidr = has_source_cidr ? 1 : 0;
+    rec.has_source_host_pattern = has_source_host_pattern ? 1 : 0;
+    rec.has_principal_pattern = has_principal_pattern ? 1 : 0;
+    rec.has_auth_database_pattern = has_auth_database_pattern ? 1 : 0;
+    rec.has_tenant_pattern = has_tenant_pattern ? 1 : 0;
+    rec.has_target_db_pattern = has_target_db_pattern ? 1 : 0;
+    rec.has_required_provider_kind = info.has_required_provider_kind ? 1 : 0;
+    rec.required_provider_kind =
+        info.has_required_provider_kind ? static_cast<uint8_t>(info.required_provider_kind) : 0;
+    rec.has_required_tls_mode = info.has_required_tls_mode ? 1 : 0;
+    rec.required_tls_mode =
+        info.has_required_tls_mode ? static_cast<uint8_t>(info.required_tls_mode) : 0;
+    rec.has_mapped_auth_policy = info.has_mapped_auth_policy ? 1 : 0;
+    rec.mapped_auth_policy_id = info.has_mapped_auth_policy ? info.mapped_auth_policy_id : ID{};
+    rec.has_mapped_default_role = info.has_mapped_default_role ? 1 : 0;
+    rec.mapped_default_role_id = info.has_mapped_default_role ? info.mapped_default_role_id : ID{};
+    rec.has_reject_code_override = has_reject_code_override ? 1 : 0;
+    rec.is_enabled = info.is_enabled ? 1 : 0;
+    rec.is_valid = info.is_valid ? 1 : 0;
+    rec.created_time = (info.created_time == 0) ? catalogNowTicks() : info.created_time;
+    rec.last_modified_time = (info.last_modified_time == 0) ? catalogNowTicks() : info.last_modified_time;
+    std::strncpy(rec.profile_scope,
+                 UTF8Utils::truncateToBytes(info.profile_scope, sizeof(rec.profile_scope)).c_str(),
+                 sizeof(rec.profile_scope) - 1);
+
+    uint64_t xmin = 0;
+    auto store_optional_text = [&](bool present, const std::string& value, ID& oid_out) -> Status {
+        if (!present)
+        {
+            oid_out = ID{};
+            return Status::OK;
+        }
+        return storeStringInToast(value, xmin, oid_out, ctx);
+    };
+
+    status = store_optional_text(has_source_cidr, info.source_cidr, rec.source_cidr_oid);
+    if (status != Status::OK) return status;
+    status = store_optional_text(has_source_host_pattern, info.source_host_pattern, rec.source_host_pattern_oid);
+    if (status != Status::OK) return status;
+    status = store_optional_text(has_principal_pattern, info.principal_pattern, rec.principal_pattern_oid);
+    if (status != Status::OK) return status;
+    status = store_optional_text(has_auth_database_pattern, info.auth_database_pattern, rec.auth_database_pattern_oid);
+    if (status != Status::OK) return status;
+    status = store_optional_text(has_tenant_pattern, info.tenant_pattern, rec.tenant_pattern_oid);
+    if (status != Status::OK) return status;
+    status = store_optional_text(has_target_db_pattern, info.target_db_pattern, rec.target_db_pattern_oid);
+    if (status != Status::OK) return status;
+    status = store_optional_text(has_reject_code_override, info.reject_code_override, rec.reject_code_override_oid);
+    if (status != Status::OK) return status;
+
+    auto existing_predicate = [&info](const ConnectionRuleRecord& row) {
+        return row.rule_id == info.rule_id && row.is_valid == 1;
+    };
+    auto existing = findRecordInHeapPage<ConnectionRuleRecord>(
+        connection_rule_table_page_, existing_predicate, ctx);
+    if (existing.status == Status::OK)
+    {
+        rec.created_time = existing.record.created_time;
+    }
+    else if (existing.status != Status::NOT_FOUND)
+    {
+        return existing.status;
+    }
+
+    auto matcher = [&info](const ConnectionRuleRecord& row) {
+        return row.rule_id == info.rule_id && row.is_valid == 1;
+    };
+    status = updateRecordInHeapPage(connection_rule_table_page_, matcher, rec, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    ConnectionRuleEpochRecord epoch{};
+    std::strncpy(epoch.profile_scope,
+                 UTF8Utils::truncateToBytes(info.profile_scope, sizeof(epoch.profile_scope)).c_str(),
+                 sizeof(epoch.profile_scope) - 1);
+    epoch.rule_epoch_u64 = current_epoch + 1;
+    epoch.last_modified_utc = catalogNowTicks();
+    epoch.is_valid = 1;
+    epoch.created_time = epoch.last_modified_utc;
+    epoch.last_modified_time = epoch.last_modified_utc;
+
+    if (epoch_row.status == Status::OK)
+    {
+        epoch.created_time = epoch_row.record.created_time;
+    }
+    auto epoch_matcher = [&info](const ConnectionRuleEpochRecord& row) {
+        return row.is_valid == 1 &&
+               equalsIgnoreCase(
+                   fixedNameFromBuffer(row.profile_scope, sizeof(row.profile_scope)),
+                   info.profile_scope);
+    };
+    return updateRecordInHeapPage(connection_rule_epoch_table_page_, epoch_matcher, epoch, ctx);
+}
+
+auto CatalogManager::getConnectionRuleCatalogEntry(const ID& rule_id,
+                                                   ConnectionRuleCatalogInfo& info_out,
+                                                   ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto predicate = [&rule_id](const ConnectionRuleRecord& row) {
+        return row.rule_id == rule_id && row.is_valid == 1;
+    };
+    auto result = findRecordInHeapPage<ConnectionRuleRecord>(connection_rule_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+    if (!isValidConnectionRuleTransportKind(static_cast<ConnectionRuleTransportKind>(result.record.transport_kind)) ||
+        !isValidConnectionRuleAction(static_cast<ConnectionRuleAction>(result.record.action)) ||
+        (result.record.has_required_provider_kind != 0 &&
+         !isValidAuthProviderKind(static_cast<AuthProviderKind>(result.record.required_provider_kind))) ||
+        (result.record.has_required_tls_mode != 0 &&
+         !isValidConnectionRuleTlsMode(static_cast<ConnectionRuleTlsMode>(result.record.required_tls_mode))))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "connection_rule enum invalid on disk");
+        return Status::PAGE_CORRUPT;
+    }
+
+    info_out = ConnectionRuleCatalogInfo{};
+    info_out.rule_id = result.record.rule_id;
+    info_out.profile_scope = fixedNameFromBuffer(result.record.profile_scope, sizeof(result.record.profile_scope));
+    info_out.rule_order = result.record.rule_order;
+    info_out.transport_kind = static_cast<ConnectionRuleTransportKind>(result.record.transport_kind);
+    info_out.action = static_cast<ConnectionRuleAction>(result.record.action);
+    info_out.has_source_cidr = result.record.has_source_cidr != 0;
+    info_out.has_source_host_pattern = result.record.has_source_host_pattern != 0;
+    info_out.has_principal_pattern = result.record.has_principal_pattern != 0;
+    info_out.has_auth_database_pattern = result.record.has_auth_database_pattern != 0;
+    info_out.has_tenant_pattern = result.record.has_tenant_pattern != 0;
+    info_out.has_target_db_pattern = result.record.has_target_db_pattern != 0;
+    info_out.has_required_provider_kind = result.record.has_required_provider_kind != 0;
+    info_out.required_provider_kind = static_cast<AuthProviderKind>(result.record.required_provider_kind);
+    info_out.has_required_tls_mode = result.record.has_required_tls_mode != 0;
+    info_out.required_tls_mode = static_cast<ConnectionRuleTlsMode>(result.record.required_tls_mode);
+    info_out.has_mapped_auth_policy = result.record.has_mapped_auth_policy != 0;
+    info_out.mapped_auth_policy_id = result.record.mapped_auth_policy_id;
+    info_out.has_mapped_default_role = result.record.has_mapped_default_role != 0;
+    info_out.mapped_default_role_id = result.record.mapped_default_role_id;
+    info_out.has_reject_code_override = result.record.has_reject_code_override != 0;
+    info_out.is_enabled = result.record.is_enabled != 0;
+    info_out.is_valid = result.record.is_valid == 1;
+    info_out.created_time = result.record.created_time;
+    info_out.last_modified_time = result.record.last_modified_time;
+
+    uint64_t xmin = 0;
+    auto load_optional_text = [&](bool present, const ID& oid, std::string& out) -> Status {
+        out.clear();
+        if (!present || isZeroUuidLocal(oid))
+        {
+            return Status::OK;
+        }
+        return loadStringFromToast(oid, xmin, out, ctx);
+    };
+    Status status = load_optional_text(info_out.has_source_cidr, result.record.source_cidr_oid, info_out.source_cidr);
+    if (status != Status::OK) return status;
+    status = load_optional_text(info_out.has_source_host_pattern, result.record.source_host_pattern_oid,
+                                info_out.source_host_pattern);
+    if (status != Status::OK) return status;
+    status = load_optional_text(info_out.has_principal_pattern, result.record.principal_pattern_oid,
+                                info_out.principal_pattern);
+    if (status != Status::OK) return status;
+    status = load_optional_text(info_out.has_auth_database_pattern, result.record.auth_database_pattern_oid,
+                                info_out.auth_database_pattern);
+    if (status != Status::OK) return status;
+    status = load_optional_text(info_out.has_tenant_pattern, result.record.tenant_pattern_oid,
+                                info_out.tenant_pattern);
+    if (status != Status::OK) return status;
+    status = load_optional_text(info_out.has_target_db_pattern, result.record.target_db_pattern_oid,
+                                info_out.target_db_pattern);
+    if (status != Status::OK) return status;
+    status = load_optional_text(info_out.has_reject_code_override, result.record.reject_code_override_oid,
+                                info_out.reject_code_override);
+    if (status != Status::OK) return status;
+    return Status::OK;
+}
+
+auto CatalogManager::listConnectionRuleCatalogEntries(
+    const std::string& profile_scope,
+    std::vector<ConnectionRuleCatalogInfo>& rows_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+    std::vector<ConnectionRuleRecord> records;
+    auto filter = [&profile_scope](const ConnectionRuleRecord& row) {
+        if (row.is_valid != 1)
+        {
+            return false;
+        }
+        return profile_scope.empty() ||
+               equalsIgnoreCase(fixedNameFromBuffer(row.profile_scope, sizeof(row.profile_scope)),
+                                profile_scope);
+    };
+    auto converter = [](const ConnectionRuleRecord& row, ConnectionRuleRecord& out) {
+        out = row;
+    };
+    Status status = readRecordsToVector<ConnectionRuleRecord, ConnectionRuleRecord>(
+        connection_rule_table_page_, records, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    uint64_t xmin = 0;
+    auto load_optional_text = [&](bool present, const ID& oid, std::string& out) -> Status {
+        out.clear();
+        if (!present || isZeroUuidLocal(oid))
+        {
+            return Status::OK;
+        }
+        return loadStringFromToast(oid, xmin, out, ctx);
+    };
+    for (const auto& rec : records)
+    {
+        ConnectionRuleCatalogInfo row{};
+        row.rule_id = rec.rule_id;
+        row.profile_scope = fixedNameFromBuffer(rec.profile_scope, sizeof(rec.profile_scope));
+        row.rule_order = rec.rule_order;
+        row.transport_kind = static_cast<ConnectionRuleTransportKind>(rec.transport_kind);
+        row.action = static_cast<ConnectionRuleAction>(rec.action);
+        row.has_source_cidr = rec.has_source_cidr != 0;
+        row.has_source_host_pattern = rec.has_source_host_pattern != 0;
+        row.has_principal_pattern = rec.has_principal_pattern != 0;
+        row.has_auth_database_pattern = rec.has_auth_database_pattern != 0;
+        row.has_tenant_pattern = rec.has_tenant_pattern != 0;
+        row.has_target_db_pattern = rec.has_target_db_pattern != 0;
+        row.has_required_provider_kind = rec.has_required_provider_kind != 0;
+        row.required_provider_kind = static_cast<AuthProviderKind>(rec.required_provider_kind);
+        row.has_required_tls_mode = rec.has_required_tls_mode != 0;
+        row.required_tls_mode = static_cast<ConnectionRuleTlsMode>(rec.required_tls_mode);
+        row.has_mapped_auth_policy = rec.has_mapped_auth_policy != 0;
+        row.mapped_auth_policy_id = rec.mapped_auth_policy_id;
+        row.has_mapped_default_role = rec.has_mapped_default_role != 0;
+        row.mapped_default_role_id = rec.mapped_default_role_id;
+        row.has_reject_code_override = rec.has_reject_code_override != 0;
+        row.is_enabled = rec.is_enabled != 0;
+        row.is_valid = rec.is_valid == 1;
+        row.created_time = rec.created_time;
+        row.last_modified_time = rec.last_modified_time;
+
+        if (!isValidConnectionRuleTransportKind(row.transport_kind) ||
+            !isValidConnectionRuleAction(row.action) ||
+            (row.has_required_provider_kind && !isValidAuthProviderKind(row.required_provider_kind)) ||
+            (row.has_required_tls_mode && !isValidConnectionRuleTlsMode(row.required_tls_mode)))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "connection_rule enum invalid on disk");
+            return Status::PAGE_CORRUPT;
+        }
+
+        status = load_optional_text(row.has_source_cidr, rec.source_cidr_oid, row.source_cidr);
+        if (status != Status::OK) return status;
+        status = load_optional_text(row.has_source_host_pattern, rec.source_host_pattern_oid, row.source_host_pattern);
+        if (status != Status::OK) return status;
+        status = load_optional_text(row.has_principal_pattern, rec.principal_pattern_oid, row.principal_pattern);
+        if (status != Status::OK) return status;
+        status = load_optional_text(row.has_auth_database_pattern, rec.auth_database_pattern_oid, row.auth_database_pattern);
+        if (status != Status::OK) return status;
+        status = load_optional_text(row.has_tenant_pattern, rec.tenant_pattern_oid, row.tenant_pattern);
+        if (status != Status::OK) return status;
+        status = load_optional_text(row.has_target_db_pattern, rec.target_db_pattern_oid, row.target_db_pattern);
+        if (status != Status::OK) return status;
+        status = load_optional_text(row.has_reject_code_override, rec.reject_code_override_oid, row.reject_code_override);
+        if (status != Status::OK) return status;
+
+        rows_out.push_back(std::move(row));
+    }
+    std::sort(rows_out.begin(), rows_out.end(),
+              [](const ConnectionRuleCatalogInfo& lhs, const ConnectionRuleCatalogInfo& rhs) {
+                  if (lhs.profile_scope != rhs.profile_scope)
+                  {
+                      return lhs.profile_scope < rhs.profile_scope;
+                  }
+                  if (lhs.rule_order != rhs.rule_order)
+                  {
+                      return lhs.rule_order < rhs.rule_order;
+                  }
+                  return compareUuidBytesLocal(lhs.rule_id, rhs.rule_id) < 0;
+              });
+    return Status::OK;
+}
+
+auto CatalogManager::deleteConnectionRuleCatalogEntry(const ID& rule_id,
+                                                      ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto predicate = [&rule_id](const ConnectionRuleRecord& row) {
+        return row.rule_id == rule_id && row.is_valid == 1;
+    };
+    auto result = findRecordInHeapPage<ConnectionRuleRecord>(connection_rule_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    const std::string profile_scope =
+        fixedNameFromBuffer(result.record.profile_scope, sizeof(result.record.profile_scope));
+    Status status = Status::OK;
+
+    ConnectionRuleRecord updated = result.record;
+    updated.is_valid = 0;
+    updated.last_modified_time = catalogNowTicks();
+    status = updateRecordInHeapPage(connection_rule_table_page_, result.slot_index, updated, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    auto epoch_predicate = [&profile_scope](const ConnectionRuleEpochRecord& row) {
+        return row.is_valid == 1 &&
+               equalsIgnoreCase(
+                   fixedNameFromBuffer(row.profile_scope, sizeof(row.profile_scope)),
+                   profile_scope);
+    };
+    auto epoch_row = findRecordInHeapPage<ConnectionRuleEpochRecord>(
+        connection_rule_epoch_table_page_, epoch_predicate, ctx);
+    uint64_t current_epoch = 0;
+    if (epoch_row.status == Status::OK)
+    {
+        current_epoch = epoch_row.record.rule_epoch_u64;
+    }
+    else if (epoch_row.status != Status::NOT_FOUND)
+    {
+        return epoch_row.status;
+    }
+
+    ConnectionRuleEpochRecord epoch{};
+    std::strncpy(epoch.profile_scope,
+                 UTF8Utils::truncateToBytes(profile_scope, sizeof(epoch.profile_scope)).c_str(),
+                 sizeof(epoch.profile_scope) - 1);
+    epoch.rule_epoch_u64 = current_epoch + 1;
+    epoch.last_modified_utc = catalogNowTicks();
+    epoch.is_valid = 1;
+    epoch.created_time = (epoch_row.status == Status::OK) ? epoch_row.record.created_time : epoch.last_modified_utc;
+    epoch.last_modified_time = epoch.last_modified_utc;
+    auto epoch_matcher = [&profile_scope](const ConnectionRuleEpochRecord& row) {
+        return row.is_valid == 1 &&
+               equalsIgnoreCase(
+                   fixedNameFromBuffer(row.profile_scope, sizeof(row.profile_scope)),
+                   profile_scope);
+    };
+    return updateRecordInHeapPage(connection_rule_epoch_table_page_, epoch_matcher, epoch, ctx);
+}
+
+auto CatalogManager::getConnectionRuleEpochCatalogEntry(
+    const std::string& profile_scope,
+    ConnectionRuleEpochCatalogInfo& info_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto predicate = [&profile_scope](const ConnectionRuleEpochRecord& row) {
+        return row.is_valid == 1 &&
+               equalsIgnoreCase(
+                   fixedNameFromBuffer(row.profile_scope, sizeof(row.profile_scope)),
+                   profile_scope);
+    };
+    auto result = findRecordInHeapPage<ConnectionRuleEpochRecord>(
+        connection_rule_epoch_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+    info_out = ConnectionRuleEpochCatalogInfo{};
+    info_out.profile_scope = fixedNameFromBuffer(result.record.profile_scope, sizeof(result.record.profile_scope));
+    info_out.rule_epoch_u64 = result.record.rule_epoch_u64;
+    info_out.last_modified_utc = result.record.last_modified_utc;
+    info_out.is_valid = result.record.is_valid == 1;
+    info_out.created_time = result.record.created_time;
+    info_out.last_modified_time = result.record.last_modified_time;
+    return Status::OK;
+}
+
+auto CatalogManager::evaluateConnectionRuleChain(const ConnectionRuleEvaluationRequest& request,
+                                                 ConnectionRuleEvaluationDecision& decision_out,
+                                                 ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    decision_out = ConnectionRuleEvaluationDecision{};
+    decision_out.action = ConnectionRuleAction::DENY;
+
+    if (!request.source_ip.empty() &&
+        !request.remote_address.empty() &&
+        !equalsIgnoreCase(request.source_ip, request.remote_address))
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1233",
+                                "Route integrity mismatch between source_ip and remote address");
+        return Status::INVALID_AUTHORIZATION;
+    }
+    if (request.has_forwarded_identity && !request.trusted_proxy_channel)
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1233",
+                                "Forwarded identity rejected on untrusted proxy channel");
+        return Status::INVALID_AUTHORIZATION;
+    }
+    if (request.trusted_proxy_channel && request.proxy_identity.empty())
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1233",
+                                "Trusted proxy channel requires proxy identity");
+        return Status::INVALID_AUTHORIZATION;
+    }
+
+    std::vector<ConnectionRuleRecord> raw_rules;
+    auto filter = [&request](const ConnectionRuleRecord& row) {
+        return row.is_valid == 1 &&
+               row.is_enabled != 0 &&
+               equalsIgnoreCase(
+                   fixedNameFromBuffer(row.profile_scope, sizeof(row.profile_scope)),
+                   request.profile_scope);
+    };
+    auto converter = [](const ConnectionRuleRecord& row, ConnectionRuleRecord& out) {
+        out = row;
+    };
+    Status status = readRecordsToVector<ConnectionRuleRecord, ConnectionRuleRecord>(
+        connection_rule_table_page_, raw_rules, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    if (raw_rules.empty())
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1230",
+                                "No connection rule matched (implicit deny)");
+        return Status::INVALID_AUTHORIZATION;
+    }
+
+    std::vector<ConnectionRuleCatalogInfo> rules;
+    uint64_t xmin = 0;
+    auto load_optional_text = [&](bool present, const ID& oid, std::string& out) -> Status {
+        out.clear();
+        if (!present || isZeroUuidLocal(oid))
+        {
+            return Status::OK;
+        }
+        return loadStringFromToast(oid, xmin, out, ctx);
+    };
+
+    for (const auto& rec : raw_rules)
+    {
+        ConnectionRuleCatalogInfo rule{};
+        rule.rule_id = rec.rule_id;
+        rule.profile_scope = fixedNameFromBuffer(rec.profile_scope, sizeof(rec.profile_scope));
+        rule.rule_order = rec.rule_order;
+        rule.transport_kind = static_cast<ConnectionRuleTransportKind>(rec.transport_kind);
+        rule.action = static_cast<ConnectionRuleAction>(rec.action);
+        rule.has_source_cidr = rec.has_source_cidr != 0;
+        rule.has_source_host_pattern = rec.has_source_host_pattern != 0;
+        rule.has_principal_pattern = rec.has_principal_pattern != 0;
+        rule.has_auth_database_pattern = rec.has_auth_database_pattern != 0;
+        rule.has_tenant_pattern = rec.has_tenant_pattern != 0;
+        rule.has_target_db_pattern = rec.has_target_db_pattern != 0;
+        rule.has_required_provider_kind = rec.has_required_provider_kind != 0;
+        rule.required_provider_kind = static_cast<AuthProviderKind>(rec.required_provider_kind);
+        rule.has_required_tls_mode = rec.has_required_tls_mode != 0;
+        rule.required_tls_mode = static_cast<ConnectionRuleTlsMode>(rec.required_tls_mode);
+        rule.has_mapped_auth_policy = rec.has_mapped_auth_policy != 0;
+        rule.mapped_auth_policy_id = rec.mapped_auth_policy_id;
+        rule.has_mapped_default_role = rec.has_mapped_default_role != 0;
+        rule.mapped_default_role_id = rec.mapped_default_role_id;
+        rule.has_reject_code_override = rec.has_reject_code_override != 0;
+        rule.is_enabled = rec.is_enabled != 0;
+
+        if (!isValidConnectionRuleTransportKind(rule.transport_kind) ||
+            !isValidConnectionRuleAction(rule.action) ||
+            (rule.has_required_provider_kind && !isValidAuthProviderKind(rule.required_provider_kind)) ||
+            (rule.has_required_tls_mode && !isValidConnectionRuleTlsMode(rule.required_tls_mode)))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "connection_rule enum invalid on disk");
+            return Status::PAGE_CORRUPT;
+        }
+
+        status = load_optional_text(rule.has_source_cidr, rec.source_cidr_oid, rule.source_cidr);
+        if (status != Status::OK) return status;
+        status = load_optional_text(rule.has_source_host_pattern, rec.source_host_pattern_oid, rule.source_host_pattern);
+        if (status != Status::OK) return status;
+        status = load_optional_text(rule.has_principal_pattern, rec.principal_pattern_oid, rule.principal_pattern);
+        if (status != Status::OK) return status;
+        status = load_optional_text(rule.has_auth_database_pattern, rec.auth_database_pattern_oid, rule.auth_database_pattern);
+        if (status != Status::OK) return status;
+        status = load_optional_text(rule.has_tenant_pattern, rec.tenant_pattern_oid, rule.tenant_pattern);
+        if (status != Status::OK) return status;
+        status = load_optional_text(rule.has_target_db_pattern, rec.target_db_pattern_oid, rule.target_db_pattern);
+        if (status != Status::OK) return status;
+        status = load_optional_text(rule.has_reject_code_override, rec.reject_code_override_oid, rule.reject_code_override);
+        if (status != Status::OK) return status;
+
+        rules.push_back(std::move(rule));
+    }
+    std::sort(rules.begin(), rules.end(),
+              [](const ConnectionRuleCatalogInfo& lhs, const ConnectionRuleCatalogInfo& rhs) {
+                  if (lhs.rule_order != rhs.rule_order)
+                  {
+                      return lhs.rule_order < rhs.rule_order;
+                  }
+                  return compareUuidBytesLocal(lhs.rule_id, rhs.rule_id) < 0;
+              });
+    uint32_t expected_order = 1;
+    for (const auto& rule : rules)
+    {
+        if (rule.rule_order != expected_order)
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::CONSTRAINT_VIOLATION, "SEC_1236",
+                                    "Rule order must be dense and monotonic");
+            return Status::CONSTRAINT_VIOLATION;
+        }
+        ++expected_order;
+    }
+    if (rules.back().action != ConnectionRuleAction::DENY)
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::CONSTRAINT_VIOLATION, "SEC_1236",
+                                "Missing terminal deny rule");
+        return Status::CONSTRAINT_VIOLATION;
+    }
+
+    auto text_match = [](const std::string& pattern, const std::string& value) {
+        if (pattern.empty())
+        {
+            return true;
+        }
+        return wildcardMatchNoRegexCaseInsensitive(pattern, value);
+    };
+
+    for (const auto& rule : rules)
+    {
+        if (rule.transport_kind != request.transport_kind)
+        {
+            continue;
+        }
+
+        bool matched = true;
+        if (rule.has_source_cidr)
+        {
+            std::array<uint8_t, 16> network{};
+            int network_family = 0;
+            uint8_t prefix = 0;
+            if (!parseCidr(rule.source_cidr, network, network_family, prefix))
+            {
+                SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_ARGUMENT, "SEC_1235",
+                                        "connection_rule.source_cidr format invalid");
+                return Status::INVALID_ARGUMENT;
+            }
+            std::string ip_text = request.source_ip;
+            if (ip_text.empty() && !request.source_host.empty())
+            {
+                std::array<uint8_t, 16> tmp{};
+                int fam = 0;
+                if (parseIpBytes(request.source_host, tmp, fam))
+                {
+                    ip_text = request.source_host;
+                }
+            }
+            std::array<uint8_t, 16> ip_bytes{};
+            int ip_family = 0;
+            matched = !ip_text.empty() &&
+                      parseIpBytes(ip_text, ip_bytes, ip_family) &&
+                      ipMatchesCidr(ip_bytes, ip_family, network, network_family, prefix);
+        }
+        if (matched && rule.has_source_host_pattern)
+        {
+            const std::string source_value = !request.source_host.empty() ? request.source_host : request.source_ip;
+            matched = !source_value.empty() && text_match(rule.source_host_pattern, source_value);
+        }
+        if (matched && rule.has_principal_pattern)
+        {
+            matched = !request.principal_name.empty() &&
+                      text_match(rule.principal_pattern, request.principal_name);
+        }
+        if (matched && rule.has_auth_database_pattern)
+        {
+            matched = !request.auth_database.empty() &&
+                      text_match(rule.auth_database_pattern, request.auth_database);
+        }
+        if (matched && rule.has_tenant_pattern)
+        {
+            matched = !request.tenant.empty() &&
+                      text_match(rule.tenant_pattern, request.tenant);
+        }
+        if (matched && rule.has_target_db_pattern)
+        {
+            matched = !request.target_db.empty() &&
+                      text_match(rule.target_db_pattern, request.target_db);
+        }
+        if (!matched)
+        {
+            continue;
+        }
+
+        decision_out.matched = true;
+        decision_out.matched_rule_id = rule.rule_id;
+        decision_out.action = rule.action;
+        decision_out.has_mapped_auth_policy = rule.has_mapped_auth_policy;
+        decision_out.mapped_auth_policy_id = rule.mapped_auth_policy_id;
+        decision_out.has_mapped_default_role = rule.has_mapped_default_role;
+        decision_out.mapped_default_role_id = rule.mapped_default_role_id;
+        decision_out.has_required_provider_kind = rule.has_required_provider_kind;
+        decision_out.required_provider_kind = rule.required_provider_kind;
+        decision_out.has_required_tls_mode = rule.has_required_tls_mode;
+        decision_out.required_tls_mode = rule.required_tls_mode;
+
+        if (request.trusted_proxy_channel &&
+            rule.transport_kind != ConnectionRuleTransportKind::MTLS)
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1233",
+                                    "Trusted proxy channels require MTLS transport rule");
+            return Status::INVALID_AUTHORIZATION;
+        }
+
+        if (rule.action == ConnectionRuleAction::DENY)
+        {
+            const std::string reject_code = rule.has_reject_code_override
+                                                ? rule.reject_code_override
+                                                : "SEC_1231";
+            decision_out.reject_code = reject_code;
+            if (rule.has_reject_code_override)
+            {
+                SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, reject_code.c_str(),
+                                        "Connection denied by explicit rule");
+            }
+            else
+            {
+                SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1231",
+                                        "Connection denied by explicit rule");
+            }
+            return Status::INVALID_AUTHORIZATION;
+        }
+
+        if (rule.has_required_tls_mode)
+        {
+            bool tls_ok = true;
+            switch (rule.required_tls_mode)
+            {
+                case ConnectionRuleTlsMode::NONE:
+                    tls_ok = true;
+                    break;
+                case ConnectionRuleTlsMode::TLS:
+                    tls_ok = request.transport_kind == ConnectionRuleTransportKind::TLS ||
+                             request.transport_kind == ConnectionRuleTransportKind::MTLS;
+                    break;
+                case ConnectionRuleTlsMode::MTLS:
+                    tls_ok = request.transport_kind == ConnectionRuleTransportKind::MTLS;
+                    break;
+            }
+            if (!tls_ok)
+            {
+                SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1232",
+                                        "TLS requirement not satisfied by matched rule");
+                return Status::INVALID_AUTHORIZATION;
+            }
+        }
+        if (rule.has_required_provider_kind)
+        {
+            if (!request.has_provider_kind || request.provider_kind != rule.required_provider_kind)
+            {
+                SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1232",
+                                        "Required auth provider kind not satisfied");
+                return Status::INVALID_AUTHORIZATION;
+            }
+        }
+
+        return Status::OK;
+    }
+
+    SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1230",
+                            "No connection rule matched (implicit deny)");
+    return Status::INVALID_AUTHORIZATION;
+}
+
+auto CatalogManager::evaluateAuthProviderRuntime(const AuthProviderRuntimeRequest& request,
+                                                 AuthProviderRuntimeDecision& decision_out,
+                                                 ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    decision_out = AuthProviderRuntimeDecision{};
+    if (isZeroUuidLocal(request.account_id))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "auth runtime requires account_uuid");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (auth_attempt_log_table_page_ == 0)
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::NOT_SUPPORTED, "SEC_1226",
+                                "Auth attempt audit path unavailable");
+        return Status::NOT_SUPPORTED;
+    }
+
+    const uint64_t now_utc = request.now_utc == 0 ? catalogNowTicks() : request.now_utc;
+    auto account_predicate = [&request](const PrincipalAccountRecord& row) {
+        return row.is_valid == 1 && row.account_id == request.account_id;
+    };
+    auto account_row = findRecordInHeapPage<PrincipalAccountRecord>(
+        principal_account_table_page_, account_predicate, ctx);
+    if (account_row.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1210",
+                                "Account not found for auth runtime");
+        return Status::INVALID_AUTHORIZATION;
+    }
+    PrincipalAccountRecord account = account_row.record;
+
+    if (account.is_locked != 0)
+    {
+        uint64_t unlock_deadline = 0;
+        const std::string locked_reason =
+            fixedNameFromBuffer(account.locked_reason, sizeof(account.locked_reason));
+        if (parseAccountLockoutDeadline(locked_reason, unlock_deadline) && now_utc >= unlock_deadline)
+        {
+            account.is_locked = 0;
+            account.has_locked_reason = 0;
+            std::memset(account.locked_reason, 0, sizeof(account.locked_reason));
+            account.last_modified_time = now_utc;
+            Status unlock_status = updateRecordInHeapPage(
+                principal_account_table_page_, account_row.slot_index, account, ctx);
+            if (unlock_status != Status::OK)
+            {
+                return unlock_status;
+            }
+        }
+        else
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1215",
+                                    "Account is locked");
+            return Status::INVALID_AUTHORIZATION;
+        }
+    }
+
+    auto policy_predicate = [&account](const AuthPolicyRecord& row) {
+        return row.is_valid == 1 && row.policy_id == account.auth_policy_id;
+    };
+    auto policy_row = findRecordInHeapPage<AuthPolicyRecord>(
+        auth_policy_table_page_, policy_predicate, ctx);
+    if (policy_row.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1210",
+                                "Account policy missing");
+        return Status::INVALID_AUTHORIZATION;
+    }
+    AuthPolicyRecord policy = policy_row.record;
+
+    std::vector<ID> provider_chain;
+    if (!isZeroUuidLocal(policy.provider_chain_oid))
+    {
+        uint64_t xmin = 0;
+        std::string chain_blob;
+        Status status = loadStringFromToast(policy.provider_chain_oid, xmin, chain_blob, ctx);
+        if (status != Status::OK || !decodeUuidList(chain_blob, provider_chain))
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1225",
+                                    "Invalid auth policy provider chain");
+            return Status::PAGE_CORRUPT;
+        }
+    }
+    if (provider_chain.empty())
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1210",
+                                "No auth providers available after policy intersection");
+        return Status::INVALID_AUTHORIZATION;
+    }
+
+    std::unordered_set<ID, IDHash> unique_chain;
+    for (const auto& provider_id : provider_chain)
+    {
+        if (!unique_chain.insert(provider_id).second)
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_ARGUMENT, "SEC_1225",
+                                    "Auth provider chain duplicate/cycle detected");
+            return Status::INVALID_ARGUMENT;
+        }
+    }
+
+    struct CandidateProvider
+    {
+        ID provider_id;
+        AuthProviderRecord record;
+    };
+    std::vector<CandidateProvider> eligible;
+    for (const auto& provider_id : provider_chain)
+    {
+        auto provider_predicate = [&provider_id](const AuthProviderRecord& row) {
+            return row.is_valid == 1 && row.provider_id == provider_id;
+        };
+        auto provider_row = findRecordInHeapPage<AuthProviderRecord>(
+            auth_provider_table_page_, provider_predicate, ctx);
+        if (provider_row.status != Status::OK)
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_ARGUMENT, "SEC_1225",
+                                    "Auth provider chain reference missing");
+            return Status::INVALID_ARGUMENT;
+        }
+        const AuthProviderKind provider_kind =
+            static_cast<AuthProviderKind>(provider_row.record.provider_kind);
+        if (!isValidAuthProviderKind(provider_kind))
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_ARGUMENT, "SEC_1223",
+                                    "Unknown provider kind in policy chain");
+            return Status::INVALID_ARGUMENT;
+        }
+        if (static_cast<AuthProviderState>(provider_row.record.provider_state) !=
+            AuthProviderState::ENABLED)
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::PERMISSION_DENIED, "SEC_1224",
+                                    "Provider not enabled for policy profile");
+            return Status::PERMISSION_DENIED;
+        }
+        if (request.has_required_provider_kind && provider_kind != request.required_provider_kind)
+        {
+            continue;
+        }
+        bool credential_ok = request.credential_kinds.empty();
+        for (const auto kind : request.credential_kinds)
+        {
+            if (providerSupportsCredentialKind(provider_kind, kind))
+            {
+                credential_ok = true;
+                break;
+            }
+        }
+        if (!credential_ok)
+        {
+            continue;
+        }
+        bool capability_ok = request.client_capabilities.empty() ||
+                             providerInCapabilities(provider_kind, request.client_capabilities);
+        if (!capability_ok)
+        {
+            continue;
+        }
+        eligible.push_back(CandidateProvider{provider_id, provider_row.record});
+    }
+    if (eligible.empty())
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1210",
+                                "No auth providers available after policy intersection");
+        return Status::INVALID_AUTHORIZATION;
+    }
+
+    auto adapter_outcome_for = [&request](const ID& provider_id) -> AuthAdapterOutcome {
+        for (const auto& result : request.adapter_results)
+        {
+            if (result.provider_id == provider_id && isValidAuthAdapterOutcome(result.outcome))
+            {
+                return result.outcome;
+            }
+        }
+        return AuthAdapterOutcome::REJECT;
+    };
+
+    auto append_attempt = [&](const ID& provider_id,
+                              AuthAttemptOutcome outcome,
+                              const char* failure_code) -> Status {
+        AuthAttemptLogRecord rec{};
+        rec.attempt_id = generateUuidV7();
+        rec.connection_id = request.connection_id;
+        rec.has_account_id = 1;
+        rec.account_id = request.account_id;
+        rec.has_provider_id = isZeroUuidLocal(provider_id) ? 0 : 1;
+        rec.provider_id = provider_id;
+        rec.outcome = static_cast<uint8_t>(outcome);
+        rec.has_failure_code = (failure_code != nullptr && failure_code[0] != '\0') ? 1 : 0;
+        rec.is_valid = 1;
+        rec.attempt_time_utc = now_utc;
+        rec.latency_us = 0;
+        rec.created_time = now_utc;
+        rec.last_modified_time = now_utc;
+        if (rec.has_failure_code != 0)
+        {
+            uint64_t xmin = 0;
+            Status st = storeStringInToast(std::string(failure_code), xmin, rec.failure_code_oid, ctx);
+            if (st != Status::OK)
+            {
+                return st;
+            }
+        }
+        return writeRecordToHeapPage(auth_attempt_log_table_page_, rec, ctx);
+    };
+
+    auto ms_to_catalog_ticks = [](uint32_t ms) -> uint64_t {
+        using ClockDuration = std::chrono::system_clock::duration;
+        return static_cast<uint64_t>(
+            std::chrono::duration_cast<ClockDuration>(std::chrono::milliseconds(ms)).count());
+    };
+
+    auto finalize_failed_attempt = [&](const char* code) -> Status {
+        Status status = append_attempt(ID{}, AuthAttemptOutcome::FAIL, code);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        const uint64_t lockout_window_ticks = ms_to_catalog_ticks(policy.lockout_window_ms);
+        const uint64_t window_start =
+            (lockout_window_ticks == 0 || now_utc < lockout_window_ticks)
+                ? 0
+                : (now_utc - lockout_window_ticks);
+        std::vector<AuthAttemptLogRecord> failed_attempts;
+        auto failed_filter = [&](const AuthAttemptLogRecord& row) {
+            if (row.is_valid != 1 || row.has_account_id == 0 || row.account_id != request.account_id)
+            {
+                return false;
+            }
+            if (row.attempt_time_utc < window_start)
+            {
+                return false;
+            }
+            const AuthAttemptOutcome out = static_cast<AuthAttemptOutcome>(row.outcome);
+            return out != AuthAttemptOutcome::SUCCESS;
+        };
+        auto failed_converter = [](const AuthAttemptLogRecord& row, AuthAttemptLogRecord& out) {
+            out = row;
+        };
+        status = readRecordsToVector<AuthAttemptLogRecord, AuthAttemptLogRecord>(
+            auth_attempt_log_table_page_, failed_attempts, failed_filter, failed_converter, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        if (policy.lockout_threshold > 0 &&
+            failed_attempts.size() >= static_cast<size_t>(policy.lockout_threshold))
+        {
+            account.is_locked = 1;
+            account.has_locked_reason = 1;
+            const uint64_t unlock_time = now_utc + ms_to_catalog_ticks(policy.lockout_duration_ms);
+            const std::string reason = "LOCKOUT_UNTIL=" + std::to_string(unlock_time);
+            std::strncpy(account.locked_reason,
+                         UTF8Utils::truncateToBytes(reason, sizeof(account.locked_reason)).c_str(),
+                         sizeof(account.locked_reason) - 1);
+            account.last_modified_time = now_utc;
+            decision_out.lockout_applied = true;
+            status = updateRecordInHeapPage(principal_account_table_page_, account_row.slot_index, account, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+        }
+        return Status::OK;
+    };
+
+    for (const auto& provider : eligible)
+    {
+        const AuthProviderKind provider_kind =
+            static_cast<AuthProviderKind>(provider.record.provider_kind);
+        decision_out.attempted_provider_ids.push_back(provider.provider_id);
+        AuthAdapterOutcome outcome = adapter_outcome_for(provider.provider_id);
+        switch (outcome)
+        {
+            case AuthAdapterOutcome::ACCEPT:
+                decision_out.success = true;
+                decision_out.selected_provider_id = provider.provider_id;
+                break;
+            case AuthAdapterOutcome::REJECT:
+                if (!policy.allow_password_fallback)
+                {
+                    Status status = finalize_failed_attempt("SEC_1213");
+                    if (status != Status::OK)
+                    {
+                        return status;
+                    }
+                    SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1213",
+                                            "Authentication failed for provider chain");
+                    return Status::INVALID_AUTHORIZATION;
+                }
+                continue;
+            case AuthAdapterOutcome::UNAVAILABLE:
+                if (static_cast<AuthProviderFailMode>(provider.record.fail_mode) ==
+                    AuthProviderFailMode::HARD_FAIL)
+                {
+                    Status status = append_attempt(provider.provider_id,
+                                                   AuthAttemptOutcome::UNAVAILABLE,
+                                                   "SEC_1211");
+                    if (status != Status::OK)
+                    {
+                        return status;
+                    }
+                    SET_ERROR_CONTEXT_VNEXT(ctx, Status::CONNECTION_FAILURE, "SEC_1211",
+                                            "Provider unavailable and fail_mode=HARD_FAIL");
+                    return Status::CONNECTION_FAILURE;
+                }
+                continue;
+            case AuthAdapterOutcome::TIMEOUT:
+                if (static_cast<AuthProviderFailMode>(provider.record.fail_mode) ==
+                    AuthProviderFailMode::HARD_FAIL)
+                {
+                    Status status = append_attempt(provider.provider_id,
+                                                   AuthAttemptOutcome::TIMEOUT,
+                                                   "SEC_1212");
+                    if (status != Status::OK)
+                    {
+                        return status;
+                    }
+                    SET_ERROR_CONTEXT_VNEXT(ctx, Status::CONNECTION_FAILURE, "SEC_1212",
+                                            "Provider timeout and fail_mode=HARD_FAIL");
+                    return Status::CONNECTION_FAILURE;
+                }
+                continue;
+        }
+        if (decision_out.success)
+        {
+            break;
+        }
+        (void)provider_kind;
+    }
+
+    if (!decision_out.success)
+    {
+        Status status = finalize_failed_attempt("SEC_1213");
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1213",
+                                "Authentication failed for provider chain");
+        return Status::INVALID_AUTHORIZATION;
+    }
+
+    decision_out.policy_requires_mfa = policy.mfa_required != 0;
+    if (policy.mfa_required != 0 && !request.mfa_completed)
+    {
+        Status status = append_attempt(decision_out.selected_provider_id,
+                                       AuthAttemptOutcome::POLICY_DENY,
+                                       "SEC_1214");
+        if (status != Status::OK)
+        {
+            return status;
+        }
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1214",
+                                "MFA required but challenge not completed");
+        return Status::INVALID_AUTHORIZATION;
+    }
+
+    account.is_locked = 0;
+    account.has_locked_reason = 0;
+    std::memset(account.locked_reason, 0, sizeof(account.locked_reason));
+    account.last_modified_time = now_utc;
+    Status status = updateRecordInHeapPage(principal_account_table_page_, account_row.slot_index, account, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    status = append_attempt(decision_out.selected_provider_id, AuthAttemptOutcome::SUCCESS, "");
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    return Status::OK;
+}
+
+auto CatalogManager::upsertAclCommandCatalogEntry(const AclCommandCatalogInfo& info,
+                                                  ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (info.command_name.empty())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "acl_command.command_name is required");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (!isValidAclCommandArityClass(info.arity_class))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "acl_command.arity_class is invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    ErrorContext local_ctx;
+    Status status = UTF8Utils::validateStorageCapacity(
+        info.command_name,
+        sizeof(AclCommandCatalogRecord{}.command_name),
+        sizeof(AclCommandCatalogRecord{}.command_name),
+        &local_ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "acl_command.command_name too long");
+        return status;
+    }
+
+    AclCommandCatalogRecord rec{};
+    std::strncpy(rec.command_name,
+                 UTF8Utils::truncateToBytes(info.command_name, sizeof(rec.command_name)).c_str(),
+                 sizeof(rec.command_name) - 1);
+    rec.category_bits = info.category_bits;
+    rec.arity_class = static_cast<uint8_t>(info.arity_class);
+    rec.is_write = info.is_write ? 1 : 0;
+    rec.is_admin = info.is_admin ? 1 : 0;
+    rec.is_valid = info.is_valid ? 1 : 0;
+    rec.created_time = (info.created_time == 0) ? catalogNowTicks() : info.created_time;
+    rec.last_modified_time = (info.last_modified_time == 0) ? catalogNowTicks() : info.last_modified_time;
+
+    auto existing = findRecordInHeapPage<AclCommandCatalogRecord>(
+        acl_command_catalog_table_page_,
+        [&info](const AclCommandCatalogRecord& row) {
+            return row.is_valid == 1 &&
+                   equalsIgnoreCase(fixedNameFromBuffer(row.command_name, sizeof(row.command_name)),
+                                    info.command_name);
+        },
+        ctx);
+    if (existing.status == Status::OK)
+    {
+        rec.created_time = existing.record.created_time;
+    }
+    else if (existing.status != Status::NOT_FOUND)
+    {
+        return existing.status;
+    }
+
+    auto matcher = [&info](const AclCommandCatalogRecord& row) {
+        return row.is_valid == 1 &&
+               equalsIgnoreCase(fixedNameFromBuffer(row.command_name, sizeof(row.command_name)),
+                                info.command_name);
+    };
+    return updateRecordInHeapPage(acl_command_catalog_table_page_, matcher, rec, ctx);
+}
+
+auto CatalogManager::getAclCommandCatalogEntry(const std::string& command_name,
+                                               AclCommandCatalogInfo& info_out,
+                                               ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto result = findRecordInHeapPage<AclCommandCatalogRecord>(
+        acl_command_catalog_table_page_,
+        [&command_name](const AclCommandCatalogRecord& row) {
+            return row.is_valid == 1 &&
+                   equalsIgnoreCase(fixedNameFromBuffer(row.command_name, sizeof(row.command_name)),
+                                    command_name);
+        },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+    if (!isValidAclCommandArityClass(static_cast<AclCommandArityClass>(result.record.arity_class)))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "acl_command.arity_class invalid on disk");
+        return Status::PAGE_CORRUPT;
+    }
+
+    info_out = AclCommandCatalogInfo{};
+    info_out.command_name = fixedNameFromBuffer(result.record.command_name, sizeof(result.record.command_name));
+    info_out.category_bits = result.record.category_bits;
+    info_out.arity_class = static_cast<AclCommandArityClass>(result.record.arity_class);
+    info_out.is_write = result.record.is_write != 0;
+    info_out.is_admin = result.record.is_admin != 0;
+    info_out.is_valid = result.record.is_valid == 1;
+    info_out.created_time = result.record.created_time;
+    info_out.last_modified_time = result.record.last_modified_time;
+    return Status::OK;
+}
+
+auto CatalogManager::listAclCommandCatalogEntries(std::vector<AclCommandCatalogInfo>& rows_out,
+                                                  ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+    auto filter = [](const AclCommandCatalogRecord& row) { return row.is_valid == 1; };
+    auto converter = [](const AclCommandCatalogRecord& row, AclCommandCatalogInfo& info) {
+        info = AclCommandCatalogInfo{};
+        info.command_name = fixedNameFromBuffer(row.command_name, sizeof(row.command_name));
+        info.category_bits = row.category_bits;
+        info.arity_class = static_cast<AclCommandArityClass>(row.arity_class);
+        info.is_write = row.is_write != 0;
+        info.is_admin = row.is_admin != 0;
+        info.is_valid = row.is_valid == 1;
+        info.created_time = row.created_time;
+        info.last_modified_time = row.last_modified_time;
+    };
+    Status status = readRecordsToVector<AclCommandCatalogRecord, AclCommandCatalogInfo>(
+        acl_command_catalog_table_page_, rows_out, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    for (const auto& row : rows_out)
+    {
+        if (!isValidAclCommandArityClass(row.arity_class))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "acl_command.arity_class invalid on disk");
+            return Status::PAGE_CORRUPT;
+        }
+    }
+    std::sort(rows_out.begin(), rows_out.end(),
+              [](const AclCommandCatalogInfo& lhs, const AclCommandCatalogInfo& rhs) {
+                  return toLowerCopy(lhs.command_name) < toLowerCopy(rhs.command_name);
+              });
+    return Status::OK;
+}
+
+auto CatalogManager::deleteAclCommandCatalogEntry(const std::string& command_name,
+                                                  ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto result = findRecordInHeapPage<AclCommandCatalogRecord>(
+        acl_command_catalog_table_page_,
+        [&command_name](const AclCommandCatalogRecord& row) {
+            return row.is_valid == 1 &&
+                   equalsIgnoreCase(fixedNameFromBuffer(row.command_name, sizeof(row.command_name)),
+                                    command_name);
+        },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+    AclCommandCatalogRecord updated = result.record;
+    updated.is_valid = 0;
+    updated.last_modified_time = catalogNowTicks();
+    return updateRecordInHeapPage(acl_command_catalog_table_page_, result.slot_index, updated, ctx);
+}
+
+auto CatalogManager::upsertAclRuleCatalogEntry(const AclRuleCatalogInfo& info,
+                                               ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (isZeroUuidLocal(info.acl_rule_id) || isZeroUuidLocal(info.subject_id))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "acl_rule.acl_rule_uuid and subject_uuid are required");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (!isValidAuthorizationSubjectType(info.subject_type) || !isValidPolicyEffect(info.effect))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "acl_rule enum value is invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+    Status status = validateWildcardPatternNoRegexWithCode(info.command_pattern, "SEC_1246", ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    if (info.has_key_pattern)
+    {
+        status = validateWildcardPatternNoRegexWithCode(info.key_pattern, "SEC_1246", ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+    if (info.has_channel_pattern)
+    {
+        status = validateWildcardPatternNoRegexWithCode(info.channel_pattern, "SEC_1246", ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    AclRuleRecord rec{};
+    rec.acl_rule_id = info.acl_rule_id;
+    rec.subject_id = info.subject_id;
+    rec.subject_type = static_cast<uint8_t>(info.subject_type);
+    rec.effect = static_cast<uint8_t>(info.effect);
+    rec.has_category_mask = info.has_category_mask ? 1 : 0;
+    rec.has_key_pattern = info.has_key_pattern ? 1 : 0;
+    rec.has_channel_pattern = info.has_channel_pattern ? 1 : 0;
+    rec.is_enabled = info.is_enabled ? 1 : 0;
+    rec.is_valid = info.is_valid ? 1 : 0;
+    rec.priority_u16 = info.priority_u16;
+    rec.category_mask = info.category_mask;
+    rec.created_time = (info.created_time == 0) ? catalogNowTicks() : info.created_time;
+    rec.last_modified_time = (info.last_modified_time == 0) ? catalogNowTicks() : info.last_modified_time;
+
+    uint64_t xmin = 0;
+    status = storeStringInToast(info.command_pattern, xmin, rec.command_pattern_oid, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    if (info.has_key_pattern)
+    {
+        status = storeStringInToast(info.key_pattern, xmin, rec.key_pattern_oid, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+    if (info.has_channel_pattern)
+    {
+        status = storeStringInToast(info.channel_pattern, xmin, rec.channel_pattern_oid, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    auto existing = findRecordInHeapPage<AclRuleRecord>(
+        acl_rule_table_page_,
+        [&info](const AclRuleRecord& row) { return row.is_valid == 1 && row.acl_rule_id == info.acl_rule_id; },
+        ctx);
+    if (existing.status == Status::OK)
+    {
+        rec.created_time = existing.record.created_time;
+    }
+    else if (existing.status != Status::NOT_FOUND)
+    {
+        return existing.status;
+    }
+
+    auto matcher = [&info](const AclRuleRecord& row) {
+        return row.is_valid == 1 && row.acl_rule_id == info.acl_rule_id;
+    };
+    return updateRecordInHeapPage(acl_rule_table_page_, matcher, rec, ctx);
+}
+
+auto CatalogManager::getAclRuleCatalogEntry(const ID& acl_rule_id,
+                                            AclRuleCatalogInfo& info_out,
+                                            ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto result = findRecordInHeapPage<AclRuleRecord>(
+        acl_rule_table_page_,
+        [&acl_rule_id](const AclRuleRecord& row) { return row.is_valid == 1 && row.acl_rule_id == acl_rule_id; },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    info_out = AclRuleCatalogInfo{};
+    info_out.acl_rule_id = result.record.acl_rule_id;
+    info_out.subject_id = result.record.subject_id;
+    info_out.subject_type = static_cast<AuthorizationSubjectType>(result.record.subject_type);
+    info_out.effect = static_cast<PolicyEffect>(result.record.effect);
+    info_out.has_category_mask = result.record.has_category_mask != 0;
+    info_out.category_mask = result.record.category_mask;
+    info_out.has_key_pattern = result.record.has_key_pattern != 0;
+    info_out.has_channel_pattern = result.record.has_channel_pattern != 0;
+    info_out.priority_u16 = result.record.priority_u16;
+    info_out.is_enabled = result.record.is_enabled != 0;
+    info_out.is_valid = result.record.is_valid == 1;
+    info_out.created_time = result.record.created_time;
+    info_out.last_modified_time = result.record.last_modified_time;
+
+    uint64_t xmin = 0;
+    Status status = loadStringFromToast(result.record.command_pattern_oid, xmin, info_out.command_pattern, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1249",
+                                "acl_rule.command_pattern payload invalid");
+        return Status::PAGE_CORRUPT;
+    }
+    if (info_out.has_key_pattern)
+    {
+        status = loadStringFromToast(result.record.key_pattern_oid, xmin, info_out.key_pattern, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1249",
+                                    "acl_rule.key_pattern payload invalid");
+            return Status::PAGE_CORRUPT;
+        }
+    }
+    if (info_out.has_channel_pattern)
+    {
+        status = loadStringFromToast(result.record.channel_pattern_oid, xmin, info_out.channel_pattern, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1249",
+                                    "acl_rule.channel_pattern payload invalid");
+            return Status::PAGE_CORRUPT;
+        }
+    }
+    return Status::OK;
+}
+
+auto CatalogManager::listAclRuleCatalogEntries(std::vector<AclRuleCatalogInfo>& rows_out,
+                                               ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+    auto filter = [](const AclRuleRecord& row) { return row.is_valid == 1; };
+    auto converter = [](const AclRuleRecord& row, AclRuleCatalogInfo& info) {
+        info = AclRuleCatalogInfo{};
+        info.acl_rule_id = row.acl_rule_id;
+        info.subject_id = row.subject_id;
+        info.subject_type = static_cast<AuthorizationSubjectType>(row.subject_type);
+        info.effect = static_cast<PolicyEffect>(row.effect);
+        info.has_category_mask = row.has_category_mask != 0;
+        info.category_mask = row.category_mask;
+        info.has_key_pattern = row.has_key_pattern != 0;
+        info.has_channel_pattern = row.has_channel_pattern != 0;
+        info.priority_u16 = row.priority_u16;
+        info.is_enabled = row.is_enabled != 0;
+        info.is_valid = row.is_valid == 1;
+        info.created_time = row.created_time;
+        info.last_modified_time = row.last_modified_time;
+    };
+    Status status = readRecordsToVector<AclRuleRecord, AclRuleCatalogInfo>(
+        acl_rule_table_page_, rows_out, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    for (auto& row : rows_out)
+    {
+        auto found = findRecordInHeapPage<AclRuleRecord>(
+            acl_rule_table_page_,
+            [&row](const AclRuleRecord& rec) { return rec.is_valid == 1 && rec.acl_rule_id == row.acl_rule_id; },
+            ctx);
+        if (found.status != Status::OK)
+        {
+            return found.status;
+        }
+        uint64_t xmin = 0;
+        status = loadStringFromToast(found.record.command_pattern_oid, xmin, row.command_pattern, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1249",
+                                    "acl_rule.command_pattern payload invalid");
+            return Status::PAGE_CORRUPT;
+        }
+        if (row.has_key_pattern)
+        {
+            status = loadStringFromToast(found.record.key_pattern_oid, xmin, row.key_pattern, ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1249",
+                                        "acl_rule.key_pattern payload invalid");
+                return Status::PAGE_CORRUPT;
+            }
+        }
+        if (row.has_channel_pattern)
+        {
+            status = loadStringFromToast(found.record.channel_pattern_oid, xmin, row.channel_pattern, ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1249",
+                                        "acl_rule.channel_pattern payload invalid");
+                return Status::PAGE_CORRUPT;
+            }
+        }
+    }
+
+    std::sort(rows_out.begin(), rows_out.end(),
+              [](const AclRuleCatalogInfo& lhs, const AclRuleCatalogInfo& rhs) {
+                  if (lhs.priority_u16 != rhs.priority_u16)
+                  {
+                      return lhs.priority_u16 < rhs.priority_u16;
+                  }
+                  return compareUuidBytesLocal(lhs.acl_rule_id, rhs.acl_rule_id) < 0;
+              });
+    return Status::OK;
+}
+
+auto CatalogManager::deleteAclRuleCatalogEntry(const ID& acl_rule_id,
+                                               ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto result = findRecordInHeapPage<AclRuleRecord>(
+        acl_rule_table_page_,
+        [&acl_rule_id](const AclRuleRecord& row) { return row.is_valid == 1 && row.acl_rule_id == acl_rule_id; },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+    AclRuleRecord updated = result.record;
+    updated.is_valid = 0;
+    updated.last_modified_time = catalogNowTicks();
+    return updateRecordInHeapPage(acl_rule_table_page_, result.slot_index, updated, ctx);
+}
+
+auto CatalogManager::evaluateAclCommandPolicy(const AclEvaluationRequest& request,
+                                              AclEvaluationDecision& decision_out,
+                                              ErrorContext* ctx) -> Status
+{
+    decision_out = AclEvaluationDecision{};
+    if (request.command_name.empty())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "acl evaluation requires command_name");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    std::vector<AclRuleCatalogInfo> rules;
+    Status status = listAclRuleCatalogEntries(rules, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    std::vector<AclRuleCatalogInfo> matched_rules;
+    for (const auto& rule : rules)
+    {
+        if (!rule.is_enabled)
+        {
+            continue;
+        }
+        if (!subjectRefMatches(rule.subject_id, rule.subject_type, request.effective_subjects))
+        {
+            continue;
+        }
+
+        const bool command_match = wildcardMatchNoRegexCaseInsensitive(rule.command_pattern, request.command_name);
+        const bool category_match = rule.has_category_mask &&
+                                    ((request.command_category_bits & rule.category_mask) != 0);
+        if (!command_match && !category_match)
+        {
+            continue;
+        }
+
+        if (rule.has_key_pattern)
+        {
+            bool key_match = false;
+            for (const auto& key : request.keys)
+            {
+                if (wildcardMatchNoRegexCaseInsensitive(rule.key_pattern, key))
+                {
+                    key_match = true;
+                    break;
+                }
+            }
+            if (!key_match)
+            {
+                continue;
+            }
+        }
+        if (rule.has_channel_pattern)
+        {
+            bool channel_match = false;
+            for (const auto& channel : request.channels)
+            {
+                if (wildcardMatchNoRegexCaseInsensitive(rule.channel_pattern, channel))
+                {
+                    channel_match = true;
+                    break;
+                }
+            }
+            if (!channel_match)
+            {
+                continue;
+            }
+        }
+
+        matched_rules.push_back(rule);
+    }
+
+    if (matched_rules.empty())
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1241",
+                                "No ACL ALLOW rule matched request");
+        decision_out.reject_code = "SEC_1241";
+        VNextMetricsEventModel::recordSecurityEvent(
+            "acl_command_policy", "reject", "SEC_1241");
+        return Status::INVALID_AUTHORIZATION;
+    }
+
+    std::sort(matched_rules.begin(), matched_rules.end(),
+              [](const AclRuleCatalogInfo& lhs, const AclRuleCatalogInfo& rhs) {
+                  if (lhs.priority_u16 != rhs.priority_u16)
+                  {
+                      return lhs.priority_u16 < rhs.priority_u16;
+                  }
+                  return compareUuidBytesLocal(lhs.acl_rule_id, rhs.acl_rule_id) < 0;
+              });
+
+    for (const auto& rule : matched_rules)
+    {
+        if (rule.effect == PolicyEffect::DENY)
+        {
+            decision_out.matched = true;
+            decision_out.allowed = false;
+            decision_out.matched_rule_id = rule.acl_rule_id;
+            decision_out.reject_code = "SEC_1240";
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1240",
+                                    "ACL DENY rule matched request");
+            VNextMetricsEventModel::recordSecurityEvent(
+                "acl_command_policy", "reject", "SEC_1240");
+            return Status::INVALID_AUTHORIZATION;
+        }
+    }
+
+    for (const auto& rule : matched_rules)
+    {
+        if (rule.effect == PolicyEffect::ALLOW)
+        {
+            decision_out.matched = true;
+            decision_out.allowed = true;
+            decision_out.matched_rule_id = rule.acl_rule_id;
+            VNextMetricsEventModel::recordSecurityEvent(
+                "acl_command_policy", "allow", "NONE");
+            return Status::OK;
+        }
+    }
+
+    SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1241",
+                            "No ACL ALLOW rule matched request");
+    decision_out.reject_code = "SEC_1241";
+    VNextMetricsEventModel::recordSecurityEvent(
+        "acl_command_policy", "reject", "SEC_1241");
+    return Status::INVALID_AUTHORIZATION;
+}
+
+auto CatalogManager::upsertDocumentPolicyCatalogEntry(const DocumentPolicyCatalogInfo& info,
+                                                      ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (isZeroUuidLocal(info.policy_id))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "document_policy.policy_uuid is required");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (!isValidDocumentEngineTag(info.engine_tag) || !isValidPolicyEffect(info.effect))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "document_policy enum value is invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+    Status status = validateWildcardPatternNoRegexWithCode(info.resource_pattern, "SEC_1246", ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    if (info.has_tenant_pattern)
+    {
+        status = validateWildcardPatternNoRegexWithCode(info.tenant_pattern, "SEC_1246", ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    DocumentPolicyRecord rec{};
+    rec.policy_id = info.policy_id;
+    rec.engine_tag = static_cast<uint8_t>(info.engine_tag);
+    rec.effect = static_cast<uint8_t>(info.effect);
+    rec.has_tenant_pattern = info.has_tenant_pattern ? 1 : 0;
+    rec.has_doc_filter_sblr = info.has_doc_filter_sblr_uuid ? 1 : 0;
+    rec.has_write_filter_sblr = info.has_write_filter_sblr_uuid ? 1 : 0;
+    rec.is_enabled = info.is_enabled ? 1 : 0;
+    rec.is_valid = info.is_valid ? 1 : 0;
+    rec.priority_u16 = info.priority_u16;
+    rec.doc_filter_sblr_uuid = info.has_doc_filter_sblr_uuid ? info.doc_filter_sblr_uuid : ID{};
+    rec.write_filter_sblr_uuid = info.has_write_filter_sblr_uuid ? info.write_filter_sblr_uuid : ID{};
+    rec.created_time = (info.created_time == 0) ? catalogNowTicks() : info.created_time;
+    rec.last_modified_time = (info.last_modified_time == 0) ? catalogNowTicks() : info.last_modified_time;
+
+    uint64_t xmin = 0;
+    status = storeStringInToast(info.resource_pattern, xmin, rec.resource_pattern_oid, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    if (info.has_tenant_pattern)
+    {
+        status = storeStringInToast(info.tenant_pattern, xmin, rec.tenant_pattern_oid, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+    if (!info.field_allowlist.empty())
+    {
+        status = storeStringInToast(encodeStringList(info.field_allowlist), xmin, rec.field_allowlist_oid, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+    if (!info.field_denylist.empty())
+    {
+        status = storeStringInToast(encodeStringList(info.field_denylist), xmin, rec.field_denylist_oid, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    auto existing = findRecordInHeapPage<DocumentPolicyRecord>(
+        document_policy_table_page_,
+        [&info](const DocumentPolicyRecord& row) { return row.is_valid == 1 && row.policy_id == info.policy_id; },
+        ctx);
+    if (existing.status == Status::OK)
+    {
+        rec.created_time = existing.record.created_time;
+    }
+    else if (existing.status != Status::NOT_FOUND)
+    {
+        return existing.status;
+    }
+
+    auto matcher = [&info](const DocumentPolicyRecord& row) {
+        return row.is_valid == 1 && row.policy_id == info.policy_id;
+    };
+    return updateRecordInHeapPage(document_policy_table_page_, matcher, rec, ctx);
+}
+
+auto CatalogManager::getDocumentPolicyCatalogEntry(const ID& policy_id,
+                                                   DocumentPolicyCatalogInfo& info_out,
+                                                   ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto result = findRecordInHeapPage<DocumentPolicyRecord>(
+        document_policy_table_page_,
+        [&policy_id](const DocumentPolicyRecord& row) { return row.is_valid == 1 && row.policy_id == policy_id; },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+    if (!isValidDocumentEngineTag(static_cast<DocumentEngineTag>(result.record.engine_tag)) ||
+        !isValidPolicyEffect(static_cast<PolicyEffect>(result.record.effect)))
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1249",
+                                "document_policy enum invalid on disk");
+        return Status::PAGE_CORRUPT;
+    }
+
+    info_out = DocumentPolicyCatalogInfo{};
+    info_out.policy_id = result.record.policy_id;
+    info_out.engine_tag = static_cast<DocumentEngineTag>(result.record.engine_tag);
+    info_out.effect = static_cast<PolicyEffect>(result.record.effect);
+    info_out.has_tenant_pattern = result.record.has_tenant_pattern != 0;
+    info_out.has_doc_filter_sblr_uuid = result.record.has_doc_filter_sblr != 0;
+    info_out.doc_filter_sblr_uuid = result.record.doc_filter_sblr_uuid;
+    info_out.has_write_filter_sblr_uuid = result.record.has_write_filter_sblr != 0;
+    info_out.write_filter_sblr_uuid = result.record.write_filter_sblr_uuid;
+    info_out.priority_u16 = result.record.priority_u16;
+    info_out.is_enabled = result.record.is_enabled != 0;
+    info_out.is_valid = result.record.is_valid == 1;
+    info_out.created_time = result.record.created_time;
+    info_out.last_modified_time = result.record.last_modified_time;
+
+    uint64_t xmin = 0;
+    Status status = loadStringFromToast(result.record.resource_pattern_oid, xmin, info_out.resource_pattern, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1249",
+                                "document_policy.resource_pattern payload invalid");
+        return Status::PAGE_CORRUPT;
+    }
+    if (info_out.has_tenant_pattern)
+    {
+        status = loadStringFromToast(result.record.tenant_pattern_oid, xmin, info_out.tenant_pattern, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1249",
+                                    "document_policy.tenant_pattern payload invalid");
+            return Status::PAGE_CORRUPT;
+        }
+    }
+    if (!isZeroUuidLocal(result.record.field_allowlist_oid))
+    {
+        std::string blob;
+        status = loadStringFromToast(result.record.field_allowlist_oid, xmin, blob, ctx);
+        if (status != Status::OK || !decodeStringList(blob, info_out.field_allowlist))
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1249",
+                                    "document_policy.field_allowlist payload invalid");
+            return Status::PAGE_CORRUPT;
+        }
+    }
+    if (!isZeroUuidLocal(result.record.field_denylist_oid))
+    {
+        std::string blob;
+        status = loadStringFromToast(result.record.field_denylist_oid, xmin, blob, ctx);
+        if (status != Status::OK || !decodeStringList(blob, info_out.field_denylist))
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1249",
+                                    "document_policy.field_denylist payload invalid");
+            return Status::PAGE_CORRUPT;
+        }
+    }
+    return Status::OK;
+}
+
+auto CatalogManager::listDocumentPolicyCatalogEntries(std::vector<DocumentPolicyCatalogInfo>& rows_out,
+                                                      ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+    auto filter = [](const DocumentPolicyRecord& row) { return row.is_valid == 1; };
+    auto converter = [](const DocumentPolicyRecord& row, DocumentPolicyCatalogInfo& info) {
+        info = DocumentPolicyCatalogInfo{};
+        info.policy_id = row.policy_id;
+        info.engine_tag = static_cast<DocumentEngineTag>(row.engine_tag);
+        info.effect = static_cast<PolicyEffect>(row.effect);
+        info.has_tenant_pattern = row.has_tenant_pattern != 0;
+        info.has_doc_filter_sblr_uuid = row.has_doc_filter_sblr != 0;
+        info.doc_filter_sblr_uuid = row.doc_filter_sblr_uuid;
+        info.has_write_filter_sblr_uuid = row.has_write_filter_sblr != 0;
+        info.write_filter_sblr_uuid = row.write_filter_sblr_uuid;
+        info.priority_u16 = row.priority_u16;
+        info.is_enabled = row.is_enabled != 0;
+        info.is_valid = row.is_valid == 1;
+        info.created_time = row.created_time;
+        info.last_modified_time = row.last_modified_time;
+    };
+    Status status = readRecordsToVector<DocumentPolicyRecord, DocumentPolicyCatalogInfo>(
+        document_policy_table_page_, rows_out, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    for (auto& row : rows_out)
+    {
+        auto found = findRecordInHeapPage<DocumentPolicyRecord>(
+            document_policy_table_page_,
+            [&row](const DocumentPolicyRecord& rec) { return rec.is_valid == 1 && rec.policy_id == row.policy_id; },
+            ctx);
+        if (found.status != Status::OK)
+        {
+            return found.status;
+        }
+        uint64_t xmin = 0;
+        status = loadStringFromToast(found.record.resource_pattern_oid, xmin, row.resource_pattern, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1249",
+                                    "document_policy.resource_pattern payload invalid");
+            return Status::PAGE_CORRUPT;
+        }
+        if (row.has_tenant_pattern)
+        {
+            status = loadStringFromToast(found.record.tenant_pattern_oid, xmin, row.tenant_pattern, ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1249",
+                                        "document_policy.tenant_pattern payload invalid");
+                return Status::PAGE_CORRUPT;
+            }
+        }
+        if (!isZeroUuidLocal(found.record.field_allowlist_oid))
+        {
+            std::string blob;
+            status = loadStringFromToast(found.record.field_allowlist_oid, xmin, blob, ctx);
+            if (status != Status::OK || !decodeStringList(blob, row.field_allowlist))
+            {
+                SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1249",
+                                        "document_policy.field_allowlist payload invalid");
+                return Status::PAGE_CORRUPT;
+            }
+        }
+        if (!isZeroUuidLocal(found.record.field_denylist_oid))
+        {
+            std::string blob;
+            status = loadStringFromToast(found.record.field_denylist_oid, xmin, blob, ctx);
+            if (status != Status::OK || !decodeStringList(blob, row.field_denylist))
+            {
+                SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1249",
+                                        "document_policy.field_denylist payload invalid");
+                return Status::PAGE_CORRUPT;
+            }
+        }
+    }
+    std::sort(rows_out.begin(), rows_out.end(),
+              [](const DocumentPolicyCatalogInfo& lhs, const DocumentPolicyCatalogInfo& rhs) {
+                  if (lhs.priority_u16 != rhs.priority_u16)
+                  {
+                      return lhs.priority_u16 < rhs.priority_u16;
+                  }
+                  return compareUuidBytesLocal(lhs.policy_id, rhs.policy_id) < 0;
+              });
+    return Status::OK;
+}
+
+auto CatalogManager::deleteDocumentPolicyCatalogEntry(const ID& policy_id,
+                                                      ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto result = findRecordInHeapPage<DocumentPolicyRecord>(
+        document_policy_table_page_,
+        [&policy_id](const DocumentPolicyRecord& row) { return row.is_valid == 1 && row.policy_id == policy_id; },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+    DocumentPolicyRecord updated = result.record;
+    updated.is_valid = 0;
+    updated.last_modified_time = catalogNowTicks();
+    return updateRecordInHeapPage(document_policy_table_page_, result.slot_index, updated, ctx);
+}
+
+auto CatalogManager::upsertTenantBindingCatalogEntry(const TenantBindingCatalogInfo& info,
+                                                     ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (isZeroUuidLocal(info.binding_id) || isZeroUuidLocal(info.subject_id) || info.tenant_name.empty())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "tenant_binding requires binding_uuid, subject_uuid, tenant_name");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (!isValidAuthorizationSubjectType(info.subject_type))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "tenant_binding.subject_type is invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    TenantBindingRecord rec{};
+    rec.binding_id = info.binding_id;
+    rec.subject_id = info.subject_id;
+    rec.subject_type = static_cast<uint8_t>(info.subject_type);
+    rec.is_valid = info.is_valid ? 1 : 0;
+    rec.priority_u16 = info.priority_u16;
+    rec.created_time = (info.created_time == 0) ? catalogNowTicks() : info.created_time;
+    rec.last_modified_time = (info.last_modified_time == 0) ? catalogNowTicks() : info.last_modified_time;
+
+    uint64_t xmin = 0;
+    Status status = storeStringInToast(info.tenant_name, xmin, rec.tenant_name_oid, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    auto existing = findRecordInHeapPage<TenantBindingRecord>(
+        tenant_binding_table_page_,
+        [&info](const TenantBindingRecord& row) { return row.is_valid == 1 && row.binding_id == info.binding_id; },
+        ctx);
+    if (existing.status == Status::OK)
+    {
+        rec.created_time = existing.record.created_time;
+    }
+    else if (existing.status != Status::NOT_FOUND)
+    {
+        return existing.status;
+    }
+
+    auto matcher = [&info](const TenantBindingRecord& row) {
+        return row.is_valid == 1 && row.binding_id == info.binding_id;
+    };
+    return updateRecordInHeapPage(tenant_binding_table_page_, matcher, rec, ctx);
+}
+
+auto CatalogManager::getTenantBindingCatalogEntry(const ID& binding_id,
+                                                  TenantBindingCatalogInfo& info_out,
+                                                  ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto result = findRecordInHeapPage<TenantBindingRecord>(
+        tenant_binding_table_page_,
+        [&binding_id](const TenantBindingRecord& row) { return row.is_valid == 1 && row.binding_id == binding_id; },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+    if (!isValidAuthorizationSubjectType(static_cast<AuthorizationSubjectType>(result.record.subject_type)))
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1249",
+                                "tenant_binding.subject_type invalid on disk");
+        return Status::PAGE_CORRUPT;
+    }
+
+    info_out = TenantBindingCatalogInfo{};
+    info_out.binding_id = result.record.binding_id;
+    info_out.subject_id = result.record.subject_id;
+    info_out.subject_type = static_cast<AuthorizationSubjectType>(result.record.subject_type);
+    info_out.priority_u16 = result.record.priority_u16;
+    info_out.is_valid = result.record.is_valid == 1;
+    info_out.created_time = result.record.created_time;
+    info_out.last_modified_time = result.record.last_modified_time;
+    uint64_t xmin = 0;
+    Status status = loadStringFromToast(result.record.tenant_name_oid, xmin, info_out.tenant_name, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1249",
+                                "tenant_binding.tenant_name payload invalid");
+        return Status::PAGE_CORRUPT;
+    }
+    return Status::OK;
+}
+
+auto CatalogManager::listTenantBindingCatalogEntries(std::vector<TenantBindingCatalogInfo>& rows_out,
+                                                     ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+    auto filter = [](const TenantBindingRecord& row) { return row.is_valid == 1; };
+    auto converter = [](const TenantBindingRecord& row, TenantBindingCatalogInfo& info) {
+        info = TenantBindingCatalogInfo{};
+        info.binding_id = row.binding_id;
+        info.subject_id = row.subject_id;
+        info.subject_type = static_cast<AuthorizationSubjectType>(row.subject_type);
+        info.priority_u16 = row.priority_u16;
+        info.is_valid = row.is_valid == 1;
+        info.created_time = row.created_time;
+        info.last_modified_time = row.last_modified_time;
+    };
+    Status status = readRecordsToVector<TenantBindingRecord, TenantBindingCatalogInfo>(
+        tenant_binding_table_page_, rows_out, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    for (auto& row : rows_out)
+    {
+        auto found = findRecordInHeapPage<TenantBindingRecord>(
+            tenant_binding_table_page_,
+            [&row](const TenantBindingRecord& rec) { return rec.is_valid == 1 && rec.binding_id == row.binding_id; },
+            ctx);
+        if (found.status != Status::OK)
+        {
+            return found.status;
+        }
+        uint64_t xmin = 0;
+        status = loadStringFromToast(found.record.tenant_name_oid, xmin, row.tenant_name, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1249",
+                                    "tenant_binding.tenant_name payload invalid");
+            return Status::PAGE_CORRUPT;
+        }
+    }
+    std::sort(rows_out.begin(), rows_out.end(),
+              [](const TenantBindingCatalogInfo& lhs, const TenantBindingCatalogInfo& rhs) {
+                  if (lhs.priority_u16 != rhs.priority_u16)
+                  {
+                      return lhs.priority_u16 < rhs.priority_u16;
+                  }
+                  return compareUuidBytesLocal(lhs.binding_id, rhs.binding_id) < 0;
+              });
+    return Status::OK;
+}
+
+auto CatalogManager::deleteTenantBindingCatalogEntry(const ID& binding_id,
+                                                     ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto result = findRecordInHeapPage<TenantBindingRecord>(
+        tenant_binding_table_page_,
+        [&binding_id](const TenantBindingRecord& row) { return row.is_valid == 1 && row.binding_id == binding_id; },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+    TenantBindingRecord updated = result.record;
+    updated.is_valid = 0;
+    updated.last_modified_time = catalogNowTicks();
+    return updateRecordInHeapPage(tenant_binding_table_page_, result.slot_index, updated, ctx);
+}
+
+auto CatalogManager::evaluateDocumentReadPolicy(const DocumentAuthorizationRequest& request,
+                                                DocumentAuthorizationDecision& decision_out,
+                                                ErrorContext* ctx) -> Status
+{
+    if (request.is_write)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "read policy evaluation must use read mode");
+        return Status::INVALID_ARGUMENT;
+    }
+    decision_out = DocumentAuthorizationDecision{};
+    std::vector<DocumentPolicyCatalogInfo> policies;
+    Status status = listDocumentPolicyCatalogEntries(policies, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    return evaluateDocumentPoliciesInternal(request, policies, false, decision_out, ctx);
+}
+
+auto CatalogManager::evaluateDocumentWritePolicy(const DocumentAuthorizationRequest& request,
+                                                 DocumentAuthorizationDecision& decision_out,
+                                                 ErrorContext* ctx) -> Status
+{
+    decision_out = DocumentAuthorizationDecision{};
+    std::vector<DocumentPolicyCatalogInfo> policies;
+    Status status = listDocumentPolicyCatalogEntries(policies, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    DocumentAuthorizationRequest write_request = request;
+    write_request.is_write = true;
+    return evaluateDocumentPoliciesInternal(write_request, policies, true, decision_out, ctx);
+}
+
+auto CatalogManager::upsertGraphPrivilegeCatalogEntry(const GraphPrivilegeCatalogInfo& info,
+                                                      ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (isZeroUuidLocal(info.graph_priv_id) || isZeroUuidLocal(info.subject_id) || info.graph_scope.empty())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "graph_privilege requires graph_priv_uuid, subject_uuid, graph_scope");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (!isValidAuthorizationSubjectType(info.subject_type) || !isValidPolicyEffect(info.effect))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "graph_privilege enum value is invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (info.action_bits == 0 || hasUnknownGraphActionBits(info.action_bits))
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_ARGUMENT, "SEC_1248",
+                                "graph_privilege.action_bits contains unknown bits");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (info.has_label_pattern)
+    {
+        Status status = validateWildcardPatternNoRegexWithCode(info.label_pattern, "SEC_1246", ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+    if (info.has_relationship_pattern)
+    {
+        Status status = validateWildcardPatternNoRegexWithCode(info.relationship_pattern, "SEC_1246", ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+    if (info.has_property_pattern)
+    {
+        Status status = validateWildcardPatternNoRegexWithCode(info.property_pattern, "SEC_1246", ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    GraphPrivilegeRecord rec{};
+    rec.graph_priv_id = info.graph_priv_id;
+    rec.subject_id = info.subject_id;
+    rec.subject_type = static_cast<uint8_t>(info.subject_type);
+    rec.effect = static_cast<uint8_t>(info.effect);
+    rec.has_label_pattern = info.has_label_pattern ? 1 : 0;
+    rec.has_relationship_pattern = info.has_relationship_pattern ? 1 : 0;
+    rec.has_property_pattern = info.has_property_pattern ? 1 : 0;
+    rec.is_enabled = info.is_enabled ? 1 : 0;
+    rec.is_valid = info.is_valid ? 1 : 0;
+    rec.priority_u16 = info.priority_u16;
+    rec.action_bits = info.action_bits;
+    rec.created_time = (info.created_time == 0) ? catalogNowTicks() : info.created_time;
+    rec.last_modified_time = (info.last_modified_time == 0) ? catalogNowTicks() : info.last_modified_time;
+
+    uint64_t xmin = 0;
+    Status status = storeStringInToast(info.graph_scope, xmin, rec.graph_scope_oid, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    if (info.has_label_pattern)
+    {
+        status = storeStringInToast(info.label_pattern, xmin, rec.label_pattern_oid, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+    if (info.has_relationship_pattern)
+    {
+        status = storeStringInToast(info.relationship_pattern, xmin, rec.relationship_pattern_oid, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+    if (info.has_property_pattern)
+    {
+        status = storeStringInToast(info.property_pattern, xmin, rec.property_pattern_oid, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    auto existing = findRecordInHeapPage<GraphPrivilegeRecord>(
+        graph_privilege_table_page_,
+        [&info](const GraphPrivilegeRecord& row) { return row.is_valid == 1 && row.graph_priv_id == info.graph_priv_id; },
+        ctx);
+    if (existing.status == Status::OK)
+    {
+        rec.created_time = existing.record.created_time;
+    }
+    else if (existing.status != Status::NOT_FOUND)
+    {
+        return existing.status;
+    }
+
+    auto matcher = [&info](const GraphPrivilegeRecord& row) {
+        return row.is_valid == 1 && row.graph_priv_id == info.graph_priv_id;
+    };
+    return updateRecordInHeapPage(graph_privilege_table_page_, matcher, rec, ctx);
+}
+
+auto CatalogManager::getGraphPrivilegeCatalogEntry(const ID& graph_priv_id,
+                                                   GraphPrivilegeCatalogInfo& info_out,
+                                                   ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto result = findRecordInHeapPage<GraphPrivilegeRecord>(
+        graph_privilege_table_page_,
+        [&graph_priv_id](const GraphPrivilegeRecord& row) {
+            return row.is_valid == 1 && row.graph_priv_id == graph_priv_id;
+        },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    if (!isValidAuthorizationSubjectType(static_cast<AuthorizationSubjectType>(result.record.subject_type)) ||
+        !isValidPolicyEffect(static_cast<PolicyEffect>(result.record.effect)))
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1249",
+                                "graph_privilege enum invalid on disk");
+        return Status::PAGE_CORRUPT;
+    }
+
+    info_out = GraphPrivilegeCatalogInfo{};
+    info_out.graph_priv_id = result.record.graph_priv_id;
+    info_out.subject_id = result.record.subject_id;
+    info_out.subject_type = static_cast<AuthorizationSubjectType>(result.record.subject_type);
+    info_out.effect = static_cast<PolicyEffect>(result.record.effect);
+    info_out.has_label_pattern = result.record.has_label_pattern != 0;
+    info_out.has_relationship_pattern = result.record.has_relationship_pattern != 0;
+    info_out.has_property_pattern = result.record.has_property_pattern != 0;
+    info_out.action_bits = result.record.action_bits;
+    info_out.priority_u16 = result.record.priority_u16;
+    info_out.is_enabled = result.record.is_enabled != 0;
+    info_out.is_valid = result.record.is_valid == 1;
+    info_out.created_time = result.record.created_time;
+    info_out.last_modified_time = result.record.last_modified_time;
+
+    uint64_t xmin = 0;
+    Status status = loadStringFromToast(result.record.graph_scope_oid, xmin, info_out.graph_scope, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1249",
+                                "graph_privilege.graph_scope payload invalid");
+        return Status::PAGE_CORRUPT;
+    }
+    if (info_out.has_label_pattern)
+    {
+        status = loadStringFromToast(result.record.label_pattern_oid, xmin, info_out.label_pattern, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1249",
+                                    "graph_privilege.label_pattern payload invalid");
+            return Status::PAGE_CORRUPT;
+        }
+    }
+    if (info_out.has_relationship_pattern)
+    {
+        status = loadStringFromToast(result.record.relationship_pattern_oid, xmin, info_out.relationship_pattern, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1249",
+                                    "graph_privilege.relationship_pattern payload invalid");
+            return Status::PAGE_CORRUPT;
+        }
+    }
+    if (info_out.has_property_pattern)
+    {
+        status = loadStringFromToast(result.record.property_pattern_oid, xmin, info_out.property_pattern, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1249",
+                                    "graph_privilege.property_pattern payload invalid");
+            return Status::PAGE_CORRUPT;
+        }
+    }
+    return Status::OK;
+}
+
+auto CatalogManager::listGraphPrivilegeCatalogEntries(std::vector<GraphPrivilegeCatalogInfo>& rows_out,
+                                                      ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+    auto filter = [](const GraphPrivilegeRecord& row) { return row.is_valid == 1; };
+    auto converter = [](const GraphPrivilegeRecord& row, GraphPrivilegeCatalogInfo& info) {
+        info = GraphPrivilegeCatalogInfo{};
+        info.graph_priv_id = row.graph_priv_id;
+        info.subject_id = row.subject_id;
+        info.subject_type = static_cast<AuthorizationSubjectType>(row.subject_type);
+        info.effect = static_cast<PolicyEffect>(row.effect);
+        info.has_label_pattern = row.has_label_pattern != 0;
+        info.has_relationship_pattern = row.has_relationship_pattern != 0;
+        info.has_property_pattern = row.has_property_pattern != 0;
+        info.action_bits = row.action_bits;
+        info.priority_u16 = row.priority_u16;
+        info.is_enabled = row.is_enabled != 0;
+        info.is_valid = row.is_valid == 1;
+        info.created_time = row.created_time;
+        info.last_modified_time = row.last_modified_time;
+    };
+    Status status = readRecordsToVector<GraphPrivilegeRecord, GraphPrivilegeCatalogInfo>(
+        graph_privilege_table_page_, rows_out, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    for (auto& row : rows_out)
+    {
+        auto found = findRecordInHeapPage<GraphPrivilegeRecord>(
+            graph_privilege_table_page_,
+            [&row](const GraphPrivilegeRecord& rec) {
+                return rec.is_valid == 1 && rec.graph_priv_id == row.graph_priv_id;
+            },
+            ctx);
+        if (found.status != Status::OK)
+        {
+            return found.status;
+        }
+        uint64_t xmin = 0;
+        status = loadStringFromToast(found.record.graph_scope_oid, xmin, row.graph_scope, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1249",
+                                    "graph_privilege.graph_scope payload invalid");
+            return Status::PAGE_CORRUPT;
+        }
+        if (row.has_label_pattern)
+        {
+            status = loadStringFromToast(found.record.label_pattern_oid, xmin, row.label_pattern, ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1249",
+                                        "graph_privilege.label_pattern payload invalid");
+                return Status::PAGE_CORRUPT;
+            }
+        }
+        if (row.has_relationship_pattern)
+        {
+            status = loadStringFromToast(found.record.relationship_pattern_oid, xmin, row.relationship_pattern, ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1249",
+                                        "graph_privilege.relationship_pattern payload invalid");
+                return Status::PAGE_CORRUPT;
+            }
+        }
+        if (row.has_property_pattern)
+        {
+            status = loadStringFromToast(found.record.property_pattern_oid, xmin, row.property_pattern, ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1249",
+                                        "graph_privilege.property_pattern payload invalid");
+                return Status::PAGE_CORRUPT;
+            }
+        }
+    }
+    std::sort(rows_out.begin(), rows_out.end(),
+              [](const GraphPrivilegeCatalogInfo& lhs, const GraphPrivilegeCatalogInfo& rhs) {
+                  if (lhs.priority_u16 != rhs.priority_u16)
+                  {
+                      return lhs.priority_u16 < rhs.priority_u16;
+                  }
+                  return compareUuidBytesLocal(lhs.graph_priv_id, rhs.graph_priv_id) < 0;
+              });
+    return Status::OK;
+}
+
+auto CatalogManager::deleteGraphPrivilegeCatalogEntry(const ID& graph_priv_id,
+                                                      ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto result = findRecordInHeapPage<GraphPrivilegeRecord>(
+        graph_privilege_table_page_,
+        [&graph_priv_id](const GraphPrivilegeRecord& row) {
+            return row.is_valid == 1 && row.graph_priv_id == graph_priv_id;
+        },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+    GraphPrivilegeRecord updated = result.record;
+    updated.is_valid = 0;
+    updated.last_modified_time = catalogNowTicks();
+    return updateRecordInHeapPage(graph_privilege_table_page_, result.slot_index, updated, ctx);
+}
+
+auto CatalogManager::evaluateGraphPrivilegePolicy(const GraphAuthorizationRequest& request,
+                                                  GraphAuthorizationDecision& decision_out,
+                                                  ErrorContext* ctx) -> Status
+{
+    decision_out = GraphAuthorizationDecision{};
+    if (request.requested_action_bits == 0 || hasUnknownGraphActionBits(request.requested_action_bits))
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_ARGUMENT, "SEC_1248",
+                                "graph request action bits are invalid");
+        VNextMetricsEventModel::recordSecurityEvent(
+            "graph_privilege_policy", "reject", "SEC_1248");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    std::vector<GraphPrivilegeCatalogInfo> rows;
+    Status status = listGraphPrivilegeCatalogEntries(rows, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    uint64_t allow_bits = 0;
+    for (const auto& row : rows)
+    {
+        if (!row.is_enabled)
+        {
+            continue;
+        }
+        if (!subjectRefMatches(row.subject_id, row.subject_type, request.effective_subjects))
+        {
+            continue;
+        }
+        if (!wildcardMatchNoRegexCaseInsensitive(row.graph_scope, request.graph_scope))
+        {
+            continue;
+        }
+        if (row.has_label_pattern &&
+            (request.label_name.empty() ||
+             !wildcardMatchNoRegexCaseInsensitive(row.label_pattern, request.label_name)))
+        {
+            continue;
+        }
+        if (row.has_relationship_pattern &&
+            (request.relationship_name.empty() ||
+             !wildcardMatchNoRegexCaseInsensitive(row.relationship_pattern, request.relationship_name)))
+        {
+            continue;
+        }
+        if (row.has_property_pattern &&
+            (request.property_name.empty() ||
+             !wildcardMatchNoRegexCaseInsensitive(row.property_pattern, request.property_name)))
+        {
+            continue;
+        }
+        if ((row.action_bits & request.requested_action_bits) == 0)
+        {
+            continue;
+        }
+        decision_out.matched_rule_id = row.graph_priv_id;
+        if (row.effect == PolicyEffect::DENY)
+        {
+            decision_out.reject_code = "SEC_1244";
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1244",
+                                    "Graph deny privilege matched request");
+            VNextMetricsEventModel::recordSecurityEvent(
+                "graph_privilege_policy", "reject", "SEC_1244");
+            return Status::INVALID_AUTHORIZATION;
+        }
+        allow_bits |= (row.action_bits & request.requested_action_bits);
+    }
+
+    if ((allow_bits & request.requested_action_bits) != request.requested_action_bits)
+    {
+        decision_out.reject_code = "SEC_1245";
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1245",
+                                "Graph allow privilege missing for requested action");
+        VNextMetricsEventModel::recordSecurityEvent(
+            "graph_privilege_policy", "reject", "SEC_1245");
+        return Status::INVALID_AUTHORIZATION;
+    }
+    decision_out.allowed = true;
+    VNextMetricsEventModel::recordSecurityEvent(
+        "graph_privilege_policy", "allow", "NONE");
+    return Status::OK;
+}
+
+auto CatalogManager::upsertTokenCatalogEntry(const TokenCatalogInfo& info,
+                                             ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (isZeroUuidLocal(info.token_id) || isZeroUuidLocal(info.subject_account_id) || info.issuer.empty())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "token requires token_uuid, subject_account_uuid, and issuer");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (!isValidTokenKind(info.token_kind) || !isValidTokenScopeModel(info.scope_model))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "token enum value is invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (info.not_before_utc == 0 || info.not_after_utc == 0 || info.not_before_utc > info.not_after_utc)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "token validity window is invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (info.has_revoked_time_utc && info.revoked_time_utc == 0)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "token.revoked_time_utc is invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (info.has_last_used_time_utc && info.last_used_time_utc == 0)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "token.last_used_time_utc is invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (info.has_revoked_time_utc && info.revoked_time_utc < info.not_before_utc)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "token.revoked_time_utc precedes not_before_utc");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    auto duplicate_predicate = [&info](const TokenRecord& row) {
+        return row.is_valid == 1 &&
+               row.token_id != info.token_id &&
+               std::memcmp(row.token_hash.data(), info.token_hash.data(), info.token_hash.size()) == 0;
+    };
+    auto duplicate = findRecordInHeapPage<TokenRecord>(token_table_page_, duplicate_predicate, ctx);
+    if (duplicate.status == Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, "UNIQUE(token_hash) violated");
+        return Status::CONSTRAINT_VIOLATION;
+    }
+    if (duplicate.status != Status::NOT_FOUND)
+    {
+        return duplicate.status;
+    }
+
+    TokenRecord rec{};
+    rec.token_id = info.token_id;
+    rec.token_kind = static_cast<uint8_t>(info.token_kind);
+    rec.scope_model = static_cast<uint8_t>(info.scope_model);
+    rec.has_revoked_time = info.has_revoked_time_utc ? 1 : 0;
+    rec.has_rotation_group = info.has_rotation_group ? 1 : 0;
+    rec.has_last_used_time = info.has_last_used_time_utc ? 1 : 0;
+    rec.is_valid = info.is_valid ? 1 : 0;
+    rec.token_hash = info.token_hash;
+    rec.subject_account_id = info.subject_account_id;
+    rec.rotation_group_id = info.has_rotation_group ? info.rotation_group_id : ID{};
+    rec.not_before_utc = info.not_before_utc;
+    rec.not_after_utc = info.not_after_utc;
+    rec.revoked_time_utc = info.has_revoked_time_utc ? info.revoked_time_utc : 0;
+    rec.last_used_time_utc = info.has_last_used_time_utc ? info.last_used_time_utc : 0;
+    rec.created_time = (info.created_time == 0) ? catalogNowTicks() : info.created_time;
+    rec.last_modified_time = (info.last_modified_time == 0) ? catalogNowTicks() : info.last_modified_time;
+
+    uint64_t xmin = 0;
+    Status status = storeStringInToast(info.issuer, xmin, rec.issuer_oid, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    auto existing = findRecordInHeapPage<TokenRecord>(
+        token_table_page_,
+        [&info](const TokenRecord& row) { return row.is_valid == 1 && row.token_id == info.token_id; },
+        ctx);
+    if (existing.status == Status::OK)
+    {
+        rec.created_time = existing.record.created_time;
+    }
+    else if (existing.status != Status::NOT_FOUND)
+    {
+        return existing.status;
+    }
+
+    auto matcher = [&info](const TokenRecord& row) {
+        return row.is_valid == 1 && row.token_id == info.token_id;
+    };
+    return updateRecordInHeapPage(token_table_page_, matcher, rec, ctx);
+}
+
+auto CatalogManager::getTokenCatalogEntry(const ID& token_id,
+                                          TokenCatalogInfo& info_out,
+                                          ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto result = findRecordInHeapPage<TokenRecord>(
+        token_table_page_,
+        [&token_id](const TokenRecord& row) { return row.is_valid == 1 && row.token_id == token_id; },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+    if (!isValidTokenKind(static_cast<TokenKind>(result.record.token_kind)) ||
+        !isValidTokenScopeModel(static_cast<TokenScopeModel>(result.record.scope_model)))
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1256",
+                                "token enum value invalid on disk");
+        return Status::PAGE_CORRUPT;
+    }
+
+    info_out = TokenCatalogInfo{};
+    info_out.token_id = result.record.token_id;
+    info_out.token_kind = static_cast<TokenKind>(result.record.token_kind);
+    info_out.token_hash = result.record.token_hash;
+    info_out.subject_account_id = result.record.subject_account_id;
+    info_out.scope_model = static_cast<TokenScopeModel>(result.record.scope_model);
+    info_out.not_before_utc = result.record.not_before_utc;
+    info_out.not_after_utc = result.record.not_after_utc;
+    info_out.has_revoked_time_utc = result.record.has_revoked_time != 0;
+    info_out.revoked_time_utc = result.record.revoked_time_utc;
+    info_out.has_rotation_group = result.record.has_rotation_group != 0;
+    info_out.rotation_group_id = result.record.rotation_group_id;
+    info_out.has_last_used_time_utc = result.record.has_last_used_time != 0;
+    info_out.last_used_time_utc = result.record.last_used_time_utc;
+    info_out.is_valid = result.record.is_valid == 1;
+    info_out.created_time = result.record.created_time;
+    info_out.last_modified_time = result.record.last_modified_time;
+
+    uint64_t xmin = 0;
+    Status status = loadStringFromToast(result.record.issuer_oid, xmin, info_out.issuer, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1256", "token issuer payload invalid");
+        return Status::PAGE_CORRUPT;
+    }
+    return Status::OK;
+}
+
+auto CatalogManager::listTokenCatalogEntries(std::vector<TokenCatalogInfo>& rows_out,
+                                             ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+
+    std::vector<TokenRecord> records;
+    auto filter = [](const TokenRecord& row) { return row.is_valid == 1; };
+    auto converter = [](const TokenRecord& row, TokenRecord& out) { out = row; };
+    Status status = readRecordsToVector<TokenRecord, TokenRecord>(
+        token_table_page_, records, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    rows_out.reserve(records.size());
+    for (const auto& rec : records)
+    {
+        if (!isValidTokenKind(static_cast<TokenKind>(rec.token_kind)) ||
+            !isValidTokenScopeModel(static_cast<TokenScopeModel>(rec.scope_model)))
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1256",
+                                    "token enum value invalid on disk");
+            return Status::PAGE_CORRUPT;
+        }
+        TokenCatalogInfo info{};
+        info.token_id = rec.token_id;
+        info.token_kind = static_cast<TokenKind>(rec.token_kind);
+        info.token_hash = rec.token_hash;
+        info.subject_account_id = rec.subject_account_id;
+        info.scope_model = static_cast<TokenScopeModel>(rec.scope_model);
+        info.not_before_utc = rec.not_before_utc;
+        info.not_after_utc = rec.not_after_utc;
+        info.has_revoked_time_utc = rec.has_revoked_time != 0;
+        info.revoked_time_utc = rec.revoked_time_utc;
+        info.has_rotation_group = rec.has_rotation_group != 0;
+        info.rotation_group_id = rec.rotation_group_id;
+        info.has_last_used_time_utc = rec.has_last_used_time != 0;
+        info.last_used_time_utc = rec.last_used_time_utc;
+        info.is_valid = rec.is_valid == 1;
+        info.created_time = rec.created_time;
+        info.last_modified_time = rec.last_modified_time;
+        uint64_t xmin = 0;
+        status = loadStringFromToast(rec.issuer_oid, xmin, info.issuer, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1256",
+                                    "token issuer payload invalid");
+            return Status::PAGE_CORRUPT;
+        }
+        rows_out.push_back(std::move(info));
+    }
+
+    std::sort(rows_out.begin(), rows_out.end(),
+              [](const TokenCatalogInfo& lhs, const TokenCatalogInfo& rhs) {
+                  return compareUuidBytesLocal(lhs.token_id, rhs.token_id) < 0;
+              });
+    return Status::OK;
+}
+
+auto CatalogManager::deleteTokenCatalogEntry(const ID& token_id,
+                                             ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto result = findRecordInHeapPage<TokenRecord>(
+        token_table_page_,
+        [&token_id](const TokenRecord& row) { return row.is_valid == 1 && row.token_id == token_id; },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+    TokenRecord updated = result.record;
+    updated.is_valid = 0;
+    updated.last_modified_time = catalogNowTicks();
+    return updateRecordInHeapPage(token_table_page_, result.slot_index, updated, ctx);
+}
+
+auto CatalogManager::upsertTokenScopeEntryCatalogEntry(const TokenScopeEntryCatalogInfo& info,
+                                                       ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (isZeroUuidLocal(info.scope_id) || isZeroUuidLocal(info.token_id) ||
+        info.resource_pattern.empty() || info.action_bits == 0)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "token_scope_entry requires scope_uuid, token_uuid, resource_pattern, action_bits");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (!isValidPolicyEffect(info.effect) || !isValidTokenResourceKind(info.resource_kind))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "token_scope_entry enum value is invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+    Status status = validateWildcardPatternNoRegexWithCode(info.resource_pattern, "SEC_1246", ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    auto token = findRecordInHeapPage<TokenRecord>(
+        token_table_page_,
+        [&info](const TokenRecord& row) { return row.is_valid == 1 && row.token_id == info.token_id; },
+        ctx);
+    if (token.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1250",
+                                "token_scope_entry references unknown token");
+        return Status::INVALID_AUTHORIZATION;
+    }
+
+    TokenScopeEntryRecord rec{};
+    rec.scope_id = info.scope_id;
+    rec.token_id = info.token_id;
+    rec.effect = static_cast<uint8_t>(info.effect);
+    rec.resource_kind = static_cast<uint8_t>(info.resource_kind);
+    rec.is_valid = info.is_valid ? 1 : 0;
+    rec.priority_u16 = info.priority_u16;
+    rec.action_bits = info.action_bits;
+    rec.created_time = (info.created_time == 0) ? catalogNowTicks() : info.created_time;
+    rec.last_modified_time = (info.last_modified_time == 0) ? catalogNowTicks() : info.last_modified_time;
+
+    uint64_t xmin = 0;
+    status = storeStringInToast(info.resource_pattern, xmin, rec.resource_pattern_oid, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    auto existing = findRecordInHeapPage<TokenScopeEntryRecord>(
+        token_scope_entry_table_page_,
+        [&info](const TokenScopeEntryRecord& row) { return row.is_valid == 1 && row.scope_id == info.scope_id; },
+        ctx);
+    if (existing.status == Status::OK)
+    {
+        rec.created_time = existing.record.created_time;
+    }
+    else if (existing.status != Status::NOT_FOUND)
+    {
+        return existing.status;
+    }
+
+    auto matcher = [&info](const TokenScopeEntryRecord& row) {
+        return row.is_valid == 1 && row.scope_id == info.scope_id;
+    };
+    return updateRecordInHeapPage(token_scope_entry_table_page_, matcher, rec, ctx);
+}
+
+auto CatalogManager::getTokenScopeEntryCatalogEntry(const ID& scope_id,
+                                                    TokenScopeEntryCatalogInfo& info_out,
+                                                    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto result = findRecordInHeapPage<TokenScopeEntryRecord>(
+        token_scope_entry_table_page_,
+        [&scope_id](const TokenScopeEntryRecord& row) { return row.is_valid == 1 && row.scope_id == scope_id; },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+    if (!isValidPolicyEffect(static_cast<PolicyEffect>(result.record.effect)) ||
+        !isValidTokenResourceKind(static_cast<TokenResourceKind>(result.record.resource_kind)))
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1256",
+                                "token_scope_entry enum value invalid on disk");
+        return Status::PAGE_CORRUPT;
+    }
+
+    info_out = TokenScopeEntryCatalogInfo{};
+    info_out.scope_id = result.record.scope_id;
+    info_out.token_id = result.record.token_id;
+    info_out.effect = static_cast<PolicyEffect>(result.record.effect);
+    info_out.resource_kind = static_cast<TokenResourceKind>(result.record.resource_kind);
+    info_out.action_bits = result.record.action_bits;
+    info_out.priority_u16 = result.record.priority_u16;
+    info_out.is_valid = result.record.is_valid == 1;
+    info_out.created_time = result.record.created_time;
+    info_out.last_modified_time = result.record.last_modified_time;
+
+    uint64_t xmin = 0;
+    Status status = loadStringFromToast(result.record.resource_pattern_oid, xmin, info_out.resource_pattern, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1256",
+                                "token_scope_entry.resource_pattern payload invalid");
+        return Status::PAGE_CORRUPT;
+    }
+    return Status::OK;
+}
+
+auto CatalogManager::listTokenScopeEntryCatalogEntries(const ID& token_id,
+                                                       std::vector<TokenScopeEntryCatalogInfo>& rows_out,
+                                                       ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+
+    std::vector<TokenScopeEntryRecord> records;
+    auto filter = [&token_id](const TokenScopeEntryRecord& row) {
+        if (row.is_valid != 1)
+        {
+            return false;
+        }
+        return isZeroUuidLocal(token_id) || row.token_id == token_id;
+    };
+    auto converter = [](const TokenScopeEntryRecord& row, TokenScopeEntryRecord& out) { out = row; };
+    Status status = readRecordsToVector<TokenScopeEntryRecord, TokenScopeEntryRecord>(
+        token_scope_entry_table_page_, records, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    rows_out.reserve(records.size());
+    for (const auto& rec : records)
+    {
+        if (!isValidPolicyEffect(static_cast<PolicyEffect>(rec.effect)) ||
+            !isValidTokenResourceKind(static_cast<TokenResourceKind>(rec.resource_kind)))
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1256",
+                                    "token_scope_entry enum value invalid on disk");
+            return Status::PAGE_CORRUPT;
+        }
+        TokenScopeEntryCatalogInfo info{};
+        info.scope_id = rec.scope_id;
+        info.token_id = rec.token_id;
+        info.effect = static_cast<PolicyEffect>(rec.effect);
+        info.resource_kind = static_cast<TokenResourceKind>(rec.resource_kind);
+        info.action_bits = rec.action_bits;
+        info.priority_u16 = rec.priority_u16;
+        info.is_valid = rec.is_valid == 1;
+        info.created_time = rec.created_time;
+        info.last_modified_time = rec.last_modified_time;
+        uint64_t xmin = 0;
+        status = loadStringFromToast(rec.resource_pattern_oid, xmin, info.resource_pattern, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1256",
+                                    "token_scope_entry.resource_pattern payload invalid");
+            return Status::PAGE_CORRUPT;
+        }
+        rows_out.push_back(std::move(info));
+    }
+
+    std::sort(rows_out.begin(), rows_out.end(),
+              [](const TokenScopeEntryCatalogInfo& lhs, const TokenScopeEntryCatalogInfo& rhs) {
+                  if (lhs.priority_u16 != rhs.priority_u16)
+                  {
+                      return lhs.priority_u16 < rhs.priority_u16;
+                  }
+                  return compareUuidBytesLocal(lhs.scope_id, rhs.scope_id) < 0;
+              });
+    return Status::OK;
+}
+
+auto CatalogManager::deleteTokenScopeEntryCatalogEntry(const ID& scope_id,
+                                                       ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto result = findRecordInHeapPage<TokenScopeEntryRecord>(
+        token_scope_entry_table_page_,
+        [&scope_id](const TokenScopeEntryRecord& row) { return row.is_valid == 1 && row.scope_id == scope_id; },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+    TokenScopeEntryRecord updated = result.record;
+    updated.is_valid = 0;
+    updated.last_modified_time = catalogNowTicks();
+    return updateRecordInHeapPage(token_scope_entry_table_page_, result.slot_index, updated, ctx);
+}
+
+auto CatalogManager::validateTokenScope(const TokenValidationRequest& request,
+                                        TokenValidationDecision& decision_out,
+                                        ErrorContext* ctx) -> Status
+{
+    decision_out = TokenValidationDecision{};
+    if (!isValidTokenResourceKind(request.resource_kind) || request.requested_action_bits == 0)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "token scope request is invalid");
+        VNextMetricsEventModel::recordSecurityEvent(
+            "token_scope_validation", "reject", "SEC_1257");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    std::vector<TokenCatalogInfo> tokens;
+    Status status = listTokenCatalogEntries(tokens, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    TokenCatalogInfo matched_token{};
+    bool found_token = false;
+    for (const auto& token : tokens)
+    {
+        if (constantTimeEqualHash32(token.token_hash, request.presented_token_hash))
+        {
+            matched_token = token;
+            found_token = true;
+            break;
+        }
+    }
+    if (!found_token)
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1250",
+                                "Token missing/unknown");
+        decision_out.reject_code = "SEC_1250";
+        VNextMetricsEventModel::recordSecurityEvent(
+            "token_scope_validation", "reject", "SEC_1250");
+        return Status::INVALID_AUTHORIZATION;
+    }
+    if (!isValidTokenScopeModel(matched_token.scope_model))
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_ARGUMENT, "SEC_1257", "Unknown token scope model");
+        decision_out.reject_code = "SEC_1257";
+        VNextMetricsEventModel::recordSecurityEvent(
+            "token_scope_validation", "reject", "SEC_1257");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    const uint64_t now_utc = request.now_utc == 0 ? catalogNowTicks() : request.now_utc;
+    if (matched_token.has_revoked_time_utc)
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1251", "Token revoked");
+        decision_out.reject_code = "SEC_1251";
+        VNextMetricsEventModel::recordSecurityEvent(
+            "token_scope_validation", "reject", "SEC_1251");
+        return Status::INVALID_AUTHORIZATION;
+    }
+    if (now_utc < matched_token.not_before_utc || now_utc > matched_token.not_after_utc)
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1252",
+                                "Token not valid at current time");
+        decision_out.reject_code = "SEC_1252";
+        VNextMetricsEventModel::recordSecurityEvent(
+            "token_scope_validation", "reject", "SEC_1252");
+        return Status::INVALID_AUTHORIZATION;
+    }
+
+    std::vector<TokenScopeEntryCatalogInfo> scopes;
+    status = listTokenScopeEntryCatalogEntries(matched_token.token_id, scopes, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    uint64_t allow_bits = 0;
+    for (const auto& scope : scopes)
+    {
+        if (scope.resource_kind != request.resource_kind)
+        {
+            continue;
+        }
+        if (!wildcardMatchNoRegexCaseInsensitive(scope.resource_pattern, request.resource_name))
+        {
+            continue;
+        }
+        const uint64_t matched_bits = (scope.action_bits & request.requested_action_bits);
+        if (matched_bits == 0)
+        {
+            continue;
+        }
+        decision_out.matched_scope_ids.push_back(scope.scope_id);
+        if (scope.effect == PolicyEffect::DENY)
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1253",
+                                    "Token scope deny matched request");
+            decision_out.reject_code = "SEC_1253";
+            VNextMetricsEventModel::recordSecurityEvent(
+                "token_scope_validation", "reject", "SEC_1253");
+            return Status::INVALID_AUTHORIZATION;
+        }
+        allow_bits |= matched_bits;
+    }
+
+    if ((allow_bits & request.requested_action_bits) != request.requested_action_bits)
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1253",
+                                "Token scope allow not found");
+        decision_out.reject_code = "SEC_1253";
+        VNextMetricsEventModel::recordSecurityEvent(
+            "token_scope_validation", "reject", "SEC_1253");
+        return Status::INVALID_AUTHORIZATION;
+    }
+
+    decision_out.allowed = true;
+    decision_out.token_id = matched_token.token_id;
+    decision_out.subject_account_id = matched_token.subject_account_id;
+    decision_out.scope_model = matched_token.scope_model;
+    VNextMetricsEventModel::recordSecurityEvent(
+        "token_scope_validation", "allow", "NONE");
+    return Status::OK;
+}
+
+auto CatalogManager::upsertQuotaProfileCatalogEntry(const QuotaProfileCatalogInfo& info,
+                                                    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (isZeroUuidLocal(info.quota_profile_id) || info.profile_name.empty())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "quota_profile requires quota_profile_uuid and profile_name");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (info.window_ms == 0)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "quota_profile.window_ms must be > 0");
+        return Status::INVALID_ARGUMENT;
+    }
+    ErrorContext local_ctx;
+    Status status = UTF8Utils::validateStorageCapacity(
+        info.profile_name, sizeof(QuotaProfileRecord{}.profile_name), sizeof(QuotaProfileRecord{}.profile_name), &local_ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "quota_profile.profile_name too long");
+        return status;
+    }
+
+    auto duplicate_predicate = [&info](const QuotaProfileRecord& row) {
+        return row.is_valid == 1 &&
+               row.quota_profile_id != info.quota_profile_id &&
+               fixedNameFromBuffer(row.profile_name, sizeof(row.profile_name)) == info.profile_name;
+    };
+    auto duplicate = findRecordInHeapPage<QuotaProfileRecord>(quota_profile_table_page_, duplicate_predicate, ctx);
+    if (duplicate.status == Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, "UNIQUE(profile_name) violated");
+        return Status::CONSTRAINT_VIOLATION;
+    }
+    if (duplicate.status != Status::NOT_FOUND)
+    {
+        return duplicate.status;
+    }
+
+    QuotaProfileRecord rec{};
+    rec.quota_profile_id = info.quota_profile_id;
+    std::strncpy(rec.profile_name,
+                 UTF8Utils::truncateToBytes(info.profile_name, sizeof(rec.profile_name)).c_str(),
+                 sizeof(rec.profile_name) - 1);
+    rec.max_requests_per_sec = info.max_requests_per_sec;
+    rec.max_concurrent_requests = info.max_concurrent_requests;
+    rec.max_read_bytes_per_sec = info.max_read_bytes_per_sec;
+    rec.max_write_bytes_per_sec = info.max_write_bytes_per_sec;
+    rec.max_result_rows = info.max_result_rows;
+    rec.max_cpu_ms_per_min = info.max_cpu_ms_per_min;
+    rec.window_ms = info.window_ms;
+    rec.is_enabled = info.is_enabled ? 1 : 0;
+    rec.is_valid = info.is_valid ? 1 : 0;
+    rec.created_time = (info.created_time == 0) ? catalogNowTicks() : info.created_time;
+    rec.last_modified_time = (info.last_modified_time == 0) ? catalogNowTicks() : info.last_modified_time;
+
+    auto existing = findRecordInHeapPage<QuotaProfileRecord>(
+        quota_profile_table_page_,
+        [&info](const QuotaProfileRecord& row) { return row.is_valid == 1 && row.quota_profile_id == info.quota_profile_id; },
+        ctx);
+    if (existing.status == Status::OK)
+    {
+        rec.created_time = existing.record.created_time;
+    }
+    else if (existing.status != Status::NOT_FOUND)
+    {
+        return existing.status;
+    }
+
+    auto matcher = [&info](const QuotaProfileRecord& row) {
+        return row.is_valid == 1 && row.quota_profile_id == info.quota_profile_id;
+    };
+    return updateRecordInHeapPage(quota_profile_table_page_, matcher, rec, ctx);
+}
+
+auto CatalogManager::getQuotaProfileCatalogEntry(const ID& quota_profile_id,
+                                                 QuotaProfileCatalogInfo& info_out,
+                                                 ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto result = findRecordInHeapPage<QuotaProfileRecord>(
+        quota_profile_table_page_,
+        [&quota_profile_id](const QuotaProfileRecord& row) {
+            return row.is_valid == 1 && row.quota_profile_id == quota_profile_id;
+        },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+    info_out = QuotaProfileCatalogInfo{};
+    info_out.quota_profile_id = result.record.quota_profile_id;
+    info_out.profile_name = fixedNameFromBuffer(result.record.profile_name, sizeof(result.record.profile_name));
+    info_out.max_requests_per_sec = result.record.max_requests_per_sec;
+    info_out.max_concurrent_requests = result.record.max_concurrent_requests;
+    info_out.max_read_bytes_per_sec = result.record.max_read_bytes_per_sec;
+    info_out.max_write_bytes_per_sec = result.record.max_write_bytes_per_sec;
+    info_out.max_result_rows = result.record.max_result_rows;
+    info_out.max_cpu_ms_per_min = result.record.max_cpu_ms_per_min;
+    info_out.window_ms = result.record.window_ms;
+    info_out.is_enabled = result.record.is_enabled != 0;
+    info_out.is_valid = result.record.is_valid == 1;
+    info_out.created_time = result.record.created_time;
+    info_out.last_modified_time = result.record.last_modified_time;
+    return Status::OK;
+}
+
+auto CatalogManager::listQuotaProfileCatalogEntries(std::vector<QuotaProfileCatalogInfo>& rows_out,
+                                                    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+    auto filter = [](const QuotaProfileRecord& row) { return row.is_valid == 1; };
+    auto converter = [](const QuotaProfileRecord& row, QuotaProfileCatalogInfo& info) {
+        info = QuotaProfileCatalogInfo{};
+        info.quota_profile_id = row.quota_profile_id;
+        info.profile_name = fixedNameFromBuffer(row.profile_name, sizeof(row.profile_name));
+        info.max_requests_per_sec = row.max_requests_per_sec;
+        info.max_concurrent_requests = row.max_concurrent_requests;
+        info.max_read_bytes_per_sec = row.max_read_bytes_per_sec;
+        info.max_write_bytes_per_sec = row.max_write_bytes_per_sec;
+        info.max_result_rows = row.max_result_rows;
+        info.max_cpu_ms_per_min = row.max_cpu_ms_per_min;
+        info.window_ms = row.window_ms;
+        info.is_enabled = row.is_enabled != 0;
+        info.is_valid = row.is_valid == 1;
+        info.created_time = row.created_time;
+        info.last_modified_time = row.last_modified_time;
+    };
+    Status status = readRecordsToVector<QuotaProfileRecord, QuotaProfileCatalogInfo>(
+        quota_profile_table_page_, rows_out, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    std::sort(rows_out.begin(), rows_out.end(),
+              [](const QuotaProfileCatalogInfo& lhs, const QuotaProfileCatalogInfo& rhs) {
+                  if (lhs.profile_name != rhs.profile_name)
+                  {
+                      return lhs.profile_name < rhs.profile_name;
+                  }
+                  return compareUuidBytesLocal(lhs.quota_profile_id, rhs.quota_profile_id) < 0;
+              });
+    return Status::OK;
+}
+
+auto CatalogManager::deleteQuotaProfileCatalogEntry(const ID& quota_profile_id,
+                                                    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto result = findRecordInHeapPage<QuotaProfileRecord>(
+        quota_profile_table_page_,
+        [&quota_profile_id](const QuotaProfileRecord& row) {
+            return row.is_valid == 1 && row.quota_profile_id == quota_profile_id;
+        },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+    QuotaProfileRecord updated = result.record;
+    updated.is_valid = 0;
+    updated.last_modified_time = catalogNowTicks();
+    return updateRecordInHeapPage(quota_profile_table_page_, result.slot_index, updated, ctx);
+}
+
+auto CatalogManager::upsertQuotaBindingCatalogEntry(const QuotaBindingCatalogInfo& info,
+                                                    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (isZeroUuidLocal(info.binding_id) || isZeroUuidLocal(info.quota_profile_id))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "quota_binding requires binding_uuid and quota_profile_uuid");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (!isValidBindingSubjectType(info.subject_type) ||
+        !isValidBindingResourceScopeKind(info.resource_scope_kind))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "quota_binding enum value is invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    if ((info.subject_type == BindingSubjectType::USER ||
+         info.subject_type == BindingSubjectType::ROLE ||
+         info.subject_type == BindingSubjectType::GROUP) &&
+        (!info.has_subject_id || isZeroUuidLocal(info.subject_id)))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "quota_binding subject_uuid required for USER/ROLE/GROUP");
+        return Status::INVALID_ARGUMENT;
+    }
+    if ((info.subject_type == BindingSubjectType::TENANT ||
+         info.subject_type == BindingSubjectType::GLOBAL) &&
+        info.has_subject_id)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "quota_binding subject_uuid must be null for TENANT/GLOBAL");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    if (info.has_tenant_scope)
+    {
+        Status status = validateWildcardPatternNoRegexWithCode(info.tenant_scope, "SEC_1246", ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    switch (info.resource_scope_kind)
+    {
+        case BindingResourceScopeKind::GLOBAL:
+            if (info.has_resource_scope_value)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "quota_binding GLOBAL scope cannot provide resource_scope_value");
+                return Status::INVALID_ARGUMENT;
+            }
+            break;
+        case BindingResourceScopeKind::DATABASE:
+        case BindingResourceScopeKind::SCHEMA:
+            if (!info.has_resource_scope_value || info.resource_scope_value.empty())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "quota_binding scope requires resource_scope_value");
+                return Status::INVALID_ARGUMENT;
+            }
+            break;
+        case BindingResourceScopeKind::RESOURCE_PATTERN:
+            if (!info.has_resource_scope_value || info.resource_scope_value.empty())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "quota_binding RESOURCE_PATTERN requires resource_scope_value");
+                return Status::INVALID_ARGUMENT;
+            }
+            {
+                Status status = validateWildcardPatternNoRegexWithCode(info.resource_scope_value, "SEC_1246", ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+            }
+            break;
+    }
+
+    auto profile = findRecordInHeapPage<QuotaProfileRecord>(
+        quota_profile_table_page_,
+        [&info](const QuotaProfileRecord& row) {
+            return row.is_valid == 1 && row.quota_profile_id == info.quota_profile_id;
+        },
+        ctx);
+    if (profile.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1258",
+                                "quota_binding references missing quota profile");
+        return Status::INVALID_AUTHORIZATION;
+    }
+
+    QuotaBindingRecord rec{};
+    rec.binding_id = info.binding_id;
+    rec.subject_type = static_cast<uint8_t>(info.subject_type);
+    rec.has_subject_id = info.has_subject_id ? 1 : 0;
+    rec.has_tenant_scope = info.has_tenant_scope ? 1 : 0;
+    rec.resource_scope_kind = static_cast<uint8_t>(info.resource_scope_kind);
+    rec.has_resource_scope_value = info.has_resource_scope_value ? 1 : 0;
+    rec.is_valid = info.is_valid ? 1 : 0;
+    rec.priority_u16 = info.priority_u16;
+    rec.subject_id = info.has_subject_id ? info.subject_id : ID{};
+    rec.quota_profile_id = info.quota_profile_id;
+    rec.created_time = (info.created_time == 0) ? catalogNowTicks() : info.created_time;
+    rec.last_modified_time = (info.last_modified_time == 0) ? catalogNowTicks() : info.last_modified_time;
+
+    uint64_t xmin = 0;
+    if (info.has_tenant_scope)
+    {
+        Status status = storeStringInToast(info.tenant_scope, xmin, rec.tenant_scope_oid, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+    if (info.has_resource_scope_value)
+    {
+        Status status = storeStringInToast(info.resource_scope_value, xmin, rec.resource_scope_value_oid, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    auto existing = findRecordInHeapPage<QuotaBindingRecord>(
+        quota_binding_table_page_,
+        [&info](const QuotaBindingRecord& row) { return row.is_valid == 1 && row.binding_id == info.binding_id; },
+        ctx);
+    if (existing.status == Status::OK)
+    {
+        rec.created_time = existing.record.created_time;
+    }
+    else if (existing.status != Status::NOT_FOUND)
+    {
+        return existing.status;
+    }
+
+    auto matcher = [&info](const QuotaBindingRecord& row) {
+        return row.is_valid == 1 && row.binding_id == info.binding_id;
+    };
+    return updateRecordInHeapPage(quota_binding_table_page_, matcher, rec, ctx);
+}
+
+auto CatalogManager::getQuotaBindingCatalogEntry(const ID& binding_id,
+                                                 QuotaBindingCatalogInfo& info_out,
+                                                 ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto result = findRecordInHeapPage<QuotaBindingRecord>(
+        quota_binding_table_page_,
+        [&binding_id](const QuotaBindingRecord& row) { return row.is_valid == 1 && row.binding_id == binding_id; },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+    if (!isValidBindingSubjectType(static_cast<BindingSubjectType>(result.record.subject_type)) ||
+        !isValidBindingResourceScopeKind(static_cast<BindingResourceScopeKind>(result.record.resource_scope_kind)))
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1249",
+                                "quota_binding enum value invalid on disk");
+        return Status::PAGE_CORRUPT;
+    }
+
+    info_out = QuotaBindingCatalogInfo{};
+    info_out.binding_id = result.record.binding_id;
+    info_out.subject_type = static_cast<BindingSubjectType>(result.record.subject_type);
+    info_out.has_subject_id = result.record.has_subject_id != 0;
+    info_out.subject_id = result.record.subject_id;
+    info_out.has_tenant_scope = result.record.has_tenant_scope != 0;
+    info_out.resource_scope_kind = static_cast<BindingResourceScopeKind>(result.record.resource_scope_kind);
+    info_out.has_resource_scope_value = result.record.has_resource_scope_value != 0;
+    info_out.quota_profile_id = result.record.quota_profile_id;
+    info_out.priority_u16 = result.record.priority_u16;
+    info_out.is_valid = result.record.is_valid == 1;
+    info_out.created_time = result.record.created_time;
+    info_out.last_modified_time = result.record.last_modified_time;
+
+    uint64_t xmin = 0;
+    if (info_out.has_tenant_scope)
+    {
+        Status status = loadStringFromToast(result.record.tenant_scope_oid, xmin, info_out.tenant_scope, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1249",
+                                    "quota_binding.tenant_scope payload invalid");
+            return Status::PAGE_CORRUPT;
+        }
+    }
+    if (info_out.has_resource_scope_value)
+    {
+        Status status = loadStringFromToast(result.record.resource_scope_value_oid, xmin,
+                                            info_out.resource_scope_value, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1249",
+                                    "quota_binding.resource_scope_value payload invalid");
+            return Status::PAGE_CORRUPT;
+        }
+    }
+    return Status::OK;
+}
+
+auto CatalogManager::listQuotaBindingCatalogEntries(std::vector<QuotaBindingCatalogInfo>& rows_out,
+                                                    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+
+    std::vector<QuotaBindingRecord> records;
+    auto filter = [](const QuotaBindingRecord& row) { return row.is_valid == 1; };
+    auto converter = [](const QuotaBindingRecord& row, QuotaBindingRecord& out) { out = row; };
+    Status status = readRecordsToVector<QuotaBindingRecord, QuotaBindingRecord>(
+        quota_binding_table_page_, records, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    rows_out.reserve(records.size());
+    for (const auto& rec : records)
+    {
+        if (!isValidBindingSubjectType(static_cast<BindingSubjectType>(rec.subject_type)) ||
+            !isValidBindingResourceScopeKind(static_cast<BindingResourceScopeKind>(rec.resource_scope_kind)))
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1249",
+                                    "quota_binding enum value invalid on disk");
+            return Status::PAGE_CORRUPT;
+        }
+        QuotaBindingCatalogInfo info{};
+        info.binding_id = rec.binding_id;
+        info.subject_type = static_cast<BindingSubjectType>(rec.subject_type);
+        info.has_subject_id = rec.has_subject_id != 0;
+        info.subject_id = rec.subject_id;
+        info.has_tenant_scope = rec.has_tenant_scope != 0;
+        info.resource_scope_kind = static_cast<BindingResourceScopeKind>(rec.resource_scope_kind);
+        info.has_resource_scope_value = rec.has_resource_scope_value != 0;
+        info.quota_profile_id = rec.quota_profile_id;
+        info.priority_u16 = rec.priority_u16;
+        info.is_valid = rec.is_valid == 1;
+        info.created_time = rec.created_time;
+        info.last_modified_time = rec.last_modified_time;
+
+        uint64_t xmin = 0;
+        if (info.has_tenant_scope)
+        {
+            status = loadStringFromToast(rec.tenant_scope_oid, xmin, info.tenant_scope, ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1249",
+                                        "quota_binding.tenant_scope payload invalid");
+                return Status::PAGE_CORRUPT;
+            }
+        }
+        if (info.has_resource_scope_value)
+        {
+            status = loadStringFromToast(rec.resource_scope_value_oid, xmin, info.resource_scope_value, ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1249",
+                                        "quota_binding.resource_scope_value payload invalid");
+                return Status::PAGE_CORRUPT;
+            }
+        }
+        rows_out.push_back(std::move(info));
+    }
+
+    std::sort(rows_out.begin(), rows_out.end(),
+              [](const QuotaBindingCatalogInfo& lhs, const QuotaBindingCatalogInfo& rhs) {
+                  const int lhs_rank = bindingSubjectRank(lhs.subject_type);
+                  const int rhs_rank = bindingSubjectRank(rhs.subject_type);
+                  if (lhs_rank != rhs_rank)
+                  {
+                      return lhs_rank < rhs_rank;
+                  }
+                  if (lhs.priority_u16 != rhs.priority_u16)
+                  {
+                      return lhs.priority_u16 < rhs.priority_u16;
+                  }
+                  return compareUuidBytesLocal(lhs.binding_id, rhs.binding_id) < 0;
+              });
+    return Status::OK;
+}
+
+auto CatalogManager::deleteQuotaBindingCatalogEntry(const ID& binding_id,
+                                                    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto result = findRecordInHeapPage<QuotaBindingRecord>(
+        quota_binding_table_page_,
+        [&binding_id](const QuotaBindingRecord& row) { return row.is_valid == 1 && row.binding_id == binding_id; },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+    QuotaBindingRecord updated = result.record;
+    updated.is_valid = 0;
+    updated.last_modified_time = catalogNowTicks();
+    return updateRecordInHeapPage(quota_binding_table_page_, result.slot_index, updated, ctx);
+}
+
+auto CatalogManager::evaluateQuotaPolicy(const QuotaEvaluationRequest& request,
+                                         QuotaEvaluationDecision& decision_out,
+                                         ErrorContext* ctx) -> Status
+{
+    decision_out = QuotaEvaluationDecision{};
+
+    std::vector<QuotaProfileCatalogInfo> profiles;
+    Status status = listQuotaProfileCatalogEntries(profiles, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    std::unordered_map<ID, QuotaProfileCatalogInfo, IDHash> profile_map;
+    for (const auto& profile : profiles)
+    {
+        if (profile.is_enabled && profile.is_valid)
+        {
+            profile_map[profile.quota_profile_id] = profile;
+        }
+    }
+
+    std::vector<QuotaBindingCatalogInfo> bindings;
+    status = listQuotaBindingCatalogEntries(bindings, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    std::vector<QuotaBindingCatalogInfo> matched_bindings;
+    for (const auto& binding : bindings)
+    {
+        if (!binding.is_valid)
+        {
+            continue;
+        }
+        if (profile_map.find(binding.quota_profile_id) == profile_map.end())
+        {
+            continue;
+        }
+        if (!bindingSubjectMatches(request.profile_context, binding.subject_type,
+                                   binding.has_subject_id, binding.subject_id))
+        {
+            continue;
+        }
+        if (!bindingTenantMatches(request.profile_context.tenant_scope,
+                                  binding.has_tenant_scope,
+                                  binding.tenant_scope))
+        {
+            continue;
+        }
+        if (!bindingResourceScopeMatches(request.profile_context,
+                                         binding.resource_scope_kind,
+                                         binding.has_resource_scope_value,
+                                         binding.resource_scope_value))
+        {
+            continue;
+        }
+        matched_bindings.push_back(binding);
+    }
+
+    std::sort(matched_bindings.begin(), matched_bindings.end(),
+              [](const QuotaBindingCatalogInfo& lhs, const QuotaBindingCatalogInfo& rhs) {
+                  const int lhs_rank = bindingSubjectRank(lhs.subject_type);
+                  const int rhs_rank = bindingSubjectRank(rhs.subject_type);
+                  if (lhs_rank != rhs_rank)
+                  {
+                      return lhs_rank < rhs_rank;
+                  }
+                  if (lhs.priority_u16 != rhs.priority_u16)
+                  {
+                      return lhs.priority_u16 < rhs.priority_u16;
+                  }
+                  return compareUuidBytesLocal(lhs.binding_id, rhs.binding_id) < 0;
+              });
+
+    if (matched_bindings.empty())
+    {
+        if (request.require_profile)
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1258",
+                                    "Quota profile missing for required profile mode");
+            decision_out.reject_code = "SEC_1258";
+            VNextMetricsEventModel::recordSecurityEvent(
+                "quota_policy", "reject", "SEC_1258");
+            return Status::INVALID_AUTHORIZATION;
+        }
+        decision_out.allowed = true;
+        decision_out.profile_resolved = false;
+        VNextMetricsEventModel::recordSecurityEvent(
+            "quota_policy", "allow", "NONE");
+        return Status::OK;
+    }
+
+    const auto& chosen_binding = matched_bindings.front();
+    const auto profile_it = profile_map.find(chosen_binding.quota_profile_id);
+    if (profile_it == profile_map.end())
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1258",
+                                "Quota profile missing for required profile mode");
+        decision_out.reject_code = "SEC_1258";
+        VNextMetricsEventModel::recordSecurityEvent(
+            "quota_policy", "reject", "SEC_1258");
+        return Status::INVALID_AUTHORIZATION;
+    }
+    const QuotaProfileCatalogInfo& profile = profile_it->second;
+    decision_out.profile_resolved = true;
+    decision_out.quota_profile_id = profile.quota_profile_id;
+    decision_out.profile_name = profile.profile_name;
+
+    const uint64_t window_ms = profile.window_ms == 0 ? 1000 : profile.window_ms;
+    auto per_sec_to_window = [window_ms](uint64_t per_sec) -> uint64_t {
+        return (per_sec * window_ms + 999ULL) / 1000ULL;
+    };
+    if (profile.max_concurrent_requests > 0 &&
+        request.concurrent_requests > profile.max_concurrent_requests)
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1254", "Quota exceeded");
+        decision_out.reject_code = "SEC_1254";
+        VNextMetricsEventModel::recordSecurityEvent(
+            "quota_policy", "reject", "SEC_1254");
+        return Status::INVALID_AUTHORIZATION;
+    }
+    if (profile.max_requests_per_sec > 0 &&
+        request.window_request_count > per_sec_to_window(profile.max_requests_per_sec))
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1254", "Quota exceeded");
+        decision_out.reject_code = "SEC_1254";
+        VNextMetricsEventModel::recordSecurityEvent(
+            "quota_policy", "reject", "SEC_1254");
+        return Status::INVALID_AUTHORIZATION;
+    }
+    if (profile.max_read_bytes_per_sec > 0 &&
+        request.window_read_bytes > per_sec_to_window(profile.max_read_bytes_per_sec))
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1254", "Quota exceeded");
+        decision_out.reject_code = "SEC_1254";
+        VNextMetricsEventModel::recordSecurityEvent(
+            "quota_policy", "reject", "SEC_1254");
+        return Status::INVALID_AUTHORIZATION;
+    }
+    if (profile.max_write_bytes_per_sec > 0 &&
+        request.window_write_bytes > per_sec_to_window(profile.max_write_bytes_per_sec))
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1254", "Quota exceeded");
+        decision_out.reject_code = "SEC_1254";
+        VNextMetricsEventModel::recordSecurityEvent(
+            "quota_policy", "reject", "SEC_1254");
+        return Status::INVALID_AUTHORIZATION;
+    }
+    if (profile.max_result_rows > 0 &&
+        request.estimated_result_rows > profile.max_result_rows)
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1254", "Quota exceeded");
+        decision_out.reject_code = "SEC_1254";
+        VNextMetricsEventModel::recordSecurityEvent(
+            "quota_policy", "reject", "SEC_1254");
+        return Status::INVALID_AUTHORIZATION;
+    }
+    if (profile.max_cpu_ms_per_min > 0 &&
+        request.estimated_cpu_ms > profile.max_cpu_ms_per_min)
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1254", "Quota exceeded");
+        decision_out.reject_code = "SEC_1254";
+        VNextMetricsEventModel::recordSecurityEvent(
+            "quota_policy", "reject", "SEC_1254");
+        return Status::INVALID_AUTHORIZATION;
+    }
+
+    decision_out.allowed = true;
+    VNextMetricsEventModel::recordSecurityEvent(
+        "quota_policy", "allow", "NONE");
+    return Status::OK;
+}
+
+auto CatalogManager::upsertSettingsProfileCatalogEntry(const SettingsProfileCatalogInfo& info,
+                                                       ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (isZeroUuidLocal(info.settings_profile_id) || info.profile_name.empty())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "settings_profile requires settings_profile_uuid and profile_name");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    ErrorContext local_ctx;
+    Status status = UTF8Utils::validateStorageCapacity(
+        info.profile_name, sizeof(SettingsProfileRecord{}.profile_name),
+        sizeof(SettingsProfileRecord{}.profile_name), &local_ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "settings_profile.profile_name too long");
+        return status;
+    }
+
+    std::unordered_map<std::string, std::string> payload_map;
+    if (!parseSettingsPayload(info.settings_payload, payload_map))
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_ARGUMENT, "SEC_1259",
+                                "Settings profile payload invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    auto duplicate_predicate = [&info](const SettingsProfileRecord& row) {
+        return row.is_valid == 1 &&
+               row.settings_profile_id != info.settings_profile_id &&
+               fixedNameFromBuffer(row.profile_name, sizeof(row.profile_name)) == info.profile_name;
+    };
+    auto duplicate = findRecordInHeapPage<SettingsProfileRecord>(
+        settings_profile_table_page_, duplicate_predicate, ctx);
+    if (duplicate.status == Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, "UNIQUE(profile_name) violated");
+        return Status::CONSTRAINT_VIOLATION;
+    }
+    if (duplicate.status != Status::NOT_FOUND)
+    {
+        return duplicate.status;
+    }
+
+    SettingsProfileRecord rec{};
+    rec.settings_profile_id = info.settings_profile_id;
+    std::strncpy(rec.profile_name,
+                 UTF8Utils::truncateToBytes(info.profile_name, sizeof(rec.profile_name)).c_str(),
+                 sizeof(rec.profile_name) - 1);
+    rec.strict_mode = info.strict_mode ? 1 : 0;
+    rec.is_enabled = info.is_enabled ? 1 : 0;
+    rec.is_valid = info.is_valid ? 1 : 0;
+    rec.created_time = (info.created_time == 0) ? catalogNowTicks() : info.created_time;
+    rec.last_modified_time = (info.last_modified_time == 0) ? catalogNowTicks() : info.last_modified_time;
+
+    const std::string canonical_payload = encodeSettingsPayload(payload_map);
+    uint64_t xmin = 0;
+    status = storeStringInToast(canonical_payload, xmin, rec.settings_payload_oid, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    auto existing = findRecordInHeapPage<SettingsProfileRecord>(
+        settings_profile_table_page_,
+        [&info](const SettingsProfileRecord& row) {
+            return row.is_valid == 1 && row.settings_profile_id == info.settings_profile_id;
+        },
+        ctx);
+    if (existing.status == Status::OK)
+    {
+        rec.created_time = existing.record.created_time;
+    }
+    else if (existing.status != Status::NOT_FOUND)
+    {
+        return existing.status;
+    }
+
+    auto matcher = [&info](const SettingsProfileRecord& row) {
+        return row.is_valid == 1 && row.settings_profile_id == info.settings_profile_id;
+    };
+    return updateRecordInHeapPage(settings_profile_table_page_, matcher, rec, ctx);
+}
+
+auto CatalogManager::getSettingsProfileCatalogEntry(const ID& settings_profile_id,
+                                                    SettingsProfileCatalogInfo& info_out,
+                                                    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto result = findRecordInHeapPage<SettingsProfileRecord>(
+        settings_profile_table_page_,
+        [&settings_profile_id](const SettingsProfileRecord& row) {
+            return row.is_valid == 1 && row.settings_profile_id == settings_profile_id;
+        },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+
+    info_out = SettingsProfileCatalogInfo{};
+    info_out.settings_profile_id = result.record.settings_profile_id;
+    info_out.profile_name = fixedNameFromBuffer(result.record.profile_name, sizeof(result.record.profile_name));
+    info_out.strict_mode = result.record.strict_mode != 0;
+    info_out.is_enabled = result.record.is_enabled != 0;
+    info_out.is_valid = result.record.is_valid == 1;
+    info_out.created_time = result.record.created_time;
+    info_out.last_modified_time = result.record.last_modified_time;
+    uint64_t xmin = 0;
+    Status status = loadStringFromToast(result.record.settings_payload_oid, xmin, info_out.settings_payload, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1259",
+                                "settings_profile payload invalid");
+        return Status::PAGE_CORRUPT;
+    }
+    return Status::OK;
+}
+
+auto CatalogManager::listSettingsProfileCatalogEntries(std::vector<SettingsProfileCatalogInfo>& rows_out,
+                                                       ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+
+    std::vector<SettingsProfileRecord> records;
+    auto filter = [](const SettingsProfileRecord& row) { return row.is_valid == 1; };
+    auto converter = [](const SettingsProfileRecord& row, SettingsProfileRecord& out) { out = row; };
+    Status status = readRecordsToVector<SettingsProfileRecord, SettingsProfileRecord>(
+        settings_profile_table_page_, records, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    rows_out.reserve(records.size());
+    for (const auto& rec : records)
+    {
+        SettingsProfileCatalogInfo info{};
+        info.settings_profile_id = rec.settings_profile_id;
+        info.profile_name = fixedNameFromBuffer(rec.profile_name, sizeof(rec.profile_name));
+        info.strict_mode = rec.strict_mode != 0;
+        info.is_enabled = rec.is_enabled != 0;
+        info.is_valid = rec.is_valid == 1;
+        info.created_time = rec.created_time;
+        info.last_modified_time = rec.last_modified_time;
+        uint64_t xmin = 0;
+        status = loadStringFromToast(rec.settings_payload_oid, xmin, info.settings_payload, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1259",
+                                    "settings_profile payload invalid");
+            return Status::PAGE_CORRUPT;
+        }
+        rows_out.push_back(std::move(info));
+    }
+
+    std::sort(rows_out.begin(), rows_out.end(),
+              [](const SettingsProfileCatalogInfo& lhs, const SettingsProfileCatalogInfo& rhs) {
+                  if (lhs.profile_name != rhs.profile_name)
+                  {
+                      return lhs.profile_name < rhs.profile_name;
+                  }
+                  return compareUuidBytesLocal(lhs.settings_profile_id, rhs.settings_profile_id) < 0;
+              });
+    return Status::OK;
+}
+
+auto CatalogManager::deleteSettingsProfileCatalogEntry(const ID& settings_profile_id,
+                                                       ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto result = findRecordInHeapPage<SettingsProfileRecord>(
+        settings_profile_table_page_,
+        [&settings_profile_id](const SettingsProfileRecord& row) {
+            return row.is_valid == 1 && row.settings_profile_id == settings_profile_id;
+        },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+    SettingsProfileRecord updated = result.record;
+    updated.is_valid = 0;
+    updated.last_modified_time = catalogNowTicks();
+    return updateRecordInHeapPage(settings_profile_table_page_, result.slot_index, updated, ctx);
+}
+
+auto CatalogManager::upsertSettingsBindingCatalogEntry(const SettingsBindingCatalogInfo& info,
+                                                       ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (isZeroUuidLocal(info.binding_id) || isZeroUuidLocal(info.settings_profile_id))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "settings_binding requires binding_uuid and settings_profile_uuid");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (!isValidBindingSubjectType(info.subject_type) ||
+        !isValidBindingResourceScopeKind(info.resource_scope_kind))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "settings_binding enum value is invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+    if ((info.subject_type == BindingSubjectType::USER ||
+         info.subject_type == BindingSubjectType::ROLE ||
+         info.subject_type == BindingSubjectType::GROUP) &&
+        (!info.has_subject_id || isZeroUuidLocal(info.subject_id)))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "settings_binding subject_uuid required for USER/ROLE/GROUP");
+        return Status::INVALID_ARGUMENT;
+    }
+    if ((info.subject_type == BindingSubjectType::TENANT ||
+         info.subject_type == BindingSubjectType::GLOBAL) &&
+        info.has_subject_id)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "settings_binding subject_uuid must be null for TENANT/GLOBAL");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (info.has_tenant_scope)
+    {
+        Status status = validateWildcardPatternNoRegexWithCode(info.tenant_scope, "SEC_1246", ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+    switch (info.resource_scope_kind)
+    {
+        case BindingResourceScopeKind::GLOBAL:
+            if (info.has_resource_scope_value)
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "settings_binding GLOBAL scope cannot provide resource_scope_value");
+                return Status::INVALID_ARGUMENT;
+            }
+            break;
+        case BindingResourceScopeKind::DATABASE:
+        case BindingResourceScopeKind::SCHEMA:
+            if (!info.has_resource_scope_value || info.resource_scope_value.empty())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "settings_binding scope requires resource_scope_value");
+                return Status::INVALID_ARGUMENT;
+            }
+            break;
+        case BindingResourceScopeKind::RESOURCE_PATTERN:
+            if (!info.has_resource_scope_value || info.resource_scope_value.empty())
+            {
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                                  "settings_binding RESOURCE_PATTERN requires resource_scope_value");
+                return Status::INVALID_ARGUMENT;
+            }
+            {
+                Status status = validateWildcardPatternNoRegexWithCode(info.resource_scope_value, "SEC_1246", ctx);
+                if (status != Status::OK)
+                {
+                    return status;
+                }
+            }
+            break;
+    }
+
+    auto profile = findRecordInHeapPage<SettingsProfileRecord>(
+        settings_profile_table_page_,
+        [&info](const SettingsProfileRecord& row) {
+            return row.is_valid == 1 && row.settings_profile_id == info.settings_profile_id;
+        },
+        ctx);
+    if (profile.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1258",
+                                "settings_binding references missing settings profile");
+        return Status::INVALID_AUTHORIZATION;
+    }
+
+    SettingsBindingRecord rec{};
+    rec.binding_id = info.binding_id;
+    rec.subject_type = static_cast<uint8_t>(info.subject_type);
+    rec.has_subject_id = info.has_subject_id ? 1 : 0;
+    rec.has_tenant_scope = info.has_tenant_scope ? 1 : 0;
+    rec.resource_scope_kind = static_cast<uint8_t>(info.resource_scope_kind);
+    rec.has_resource_scope_value = info.has_resource_scope_value ? 1 : 0;
+    rec.is_valid = info.is_valid ? 1 : 0;
+    rec.priority_u16 = info.priority_u16;
+    rec.subject_id = info.has_subject_id ? info.subject_id : ID{};
+    rec.settings_profile_id = info.settings_profile_id;
+    rec.created_time = (info.created_time == 0) ? catalogNowTicks() : info.created_time;
+    rec.last_modified_time = (info.last_modified_time == 0) ? catalogNowTicks() : info.last_modified_time;
+
+    uint64_t xmin = 0;
+    if (info.has_tenant_scope)
+    {
+        Status status = storeStringInToast(info.tenant_scope, xmin, rec.tenant_scope_oid, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+    if (info.has_resource_scope_value)
+    {
+        Status status = storeStringInToast(info.resource_scope_value, xmin, rec.resource_scope_value_oid, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+
+    auto existing = findRecordInHeapPage<SettingsBindingRecord>(
+        settings_binding_table_page_,
+        [&info](const SettingsBindingRecord& row) { return row.is_valid == 1 && row.binding_id == info.binding_id; },
+        ctx);
+    if (existing.status == Status::OK)
+    {
+        rec.created_time = existing.record.created_time;
+    }
+    else if (existing.status != Status::NOT_FOUND)
+    {
+        return existing.status;
+    }
+
+    auto matcher = [&info](const SettingsBindingRecord& row) {
+        return row.is_valid == 1 && row.binding_id == info.binding_id;
+    };
+    return updateRecordInHeapPage(settings_binding_table_page_, matcher, rec, ctx);
+}
+
+auto CatalogManager::getSettingsBindingCatalogEntry(const ID& binding_id,
+                                                    SettingsBindingCatalogInfo& info_out,
+                                                    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto result = findRecordInHeapPage<SettingsBindingRecord>(
+        settings_binding_table_page_,
+        [&binding_id](const SettingsBindingRecord& row) { return row.is_valid == 1 && row.binding_id == binding_id; },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+    if (!isValidBindingSubjectType(static_cast<BindingSubjectType>(result.record.subject_type)) ||
+        !isValidBindingResourceScopeKind(static_cast<BindingResourceScopeKind>(result.record.resource_scope_kind)))
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1249",
+                                "settings_binding enum value invalid on disk");
+        return Status::PAGE_CORRUPT;
+    }
+
+    info_out = SettingsBindingCatalogInfo{};
+    info_out.binding_id = result.record.binding_id;
+    info_out.subject_type = static_cast<BindingSubjectType>(result.record.subject_type);
+    info_out.has_subject_id = result.record.has_subject_id != 0;
+    info_out.subject_id = result.record.subject_id;
+    info_out.has_tenant_scope = result.record.has_tenant_scope != 0;
+    info_out.resource_scope_kind = static_cast<BindingResourceScopeKind>(result.record.resource_scope_kind);
+    info_out.has_resource_scope_value = result.record.has_resource_scope_value != 0;
+    info_out.settings_profile_id = result.record.settings_profile_id;
+    info_out.priority_u16 = result.record.priority_u16;
+    info_out.is_valid = result.record.is_valid == 1;
+    info_out.created_time = result.record.created_time;
+    info_out.last_modified_time = result.record.last_modified_time;
+
+    uint64_t xmin = 0;
+    if (info_out.has_tenant_scope)
+    {
+        Status status = loadStringFromToast(result.record.tenant_scope_oid, xmin, info_out.tenant_scope, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1249",
+                                    "settings_binding.tenant_scope payload invalid");
+            return Status::PAGE_CORRUPT;
+        }
+    }
+    if (info_out.has_resource_scope_value)
+    {
+        Status status = loadStringFromToast(result.record.resource_scope_value_oid, xmin,
+                                            info_out.resource_scope_value, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1249",
+                                    "settings_binding.resource_scope_value payload invalid");
+            return Status::PAGE_CORRUPT;
+        }
+    }
+    return Status::OK;
+}
+
+auto CatalogManager::listSettingsBindingCatalogEntries(std::vector<SettingsBindingCatalogInfo>& rows_out,
+                                                       ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    rows_out.clear();
+
+    std::vector<SettingsBindingRecord> records;
+    auto filter = [](const SettingsBindingRecord& row) { return row.is_valid == 1; };
+    auto converter = [](const SettingsBindingRecord& row, SettingsBindingRecord& out) { out = row; };
+    Status status = readRecordsToVector<SettingsBindingRecord, SettingsBindingRecord>(
+        settings_binding_table_page_, records, filter, converter, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    rows_out.reserve(records.size());
+    for (const auto& rec : records)
+    {
+        if (!isValidBindingSubjectType(static_cast<BindingSubjectType>(rec.subject_type)) ||
+            !isValidBindingResourceScopeKind(static_cast<BindingResourceScopeKind>(rec.resource_scope_kind)))
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1249",
+                                    "settings_binding enum value invalid on disk");
+            return Status::PAGE_CORRUPT;
+        }
+        SettingsBindingCatalogInfo info{};
+        info.binding_id = rec.binding_id;
+        info.subject_type = static_cast<BindingSubjectType>(rec.subject_type);
+        info.has_subject_id = rec.has_subject_id != 0;
+        info.subject_id = rec.subject_id;
+        info.has_tenant_scope = rec.has_tenant_scope != 0;
+        info.resource_scope_kind = static_cast<BindingResourceScopeKind>(rec.resource_scope_kind);
+        info.has_resource_scope_value = rec.has_resource_scope_value != 0;
+        info.settings_profile_id = rec.settings_profile_id;
+        info.priority_u16 = rec.priority_u16;
+        info.is_valid = rec.is_valid == 1;
+        info.created_time = rec.created_time;
+        info.last_modified_time = rec.last_modified_time;
+
+        uint64_t xmin = 0;
+        if (info.has_tenant_scope)
+        {
+            status = loadStringFromToast(rec.tenant_scope_oid, xmin, info.tenant_scope, ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1249",
+                                        "settings_binding.tenant_scope payload invalid");
+                return Status::PAGE_CORRUPT;
+            }
+        }
+        if (info.has_resource_scope_value)
+        {
+            status = loadStringFromToast(rec.resource_scope_value_oid, xmin, info.resource_scope_value, ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1249",
+                                        "settings_binding.resource_scope_value payload invalid");
+                return Status::PAGE_CORRUPT;
+            }
+        }
+        rows_out.push_back(std::move(info));
+    }
+
+    std::sort(rows_out.begin(), rows_out.end(),
+              [](const SettingsBindingCatalogInfo& lhs, const SettingsBindingCatalogInfo& rhs) {
+                  const int lhs_rank = bindingSubjectRank(lhs.subject_type);
+                  const int rhs_rank = bindingSubjectRank(rhs.subject_type);
+                  if (lhs_rank != rhs_rank)
+                  {
+                      return lhs_rank < rhs_rank;
+                  }
+                  if (lhs.priority_u16 != rhs.priority_u16)
+                  {
+                      return lhs.priority_u16 < rhs.priority_u16;
+                  }
+                  return compareUuidBytesLocal(lhs.binding_id, rhs.binding_id) < 0;
+              });
+    return Status::OK;
+}
+
+auto CatalogManager::deleteSettingsBindingCatalogEntry(const ID& binding_id,
+                                                       ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    auto result = findRecordInHeapPage<SettingsBindingRecord>(
+        settings_binding_table_page_,
+        [&binding_id](const SettingsBindingRecord& row) { return row.is_valid == 1 && row.binding_id == binding_id; },
+        ctx);
+    if (result.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+    SettingsBindingRecord updated = result.record;
+    updated.is_valid = 0;
+    updated.last_modified_time = catalogNowTicks();
+    return updateRecordInHeapPage(settings_binding_table_page_, result.slot_index, updated, ctx);
+}
+
+auto CatalogManager::resolveSettingsPolicy(const SettingsResolutionRequest& request,
+                                           SettingsResolutionDecision& decision_out,
+                                           ErrorContext* ctx) -> Status
+{
+    decision_out = SettingsResolutionDecision{};
+
+    std::vector<SettingsProfileCatalogInfo> profiles;
+    Status status = listSettingsProfileCatalogEntries(profiles, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+    std::unordered_map<ID, SettingsProfileCatalogInfo, IDHash> profile_map;
+    for (const auto& profile : profiles)
+    {
+        if (profile.is_enabled && profile.is_valid)
+        {
+            profile_map[profile.settings_profile_id] = profile;
+        }
+    }
+
+    std::vector<SettingsBindingCatalogInfo> bindings;
+    status = listSettingsBindingCatalogEntries(bindings, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    std::vector<SettingsBindingCatalogInfo> matched_bindings;
+    for (const auto& binding : bindings)
+    {
+        if (!binding.is_valid)
+        {
+            continue;
+        }
+        if (profile_map.find(binding.settings_profile_id) == profile_map.end())
+        {
+            continue;
+        }
+        if (!bindingSubjectMatches(request.profile_context, binding.subject_type,
+                                   binding.has_subject_id, binding.subject_id))
+        {
+            continue;
+        }
+        if (!bindingTenantMatches(request.profile_context.tenant_scope,
+                                  binding.has_tenant_scope,
+                                  binding.tenant_scope))
+        {
+            continue;
+        }
+        if (!bindingResourceScopeMatches(request.profile_context,
+                                         binding.resource_scope_kind,
+                                         binding.has_resource_scope_value,
+                                         binding.resource_scope_value))
+        {
+            continue;
+        }
+        matched_bindings.push_back(binding);
+    }
+
+    std::sort(matched_bindings.begin(), matched_bindings.end(),
+              [](const SettingsBindingCatalogInfo& lhs, const SettingsBindingCatalogInfo& rhs) {
+                  const int lhs_rank = bindingSubjectRank(lhs.subject_type);
+                  const int rhs_rank = bindingSubjectRank(rhs.subject_type);
+                  if (lhs_rank != rhs_rank)
+                  {
+                      return lhs_rank < rhs_rank;
+                  }
+                  if (lhs.priority_u16 != rhs.priority_u16)
+                  {
+                      return lhs.priority_u16 < rhs.priority_u16;
+                  }
+                  return compareUuidBytesLocal(lhs.binding_id, rhs.binding_id) < 0;
+              });
+
+    if (matched_bindings.empty())
+    {
+        if (request.require_profile)
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1258",
+                                    "Settings profile missing for required profile mode");
+            decision_out.reject_code = "SEC_1258";
+            VNextMetricsEventModel::recordSecurityEvent(
+                "settings_policy", "reject", "SEC_1258");
+            return Status::INVALID_AUTHORIZATION;
+        }
+        decision_out.applied = true;
+        decision_out.profile_resolved = false;
+        decision_out.merged_settings = request.session_overrides;
+        VNextMetricsEventModel::recordSecurityEvent(
+            "settings_policy", "allow", "NONE");
+        return Status::OK;
+    }
+
+    const auto& chosen_binding = matched_bindings.front();
+    const auto profile_it = profile_map.find(chosen_binding.settings_profile_id);
+    if (profile_it == profile_map.end())
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1258",
+                                "Settings profile missing for required profile mode");
+        decision_out.reject_code = "SEC_1258";
+        VNextMetricsEventModel::recordSecurityEvent(
+            "settings_policy", "reject", "SEC_1258");
+        return Status::INVALID_AUTHORIZATION;
+    }
+    const SettingsProfileCatalogInfo& profile = profile_it->second;
+    decision_out.profile_resolved = true;
+    decision_out.settings_profile_id = profile.settings_profile_id;
+    decision_out.profile_name = profile.profile_name;
+
+    std::unordered_map<std::string, std::string> merged_settings;
+    if (!parseSettingsPayload(profile.settings_payload, merged_settings))
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::PAGE_CORRUPT, "SEC_1259",
+                                "Settings profile payload invalid");
+        decision_out.reject_code = "SEC_1259";
+        VNextMetricsEventModel::recordSecurityEvent(
+            "settings_policy", "reject", "SEC_1259");
+        return Status::PAGE_CORRUPT;
+    }
+
+    for (const auto& kv : request.session_overrides)
+    {
+        if (profile.strict_mode && merged_settings.find(kv.first) == merged_settings.end())
+        {
+            SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_AUTHORIZATION, "SEC_1255",
+                                    "Settings key invalid in strict profile");
+            decision_out.reject_code = "SEC_1255";
+            VNextMetricsEventModel::recordSecurityEvent(
+                "settings_policy", "reject", "SEC_1255");
+            return Status::INVALID_AUTHORIZATION;
+        }
+        merged_settings[kv.first] = kv.second;
+    }
+
+    decision_out.applied = true;
+    decision_out.merged_settings = std::move(merged_settings);
+    VNextMetricsEventModel::recordSecurityEvent(
+        "settings_policy", "allow", "NONE");
+    return Status::OK;
+}
+
 auto CatalogManager::upsertAuthMappingCatalogEntry(const AuthMappingCatalogInfo& info,
                                                    ErrorContext* ctx) -> Status
 {
@@ -80436,6 +88579,494 @@ auto CatalogManager::deleteEncryptionBootstrapInfoCatalogEntry(const ID& databas
     EncryptionBootstrapInfoRecord updated = result.record;
     updated.is_valid = 0;
     return updateRecordInHeapPage(encryption_bootstrap_info_table_page_, result.slot_index, updated, ctx);
+}
+
+auto CatalogManager::evaluateCryptoBaselinePolicy(const CryptoBaselineEvaluationRequest& request,
+                                                  CryptoBaselineEvaluationDecision& decision_out,
+                                                  ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    decision_out = CryptoBaselineEvaluationDecision{};
+
+    if (!isValidCryptoProfileId(request.crypto_profile_id) ||
+        !isValidSecurityTierId(request.security_tier) ||
+        !isValidKeyProviderKind(request.primary_provider) ||
+        (request.has_escrow_provider && !isValidKeyProviderKind(request.escrow_provider)))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "crypto baseline request contains invalid enum values");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    const bool is_modern = request.crypto_profile_id == CryptoProfileId::MODERN_BASELINE;
+    const bool is_compat = request.crypto_profile_id == CryptoProfileId::COMPAT_EMULATION;
+    const bool is_mil = request.crypto_profile_id == CryptoProfileId::MIL_HARDENED;
+
+    auto reject = [&](Status status, const char* code, const char* message) -> Status {
+        decision_out.allowed = false;
+        decision_out.gate_pass = false;
+        decision_out.reject_code = code;
+        SET_ERROR_CONTEXT_VNEXT(ctx, status, code, message);
+        return status;
+    };
+
+    auto tls13_cipher_allowed = [](const std::string& suite) {
+        return equalsIgnoreCase(suite, "TLS_AES_256_GCM_SHA384") ||
+               equalsIgnoreCase(suite, "TLS_CHACHA20_POLY1305_SHA256");
+    };
+    auto tls12_cipher_allowed = [](const std::string& suite) {
+        return equalsIgnoreCase(suite, "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384") ||
+               equalsIgnoreCase(suite, "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384");
+    };
+
+    if (request.is_network_session)
+    {
+        if ((is_modern || is_mil) && request.tls_version != TlsVersion::TLS_1_3)
+        {
+            return reject(Status::INVALID_AUTHORIZATION, "SEC_1289",
+                          "TLS 1.3 is required by active crypto profile");
+        }
+        if (is_mil && !request.is_mtls)
+        {
+            return reject(Status::INVALID_AUTHORIZATION, "SEC_1289",
+                          "mTLS is required for military-hardened profile");
+        }
+        if (request.tls_version == TlsVersion::TLS_1_3)
+        {
+            if (!tls13_cipher_allowed(request.tls_cipher_suite))
+            {
+                return reject(Status::INVALID_AUTHORIZATION, "SEC_1289",
+                              "TLS 1.3 cipher is not allowed by crypto policy");
+            }
+        }
+        else
+        {
+            if (!is_compat)
+            {
+                return reject(Status::INVALID_AUTHORIZATION, "SEC_1289",
+                              "TLS 1.2 is allowed only in compatibility crypto profile");
+            }
+            if (!tls12_cipher_allowed(request.tls_cipher_suite))
+            {
+                return reject(Status::INVALID_AUTHORIZATION, "SEC_1289",
+                              "TLS 1.2 cipher is not allowed by compatibility profile");
+            }
+        }
+    }
+
+    if (request.is_privileged_account &&
+        request.credential_kind == CredentialKind::PASSWORD_SCRAM_SHA256 &&
+        !is_compat)
+    {
+        return reject(Status::INVALID_AUTHORIZATION, "SEC_1290",
+                      "SCRAM-SHA-256 is not allowed for privileged accounts in strict crypto profiles");
+    }
+    if (request.require_password_rehash_check &&
+        request.credential_kind == CredentialKind::PASSWORD_ARGON2ID)
+    {
+        if (request.argon2_memory_kib < 262144 ||
+            request.argon2_iterations < 3 ||
+            request.argon2_parallelism < 1)
+        {
+            decision_out.require_password_rehash = true;
+        }
+    }
+
+    if (!request.artifact_signed)
+    {
+        const bool debug_exception = request.security_tier == SecurityTierId::TIER_0_NONE &&
+                                     !request.listener_enabled &&
+                                     request.debug_unsigned_override;
+        if (!debug_exception)
+        {
+            return reject(Status::INVALID_AUTHORIZATION, "SEC_1291",
+                          "Unsigned artifacts are not permitted by crypto policy");
+        }
+    }
+    else
+    {
+        const bool signature_ok = equalsIgnoreCase(request.artifact_signature_algorithm, "Ed25519") ||
+                                  (is_compat && equalsIgnoreCase(request.artifact_signature_algorithm,
+                                                                 "ECDSA_P256_SHA256"));
+        if (!signature_ok)
+        {
+            return reject(Status::INVALID_AUTHORIZATION, "SEC_1291",
+                          "Artifact signature algorithm is not allowed by crypto policy");
+        }
+    }
+
+    if (request.nonce_len_bytes != 12)
+    {
+        return reject(Status::INVALID_AUTHORIZATION, "SEC_1292",
+                      "At-rest encryption nonce length must be 12 bytes");
+    }
+    if (request.at_rest_algorithm == EncryptionAlgorithm::CHACHA20_POLY1305)
+    {
+        if (!(is_compat && request.chacha_fallback_explicit && !request.aes_gcm_hw_available))
+        {
+            return reject(Status::INVALID_AUTHORIZATION, "SEC_1292",
+                          "ChaCha20-Poly1305 fallback requires compatibility profile and explicit hardware fallback");
+        }
+    }
+
+    auto provider_allowed_for_tier = [&](SecurityTierId tier, KeyProviderKind provider) {
+        switch (tier)
+        {
+            case SecurityTierId::TIER_0_NONE:
+                return provider == KeyProviderKind::LOCAL_FILE_KEYSTORE;
+            case SecurityTierId::TIER_1_BASIC:
+                return provider == KeyProviderKind::LOCAL_FILE_KEYSTORE ||
+                       provider == KeyProviderKind::OS_KEYRING;
+            case SecurityTierId::TIER_2_STANDARD:
+                return provider == KeyProviderKind::OS_KEYRING ||
+                       provider == KeyProviderKind::EXTERNAL_KMS;
+            case SecurityTierId::TIER_3_HARDENED:
+                return provider == KeyProviderKind::EXTERNAL_KMS ||
+                       provider == KeyProviderKind::PKCS11_HSM;
+            case SecurityTierId::TIER_4_MILITARY_CLUSTER:
+                return provider == KeyProviderKind::PKCS11_HSM;
+        }
+        return false;
+    };
+
+    if (!provider_allowed_for_tier(request.security_tier, request.primary_provider))
+    {
+        return reject(Status::CONNECTION_FAILURE, "SEC_1293",
+                      "Primary key provider is not allowed for selected security tier");
+    }
+    if (!request.primary_provider_available || !request.primary_provider_authorized)
+    {
+        return reject(Status::CONNECTION_FAILURE, "SEC_1293",
+                      "Primary key provider is unavailable or unauthorized");
+    }
+    if (request.security_tier == SecurityTierId::TIER_4_MILITARY_CLUSTER)
+    {
+        if (!request.has_escrow_provider ||
+            request.escrow_provider != KeyProviderKind::EXTERNAL_KMS)
+        {
+            return reject(Status::CONNECTION_FAILURE, "SEC_1293",
+                          "Tier-4 profile requires external KMS escrow provider");
+        }
+        if (!request.escrow_provider_available || !request.escrow_provider_authorized)
+        {
+            return reject(Status::CONNECTION_FAILURE, "SEC_1293",
+                          "Tier-4 escrow key provider is unavailable or unauthorized");
+        }
+    }
+
+    if (request.evaluate_rotation_window)
+    {
+        if (!request.has_encryption_profile_id || isZeroUuidLocal(request.encryption_profile_id))
+        {
+            return reject(Status::INVALID_AUTHORIZATION, "SEC_1294",
+                          "Rotation-window evaluation requires encryption profile id");
+        }
+        auto profile_row = findRecordInHeapPage<EncryptionProfileRecord>(
+            encryption_profile_table_page_,
+            [&request](const EncryptionProfileRecord& row) {
+                return row.is_valid == 1 && row.profile_id == request.encryption_profile_id;
+            },
+            ctx);
+        if (profile_row.status != Status::OK)
+        {
+            return reject(Status::INVALID_AUTHORIZATION, "SEC_1294",
+                          "Encryption profile not found for rotation-window evaluation");
+        }
+
+        std::vector<EncryptionKeyRecord> active_keys;
+        Status read_status = readRecordsToVector<EncryptionKeyRecord, EncryptionKeyRecord>(
+            encryption_key_table_page_,
+            active_keys,
+            [&profile_row](const EncryptionKeyRecord& row) {
+                return row.is_valid == 1 &&
+                       row.profile_id == profile_row.record.profile_id &&
+                       row.key_status == static_cast<uint8_t>(EncryptionKeyStatus::ACTIVE);
+            },
+            [](const EncryptionKeyRecord& row, EncryptionKeyRecord& out) { out = row; },
+            ctx);
+        if (read_status != Status::OK)
+        {
+            return read_status;
+        }
+        if (active_keys.empty())
+        {
+            return reject(Status::INVALID_AUTHORIZATION, "SEC_1294",
+                          "No active key found for required rotation-window evaluation");
+        }
+
+        const EncryptionKeyRecord* selected_key = nullptr;
+        if (request.has_active_key_id)
+        {
+            for (const auto& key : active_keys)
+            {
+                if (key.key_id == request.active_key_id)
+                {
+                    selected_key = &key;
+                    break;
+                }
+            }
+            if (selected_key == nullptr)
+            {
+                return reject(Status::INVALID_AUTHORIZATION, "SEC_1294",
+                              "Requested active key is not active in profile");
+            }
+        }
+        else
+        {
+            selected_key = &active_keys.front();
+            for (const auto& key : active_keys)
+            {
+                if (key.key_version > selected_key->key_version ||
+                    (key.key_version == selected_key->key_version &&
+                     key.activated_time > selected_key->activated_time))
+                {
+                    selected_key = &key;
+                }
+            }
+        }
+        decision_out.active_key_id = selected_key->key_id;
+
+        uint64_t max_age_days = 0;
+        const KeyRotationPolicy rotation_policy =
+            static_cast<KeyRotationPolicy>(profile_row.record.key_rotation_policy);
+        if (rotation_policy == KeyRotationPolicy::TIME_BASED ||
+            rotation_policy == KeyRotationPolicy::USAGE_BASED)
+        {
+            max_age_days = 90;
+            if (request.security_tier == SecurityTierId::TIER_3_HARDENED)
+            {
+                max_age_days = 30;
+            }
+            else if (request.security_tier == SecurityTierId::TIER_4_MILITARY_CLUSTER)
+            {
+                max_age_days = 7;
+            }
+        }
+
+        if (max_age_days > 0)
+        {
+            const uint64_t active_since =
+                selected_key->has_activated_time != 0 ? selected_key->activated_time : selected_key->created_time;
+            const uint64_t now_utc = request.now_utc == 0 ? catalogNowTicks() : request.now_utc;
+            using ClockDuration = std::chrono::system_clock::duration;
+            const uint64_t max_age_ticks = static_cast<uint64_t>(
+                std::chrono::duration_cast<ClockDuration>(std::chrono::hours(24 * max_age_days)).count());
+            if (now_utc > active_since && (now_utc - active_since) > max_age_ticks)
+            {
+                decision_out.rotation_overdue = true;
+                if ((request.security_tier == SecurityTierId::TIER_3_HARDENED ||
+                     request.security_tier == SecurityTierId::TIER_4_MILITARY_CLUSTER) &&
+                    request.privileged_operation)
+                {
+                    return reject(Status::INVALID_AUTHORIZATION, "SEC_1294",
+                                  "Key rotation is overdue for privileged operation");
+                }
+            }
+        }
+    }
+
+    decision_out.allowed = true;
+    decision_out.gate_pass = true;
+    decision_out.reject_code.clear();
+    return Status::OK;
+}
+
+auto CatalogManager::evaluateCryptoBaselineConformanceGate(
+    const CryptoBaselineEvaluationRequest& request,
+    CryptoBaselineEvaluationDecision& decision_out,
+    ErrorContext* ctx) -> Status
+{
+    ErrorContext local_ctx;
+    CryptoBaselineEvaluationDecision local_decision{};
+    Status status = evaluateCryptoBaselinePolicy(request, local_decision, &local_ctx);
+    if (status != Status::OK)
+    {
+        decision_out = local_decision;
+        decision_out.allowed = false;
+        decision_out.gate_pass = false;
+        decision_out.reject_code = "SEC_1295";
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::NOT_SUPPORTED, "SEC_1295",
+                                "Crypto baseline conformance gate failed");
+        return Status::NOT_SUPPORTED;
+    }
+
+    decision_out = local_decision;
+    decision_out.gate_pass = true;
+    return Status::OK;
+}
+
+auto CatalogManager::transitionEncryptionKeyLifecycle(
+    const EncryptionKeyLifecycleTransitionRequest& request,
+    EncryptionKeyLifecycleTransitionDecision& decision_out,
+    ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    decision_out = EncryptionKeyLifecycleTransitionDecision{};
+
+    if (isZeroUuidLocal(request.key_id) || !isValidEncryptionKeyStatus(request.target_status))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "encryption key lifecycle transition request is invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    const uint64_t event_time = request.event_time_utc == 0 ? catalogNowTicks() : request.event_time_utc;
+    auto key_row = findRecordInHeapPage<EncryptionKeyRecord>(
+        encryption_key_table_page_,
+        [&request](const EncryptionKeyRecord& row) { return row.is_valid == 1 && row.key_id == request.key_id; },
+        ctx);
+    if (key_row.status != Status::OK)
+    {
+        return Status::NOT_FOUND;
+    }
+    if (!isValidEncryptionKeyStatus(static_cast<EncryptionKeyStatus>(key_row.record.key_status)))
+    {
+        return Status::PAGE_CORRUPT;
+    }
+
+    EncryptionKeyRecord updated = key_row.record;
+    const EncryptionKeyStatus current_status = static_cast<EncryptionKeyStatus>(key_row.record.key_status);
+    if (current_status == request.target_status)
+    {
+        decision_out.applied = true;
+        decision_out.resulting_key_version = key_row.record.key_version;
+        return Status::OK;
+    }
+
+    auto reject = [&](Status status, const char* message) -> Status {
+        decision_out.applied = false;
+        decision_out.reject_code = "SEC_1294";
+        SET_ERROR_CONTEXT_VNEXT(ctx, status, "SEC_1294", message);
+        return status;
+    };
+
+    bool transition_allowed = false;
+    switch (current_status)
+    {
+        case EncryptionKeyStatus::STAGED:
+            transition_allowed = request.target_status == EncryptionKeyStatus::ACTIVE ||
+                                 request.target_status == EncryptionKeyStatus::DESTROYED;
+            break;
+        case EncryptionKeyStatus::ACTIVE:
+            transition_allowed = request.target_status == EncryptionKeyStatus::RETIRED ||
+                                 request.target_status == EncryptionKeyStatus::DESTROYED;
+            break;
+        case EncryptionKeyStatus::RETIRED:
+            transition_allowed = request.target_status == EncryptionKeyStatus::DESTROYED;
+            break;
+        case EncryptionKeyStatus::DESTROYED:
+            transition_allowed = false;
+            break;
+    }
+    if (!transition_allowed)
+    {
+        return reject(Status::INVALID_ARGUMENT, "Invalid encryption key lifecycle transition");
+    }
+
+    if (request.target_status == EncryptionKeyStatus::ACTIVE)
+    {
+        std::vector<EncryptionKeyRecord> sibling_keys;
+        Status status = readRecordsToVector<EncryptionKeyRecord, EncryptionKeyRecord>(
+            encryption_key_table_page_,
+            sibling_keys,
+            [&key_row](const EncryptionKeyRecord& row) {
+                return row.is_valid == 1 &&
+                       row.profile_id == key_row.record.profile_id &&
+                       row.key_kind == key_row.record.key_kind;
+            },
+            [](const EncryptionKeyRecord& row, EncryptionKeyRecord& out) { out = row; },
+            ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        uint32_t max_other_version = 0;
+        std::vector<EncryptionKeyRecord> active_siblings;
+        for (const auto& key : sibling_keys)
+        {
+            if (key.key_id != key_row.record.key_id)
+            {
+                max_other_version = std::max(max_other_version, key.key_version);
+                if (key.key_status == static_cast<uint8_t>(EncryptionKeyStatus::ACTIVE))
+                {
+                    active_siblings.push_back(key);
+                }
+            }
+        }
+        if (updated.key_version <= max_other_version)
+        {
+            return reject(Status::INVALID_ARGUMENT,
+                          "Key version must be monotonic when activating a staged key");
+        }
+        if (!active_siblings.empty() && !request.retire_existing_active)
+        {
+            return reject(Status::INVALID_ARGUMENT,
+                          "Existing active key must be retired before activating new key");
+        }
+        for (const auto& sibling : active_siblings)
+        {
+            EncryptionKeyRecord retired = sibling;
+            retired.key_status = static_cast<uint8_t>(EncryptionKeyStatus::RETIRED);
+            retired.has_retired_time = 1;
+            retired.retired_time = event_time;
+            Status retire_status = updateRecordInHeapPage(
+                encryption_key_table_page_,
+                [&sibling](const EncryptionKeyRecord& row) {
+                    return row.is_valid == 1 && row.key_id == sibling.key_id;
+                },
+                retired,
+                ctx);
+            if (retire_status != Status::OK)
+            {
+                return retire_status;
+            }
+            decision_out.rotated_existing_active = true;
+            if (isZeroUuidLocal(decision_out.retired_key_id))
+            {
+                decision_out.retired_key_id = sibling.key_id;
+            }
+        }
+
+        updated.key_status = static_cast<uint8_t>(EncryptionKeyStatus::ACTIVE);
+        updated.has_activated_time = 1;
+        if (updated.activated_time == 0)
+        {
+            updated.activated_time = event_time;
+        }
+        updated.has_retired_time = 0;
+        updated.retired_time = 0;
+    }
+    else if (request.target_status == EncryptionKeyStatus::RETIRED)
+    {
+        updated.key_status = static_cast<uint8_t>(EncryptionKeyStatus::RETIRED);
+        updated.has_retired_time = 1;
+        if (updated.retired_time == 0)
+        {
+            updated.retired_time = event_time;
+        }
+    }
+    else if (request.target_status == EncryptionKeyStatus::DESTROYED)
+    {
+        if (current_status == EncryptionKeyStatus::ACTIVE)
+        {
+            updated.has_retired_time = 1;
+            if (updated.retired_time == 0)
+            {
+                updated.retired_time = event_time;
+            }
+        }
+        updated.key_status = static_cast<uint8_t>(EncryptionKeyStatus::DESTROYED);
+    }
+
+    Status update_status =
+        updateRecordInHeapPage(encryption_key_table_page_, key_row.slot_index, updated, ctx);
+    if (update_status != Status::OK)
+    {
+        return update_status;
+    }
+
+    decision_out.applied = true;
+    decision_out.resulting_key_version = updated.key_version;
+    return Status::OK;
 }
 
 // ============================================================================

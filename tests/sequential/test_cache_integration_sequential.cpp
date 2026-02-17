@@ -77,6 +77,9 @@ TEST(CacheIntegrationSequentialSuite, AllTests)
         auto conn_ctx = std::make_unique<scratchbird::core::ConnectionContext>(db.get(), proc_id);
         status = conn_ctx->initialize(&ctx);
         ASSERT_EQ(status, Status::OK);
+        ID system_user_id = db->catalog_manager()->getSystemUserId(&ctx);
+        ASSERT_NE(system_user_id, ID{});
+        conn_ctx->setCurrentUser(system_user_id, true);
         
         scratchbird::core::CatalogManager::SchemaInfo schema;
         ASSERT_EQ(db->catalog_manager()->getSchema("PUBLIC", schema, &ctx), Status::OK);

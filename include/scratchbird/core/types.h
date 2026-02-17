@@ -143,6 +143,17 @@ namespace scratchbird::core
         // Polymorphic types (110-119)
         VARIANT = 110,   // Tagged union that can hold any type
 
+        // vNext extended datatype catalog IDs.
+        TIMESTAMP_NS = 0x5101,      // Nanosecond precision timestamp
+        INT256 = 0x5102,            // 256-bit signed integer
+        UINT256 = 0x5103,           // 256-bit unsigned integer
+        DECIMAL256 = 0x5104,        // Fixed-point decimal with i256 mantissa domain
+        TAGGED_UNION = 0x5105,      // Tagged union with explicit variant tag
+        DICT_ENCODED = 0x5106,      // Dictionary encoded scalar domain
+        COMPLETION_FIELD = 0x5107,  // Search completion field domain
+        PREFIX_SEARCH_FIELD = 0x5108, // Search-as-you-type prefix field domain
+        FLAT_OBJECT = 0x5109,       // Flattened document field domain
+
         // Special blob subtypes
         BLOB_SUB_TYPE_TEXT = 120, // Firebird-style text BLOB
 

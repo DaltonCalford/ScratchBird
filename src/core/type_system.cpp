@@ -333,11 +333,26 @@ namespace scratchbird::core
             {"REDIS", "GEO", EmulatedStorageKind::DOMAIN, DataType::LIST, "[sb_redis_dom]geo", "geohash member payload"},
             {"REDIS", "HLL", EmulatedStorageKind::DOMAIN, DataType::MAP, "[sb_redis_dom]hll", "register map"},
             {"REDIS", "BITMAP", EmulatedStorageKind::DOMAIN, DataType::LIST, "[sb_redis_dom]bitmap", "byte-addressable bitmap"},
+
+            // ClickHouse vNext coverage
+            {"CLICKHOUSE", "INT256", EmulatedStorageKind::NATIVE, DataType::INT256, "", "direct"},
+            {"CLICKHOUSE", "UINT256", EmulatedStorageKind::NATIVE, DataType::UINT256, "", "direct"},
+            {"CLICKHOUSE", "DECIMAL256", EmulatedStorageKind::NATIVE, DataType::DECIMAL256, "", "precision/scale"},
+            {"CLICKHOUSE", "LOWCARDINALITY", EmulatedStorageKind::DOMAIN, DataType::DICT_ENCODED, "[sb_dom]dict_encoded", "dictionary encoded"},
+
+            // Influx/OpenSearch/DuckDB vNext coverage
+            {"INFLUXDB", "TIMESTAMP", EmulatedStorageKind::NATIVE, DataType::TIMESTAMP_NS, "", "nanosecond epoch"},
+            {"DUCKDB", "UNION", EmulatedStorageKind::NATIVE, DataType::TAGGED_UNION, "", "tagged union"},
+            {"DUCKDB", "TIMESTAMP_NS", EmulatedStorageKind::NATIVE, DataType::TIMESTAMP_NS, "", "direct"},
+            {"OPENSEARCH", "COMPLETION", EmulatedStorageKind::DOMAIN, DataType::COMPLETION_FIELD, "[sb_dom]completion_field", "completion field"},
+            {"OPENSEARCH", "SEARCH_AS_YOU_TYPE", EmulatedStorageKind::DOMAIN, DataType::PREFIX_SEARCH_FIELD, "[sb_dom]prefix_search_field", "prefix field"},
+            {"OPENSEARCH", "FLAT_OBJECT", EmulatedStorageKind::DOMAIN, DataType::FLAT_OBJECT, "[sb_dom]flat_object", "flattened field"},
         };
 
         bool isStringType(DataType type)
         {
-            return type == DataType::CHAR || type == DataType::VARCHAR || type == DataType::TEXT;
+            return type == DataType::CHAR || type == DataType::VARCHAR || type == DataType::TEXT ||
+                   type == DataType::COMPLETION_FIELD || type == DataType::PREFIX_SEARCH_FIELD;
         }
 
         bool isIntegerType(DataType type)
@@ -345,7 +360,8 @@ namespace scratchbird::core
             return type == DataType::INT8 || type == DataType::INT16 || type == DataType::INT32 ||
                    type == DataType::INT64 || type == DataType::INT128 || type == DataType::UINT8 ||
                    type == DataType::UINT16 || type == DataType::UINT32 ||
-                   type == DataType::UINT64 || type == DataType::UINT128;
+                   type == DataType::UINT64 || type == DataType::UINT128 ||
+                   type == DataType::INT256 || type == DataType::UINT256;
         }
 
         bool isFloatType(DataType type)
@@ -356,7 +372,8 @@ namespace scratchbird::core
         bool isDecimalFamily(DataType type)
         {
             return type == DataType::DECIMAL || type == DataType::MONEY ||
-                   type == DataType::DECFLOAT16 || type == DataType::DECFLOAT34;
+                   type == DataType::DECFLOAT16 || type == DataType::DECFLOAT34 ||
+                   type == DataType::DECIMAL256;
         }
 
         bool isNumericType(DataType type)
@@ -368,7 +385,8 @@ namespace scratchbird::core
         {
             return type == DataType::DATE || type == DataType::TIME ||
                    type == DataType::TIMESTAMP || type == DataType::TIMESTAMP_WITH_ZONE ||
-                   type == DataType::TIME_WITH_ZONE || type == DataType::INTERVAL;
+                   type == DataType::TIME_WITH_ZONE || type == DataType::INTERVAL ||
+                   type == DataType::TIMESTAMP_NS;
         }
 
         bool isBinaryType(DataType type)
@@ -394,7 +412,9 @@ namespace scratchbird::core
             return type == DataType::ARRAY || type == DataType::LIST ||
                    type == DataType::COMPOSITE || type == DataType::MAP ||
                    type == DataType::VARIANT || type == DataType::SET ||
-                   type == DataType::ENUM || type == DataType::ROW;
+                   type == DataType::ENUM || type == DataType::ROW ||
+                   type == DataType::TAGGED_UNION || type == DataType::DICT_ENCODED ||
+                   type == DataType::FLAT_OBJECT;
         }
 
         bool isGeometryType(DataType type)
@@ -427,14 +447,17 @@ namespace scratchbird::core
             case DataType::INT32: return "INT32";
             case DataType::INT64: return "INT64";
             case DataType::INT128: return "INT128";
+            case DataType::INT256: return "INT256";
             case DataType::UINT8: return "UINT8";
             case DataType::UINT16: return "UINT16";
             case DataType::UINT32: return "UINT32";
             case DataType::UINT64: return "UINT64";
             case DataType::UINT128: return "UINT128";
+            case DataType::UINT256: return "UINT256";
             case DataType::FLOAT32: return "FLOAT32";
             case DataType::FLOAT64: return "FLOAT64";
             case DataType::DECIMAL: return "DECIMAL";
+            case DataType::DECIMAL256: return "DECIMAL256";
             case DataType::MONEY: return "MONEY";
             case DataType::DECFLOAT16: return "DECFLOAT(16)";
             case DataType::DECFLOAT34: return "DECFLOAT(34)";
@@ -448,6 +471,7 @@ namespace scratchbird::core
             case DataType::DATE: return "DATE";
             case DataType::TIME: return "TIME";
             case DataType::TIMESTAMP: return "TIMESTAMP";
+            case DataType::TIMESTAMP_NS: return "TIMESTAMP_NS";
             case DataType::TIMESTAMP_WITH_ZONE: return "TIMESTAMP_WITH_ZONE";
             case DataType::TIME_WITH_ZONE: return "TIME_WITH_ZONE";
             case DataType::INTERVAL: return "INTERVAL";
@@ -487,6 +511,11 @@ namespace scratchbird::core
             case DataType::ENUM: return "ENUM";
             case DataType::SET: return "SET";
             case DataType::VARIANT: return "VARIANT";
+            case DataType::TAGGED_UNION: return "TAGGED_UNION";
+            case DataType::DICT_ENCODED: return "DICT_ENCODED";
+            case DataType::COMPLETION_FIELD: return "COMPLETION_FIELD";
+            case DataType::PREFIX_SEARCH_FIELD: return "PREFIX_SEARCH_FIELD";
+            case DataType::FLAT_OBJECT: return "FLAT_OBJECT";
             case DataType::BLOB_SUB_TYPE_TEXT: return "BLOB_SUB_TYPE_TEXT";
             case DataType::NULL_TYPE: return "NULL";
             default: return "UNKNOWN";
@@ -500,6 +529,73 @@ namespace scratchbird::core
 
         // NULL can convert to any type
         if (from == DataType::NULL_TYPE) return true;
+
+        auto is_vnext_type = [](DataType type) -> bool
+        {
+            return type == DataType::TIMESTAMP_NS ||
+                   type == DataType::INT256 ||
+                   type == DataType::UINT256 ||
+                   type == DataType::DECIMAL256 ||
+                   type == DataType::TAGGED_UNION ||
+                   type == DataType::DICT_ENCODED ||
+                   type == DataType::COMPLETION_FIELD ||
+                   type == DataType::PREFIX_SEARCH_FIELD ||
+                   type == DataType::FLAT_OBJECT;
+        };
+        auto is_scalar_type = [&](DataType type) -> bool
+        {
+            if (type == DataType::UNKNOWN || type == DataType::NULL_TYPE)
+            {
+                return false;
+            }
+            if (isContainerType(type) || isGeometryType(type))
+            {
+                return false;
+            }
+            return true;
+        };
+
+        if (is_vnext_type(from) || is_vnext_type(to))
+        {
+            if ((from == DataType::INT256 && to == DataType::DECIMAL256) ||
+                (from == DataType::UINT256 && to == DataType::DECIMAL256) ||
+                (from == DataType::DECIMAL256 && to == DataType::INT256) ||
+                (from == DataType::DECIMAL256 && to == DataType::UINT256) ||
+                (from == DataType::UINT256 && to == DataType::INT256))
+            {
+                return true;
+            }
+            if ((from == DataType::TIMESTAMP_NS && to == DataType::TIMESTAMP) ||
+                (from == DataType::TIMESTAMP_NS && to == DataType::TIMESTAMP_WITH_ZONE) ||
+                (to == DataType::TIMESTAMP_NS && from == DataType::TIMESTAMP) ||
+                (to == DataType::TIMESTAMP_NS && from == DataType::TIMESTAMP_WITH_ZONE))
+            {
+                return true;
+            }
+            if ((from == DataType::TAGGED_UNION && is_scalar_type(to)) ||
+                (to == DataType::TAGGED_UNION && is_scalar_type(from)))
+            {
+                return true;
+            }
+            if ((from == DataType::DICT_ENCODED && is_scalar_type(to)) ||
+                (to == DataType::DICT_ENCODED && is_scalar_type(from)))
+            {
+                return true;
+            }
+            if (to == DataType::COMPLETION_FIELD && is_scalar_type(from))
+            {
+                return true;
+            }
+            if (from == DataType::FLAT_OBJECT && isJsonFamily(to))
+            {
+                return true;
+            }
+            if (from == DataType::PREFIX_SEARCH_FIELD && isStringType(to))
+            {
+                return true;
+            }
+            return false;
+        }
 
         // Numeric matrix
         if (isNumericType(from) && isNumericType(to))
@@ -535,6 +631,10 @@ namespace scratchbird::core
             (from == DataType::TIMESTAMP && to == DataType::TIME) ||
             (from == DataType::TIMESTAMP && to == DataType::TIMESTAMP_WITH_ZONE) ||
             (from == DataType::TIMESTAMP_WITH_ZONE && to == DataType::TIMESTAMP) ||
+            (from == DataType::TIMESTAMP_NS && to == DataType::TIMESTAMP) ||
+            (from == DataType::TIMESTAMP && to == DataType::TIMESTAMP_NS) ||
+            (from == DataType::TIMESTAMP_NS && to == DataType::TIMESTAMP_WITH_ZONE) ||
+            (from == DataType::TIMESTAMP_WITH_ZONE && to == DataType::TIMESTAMP_NS) ||
             (from == DataType::TIME && to == DataType::TIME_WITH_ZONE) ||
             (from == DataType::TIME_WITH_ZONE && to == DataType::TIME))
         {
@@ -656,7 +756,11 @@ namespace scratchbird::core
 
         return type == DataType::ARRAY || type == DataType::LIST ||
                type == DataType::MAP || type == DataType::COMPOSITE ||
-               type == DataType::ROW || type == DataType::VARIANT;
+               type == DataType::ROW || type == DataType::VARIANT ||
+               type == DataType::TAGGED_UNION || type == DataType::DICT_ENCODED ||
+               type == DataType::COMPLETION_FIELD ||
+               type == DataType::PREFIX_SEARCH_FIELD ||
+               type == DataType::FLAT_OBJECT;
     }
 
 } // namespace scratchbird::core
