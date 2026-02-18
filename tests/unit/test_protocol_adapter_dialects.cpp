@@ -12,6 +12,8 @@
 #include "scratchbird/protocol/adapters/postgresql_adapter.h"
 #include "scratchbird/protocol/adapters/mysql_adapter.h"
 #include "scratchbird/protocol/adapters/firebird_adapter.h"
+#include "scratchbird/protocol/adapters/native_adapter.h"
+#include "scratchbird/protocol/sbwp_protocol.h"
 
 #include <filesystem>
 #include <cctype>
@@ -53,6 +55,10 @@ public:
     std::vector<uint8_t> computeCachingSha2PasswordAuth(const std::string& password,
                                                          const uint8_t* scramble) {
         return T::computeCachingSha2PasswordAuth(password, scramble);
+    }
+
+    uint64_t getContractFeatureMask() const {
+        return T::contractServerFeatureMask();
     }
 };
 
@@ -285,6 +291,25 @@ TEST(ProtocolAdapterDialectsC3, MySQLTLSEnabledByDefault) {
     // TLS should not be enabled by default
     EXPECT_FALSE(adapter.isTLSEnabled());
     EXPECT_FALSE(adapter.isTLSNegotiated());
+}
+
+TEST(ProtocolAdapterDialectsNative, NativeCapabilityMaskAdvertisesCanonicalProfiles) {
+    cleanupDb("test_native_capability_mask.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_native_capability_mask.sbdb").string();
+
+    AdapterHarness<NativeAdapter> adapter(cfg);
+    const uint64_t feature_mask = adapter.getContractFeatureMask();
+    const uint64_t profile_mask = feature_mask & scratchbird::protocol::sbwp::kFeatureProfileMask;
+    const auto enabled = scratchbird::protocol::sbwp::enabledProfilesFromFeatureMask(feature_mask);
+
+    EXPECT_NE(profile_mask, 0u);
+    EXPECT_EQ(profile_mask, scratchbird::protocol::sbwp::canonicalProfileFeatureMask());
+    EXPECT_EQ(enabled.size(), 13u);
+    EXPECT_TRUE(scratchbird::protocol::sbwp::hasProfileFeature(feature_mask, "postgresql"));
+    EXPECT_TRUE(scratchbird::protocol::sbwp::hasProfileFeature(feature_mask, "firebird"));
+    EXPECT_TRUE(scratchbird::protocol::sbwp::hasProfileFeature(feature_mask, "opensearch"));
 }
 
 TEST(ProtocolAdapterDialectsC3, MySQLNativePasswordAuth) {

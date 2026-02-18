@@ -681,6 +681,22 @@ static const std::unordered_map<std::string, SchemaDef> kSchemas = {
         FieldDef{"format", FieldType::OPT, "ident"},
         FieldDef{"query", FieldType::STMT, ""},
     }}},
+    {"SCHEMA_CONTROL_COMMAND", SchemaDef{"SCHEMA_CONTROL_COMMAND", {
+        FieldDef{"action", FieldType::U8, ""},
+        FieldDef{"object_path", FieldType::OPT, "schema_path"},
+        FieldDef{"object_name", FieldType::OPT, "ident"},
+        FieldDef{"value", FieldType::OPT, "expr"},
+        FieldDef{"payload", FieldType::OPT, "bytes"},
+        FieldDef{"options", FieldType::SCHEMA, "OPTION_KV"},
+    }}},
+    {"SCHEMA_MULTI_MODEL_QUERY", SchemaDef{"SCHEMA_MULTI_MODEL_QUERY", {
+        FieldDef{"action", FieldType::U8, ""},
+        FieldDef{"namespace_path", FieldType::OPT, "schema_path"},
+        FieldDef{"source_path", FieldType::OPT, "schema_path"},
+        FieldDef{"query_expr", FieldType::OPT, "expr"},
+        FieldDef{"document", FieldType::OPT, "bytes"},
+        FieldDef{"options", FieldType::SCHEMA, "OPTION_KV"},
+    }}},
     {"SCHEMA_TXN_CONTROL", SchemaDef{"SCHEMA_TXN_CONTROL", {
         FieldDef{"action", FieldType::U8, ""},
         FieldDef{"name", FieldType::OPT, "ident"},

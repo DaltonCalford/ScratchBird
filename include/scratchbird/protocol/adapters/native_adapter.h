@@ -95,6 +95,9 @@ protected:
                                    const std::string& detail = "",
                                    const std::string& hint = "") override;
 
+    // EF-041 contract hook for deterministic capability reporting tests.
+    uint64_t contractServerFeatureMask() const { return serverFeatureMask(); }
+
 private:
     // ========================================================================
     // Message Handling
@@ -180,6 +183,7 @@ private:
     void sendTransactionStatus(network::Connection* conn, bool in_transaction);
     void sendPong(network::Connection* conn, uint64_t timestamp, uint32_t sequence);
     void sendStatusResponse(network::Connection* conn);
+    void sendCapabilityStatus(network::Connection* conn);
     void sendCopyInResponse(network::Connection* conn, uint8_t format, uint32_t window_bytes);
     void sendCopyOutResponse(network::Connection* conn, uint8_t format, uint16_t column_count,
                              const std::vector<uint32_t>& column_formats);
@@ -218,6 +222,7 @@ private:
     bool waitForStreamWindow(network::Connection* conn, std::string& error);
     bool sendStreamPayload(network::Connection* conn, uint64_t stream_id,
                            const uint8_t* data, size_t len, std::string& error);
+    uint64_t serverFeatureMask() const;
 
     struct PortalState {
         std::string statement_name;

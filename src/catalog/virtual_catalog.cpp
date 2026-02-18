@@ -25,10 +25,66 @@
 #include "scratchbird/catalog/pg_catalog.h"
 #include "scratchbird/catalog/mysql_catalog.h"
 #include "scratchbird/catalog/firebird_catalog.h"
+#include "scratchbird/catalog/cassandra_catalog.h"
+#include "scratchbird/catalog/mariadb_catalog.h"
+#include "scratchbird/catalog/clickhouse_catalog.h"
+#include "scratchbird/catalog/duckdb_catalog.h"
+#include "scratchbird/catalog/influxdb_catalog.h"
+#include "scratchbird/catalog/mongodb_catalog.h"
+#include "scratchbird/catalog/redis_catalog.h"
+#include "scratchbird/catalog/neo4j_catalog.h"
+#include "scratchbird/catalog/milvus_catalog.h"
+#include "scratchbird/catalog/opensearch_catalog.h"
 // TEMPORARILY DISABLED: mssql_catalog.h has pre-existing API mismatch issues
 // #include "scratchbird/catalog/mssql_catalog.h"
 
+#include <unordered_set>
+
 namespace scratchbird::catalog {
+
+namespace {
+
+struct EmulationOverlayPolicy {
+    bool constrained = false;
+    std::unordered_set<uint8_t> enabled_engines;
+};
+
+EmulationOverlayPolicy loadEmulationOverlayPolicy(CatalogManager* catalog) {
+    EmulationOverlayPolicy policy{};
+    if (catalog == nullptr) {
+        return policy;
+    }
+
+    ErrorContext ctx;
+    std::vector<CatalogManager::EmulationProfileCatalogInfo> rows;
+    const Status status = catalog->listEmulationProfileCatalogEntries(rows, &ctx);
+    if (status != Status::OK) {
+        // Compatibility fallback for startup paths that don't yet expose emulation profiles.
+        return policy;
+    }
+    if (rows.empty()) {
+        // No profile rows means no lifecycle constraints are active yet.
+        return policy;
+    }
+
+    policy.constrained = true;
+    for (const auto& row : rows) {
+        if (row.is_valid && row.enabled) {
+            policy.enabled_engines.insert(static_cast<uint8_t>(row.engine));
+        }
+    }
+    return policy;
+}
+
+bool shouldRegisterEmulationHandler(const EmulationOverlayPolicy& policy,
+                                    CatalogManager::EmulationEngine engine) {
+    if (!policy.constrained) {
+        return true;
+    }
+    return policy.enabled_engines.find(static_cast<uint8_t>(engine)) != policy.enabled_engines.end();
+}
+
+} // namespace
 
 // ============================================================================
 // Virtual Catalog Initialization
@@ -45,7 +101,10 @@ namespace scratchbird::catalog {
  */
 void initializeVirtualCatalogs(CatalogManager* catalog) {
     VirtualCatalogRouter& router = VirtualCatalogRouter::getInstance();
+    router.clearHandlers();
     router.initialize(catalog);
+
+    const EmulationOverlayPolicy policy = loadEmulationOverlayPolicy(catalog);
 
     // Register information_schema (SQL standard - all protocols)
     router.registerHandler(ProtocolType::SCRATCHBIRD,
@@ -54,17 +113,83 @@ void initializeVirtualCatalogs(CatalogManager* catalog) {
     router.registerHandler(ProtocolType::SCRATCHBIRD,
         std::make_unique<SysCatalogHandler>(catalog));
 
-    // Register pg_catalog (PostgreSQL wire protocol)
-    router.registerHandler(ProtocolType::POSTGRESQL,
-        std::make_unique<PgCatalogHandler>(catalog));
+    if (shouldRegisterEmulationHandler(policy, CatalogManager::EmulationEngine::POSTGRESQL)) {
+        // Register pg_catalog (PostgreSQL wire protocol)
+        router.registerHandler(ProtocolType::POSTGRESQL,
+            std::make_unique<PgCatalogHandler>(catalog));
+    }
 
-    // Register mysql.* (MySQL wire protocol)
-    router.registerHandler(ProtocolType::MYSQL,
-        std::make_unique<MySQLCatalogHandler>(catalog));
+    if (shouldRegisterEmulationHandler(policy, CatalogManager::EmulationEngine::MYSQL)) {
+        // Register mysql.* (MySQL wire protocol)
+        router.registerHandler(ProtocolType::MYSQL,
+            std::make_unique<MySQLCatalogHandler>(catalog));
+    }
 
-    // Register RDB$, MON$, SEC$ (Firebird wire protocol)
-    router.registerHandler(ProtocolType::FIREBIRD,
-        std::make_unique<FirebirdCatalogHandler>(catalog));
+    if (shouldRegisterEmulationHandler(policy, CatalogManager::EmulationEngine::FIREBIRD)) {
+        // Register RDB$, MON$, SEC$ (Firebird wire protocol)
+        router.registerHandler(ProtocolType::FIREBIRD,
+            std::make_unique<FirebirdCatalogHandler>(catalog));
+    }
+
+    if (shouldRegisterEmulationHandler(policy, CatalogManager::EmulationEngine::CASSANDRA)) {
+        // Register system.* and system_schema.* (Cassandra protocol)
+        router.registerHandler(ProtocolType::CASSANDRA,
+            std::make_unique<CassandraCatalogHandler>(catalog));
+    }
+
+    if (shouldRegisterEmulationHandler(policy, CatalogManager::EmulationEngine::MARIADB)) {
+        // Register mysql/performance_schema overlays (MariaDB protocol compatibility)
+        router.registerHandler(ProtocolType::MARIADB,
+            std::make_unique<MariaDBCatalogHandler>(catalog));
+    }
+
+    if (shouldRegisterEmulationHandler(policy, CatalogManager::EmulationEngine::CLICKHOUSE)) {
+        // Register system.* overlays (ClickHouse protocol)
+        router.registerHandler(ProtocolType::CLICKHOUSE,
+            std::make_unique<ClickHouseCatalogHandler>(catalog));
+    }
+
+    if (shouldRegisterEmulationHandler(policy, CatalogManager::EmulationEngine::DUCKDB)) {
+        // Register duckdb_catalog.* overlays (DuckDB protocol)
+        router.registerHandler(ProtocolType::DUCKDB,
+            std::make_unique<DuckDBCatalogHandler>(catalog));
+    }
+
+    if (shouldRegisterEmulationHandler(policy, CatalogManager::EmulationEngine::INFLUXDB)) {
+        // Register influxdb_meta.* overlays (InfluxDB protocol)
+        router.registerHandler(ProtocolType::INFLUXDB,
+            std::make_unique<InfluxDBCatalogHandler>(catalog));
+    }
+
+    if (shouldRegisterEmulationHandler(policy, CatalogManager::EmulationEngine::MONGODB)) {
+        // Register mongo_meta.* overlays (MongoDB protocol)
+        router.registerHandler(ProtocolType::MONGODB,
+            std::make_unique<MongoDBCatalogHandler>(catalog));
+    }
+
+    if (shouldRegisterEmulationHandler(policy, CatalogManager::EmulationEngine::REDIS)) {
+        // Register redis_meta.* overlays (Redis protocol)
+        router.registerHandler(ProtocolType::REDIS,
+            std::make_unique<RedisCatalogHandler>(catalog));
+    }
+
+    if (shouldRegisterEmulationHandler(policy, CatalogManager::EmulationEngine::NEO4J)) {
+        // Register neo4j_meta.* overlays (Neo4j protocol)
+        router.registerHandler(ProtocolType::NEO4J,
+            std::make_unique<Neo4jCatalogHandler>(catalog));
+    }
+
+    if (shouldRegisterEmulationHandler(policy, CatalogManager::EmulationEngine::MILVUS)) {
+        // Register milvus_meta.* overlays (Milvus protocol)
+        router.registerHandler(ProtocolType::MILVUS,
+            std::make_unique<MilvusCatalogHandler>(catalog));
+    }
+
+    if (shouldRegisterEmulationHandler(policy, CatalogManager::EmulationEngine::OPENSEARCH)) {
+        // Register opensearch_meta.* overlays (OpenSearch protocol)
+        router.registerHandler(ProtocolType::OPENSEARCH,
+            std::make_unique<OpenSearchCatalogHandler>(catalog));
+    }
 
     // TEMPORARILY DISABLED: MSSQLCatalogHandler has pre-existing API mismatch issues
     // Register sys.* (SQL Server wire protocol / TDS)
@@ -78,8 +203,8 @@ void initializeVirtualCatalogs(CatalogManager* catalog) {
  * Call during server shutdown to cleanup handlers.
  */
 void shutdownVirtualCatalogs() {
-    // Router is a singleton, handlers will be cleaned up automatically
-    // when the static instance is destroyed
+    // Handlers are unregistered explicitly to support deterministic lifecycle reload.
+    VirtualCatalogRouter::getInstance().clearHandlers();
 }
 
 // ============================================================================
@@ -165,12 +290,47 @@ ProtocolType protocolTypeFromString(const std::string& name) {
     if (equalsCaseInsensitive(name, "mysql")) {
         return ProtocolType::MYSQL;
     }
+    if (equalsCaseInsensitive(name, "mariadb")) {
+        return ProtocolType::MARIADB;
+    }
+    if (equalsCaseInsensitive(name, "cassandra") ||
+        equalsCaseInsensitive(name, "cql")) {
+        return ProtocolType::CASSANDRA;
+    }
+    if (equalsCaseInsensitive(name, "clickhouse")) {
+        return ProtocolType::CLICKHOUSE;
+    }
+    if (equalsCaseInsensitive(name, "duckdb")) {
+        return ProtocolType::DUCKDB;
+    }
+    if (equalsCaseInsensitive(name, "influxdb") ||
+        equalsCaseInsensitive(name, "influx")) {
+        return ProtocolType::INFLUXDB;
+    }
+    if (equalsCaseInsensitive(name, "milvus")) {
+        return ProtocolType::MILVUS;
+    }
+    if (equalsCaseInsensitive(name, "mongodb") ||
+        equalsCaseInsensitive(name, "mongo")) {
+        return ProtocolType::MONGODB;
+    }
+    if (equalsCaseInsensitive(name, "neo4j")) {
+        return ProtocolType::NEO4J;
+    }
+    if (equalsCaseInsensitive(name, "opensearch")) {
+        return ProtocolType::OPENSEARCH;
+    }
+    if (equalsCaseInsensitive(name, "redis") ||
+        equalsCaseInsensitive(name, "resp")) {
+        return ProtocolType::REDIS;
+    }
     if (equalsCaseInsensitive(name, "mssql") ||
         equalsCaseInsensitive(name, "sqlserver") ||
         equalsCaseInsensitive(name, "tds")) {
         return ProtocolType::MSSQL;
     }
     if (equalsCaseInsensitive(name, "firebird") ||
+        equalsCaseInsensitive(name, "firebirdsql") ||
         equalsCaseInsensitive(name, "fb")) {
         return ProtocolType::FIREBIRD;
     }

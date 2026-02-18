@@ -37,8 +37,19 @@ enum class ConnectorType : uint8_t {
     POSTGRESQL = 1,
     MYSQL = 2,
     FIREBIRD = 3,
+    FIREBIRDSQL = FIREBIRD,  // Canonical alias used by vNext docs
     SCRATCHBIRD = 4,
-    ODBC = 5
+    ODBC = 5,
+    CASSANDRA = 6,
+    MILVUS = 7,
+    MONGODB = 8,
+    NEO4J = 9,
+    REDIS = 10,
+    MARIADB = 11,
+    INFLUXDB = 12,
+    CLICKHOUSE = 13,
+    OPENSEARCH = 14,
+    DUCKDB = 15
 };
 
 enum class RemoteObjectType : uint8_t {

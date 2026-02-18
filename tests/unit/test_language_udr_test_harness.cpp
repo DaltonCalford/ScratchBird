@@ -22,6 +22,7 @@ namespace
     using scratchbird::udr::LanguageUdrArtifactPreference;
     using scratchbird::udr::LanguageUdrCompileRequest;
     using scratchbird::udr::LanguageUdrCompileResponse;
+    using scratchbird::udr::LanguageUdrDiagnosticSeverity;
     using scratchbird::udr::LanguageUdrModuleStatus;
     using scratchbird::udr::LanguageUdrNativeArtifactStatus;
     using scratchbird::udr::LanguageUdrNativeCompileOptions;
@@ -38,7 +39,7 @@ namespace
         reg.module_name = "test_udr_module";
         reg.engine_profile_id = "native";
         reg.engine_profile_version = "3.0";
-        reg.translation_mode = "STRICT";
+        reg.translation_mode = "SQL_REWRITE_TO_NATIVE";
         reg.module_semver = "3.0.1";
         reg.artifact_hash = "module_hash";
         reg.signature_status = LanguageUdrSignatureStatus::TRUSTED;
@@ -209,3 +210,46 @@ TEST(LanguageUdrTestHarnessContractTest, NativePreferredFallsBackOnAbiMismatch)
     EXPECT_TRUE(response.native_artifacts.empty());
 }
 
+TEST(LanguageUdrTestHarnessContractTest, CompileSingleRejectsSandboxViolationAsCompileRejectShape)
+{
+    LanguageUdrRegistry registry;
+    ErrorContext ctx;
+    ASSERT_EQ(registry.registerModule(makeRegistration(), {"compile_embedded_payload"}, &ctx), Status::OK)
+        << ctx.message;
+
+    LanguageUdrTestHarness harness(registry);
+    LanguageUdrCompileRequest request = makeRequest("compile_embedded_payload");
+    request.requires_network_access = true;
+
+    LanguageUdrCompileResponse response{};
+    const Status status = harness.compileSingle(request, response, &ctx);
+    EXPECT_EQ(status, Status::PERMISSION_DENIED);
+    EXPECT_FALSE(response.success);
+    EXPECT_EQ(response.result_shape, LanguageUdrResultShape::UDR_RS_COMPILE_REJECT);
+    EXPECT_TRUE(response.sblr_payload.empty());
+    ASSERT_FALSE(response.diagnostics.empty());
+    EXPECT_EQ(response.diagnostics.front().code, "UDR_1508");
+    EXPECT_EQ(response.diagnostics.front().severity, LanguageUdrDiagnosticSeverity::ERROR);
+}
+
+TEST(LanguageUdrTestHarnessContractTest, CompileSingleRejectsQuotaViolationAsCompileRejectShape)
+{
+    LanguageUdrRegistry registry;
+    ErrorContext ctx;
+    ASSERT_EQ(registry.registerModule(makeRegistration(), {"compile_embedded_payload"}, &ctx), Status::OK)
+        << ctx.message;
+
+    LanguageUdrTestHarness harness(registry);
+    LanguageUdrCompileRequest request = makeRequest("compile_embedded_payload");
+    request.resource_limits.max_payload_bytes = 2;
+
+    LanguageUdrCompileResponse response{};
+    const Status status = harness.compileSingle(request, response, &ctx);
+    EXPECT_EQ(status, Status::CONFIGURATION_LIMIT_EXCEEDED);
+    EXPECT_FALSE(response.success);
+    EXPECT_EQ(response.result_shape, LanguageUdrResultShape::UDR_RS_COMPILE_REJECT);
+    EXPECT_TRUE(response.sblr_payload.empty());
+    ASSERT_FALSE(response.diagnostics.empty());
+    EXPECT_EQ(response.diagnostics.front().code, "UDR_1512");
+    EXPECT_EQ(response.diagnostics.front().severity, LanguageUdrDiagnosticSeverity::ERROR);
+}

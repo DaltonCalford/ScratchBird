@@ -3526,6 +3526,7 @@ public:
         {
             NATIVE = 0,
             FIREBIRD = 1,
+            FIREBIRDSQL = FIREBIRD,  // Canonical alias used by vNext docs
             POSTGRESQL = 2,
             MYSQL = 3,
             CASSANDRA = 4,
@@ -3533,6 +3534,11 @@ public:
             MONGODB = 6,
             NEO4J = 7,
             REDIS = 8,
+            MARIADB = 9,
+            INFLUXDB = 10,
+            CLICKHOUSE = 11,
+            OPENSEARCH = 12,
+            DUCKDB = 13,
             UNSPECIFIED = 255
         };
 

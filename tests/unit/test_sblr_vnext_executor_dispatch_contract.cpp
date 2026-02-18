@@ -175,7 +175,7 @@ TEST_F(SBLRVNextExecutorDispatchContractTest, KnownVNextOpcodesRejectWithDetermi
         Value::Object payload;
     };
 
-    const std::array<DispatchCase, 7> cases = {{
+    const std::array<DispatchCase, 14> cases = {{
         {static_cast<uint16_t>(Opcode::SBLR3_OP_DOC_PATH_FILTER),
          "SBLR3_OP_DOC_PATH_FILTER",
          Value::Object{{"path_id", Value(static_cast<uint64_t>(11))},
@@ -210,6 +210,44 @@ TEST_F(SBLRVNextExecutorDispatchContractTest, KnownVNextOpcodesRejectWithDetermi
          "SBLR3_OP_HYBRID_BRIDGE_MATERIALIZE",
          Value::Object{{"buffer_class", Value(static_cast<uint64_t>(2))},
                        {"row_shape_ref", Value(static_cast<uint64_t>(77))}}},
+        {static_cast<uint16_t>(Opcode::SBLR3_SESSION_RESET),
+         "SBLR3_SESSION_RESET",
+         Value::Object{{"action", Value(static_cast<uint64_t>(1))},
+                       {"options", Value(Value::Object{{"scope", Value(std::string("session"))}})}}},
+        {static_cast<uint16_t>(Opcode::SBLR3_CREATE_DATABASE_EMULATED),
+         "SBLR3_CREATE_DATABASE_EMULATED",
+         Value::Object{{"flags", Value(static_cast<uint64_t>(0))},
+                       {"name", Value(std::string("emulated_db"))},
+                       {"encrypted", Value(false)},
+                       {"options", Value(Value::Object{{"engine", Value(std::string("postgresql"))}})}}},
+        {static_cast<uint16_t>(Opcode::SBLR3_IDX_SET_OPTIONS),
+         "SBLR3_IDX_SET_OPTIONS",
+         Value::Object{{"index", Value(Value::List{Value(std::string("users")),
+                                                   Value(std::string("public")),
+                                                   Value(std::string("idx_users_name"))})},
+                       {"action", Value(static_cast<uint64_t>(1))},
+                       {"options", Value(Value::Object{{"fillfactor", Value(static_cast<uint64_t>(90))}})}}},
+        {static_cast<uint16_t>(Opcode::SBLR3_CQL_KEYSPACE),
+         "SBLR3_CQL_KEYSPACE",
+         Value::Object{{"action", Value(static_cast<uint64_t>(1))},
+                       {"namespace_path", Value(Value::List{Value(std::string("users")),
+                                                           Value(std::string("cassandra"))})},
+                       {"options", Value(Value::Object{{"replication", Value(std::string("simple"))}})}}},
+        {static_cast<uint16_t>(Opcode::SBLR3_CLUSTER_WORKLOAD_CLASS),
+         "SBLR3_CLUSTER_WORKLOAD_CLASS",
+         Value::Object{{"action", Value(static_cast<uint64_t>(2))},
+                       {"object_name", Value(std::string("oltp_default"))},
+                       {"options", Value(Value::Object{{"priority", Value(static_cast<uint64_t>(5))}})}}},
+        {static_cast<uint16_t>(Opcode::SBLR3_SECURITY_ENCRYPTION_PROFILE),
+         "SBLR3_SECURITY_ENCRYPTION_PROFILE",
+         Value::Object{{"action", Value(static_cast<uint64_t>(3))},
+                       {"object_name", Value(std::string("default_profile"))},
+                       {"options", Value(Value::Object{{"cipher", Value(std::string("aes-256-gcm"))}})}}},
+        {static_cast<uint16_t>(Opcode::SBLR3_SERVICE_CHANNEL_BACKUP),
+         "SBLR3_SERVICE_CHANNEL_BACKUP",
+         Value::Object{{"action", Value(static_cast<uint64_t>(1))},
+                       {"object_name", Value(std::string("backup"))},
+                       {"options", Value(Value::Object{{"mode", Value(std::string("full"))}})}}},
     }};
 
     for (const auto &entry : cases)
@@ -223,6 +261,314 @@ TEST_F(SBLRVNextExecutorDispatchContractTest, KnownVNextOpcodesRejectWithDetermi
     }
 
     EXPECT_EQ(reject_before + static_cast<double>(cases.size()),
+              metricCounterValue(metric, {"vnext_opcode_dispatch", "reject", "IRX_0406"}));
+}
+
+TEST_F(SBLRVNextExecutorDispatchContractTest,
+       CanonicalOpcodeWithoutDirectDispatchRejectsWithDeterministicBridgeCode)
+{
+    const std::string metric = "scratchbird_vnext_executor_events_total";
+    const double reject_before =
+        metricCounterValue(metric, {"vnext_opcode_dispatch", "reject", "IRX_0406"});
+
+    ExecutionResult result = executeVNext(
+        static_cast<uint16_t>(Opcode::SBLR3_CREATE_DATABASE),
+        Value::Object{{"flags", Value(static_cast<uint64_t>(0))},
+                      {"name", Value(std::string("native_db"))},
+                      {"encrypted", Value(false)},
+                      {"options", Value(Value::Object{{"engine", Value(std::string("native"))}})}});
+
+    ASSERT_FALSE(result.success());
+    EXPECT_NE(result.error().find("IRX_0406"), std::string::npos) << result.error();
+    EXPECT_NE(result.error().find("SBLR3_CREATE_DATABASE"), std::string::npos) << result.error();
+    EXPECT_EQ(result.error().find("V3 opcode not implemented in executor"), std::string::npos)
+        << result.error();
+
+    EXPECT_EQ(reject_before + 1.0,
+              metricCounterValue(metric, {"vnext_opcode_dispatch", "reject", "IRX_0406"}));
+}
+
+TEST_F(SBLRVNextExecutorDispatchContractTest, BridgeOpcodeFamilyMatrixRejectsDeterministically)
+{
+    const std::string metric = "scratchbird_vnext_executor_events_total";
+    const double reject_before =
+        metricCounterValue(metric, {"vnext_opcode_dispatch", "reject", "IRX_0406"});
+
+    auto makeDocPathPayload = []() -> Value::Object {
+        return Value::Object{
+            {"path_id", Value(static_cast<uint64_t>(11))},
+            {"cmp", Value(static_cast<uint64_t>(0))},
+            {"value_ref", Value(static_cast<uint64_t>(14))}};
+    };
+    auto makeTsBucketPayload = []() -> Value::Object {
+        return Value::Object{
+            {"bucket_ns", Value(static_cast<uint64_t>(120000000000ULL))},
+            {"agg_count", Value(static_cast<uint64_t>(2))},
+            {"agg_refs", Value(Value::Bytes{0x01, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00})}};
+    };
+    auto makeColScanPayload = []() -> Value::Object {
+        return Value::Object{
+            {"table_id", Value(static_cast<uint64_t>(22))},
+            {"proj_bitmap", Value(Value::Bytes{0x0F})},
+            {"predicate_bitmap", Value(Value::Bytes{0xAA, 0xBB})}};
+    };
+    auto makeSearchDslPayload = []() -> Value::Object {
+        return Value::Object{
+            {"dsl_blob_ref", Value(static_cast<uint64_t>(5001))},
+            {"scorer_id", Value(static_cast<uint64_t>(1))}};
+    };
+    auto makeVectorAnnPayload = []() -> Value::Object {
+        return Value::Object{
+            {"index_id", Value(static_cast<uint64_t>(99))},
+            {"metric", Value(static_cast<uint64_t>(2))},
+            {"topk", Value(static_cast<uint64_t>(10))},
+            {"ef", Value(static_cast<uint64_t>(64))}};
+    };
+    auto makeHybridExchangePayload = []() -> Value::Object {
+        return Value::Object{
+            {"src_track", Value(static_cast<uint64_t>(1))},
+            {"dst_track", Value(static_cast<uint64_t>(2))},
+            {"mode", Value(static_cast<uint64_t>(3))}};
+    };
+    auto makeHybridMaterializePayload = []() -> Value::Object {
+        return Value::Object{
+            {"buffer_class", Value(static_cast<uint64_t>(2))},
+            {"row_shape_ref", Value(static_cast<uint64_t>(77))}};
+    };
+    auto makeCreateDatabasePayload = []() -> Value::Object {
+        return Value::Object{
+            {"flags", Value(static_cast<uint64_t>(0))},
+            {"name", Value(std::string("emulated_db"))},
+            {"encrypted", Value(false)},
+            {"options", Value(Value::Object{{"engine", Value(std::string("postgresql"))}})}};
+    };
+    auto makeCreateDomainPayload = []() -> Value::Object {
+        const auto type_spec = scratchbird::sblr::v3::TypeSpec{
+            static_cast<uint16_t>(Opcode::SBLR3_TYPE_INTEGER),
+            Value::Bytes{}};
+        return Value::Object{
+            {"flags", Value(static_cast<uint64_t>(0))},
+            {"path", Value(Value::List{Value(std::string("users")), Value(std::string("public"))})},
+            {"name", Value(std::string("dom_bridge"))},
+            {"type", Value(type_spec)},
+            {"domain_kind", Value(static_cast<uint64_t>(0))},
+            {"constraints", Value(Value::List{})}};
+    };
+    auto makeIndexBridgePayload = []() -> Value::Object {
+        return Value::Object{
+            {"index", Value(Value::List{Value(std::string("users")),
+                                        Value(std::string("public")),
+                                        Value(std::string("idx_users_name"))})},
+            {"action", Value(static_cast<uint64_t>(1))},
+            {"options", Value(Value::Object{{"fillfactor", Value(static_cast<uint64_t>(90))}})}};
+    };
+    auto makeControlPayload = []() -> Value::Object {
+        return Value::Object{
+            {"action", Value(static_cast<uint64_t>(1))},
+            {"object_name", Value(std::string("control_object"))},
+            {"options", Value(Value::Object{{"scope", Value(std::string("session"))}})}};
+    };
+    auto makeMultiModelPayload = []() -> Value::Object {
+        return Value::Object{
+            {"action", Value(static_cast<uint64_t>(1))},
+            {"namespace_path", Value(Value::List{Value(std::string("users")),
+                                                Value(std::string("remote"))})},
+            {"options", Value(Value::Object{{"mode", Value(std::string("compat"))}})}};
+    };
+
+    auto assertBridgeReject = [&](Opcode opcode, Value::Object payload) {
+        const char* symbol_c = scratchbird::sblr::v3::opcodeName(static_cast<uint16_t>(opcode));
+        const std::string symbol = symbol_c ? symbol_c : "UNKNOWN";
+        ExecutionResult result = executeVNext(static_cast<uint16_t>(opcode), std::move(payload));
+        EXPECT_FALSE(result.success()) << "expected deterministic reject for " << symbol;
+        EXPECT_NE(result.error().find("IRX_0406"), std::string::npos) << result.error();
+        EXPECT_NE(result.error().find(symbol), std::string::npos) << result.error();
+        EXPECT_EQ(result.error().find("V3 opcode not implemented in executor"), std::string::npos)
+            << result.error();
+    };
+
+    const std::array<Opcode, 7> bridge_expr = {{
+        Opcode::SBLR3_OP_DOC_PATH_FILTER,
+        Opcode::SBLR3_OP_TS_BUCKET_AGG,
+        Opcode::SBLR3_OP_COL_SCAN,
+        Opcode::SBLR3_OP_SEARCH_DSL_EVAL,
+        Opcode::SBLR3_OP_VECTOR_ANN,
+        Opcode::SBLR3_OP_HYBRID_BRIDGE_EXCHANGE,
+        Opcode::SBLR3_OP_HYBRID_BRIDGE_MATERIALIZE,
+    }};
+
+    const std::array<Opcode, 1> bridge_create_db = {{
+        Opcode::SBLR3_CREATE_DATABASE_EMULATED,
+    }};
+
+    const std::array<Opcode, 4> bridge_domain = {{
+        Opcode::SBLR3_CREATE_DOMAIN_RECORD,
+        Opcode::SBLR3_CREATE_DOMAIN_ENUM,
+        Opcode::SBLR3_CREATE_DOMAIN_SET,
+        Opcode::SBLR3_CREATE_DOMAIN_RANGE,
+    }};
+
+    const std::array<Opcode, 7> bridge_index = {{
+        Opcode::SBLR3_IDX_SET_OPTIONS,
+        Opcode::SBLR3_IDX_RESET_OPTIONS,
+        Opcode::SBLR3_IDX_RELOCATE,
+        Opcode::SBLR3_IDX_DEFAULTS_SET,
+        Opcode::SBLR3_IDX_DEFAULTS_RESET,
+        Opcode::SBLR3_IDX_SHOW_HEALTH,
+        Opcode::SBLR3_IDX_SHOW_CONTENTION,
+    }};
+
+    const std::array<Opcode, 18> bridge_control_admin = {{
+        Opcode::SBLR3_SESSION_RESET,
+        Opcode::SBLR3_CONFIG_RESET,
+        Opcode::SBLR3_CONFIG_HISTORY,
+        Opcode::SBLR3_CONFIG_RELOAD,
+        Opcode::SBLR3_CONFIG_RESOURCE_BUNDLES_SHOW,
+        Opcode::SBLR3_CONFIG_RESOURCE_BUNDLE_VALIDATE,
+        Opcode::SBLR3_CONFIG_RESOURCE_BUNDLE_ACTIVATE,
+        Opcode::SBLR3_TEXTSEARCH_CREATE_DICTIONARY,
+        Opcode::SBLR3_TEXTSEARCH_ALTER_DICTIONARY,
+        Opcode::SBLR3_TEXTSEARCH_DROP_DICTIONARY,
+        Opcode::SBLR3_TEXTSEARCH_CREATE_CONFIGURATION,
+        Opcode::SBLR3_TEXTSEARCH_ALTER_CONFIGURATION,
+        Opcode::SBLR3_TEXTSEARCH_DROP_CONFIGURATION,
+        Opcode::SBLR3_TEXTSEARCH_LOAD_DICTIONARY_DATA,
+        Opcode::SBLR3_ADMIN_BACKUP,
+        Opcode::SBLR3_ADMIN_RESTORE,
+        Opcode::SBLR3_ADMIN_VALIDATE,
+        Opcode::SBLR3_ADMIN_VACUUM_ALIAS,
+    }};
+
+    const std::array<Opcode, 27> bridge_multi_model = {{
+        Opcode::SBLR3_CQL_KEYSPACE,
+        Opcode::SBLR3_CQL_BATCH,
+        Opcode::SBLR3_CQL_TTL,
+        Opcode::SBLR3_CQL_WRITETIME,
+        Opcode::SBLR3_MONGO_FIND,
+        Opcode::SBLR3_MONGO_AGGREGATE,
+        Opcode::SBLR3_MONGO_FIND_AND_MODIFY,
+        Opcode::SBLR3_MONGO_BULK_WRITE,
+        Opcode::SBLR3_CYPHER_MATCH,
+        Opcode::SBLR3_CYPHER_MERGE,
+        Opcode::SBLR3_CYPHER_UNWIND,
+        Opcode::SBLR3_CYPHER_CALL,
+        Opcode::SBLR3_REDIS_STRING,
+        Opcode::SBLR3_REDIS_HASH,
+        Opcode::SBLR3_REDIS_LIST,
+        Opcode::SBLR3_REDIS_SET,
+        Opcode::SBLR3_REDIS_ZSET,
+        Opcode::SBLR3_REDIS_STREAM,
+        Opcode::SBLR3_REDIS_PUBSUB,
+        Opcode::SBLR3_MILVUS_CREATE_COLLECTION,
+        Opcode::SBLR3_MILVUS_DROP_COLLECTION,
+        Opcode::SBLR3_MILVUS_CREATE_INDEX,
+        Opcode::SBLR3_MILVUS_DROP_INDEX,
+        Opcode::SBLR3_MILVUS_INSERT,
+        Opcode::SBLR3_MILVUS_DELETE,
+        Opcode::SBLR3_MILVUS_SEARCH,
+        Opcode::SBLR3_MILVUS_QUERY,
+    }};
+
+    const std::array<Opcode, 38> bridge_control_cluster_security = {{
+        Opcode::SBLR3_CLUSTER_WORKLOAD_CLASS,
+        Opcode::SBLR3_CLUSTER_WORKLOAD_ROUTE,
+        Opcode::SBLR3_CLUSTER_ADMISSION_POLICY,
+        Opcode::SBLR3_CLUSTER_ADMISSION_BINDING,
+        Opcode::SBLR3_CLUSTER_SET_STATE,
+        Opcode::SBLR3_CLUSTER_SHOW_STATE,
+        Opcode::SBLR3_CLUSTER_SHOW_ROUTING_PLAN,
+        Opcode::SBLR3_CLUSTER_SHOW_ADMISSION_STATUS,
+        Opcode::SBLR3_ALERT_RULE_DDL,
+        Opcode::SBLR3_ALERT_TARGET_DDL,
+        Opcode::SBLR3_ALERT_ROUTE_DDL,
+        Opcode::SBLR3_ALERT_SILENCE_DDL,
+        Opcode::SBLR3_ALERT_ACK,
+        Opcode::SBLR3_ALERT_SHOW,
+        Opcode::SBLR3_HEALING_POLICY_DDL,
+        Opcode::SBLR3_HEALING_ACTION_DDL,
+        Opcode::SBLR3_HEALING_RUN,
+        Opcode::SBLR3_HEALING_SHOW_RUNS,
+        Opcode::SBLR3_JOB_TYPE_DDL,
+        Opcode::SBLR3_JOB_TYPE_PARAM_SET,
+        Opcode::SBLR3_SHARD_POLICY_DDL,
+        Opcode::SBLR3_SHARD_DDL,
+        Opcode::SBLR3_SHARD_REPLICA_DDL,
+        Opcode::SBLR3_SHARD_MIGRATE,
+        Opcode::SBLR3_SHARD_SHOW,
+        Opcode::SBLR3_CUBE_DDL,
+        Opcode::SBLR3_CUBE_REFRESH,
+        Opcode::SBLR3_CUBE_SHOW_STATS,
+        Opcode::SBLR3_SECURITY_ENCRYPTION_PROFILE,
+        Opcode::SBLR3_SECURITY_ENCRYPTION_KEY,
+        Opcode::SBLR3_SECURITY_KEY_SHARD_SUBMIT,
+        Opcode::SBLR3_SECURITY_UNLOCK_DATABASE,
+        Opcode::SBLR3_SECURITY_CERT_DDL,
+        Opcode::SBLR3_SECURITY_PRIVATE_KEY_ROTATE,
+        Opcode::SBLR3_SECURITY_SHOW_STATUS,
+        Opcode::SBLR3_SERVICE_CHANNEL_BACKUP,
+        Opcode::SBLR3_SERVICE_CHANNEL_EVENTS,
+        Opcode::SBLR3_SERVICE_CHANNEL_PROGRESS,
+    }};
+
+    for (const auto opcode : bridge_expr)
+    {
+        switch (opcode)
+        {
+            case Opcode::SBLR3_OP_DOC_PATH_FILTER:
+                assertBridgeReject(opcode, makeDocPathPayload());
+                break;
+            case Opcode::SBLR3_OP_TS_BUCKET_AGG:
+                assertBridgeReject(opcode, makeTsBucketPayload());
+                break;
+            case Opcode::SBLR3_OP_COL_SCAN:
+                assertBridgeReject(opcode, makeColScanPayload());
+                break;
+            case Opcode::SBLR3_OP_SEARCH_DSL_EVAL:
+                assertBridgeReject(opcode, makeSearchDslPayload());
+                break;
+            case Opcode::SBLR3_OP_VECTOR_ANN:
+                assertBridgeReject(opcode, makeVectorAnnPayload());
+                break;
+            case Opcode::SBLR3_OP_HYBRID_BRIDGE_EXCHANGE:
+                assertBridgeReject(opcode, makeHybridExchangePayload());
+                break;
+            case Opcode::SBLR3_OP_HYBRID_BRIDGE_MATERIALIZE:
+                assertBridgeReject(opcode, makeHybridMaterializePayload());
+                break;
+            default:
+                break;
+        }
+    }
+
+    for (const auto opcode : bridge_create_db)
+    {
+        assertBridgeReject(opcode, makeCreateDatabasePayload());
+    }
+    for (const auto opcode : bridge_domain)
+    {
+        assertBridgeReject(opcode, makeCreateDomainPayload());
+    }
+    for (const auto opcode : bridge_index)
+    {
+        assertBridgeReject(opcode, makeIndexBridgePayload());
+    }
+    for (const auto opcode : bridge_control_admin)
+    {
+        assertBridgeReject(opcode, makeControlPayload());
+    }
+    for (const auto opcode : bridge_multi_model)
+    {
+        assertBridgeReject(opcode, makeMultiModelPayload());
+    }
+    for (const auto opcode : bridge_control_cluster_security)
+    {
+        assertBridgeReject(opcode, makeControlPayload());
+    }
+
+    const size_t total_cases = bridge_expr.size() + bridge_create_db.size() + bridge_domain.size() +
+                               bridge_index.size() + bridge_control_admin.size() +
+                               bridge_multi_model.size() + bridge_control_cluster_security.size();
+    EXPECT_EQ(reject_before + static_cast<double>(total_cases),
               metricCounterValue(metric, {"vnext_opcode_dispatch", "reject", "IRX_0406"}));
 }
 

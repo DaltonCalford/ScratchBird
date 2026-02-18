@@ -442,4 +442,16 @@ TEST_F(CatalogVirtualOverlayConformanceContractTest, VirtualOverlayConformance)
               Status::OK)
         << ctx.message;
     ASSERT_FALSE(firebird_result.empty());
+
+    VirtualResultSet cassandra_local;
+    ASSERT_EQ(executeVirtualQuery(ProtocolType::CASSANDRA, "system", "local", "", cassandra_local, &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_FALSE(cassandra_local.empty());
+
+    VirtualResultSet cassandra_tables;
+    ASSERT_EQ(executeVirtualQuery(ProtocolType::CASSANDRA, "system_schema", "tables", "", cassandra_tables, &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_FALSE(cassandra_tables.empty());
 }

@@ -590,7 +590,12 @@ bool isValidEmulationEngine(CatalogManager::EmulationEngine engine)
            engine == EE::MILVUS ||
            engine == EE::MONGODB ||
            engine == EE::NEO4J ||
-           engine == EE::REDIS;
+           engine == EE::REDIS ||
+           engine == EE::MARIADB ||
+           engine == EE::INFLUXDB ||
+           engine == EE::CLICKHOUSE ||
+           engine == EE::OPENSEARCH ||
+           engine == EE::DUCKDB;
 }
 
 bool isValidStorageProfile(CatalogManager::StorageProfile profile)

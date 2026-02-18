@@ -14,6 +14,7 @@
 #include <cctype>
 #include <limits>
 #include <sstream>
+#include <unordered_set>
 
 namespace scratchbird::udr
 {
@@ -59,6 +60,16 @@ namespace scratchbird::udr
                                return static_cast<char>(std::tolower(c));
                            });
             return value;
+        }
+
+        auto canonicalizeProfileId(const std::string &profile_id) -> std::string
+        {
+            std::string normalized = toLowerAscii(trimAscii(profile_id));
+            if (normalized == "firebird")
+            {
+                return "firebirdsql";
+            }
+            return normalized;
         }
 
         auto parseUInt32(const std::string &token, uint32_t &value_out) -> bool
@@ -171,6 +182,248 @@ namespace scratchbird::udr
             SET_ERROR_CONTEXT_VNEXT(ctx, status, vnext_code, message.c_str());
             return status;
         }
+
+        struct ProfileCompileContract
+        {
+            const char *translation_mode = "";
+            std::array<const char *, 2> payload_formats{};
+            size_t payload_count = 0;
+        };
+
+        auto resolveProfileCompileContract(const std::string &profile_id,
+                                           ProfileCompileContract &contract_out) -> bool
+        {
+            const std::string normalized = canonicalizeProfileId(profile_id);
+
+            if (normalized == "native")
+            {
+                contract_out.translation_mode = "SQL_REWRITE_TO_NATIVE";
+                contract_out.payload_formats = {"SQL_TEXT", ""};
+                contract_out.payload_count = 1;
+                return true;
+            }
+            if (normalized == "cassandra")
+            {
+                contract_out.translation_mode = "CQL_REWRITE_TO_NATIVE";
+                contract_out.payload_formats = {"CQL_TEXT", ""};
+                contract_out.payload_count = 1;
+                return true;
+            }
+            if (normalized == "clickhouse")
+            {
+                contract_out.translation_mode = "SQL_REWRITE_TO_NATIVE";
+                contract_out.payload_formats = {"SQL_TEXT", ""};
+                contract_out.payload_count = 1;
+                return true;
+            }
+            if (normalized == "duckdb")
+            {
+                contract_out.translation_mode = "SQL_REWRITE_TO_NATIVE";
+                contract_out.payload_formats = {"SQL_TEXT", ""};
+                contract_out.payload_count = 1;
+                return true;
+            }
+            if (normalized == "firebirdsql")
+            {
+                contract_out.translation_mode = "SQL_REWRITE_TO_NATIVE";
+                contract_out.payload_formats = {"SQL_TEXT", ""};
+                contract_out.payload_count = 1;
+                return true;
+            }
+            if (normalized == "influxdb")
+            {
+                contract_out.translation_mode = "TIMESERIES_REWRITE_TO_NATIVE";
+                contract_out.payload_formats = {"INFLUXQL_TEXT", "INFLUX_LINE"};
+                contract_out.payload_count = 2;
+                return true;
+            }
+            if (normalized == "mariadb")
+            {
+                contract_out.translation_mode = "SQL_REWRITE_TO_NATIVE";
+                contract_out.payload_formats = {"SQL_TEXT", ""};
+                contract_out.payload_count = 1;
+                return true;
+            }
+            if (normalized == "milvus")
+            {
+                contract_out.translation_mode = "VECTOR_API_TO_NATIVE";
+                contract_out.payload_formats = {"VECTOR_API_JSON", ""};
+                contract_out.payload_count = 1;
+                return true;
+            }
+            if (normalized == "mongodb")
+            {
+                contract_out.translation_mode = "DOCUMENT_PIPELINE_TO_NATIVE";
+                contract_out.payload_formats = {"BSON_COMMAND", ""};
+                contract_out.payload_count = 1;
+                return true;
+            }
+            if (normalized == "mysql")
+            {
+                contract_out.translation_mode = "SQL_REWRITE_TO_NATIVE";
+                contract_out.payload_formats = {"SQL_TEXT", ""};
+                contract_out.payload_count = 1;
+                return true;
+            }
+            if (normalized == "neo4j")
+            {
+                contract_out.translation_mode = "CYPHER_REWRITE_TO_NATIVE";
+                contract_out.payload_formats = {"CYPHER_TEXT", ""};
+                contract_out.payload_count = 1;
+                return true;
+            }
+            if (normalized == "opensearch")
+            {
+                contract_out.translation_mode = "DSL_REWRITE_TO_NATIVE";
+                contract_out.payload_formats = {"JSON_DSL", ""};
+                contract_out.payload_count = 1;
+                return true;
+            }
+            if (normalized == "postgresql")
+            {
+                contract_out.translation_mode = "SQL_REWRITE_TO_NATIVE";
+                contract_out.payload_formats = {"SQL_TEXT", ""};
+                contract_out.payload_count = 1;
+                return true;
+            }
+            if (normalized == "redis")
+            {
+                contract_out.translation_mode = "RESP_TO_NATIVE_COMMAND";
+                contract_out.payload_formats = {"RESP_ARRAY", ""};
+                contract_out.payload_count = 1;
+                return true;
+            }
+            return false;
+        }
+
+        auto payloadMatchesContract(const std::string &payload_format,
+                                    const ProfileCompileContract &contract) -> bool
+        {
+            for (size_t i = 0; i < contract.payload_count; ++i)
+            {
+                if (payload_format == contract.payload_formats[i])
+                {
+                    return true;
+                }
+            }
+            return false;
+        }
+
+        auto isTextPayloadFormat(const std::string &payload_format) -> bool
+        {
+            static const std::unordered_set<std::string> text_formats{
+                "SQL_TEXT",
+                "CQL_TEXT",
+                "CYPHER_TEXT",
+                "JSON_DSL",
+                "INFLUXQL_TEXT",
+                "INFLUX_LINE",
+                "VECTOR_API_JSON"};
+            return text_formats.find(payload_format) != text_formats.end();
+        }
+
+        auto resolveLimitOrDefault(uint32_t value, uint32_t fallback) -> uint32_t
+        {
+            return value == 0 ? fallback : value;
+        }
+
+        auto estimateAstNodeCount(const LanguageUdrCompileRequest &request) -> uint32_t
+        {
+            const size_t payload_size = request.payload.size();
+            if (payload_size == 0)
+            {
+                return 0;
+            }
+            if (!isTextPayloadFormat(request.payload_format))
+            {
+                const size_t estimated = payload_size / 8U + 1U;
+                return estimated > std::numeric_limits<uint32_t>::max()
+                           ? std::numeric_limits<uint32_t>::max()
+                           : static_cast<uint32_t>(estimated);
+            }
+
+            uint64_t token_count = 0;
+            uint64_t punctuation_count = 0;
+            bool in_token = false;
+            for (uint8_t byte : request.payload)
+            {
+                const unsigned char c = static_cast<unsigned char>(byte);
+                const bool is_token_char = (std::isalnum(c) != 0) || c == '_';
+                if (is_token_char)
+                {
+                    if (!in_token)
+                    {
+                        ++token_count;
+                        in_token = true;
+                    }
+                    continue;
+                }
+                in_token = false;
+                switch (c)
+                {
+                case '(':
+                case ')':
+                case '[':
+                case ']':
+                case '{':
+                case '}':
+                case ',':
+                case '.':
+                case ';':
+                case ':':
+                case '+':
+                case '-':
+                case '*':
+                case '/':
+                case '%':
+                case '=':
+                case '<':
+                case '>':
+                case '!':
+                case '&':
+                case '|':
+                case '^':
+                    ++punctuation_count;
+                    break;
+                default:
+                    break;
+                }
+            }
+
+            uint64_t estimated = token_count + punctuation_count;
+            if (estimated == 0)
+            {
+                estimated = 1;
+            }
+            if (estimated > std::numeric_limits<uint32_t>::max())
+            {
+                return std::numeric_limits<uint32_t>::max();
+            }
+            return static_cast<uint32_t>(estimated);
+        }
+
+        auto estimateNormalizationSteps(const LanguageUdrCompileRequest &request) -> uint32_t
+        {
+            uint64_t steps = static_cast<uint64_t>(request.payload.size()) + 1U;
+            if (isTextPayloadFormat(request.payload_format))
+            {
+                uint64_t whitespace = 0;
+                for (uint8_t byte : request.payload)
+                {
+                    if (std::isspace(static_cast<unsigned char>(byte)) != 0)
+                    {
+                        ++whitespace;
+                    }
+                }
+                steps += whitespace;
+            }
+
+            if (steps > std::numeric_limits<uint32_t>::max())
+            {
+                return std::numeric_limits<uint32_t>::max();
+            }
+            return static_cast<uint32_t>(steps);
+        }
     } // namespace
 
     auto LanguageUdrRegistry::computeCapabilitySetHash(
@@ -235,6 +488,7 @@ namespace scratchbird::udr
 
         ModuleEntry entry{};
         entry.registration = registration;
+        entry.registration.engine_profile_id = canonicalizeProfileId(entry.registration.engine_profile_id);
         for (const std::string &key : enabled_feature_keys)
         {
             std::string normalized = toLowerAscii(trimAscii(key));
@@ -296,6 +550,7 @@ namespace scratchbird::udr
         const std::string &profile_id, const std::string &profile_version,
         LanguageUdrRegistration &resolved_out, core::ErrorContext *ctx) const -> core::Status
     {
+        const std::string profile_id_norm = canonicalizeProfileId(profile_id);
         std::lock_guard<std::mutex> lock(mutex_);
 
         std::vector<const ModuleEntry *> profile_matches;
@@ -304,11 +559,11 @@ namespace scratchbird::udr
         for (const auto &[module_id, entry] : modules_)
         {
             (void)module_id;
-            if (entry.registration.engine_profile_id == profile_id)
+            if (entry.registration.engine_profile_id == profile_id_norm)
             {
                 profile_matches.push_back(&entry);
             }
-            if (entry.registration.engine_profile_id == profile_id &&
+            if (entry.registration.engine_profile_id == profile_id_norm &&
                 entry.registration.engine_profile_version == profile_version &&
                 entry.registration.status == LanguageUdrModuleStatus::ACTIVE)
             {
@@ -472,11 +727,82 @@ namespace scratchbird::udr
                                "Caller principal not allowed to invoke language UDR");
         }
 
+        if ((request.requires_network_access && !request.sandbox_policy.allow_network_access) ||
+            (request.requires_filesystem_write && !request.sandbox_policy.allow_filesystem_write))
+        {
+            return setUdrError(ctx, core::Status::PERMISSION_DENIED, "UDR_1508",
+                               "UDR attempted disallowed operation by sandbox policy");
+        }
+
+        constexpr uint32_t kDefaultMaxPayloadBytes = 1024U * 1024U;
+        constexpr uint32_t kDefaultMaxAstNodeCount = 262144U;
+        constexpr uint32_t kDefaultMaxNormalizationSteps = 524288U;
+        constexpr uint32_t kDefaultMaxCompileWallTimeMs = 5000U;
+        constexpr uint64_t kCompileWorkUnitsPerMs = 1000ULL;
+
+        const uint32_t payload_limit =
+            resolveLimitOrDefault(request.resource_limits.max_payload_bytes, kDefaultMaxPayloadBytes);
+        if (request.payload.size() > static_cast<size_t>(payload_limit))
+        {
+            return setUdrError(ctx, core::Status::CONFIGURATION_LIMIT_EXCEEDED, "UDR_1512",
+                               "Compile request payload exceeds configured quota");
+        }
+
+        const uint32_t ast_limit =
+            resolveLimitOrDefault(request.resource_limits.max_ast_node_count, kDefaultMaxAstNodeCount);
+        const uint32_t ast_estimate = estimateAstNodeCount(request);
+        if (ast_estimate > ast_limit)
+        {
+            return setUdrError(ctx, core::Status::CONFIGURATION_LIMIT_EXCEEDED, "UDR_1512",
+                               "Compile request estimated AST exceeds configured quota");
+        }
+
+        const uint32_t normalization_limit = resolveLimitOrDefault(
+            request.resource_limits.max_normalization_steps, kDefaultMaxNormalizationSteps);
+        const uint32_t normalization_steps = estimateNormalizationSteps(request);
+        if (normalization_steps > normalization_limit)
+        {
+            return setUdrError(ctx, core::Status::CONFIGURATION_LIMIT_EXCEEDED, "UDR_1512",
+                               "Compile request normalization budget exceeded");
+        }
+
+        const uint32_t compile_limit_ms = resolveLimitOrDefault(
+            request.resource_limits.max_compile_wall_time_ms, kDefaultMaxCompileWallTimeMs);
+        const uint64_t compile_budget_units =
+            static_cast<uint64_t>(compile_limit_ms) * kCompileWorkUnitsPerMs;
+        const uint64_t estimated_compile_units =
+            static_cast<uint64_t>(ast_estimate) * 4ULL + static_cast<uint64_t>(normalization_steps);
+        if (estimated_compile_units > compile_budget_units)
+        {
+            return setUdrError(ctx, core::Status::CONFIGURATION_LIMIT_EXCEEDED, "UDR_1512",
+                               "Compile request wall-time budget exceeded");
+        }
+
         status = registry.resolveActiveModule(request.profile_id, request.profile_version,
                                               selected_module_out, ctx);
         if (status != core::Status::OK)
         {
             return status;
+        }
+
+        ProfileCompileContract contract{};
+        if (!resolveProfileCompileContract(request.profile_id, contract))
+        {
+            return setUdrError(ctx, core::Status::INVALID_ARGUMENT, "UDR_1501",
+                               "Unknown engine profile id");
+        }
+
+        if (toLowerAscii(trimAscii(selected_module_out.translation_mode)) !=
+            toLowerAscii(trimAscii(contract.translation_mode)))
+        {
+            return setUdrError(ctx, core::Status::NOT_SUPPORTED, "UDR_1503",
+                               "Installed UDR module translation mode is incompatible with profile contract");
+        }
+
+        if (!payloadMatchesContract(request.payload_format, contract))
+        {
+            return setUdrError(ctx, core::Status::SYNTAX_ERROR, "UDR_1505",
+                               "Source payload syntax unsupported for active profile");
         }
 
         if (!request.native_feature_key.empty())
@@ -493,4 +819,3 @@ namespace scratchbird::udr
     }
 
 } // namespace scratchbird::udr
-

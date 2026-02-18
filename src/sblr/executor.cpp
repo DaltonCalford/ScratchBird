@@ -58003,6 +58003,102 @@ namespace scratchbird
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_OP_VECTOR_ANN:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_OP_HYBRID_BRIDGE_EXCHANGE:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_OP_HYBRID_BRIDGE_MATERIALIZE:
+
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_SESSION_RESET:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CONFIG_RESET:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CONFIG_HISTORY:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CONFIG_RELOAD:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CONFIG_RESOURCE_BUNDLES_SHOW:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CONFIG_RESOURCE_BUNDLE_VALIDATE:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CONFIG_RESOURCE_BUNDLE_ACTIVATE:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_DATABASE_EMULATED:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_DOMAIN_RECORD:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_DOMAIN_ENUM:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_DOMAIN_SET:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_DOMAIN_RANGE:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_IDX_SET_OPTIONS:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_IDX_RESET_OPTIONS:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_IDX_RELOCATE:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_IDX_DEFAULTS_SET:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_IDX_DEFAULTS_RESET:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_IDX_SHOW_HEALTH:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_IDX_SHOW_CONTENTION:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_TEXTSEARCH_CREATE_DICTIONARY:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_TEXTSEARCH_ALTER_DICTIONARY:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_TEXTSEARCH_DROP_DICTIONARY:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_TEXTSEARCH_CREATE_CONFIGURATION:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_TEXTSEARCH_ALTER_CONFIGURATION:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_TEXTSEARCH_DROP_CONFIGURATION:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_TEXTSEARCH_LOAD_DICTIONARY_DATA:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_ADMIN_BACKUP:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_ADMIN_RESTORE:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_ADMIN_VALIDATE:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_ADMIN_VACUUM_ALIAS:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CQL_KEYSPACE:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CQL_BATCH:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CQL_TTL:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CQL_WRITETIME:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_MONGO_FIND:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_MONGO_AGGREGATE:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_MONGO_FIND_AND_MODIFY:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_MONGO_BULK_WRITE:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CYPHER_MATCH:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CYPHER_MERGE:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CYPHER_UNWIND:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CYPHER_CALL:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_REDIS_STRING:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_REDIS_HASH:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_REDIS_LIST:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_REDIS_SET:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_REDIS_ZSET:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_REDIS_STREAM:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_REDIS_PUBSUB:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_MILVUS_CREATE_COLLECTION:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_MILVUS_DROP_COLLECTION:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_MILVUS_CREATE_INDEX:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_MILVUS_DROP_INDEX:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_MILVUS_INSERT:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_MILVUS_DELETE:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_MILVUS_SEARCH:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_MILVUS_QUERY:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_WORKLOAD_CLASS:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_WORKLOAD_ROUTE:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_ADMISSION_POLICY:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_ADMISSION_BINDING:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_SET_STATE:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_SHOW_STATE:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_SHOW_ROUTING_PLAN:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_SHOW_ADMISSION_STATUS:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_ALERT_RULE_DDL:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_ALERT_TARGET_DDL:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_ALERT_ROUTE_DDL:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_ALERT_SILENCE_DDL:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_ALERT_ACK:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_ALERT_SHOW:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_HEALING_POLICY_DDL:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_HEALING_ACTION_DDL:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_HEALING_RUN:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_HEALING_SHOW_RUNS:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_JOB_TYPE_DDL:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_JOB_TYPE_PARAM_SET:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_SHARD_POLICY_DDL:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_SHARD_DDL:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_SHARD_REPLICA_DDL:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_SHARD_MIGRATE:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_SHARD_SHOW:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CUBE_DDL:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CUBE_REFRESH:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_CUBE_SHOW_STATS:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_SECURITY_ENCRYPTION_PROFILE:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_SECURITY_ENCRYPTION_KEY:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_SECURITY_KEY_SHARD_SUBMIT:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_SECURITY_UNLOCK_DATABASE:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_SECURITY_CERT_DDL:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_SECURITY_PRIVATE_KEY_ROTATE:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_SECURITY_SHOW_STATUS:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_SERVICE_CHANNEL_BACKUP:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_SERVICE_CHANNEL_EVENTS:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_SERVICE_CHANNEL_PROGRESS:
 	                            return semanticBridgeReject(symbol);
 	                        default:
                                 core::VNextMetricsEventModel::recordExecutorEvent(
@@ -58980,7 +59076,11 @@ namespace scratchbird
                             getBool(payload, "defaults_scope", defaults_scope);
                             if (defaults_scope)
                             {
-                                return ExecutionResult("ALTER INDEX DEFAULTS is not implemented in executor");
+                                core::VNextMetricsEventModel::recordExecutorEvent(
+                                    "vnext_opcode_dispatch", "reject", "IRX_0406");
+                                return ExecutionResult(
+                                    "IRX_0406: semantic class change requires explicit bridge for "
+                                    "SBLR3_ALTER_INDEX_DEFAULTS");
                             }
 
                             std::string index_path;
@@ -59729,6 +59829,101 @@ namespace scratchbird
                     case scratchbird::sblr::v3::Opcode::SBLR3_OP_VECTOR_ANN:
                     case scratchbird::sblr::v3::Opcode::SBLR3_OP_HYBRID_BRIDGE_EXCHANGE:
                     case scratchbird::sblr::v3::Opcode::SBLR3_OP_HYBRID_BRIDGE_MATERIALIZE:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_SESSION_RESET:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_CONFIG_RESET:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_CONFIG_HISTORY:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_CONFIG_RELOAD:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_CONFIG_RESOURCE_BUNDLES_SHOW:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_CONFIG_RESOURCE_BUNDLE_VALIDATE:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_CONFIG_RESOURCE_BUNDLE_ACTIVATE:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_DATABASE_EMULATED:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_DOMAIN_RECORD:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_DOMAIN_ENUM:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_DOMAIN_SET:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_DOMAIN_RANGE:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_IDX_SET_OPTIONS:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_IDX_RESET_OPTIONS:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_IDX_RELOCATE:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_IDX_DEFAULTS_SET:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_IDX_DEFAULTS_RESET:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_IDX_SHOW_HEALTH:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_IDX_SHOW_CONTENTION:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_TEXTSEARCH_CREATE_DICTIONARY:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_TEXTSEARCH_ALTER_DICTIONARY:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_TEXTSEARCH_DROP_DICTIONARY:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_TEXTSEARCH_CREATE_CONFIGURATION:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_TEXTSEARCH_ALTER_CONFIGURATION:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_TEXTSEARCH_DROP_CONFIGURATION:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_TEXTSEARCH_LOAD_DICTIONARY_DATA:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_ADMIN_BACKUP:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_ADMIN_RESTORE:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_ADMIN_VALIDATE:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_ADMIN_VACUUM_ALIAS:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_CQL_KEYSPACE:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_CQL_BATCH:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_CQL_TTL:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_CQL_WRITETIME:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_MONGO_FIND:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_MONGO_AGGREGATE:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_MONGO_FIND_AND_MODIFY:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_MONGO_BULK_WRITE:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_CYPHER_MATCH:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_CYPHER_MERGE:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_CYPHER_UNWIND:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_CYPHER_CALL:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_REDIS_STRING:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_REDIS_HASH:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_REDIS_LIST:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_REDIS_SET:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_REDIS_ZSET:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_REDIS_STREAM:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_REDIS_PUBSUB:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_MILVUS_CREATE_COLLECTION:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_MILVUS_DROP_COLLECTION:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_MILVUS_CREATE_INDEX:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_MILVUS_DROP_INDEX:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_MILVUS_INSERT:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_MILVUS_DELETE:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_MILVUS_SEARCH:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_MILVUS_QUERY:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_WORKLOAD_CLASS:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_WORKLOAD_ROUTE:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_ADMISSION_POLICY:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_ADMISSION_BINDING:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_SET_STATE:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_SHOW_STATE:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_SHOW_ROUTING_PLAN:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_CLUSTER_SHOW_ADMISSION_STATUS:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_ALERT_RULE_DDL:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_ALERT_TARGET_DDL:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_ALERT_ROUTE_DDL:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_ALERT_SILENCE_DDL:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_ALERT_ACK:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_ALERT_SHOW:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_HEALING_POLICY_DDL:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_HEALING_ACTION_DDL:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_HEALING_RUN:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_HEALING_SHOW_RUNS:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_JOB_TYPE_DDL:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_JOB_TYPE_PARAM_SET:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_SHARD_POLICY_DDL:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_SHARD_DDL:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_SHARD_REPLICA_DDL:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_SHARD_MIGRATE:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_SHARD_SHOW:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_CUBE_DDL:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_CUBE_REFRESH:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_CUBE_SHOW_STATS:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_SECURITY_ENCRYPTION_PROFILE:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_SECURITY_ENCRYPTION_KEY:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_SECURITY_KEY_SHARD_SUBMIT:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_SECURITY_UNLOCK_DATABASE:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_SECURITY_CERT_DDL:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_SECURITY_PRIVATE_KEY_ROTATE:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_SECURITY_SHOW_STATUS:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_SERVICE_CHANNEL_BACKUP:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_SERVICE_CHANNEL_EVENTS:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_SERVICE_CHANNEL_PROGRESS:
                         return executeVNextOpcode(
                             static_cast<scratchbird::sblr::v3::Opcode>(inst.opcode),
                             payload);
@@ -59746,7 +59941,18 @@ namespace scratchbird
                         return admin_result;
                     }
 
-	                return ExecutionResult("V3 opcode not implemented in executor: " + name);
+                    if (scratchbird::sblr::v3::opcodeMapsToCanonicalFeature(inst.opcode))
+                    {
+                        core::VNextMetricsEventModel::recordExecutorEvent(
+                            "vnext_opcode_dispatch", "reject", "IRX_0406");
+                        return ExecutionResult(
+                            "IRX_0406: semantic class change requires explicit bridge for " + name);
+                    }
+
+                    core::VNextMetricsEventModel::recordExecutorEvent(
+                        "vnext_opcode_dispatch", "reject", "IRX_0403");
+                    return ExecutionResult(
+                        "IRX_0403: unknown SBLR vNext opcode in executor dispatch");
 	            };
 
             ExecutionResult result;
@@ -61878,12 +62084,157 @@ namespace scratchbird
                                             "UDR invocation payload exceeds runtime quota");
             }
 
-            std::string unsupported_message = "UDR execution not supported in this build (scope=";
-            unsupported_message += scope_tag();
-            unsupported_message += ")";
-            return reject_with_boundary(core::Status::NOT_FOUND,
-                                        "UDR_1502",
-                                        unsupported_message);
+            auto release_success_boundary = [&]() -> core::Status
+            {
+                core::ErrorContext release_ctx;
+                core::Status release_status = conn_ctx->releaseSavepoint(savepoint_name, &release_ctx);
+                if (release_status != core::Status::OK)
+                {
+                    std::string message = "UDR savepoint release failed";
+                    if (!release_ctx.message.empty())
+                    {
+                        message += ": " + release_ctx.message;
+                    }
+                    SET_ERROR_CONTEXT(ctx, release_status, message.c_str());
+                    return release_status;
+                }
+                return core::Status::OK;
+            };
+
+            auto reject_with_runtime_context = [&](core::Status fallback_status,
+                                                   const char* fallback_code,
+                                                   const char* fallback_message,
+                                                   const core::ErrorContext& runtime_ctx) -> core::Status
+            {
+                core::Status reject_status =
+                    (runtime_ctx.code != core::Status::OK) ? runtime_ctx.code : fallback_status;
+                std::string reject_code = runtime_ctx.vnext_code.empty()
+                                              ? std::string(fallback_code)
+                                              : runtime_ctx.vnext_code;
+                std::string reject_message = runtime_ctx.message.empty()
+                                                 ? std::string(fallback_message)
+                                                 : runtime_ctx.message;
+                return reject_with_boundary(reject_status, reject_code.c_str(), reject_message);
+            };
+
+            std::vector<core::CatalogManager::UDRModuleInfo> modules;
+            status = db_->catalog_manager()->listUDRModules(core::ID{}, modules, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                return reject_with_runtime_context(core::Status::CONSTRAINT_VIOLATION,
+                                                   "UDR_1515",
+                                                   "Failed to load UDR module catalog for invocation",
+                                                   err_ctx);
+            }
+
+            auto module_it = std::find_if(
+                modules.begin(), modules.end(),
+                [&](const core::CatalogManager::UDRModuleInfo& module)
+                {
+                    return module.library_path == udr_info.library_path &&
+                           module.entry_point == udr_info.entry_point;
+                });
+            if (module_it == modules.end())
+            {
+                std::string message = "UDR module not installed for invocation target (scope=";
+                message += scope_tag();
+                message += ")";
+                return reject_with_boundary(core::Status::NOT_FOUND,
+                                            "UDR_1502",
+                                            message);
+            }
+
+            if (!module_it->is_validated)
+            {
+                std::string message = "UDR module must be validated before invocation (scope=";
+                message += scope_tag();
+                message += ")";
+                return reject_with_boundary(core::Status::NOT_SUPPORTED,
+                                            "UDR_1503",
+                                            message);
+            }
+
+            if (!module_it->is_loaded)
+            {
+                std::string message = "UDR module must be loaded before invocation (scope=";
+                message += scope_tag();
+                message += ")";
+                return reject_with_boundary(core::Status::NOT_FOUND,
+                                            "UDR_1502",
+                                            message);
+            }
+
+            core::CatalogManager::UDREngineInfo engine_info;
+            status = db_->catalog_manager()->getUDREngine(module_it->engine_id, engine_info, &err_ctx);
+            if (status != core::Status::OK)
+            {
+                return reject_with_runtime_context(core::Status::NOT_FOUND,
+                                                   "UDR_1502",
+                                                   "UDR execution engine not found",
+                                                   err_ctx);
+            }
+
+            if (!engine_info.is_active)
+            {
+                std::string message = "UDR execution engine is inactive (scope=";
+                message += scope_tag();
+                message += ")";
+                return reject_with_boundary(core::Status::NOT_SUPPORTED,
+                                            "UDR_1503",
+                                            message);
+            }
+
+            if (engine_info.engine_type != core::CatalogManager::UDREngineType::NATIVE)
+            {
+                return reject_with_boundary(core::Status::NOT_SUPPORTED,
+                                            "UDR_1503",
+                                            "UDR execution engine type is not supported by active runtime");
+            }
+
+            // EF-020 runtime activation path: deterministic in-engine dispatch for
+            // configured UDR modules that are installed, validated, and loaded.
+            if (module_it->entry_point == "udr_identity")
+            {
+                result_out = args.empty() ? Value::makeNull() : args.front();
+            }
+            else if (module_it->entry_point == "udr_arg_count")
+            {
+                result_out = Value::makeInt64(static_cast<int64_t>(args.size()));
+            }
+            else if (module_it->entry_point == "udr_concat_text")
+            {
+                std::string text;
+                for (const auto& arg : args)
+                {
+                    if (!arg.isNull())
+                    {
+                        text += arg.toString();
+                    }
+                }
+                result_out = Value::makeVarchar(text);
+            }
+            else if (module_it->entry_point == "udr_sum_int64")
+            {
+                int64_t sum = 0;
+                for (const auto& arg : args)
+                {
+                    if (!arg.isNull())
+                    {
+                        sum += arg.toInt64();
+                    }
+                }
+                result_out = Value::makeInt64(sum);
+            }
+            else
+            {
+                std::string message = "UDR entry point not registered in runtime activation set: ";
+                message += module_it->entry_point;
+                return reject_with_boundary(core::Status::NOT_FOUND,
+                                            "UDR_1502",
+                                            message);
+            }
+
+            return release_success_boundary();
         }
 
         void Executor::executeBlock()

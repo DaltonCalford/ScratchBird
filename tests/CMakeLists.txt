@@ -175,6 +175,7 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_schema_introspection\.cpp$")  # 
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_unix_socket_channel\.cpp$")  # API mismatch
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/test_type_mapping\.cpp$")  # Link error
 list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_fdw_protocol_adapter_factory\.cpp$")  # Standalone FDW target
+list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_udr_connector_factory\.cpp$")  # Standalone UDR target
 
 # Test executable
 add_executable(scratchbird_tests ${TEST_SOURCES})
@@ -1964,6 +1965,30 @@ target_link_libraries(test_fdw_protocol_adapter_factory
 gtest_discover_tests(test_fdw_protocol_adapter_factory
     TEST_PREFIX "FDW."
     PROPERTIES LABELS "unit;fdw;factory"
+    PROPERTIES TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
+)
+
+# ============================================================================
+# UDR Connector Factory Tests
+# ============================================================================
+
+add_executable(test_udr_connector_factory
+    unit/test_udr_connector_factory.cpp
+)
+
+target_include_directories(test_udr_connector_factory PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+
+target_link_libraries(test_udr_connector_factory
+    PRIVATE
+    scratchbird_udr
+    scratchbird_core
+    GTest::gtest
+    GTest::gtest_main
+)
+
+gtest_discover_tests(test_udr_connector_factory
+    TEST_PREFIX "UDRFactory."
+    PROPERTIES LABELS "unit;udr;factory"
     PROPERTIES TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 

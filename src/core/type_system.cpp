@@ -74,6 +74,15 @@ namespace scratchbird::core
         std::string normalizeEngineName(const std::string& engine_name)
         {
             std::string normalized = uppercaseAscii(trimAscii(engine_name));
+            if (normalized == "FIREBIRDSQL")
+            {
+                return "FIREBIRD";
+            }
+            if (normalized == "MARIADB")
+            {
+                // MariaDB emulation currently reuses the MySQL datatype matrix.
+                return "MYSQL";
+            }
             if (normalized == "POSTGRES")
             {
                 return "POSTGRESQL";

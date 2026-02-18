@@ -73,6 +73,16 @@ constexpr uint16_t DEFAULT_NATIVE_PORT = 3092;      // ScratchBird native protoc
 constexpr uint16_t DEFAULT_POSTGRESQL_PORT = 5432;  // PostgreSQL emulation
 constexpr uint16_t DEFAULT_MYSQL_PORT = 3306;       // MySQL emulation
 constexpr uint16_t DEFAULT_FIREBIRD_PORT = 3050;    // Firebird emulation
+constexpr uint16_t DEFAULT_CASSANDRA_PORT = 9042;   // Cassandra native protocol
+constexpr uint16_t DEFAULT_CLICKHOUSE_PORT = 9000;  // ClickHouse native TCP protocol
+constexpr uint16_t DEFAULT_DUCKDB_PORT = DEFAULT_NATIVE_PORT; // DuckDB emulation defaults to native listener policy
+constexpr uint16_t DEFAULT_INFLUXDB_PORT = 8086;    // InfluxDB HTTP API
+constexpr uint16_t DEFAULT_MARIADB_PORT = 3306;     // MariaDB protocol (MySQL-compatible default)
+constexpr uint16_t DEFAULT_MILVUS_PORT = 19530;     // Milvus gRPC protocol
+constexpr uint16_t DEFAULT_MONGODB_PORT = 27017;    // MongoDB wire protocol
+constexpr uint16_t DEFAULT_NEO4J_PORT = 7687;       // Neo4j Bolt protocol
+constexpr uint16_t DEFAULT_OPENSEARCH_PORT = 9200;  // OpenSearch REST API
+constexpr uint16_t DEFAULT_REDIS_PORT = 6379;       // Redis RESP protocol
 
 // Buffer sizes
 constexpr size_t DEFAULT_RECV_BUFFER_SIZE = 65536;      // 64KB receive buffer
@@ -104,6 +114,17 @@ enum class ProtocolType : uint8_t {
     POSTGRESQL = 1,     // PostgreSQL wire protocol v3
     MYSQL = 2,          // MySQL wire protocol
     FIREBIRD = 3,       // Firebird wire protocol
+    CASSANDRA = 4,      // Cassandra protocol surface
+    CLICKHOUSE = 5,     // ClickHouse protocol surface
+    DUCKDB = 6,         // DuckDB protocol surface
+    INFLUXDB = 7,       // InfluxDB protocol surface
+    MARIADB = 8,        // MariaDB protocol surface
+    MILVUS = 9,         // Milvus protocol surface
+    MONGODB = 10,       // MongoDB protocol surface
+    NEO4J = 11,         // Neo4j protocol surface
+    OPENSEARCH = 12,    // OpenSearch protocol surface
+    REDIS = 13,         // Redis protocol surface
+    FIREBIRDSQL = FIREBIRD,
     AUTO_DETECT = 255   // Auto-detect from first bytes
 };
 
@@ -347,6 +368,16 @@ inline const char* protocolTypeToString(ProtocolType type) {
         case ProtocolType::POSTGRESQL: return "postgresql";
         case ProtocolType::MYSQL: return "mysql";
         case ProtocolType::FIREBIRD: return "firebird";
+        case ProtocolType::CASSANDRA: return "cassandra";
+        case ProtocolType::CLICKHOUSE: return "clickhouse";
+        case ProtocolType::DUCKDB: return "duckdb";
+        case ProtocolType::INFLUXDB: return "influxdb";
+        case ProtocolType::MARIADB: return "mariadb";
+        case ProtocolType::MILVUS: return "milvus";
+        case ProtocolType::MONGODB: return "mongodb";
+        case ProtocolType::NEO4J: return "neo4j";
+        case ProtocolType::OPENSEARCH: return "opensearch";
+        case ProtocolType::REDIS: return "redis";
         case ProtocolType::AUTO_DETECT: return "auto";
         default: return "unknown";
     }
@@ -399,6 +430,16 @@ inline uint16_t getDefaultPort(ProtocolType protocol) {
         case ProtocolType::POSTGRESQL: return DEFAULT_POSTGRESQL_PORT;
         case ProtocolType::MYSQL: return DEFAULT_MYSQL_PORT;
         case ProtocolType::FIREBIRD: return DEFAULT_FIREBIRD_PORT;
+        case ProtocolType::CASSANDRA: return DEFAULT_CASSANDRA_PORT;
+        case ProtocolType::CLICKHOUSE: return DEFAULT_CLICKHOUSE_PORT;
+        case ProtocolType::DUCKDB: return DEFAULT_DUCKDB_PORT;
+        case ProtocolType::INFLUXDB: return DEFAULT_INFLUXDB_PORT;
+        case ProtocolType::MARIADB: return DEFAULT_MARIADB_PORT;
+        case ProtocolType::MILVUS: return DEFAULT_MILVUS_PORT;
+        case ProtocolType::MONGODB: return DEFAULT_MONGODB_PORT;
+        case ProtocolType::NEO4J: return DEFAULT_NEO4J_PORT;
+        case ProtocolType::OPENSEARCH: return DEFAULT_OPENSEARCH_PORT;
+        case ProtocolType::REDIS: return DEFAULT_REDIS_PORT;
         default: return DEFAULT_NATIVE_PORT;
     }
 }

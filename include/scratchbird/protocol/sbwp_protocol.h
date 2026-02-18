@@ -3,6 +3,7 @@
 #include <array>
 #include <cstdint>
 #include <map>
+#include <utility>
 #include <string>
 #include <vector>
 
@@ -108,6 +109,36 @@ constexpr uint64_t kFeatureBinaryCopy = 1ULL << 8;
 constexpr uint64_t kFeatureSavepoints = 1ULL << 9;
 constexpr uint64_t kFeatureTwoPhase = 1ULL << 10;
 constexpr uint64_t kFeatureChecksums = 1ULL << 11;
+
+// Engine-profile capability bits (EF-041 contract lock).
+constexpr uint64_t kFeatureProfilePostgresql = 1ULL << 16;
+constexpr uint64_t kFeatureProfileMysql = 1ULL << 17;
+constexpr uint64_t kFeatureProfileFirebird = 1ULL << 18;
+constexpr uint64_t kFeatureProfileCassandra = 1ULL << 19;
+constexpr uint64_t kFeatureProfileMariadb = 1ULL << 20;
+constexpr uint64_t kFeatureProfileClickhouse = 1ULL << 21;
+constexpr uint64_t kFeatureProfileDuckdb = 1ULL << 22;
+constexpr uint64_t kFeatureProfileInfluxdb = 1ULL << 23;
+constexpr uint64_t kFeatureProfileMongodb = 1ULL << 24;
+constexpr uint64_t kFeatureProfileRedis = 1ULL << 25;
+constexpr uint64_t kFeatureProfileNeo4j = 1ULL << 26;
+constexpr uint64_t kFeatureProfileMilvus = 1ULL << 27;
+constexpr uint64_t kFeatureProfileOpensearch = 1ULL << 28;
+
+constexpr uint64_t kFeatureProfileMask =
+    kFeatureProfilePostgresql |
+    kFeatureProfileMysql |
+    kFeatureProfileFirebird |
+    kFeatureProfileCassandra |
+    kFeatureProfileMariadb |
+    kFeatureProfileClickhouse |
+    kFeatureProfileDuckdb |
+    kFeatureProfileInfluxdb |
+    kFeatureProfileMongodb |
+    kFeatureProfileRedis |
+    kFeatureProfileNeo4j |
+    kFeatureProfileMilvus |
+    kFeatureProfileOpensearch;
 
 constexpr uint32_t kQueryFlagDescribeOnly = 0x01;
 constexpr uint32_t kQueryFlagNoPortal = 0x02;
@@ -389,4 +420,9 @@ core::Status parseErrorMessage(const std::vector<uint8_t>& payload,
                                std::string& detail,
                                std::string& hint,
                                core::ErrorContext* ctx = nullptr);
+
+const std::array<std::pair<const char*, uint64_t>, 13>& canonicalProfileFeatureRegistry();
+uint64_t canonicalProfileFeatureMask();
+std::vector<std::string> enabledProfilesFromFeatureMask(uint64_t features);
+bool hasProfileFeature(uint64_t features, const std::string& profile_name);
 } // namespace scratchbird::protocol::sbwp

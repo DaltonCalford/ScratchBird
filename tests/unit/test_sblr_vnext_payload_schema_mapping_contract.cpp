@@ -64,6 +64,31 @@ TEST(SBLRVNextPayloadSchemaMappingContractTest, OpcodeToSchemaMappingsAreDetermi
     }
 }
 
+TEST(SBLRVNextPayloadSchemaMappingContractTest, BridgeOpcodeRangeMappingsAreDeterministic)
+{
+    auto expectRange = [](uint16_t start, uint16_t end, const char *schema_name) {
+        for (uint16_t opcode = start; opcode <= end; ++opcode)
+        {
+            const SchemaDef *schema = scratchbird::sblr::v3::schemaForOpcode(opcode);
+            ASSERT_NE(nullptr, schema) << "missing schema for bridge opcode " << opcode;
+            EXPECT_EQ(std::string(schema_name), schema->name)
+                << "unexpected schema for bridge opcode " << opcode;
+        }
+    };
+
+    expectRange(0x6101, 0x6107, "SCHEMA_CONTROL_COMMAND");
+    expectRange(0x6109, 0x610C, "SCHEMA_DDL_CREATE_DOMAIN");
+    expectRange(0x610D, 0x6113, "SCHEMA_DDL_ALTER_INDEX");
+    expectRange(0x6114, 0x611E, "SCHEMA_CONTROL_COMMAND");
+    expectRange(0x611F, 0x6139, "SCHEMA_MULTI_MODEL_QUERY");
+    expectRange(0x613A, 0x615F, "SCHEMA_CONTROL_COMMAND");
+
+    const SchemaDef *create_db_emulated =
+        scratchbird::sblr::v3::schemaForOpcode(static_cast<uint16_t>(Opcode::SBLR3_CREATE_DATABASE_EMULATED));
+    ASSERT_NE(nullptr, create_db_emulated);
+    EXPECT_EQ(std::string("SCHEMA_DDL_CREATE_DATABASE"), create_db_emulated->name);
+}
+
 TEST(SBLRVNextPayloadSchemaMappingContractTest, SchemaFieldContractsMatchSpecification)
 {
     auto assertField = [](const SchemaDef *schema,
@@ -96,6 +121,26 @@ TEST(SBLRVNextPayloadSchemaMappingContractTest, SchemaFieldContractsMatchSpecifi
     assertField(scan, 0, "table_id", FieldType::U32);
     assertField(scan, 1, "proj_bitmap", FieldType::BYTES);
     assertField(scan, 2, "predicate_bitmap", FieldType::BYTES);
+
+    const SchemaDef *control = scratchbird::sblr::v3::lookupSchema("SCHEMA_CONTROL_COMMAND");
+    ASSERT_NE(nullptr, control);
+    ASSERT_EQ(6u, control->fields.size());
+    assertField(control, 0, "action", FieldType::U8);
+    assertField(control, 1, "object_path", FieldType::OPT);
+    assertField(control, 2, "object_name", FieldType::OPT);
+    assertField(control, 3, "value", FieldType::OPT);
+    assertField(control, 4, "payload", FieldType::OPT);
+    assertField(control, 5, "options", FieldType::SCHEMA);
+
+    const SchemaDef *multi_model = scratchbird::sblr::v3::lookupSchema("SCHEMA_MULTI_MODEL_QUERY");
+    ASSERT_NE(nullptr, multi_model);
+    ASSERT_EQ(6u, multi_model->fields.size());
+    assertField(multi_model, 0, "action", FieldType::U8);
+    assertField(multi_model, 1, "namespace_path", FieldType::OPT);
+    assertField(multi_model, 2, "source_path", FieldType::OPT);
+    assertField(multi_model, 3, "query_expr", FieldType::OPT);
+    assertField(multi_model, 4, "document", FieldType::OPT);
+    assertField(multi_model, 5, "options", FieldType::SCHEMA);
 }
 
 TEST(SBLRVNextPayloadSchemaMappingContractTest, SchemaRoundTripAndEnumValidation)
@@ -135,6 +180,18 @@ TEST(SBLRVNextPayloadSchemaMappingContractTest, SchemaRoundTripAndEnumValidation
         static_cast<uint16_t>(Opcode::SBLR3_OP_HYBRID_BRIDGE_MATERIALIZE),
         Value::Object{{"buffer_class", Value(static_cast<uint64_t>(2))},
                       {"row_shape_ref", Value(static_cast<uint64_t>(77))}}));
+    instructions.push_back(makeInstruction(
+        static_cast<uint16_t>(Opcode::SBLR3_SESSION_RESET),
+        Value::Object{{"action", Value(static_cast<uint64_t>(1))},
+                      {"object_name", Value(std::string("session"))},
+                      {"options", Value(Value::Object{{"scope", Value(std::string("default"))}})}}));
+    instructions.push_back(makeInstruction(
+        static_cast<uint16_t>(Opcode::SBLR3_CQL_BATCH),
+        Value::Object{{"action", Value(static_cast<uint64_t>(2))},
+                      {"namespace_path", Value(Value::List{Value(std::string("users")),
+                                                           Value(std::string("public"))})},
+                      {"document", Value(Value::Bytes{0x43, 0x51, 0x4C})},
+                      {"options", Value(Value::Object{{"consistency", Value(std::string("quorum"))}})}}));
 
     for (const auto &inst : instructions)
     {
@@ -187,4 +244,3 @@ TEST(SBLRVNextPayloadSchemaMappingContractTest, EncodedPayloadContractRejectsUnk
     ASSERT_FALSE(invalid.ok);
     EXPECT_EQ("IRX_0403", invalid.code);
 }
-

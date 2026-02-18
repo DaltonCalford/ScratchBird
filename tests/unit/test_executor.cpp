@@ -192,15 +192,47 @@ protected:
         return udr_id;
     }
 
+    ID registerRuntimeReadyUdrModule(const std::string& engine_name,
+                                     const std::string& module_name,
+                                     const std::string& library_path,
+                                     const std::string& entry_point,
+                                     CatalogManager::UDREngineType engine_type =
+                                         CatalogManager::UDREngineType::NATIVE)
+    {
+        ErrorContext ctx;
+        ID engine_id{};
+        Status status = db_->catalog_manager()->registerUDREngine(
+            engine_name, engine_type, "", "{}", engine_id, &ctx);
+        EXPECT_EQ(status, Status::OK) << ctx.message;
+
+        ID module_id{};
+        status = db_->catalog_manager()->registerUDRModule(
+            module_name, engine_id, library_path, entry_point, module_id, &ctx);
+        EXPECT_EQ(status, Status::OK) << ctx.message;
+
+        status = db_->catalog_manager()->validateUDRModule(module_id, &ctx);
+        EXPECT_EQ(status, Status::OK) << ctx.message;
+
+        status = db_->catalog_manager()->setUDRModuleLoaded(module_id, true, &ctx);
+        EXPECT_EQ(status, Status::OK) << ctx.message;
+        return module_id;
+    }
+
     Status invokeUdrBoundary(Executor& executor,
                              const ID& udr_id,
                              Executor::UdrInvocationScope scope,
                              const std::vector<Value>& args,
-                             ErrorContext* ctx)
+                             ErrorContext* ctx,
+                             Value* out_value = nullptr)
     {
         executor.udr_invocation_scope_ = scope;
-        Value out;
-        return executor.callUDRFunctionById(udr_id, args, out, ctx);
+        Value out{};
+        Status status = executor.callUDRFunctionById(udr_id, args, out, ctx);
+        if (out_value != nullptr)
+        {
+            *out_value = out;
+        }
+        return status;
     }
     
 protected:
@@ -1262,7 +1294,37 @@ TEST_F(ExecutorTest, UdrBoundaryRejectsInvocationQuotaDeterministically) {
     EXPECT_EQ(call_ctx.vnext_code, "UDR_1512");
 }
 
-TEST_F(ExecutorTest, UdrBoundaryUnsupportedRuntimeIncludesScopeAndKeepsTransactionUsable) {
+TEST_F(ExecutorTest, UdrBoundaryExecutesConfiguredRuntimeModuleDeterministically) {
+    const std::string library_path = "udr/runtime_dispatch.so";
+    const std::string entry_point = "udr_arg_count";
+    registerRuntimeReadyUdrModule("runtime_native_engine",
+                                  "runtime_dispatch_module",
+                                  library_path,
+                                  entry_point);
+
+    const ID udr_id = createUdrFunction("udr_runtime_dispatch", library_path, entry_point);
+
+    Executor executor(db_.get());
+    executor.setConnectionContext(conn_ctx_.get());
+    executor.setCurrentSchema(default_schema_id_);
+
+    ErrorContext call_ctx;
+    Value out{};
+    Status st = invokeUdrBoundary(executor,
+                                  udr_id,
+                                  Executor::UdrInvocationScope::FUNCTION,
+                                  {Value::makeInt32(7), Value::makeVarchar("x"), Value::makeNull()},
+                                  &call_ctx,
+                                  &out);
+    EXPECT_EQ(st, Status::OK) << call_ctx.message;
+    EXPECT_EQ(out.toInt64(), 3);
+
+    ErrorContext sp_ctx;
+    EXPECT_EQ(conn_ctx_->createSavepoint("post_udr_runtime_ok", &sp_ctx), Status::OK) << sp_ctx.message;
+    EXPECT_EQ(conn_ctx_->releaseSavepoint("post_udr_runtime_ok", &sp_ctx), Status::OK) << sp_ctx.message;
+}
+
+TEST_F(ExecutorTest, UdrBoundaryRejectsUnconfiguredRuntimeIncludesScopeAndKeepsTransactionUsable) {
     const ID udr_id = createUdrFunction("udr_runtime_missing", "udr/runtime_missing.so");
 
     Executor executor(db_.get());

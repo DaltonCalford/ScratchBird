@@ -107,8 +107,19 @@ enum class ProtocolType : uint8_t {
     SCRATCHBIRD = 0,  // Native ScratchBird (information_schema)
     POSTGRESQL = 1,   // PostgreSQL (pg_catalog.*)
     MYSQL = 2,        // MySQL (mysql.*, information_schema)
-    MSSQL = 3,        // SQL Server (sys.*)
-    FIREBIRD = 4      // Firebird (RDB$*)
+    FIREBIRD = 3,     // FirebirdSQL (RDB$*)
+    CASSANDRA = 4,    // Cassandra virtual overlays
+    CLICKHOUSE = 5,   // ClickHouse virtual overlays
+    DUCKDB = 6,       // DuckDB virtual overlays
+    INFLUXDB = 7,     // InfluxDB virtual overlays
+    MARIADB = 8,      // MariaDB virtual overlays
+    MILVUS = 9,       // Milvus virtual overlays
+    MONGODB = 10,     // MongoDB virtual overlays
+    NEO4J = 11,       // Neo4j virtual overlays
+    OPENSEARCH = 12,  // OpenSearch virtual overlays
+    REDIS = 13,       // Redis virtual overlays
+    MSSQL = 14,       // SQL Server (legacy track)
+    FIREBIRDSQL = FIREBIRD
 };
 
 /**
@@ -119,8 +130,18 @@ inline const char* protocolTypeToString(ProtocolType type) {
         case ProtocolType::SCRATCHBIRD: return "scratchbird";
         case ProtocolType::POSTGRESQL:  return "postgresql";
         case ProtocolType::MYSQL:       return "mysql";
+        case ProtocolType::FIREBIRD:    return "firebirdsql";
+        case ProtocolType::CASSANDRA:   return "cassandra";
+        case ProtocolType::CLICKHOUSE:  return "clickhouse";
+        case ProtocolType::DUCKDB:      return "duckdb";
+        case ProtocolType::INFLUXDB:    return "influxdb";
+        case ProtocolType::MARIADB:     return "mariadb";
+        case ProtocolType::MILVUS:      return "milvus";
+        case ProtocolType::MONGODB:     return "mongodb";
+        case ProtocolType::NEO4J:       return "neo4j";
+        case ProtocolType::OPENSEARCH:  return "opensearch";
+        case ProtocolType::REDIS:       return "redis";
         case ProtocolType::MSSQL:       return "mssql";
-        case ProtocolType::FIREBIRD:    return "firebird";
         default: return "unknown";
     }
 }
@@ -297,6 +318,15 @@ public:
             handler->setCatalogManager(catalog_manager_);
         }
         handlers_[protocol].push_back(std::move(handler));
+    }
+
+    /**
+     * Remove all registered handlers.
+     *
+     * Used when reloading emulation-profile-driven overlay lifecycle.
+     */
+    void clearHandlers() {
+        handlers_.clear();
     }
 
     /**

@@ -53,6 +53,20 @@ namespace scratchbird::udr
 
     struct LanguageUdrCompileRequest
     {
+        struct SandboxPolicy
+        {
+            bool allow_network_access = false;
+            bool allow_filesystem_write = false;
+        };
+
+        struct ResourceLimits
+        {
+            uint32_t max_payload_bytes = 1024U * 1024U;
+            uint32_t max_ast_node_count = 262144U;
+            uint32_t max_normalization_steps = 524288U;
+            uint32_t max_compile_wall_time_ms = 5000U;
+        };
+
         core::ID request_id;
         std::string profile_id;
         std::string profile_version;
@@ -66,6 +80,10 @@ namespace scratchbird::udr
         uint64_t security_epoch = 0;
         std::string native_feature_key;
         bool compile_permission_granted = true;
+        bool requires_network_access = false;
+        bool requires_filesystem_write = false;
+        SandboxPolicy sandbox_policy{};
+        ResourceLimits resource_limits{};
     };
 
     class LanguageUdrRegistry
@@ -115,4 +133,3 @@ namespace scratchbird::udr
     };
 
 } // namespace scratchbird::udr
-

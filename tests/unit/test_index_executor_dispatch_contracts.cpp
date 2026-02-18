@@ -940,7 +940,10 @@ TEST_F(IndexExecutorDispatchContractsTest, V3AlterIndexDefaultsScopeRejectsUntil
     ExecutionResult result =
         executeSql("ALTER INDEX DEFAULTS FOR HASH SET (bloom_filter = true)");
     ASSERT_FALSE(result.success());
-    EXPECT_NE(result.error().find("ALTER INDEX DEFAULTS is not implemented in executor"),
+    EXPECT_NE(result.error().find("IRX_0406"),
+              std::string::npos)
+        << result.error();
+    EXPECT_NE(result.error().find("SBLR3_ALTER_INDEX_DEFAULTS"),
               std::string::npos)
         << result.error();
 }

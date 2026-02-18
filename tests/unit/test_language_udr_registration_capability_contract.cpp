@@ -35,7 +35,7 @@ namespace
         reg.module_name = module_name;
         reg.engine_profile_id = profile_id;
         reg.engine_profile_version = profile_version;
-        reg.translation_mode = "STRICT";
+        reg.translation_mode = "SQL_REWRITE_TO_NATIVE";
         reg.module_semver = module_semver;
         reg.artifact_hash = "artifact_hash_" + module_name;
         reg.signature_status = LanguageUdrSignatureStatus::TRUSTED;
@@ -202,3 +202,107 @@ TEST(LanguageUdrRegistrationCapabilityContractTest, PreflightSucceedsWithValidPr
     EXPECT_EQ(selected.module_id, reg.module_id);
 }
 
+TEST(LanguageUdrRegistrationCapabilityContractTest, PreflightRejectsSandboxNetworkAccessByDefaultPolicy)
+{
+    LanguageUdrRegistry registry;
+    ErrorContext ctx;
+
+    LanguageUdrRegistration reg = makeRegistration("native", "3.0", "3.0.9", "mod_sandbox_net");
+    ASSERT_EQ(registry.registerModule(reg, {"select_projection"}, &ctx), Status::OK) << ctx.message;
+
+    LanguageUdrCompileRequest req = makeRequest("native", "3.0", "select_projection");
+    req.requires_network_access = true;
+
+    LanguageUdrRegistration selected{};
+    const Status status = LanguageUdrRuntimeBoundary::preflightCompile(registry, req, selected, &ctx);
+    EXPECT_EQ(status, Status::PERMISSION_DENIED);
+    EXPECT_EQ(ctx.vnext_code, "UDR_1508");
+}
+
+TEST(LanguageUdrRegistrationCapabilityContractTest, PreflightRejectsSandboxFilesystemWriteByDefaultPolicy)
+{
+    LanguageUdrRegistry registry;
+    ErrorContext ctx;
+
+    LanguageUdrRegistration reg = makeRegistration("native", "3.0", "3.0.9", "mod_sandbox_fs");
+    ASSERT_EQ(registry.registerModule(reg, {"select_projection"}, &ctx), Status::OK) << ctx.message;
+
+    LanguageUdrCompileRequest req = makeRequest("native", "3.0", "select_projection");
+    req.requires_filesystem_write = true;
+
+    LanguageUdrRegistration selected{};
+    const Status status = LanguageUdrRuntimeBoundary::preflightCompile(registry, req, selected, &ctx);
+    EXPECT_EQ(status, Status::PERMISSION_DENIED);
+    EXPECT_EQ(ctx.vnext_code, "UDR_1508");
+}
+
+TEST(LanguageUdrRegistrationCapabilityContractTest, PreflightRejectsPayloadQuotaDeterministically)
+{
+    LanguageUdrRegistry registry;
+    ErrorContext ctx;
+
+    LanguageUdrRegistration reg = makeRegistration("native", "3.0", "3.0.9", "mod_quota_payload");
+    ASSERT_EQ(registry.registerModule(reg, {"select_projection"}, &ctx), Status::OK) << ctx.message;
+
+    LanguageUdrCompileRequest req = makeRequest("native", "3.0", "select_projection");
+    req.resource_limits.max_payload_bytes = 2;
+
+    LanguageUdrRegistration selected{};
+    const Status status = LanguageUdrRuntimeBoundary::preflightCompile(registry, req, selected, &ctx);
+    EXPECT_EQ(status, Status::CONFIGURATION_LIMIT_EXCEEDED);
+    EXPECT_EQ(ctx.vnext_code, "UDR_1512");
+}
+
+TEST(LanguageUdrRegistrationCapabilityContractTest, PreflightRejectsAstQuotaDeterministically)
+{
+    LanguageUdrRegistry registry;
+    ErrorContext ctx;
+
+    LanguageUdrRegistration reg = makeRegistration("native", "3.0", "3.0.9", "mod_quota_ast");
+    ASSERT_EQ(registry.registerModule(reg, {"select_projection"}, &ctx), Status::OK) << ctx.message;
+
+    LanguageUdrCompileRequest req = makeRequest("native", "3.0", "select_projection");
+    req.payload = std::vector<uint8_t>{'s','e','l','e','c','t',' ','a',',','b',' ','f','r','o','m',' ','t',
+                                       ' ','w','h','e','r','e',' ','a','=','1',' ','a','n','d',' ','b','=','2'};
+    req.resource_limits.max_ast_node_count = 2;
+
+    LanguageUdrRegistration selected{};
+    const Status status = LanguageUdrRuntimeBoundary::preflightCompile(registry, req, selected, &ctx);
+    EXPECT_EQ(status, Status::CONFIGURATION_LIMIT_EXCEEDED);
+    EXPECT_EQ(ctx.vnext_code, "UDR_1512");
+}
+
+TEST(LanguageUdrRegistrationCapabilityContractTest, PreflightRejectsNormalizationQuotaDeterministically)
+{
+    LanguageUdrRegistry registry;
+    ErrorContext ctx;
+
+    LanguageUdrRegistration reg = makeRegistration("native", "3.0", "3.0.9", "mod_quota_norm");
+    ASSERT_EQ(registry.registerModule(reg, {"select_projection"}, &ctx), Status::OK) << ctx.message;
+
+    LanguageUdrCompileRequest req = makeRequest("native", "3.0", "select_projection");
+    req.resource_limits.max_normalization_steps = 1;
+
+    LanguageUdrRegistration selected{};
+    const Status status = LanguageUdrRuntimeBoundary::preflightCompile(registry, req, selected, &ctx);
+    EXPECT_EQ(status, Status::CONFIGURATION_LIMIT_EXCEEDED);
+    EXPECT_EQ(ctx.vnext_code, "UDR_1512");
+}
+
+TEST(LanguageUdrRegistrationCapabilityContractTest, PreflightRejectsCompileWallTimeQuotaDeterministically)
+{
+    LanguageUdrRegistry registry;
+    ErrorContext ctx;
+
+    LanguageUdrRegistration reg = makeRegistration("native", "3.0", "3.0.9", "mod_quota_time");
+    ASSERT_EQ(registry.registerModule(reg, {"select_projection"}, &ctx), Status::OK) << ctx.message;
+
+    LanguageUdrCompileRequest req = makeRequest("native", "3.0", "select_projection");
+    req.payload.assign(4096, static_cast<uint8_t>('x'));
+    req.resource_limits.max_compile_wall_time_ms = 1;
+
+    LanguageUdrRegistration selected{};
+    const Status status = LanguageUdrRuntimeBoundary::preflightCompile(registry, req, selected, &ctx);
+    EXPECT_EQ(status, Status::CONFIGURATION_LIMIT_EXCEEDED);
+    EXPECT_EQ(ctx.vnext_code, "UDR_1512");
+}

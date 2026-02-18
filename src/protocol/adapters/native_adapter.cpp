@@ -29,6 +29,7 @@
 #include <filesystem>
 #include <functional>
 #include <iostream>
+#include <sstream>
 #include <streambuf>
 #include <thread>
 #include <chrono>
@@ -610,6 +611,7 @@ core::Status NativeAdapter::sendAuthResult(network::Connection* conn,
     sendAuthOk(conn, {});
     sendParameterStatus(conn, "attachment_id", formatUuid(session_id_, sizeof(session_id_)));
     sendParameterStatus(conn, "current_txn_id", std::to_string(transaction_id_));
+    sendCapabilityStatus(conn);
     sendReady(conn);
     native_state_ = NativeProtocolState::READY;
     return sendBuffer(conn);
@@ -813,6 +815,7 @@ core::Status NativeAdapter::handleAuthRequest(network::Connection* conn) {
         sendAuthOk(conn, auth_response.data);
         sendParameterStatus(conn, "attachment_id", formatUuid(session_id_, sizeof(session_id_)));
         sendParameterStatus(conn, "current_txn_id", std::to_string(transaction_id_));
+        sendCapabilityStatus(conn);
         sendReady(conn);
         native_state_ = NativeProtocolState::READY;
         return sendBuffer(conn);
@@ -1913,8 +1916,41 @@ core::Status NativeAdapter::sendPortalResults(network::Connection* conn,
 }
 
 void NativeAdapter::sendStatusResponse(network::Connection* conn) {
-    sendQueryError(conn, static_cast<uint32_t>(core::Status::NOT_SUPPORTED),
-                  "0A000", "STATUS is not supported over SBWP");
+    sendCapabilityStatus(conn);
+    sendReady(conn);
+}
+
+void NativeAdapter::sendCapabilityStatus(network::Connection* conn) {
+    const uint64_t feature_mask = serverFeatureMask();
+    const uint64_t profile_mask = feature_mask & sbwp::kFeatureProfileMask;
+    const auto enabled_profiles = sbwp::enabledProfilesFromFeatureMask(feature_mask);
+
+    std::ostringstream profile_join;
+    for (size_t i = 0; i < enabled_profiles.size(); ++i) {
+        if (i > 0) {
+            profile_join << ',';
+        }
+        profile_join << enabled_profiles[i];
+    }
+
+    sendParameterStatus(conn, "profile_contract_version", "16.0");
+    sendParameterStatus(conn, "server_feature_mask", std::to_string(feature_mask));
+    sendParameterStatus(conn, "profile_capability_mask", std::to_string(profile_mask));
+    sendParameterStatus(conn, "profile_count", std::to_string(enabled_profiles.size()));
+    sendParameterStatus(conn, "profile_bundle_set", profile_join.str());
+}
+
+uint64_t NativeAdapter::serverFeatureMask() const {
+    constexpr uint64_t kCoreFeatures =
+        sbwp::kFeatureCompression |
+        sbwp::kFeatureStreaming |
+        sbwp::kFeatureSblr |
+        sbwp::kFeatureNotifications |
+        sbwp::kFeatureQueryPlan |
+        sbwp::kFeatureBatch |
+        sbwp::kFeaturePipeline |
+        sbwp::kFeatureSavepoints;
+    return kCoreFeatures | sbwp::canonicalProfileFeatureMask();
 }
 
 core::Status NativeAdapter::ensureRemoteClient(core::ErrorContext* ctx) {

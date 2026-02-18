@@ -1,5 +1,7 @@
 #include "scratchbird/protocol/sbwp_protocol.h"
 
+#include <algorithm>
+#include <cctype>
 #include <cstring>
 
 namespace scratchbird::protocol::sbwp {
@@ -63,7 +65,68 @@ std::vector<uint8_t> buildParamList(const std::map<std::string, std::string>& pa
     return buf;
 }
 
+std::array<std::pair<const char*, uint64_t>, 13> makeProfileFeatureRegistry() {
+    return {{
+        {"postgresql", kFeatureProfilePostgresql},
+        {"mysql", kFeatureProfileMysql},
+        {"firebirdsql", kFeatureProfileFirebird},
+        {"cassandra", kFeatureProfileCassandra},
+        {"mariadb", kFeatureProfileMariadb},
+        {"clickhouse", kFeatureProfileClickhouse},
+        {"duckdb", kFeatureProfileDuckdb},
+        {"influxdb", kFeatureProfileInfluxdb},
+        {"mongodb", kFeatureProfileMongodb},
+        {"redis", kFeatureProfileRedis},
+        {"neo4j", kFeatureProfileNeo4j},
+        {"milvus", kFeatureProfileMilvus},
+        {"opensearch", kFeatureProfileOpensearch},
+    }};
+}
+
+std::string toLowerAscii(std::string value) {
+    for (char& ch : value) {
+        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    }
+    return value;
+}
+
 } // namespace
+
+const std::array<std::pair<const char*, uint64_t>, 13>& canonicalProfileFeatureRegistry() {
+    static const std::array<std::pair<const char*, uint64_t>, 13> kRegistry = makeProfileFeatureRegistry();
+    return kRegistry;
+}
+
+uint64_t canonicalProfileFeatureMask() {
+    uint64_t mask = 0;
+    for (const auto& entry : canonicalProfileFeatureRegistry()) {
+        mask |= entry.second;
+    }
+    return mask;
+}
+
+std::vector<std::string> enabledProfilesFromFeatureMask(uint64_t features) {
+    std::vector<std::string> enabled;
+    for (const auto& entry : canonicalProfileFeatureRegistry()) {
+        if ((features & entry.second) != 0) {
+            enabled.emplace_back(entry.first);
+        }
+    }
+    return enabled;
+}
+
+bool hasProfileFeature(uint64_t features, const std::string& profile_name) {
+    const std::string normalized = toLowerAscii(profile_name);
+    if (normalized == "firebird") {
+        return (features & kFeatureProfileFirebird) != 0;
+    }
+    for (const auto& entry : canonicalProfileFeatureRegistry()) {
+        if (normalized == entry.first) {
+            return (features & entry.second) != 0;
+        }
+    }
+    return false;
+}
 
 std::vector<uint8_t> encodeMessage(const MessageHeader& header,
                                    const std::vector<uint8_t>& payload) {
