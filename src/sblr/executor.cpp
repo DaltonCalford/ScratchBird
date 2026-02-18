@@ -101,6 +101,8 @@
 #include "scratchbird/catalog/virtual_catalog.h"
 #include "scratchbird/catalog/emulation_view_generator.h"
 #include "scratchbird/sblr/query_result_cache.h"  // P2-19: Query Result Caching
+#include "scratchbird/udr/language_udr_runtime.h"
+#include "scratchbird/udr/language_udr_test_harness.h"
 #include <nlohmann/json.hpp>
 #include <array>
 #include <sstream>
@@ -110,6 +112,7 @@
 #include <algorithm>
 #include <cstring>
 #include <chrono>
+#include <mutex>
 #include <map>
 #include <unordered_set>
 #include <regex>
@@ -137,6 +140,68 @@ namespace scratchbird
     namespace sblr
     {
         namespace {
+            struct UdrCompileProfileSeed
+            {
+                const char* profile_id;
+                const char* translation_mode;
+            };
+
+            static const std::array<UdrCompileProfileSeed, 13> kLanguageUdrCompileProfiles = {{
+                {"PostgreSQL", "SQL_REWRITE_TO_NATIVE"},
+                {"MySQL", "SQL_REWRITE_TO_NATIVE"},
+                {"FirebirdSQL", "SQL_REWRITE_TO_NATIVE"},
+                {"Cassandra", "CQL_REWRITE_TO_NATIVE"},
+                {"ClickHouse", "SQL_REWRITE_TO_NATIVE"},
+                {"DuckDB", "SQL_REWRITE_TO_NATIVE"},
+                {"MongoDB", "DOCUMENT_PIPELINE_TO_NATIVE"},
+                {"OpenSearch", "DSL_REWRITE_TO_NATIVE"},
+                {"InfluxDB", "TIMESERIES_REWRITE_TO_NATIVE"},
+                {"Neo4j", "CYPHER_REWRITE_TO_NATIVE"},
+                {"Redis", "RESP_TO_NATIVE_COMMAND"},
+                {"Milvus", "VECTOR_API_TO_NATIVE"},
+                {"MariaDB", "SQL_REWRITE_TO_NATIVE"},
+            }};
+
+            static std::string toLowerAsciiCopy(const std::string& input)
+            {
+                std::string out = input;
+                std::transform(out.begin(), out.end(), out.begin(),
+                               [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                return out;
+            }
+
+            static void initializeLanguageUdrCompileRegistry(scratchbird::udr::LanguageUdrRegistry& registry)
+            {
+                for (const auto& seed : kLanguageUdrCompileProfiles)
+                {
+                    scratchbird::udr::LanguageUdrRegistration registration{};
+                    registration.module_id = core::generateUuidV7();
+                    registration.module_name = "sb_udr_compile_" + toLowerAsciiCopy(seed.profile_id);
+                    registration.engine_profile_id = seed.profile_id;
+                    registration.engine_profile_version = "1.0";
+                    registration.translation_mode = seed.translation_mode;
+                    registration.module_semver = "1.0.0";
+                    registration.artifact_hash = "artifact_" + toLowerAsciiCopy(seed.profile_id);
+                    registration.signature_status =
+                        scratchbird::udr::LanguageUdrSignatureStatus::TRUSTED;
+                    registration.status = scratchbird::udr::LanguageUdrModuleStatus::ACTIVE;
+
+                    core::ErrorContext ctx;
+                    (void)registry.registerModule(
+                        registration,
+                        {"compile_route", "template_compile"},
+                        &ctx);
+                }
+            }
+
+            static scratchbird::udr::LanguageUdrRegistry& languageUdrCompileRegistry()
+            {
+                static scratchbird::udr::LanguageUdrRegistry registry;
+                static std::once_flag init_once;
+                std::call_once(init_once, [&]() { initializeLanguageUdrCompileRegistry(registry); });
+                return registry;
+            }
+
             bool isZeroUuid(const core::ID& id);
             inline bool isZeroId(const core::ID& id) { return isZeroUuid(id); }
             bool hasJobAdminPrivilege(core::CatalogManager* catalog, core::ConnectionContext* conn_ctx);
@@ -57994,8 +58059,212 @@ namespace scratchbird
 	                            "IRX_0406: semantic class change requires explicit bridge for " + feature);
 	                    };
 
+                        auto payloadFieldToString =
+                            [&](const scratchbird::sblr::v3::Value::Object& obj,
+                                const std::string& key,
+                                std::string& out) -> bool {
+                            auto it = obj.find(key);
+                            if (it == obj.end() || it->second.isNull())
+                            {
+                                return false;
+                            }
+                            if (auto v = std::get_if<std::string>(&it->second.data))
+                            {
+                                out = *v;
+                                return true;
+                            }
+                            if (auto v = std::get_if<int64_t>(&it->second.data))
+                            {
+                                out = std::to_string(*v);
+                                return true;
+                            }
+                            if (auto v = std::get_if<uint64_t>(&it->second.data))
+                            {
+                                out = std::to_string(*v);
+                                return true;
+                            }
+                            if (auto v = std::get_if<double>(&it->second.data))
+                            {
+                                out = std::to_string(*v);
+                                return true;
+                            }
+                            if (auto v = std::get_if<bool>(&it->second.data))
+                            {
+                                out = *v ? "true" : "false";
+                                return true;
+                            }
+                            return false;
+                        };
+
+                        auto payloadFieldToBool =
+                            [&](const scratchbird::sblr::v3::Value::Object& obj,
+                                const std::string& key,
+                                bool& out) -> bool {
+                            auto it = obj.find(key);
+                            if (it == obj.end() || it->second.isNull())
+                            {
+                                return false;
+                            }
+                            if (auto v = std::get_if<bool>(&it->second.data))
+                            {
+                                out = *v;
+                                return true;
+                            }
+                            if (auto v = std::get_if<uint64_t>(&it->second.data))
+                            {
+                                out = (*v != 0);
+                                return true;
+                            }
+                            if (auto v = std::get_if<int64_t>(&it->second.data))
+                            {
+                                out = (*v != 0);
+                                return true;
+                            }
+                            if (auto v = std::get_if<std::string>(&it->second.data))
+                            {
+                                std::string text = scratchbird::core::IdentifierUtils::toUpper(*v);
+                                if (text == "TRUE" || text == "1" || text == "ON")
+                                {
+                                    out = true;
+                                    return true;
+                                }
+                                if (text == "FALSE" || text == "0" || text == "OFF")
+                                {
+                                    out = false;
+                                    return true;
+                                }
+                            }
+                            return false;
+                        };
+
+                        auto executeUdrCompileBridgeOpcode =
+                            [&](scratchbird::sblr::v3::Opcode udr_opcode,
+                                const scratchbird::sblr::v3::Value::Object& udr_payload) -> ExecutionResult {
+                            const char* opcode_name = scratchbird::sblr::v3::opcodeName(
+                                static_cast<uint16_t>(udr_opcode));
+                            const std::string symbol = opcode_name ? opcode_name : "UNKNOWN";
+
+                            bool validate_only = false;
+                            (void)payloadFieldToBool(udr_payload, "validate_only", validate_only);
+
+                            std::string profile_id;
+                            std::string profile_version = "1.0";
+                            std::string payload_format;
+                            std::string payload_text;
+                            std::string session_signature;
+                            std::string native_feature_key;
+
+                            if (udr_opcode == scratchbird::sblr::v3::Opcode::SBLR3_OP_UDR_COMPILE_DISPATCH)
+                            {
+                                (void)payloadFieldToString(udr_payload, "profile_id", profile_id);
+                                (void)payloadFieldToString(udr_payload, "payload_format", payload_format);
+                                (void)payloadFieldToString(udr_payload, "payload_bytes", payload_text);
+                                (void)payloadFieldToString(udr_payload, "session_signature", session_signature);
+                                native_feature_key = "compile_route";
+                            }
+                            else
+                            {
+                                std::string template_id;
+                                (void)payloadFieldToString(udr_payload, "template_id", template_id);
+                                (void)payloadFieldToString(udr_payload, "sql_text", payload_text);
+                                (void)payloadFieldToString(udr_payload, "profile_id", profile_id);
+                                (void)payloadFieldToString(udr_payload, "session_signature", session_signature);
+                                payload_format = "SQL_TEXT";
+                                native_feature_key = "template_compile";
+                            }
+
+                            std::string profile_version_override;
+                            if (payloadFieldToString(udr_payload, "profile_version", profile_version_override) &&
+                                !profile_version_override.empty())
+                            {
+                                profile_version = profile_version_override;
+                            }
+                            std::string native_feature_override;
+                            if (payloadFieldToString(udr_payload, "native_feature_key", native_feature_override) &&
+                                !native_feature_override.empty())
+                            {
+                                native_feature_key = native_feature_override;
+                            }
+
+                            scratchbird::udr::LanguageUdrCompileRequest request{};
+                            request.request_id = core::generateUuidV7();
+                            request.profile_id = profile_id;
+                            request.profile_version = profile_version;
+                            request.payload_format = payload_format;
+                            request.payload.assign(payload_text.begin(), payload_text.end());
+                            request.session_option_signature = session_signature;
+                            request.role_context_signature = session_signature.empty()
+                                                                 ? std::string("sig_default")
+                                                                 : session_signature;
+                            request.native_feature_key = native_feature_key;
+                            request.transaction_id = 1;
+                            if (conn_ctx_ != nullptr)
+                            {
+                                request.transaction_id = std::max<uint64_t>(1, conn_ctx_->getCurrentXid());
+                                auto security_ctx = conn_ctx_->getCurrentSecurityContext();
+                                if (!isZeroUuid(security_ctx.effective_user_id))
+                                {
+                                    request.principal_id = security_ctx.effective_user_id;
+                                }
+                            }
+                            if (isZeroUuid(request.principal_id))
+                            {
+                                request.principal_id = core::generateUuidV7();
+                            }
+
+                            bool bool_opt = false;
+                            if (payloadFieldToBool(udr_payload, "compile_permission_granted", bool_opt))
+                            {
+                                request.compile_permission_granted = bool_opt;
+                            }
+                            if (payloadFieldToBool(udr_payload, "requires_network_access", bool_opt))
+                            {
+                                request.requires_network_access = bool_opt;
+                            }
+                            if (payloadFieldToBool(udr_payload, "requires_filesystem_write", bool_opt))
+                            {
+                                request.requires_filesystem_write = bool_opt;
+                            }
+                            if (payloadFieldToBool(udr_payload, "allow_network_access", bool_opt))
+                            {
+                                request.sandbox_policy.allow_network_access = bool_opt;
+                            }
+                            if (payloadFieldToBool(udr_payload, "allow_filesystem_write", bool_opt))
+                            {
+                                request.sandbox_policy.allow_filesystem_write = bool_opt;
+                            }
+
+                            auto& registry = languageUdrCompileRegistry();
+                            scratchbird::udr::LanguageUdrTestHarness harness(registry);
+                            scratchbird::udr::LanguageUdrCompileResponse response{};
+                            core::ErrorContext udr_ctx;
+                            core::Status udr_status = validate_only
+                                ? harness.validateOnly(request, response, &udr_ctx)
+                                : harness.compileSingle(request, response, &udr_ctx);
+
+                            if (udr_status != core::Status::OK)
+                            {
+                                const std::string code =
+                                    udr_ctx.vnext_code.empty() ? std::string("UDR_1506") : udr_ctx.vnext_code;
+                                const std::string message =
+                                    udr_ctx.message.empty()
+                                        ? std::string("UDR compile bridge request rejected")
+                                        : udr_ctx.message;
+                                core::VNextMetricsEventModel::recordExecutorEvent(
+                                    "vnext_opcode_dispatch", "reject", code);
+                                return ExecutionResult(code + ": " + message);
+                            }
+
+                            core::VNextMetricsEventModel::recordExecutorEvent(
+                                "vnext_opcode_dispatch", "ok", symbol);
+                            return ExecutionResult();
+                        };
+
 	                    switch (opcode)
 	                    {
+                            case scratchbird::sblr::v3::Opcode::SBLR3_OP_UDR_COMPILE_DISPATCH:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_OP_UDR_EMBEDDED_SQL_COMPILE:
+                                return executeUdrCompileBridgeOpcode(opcode, payload);
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_OP_DOC_PATH_FILTER:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_OP_TS_BUCKET_AGG:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_OP_COL_SCAN:
@@ -58003,8 +58272,6 @@ namespace scratchbird
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_OP_VECTOR_ANN:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_OP_HYBRID_BRIDGE_EXCHANGE:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_OP_HYBRID_BRIDGE_MATERIALIZE:
-	                        case scratchbird::sblr::v3::Opcode::SBLR3_OP_UDR_COMPILE_DISPATCH:
-	                        case scratchbird::sblr::v3::Opcode::SBLR3_OP_UDR_EMBEDDED_SQL_COMPILE:
 
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_SESSION_RESET:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_CONFIG_RESET:

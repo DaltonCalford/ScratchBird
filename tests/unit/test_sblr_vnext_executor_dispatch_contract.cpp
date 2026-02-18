@@ -175,7 +175,7 @@ TEST_F(SBLRVNextExecutorDispatchContractTest, KnownVNextOpcodesRejectWithDetermi
         Value::Object payload;
     };
 
-    const std::array<DispatchCase, 16> cases = {{
+    const std::array<DispatchCase, 14> cases = {{
         {static_cast<uint16_t>(Opcode::SBLR3_OP_DOC_PATH_FILTER),
          "SBLR3_OP_DOC_PATH_FILTER",
          Value::Object{{"path_id", Value(static_cast<uint64_t>(11))},
@@ -210,20 +210,6 @@ TEST_F(SBLRVNextExecutorDispatchContractTest, KnownVNextOpcodesRejectWithDetermi
          "SBLR3_OP_HYBRID_BRIDGE_MATERIALIZE",
          Value::Object{{"buffer_class", Value(static_cast<uint64_t>(2))},
                        {"row_shape_ref", Value(static_cast<uint64_t>(77))}}},
-        {static_cast<uint16_t>(Opcode::SBLR3_OP_UDR_COMPILE_DISPATCH),
-         "SBLR3_OP_UDR_COMPILE_DISPATCH",
-         Value::Object{{"validate_only", Value(false)},
-                       {"profile_id", Value(std::string("native"))},
-                       {"payload_format", Value(std::string("SQL_TEXT"))},
-                       {"payload_bytes", Value(std::string("payload_1"))},
-                       {"session_signature", Value(std::string("sig_1"))}}},
-        {static_cast<uint16_t>(Opcode::SBLR3_OP_UDR_EMBEDDED_SQL_COMPILE),
-         "SBLR3_OP_UDR_EMBEDDED_SQL_COMPILE",
-         Value::Object{{"validate_only", Value(true)},
-                       {"template_id", Value(std::string("tpl_1"))},
-                       {"sql_text", Value(std::string("SELECT 1"))},
-                       {"profile_id", Value(std::string("native"))},
-                       {"session_signature", Value(std::string("sig_2"))}}},
         {static_cast<uint16_t>(Opcode::SBLR3_SESSION_RESET),
          "SBLR3_SESSION_RESET",
          Value::Object{{"action", Value(static_cast<uint64_t>(1))},
@@ -276,6 +262,63 @@ TEST_F(SBLRVNextExecutorDispatchContractTest, KnownVNextOpcodesRejectWithDetermi
 
     EXPECT_EQ(reject_before + static_cast<double>(cases.size()),
               metricCounterValue(metric, {"vnext_opcode_dispatch", "reject", "IRX_0406"}));
+}
+
+TEST_F(SBLRVNextExecutorDispatchContractTest, UdrCompileDispatchAcceptsValidProfilePayload)
+{
+    ExecutionResult result = executeVNext(
+        static_cast<uint16_t>(Opcode::SBLR3_OP_UDR_COMPILE_DISPATCH),
+        Value::Object{{"validate_only", Value(false)},
+                      {"profile_id", Value(std::string("PostgreSQL"))},
+                      {"payload_format", Value(std::string("SQL_TEXT"))},
+                      {"payload_bytes", Value(std::string("SELECT 1"))},
+                      {"session_signature", Value(std::string("sig_ok"))}});
+
+    EXPECT_TRUE(result.success()) << result.error();
+}
+
+TEST_F(SBLRVNextExecutorDispatchContractTest, UdrCompileDispatchRejectsDeterministicallyByProfileContract)
+{
+    {
+        ExecutionResult result = executeVNext(
+            static_cast<uint16_t>(Opcode::SBLR3_OP_UDR_COMPILE_DISPATCH),
+            Value::Object{{"validate_only", Value(false)},
+                          {"profile_id", Value(std::string("UNKNOWN_PROFILE"))},
+                          {"payload_format", Value(std::string("SQL_TEXT"))},
+                          {"payload_bytes", Value(std::string("SELECT 1"))},
+                          {"session_signature", Value(std::string("sig_bad_profile"))}});
+
+        EXPECT_FALSE(result.success());
+        EXPECT_NE(result.error().find("UDR_1501"), std::string::npos) << result.error();
+    }
+
+    {
+        ExecutionResult result = executeVNext(
+            static_cast<uint16_t>(Opcode::SBLR3_OP_UDR_COMPILE_DISPATCH),
+            Value::Object{{"validate_only", Value(false)},
+                          {"profile_id", Value(std::string("PostgreSQL"))},
+                          {"payload_format", Value(std::string("RESP_ARRAY"))},
+                          {"payload_bytes", Value(std::string("*1\\r\\n$4\\r\\nPING\\r\\n"))},
+                          {"session_signature", Value(std::string("sig_bad_format"))}});
+
+        EXPECT_FALSE(result.success());
+        EXPECT_NE(result.error().find("UDR_1505"), std::string::npos) << result.error();
+    }
+}
+
+TEST_F(SBLRVNextExecutorDispatchContractTest,
+       UdrEmbeddedSqlCompileValidateRejectsMalformedPayloadWithDeterministicCode)
+{
+    ExecutionResult result = executeVNext(
+        static_cast<uint16_t>(Opcode::SBLR3_OP_UDR_EMBEDDED_SQL_COMPILE),
+        Value::Object{{"validate_only", Value(true)},
+                      {"template_id", Value(std::string("tpl_1"))},
+                      {"sql_text", Value(std::string(""))},
+                      {"profile_id", Value(std::string("PostgreSQL"))},
+                      {"session_signature", Value(std::string("sig_empty_sql"))}});
+
+    EXPECT_FALSE(result.success());
+    EXPECT_NE(result.error().find("UDR_1506"), std::string::npos) << result.error();
 }
 
 TEST_F(SBLRVNextExecutorDispatchContractTest,
