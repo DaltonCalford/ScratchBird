@@ -992,6 +992,20 @@ static const std::unordered_map<std::string, SchemaDef> kSchemas = {
         FieldDef{"buffer_class", FieldType::U8, ""},
         FieldDef{"row_shape_ref", FieldType::U32, ""},
     }}},
+    {"SCHEMA_UDR_COMPILE_DISPATCH", SchemaDef{"SCHEMA_UDR_COMPILE_DISPATCH", {
+        FieldDef{"validate_only", FieldType::BOOL, ""},
+        FieldDef{"profile_id", FieldType::STRING, ""},
+        FieldDef{"payload_format", FieldType::STRING, ""},
+        FieldDef{"payload_bytes", FieldType::STRING, ""},
+        FieldDef{"session_signature", FieldType::STRING, ""},
+    }}},
+    {"SCHEMA_UDR_EMBEDDED_SQL_COMPILE", SchemaDef{"SCHEMA_UDR_EMBEDDED_SQL_COMPILE", {
+        FieldDef{"validate_only", FieldType::BOOL, ""},
+        FieldDef{"template_id", FieldType::STRING, ""},
+        FieldDef{"sql_text", FieldType::STRING, ""},
+        FieldDef{"profile_id", FieldType::STRING, ""},
+        FieldDef{"session_signature", FieldType::STRING, ""},
+    }}},
     {"SCHEMA_JOB_EXECUTE", SchemaDef{"SCHEMA_JOB_EXECUTE", {
         FieldDef{"job_name", FieldType::IDENT, ""},
         FieldDef{"run_id", FieldType::OPT, "u64"},

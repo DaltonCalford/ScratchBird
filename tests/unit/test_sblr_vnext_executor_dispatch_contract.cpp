@@ -175,7 +175,7 @@ TEST_F(SBLRVNextExecutorDispatchContractTest, KnownVNextOpcodesRejectWithDetermi
         Value::Object payload;
     };
 
-    const std::array<DispatchCase, 14> cases = {{
+    const std::array<DispatchCase, 16> cases = {{
         {static_cast<uint16_t>(Opcode::SBLR3_OP_DOC_PATH_FILTER),
          "SBLR3_OP_DOC_PATH_FILTER",
          Value::Object{{"path_id", Value(static_cast<uint64_t>(11))},
@@ -210,6 +210,20 @@ TEST_F(SBLRVNextExecutorDispatchContractTest, KnownVNextOpcodesRejectWithDetermi
          "SBLR3_OP_HYBRID_BRIDGE_MATERIALIZE",
          Value::Object{{"buffer_class", Value(static_cast<uint64_t>(2))},
                        {"row_shape_ref", Value(static_cast<uint64_t>(77))}}},
+        {static_cast<uint16_t>(Opcode::SBLR3_OP_UDR_COMPILE_DISPATCH),
+         "SBLR3_OP_UDR_COMPILE_DISPATCH",
+         Value::Object{{"validate_only", Value(false)},
+                       {"profile_id", Value(std::string("native"))},
+                       {"payload_format", Value(std::string("SQL_TEXT"))},
+                       {"payload_bytes", Value(std::string("payload_1"))},
+                       {"session_signature", Value(std::string("sig_1"))}}},
+        {static_cast<uint16_t>(Opcode::SBLR3_OP_UDR_EMBEDDED_SQL_COMPILE),
+         "SBLR3_OP_UDR_EMBEDDED_SQL_COMPILE",
+         Value::Object{{"validate_only", Value(true)},
+                       {"template_id", Value(std::string("tpl_1"))},
+                       {"sql_text", Value(std::string("SELECT 1"))},
+                       {"profile_id", Value(std::string("native"))},
+                       {"session_signature", Value(std::string("sig_2"))}}},
         {static_cast<uint16_t>(Opcode::SBLR3_SESSION_RESET),
          "SBLR3_SESSION_RESET",
          Value::Object{{"action", Value(static_cast<uint64_t>(1))},

@@ -14,6 +14,7 @@
 #include "scratchbird/protocol/adapters/firebird_adapter.h"
 #include "scratchbird/protocol/adapters/native_adapter.h"
 #include "scratchbird/protocol/sbwp_protocol.h"
+#include "scratchbird/parser/v3_compiler.h"
 
 #include <filesystem>
 #include <cctype>
@@ -32,6 +33,16 @@ public:
     using T::T;
     core::Status runCompile(const std::string& sql, std::vector<uint8_t>& bytecode, std::string& err) {
         return T::compileQuery(sql, bytecode, err);
+    }
+
+    core::Status ensureEngineReady(core::ErrorContext* ctx) {
+        return T::ensureEngine(ctx);
+    }
+
+    void primeNativeScratchbirdCompiler() {
+        if (!T::compiler_v3_) {
+            T::compiler_v3_ = std::make_unique<scratchbird::parser::v3::Compiler>();
+        }
     }
     
     // Expose protected methods for testing PostgreSQL
@@ -310,6 +321,33 @@ TEST(ProtocolAdapterDialectsNative, NativeCapabilityMaskAdvertisesCanonicalProfi
     EXPECT_TRUE(scratchbird::protocol::sbwp::hasProfileFeature(feature_mask, "postgresql"));
     EXPECT_TRUE(scratchbird::protocol::sbwp::hasProfileFeature(feature_mask, "firebird"));
     EXPECT_TRUE(scratchbird::protocol::sbwp::hasProfileFeature(feature_mask, "opensearch"));
+}
+
+TEST(ProtocolAdapterDialectsNative, NativeCompileRejectIncludesDeterministicSqlContext) {
+    cleanupDb("test_native_compile_diagnostic.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_native_compile_diagnostic.sbdb").string();
+
+    AdapterHarness<NativeAdapter> adapter(cfg);
+    core::ErrorContext ctx;
+    ASSERT_EQ(adapter.ensureEngineReady(&ctx), core::Status::OK) << ctx.message;
+    adapter.primeNativeScratchbirdCompiler();
+
+    std::vector<uint8_t> first_bytecode;
+    std::vector<uint8_t> second_bytecode;
+    std::string first_error;
+    std::string second_error;
+
+    const std::string bad_sql = "DOC PATH FILTER PATH_ID 1 OP BAD VALUE_REF 2";
+    const auto first_status = adapter.runCompile(bad_sql, first_bytecode, first_error);
+    const auto second_status = adapter.runCompile(bad_sql, second_bytecode, second_error);
+
+    EXPECT_EQ(first_status, core::Status::INVALID_ARGUMENT);
+    EXPECT_EQ(second_status, core::Status::INVALID_ARGUMENT);
+    EXPECT_NE(first_error.find("SQL_CONTEXT:"), std::string::npos);
+    EXPECT_NE(second_error.find("SQL_CONTEXT:"), std::string::npos);
+    EXPECT_EQ(first_error, second_error);
 }
 
 TEST(ProtocolAdapterDialectsC3, MySQLNativePasswordAuth) {

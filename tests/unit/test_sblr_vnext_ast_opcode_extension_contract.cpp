@@ -53,6 +53,8 @@ TEST(SBLRVNextAstOpcodeExtensionContractTest, OpcodeRangeAndSchemasAreRegistered
     EXPECT_EQ(static_cast<uint16_t>(Opcode::SBLR3_OP_VECTOR_ANN), 0x6005);
     EXPECT_EQ(static_cast<uint16_t>(Opcode::SBLR3_OP_HYBRID_BRIDGE_EXCHANGE), 0x6006);
     EXPECT_EQ(static_cast<uint16_t>(Opcode::SBLR3_OP_HYBRID_BRIDGE_MATERIALIZE), 0x6007);
+    EXPECT_EQ(static_cast<uint16_t>(Opcode::SBLR3_OP_UDR_COMPILE_DISPATCH), 0x6008);
+    EXPECT_EQ(static_cast<uint16_t>(Opcode::SBLR3_OP_UDR_EMBEDDED_SQL_COMPILE), 0x6009);
 
     const uint16_t opcodes[] = {
         static_cast<uint16_t>(Opcode::SBLR3_OP_DOC_PATH_FILTER),
@@ -61,7 +63,9 @@ TEST(SBLRVNextAstOpcodeExtensionContractTest, OpcodeRangeAndSchemasAreRegistered
         static_cast<uint16_t>(Opcode::SBLR3_OP_SEARCH_DSL_EVAL),
         static_cast<uint16_t>(Opcode::SBLR3_OP_VECTOR_ANN),
         static_cast<uint16_t>(Opcode::SBLR3_OP_HYBRID_BRIDGE_EXCHANGE),
-        static_cast<uint16_t>(Opcode::SBLR3_OP_HYBRID_BRIDGE_MATERIALIZE)};
+        static_cast<uint16_t>(Opcode::SBLR3_OP_HYBRID_BRIDGE_MATERIALIZE),
+        static_cast<uint16_t>(Opcode::SBLR3_OP_UDR_COMPILE_DISPATCH),
+        static_cast<uint16_t>(Opcode::SBLR3_OP_UDR_EMBEDDED_SQL_COMPILE)};
 
     for (uint16_t opcode : opcodes)
     {
@@ -124,6 +128,24 @@ TEST(SBLRVNextAstOpcodeExtensionContractTest, AstContractShimMapsNodesToOpcodes)
          {{"source_track", Value(static_cast<uint64_t>(1))},
           {"target_track", Value(static_cast<uint64_t>(2))},
           {"bridge_mode", Value(static_cast<uint64_t>(3))}}});
+
+    cases.push_back(
+        {ASTKind::AST_UDR_COMPILE_DISPATCH,
+         static_cast<uint16_t>(Opcode::SBLR3_OP_UDR_COMPILE_DISPATCH),
+         {{"validate_only", Value(static_cast<uint64_t>(1))},
+          {"profile_id", Value(std::string("native"))},
+          {"payload_format", Value(std::string("SQL_TEXT"))},
+          {"payload_bytes", Value(std::string("payload_blob"))},
+          {"session_signature", Value(std::string("sig_a"))}}});
+
+    cases.push_back(
+        {ASTKind::AST_UDR_EMBEDDED_SQL_COMPILE,
+         static_cast<uint16_t>(Opcode::SBLR3_OP_UDR_EMBEDDED_SQL_COMPILE),
+         {{"validate_only", Value(static_cast<uint64_t>(0))},
+          {"template_id", Value(std::string("tpl_a"))},
+          {"sql_text", Value(std::string("SELECT 1"))},
+          {"profile_id", Value(std::string("native"))},
+          {"session_signature", Value(std::string("sig_b"))}}});
 
     for (const auto &test_case : cases)
     {

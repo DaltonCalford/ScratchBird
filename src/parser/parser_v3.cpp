@@ -19,6 +19,7 @@
 #include <cstring>
 #include <algorithm>
 #include <set>
+#include <utility>
 
 namespace {
 
@@ -282,6 +283,40 @@ static void storeU128LE(unsigned __int128 value, scratchbird::parser::v3::U128& 
 
 namespace scratchbird::parser::v3 {
 
+namespace {
+
+constexpr char kFeatureDocPathFilter[] = "F_DOC_PATH_FILTER";
+constexpr char kFeatureTsBucketAgg[] = "F_TS_BUCKET_AGG";
+constexpr char kFeatureScheduleRruleSurface[] = "F_RRULE_SCHEDULE_SURFACE";
+constexpr char kFeatureSearchQueryDsl[] = "F_SEARCH_QUERY_DSL";
+constexpr char kFeatureVectorAnn[] = "F_VECTOR_ANN";
+constexpr char kFeatureHybridBridgeHint[] = "F_HYBRID_BRIDGE_HINT";
+constexpr char kFeatureEngineProfileCreate[] = "F_ENGINE_PROFILE_CREATE";
+constexpr char kFeatureSecurityUserAccountDdl[] = "F_SECURITY_USER_ACCOUNT_DDL";
+constexpr char kFeatureSecurityConnectionRuleDdl[] = "F_SECURITY_CONNECTION_RULE_DDL";
+constexpr char kFeatureSecurityTokenDdl[] = "F_SECURITY_TOKEN_DDL";
+constexpr char kFeatureSecurityQuotaProfileDdl[] = "F_SECURITY_QUOTA_PROFILE_DDL";
+constexpr char kFeatureSecurityModelPolicyDdl[] = "F_SECURITY_MODEL_POLICY_DDL";
+constexpr char kFeatureLanguageUdrCompileBridge[] = "F_LANGUAGE_UDR_COMPILE_BRIDGE";
+constexpr char kFeatureEmbeddedSqlTemplateCompile[] = "F_EMBEDDED_SQL_TEMPLATE_COMPILE";
+
+std::string toUpperAscii(std::string value) {
+    for (char& ch : value) {
+        ch = static_cast<char>(std::toupper(static_cast<unsigned char>(ch)));
+    }
+    return value;
+}
+
+std::set<std::string> normalizeFeatureKeySet(const std::set<std::string>& input) {
+    std::set<std::string> normalized;
+    for (const std::string& value : input) {
+        normalized.insert(toUpperAscii(value));
+    }
+    return normalized;
+}
+
+} // namespace
+
 static std::optional<IndexType> indexTypeFromName(std::string_view name) {
     if (caseInsensitiveEquals(name, "BTREE")) return IndexType::BTREE;
     if (caseInsensitiveEquals(name, "HASH")) return IndexType::HASH;
@@ -350,13 +385,69 @@ static std::optional<IndexType> indexTypeFromName(std::string_view name) {
 // =============================================================================
 
 Parser::Parser(std::string_view input)
-    : lexer_(input)
-    , state_(lexer_)
-    , arena_()
+    : Parser(input, ParserOptions{})
 {
 }
 
+Parser::Parser(std::string_view input, ParserOptions options)
+    : lexer_(input)
+    , state_(lexer_)
+    , arena_()
+    , options_(std::move(options))
+{
+    initializeCapabilityProfile();
+}
+
 Parser::~Parser() = default;
+
+std::set<std::string> Parser::defaultCapabilitySetForProfile(std::string_view profile) {
+    const std::string normalized_profile = toUpperAscii(std::string(profile));
+    if (normalized_profile == "NATIVE" || normalized_profile.empty()) {
+        return {
+            kFeatureDocPathFilter,
+            kFeatureTsBucketAgg,
+            kFeatureScheduleRruleSurface,
+            kFeatureSearchQueryDsl,
+            kFeatureVectorAnn,
+            kFeatureHybridBridgeHint,
+            kFeatureEngineProfileCreate,
+            kFeatureSecurityUserAccountDdl,
+            kFeatureSecurityConnectionRuleDdl,
+            kFeatureSecurityTokenDdl,
+            kFeatureSecurityQuotaProfileDdl,
+            kFeatureSecurityModelPolicyDdl,
+            kFeatureLanguageUdrCompileBridge,
+            kFeatureEmbeddedSqlTemplateCompile
+        };
+    }
+    return {};
+}
+
+void Parser::initializeCapabilityProfile() {
+    if (options_.active_profile.empty()) {
+        options_.active_profile = "native";
+    }
+    active_profile_ = toUpperAscii(options_.active_profile);
+
+    if (options_.enabled_feature_keys.empty()) {
+        capability_feature_keys_ = defaultCapabilitySetForProfile(active_profile_);
+    } else {
+        capability_feature_keys_ = normalizeFeatureKeySet(options_.enabled_feature_keys);
+    }
+
+    const std::set<std::string> disabled = normalizeFeatureKeySet(options_.disabled_feature_keys);
+    for (const std::string& key : disabled) {
+        capability_feature_keys_.erase(key);
+    }
+}
+
+bool Parser::requireFeature(const char* feature_key) {
+    if (capability_feature_keys_.count(feature_key) != 0) {
+        return true;
+    }
+    errorCode("PRS_0503", std::string("Feature ").append(feature_key).append(" not enabled for active profile"));
+    return false;
+}
 
 // =============================================================================
 // Error Handling
@@ -553,18 +644,97 @@ Statement* Parser::parseStatementInternal() {
 
     // Gatekeeper dispatch
     if (check(TokenType::KW_WITH))      return parseWithStatement();
-    if (matchContextual("RECREATE")) {
-        expectContextual("JOB", "Expected JOB after RECREATE");
-        return parseCreateJob(false, true);
-    }
+    if (matchContextual("RECREATE"))    return parseRecreate();
     if (match(TokenType::KW_CREATE))    return parseCreate();
     if (match(TokenType::KW_ALTER))     return parseAlter();
     if (match(TokenType::KW_DROP))      return parseDrop();
     if (match(TokenType::KW_TRUNCATE))  return parseTruncate();
+    if (match(TokenType::KW_DECLARE))   return parseDeclareTopLevel();
+    if (checkContextual("DOC") || checkContextual("FILTER")) {
+        if (!requireFeature(kFeatureDocPathFilter)) return nullptr;
+        return parseDocPathFilterSurface();
+    }
+    if (checkContextual("TS") || checkContextual("AGGREGATE")) {
+        if (!requireFeature(kFeatureTsBucketAgg)) return nullptr;
+        return parseTimeBucketAggSurface();
+    }
+    if (checkContextual("SEARCH") || check(TokenType::KW_JOIN) ||
+        checkContextual("JOIN") || checkContextual("PERCOLATOR")) {
+        if (!requireFeature(kFeatureSearchQueryDsl)) return nullptr;
+        return parseSearchDslSurface();
+    }
+    if (checkContextual("VECTOR") || checkContextual("ANN")) {
+        if (!requireFeature(kFeatureVectorAnn)) return nullptr;
+        return parseVectorAnnSurface();
+    }
+    if (checkContextual("GRAPH")) {
+        return parseGraphPathSurface();
+    }
+    if (checkContextual("MATCH")) {
+        Token lookahead = state_.lexer().peekToken();
+        if (lookahead.type == TokenType::IDENTIFIER &&
+            caseInsensitiveEquals(state_.lexer().getTokenText(lookahead.span), "GRAPH")) {
+            return parseGraphPathSurface();
+        }
+    }
+    if (checkContextual("REDIS")) {
+        Token lookahead = state_.lexer().peekToken();
+        if (lookahead.type == TokenType::IDENTIFIER &&
+            caseInsensitiveEquals(state_.lexer().getTokenText(lookahead.span), "STREAM")) {
+            return parseRedisStreamGroupSurface();
+        }
+        return parseRedisLuaEvalSurface();
+    }
+    if (checkContextual("EVAL")) {
+        return parseRedisLuaEvalSurface();
+    }
+    if (checkContextual("XGROUP") || checkContextual("XREADGROUP") || checkContextual("XCLAIM")) {
+        return parseRedisStreamGroupSurface();
+    }
+    if (checkContextual("HYBRID") || checkContextual("BRIDGE")) {
+        if (!requireFeature(kFeatureHybridBridgeHint)) return nullptr;
+        return parseHybridBridgeSurface();
+    }
+    if (checkContextual("COMPILE")) return parseUdrCompileSurface();
+    if (checkContextual("UDR")) {
+        Token lookahead = state_.lexer().peekToken();
+        if (lookahead.type == TokenType::IDENTIFIER) {
+            std::string_view next_text = state_.lexer().getTokenText(lookahead.span);
+            if (caseInsensitiveEquals(next_text, "COMPILE") ||
+                caseInsensitiveEquals(next_text, "VALIDATE")) {
+                return parseUdrCompileSurface();
+            }
+        }
+    }
+    if (checkContextual("VALIDATE")) {
+        Token lookahead = state_.lexer().peekToken();
+        if (lookahead.type == TokenType::IDENTIFIER) {
+            std::string_view next_text = state_.lexer().getTokenText(lookahead.span);
+            if (caseInsensitiveEquals(next_text, "EMBEDDED") ||
+                caseInsensitiveEquals(next_text, "SQL")) {
+                return parseUdrCompileSurface();
+            }
+        }
+    }
+    if (matchContextual("INSTALL")) {
+        return parseInstallExtensionSurface(false);
+    }
+    if (matchContextual("LOAD")) {
+        return parseInstallExtensionSurface(true);
+    }
 
     // DML statements
     if (match(TokenType::KW_SELECT))    return parseSelect();
     if (match(TokenType::KW_INSERT))    return parseInsert();
+    if (check(TokenType::KW_UPDATE)) {
+        Token lookahead = state_.lexer().peekToken();
+        if (lookahead.type == TokenType::KW_OR ||
+            (lookahead.type == TokenType::IDENTIFIER &&
+             caseInsensitiveEquals(state_.lexer().getTokenText(lookahead.span), "OR"))) {
+            match(TokenType::KW_UPDATE);
+            return parseUpdateOrInsert();
+        }
+    }
     if (match(TokenType::KW_UPDATE))    return parseUpdate();
     if (match(TokenType::KW_DELETE))    return parseDelete();
     if (match(TokenType::KW_COPY))      return parseCopy();
@@ -583,6 +753,14 @@ Statement* Parser::parseStatementInternal() {
     if (match(TokenType::KW_SHOW))      return parseShow();
     if (matchContextual("RESET"))       return parseReset();
     if (matchContextual("DESCRIBE") || matchContextual("DESC")) return parseDescribe();
+    if (checkContextual("SECURITY")) {
+        matchContextual("SECURITY");
+        if (matchContextual("LABEL")) {
+            return parseSecurityLabel();
+        }
+        error("Expected LABEL after SECURITY");
+        return nullptr;
+    }
 
     // Utility statements
     if (match(TokenType::KW_EXPLAIN))   return parseExplain();
@@ -626,6 +804,7 @@ Statement* Parser::parseStatementInternal() {
                 return true;
             };
             if (eq_ci(next_text, "TOKEN")) {
+                if (!requireFeature(kFeatureSecurityTokenDdl)) return nullptr;
                 match(TokenType::KW_REVOKE);
                 return parseRevokeToken();
             }
@@ -645,6 +824,129 @@ Statement* Parser::parseStatementInternal() {
 
     error("Expected SQL statement");
     return nullptr;
+}
+
+Statement* Parser::parseRecreate() {
+    ParseModeGuard guard(state_, ParseMode::DDL);
+
+    if (matchContextual("JOB")) {
+        return parseCreateJob(false, true);
+    }
+    if (matchContextual("TABLE")) {
+        return parseCreateTable(true, TempTableType::NONE);
+    }
+    if (matchContextual("VIEW")) {
+        return parseCreateView(true);
+    }
+    if (matchContextual("PROCEDURE")) {
+        return parseCreateProcedure(true);
+    }
+    if (matchContextual("FUNCTION")) {
+        return parseCreateFunction(true);
+    }
+    if (matchContextual("TRIGGER")) {
+        return parseCreateTrigger(true);
+    }
+    if (matchContextual("PACKAGE")) {
+        return parseCreatePackage(true);
+    }
+    if (matchContextual("EXCEPTION")) {
+        return parseCreateException(true);
+    }
+    if (matchContextual("SEQUENCE")) {
+        auto* stmt = parseCreateSequence();
+        if (stmt) {
+            stmt->or_replace = true;
+        }
+        return stmt;
+    }
+
+    errorCode("PRS_0505", "Unsupported RECREATE object type");
+    return nullptr;
+}
+
+Statement* Parser::parseDeclareTopLevel() {
+    if (matchContextual("EXTERNAL")) {
+        if (matchContextual("FUNCTION")) {
+            return parseDeclareExternalFunction();
+        }
+        errorCode("PRS_0505", "Expected FUNCTION after DECLARE EXTERNAL");
+        return nullptr;
+    }
+
+    errorCode("PRS_0505", "Unsupported DECLARE statement");
+    return nullptr;
+}
+
+CreateUdrStmt* Parser::parseDeclareExternalFunction() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<CreateUdrStmt>();
+
+    stmt->udr_type = UdrObjectType::FUNCTION;
+    stmt->udr_path = parseSchemaPath(state_);
+    if (stmt->udr_path.isEmpty()) {
+        errorCode("PRS_0505", "Expected function name after DECLARE EXTERNAL FUNCTION");
+        stmt->span = makeSpan(start);
+        return stmt;
+    }
+
+    if (match(TokenType::LEFT_PAREN)) {
+        int depth = 1;
+        while (!isAtEnd() && depth > 0) {
+            if (match(TokenType::LEFT_PAREN)) {
+                ++depth;
+            } else if (match(TokenType::RIGHT_PAREN)) {
+                --depth;
+            } else {
+                advance();
+            }
+        }
+    } else {
+        while (!isAtEnd() && !checkContextual("RETURNS") && !check(TokenType::SEMICOLON)) {
+            advance();
+        }
+    }
+
+    if (matchContextual("RETURNS")) {
+        if (matchContextual("PARAMETER")) {
+            // Firebird legacy: RETURNS PARAMETER n
+            if (check(TokenType::INTEGER_LITERAL)) {
+                advance();
+            }
+        } else {
+            (void)parseTypeName();
+            if (matchContextual("BY")) {
+                matchContextual("VALUE");
+                matchContextual("DESCRIPTOR");
+            }
+            if (matchContextual("FREE_IT")) {
+                // Optional Firebird marker; ignored in normalized AST.
+            }
+        }
+    }
+
+    expectContextual("ENTRY_POINT", "Expected ENTRY_POINT in DECLARE EXTERNAL FUNCTION");
+    if (!check(TokenType::STRING_LITERAL)) {
+        errorCode("PRS_0505", "Expected string literal for ENTRY_POINT");
+        stmt->span = makeSpan(start);
+        return stmt;
+    }
+    stmt->entry_point = std::string(stringPool().get(current().value.string_id));
+    advance();
+
+    expectContextual("MODULE_NAME", "Expected MODULE_NAME in DECLARE EXTERNAL FUNCTION");
+    if (!check(TokenType::STRING_LITERAL)) {
+        errorCode("PRS_0505", "Expected string literal for MODULE_NAME");
+        stmt->span = makeSpan(start);
+        return stmt;
+    }
+    stmt->library_path = std::string(stringPool().get(current().value.string_id));
+    advance();
+
+    stmt->signature = "DECLARE EXTERNAL FUNCTION";
+    stmt->has_signature = true;
+    stmt->span = makeSpan(start);
+    return stmt;
 }
 
 // =============================================================================
@@ -741,6 +1043,9 @@ Statement* Parser::parseCreate() {
         if (or_alter) {
             errorCode("PRS_0505", "CREATE OR ALTER is not supported for SCHEDULE");
         }
+        if (!requireFeature(kFeatureScheduleRruleSurface)) {
+            return nullptr;
+        }
         return parseCreateSchedule();
     }
 
@@ -752,12 +1057,18 @@ Statement* Parser::parseCreate() {
         if (or_alter) {
             errorCode("PRS_0505", "CREATE OR ALTER is not supported for CONNECTION RULE");
         }
+        if (!requireFeature(kFeatureSecurityConnectionRuleDdl)) {
+            return nullptr;
+        }
         return parseCreateConnectionRule();
     }
 
     if (matchContextual("TOKEN")) {
         if (or_alter) {
             errorCode("PRS_0505", "CREATE OR ALTER is not supported for TOKEN");
+        }
+        if (!requireFeature(kFeatureSecurityTokenDdl)) {
+            return nullptr;
         }
         return parseCreateToken();
     }
@@ -770,7 +1081,50 @@ Statement* Parser::parseCreate() {
         if (or_alter) {
             errorCode("PRS_0505", "CREATE OR ALTER is not supported for QUOTA PROFILE");
         }
+        if (!requireFeature(kFeatureSecurityQuotaProfileDdl)) {
+            return nullptr;
+        }
         return parseCreateQuotaProfile();
+    }
+    if (matchContextual("EXTENSION")) {
+        if (or_alter) {
+            errorCode("PRS_0505", "CREATE OR ALTER is not supported for EXTENSION");
+        }
+        return parseCreateExtension();
+    }
+    if (matchContextual("PUBLICATION")) {
+        if (or_alter) {
+            errorCode("PRS_0505", "CREATE OR ALTER is not supported for PUBLICATION");
+        }
+        return parseCreatePublication();
+    }
+    if (matchContextual("SUBSCRIPTION")) {
+        if (or_alter) {
+            errorCode("PRS_0505", "CREATE OR ALTER is not supported for SUBSCRIPTION");
+        }
+        return parseCreateSubscription();
+    }
+    if (matchContextual("ACCESS")) {
+        if (!matchContextual("METHOD")) {
+            errorCode("PRS_0505", "Expected METHOD after CREATE ACCESS");
+            return nullptr;
+        }
+        if (or_alter) {
+            errorCode("PRS_0505", "CREATE OR ALTER is not supported for ACCESS METHOD");
+        }
+        return parseCreateAccessMethod();
+    }
+    if (matchContextual("STATISTICS")) {
+        if (or_alter) {
+            errorCode("PRS_0505", "CREATE OR ALTER is not supported for STATISTICS");
+        }
+        return parseCreateStatistics();
+    }
+    if (matchContextual("TRANSFORM")) {
+        if (or_alter) {
+            errorCode("PRS_0505", "CREATE OR ALTER is not supported for TRANSFORM");
+        }
+        return parseCreateTransform();
     }
 
     if (matchContextual("SCHEMA")) {
@@ -825,10 +1179,7 @@ Statement* Parser::parseCreate() {
     }
 
     if (matchContextual("VIEW")) {
-        if (or_alter) {
-            error("CREATE OR ALTER is only supported for JOB");
-        }
-        auto* stmt = parseCreateView(or_replace);
+        auto* stmt = parseCreateView(or_replace || or_alter);
         if (stmt) {
             stmt->temporary = temporary;
             stmt->materialized = materialized;
@@ -849,34 +1200,19 @@ Statement* Parser::parseCreate() {
     }
 
     if (matchContextual("FUNCTION")) {
-        if (or_alter) {
-            error("CREATE OR ALTER is only supported for JOB");
-        }
-        return parseCreateFunction(or_replace);
+        return parseCreateFunction(or_replace || or_alter);
     }
     if (matchContextual("PROCEDURE")) {
-        if (or_alter) {
-            error("CREATE OR ALTER is only supported for JOB");
-        }
-        return parseCreateProcedure(or_replace);
+        return parseCreateProcedure(or_replace || or_alter);
     }
     if (matchContextual("TRIGGER")) {
-        if (or_alter) {
-            error("CREATE OR ALTER is only supported for JOB");
-        }
-        return parseCreateTrigger(or_replace);
+        return parseCreateTrigger(or_replace || or_alter);
     }
     if (matchContextual("PACKAGE")) {
-        if (or_alter) {
-            error("CREATE OR ALTER is only supported for JOB");
-        }
-        return parseCreatePackage(or_replace);
+        return parseCreatePackage(or_replace || or_alter);
     }
     if (matchContextual("EXCEPTION")) {
-        if (or_alter) {
-            error("CREATE OR ALTER is only supported for JOB");
-        }
-        return parseCreateException(or_replace);
+        return parseCreateException(or_replace || or_alter);
     }
     if (matchContextual("TYPE")) {
         if (or_alter) {
@@ -890,6 +1226,9 @@ Statement* Parser::parseCreate() {
         }
         if (matchContextual("MAPPING")) {
             return parseCreateUserMapping();
+        }
+        if (!requireFeature(kFeatureSecurityUserAccountDdl)) {
+            return nullptr;
         }
         return parseCreateUser();
     }
@@ -908,6 +1247,9 @@ Statement* Parser::parseCreate() {
     if (matchContextual("POLICY")) {
         if (or_alter) {
             error("CREATE OR ALTER is only supported for JOB");
+        }
+        if (!requireFeature(kFeatureSecurityModelPolicyDdl)) {
+            return nullptr;
         }
         return parseCreatePolicy();
     }
@@ -1955,6 +2297,161 @@ Statement* Parser::parseCreateQuotaProfile() {
     return stmt;
 }
 
+Statement* Parser::parseCreateExtension() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    bool if_not_exists = false;
+    if (match(TokenType::KW_IF)) {
+        expect(TokenType::KW_NOT, "Expected NOT after IF");
+        expect(TokenType::KW_EXISTS, "Expected EXISTS after IF NOT");
+        if_not_exists = true;
+    }
+
+    StringPool::StringId extension_name = expectIdentifier("Expected extension name");
+    std::string extension = std::string(stringPool().get(extension_name));
+    std::string payload = captureStatementBody();
+    if (if_not_exists) {
+        if (!payload.empty()) payload.insert(0, ";");
+        payload.insert(0, "IF_NOT_EXISTS=1");
+    }
+
+    stmt->name = stringPool().intern("platform.extension.create." + extension);
+    auto* lit = arena_.create<LiteralExpr>();
+    lit->literal_type = LiteralType::STRING;
+    lit->string_value = stringPool().intern(payload);
+    stmt->value = lit;
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseCreatePublication() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    StringPool::StringId publication_name = expectIdentifier("Expected publication name");
+    std::string publication = std::string(stringPool().get(publication_name));
+
+    std::string payload = captureStatementBody();
+    if (payload.empty()) {
+        errorCode("PRS_0504", "CREATE PUBLICATION requires FOR clause");
+    }
+
+    stmt->name = stringPool().intern("replication.publication.create." + publication);
+    auto* lit = arena_.create<LiteralExpr>();
+    lit->literal_type = LiteralType::STRING;
+    lit->string_value = stringPool().intern(payload);
+    stmt->value = lit;
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseCreateSubscription() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    StringPool::StringId subscription_name = expectIdentifier("Expected subscription name");
+    std::string subscription = std::string(stringPool().get(subscription_name));
+
+    std::string payload = captureStatementBody();
+    if (payload.empty()) {
+        errorCode("PRS_0504", "CREATE SUBSCRIPTION requires CONNECTION/PUBLICATION clauses");
+    }
+
+    stmt->name = stringPool().intern("replication.subscription.create." + subscription);
+    auto* lit = arena_.create<LiteralExpr>();
+    lit->literal_type = LiteralType::STRING;
+    lit->string_value = stringPool().intern(payload);
+    stmt->value = lit;
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseCreateAccessMethod() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    StringPool::StringId method_name = expectIdentifier("Expected access method name");
+    std::string method = std::string(stringPool().get(method_name));
+
+    expectContextual("TYPE", "Expected TYPE after access method name");
+    if (!(matchContextual("INDEX") || matchContextual("TABLE"))) {
+        errorCode("PRS_0504", "CREATE ACCESS METHOD requires TYPE INDEX or TYPE TABLE");
+    }
+    expectContextual("HANDLER", "Expected HANDLER in CREATE ACCESS METHOD");
+    expectIdentifier("Expected handler function name");
+
+    std::string payload = captureStatementBody();
+    stmt->name = stringPool().intern("platform.access_method.create." + method);
+    auto* lit = arena_.create<LiteralExpr>();
+    lit->literal_type = LiteralType::STRING;
+    lit->string_value = stringPool().intern(payload);
+    stmt->value = lit;
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseCreateStatistics() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    bool if_not_exists = false;
+    if (match(TokenType::KW_IF)) {
+        expect(TokenType::KW_NOT, "Expected NOT after IF");
+        expect(TokenType::KW_EXISTS, "Expected EXISTS after IF NOT");
+        if_not_exists = true;
+    }
+
+    StringPool::StringId stats_name = expectIdentifier("Expected statistics object name");
+    std::string stats = std::string(stringPool().get(stats_name));
+    std::string payload = captureStatementBody();
+    if (if_not_exists) {
+        if (!payload.empty()) payload.insert(0, ";");
+        payload.insert(0, "IF_NOT_EXISTS=1");
+    }
+
+    stmt->name = stringPool().intern("optimizer.statistics.create." + stats);
+    auto* lit = arena_.create<LiteralExpr>();
+    lit->literal_type = LiteralType::STRING;
+    lit->string_value = stringPool().intern(payload);
+    stmt->value = lit;
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseCreateTransform() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    expectContextual("FOR", "Expected FOR after CREATE TRANSFORM");
+    TypeName source_type = parseTypeName();
+    if (!source_type.has_schema_path && source_type.name == StringPool::INVALID_ID) {
+        errorCode("PRS_0504", "CREATE TRANSFORM requires source type");
+    }
+
+    std::string payload = "FOR ";
+    if (source_type.has_schema_path) {
+        payload += schemaPathToString(source_type.schema_path, stringPool());
+    } else if (source_type.name != StringPool::INVALID_ID) {
+        payload += std::string(stringPool().get(source_type.name));
+    } else {
+        payload += "<unknown>";
+    }
+    std::string tail = captureStatementBody();
+    if (!tail.empty()) {
+        payload.push_back(' ');
+        payload.append(tail);
+    }
+
+    stmt->name = stringPool().intern("platform.transform.create");
+    auto* lit = arena_.create<LiteralExpr>();
+    lit->literal_type = LiteralType::STRING;
+    lit->string_value = stringPool().intern(payload);
+    stmt->value = lit;
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
 // =============================================================================
 // CREATE TABLE
 // =============================================================================
@@ -2131,6 +2628,26 @@ TypeName Parser::parseTypeName() {
 
     TypeName type;
 
+    // Firebird TYPE OF / TYPE OF COLUMN
+    if (checkContextual("TYPE")) {
+        matchContextual("TYPE");
+        expectContextual("OF", "Expected OF after TYPE");
+        type.is_type_of = true;
+        if (matchContextual("COLUMN")) {
+            type.is_type_of_column = true;
+            type.name = stringPool().intern("TYPE OF COLUMN");
+        } else {
+            type.name = stringPool().intern("TYPE OF");
+        }
+        type.schema_path = parseSchemaPath(state_);
+        type.has_schema_path = !type.schema_path.isEmpty();
+        if (!type.has_schema_path) {
+            error("Expected type or column reference after TYPE OF");
+        }
+        type.span = makeSpan(start);
+        return type;
+    }
+
     if (state_.check(TokenType::DOT) || state_.check(TokenType::DOUBLE_DOT) ||
         state_.check(TokenType::EXCLAIM_COLON)) {
         type.schema_path = parseSchemaPath(state_);
@@ -2185,23 +2702,84 @@ TypeName Parser::parseTypeName() {
         }
     }
 
-    // Check for type parameters: (precision, scale) or (length)
+    // Check for type parameters: numeric (precision/scale) or generic argument lists.
     if (match(TokenType::LEFT_PAREN)) {
-        // First parameter
         if (check(TokenType::INTEGER_LITERAL)) {
             type.length = static_cast<int32_t>(current().value.int_value);
             type.precision = type.length;
             advance();
 
-            // Optional second parameter (scale)
             if (match(TokenType::COMMA)) {
                 if (check(TokenType::INTEGER_LITERAL)) {
                     type.scale = static_cast<int32_t>(current().value.int_value);
                     advance();
+                } else {
+                    error("Expected integer literal for second numeric type parameter");
                 }
             }
+            expect(TokenType::RIGHT_PAREN, "Expected ')' after type parameters");
+        } else {
+            std::string_view input = state_.lexer().input();
+            auto trim = [](std::string_view v) -> std::string_view {
+                size_t b = 0;
+                while (b < v.size() && std::isspace(static_cast<unsigned char>(v[b])) != 0) {
+                    ++b;
+                }
+                size_t e = v.size();
+                while (e > b && std::isspace(static_cast<unsigned char>(v[e - 1])) != 0) {
+                    --e;
+                }
+                return v.substr(b, e - b);
+            };
+            auto appendTypeArgument = [&](size_t begin, size_t end) {
+                if (end <= begin || begin >= input.size()) {
+                    return;
+                }
+                size_t safe_end = std::min(end, input.size());
+                std::string_view raw = trim(input.substr(begin, safe_end - begin));
+                if (!raw.empty()) {
+                    type.type_arguments.push_back(stringPool().intern(std::string(raw)));
+                }
+            };
+
+            int nested_depth = 0;
+            size_t arg_start = current().span.start.offset;
+            bool saw_closing_paren = false;
+            while (!isAtEnd()) {
+                if (check(TokenType::LEFT_PAREN)) {
+                    ++nested_depth;
+                    advance();
+                    continue;
+                }
+                if (check(TokenType::RIGHT_PAREN)) {
+                    if (nested_depth == 0) {
+                        appendTypeArgument(arg_start, current().span.start.offset);
+                        advance();
+                        saw_closing_paren = true;
+                        break;
+                    }
+                    --nested_depth;
+                    advance();
+                    continue;
+                }
+                if (check(TokenType::COMMA) && nested_depth == 0) {
+                    appendTypeArgument(arg_start, current().span.start.offset);
+                    advance();
+                    if (!isAtEnd()) {
+                        arg_start = current().span.start.offset;
+                    }
+                    continue;
+                }
+                advance();
+            }
+
+            if (!saw_closing_paren) {
+                error("Expected ')' after type arguments");
+            }
+            if (type.type_arguments.empty()) {
+                error("Type argument list must not be empty");
+            }
         }
-        expect(TokenType::RIGHT_PAREN, "Expected ')' after type parameters");
     }
 
     // Check for array notation: []
@@ -2313,19 +2891,35 @@ std::vector<ColumnConstraint> Parser::parseColumnConstraints() {
             found = true;
         } else if (matchContextual("GENERATED")) {
             constraint.type = ConstraintType::GENERATED;
+            bool by_default = false;
             if (matchContextual("ALWAYS")) {
                 constraint.generated_always = true;
             } else if (matchContextual("BY")) {
                 expectContextual("DEFAULT", "Expected DEFAULT after BY");
+                by_default = true;
+            } else {
+                errorCode("PRS_0504", "Expected ALWAYS or BY DEFAULT after GENERATED");
             }
 
-            if (match(TokenType::KW_AS)) {
-                if (matchContextual("IDENTITY")) {
-                    constraint.generated_as_identity = true;
+            if (!(match(TokenType::KW_AS) || matchContextual("AS"))) {
+                errorCode("PRS_0504", "Expected AS in GENERATED clause");
+            }
+
+            if (matchContextual("IDENTITY")) {
+                constraint.generated_as_identity = true;
+            } else {
+                if (by_default) {
+                    errorCode("PRS_0504", "Generated expression columns require ALWAYS");
+                }
+                expect(TokenType::LEFT_PAREN, "Expected '(' after AS");
+                constraint.generated_expr = parseExpression();
+                expect(TokenType::RIGHT_PAREN, "Expected ')' after expression");
+                if (matchContextual("STORED")) {
+                    constraint.generated_stored = true;
+                } else if (matchContextual("VIRTUAL")) {
+                    errorCode("PRS_0504", "VIRTUAL generated columns are not supported");
                 } else {
-                    expect(TokenType::LEFT_PAREN, "Expected '(' after AS");
-                    constraint.generated_expr = parseExpression();
-                    expect(TokenType::RIGHT_PAREN, "Expected ')' after expression");
+                    errorCode("PRS_0504", "Expected STORED after generated expression");
                 }
             }
             found = true;
@@ -2334,6 +2928,16 @@ std::vector<ColumnConstraint> Parser::parseColumnConstraints() {
         if (!found) {
             break;
         }
+
+        bool allow_deferrable =
+            (constraint.type == ConstraintType::PRIMARY_KEY) ||
+            (constraint.type == ConstraintType::UNIQUE) ||
+            (constraint.type == ConstraintType::REFERENCES);
+        parseDeferrabilityClause(allow_deferrable,
+                                 constraint.deferrable,
+                                 constraint.not_deferrable,
+                                 constraint.initially_deferred,
+                                 constraint.initially_immediate);
 
         constraint.span = makeSpan(currentLocation());
         constraints.push_back(constraint);
@@ -2797,9 +3401,22 @@ TableConstraint* Parser::parseTableConstraint() {
         parseForeignKeyConstraint(constraint);
     } else if (matchContextual("CHECK")) {
         parseCheckConstraint(constraint);
+    } else if (matchContextual("EXCLUDE")) {
+        parseExcludeConstraint(constraint);
     } else {
-        error("Expected constraint type (PRIMARY KEY, UNIQUE, FOREIGN KEY, CHECK)");
+        error("Expected constraint type (PRIMARY KEY, UNIQUE, FOREIGN KEY, CHECK, EXCLUDE)");
     }
+
+    bool allow_deferrable =
+        (constraint->type == TableConstraintType::PRIMARY_KEY) ||
+        (constraint->type == TableConstraintType::UNIQUE) ||
+        (constraint->type == TableConstraintType::FOREIGN_KEY) ||
+        (constraint->type == TableConstraintType::EXCLUDE);
+    parseDeferrabilityClause(allow_deferrable,
+                             constraint->deferrable,
+                             constraint->not_deferrable,
+                             constraint->initially_deferred,
+                             constraint->initially_immediate);
 
     constraint->span = makeSpan(start);
     return constraint;
@@ -2869,6 +3486,102 @@ void Parser::parseCheckConstraint(TableConstraint* constraint) {
     expect(TokenType::LEFT_PAREN, "Expected '(' after CHECK");
     constraint->check_expr = parseExpression();
     expect(TokenType::RIGHT_PAREN, "Expected ')' after CHECK expression");
+}
+
+void Parser::parseExcludeConstraint(TableConstraint* constraint) {
+    constraint->type = TableConstraintType::EXCLUDE;
+
+    if (!(match(TokenType::KW_USING) || matchContextual("USING"))) {
+        errorCode("PRS_0504", "Expected USING after EXCLUDE");
+    }
+    constraint->index_method = expectIdentifier("Expected index method after EXCLUDE USING");
+
+    expect(TokenType::LEFT_PAREN, "Expected '(' after EXCLUDE USING method");
+    do {
+        constraint->exclude_expressions.push_back(parseExpression());
+
+        if (!(match(TokenType::KW_WITH) || matchContextual("WITH"))) {
+            errorCode("PRS_0504", "Expected WITH after EXCLUDE element expression");
+        }
+
+        StringPool::StringId op_id = StringPool::INVALID_ID;
+        if (isIdentifier()) {
+            op_id = currentIdentifier();
+        } else {
+            std::string text(state_.getTokenText(current()));
+            if (text.empty()) {
+                errorCode("PRS_0504", "Expected exclusion operator after WITH");
+            } else {
+                op_id = stringPool().intern(text);
+                advance();
+            }
+        }
+        constraint->exclude_operators.push_back(op_id);
+    } while (match(TokenType::COMMA));
+    expect(TokenType::RIGHT_PAREN, "Expected ')' after EXCLUDE element list");
+
+    if (match(TokenType::KW_WHERE)) {
+        expect(TokenType::LEFT_PAREN, "Expected '(' after WHERE in EXCLUDE constraint");
+        constraint->exclude_where = parseExpression();
+        expect(TokenType::RIGHT_PAREN, "Expected ')' after EXCLUDE WHERE expression");
+    }
+}
+
+void Parser::parseDeferrabilityClause(bool allow_deferrable,
+                                      bool& deferrable,
+                                      bool& not_deferrable,
+                                      bool& initially_deferred,
+                                      bool& initially_immediate) {
+    auto nextTokenIsDeferrable = [&]() -> bool {
+        if (!check(TokenType::KW_NOT)) {
+            return false;
+        }
+        Token next = state_.lexer().peekToken();
+        if (next.type != TokenType::IDENTIFIER || next.is_delimited) {
+            return false;
+        }
+        std::string_view text = stringPool().get(next.value.string_id);
+        return caseInsensitiveEquals(text, "DEFERRABLE");
+    };
+
+    bool saw_any = false;
+    if (matchContextual("DEFERRABLE")) {
+        deferrable = true;
+        saw_any = true;
+    } else if (nextTokenIsDeferrable()) {
+        advance();  // NOT
+        matchContextual("DEFERRABLE");
+        not_deferrable = true;
+        saw_any = true;
+    }
+
+    if (matchContextual("INITIALLY")) {
+        saw_any = true;
+        if (matchContextual("DEFERRED")) {
+            initially_deferred = true;
+        } else if (matchContextual("IMMEDIATE")) {
+            initially_immediate = true;
+        } else {
+            errorCode("PRS_0504", "Expected DEFERRED or IMMEDIATE after INITIALLY");
+        }
+    }
+
+    if (!saw_any) {
+        return;
+    }
+
+    if (!allow_deferrable) {
+        errorCode("PRS_0504", "Constraint type does not support DEFERRABLE");
+        return;
+    }
+
+    if (not_deferrable && (initially_deferred || initially_immediate)) {
+        errorCode("PRS_0504", "NOT DEFERRABLE cannot use INITIALLY clause");
+    }
+
+    if (!deferrable && (initially_deferred || initially_immediate)) {
+        errorCode("PRS_0504", "INITIALLY clause requires DEFERRABLE");
+    }
 }
 
 // =============================================================================
@@ -3285,6 +3998,10 @@ CreateDatabaseStmt* Parser::parseCreateDatabase() {
     };
 
     if (matchContextual("EMULATED")) {
+        if (!requireFeature(kFeatureEngineProfileCreate)) {
+            stmt->span = makeSpan(start);
+            return stmt;
+        }
         std::string dialect = parse_string_or_identifier();
         if (dialect.empty()) {
             error("Expected emulation dialect after EMULATED");
@@ -4631,15 +5348,19 @@ CreateTriggerStmt* Parser::parseCreateTrigger(bool or_replace) {
         stmt->active = false;
     }
 
+    bool saw_timing = false;
     if (matchContextual("BEFORE")) {
         stmt->timing = TriggerTiming::BEFORE;
+        saw_timing = true;
     } else if (matchContextual("AFTER")) {
         stmt->timing = TriggerTiming::AFTER;
+        saw_timing = true;
     } else if (matchContextual("INSTEAD")) {
         expectContextual("OF", "Expected OF after INSTEAD");
         stmt->timing = TriggerTiming::INSTEAD_OF;
-    } else {
-        error("Expected BEFORE, AFTER, or INSTEAD OF in CREATE TRIGGER");
+        saw_timing = true;
+    } else if (!( !has_table_path && (check(TokenType::KW_ON) || checkContextual("ON")) )) {
+        error("Expected BEFORE, AFTER, INSTEAD OF, or ON <database_event> in CREATE TRIGGER");
     }
 
     stmt->event_mask = 0;
@@ -4653,42 +5374,100 @@ CreateTriggerStmt* Parser::parseCreateTrigger(bool or_replace) {
         }
         return false;
     };
-
-    if (!match_event(TriggerEvent::INSERT, TokenType::KW_INSERT, "INSERT") &&
-        !match_event(TriggerEvent::UPDATE, TokenType::KW_UPDATE, "UPDATE") &&
-        !match_event(TriggerEvent::DELETE, TokenType::KW_DELETE, "DELETE")) {
-        // No-op; handled by event_mask check below.
-    }
-
-    if (stmt->event_mask == 0) {
-        error("Expected INSERT, UPDATE, or DELETE in CREATE TRIGGER");
-    }
-
-    while (match(TokenType::KW_OR) || matchContextual("OR")) {
-        if (match_event(TriggerEvent::INSERT, TokenType::KW_INSERT, "INSERT") ||
-            match_event(TriggerEvent::UPDATE, TokenType::KW_UPDATE, "UPDATE") ||
-            match_event(TriggerEvent::DELETE, TokenType::KW_DELETE, "DELETE")) {
-            continue;
+    auto parse_database_trigger_event = [&]() -> bool {
+        if (matchContextual("CONNECT")) {
+            add_event(TriggerEvent::CONNECT);
+            return true;
         }
-        error("Expected trigger event after OR");
-        break;
-    }
+        if (matchContextual("DISCONNECT")) {
+            add_event(TriggerEvent::DISCONNECT);
+            return true;
+        }
+        if (matchContextual("TRANSACTION")) {
+            if (matchContextual("START")) {
+                add_event(TriggerEvent::TRANSACTION_START);
+            } else if (matchContextual("COMMIT")) {
+                add_event(TriggerEvent::TRANSACTION_COMMIT);
+            } else if (matchContextual("ROLLBACK")) {
+                add_event(TriggerEvent::TRANSACTION_ROLLBACK);
+            } else {
+                error("Expected START, COMMIT, or ROLLBACK after TRANSACTION");
+                return false;
+            }
+            return true;
+        }
+        return false;
+    };
 
-    if (!has_table_path) {
-        if (match(TokenType::KW_ON) || matchContextual("ON")) {
+    if (!has_table_path && (match(TokenType::KW_ON) || matchContextual("ON"))) {
+        if (parse_database_trigger_event()) {
+            stmt->is_database_trigger = true;
+            stmt->timing = TriggerTiming::AFTER;
+            stmt->granularity = TriggerGranularity::FOR_EACH_STATEMENT;
+            while (match(TokenType::KW_OR) || matchContextual("OR")) {
+                if (!parse_database_trigger_event()) {
+                    error("Expected database trigger event after OR");
+                    break;
+                }
+            }
+        } else {
             stmt->table_path = parseSchemaPath(state_);
             has_table_path = true;
-        } else {
-            error("Expected ON <table> or FOR <table> in CREATE TRIGGER");
         }
     }
 
-    if (matchContextual("FOR")) {
-        matchContextual("EACH");
-        if (matchContextual("ROW")) {
-            stmt->granularity = TriggerGranularity::FOR_EACH_ROW;
-        } else if (matchContextual("STATEMENT")) {
-            stmt->granularity = TriggerGranularity::FOR_EACH_STATEMENT;
+    if (!stmt->is_database_trigger) {
+        if (!saw_timing) {
+            error("Expected BEFORE, AFTER, or INSTEAD OF for table trigger");
+        }
+        if (!match_event(TriggerEvent::INSERT, TokenType::KW_INSERT, "INSERT") &&
+            !match_event(TriggerEvent::UPDATE, TokenType::KW_UPDATE, "UPDATE") &&
+            !match_event(TriggerEvent::DELETE, TokenType::KW_DELETE, "DELETE")) {
+            // No-op; handled by event_mask check below.
+        }
+
+        if (stmt->event_mask == 0) {
+            error("Expected INSERT, UPDATE, or DELETE in CREATE TRIGGER");
+        }
+
+        while (match(TokenType::KW_OR) || matchContextual("OR")) {
+            if (match_event(TriggerEvent::INSERT, TokenType::KW_INSERT, "INSERT") ||
+                match_event(TriggerEvent::UPDATE, TokenType::KW_UPDATE, "UPDATE") ||
+                match_event(TriggerEvent::DELETE, TokenType::KW_DELETE, "DELETE")) {
+                continue;
+            }
+            error("Expected trigger event after OR");
+            break;
+        }
+
+        if (!has_table_path) {
+            if (match(TokenType::KW_ON) || matchContextual("ON")) {
+                stmt->table_path = parseSchemaPath(state_);
+                has_table_path = true;
+            } else {
+                error("Expected ON <table> or FOR <table> in CREATE TRIGGER");
+            }
+        }
+
+        if (matchContextual("FOR")) {
+            matchContextual("EACH");
+            if (matchContextual("ROW")) {
+                stmt->granularity = TriggerGranularity::FOR_EACH_ROW;
+            } else if (matchContextual("STATEMENT")) {
+                stmt->granularity = TriggerGranularity::FOR_EACH_STATEMENT;
+            }
+        }
+    }
+
+    if (matchContextual("SQL")) {
+        expectContextual("SECURITY", "Expected SECURITY after SQL");
+        stmt->has_sql_security = true;
+        if (matchContextual("DEFINER")) {
+            stmt->sql_security = RoutineSqlSecurity::DEFINER;
+        } else if (matchContextual("INVOKER")) {
+            stmt->sql_security = RoutineSqlSecurity::INVOKER;
+        } else {
+            error("Expected DEFINER or INVOKER after SQL SECURITY");
         }
     }
 
@@ -5135,6 +5914,18 @@ Statement* Parser::parseAlterSchedule() {
         errorCode("PRS_0507", "Expected SET after ALTER SCHEDULE");
     }
 
+    auto trim = [](std::string_view s) -> std::string_view {
+        size_t b = 0;
+        while (b < s.size() && std::isspace(static_cast<unsigned char>(s[b]))) {
+            ++b;
+        }
+        size_t e = s.size();
+        while (e > b && std::isspace(static_cast<unsigned char>(s[e - 1]))) {
+            --e;
+        }
+        return s.substr(b, e - b);
+    };
+
     auto parse_string_lit = [&](const char* context) -> std::string {
         if (!check(TokenType::STRING_LITERAL)) {
             errorCode("PRS_0507", std::string("Expected string literal for ") + context);
@@ -5145,24 +5936,142 @@ Statement* Parser::parseAlterSchedule() {
         return value;
     };
 
+    auto parse_rrule = [&](const std::string& raw_in, std::string& canonical_out) -> bool {
+        std::set<std::string> seen_keys;
+        std::vector<std::pair<std::string, std::string>> kv_pairs;
+
+        std::string raw(raw_in);
+        size_t pos = 0;
+        while (pos < raw.size()) {
+            size_t next = raw.find(';', pos);
+            std::string token = std::string(trim(std::string_view(raw).substr(
+                pos, next == std::string::npos ? std::string::npos : next - pos)));
+            if (token.empty()) {
+                errorCode("PRS_0507", "Invalid RRULE token");
+                return false;
+            }
+            size_t eq = token.find('=');
+            if (eq == std::string::npos || eq == 0 || eq + 1 >= token.size()) {
+                errorCode("PRS_0507", "Invalid RRULE key/value contract");
+                return false;
+            }
+            std::string key = token.substr(0, eq);
+            std::string value = token.substr(eq + 1);
+            key = std::string(trim(key));
+            value = std::string(trim(value));
+            for (char& c : key) {
+                c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+            }
+
+            static const char* kAllowed[] = {
+                "FREQ", "INTERVAL", "COUNT", "UNTIL", "BYSECOND", "BYMINUTE", "BYHOUR",
+                "BYDAY", "BYMONTHDAY", "BYYEARDAY", "BYWEEKNO", "BYMONTH", "BYSETPOS", "WKST"
+            };
+            bool allowed = false;
+            for (const char* candidate : kAllowed) {
+                if (key == candidate) {
+                    allowed = true;
+                    break;
+                }
+            }
+            if (!allowed) {
+                errorCode("PRS_0507", "Invalid RRULE key");
+                return false;
+            }
+            if (!seen_keys.insert(key).second) {
+                errorCode("PRS_0507", "Duplicate RRULE key");
+                return false;
+            }
+            kv_pairs.push_back({std::move(key), std::move(value)});
+
+            if (next == std::string::npos) {
+                break;
+            }
+            pos = next + 1;
+        }
+
+        if (seen_keys.find("FREQ") == seen_keys.end()) {
+            errorCode("PRS_0507", "RRULE requires FREQ");
+            return false;
+        }
+
+        std::sort(kv_pairs.begin(), kv_pairs.end(),
+                  [](const auto& lhs, const auto& rhs) { return lhs.first < rhs.first; });
+
+        std::string canonical;
+        for (size_t i = 0; i < kv_pairs.size(); ++i) {
+            if (i != 0) {
+                canonical.push_back(';');
+            }
+            canonical.append(kv_pairs[i].first);
+            canonical.push_back('=');
+            canonical.append(kv_pairs[i].second);
+        }
+        canonical_out = std::move(canonical);
+        return true;
+    };
+
+    auto parse_local_ts_list = [&](const char* context, std::vector<std::string>& out) -> bool {
+        if (!expect(TokenType::LEFT_PAREN, std::string("Expected '(' after ").append(context))) {
+            return false;
+        }
+        if (check(TokenType::RIGHT_PAREN)) {
+            errorCode("PRS_0507", std::string(context) + " list must not be empty");
+            advance();
+            return false;
+        }
+        while (!check(TokenType::RIGHT_PAREN) &&
+               !check(TokenType::SEMICOLON) &&
+               !check(TokenType::END_OF_FILE)) {
+            out.push_back(parse_string_lit(context));
+            if (!match(TokenType::COMMA)) {
+                break;
+            }
+        }
+        expect(TokenType::RIGHT_PAREN, std::string("Expected ')' after ").append(context));
+        return !out.empty();
+    };
+
     std::string recurrence;
     if (matchContextual("RRULE")) {
-        recurrence = "RRULE " + parse_string_lit("RRULE");
+        std::string raw_rrule = parse_string_lit("RRULE");
+        std::string canonical_rrule;
+        if (parse_rrule(raw_rrule, canonical_rrule)) {
+            recurrence = "RRULE " + canonical_rrule;
+        }
     } else if (matchContextual("RRULE_SET")) {
-        recurrence = "RRULE_SET(";
-        expect(TokenType::LEFT_PAREN, "Expected '(' after RRULE_SET");
+        if (!expect(TokenType::LEFT_PAREN, "Expected '(' after RRULE_SET")) {
+            stmt->span = makeSpan(start);
+            return stmt;
+        }
+        std::set<std::string> unique_rules;
         bool first = true;
         while (!check(TokenType::RIGHT_PAREN) &&
                !check(TokenType::SEMICOLON) &&
                !check(TokenType::END_OF_FILE)) {
-            if (!first) recurrence.push_back(',');
-            recurrence.append(parse_string_lit("RRULE_SET item"));
+            std::string raw_rrule = parse_string_lit("RRULE_SET item");
+            std::string canonical_rrule;
+            if (parse_rrule(raw_rrule, canonical_rrule)) {
+                unique_rules.insert(canonical_rrule);
+            }
             first = false;
             if (!match(TokenType::COMMA)) {
                 break;
             }
         }
         expect(TokenType::RIGHT_PAREN, "Expected ')' after RRULE_SET");
+        if (unique_rules.size() < 2) {
+            errorCode("PRS_0507", "RRULE_SET requires at least two unique RRULE members");
+        }
+        recurrence = "RRULE_SET(";
+        first = true;
+        for (const auto& member : unique_rules) {
+            if (!first) {
+                recurrence.push_back(',');
+            }
+            recurrence.append(member);
+            first = false;
+        }
         recurrence.push_back(')');
     } else {
         errorCode("PRS_0507", "Expected RRULE or RRULE_SET");
@@ -5177,9 +6086,42 @@ Statement* Parser::parseAlterSchedule() {
     }
     std::string timezone = parse_string_lit("TZ");
 
+    std::vector<std::string> rdate_list;
+    std::vector<std::string> exdate_list;
+    while (!check(TokenType::SEMICOLON) && !check(TokenType::END_OF_FILE)) {
+        if (matchContextual("RDATE")) {
+            parse_local_ts_list("RDATE", rdate_list);
+            continue;
+        }
+        if (matchContextual("EXDATE")) {
+            parse_local_ts_list("EXDATE", exdate_list);
+            continue;
+        }
+        errorCode("PRS_0508", "Unsupported recurrence-source token");
+        break;
+    }
+
+    std::string payload = recurrence + " DTSTART=" + dtstart + " TZ=" + timezone;
+    if (!rdate_list.empty()) {
+        payload.append(" RDATE=(");
+        for (size_t i = 0; i < rdate_list.size(); ++i) {
+            if (i != 0) payload.push_back(',');
+            payload.append(rdate_list[i]);
+        }
+        payload.push_back(')');
+    }
+    if (!exdate_list.empty()) {
+        payload.append(" EXDATE=(");
+        for (size_t i = 0; i < exdate_list.size(); ++i) {
+            if (i != 0) payload.push_back(',');
+            payload.append(exdate_list[i]);
+        }
+        payload.push_back(')');
+    }
+
     stmt->has_schedule = true;
     stmt->schedule_kind = JobScheduleKind::CRON;
-    stmt->cron_expression = stringPool().intern(recurrence + " DTSTART=" + dtstart + " TZ=" + timezone);
+    stmt->cron_expression = stringPool().intern(payload);
     stmt->span = makeSpan(start);
     return stmt;
 }
@@ -5348,6 +6290,116 @@ Statement* Parser::parseAlterQuotaProfile() {
     return stmt;
 }
 
+Statement* Parser::parseAlterExtension() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    StringPool::StringId extension_name = expectIdentifier("Expected extension name");
+    std::string extension = std::string(stringPool().get(extension_name));
+    std::string payload = captureStatementBody();
+    if (payload.empty()) {
+        errorCode("PRS_0504", "ALTER EXTENSION requires action clause");
+    }
+
+    stmt->name = stringPool().intern("platform.extension.alter." + extension);
+    auto* lit = arena_.create<LiteralExpr>();
+    lit->literal_type = LiteralType::STRING;
+    lit->string_value = stringPool().intern(payload);
+    stmt->value = lit;
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseAlterUser() {
+    SourceLocation start = currentLocation();
+    SchemaPath user_path = parseSchemaPath(state_);
+    if (user_path.isEmpty()) {
+        error("Expected user name");
+        return nullptr;
+    }
+
+    if (matchContextual("RENAME")) {
+        expectContextual("TO", "Expected TO after RENAME");
+        auto* stmt = arena_.create<RenameObjectStmt>();
+        stmt->object_type = DdlObjectType::USER;
+        stmt->object_path = user_path;
+        stmt->new_name = expectIdentifier("Expected new name");
+        stmt->span = makeSpan(start);
+        return stmt;
+    }
+
+    if (match(TokenType::KW_SET)) {
+        if (matchContextual("SCHEMA")) {
+            auto* stmt = arena_.create<MoveObjectStmt>();
+            stmt->object_type = DdlObjectType::USER;
+            stmt->object_path = user_path;
+            stmt->target_schema = parseSchemaPath(state_);
+            stmt->span = makeSpan(start);
+            return stmt;
+        }
+        error("Expected SCHEMA after SET");
+        return nullptr;
+    }
+
+    auto* stmt = arena_.create<AlterSystemStmt>();
+    stmt->name = stringPool().intern("security.user.alter." + schemaPathToString(user_path, stringPool()));
+
+    std::string payload;
+    bool saw_option = false;
+
+    while (!check(TokenType::SEMICOLON) && !check(TokenType::END_OF_FILE)) {
+        if (match(TokenType::KW_WITH) || matchContextual("WITH")) {
+            continue;
+        }
+
+        if (matchContextual("PASSWORD")) {
+            if (!check(TokenType::STRING_LITERAL)) {
+                error("Expected string literal for PASSWORD");
+                break;
+            }
+            if (!payload.empty()) {
+                payload.push_back(';');
+            }
+            payload.append("PASSWORD=");
+            payload.append(stringPool().get(current().value.string_id));
+            advance();
+            saw_option = true;
+            continue;
+        }
+
+        if (matchContextual("SUPERUSER")) {
+            if (!payload.empty()) {
+                payload.push_back(';');
+            }
+            payload.append("SUPERUSER=1");
+            saw_option = true;
+            continue;
+        }
+
+        if (matchContextual("NOSUPERUSER")) {
+            if (!payload.empty()) {
+                payload.push_back(';');
+            }
+            payload.append("SUPERUSER=0");
+            saw_option = true;
+            continue;
+        }
+
+        break;
+    }
+
+    if (!saw_option) {
+        error("Expected PASSWORD, SUPERUSER, NOSUPERUSER, RENAME TO, or SET SCHEMA after user name");
+    }
+
+    auto* lit = arena_.create<LiteralExpr>();
+    lit->literal_type = LiteralType::STRING;
+    lit->string_value = stringPool().intern(payload);
+    stmt->value = lit;
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
 Statement* Parser::parseAlter() {
     ParseModeGuard guard(state_, ParseMode::DDL);
 
@@ -5366,21 +6418,40 @@ Statement* Parser::parseAlter() {
         return parseAlterVectorIndex();
     }
     if (matchContextual("MEASUREMENT")) return parseAlterMeasurement();
-    if (matchContextual("SCHEDULE")) return parseAlterSchedule();
+    if (matchContextual("SCHEDULE")) {
+        if (!requireFeature(kFeatureScheduleRruleSurface)) {
+            return nullptr;
+        }
+        return parseAlterSchedule();
+    }
     if (matchContextual("CONNECTION")) {
         if (!matchContextual("RULE")) {
             errorCode("PRS_0505", "Expected RULE after ALTER CONNECTION");
             return nullptr;
         }
+        if (!requireFeature(kFeatureSecurityConnectionRuleDdl)) {
+            return nullptr;
+        }
         return parseAlterConnectionRule();
     }
-    if (matchContextual("TOKEN")) return parseAlterToken();
+    if (matchContextual("TOKEN")) {
+        if (!requireFeature(kFeatureSecurityTokenDdl)) {
+            return nullptr;
+        }
+        return parseAlterToken();
+    }
     if (matchContextual("QUOTA")) {
         if (!matchContextual("PROFILE")) {
             errorCode("PRS_0505", "Expected PROFILE after ALTER QUOTA");
             return nullptr;
         }
+        if (!requireFeature(kFeatureSecurityQuotaProfileDdl)) {
+            return nullptr;
+        }
         return parseAlterQuotaProfile();
+    }
+    if (matchContextual("EXTENSION")) {
+        return parseAlterExtension();
     }
 
     if (matchContextual("TABLE")) return parseAlterTable();
@@ -5390,7 +6461,12 @@ Statement* Parser::parseAlter() {
     if (matchContextual("TYPE")) return parseAlterType();
     if (matchContextual("DOMAIN")) return parseAlterDomain();
     if (matchContextual("JOB")) return parseAlterJob();
-    if (matchContextual("POLICY")) return parseAlterPolicy();
+    if (matchContextual("POLICY")) {
+        if (!requireFeature(kFeatureSecurityModelPolicyDdl)) {
+            return nullptr;
+        }
+        return parseAlterPolicy();
+    }
     if (matchContextual("SYSTEM")) return parseAlterSystem();
 
     auto parse_rename_move = [&](DdlObjectType object_type) -> Statement* {
@@ -5674,7 +6750,12 @@ Statement* Parser::parseAlter() {
     if (matchContextual("PACKAGE")) return parse_rename_move(DdlObjectType::PACKAGE);
     if (matchContextual("TABLESPACE")) return parse_rename_move(DdlObjectType::TABLESPACE);
     if (matchContextual("ROLE")) return parse_rename_move(DdlObjectType::ROLE);
-    if (matchContextual("USER")) return parse_rename_move(DdlObjectType::USER);
+    if (matchContextual("USER")) {
+        if (!requireFeature(kFeatureSecurityUserAccountDdl)) {
+            return nullptr;
+        }
+        return parseAlterUser();
+    }
     if (matchContextual("GROUP")) return parse_rename_move(DdlObjectType::GROUP);
     if (matchContextual("SYNONYM")) return parse_rename_move(DdlObjectType::SYNONYM);
     if (matchContextual("SERVER")) return parse_rename_move(DdlObjectType::FOREIGN_SERVER);
@@ -6744,21 +7825,46 @@ Statement* Parser::parseDrop() {
         }
         return parseDropVectorIndex();
     }
-    if (matchContextual("SCHEDULE")) return parseDropSchedule();
+    if (matchContextual("SCHEDULE")) {
+        if (!requireFeature(kFeatureScheduleRruleSurface)) {
+            return nullptr;
+        }
+        return parseDropSchedule();
+    }
     if (matchContextual("CONNECTION")) {
         if (!matchContextual("RULE")) {
             errorCode("PRS_0505", "Expected RULE after DROP CONNECTION");
             return nullptr;
         }
+        if (!requireFeature(kFeatureSecurityConnectionRuleDdl)) {
+            return nullptr;
+        }
         return parseDropConnectionRule();
     }
-    if (matchContextual("TOKEN")) return parseDropToken();
+    if (matchContextual("TOKEN")) {
+        if (!requireFeature(kFeatureSecurityTokenDdl)) {
+            return nullptr;
+        }
+        return parseDropToken();
+    }
     if (matchContextual("QUOTA")) {
         if (!matchContextual("PROFILE")) {
             errorCode("PRS_0505", "Expected PROFILE after DROP QUOTA");
             return nullptr;
         }
+        if (!requireFeature(kFeatureSecurityQuotaProfileDdl)) {
+            return nullptr;
+        }
         return parseDropQuotaProfile();
+    }
+    if (matchContextual("EXTENSION")) {
+        return parseDropExtension();
+    }
+    if (matchContextual("PUBLICATION")) {
+        return parseDropPublication();
+    }
+    if (matchContextual("SUBSCRIPTION")) {
+        return parseDropSubscription();
     }
 
     if (matchContextual("SCHEMA")) return parseDropSchema();
@@ -6776,7 +7882,12 @@ Statement* Parser::parseDrop() {
     if (matchContextual("PACKAGE")) return parseDropPackage();
     if (matchContextual("ROLE")) return parseDropRole();
     if (matchContextual("GROUP")) return parseDropGroup();
-    if (matchContextual("POLICY")) return parseDropPolicy();
+    if (matchContextual("POLICY")) {
+        if (!requireFeature(kFeatureSecurityModelPolicyDdl)) {
+            return nullptr;
+        }
+        return parseDropPolicy();
+    }
     if (matchContextual("EXCEPTION")) return parseDropException();
     if (matchContextual("SEQUENCE")) return parseDropSequence();
     if (matchContextual("SYNONYM")) return parseDropSynonym();
@@ -6786,8 +7897,10 @@ Statement* Parser::parseDrop() {
         if (matchContextual("MAPPING")) {
             return parseDropUserMapping();
         }
-        error("Expected MAPPING after DROP USER");
-        return nullptr;
+        if (!requireFeature(kFeatureSecurityUserAccountDdl)) {
+            return nullptr;
+        }
+        return parseDropUser();
     }
     if (matchContextual("FOREIGN")) {
         expectContextual("TABLE", "Expected TABLE after FOREIGN");
@@ -6889,6 +8002,98 @@ Statement* Parser::parseDropQuotaProfile() {
     auto* lit = arena_.create<LiteralExpr>();
     lit->literal_type = LiteralType::STRING;
     lit->string_value = stringPool().intern("");
+    stmt->value = lit;
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseDropExtension() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    bool if_exists = false;
+    if (match(TokenType::KW_IF)) {
+        expect(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+        if_exists = true;
+    }
+
+    StringPool::StringId extension_name = expectIdentifier("Expected extension name");
+    std::string extension = std::string(stringPool().get(extension_name));
+    std::string payload;
+    if (if_exists) {
+        payload = "IF_EXISTS=1";
+    }
+    if (matchContextual("CASCADE")) {
+        if (!payload.empty()) payload.push_back(';');
+        payload.append("CASCADE=1");
+    } else if (matchContextual("RESTRICT")) {
+        if (!payload.empty()) payload.push_back(';');
+        payload.append("RESTRICT=1");
+    }
+
+    stmt->name = stringPool().intern("platform.extension.drop." + extension);
+    auto* lit = arena_.create<LiteralExpr>();
+    lit->literal_type = LiteralType::STRING;
+    lit->string_value = stringPool().intern(payload);
+    stmt->value = lit;
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseDropPublication() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    bool if_exists = false;
+    if (match(TokenType::KW_IF)) {
+        expect(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+        if_exists = true;
+    }
+
+    StringPool::StringId publication_name = expectIdentifier("Expected publication name");
+    std::string publication = std::string(stringPool().get(publication_name));
+    std::string payload;
+    if (if_exists) {
+        payload = "IF_EXISTS=1";
+    }
+    if (matchContextual("CASCADE")) {
+        if (!payload.empty()) payload.push_back(';');
+        payload.append("CASCADE=1");
+    } else if (matchContextual("RESTRICT")) {
+        if (!payload.empty()) payload.push_back(';');
+        payload.append("RESTRICT=1");
+    }
+
+    stmt->name = stringPool().intern("replication.publication.drop." + publication);
+    auto* lit = arena_.create<LiteralExpr>();
+    lit->literal_type = LiteralType::STRING;
+    lit->string_value = stringPool().intern(payload);
+    stmt->value = lit;
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseDropSubscription() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    bool if_exists = false;
+    if (match(TokenType::KW_IF)) {
+        expect(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+        if_exists = true;
+    }
+
+    StringPool::StringId subscription_name = expectIdentifier("Expected subscription name");
+    std::string subscription = std::string(stringPool().get(subscription_name));
+    std::string payload;
+    if (if_exists) {
+        payload = "IF_EXISTS=1";
+    }
+
+    stmt->name = stringPool().intern("replication.subscription.drop." + subscription);
+    auto* lit = arena_.create<LiteralExpr>();
+    lit->literal_type = LiteralType::STRING;
+    lit->string_value = stringPool().intern(payload);
     stmt->value = lit;
     stmt->span = makeSpan(start);
     return stmt;
@@ -7158,6 +8363,34 @@ DropRoleStmt* Parser::parseDropRole() {
 
     if (matchContextual("CASCADE")) {
         stmt->cascade = true;
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+DropUserStmt* Parser::parseDropUser() {
+    SourceLocation start = currentLocation();
+
+    auto* stmt = arena_.create<DropUserStmt>();
+
+    if (match(TokenType::KW_IF)) {
+        expect(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+        stmt->if_exists = true;
+    }
+
+    do {
+        stmt->users.push_back(parseSchemaPath(state_));
+    } while (match(TokenType::COMMA));
+
+    if (stmt->users.empty() || stmt->users.front().isEmpty()) {
+        error("Expected user name");
+    }
+
+    if (matchContextual("CASCADE")) {
+        stmt->cascade = true;
+    } else if (matchContextual("RESTRICT")) {
+        stmt->cascade = false;
     }
 
     stmt->span = makeSpan(start);
@@ -7525,6 +8758,75 @@ WithClause* Parser::parseWithClause() {
         expect(TokenType::RIGHT_PAREN, "Expected ')' after CTE query");
         cte.recursive = with->recursive;
 
+        bool parsed_search_clause = false;
+        bool parsed_cycle_clause = false;
+        while (true) {
+            if (!parsed_search_clause && matchContextual("SEARCH")) {
+                parsed_search_clause = true;
+                cte.has_search = true;
+
+                if (matchContextual("BREADTH")) {
+                    expectContextual("FIRST", "Expected FIRST after SEARCH BREADTH");
+                    cte.search_order = CTE::SearchOrder::BREADTH_FIRST;
+                } else if (matchContextual("DEPTH")) {
+                    expectContextual("FIRST", "Expected FIRST after SEARCH DEPTH");
+                    cte.search_order = CTE::SearchOrder::DEPTH_FIRST;
+                } else {
+                    errorCode("PRS_0504", "SEARCH requires BREADTH FIRST or DEPTH FIRST");
+                }
+
+                expectContextual("BY", "Expected BY in SEARCH clause");
+                if (!isIdentifier()) {
+                    errorCode("PRS_0504", "SEARCH clause requires at least one BY column");
+                } else {
+                    do {
+                        cte.search_by_columns.push_back(expectIdentifier("Expected SEARCH BY column name"));
+                    } while (match(TokenType::COMMA));
+                }
+
+                if (!(match(TokenType::KW_SET) || matchContextual("SET"))) {
+                    errorCode("PRS_0504", "Expected SET in SEARCH clause");
+                }
+                cte.search_sequence_column = expectIdentifier("Expected SEARCH sequence column after SET");
+                continue;
+            }
+
+            if (!parsed_cycle_clause && matchContextual("CYCLE")) {
+                parsed_cycle_clause = true;
+                cte.has_cycle = true;
+
+                if (!isIdentifier()) {
+                    errorCode("PRS_0504", "CYCLE clause requires at least one cycle key column");
+                } else {
+                    do {
+                        cte.cycle_columns.push_back(expectIdentifier("Expected CYCLE key column name"));
+                    } while (match(TokenType::COMMA));
+                }
+
+                if (!(match(TokenType::KW_SET) || matchContextual("SET"))) {
+                    errorCode("PRS_0504", "Expected SET in CYCLE clause");
+                }
+                cte.cycle_mark_column = expectIdentifier("Expected CYCLE mark column after SET");
+
+                if (matchContextual("TO")) {
+                    cte.has_cycle_mark_value = true;
+                    cte.cycle_mark_value = parseExpression();
+                }
+                if (match(TokenType::KW_DEFAULT) || matchContextual("DEFAULT")) {
+                    cte.has_cycle_default_value = true;
+                    cte.cycle_mark_default = parseExpression();
+                }
+
+                if (!(match(TokenType::KW_USING) || matchContextual("USING"))) {
+                    errorCode("PRS_0504", "Expected USING in CYCLE clause");
+                }
+                cte.cycle_path_column = expectIdentifier("Expected CYCLE path column after USING");
+                continue;
+            }
+
+            break;
+        }
+
         with->ctes.push_back(std::move(cte));
     } while (match(TokenType::COMMA));
 
@@ -7560,8 +8862,49 @@ SelectStmt* Parser::parseSelect() {
     // DISTINCT or ALL
     if (matchContextual("DISTINCT")) {
         stmt->distinct = true;
+        if (match(TokenType::KW_ON) || matchContextual("ON")) {
+            expect(TokenType::LEFT_PAREN, "Expected '(' after DISTINCT ON");
+            do {
+                stmt->distinct_on.push_back(parseExpression());
+            } while (match(TokenType::COMMA));
+            expect(TokenType::RIGHT_PAREN, "Expected ')' after DISTINCT ON expression list");
+            if (stmt->distinct_on.empty()) {
+                errorCode("PRS_0504", "DISTINCT ON requires at least one expression");
+            }
+        }
     } else if (matchContextual("ALL")) {
         stmt->all = true;
+    }
+
+    auto parseFirebirdRowCountExpr = [&]() -> Expression* {
+        if (match(TokenType::LEFT_PAREN)) {
+            Expression* expr = parseExpression();
+            expect(TokenType::RIGHT_PAREN, "Expected ')' after row-count expression");
+            return expr;
+        }
+        if (check(TokenType::INTEGER_LITERAL)) {
+            Token value = current();
+            advance();
+            auto* lit = arena_.create<LiteralExpr>();
+            lit->literal_type = LiteralType::INTEGER;
+            lit->int_value = value.value.int_value;
+            return lit;
+        }
+        return parseExpression();
+    };
+    auto makeIntLiteral = [&](int64_t value) -> LiteralExpr* {
+        auto* lit = arena_.create<LiteralExpr>();
+        lit->literal_type = LiteralType::INTEGER;
+        lit->int_value = value;
+        return lit;
+    };
+
+    // Firebird SELECT FIRST/SKIP clause (pre-select-list).
+    if (matchContextual("FIRST")) {
+        stmt->limit = parseFirebirdRowCountExpr();
+    }
+    if (matchContextual("SKIP")) {
+        stmt->offset = parseFirebirdRowCountExpr();
     }
 
     // Parse select list
@@ -7631,37 +8974,153 @@ SelectStmt* Parser::parseSelect() {
         }
     }
 
-    // FETCH clause (SQL:2008 standard)
-    if (matchContextual("FETCH")) {
-        if (matchContextual("FIRST") || matchContextual("NEXT")) {
-            if (!checkContextual("ROW") && !checkContextual("ROWS")) {
-                stmt->limit = parseExpression();
+    auto check_ident_word = [&](const char* keyword) -> bool {
+        if (!isIdentifier()) {
+            return false;
+        }
+        StringPool::StringId id = state_.currentStringId();
+        if (id == StringPool::INVALID_ID) {
+            return false;
+        }
+        return toUpperAscii(std::string(stringPool().get(id))) == keyword;
+    };
+    auto match_ident_word = [&](const char* keyword) -> bool {
+        if (!check_ident_word(keyword)) {
+            return false;
+        }
+        advance();
+        return true;
+    };
+
+    // FETCH clause (SQL:2008 standard with PostgreSQL WITH TIES extension)
+    if (match_ident_word("FETCH")) {
+        if (stmt->limit) {
+            errorCode("PRS_0504", "FETCH clause conflicts with LIMIT");
+        }
+
+        bool saw_mode = false;
+        if (match_ident_word("FIRST")) {
+            stmt->fetch_mode = FetchMode::FIRST;
+            saw_mode = true;
+        } else if (match_ident_word("NEXT")) {
+            stmt->fetch_mode = FetchMode::NEXT;
+            saw_mode = true;
+        }
+
+        if (!saw_mode) {
+            errorCode("PRS_0505", "Expected FIRST or NEXT after FETCH");
+        }
+
+        if (!check_ident_word("ROW") && !check_ident_word("ROWS")) {
+            if (check(TokenType::INTEGER_LITERAL)) {
+                Token count_token = current();
+                advance();
+                auto* count = arena_.create<LiteralExpr>();
+                count->literal_type = LiteralType::INTEGER;
+                count->int_value = count_token.value.int_value;
+                stmt->fetch_row_count = count;
+            } else {
+                stmt->fetch_row_count = parseExpression();
             }
-            if (matchContextual("ROW") || matchContextual("ROWS")) {
-                expectContextual("ONLY", "Expected ONLY after ROW/ROWS");
+        }
+
+        if (!stmt->fetch_row_count) {
+            auto* one = arena_.create<LiteralExpr>();
+            one->literal_type = LiteralType::INTEGER;
+            one->int_value = 1;
+            stmt->fetch_row_count = one;
+        }
+        stmt->limit = stmt->fetch_row_count;
+
+        if (match_ident_word("ROW") || match_ident_word("ROWS")) {
+            if (match_ident_word("ONLY")) {
+                stmt->fetch_with_ties = false;
+            } else if (match(TokenType::KW_WITH) || match_ident_word("WITH")) {
+                if (!match_ident_word("TIES")) {
+                    errorCode("PRS_0505", "Expected TIES after WITH in FETCH clause");
+                }
+                if (stmt->order_by.empty()) {
+                    errorCode("PRS_0504", "FETCH ... WITH TIES requires ORDER BY");
+                }
+                stmt->fetch_with_ties = true;
+            } else {
+                errorCode("PRS_0505", "Expected ONLY or WITH TIES after FETCH ... ROWS");
             }
+        } else {
+            errorCode("PRS_0505", "Expected ROW or ROWS in FETCH clause");
         }
     }
 
+    // Firebird ROWS m [TO n] clause
+    if (matchContextual("ROWS")) {
+        Expression* start_expr = parseFirebirdRowCountExpr();
+        if (matchContextual("TO")) {
+            Expression* end_expr = parseFirebirdRowCountExpr();
+
+            auto* offset_expr = arena_.create<BinaryExpr>();
+            offset_expr->op = BinaryOp::SUB;
+            offset_expr->left = start_expr;
+            offset_expr->right = makeIntLiteral(1);
+            stmt->offset = offset_expr;
+
+            auto* delta_expr = arena_.create<BinaryExpr>();
+            delta_expr->op = BinaryOp::SUB;
+            delta_expr->left = end_expr;
+            delta_expr->right = start_expr;
+
+            auto* limit_expr = arena_.create<BinaryExpr>();
+            limit_expr->op = BinaryOp::ADD;
+            limit_expr->left = delta_expr;
+            limit_expr->right = makeIntLiteral(1);
+            stmt->limit = limit_expr;
+        } else {
+            stmt->limit = start_expr;
+        }
+    }
+
+    // Firebird PLAN clause (captured as expression tree for deterministic payload).
+    if (matchContextual("PLAN")) {
+        stmt->firebird_plan = parseExpression();
+    }
+
+    // Firebird OPTIMIZE FOR <n> ROWS
+    if (matchContextual("OPTIMIZE")) {
+        expectContextual("FOR", "Expected FOR after OPTIMIZE");
+        stmt->optimize_for_rows = parseFirebirdRowCountExpr();
+        matchContextual("ROWS");
+        matchContextual("ROW");
+    }
+
     // Set operations (UNION, INTERSECT, EXCEPT)
+    if (!stmt->distinct_on.empty() && stmt->order_by.empty()) {
+        errorCode("PRS_0504", "DISTINCT ON requires ORDER BY for deterministic tie-breaking");
+    }
+
     parseSetOperation(stmt);
 
     // FOR UPDATE/SHARE (FOR is contextual)
     if (matchContextual("FOR")) {
         if (match(TokenType::KW_UPDATE)) {
+            stmt->lock_strength = SelectLockStrength::UPDATE;
             stmt->for_update = true;
         } else if (matchContextual("SHARE")) {
+            stmt->lock_strength = SelectLockStrength::SHARE;
             stmt->for_share = true;
         } else if (matchContextual("NO")) {
-            // FOR NO KEY UPDATE - treat as FOR UPDATE
+            // FOR NO KEY UPDATE
             expectContextual("KEY", "Expected KEY after NO");
-            if (match(TokenType::KW_UPDATE)) {
-                stmt->for_update = true;
+            if (!match(TokenType::KW_UPDATE)) {
+                errorCode("PRS_0505", "Expected UPDATE after FOR NO KEY");
             }
+            stmt->lock_strength = SelectLockStrength::NO_KEY_UPDATE;
+            stmt->for_update = true;
         } else if (matchContextual("KEY")) {
-            // FOR KEY SHARE - treat as FOR SHARE
+            // FOR KEY SHARE
             expectContextual("SHARE", "Expected SHARE after KEY");
+            stmt->lock_strength = SelectLockStrength::KEY_SHARE;
             stmt->for_share = true;
+        } else {
+            errorCode("PRS_0505", "Expected UPDATE, SHARE, NO KEY UPDATE, or KEY SHARE after FOR");
         }
 
         // OF table_name - skip tables, AST doesn't support this
@@ -7671,12 +9130,27 @@ SelectStmt* Parser::parseSelect() {
             } while (match(TokenType::COMMA));
         }
 
-        // NOWAIT / SKIP LOCKED
-        if (matchContextual("NOWAIT")) {
-            stmt->nowait = true;
-        } else if (matchContextual("SKIP")) {
-            expectContextual("LOCKED", "Expected LOCKED after SKIP");
-            stmt->skip_locked = true;
+        // Firebird/PostgreSQL lock modifiers.
+        while (true) {
+            if (match(TokenType::KW_WITH) || matchContextual("WITH")) {
+                expectContextual("LOCK", "Expected LOCK after WITH");
+                stmt->with_lock = true;
+                continue;
+            }
+            if (matchContextual("NOWAIT")) {
+                stmt->nowait = true;
+                continue;
+            }
+            if (matchContextual("SKIP")) {
+                expectContextual("LOCKED", "Expected LOCKED after SKIP");
+                stmt->skip_locked = true;
+                continue;
+            }
+            break;
+        }
+
+        if (stmt->fetch_with_ties && stmt->skip_locked) {
+            errorCode("PRS_0504", "FETCH ... WITH TIES cannot be combined with SKIP LOCKED");
         }
     }
 
@@ -7768,6 +9242,21 @@ void Parser::parseFromClause(SelectStmt* stmt) {
     // Parse first table reference
     stmt->from = parseTableRef();
 
+    auto is_natural_join_lead = [&]() -> bool {
+        if (!checkContextual("NATURAL")) {
+            return false;
+        }
+        Token lookahead = state_.lexer().peekToken();
+        if (lookahead.type == TokenType::KW_JOIN) {
+            return true;
+        }
+        if (lookahead.type != TokenType::IDENTIFIER) {
+            return false;
+        }
+        std::string next = toUpperAscii(std::string(state_.lexer().getTokenText(lookahead.span)));
+        return next == "LEFT" || next == "RIGHT" || next == "FULL" || next == "INNER";
+    };
+
     // Parse joins
     while (true) {
         // Check for join keywords
@@ -7779,7 +9268,7 @@ void Parser::parseFromClause(SelectStmt* stmt) {
             checkContextual("OUTER") ||
             checkContextual("FULL") ||
             checkContextual("CROSS") ||
-            checkContextual("NATURAL")) {
+            is_natural_join_lead()) {
 
             JoinNode* join = parseJoin(stmt->from);
             if (join) {
@@ -7801,7 +9290,7 @@ TableRefNode* Parser::parseTableRef() {
     auto* node = arena_.create<TableRefNode>();
     SourceLocation start = currentLocation();
 
-    // Check for subquery
+    // Check for subquery / lateral / table/function source
     if (check(TokenType::LEFT_PAREN)) {
         advance();  // consume (
 
@@ -7817,16 +9306,34 @@ TableRefNode* Parser::parseTableRef() {
         }
 
         expect(TokenType::RIGHT_PAREN, "Expected ')' after subquery");
-    } else if (matchContextual("LATERAL")) {
-        // LATERAL subquery
-        expect(TokenType::LEFT_PAREN, "Expected '(' after LATERAL");
-        if (check(TokenType::KW_SELECT) || check(TokenType::KW_WITH)) {
-            node->ref_type = TableRefNode::Type::SUBQUERY;
-            node->subquery = parseSelectWithClause();
+    } else if (match(TokenType::KW_LATERAL) || matchContextual("LATERAL")) {
+        node->lateral = true;
+
+        if (check(TokenType::LEFT_PAREN)) {
+            // LATERAL (SELECT ...)
+            advance();  // consume (
+            if (check(TokenType::KW_SELECT) || check(TokenType::KW_WITH)) {
+                node->ref_type = TableRefNode::Type::SUBQUERY;
+                node->subquery = parseSelectWithClause();
+            } else {
+                error("Expected SELECT after LATERAL");
+            }
+            expect(TokenType::RIGHT_PAREN, "Expected ')' after LATERAL subquery");
         } else {
-            error("Expected SELECT after LATERAL");
+            // LATERAL function/table source
+            node->table_path = parseSchemaPath(state_);
+            if (check(TokenType::LEFT_PAREN)) {
+                node->ref_type = TableRefNode::Type::FUNCTION;
+                auto* funcExpr = dynamic_cast<FunctionCallExpr*>(parseFunctionCall(std::move(node->table_path)));
+                node->function = funcExpr;
+                if (match(TokenType::KW_WITH) || matchContextual("WITH")) {
+                    expectContextual("ORDINALITY", "Expected ORDINALITY after WITH");
+                    node->with_ordinality = true;
+                }
+            } else {
+                node->ref_type = TableRefNode::Type::TABLE;
+            }
         }
-        expect(TokenType::RIGHT_PAREN, "Expected ')' after LATERAL subquery");
     } else {
         // Table name or function
         node->table_path = parseSchemaPath(state_);
@@ -7836,8 +9343,48 @@ TableRefNode* Parser::parseTableRef() {
             node->ref_type = TableRefNode::Type::FUNCTION;
             auto* funcExpr = dynamic_cast<FunctionCallExpr*>(parseFunctionCall(std::move(node->table_path)));
             node->function = funcExpr;
+            if (match(TokenType::KW_WITH) || matchContextual("WITH")) {
+                expectContextual("ORDINALITY", "Expected ORDINALITY after WITH");
+                node->with_ordinality = true;
+            }
         } else {
             node->ref_type = TableRefNode::Type::TABLE;
+        }
+    }
+
+    // PostgreSQL TABLESAMPLE support.
+    if (matchContextual("TABLESAMPLE")) {
+        if (node->ref_type != TableRefNode::Type::TABLE) {
+            errorCode("PRS_0504", "TABLESAMPLE is only valid for base table references");
+        }
+
+        if (matchContextual("BERNOULLI")) {
+            node->sample_method = TableSampleMethod::BERNOULLI;
+        } else if (matchContextual("SYSTEM")) {
+            node->sample_method = TableSampleMethod::SYSTEM;
+        } else {
+            errorCode("PRS_0504", "TABLESAMPLE method must be BERNOULLI or SYSTEM");
+        }
+
+        expect(TokenType::LEFT_PAREN, "Expected '(' after TABLESAMPLE method");
+        if (check(TokenType::RIGHT_PAREN)) {
+            errorCode("PRS_0504", "TABLESAMPLE requires sampling percentage expression");
+        } else {
+            node->sample_percent = parseExpression();
+        }
+        if (match(TokenType::COMMA)) {
+            errorCode("PRS_0504", "TABLESAMPLE accepts exactly one sampling argument");
+            while (!check(TokenType::RIGHT_PAREN) &&
+                   !check(TokenType::END_OF_FILE)) {
+                advance();
+            }
+        }
+        expect(TokenType::RIGHT_PAREN, "Expected ')' after TABLESAMPLE argument");
+
+        if (matchContextual("REPEATABLE")) {
+            expect(TokenType::LEFT_PAREN, "Expected '(' after REPEATABLE");
+            node->sample_repeatable_seed = parseExpression();
+            expect(TokenType::RIGHT_PAREN, "Expected ')' after REPEATABLE seed");
         }
     }
 
@@ -7864,6 +9411,9 @@ TableRefNode* Parser::parseTableRef() {
                !checkContextual("FULL") &&
                !checkContextual("CROSS") &&
                !checkContextual("NATURAL") &&
+               !checkContextual("PLAN") &&
+               !checkContextual("OPTIMIZE") &&
+               !checkContextual("ROWS") &&
                !checkContextual("FOR") &&
                !checkContextual("OFFSET") &&
                !checkContextual("FETCH") &&
@@ -8108,6 +9658,23 @@ void Parser::parseWindowFrame(WindowSpec* spec) {
         spec->frame_end = FrameBoundType::CURRENT_ROW;
         spec->frame_end_value = nullptr;
     }
+
+    if (matchContextual("EXCLUDE")) {
+        spec->has_frame_exclusion = true;
+        if (matchContextual("NO")) {
+            expectContextual("OTHERS", "Expected OTHERS after EXCLUDE NO");
+            spec->frame_exclusion = FrameExclusion::NO_OTHERS;
+        } else if (matchContextual("CURRENT")) {
+            expectContextual("ROW", "Expected ROW after EXCLUDE CURRENT");
+            spec->frame_exclusion = FrameExclusion::CURRENT_ROW;
+        } else if (matchContextual("GROUP")) {
+            spec->frame_exclusion = FrameExclusion::GROUP;
+        } else if (matchContextual("TIES")) {
+            spec->frame_exclusion = FrameExclusion::TIES;
+        } else {
+            errorCode("PRS_0504", "Expected NO OTHERS, CURRENT ROW, GROUP, or TIES after EXCLUDE");
+        }
+    }
 }
 
 FrameBoundType Parser::parseWindowFrameBound(Expression** value_out) {
@@ -8214,6 +9781,17 @@ InsertStmt* Parser::parseInsert() {
 
     auto* stmt = arena_.create<InsertStmt>();
 
+    if (matchContextual("OVERRIDING")) {
+        if (matchContextual("SYSTEM")) {
+            stmt->overriding = InsertStmt::OverridingMode::SYSTEM;
+        } else if (matchContextual("USER")) {
+            stmt->overriding = InsertStmt::OverridingMode::USER;
+        } else {
+            errorCode("PRS_0505", "Expected SYSTEM or USER after OVERRIDING");
+        }
+        expectContextual("VALUE", "Expected VALUE after OVERRIDING mode");
+    }
+
     // INTO (optional in some databases)
     match(TokenType::KW_INTO);
 
@@ -8255,7 +9833,81 @@ InsertStmt* Parser::parseInsert() {
         }
     }
 
+    // Per-operation consistency controls (native canonical WITH and alias USING).
+    parseConsistencyClause(stmt->consistency_level, stmt->serial_consistency_level);
+
+    // Conditional write controls (native canonical WHEN and alias IF).
+    parseConditionalWriteClause(true,
+                                stmt->conditional_if_exists,
+                                stmt->conditional_if_not_exists,
+                                stmt->conditional_if);
+
     // RETURNING clause (RETURNING is contextual)
+    if (matchContextual("RETURNING")) {
+        parseReturningClause(stmt->returning);
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+InsertStmt* Parser::parseUpdateOrInsert() {
+    SourceLocation start = currentLocation();
+    ParseModeGuard guard(state_, ParseMode::DML_INSERT);
+
+    expect(TokenType::KW_OR, "Expected OR after UPDATE");
+    if (!(match(TokenType::KW_INSERT) || matchContextual("INSERT"))) {
+        errorCode("PRS_0505", "Expected INSERT after UPDATE OR");
+        return nullptr;
+    }
+
+    auto* stmt = arena_.create<InsertStmt>();
+    match(TokenType::KW_INTO);
+    stmt->table_path = parseSchemaPath(state_);
+    if (stmt->table_path.isEmpty()) {
+        errorCode("PRS_0505", "Expected target table in UPDATE OR INSERT");
+        return stmt;
+    }
+
+    if (check(TokenType::LEFT_PAREN)) {
+        parseInsertColumns(stmt);
+    }
+
+    if (!match(TokenType::KW_VALUES)) {
+        errorCode("PRS_0505", "UPDATE OR INSERT requires VALUES clause");
+        return stmt;
+    }
+    stmt->source = InsertStmt::Source::VALUES;
+    parseValuesClause(stmt);
+
+    if (matchContextual("MATCHING")) {
+        expect(TokenType::LEFT_PAREN, "Expected '(' after MATCHING");
+        auto* conflict = arena_.create<OnConflictClause>();
+        do {
+            conflict->columns.push_back(expectIdentifier("Expected MATCHING column"));
+        } while (match(TokenType::COMMA));
+        expect(TokenType::RIGHT_PAREN, "Expected ')' after MATCHING columns");
+        conflict->action = ConflictAction::UPDATE;
+        for (auto column : stmt->columns) {
+            auto* ref = arena_.create<ColumnRefExpr>();
+            ref->column.column_name = column;
+            ref->column.has_table_qualifier = true;
+            conflict->set_items.push_back({column, ref});
+        }
+        stmt->on_conflict = conflict;
+    } else if (!stmt->columns.empty()) {
+        auto* conflict = arena_.create<OnConflictClause>();
+        conflict->columns = stmt->columns;
+        conflict->action = ConflictAction::UPDATE;
+        for (auto column : stmt->columns) {
+            auto* ref = arena_.create<ColumnRefExpr>();
+            ref->column.column_name = column;
+            ref->column.has_table_qualifier = true;
+            conflict->set_items.push_back({column, ref});
+        }
+        stmt->on_conflict = conflict;
+    }
+
     if (matchContextual("RETURNING")) {
         parseReturningClause(stmt->returning);
     }
@@ -8347,6 +9999,77 @@ void Parser::parseOnConflict(InsertStmt* stmt) {
     }
 }
 
+void Parser::parseConsistencyClause(StringPool::StringId& consistency_level,
+                                    StringPool::StringId& serial_consistency_level) {
+    if (!(match(TokenType::KW_WITH) || match(TokenType::KW_USING) ||
+          matchContextual("WITH") || matchContextual("USING"))) {
+        return;
+    }
+
+    auto parse_level = [&](const char* message) -> StringPool::StringId {
+        if (!isIdentifier()) {
+            errorCode("PRS_0504", message);
+            return StringPool::INVALID_ID;
+        }
+        StringPool::StringId level = expectIdentifier(message);
+        if (level == StringPool::INVALID_ID) {
+            return level;
+        }
+        std::string normalized(stringPool().get(level));
+        for (char& c : normalized) {
+            c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        }
+        return stringPool().intern(normalized);
+    };
+
+    bool parsed_any = false;
+    while (true) {
+        if (matchContextual("CONSISTENCY")) {
+            consistency_level = parse_level("Expected consistency level after CONSISTENCY");
+            parsed_any = true;
+        } else if (matchContextual("SERIAL")) {
+            expectContextual("CONSISTENCY", "Expected CONSISTENCY after SERIAL");
+            serial_consistency_level =
+                parse_level("Expected serial consistency level after SERIAL CONSISTENCY");
+            parsed_any = true;
+        } else if (match(TokenType::KW_AND) || match(TokenType::COMMA)) {
+            continue;
+        } else {
+            break;
+        }
+    }
+
+    if (!parsed_any) {
+        errorCode("PRS_0504", "Expected CONSISTENCY or SERIAL CONSISTENCY after WITH/USING");
+    }
+}
+
+void Parser::parseConditionalWriteClause(bool allow_if_not_exists,
+                                         bool& conditional_if_exists,
+                                         bool& conditional_if_not_exists,
+                                         Expression*& conditional_if) {
+    auto parse_if_payload = [&]() {
+        if (allow_if_not_exists && match(TokenType::KW_NOT)) {
+            expect(TokenType::KW_EXISTS, "Expected EXISTS after IF/WHEN NOT");
+            conditional_if_not_exists = true;
+            return;
+        }
+        if (match(TokenType::KW_EXISTS)) {
+            conditional_if_exists = true;
+            return;
+        }
+        conditional_if = parseExpression();
+    };
+
+    if (match(TokenType::KW_IF)) {
+        parse_if_payload();
+        return;
+    }
+    if (matchContextual("WHEN")) {
+        parse_if_payload();
+    }
+}
+
 void Parser::parseReturningClause(std::vector<SelectItem*>& returning) {
     do {
         SelectItem* item = parseSelectItem();
@@ -8411,6 +10134,13 @@ UpdateStmt* Parser::parseUpdate() {
         // WHERE CURRENT OF is for cursors - not handling for now
         stmt->where = parseExpression();
     }
+
+    parseConsistencyClause(stmt->consistency_level, stmt->serial_consistency_level);
+    bool ignored_if_not_exists = false;
+    parseConditionalWriteClause(false,
+                                stmt->conditional_if_exists,
+                                ignored_if_not_exists,
+                                stmt->conditional_if);
 
     // RETURNING clause (RETURNING is contextual)
     if (matchContextual("RETURNING")) {
@@ -8498,6 +10228,13 @@ DeleteStmt* Parser::parseDelete() {
         stmt->where = parseExpression();
     }
 
+    parseConsistencyClause(stmt->consistency_level, stmt->serial_consistency_level);
+    bool ignored_if_not_exists = false;
+    parseConditionalWriteClause(false,
+                                stmt->conditional_if_exists,
+                                ignored_if_not_exists,
+                                stmt->conditional_if);
+
     // RETURNING clause (RETURNING is contextual)
     if (matchContextual("RETURNING")) {
         parseReturningClause(stmt->returning);
@@ -8542,24 +10279,40 @@ CopyStmt* Parser::parseCopy() {
     // Direction
     if (match(TokenType::KW_FROM)) {
         stmt->direction = CopyStmt::Direction::FROM;
-        if (matchContextual("STDIN")) {
+        if (matchContextual("PROGRAM")) {
+            stmt->target_is_program = true;
+            if (!check(TokenType::STRING_LITERAL)) {
+                error("Expected string literal after COPY FROM PROGRAM");
+                return nullptr;
+            }
+            stmt->target = current().value.string_id;
+            advance();
+        } else if (matchContextual("STDIN")) {
             stmt->target_is_stdin = true;
         } else if (check(TokenType::STRING_LITERAL)) {
             stmt->target = current().value.string_id;
             advance();
         } else {
-            error("Expected STDIN or string literal for COPY FROM");
+            error("Expected PROGRAM, STDIN, or string literal for COPY FROM");
             return nullptr;
         }
     } else if (matchContextual("TO")) {
         stmt->direction = CopyStmt::Direction::TO;
-        if (matchContextual("STDOUT")) {
+        if (matchContextual("PROGRAM")) {
+            stmt->target_is_program = true;
+            if (!check(TokenType::STRING_LITERAL)) {
+                error("Expected string literal after COPY TO PROGRAM");
+                return nullptr;
+            }
+            stmt->target = current().value.string_id;
+            advance();
+        } else if (matchContextual("STDOUT")) {
             stmt->target_is_stdout = true;
         } else if (check(TokenType::STRING_LITERAL)) {
             stmt->target = current().value.string_id;
             advance();
         } else {
-            error("Expected STDOUT or string literal for COPY TO");
+            error("Expected PROGRAM, STDOUT, or string literal for COPY TO");
             return nullptr;
         }
     } else {
@@ -10411,6 +12164,8 @@ Expression* Parser::parseFunctionCall(SchemaPath path) {
         }
     }
 
+    bool parsed_count_star = false;
+
     // Special-case COUNT(*)
     if (check(TokenType::STAR)) {
         if (upper_name != "COUNT") {
@@ -10425,78 +12180,110 @@ Expression* Parser::parseFunctionCall(SchemaPath path) {
 
         advance();  // consume '*'
         expect(TokenType::RIGHT_PAREN, "Expected ')' after function arguments");
-        return expr;
+        parsed_count_star = true;
     }
 
-    if (upper_name == "POSITION")
-    {
-        if (check(TokenType::RIGHT_PAREN))
+    if (!parsed_count_star) {
+        if (upper_name == "POSITION")
         {
-            error("POSITION requires arguments");
+            if (check(TokenType::RIGHT_PAREN))
+            {
+                error("POSITION requires arguments");
+                return expr;
+            }
+
+            Expression* needle = parseAddExpr();
+            expect(TokenType::KW_IN, "Expected IN in POSITION");
+            Expression* haystack = parseAddExpr();
+            expr->arguments.push_back(needle);
+            expr->arguments.push_back(haystack);
+            expect(TokenType::RIGHT_PAREN, "Expected ')' after POSITION arguments");
             return expr;
         }
 
-        Expression* needle = parseAddExpr();
-        expect(TokenType::KW_IN, "Expected IN in POSITION");
-        Expression* haystack = parseAddExpr();
-        expr->arguments.push_back(needle);
-        expr->arguments.push_back(haystack);
-        expect(TokenType::RIGHT_PAREN, "Expected ')' after POSITION arguments");
-        return expr;
-    }
-
-    if (upper_name == "OVERLAY")
-    {
-        if (check(TokenType::RIGHT_PAREN))
+        if (upper_name == "OVERLAY")
         {
-            error("OVERLAY requires arguments");
+            if (check(TokenType::RIGHT_PAREN))
+            {
+                error("OVERLAY requires arguments");
+                return expr;
+            }
+
+            Expression* source = parseExpression();
+            if (!expectContextual("PLACING", "Expected PLACING in OVERLAY"))
+            {
+                return expr;
+            }
+            Expression* replacement = parseExpression();
+            expect(TokenType::KW_FROM, "Expected FROM in OVERLAY");
+            Expression* start_pos = parseExpression();
+            Expression* length = nullptr;
+            if (matchContextual("FOR"))
+            {
+                length = parseExpression();
+            }
+
+            expr->arguments.push_back(source);
+            expr->arguments.push_back(replacement);
+            expr->arguments.push_back(start_pos);
+            if (length)
+            {
+                expr->arguments.push_back(length);
+            }
+
+            expect(TokenType::RIGHT_PAREN, "Expected ')' after OVERLAY arguments");
             return expr;
         }
 
-        Expression* source = parseExpression();
-        if (!expectContextual("PLACING", "Expected PLACING in OVERLAY"))
-        {
-            return expr;
-        }
-        Expression* replacement = parseExpression();
-        expect(TokenType::KW_FROM, "Expected FROM in OVERLAY");
-        Expression* start_pos = parseExpression();
-        Expression* length = nullptr;
-        if (matchContextual("FOR"))
-        {
-            length = parseExpression();
-        }
-
-        expr->arguments.push_back(source);
-        expr->arguments.push_back(replacement);
-        expr->arguments.push_back(start_pos);
-        if (length)
-        {
-            expr->arguments.push_back(length);
-        }
-
-        expect(TokenType::RIGHT_PAREN, "Expected ')' after OVERLAY arguments");
-        return expr;
-    }
-
-    // Parse arguments (allow ORDER BY within aggregate call)
-    if (!check(TokenType::RIGHT_PAREN)) {
-        expr->arguments.push_back(parseExpression());
-        while (match(TokenType::COMMA)) {
+        // Parse arguments (allow ORDER BY within aggregate call)
+        if (!check(TokenType::RIGHT_PAREN)) {
             expr->arguments.push_back(parseExpression());
+            while (match(TokenType::COMMA)) {
+                expr->arguments.push_back(parseExpression());
+            }
+            if (match(TokenType::KW_ORDER) || matchContextual("ORDER")) {
+                expectContextual("BY", "Expected BY after ORDER in aggregate");
+                do {
+                    OrderByItem* item = parseOrderByItem();
+                    if (item) {
+                        expr->order_by.push_back(item);
+                    }
+                } while (match(TokenType::COMMA));
+            }
         }
+
+        expect(TokenType::RIGHT_PAREN, "Expected ')' after function arguments");
+    } else {
         if (match(TokenType::KW_ORDER) || matchContextual("ORDER")) {
+            errorCode("PRS_0504", "COUNT(*) does not allow ORDER BY inside aggregate call");
             expectContextual("BY", "Expected BY after ORDER in aggregate");
             do {
-                OrderByItem* item = parseOrderByItem();
-                if (item) {
-                    expr->order_by.push_back(item);
-                }
+                parseOrderByItem();
             } while (match(TokenType::COMMA));
         }
+        if (match(TokenType::COMMA)) {
+            errorCode("PRS_0504", "COUNT(*) cannot have additional arguments");
+            while (!check(TokenType::RIGHT_PAREN) &&
+                   !check(TokenType::END_OF_FILE)) {
+                advance();
+            }
+            expect(TokenType::RIGHT_PAREN, "Expected ')' after function arguments");
+        }
+        if (!check(TokenType::RIGHT_PAREN) &&
+            !checkContextual("FILTER") &&
+            !checkContextual("OVER")) {
+            errorCode("PRS_0504", "COUNT(*) cannot have additional arguments");
+            while (!check(TokenType::RIGHT_PAREN) &&
+                   !check(TokenType::END_OF_FILE)) {
+                advance();
+            }
+            if (check(TokenType::RIGHT_PAREN)) {
+                advance();
+            }
+        } else if (check(TokenType::RIGHT_PAREN)) {
+            advance();
+        }
     }
-
-    expect(TokenType::RIGHT_PAREN, "Expected ')' after function arguments");
 
     auto is_window_function = [&upper_name]() {
         return upper_name == "ROW_NUMBER" || upper_name == "RANK" ||
@@ -10591,35 +12378,54 @@ Expression* Parser::parseFunctionCall(SchemaPath path) {
         }
     };
 
+    auto require_feature_gate = [&](const char* feature_key) {
+        requireFeature(feature_key);
+    };
+
     if (upper_name == "DOC_PATH_EXISTS") {
+        require_feature_gate(kFeatureDocPathFilter);
         require_arity("DOC_PATH_EXISTS", 2);
     } else if (upper_name == "DOC_PATH_GET_TEXT") {
+        require_feature_gate(kFeatureDocPathFilter);
         require_arity("DOC_PATH_GET_TEXT", 2);
     } else if (upper_name == "DOC_PATH_GET_DOUBLE") {
+        require_feature_gate(kFeatureDocPathFilter);
         require_arity("DOC_PATH_GET_DOUBLE", 2);
     } else if (upper_name == "DOC_PATH_GET_BOOL") {
+        require_feature_gate(kFeatureDocPathFilter);
         require_arity("DOC_PATH_GET_BOOL", 2);
     } else if (upper_name == "TIME_BUCKET") {
+        require_feature_gate(kFeatureTsBucketAgg);
         require_arity("TIME_BUCKET", 2);
     } else if (upper_name == "TS_INTERPOLATE_LINEAR") {
+        require_feature_gate(kFeatureTsBucketAgg);
         require_arity("TS_INTERPOLATE_LINEAR", 5);
     } else if (upper_name == "TS_RATE_PER_SEC") {
+        require_feature_gate(kFeatureTsBucketAgg);
         require_arity("TS_RATE_PER_SEC", 4);
     } else if (upper_name == "SEARCH_BM25") {
+        require_feature_gate(kFeatureSearchQueryDsl);
         require_arity("SEARCH_BM25", 6);
     } else if (upper_name == "SEARCH_SCORE_FUSION") {
+        require_feature_gate(kFeatureSearchQueryDsl);
         require_arity("SEARCH_SCORE_FUSION", 4);
     } else if (upper_name == "VECTOR_L2_DISTANCE") {
+        require_feature_gate(kFeatureVectorAnn);
         require_arity("VECTOR_L2_DISTANCE", 2);
     } else if (upper_name == "VECTOR_COSINE_DISTANCE") {
+        require_feature_gate(kFeatureVectorAnn);
         require_arity("VECTOR_COSINE_DISTANCE", 2);
     } else if (upper_name == "VECTOR_DOT_SIMILARITY") {
+        require_feature_gate(kFeatureVectorAnn);
         require_arity("VECTOR_DOT_SIMILARITY", 2);
     } else if (upper_name == "VECTOR_L2_NORM") {
+        require_feature_gate(kFeatureVectorAnn);
         require_arity("VECTOR_L2_NORM", 1);
     } else if (upper_name == "COMPILE_EMBEDDED_PAYLOAD") {
+        require_feature_gate(kFeatureLanguageUdrCompileBridge);
         require_arity("COMPILE_EMBEDDED_PAYLOAD", 4);
     } else if (upper_name == "VALIDATE_EMBEDDED_PAYLOAD") {
+        require_feature_gate(kFeatureLanguageUdrCompileBridge);
         require_arity("VALIDATE_EMBEDDED_PAYLOAD", 4);
     } else {
         auto starts_with = [&](const char* prefix) {
@@ -11435,6 +13241,31 @@ SetStmt* Parser::parseSet() {
         return stmt;
     }
 
+    if (matchContextual("CONSTRAINTS")) {
+        stmt->set_type = SetStmt::SetType::CONSTRAINTS;
+        stmt->name = stringPool().intern("CONSTRAINTS");
+
+        if (matchContextual("ALL")) {
+            stmt->constraints_all = true;
+        } else {
+            stmt->constraint_names.push_back(expectIdentifier("Expected constraint name or ALL"));
+            while (match(TokenType::COMMA)) {
+                stmt->constraint_names.push_back(expectIdentifier("Expected constraint name"));
+            }
+        }
+
+        if (matchContextual("DEFERRED")) {
+            stmt->constraints_deferred = true;
+        } else if (matchContextual("IMMEDIATE")) {
+            stmt->constraints_deferred = false;
+        } else {
+            errorCode("PRS_0504", "Expected DEFERRED or IMMEDIATE in SET CONSTRAINTS");
+        }
+
+        stmt->span = makeSpan(start);
+        return stmt;
+    }
+
     if (matchContextual("SQL")) {
         expectContextual("DIALECT", "Expected DIALECT after SQL");
         stmt->set_type = SetStmt::SetType::SQL_DIALECT;
@@ -11478,6 +13309,99 @@ SetStmt* Parser::parseSet() {
             }
         } else {
             error("Expected integer literal after SET LOCAL_TIMEOUT");
+        }
+        stmt->span = makeSpan(start);
+        return stmt;
+    }
+
+    auto makeStringLiteral = [&](const std::string& value_text) -> Expression* {
+        auto* lit = arena_.create<LiteralExpr>();
+        lit->literal_type = LiteralType::STRING;
+        lit->string_value = stringPool().intern(value_text);
+        return lit;
+    };
+
+    if (matchContextual("CONSISTENCY")) {
+        stmt->set_type = SetStmt::SetType::VARIABLE;
+        stmt->name = stringPool().intern("runtime.consistency.default");
+        if (!isIdentifier()) {
+            errorCode("PRS_0504", "Expected consistency level after SET CONSISTENCY");
+        } else {
+            std::string level = std::string(stringPool().get(expectIdentifier(
+                "Expected consistency level after SET CONSISTENCY")));
+            for (char& c : level) {
+                c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+            }
+            stmt->value = makeStringLiteral(level);
+        }
+        stmt->span = makeSpan(start);
+        return stmt;
+    }
+
+    if (matchContextual("SERIAL")) {
+        expectContextual("CONSISTENCY", "Expected CONSISTENCY after SET SERIAL");
+        stmt->set_type = SetStmt::SetType::VARIABLE;
+        stmt->name = stringPool().intern("runtime.consistency.serial_default");
+        if (!isIdentifier()) {
+            errorCode("PRS_0504", "Expected serial consistency level after SET SERIAL CONSISTENCY");
+        } else {
+            std::string level = std::string(stringPool().get(expectIdentifier(
+                "Expected serial consistency level after SET SERIAL CONSISTENCY")));
+            for (char& c : level) {
+                c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+            }
+            stmt->value = makeStringLiteral(level);
+        }
+        stmt->span = makeSpan(start);
+        return stmt;
+    }
+
+    if (matchContextual("CONCURRENCY")) {
+        expectContextual("MODE", "Expected MODE after SET CONCURRENCY");
+        stmt->set_type = SetStmt::SetType::VARIABLE;
+        stmt->name = stringPool().intern("runtime.concurrency.mode");
+        std::string mode;
+        if (matchContextual("SINGLE_WRITER")) {
+            mode = "SINGLE_WRITER";
+        } else if (matchContextual("MULTI_WRITER")) {
+            mode = "MULTI_WRITER";
+        } else if (matchContextual("AUTO")) {
+            mode = "AUTO";
+        } else {
+            errorCode("PRS_0504", "Expected SINGLE_WRITER, MULTI_WRITER, or AUTO after SET CONCURRENCY MODE");
+        }
+        if (!mode.empty()) {
+            stmt->value = makeStringLiteral(mode);
+        }
+        stmt->span = makeSpan(start);
+        return stmt;
+    }
+
+    if (matchContextual("SINGLE_WRITER")) {
+        stmt->set_type = SetStmt::SetType::VARIABLE;
+        stmt->name = stringPool().intern("runtime.concurrency.mode");
+        std::string mode;
+        if (match(TokenType::KW_ON) || matchContextual("ON")) {
+            mode = "SINGLE_WRITER";
+        } else if (matchContextual("OFF")) {
+            mode = "MULTI_WRITER";
+        } else {
+            errorCode("PRS_0504", "Expected ON or OFF after SET SINGLE_WRITER");
+        }
+        if (!mode.empty()) {
+            stmt->value = makeStringLiteral(mode);
+        }
+        stmt->span = makeSpan(start);
+        return stmt;
+    }
+
+    if (matchContextual("SEQUENCE") || matchContextual("GENERATOR")) {
+        stmt->set_type = SetStmt::SetType::GENERATOR;
+        stmt->name = expectIdentifier("Expected sequence name after SET SEQUENCE");
+        if (!matchContextual("TO") && !match(TokenType::EQUAL)) {
+            error("Expected TO or '=' in SET SEQUENCE");
+        } else {
+            stmt->value = parseExpression();
         }
         stmt->span = makeSpan(start);
         return stmt;
@@ -11929,7 +13853,7 @@ ExplainStmt* Parser::parseExplain() {
     if (check(TokenType::LEFT_PAREN)) {
         advance();
         do {
-            if (matchContextual("ANALYZE")) {
+            if (match(TokenType::KW_ANALYZE) || matchContextual("ANALYZE")) {
                 stmt->analyze = true;
             } else if (matchContextual("VERBOSE")) {
                 stmt->verbose = true;
@@ -11942,6 +13866,13 @@ ExplainStmt* Parser::parseExplain() {
                 }
             } else if (matchContextual("BUFFERS")) {
                 stmt->buffers = true;
+            } else if (matchContextual("WAL")) {
+                stmt->wal = true;
+                if (match(TokenType::KW_ON) || matchContextual("ON")) {
+                    stmt->wal = true;
+                } else if (matchContextual("OFF")) {
+                    stmt->wal = false;
+                }
             } else if (matchContextual("TIMING")) {
                 // TIMING ON/OFF
                 if (match(TokenType::KW_ON) || matchContextual("ON")) {
@@ -11966,11 +13897,33 @@ ExplainStmt* Parser::parseExplain() {
         expect(TokenType::RIGHT_PAREN, "Expected ')' after EXPLAIN options");
     } else {
         // Non-parenthesized options (simpler form)
-        if (matchContextual("ANALYZE")) {
+        if (match(TokenType::KW_ANALYZE) || matchContextual("ANALYZE")) {
             stmt->analyze = true;
         }
         if (matchContextual("VERBOSE")) {
             stmt->verbose = true;
+        }
+        bool keep_parsing = true;
+        while (keep_parsing) {
+            if (matchContextual("BUFFERS")) {
+                stmt->buffers = true;
+            } else if (matchContextual("WAL")) {
+                stmt->wal = true;
+            } else if (matchContextual("COSTS")) {
+                if (match(TokenType::KW_ON) || matchContextual("ON")) {
+                    stmt->costs = true;
+                } else if (matchContextual("OFF")) {
+                    stmt->costs = false;
+                }
+            } else if (matchContextual("TIMING")) {
+                if (match(TokenType::KW_ON) || matchContextual("ON")) {
+                    stmt->timing = true;
+                } else if (matchContextual("OFF")) {
+                    stmt->timing = false;
+                }
+            } else {
+                keep_parsing = false;
+            }
         }
     }
 
@@ -12111,6 +14064,65 @@ AnalyzeStmt* Parser::parseAnalyze() {
     return stmt;
 }
 
+Statement* Parser::parseSecurityLabel() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    std::string provider;
+    if (matchContextual("FOR")) {
+        if (check(TokenType::STRING_LITERAL)) {
+            provider = std::string(stringPool().get(current().value.string_id));
+            advance();
+        } else if (isIdentifier()) {
+            provider = std::string(stringPool().get(current().value.string_id));
+            advance();
+        } else {
+            error("Expected provider after SECURITY LABEL FOR");
+        }
+    }
+
+    expect(TokenType::KW_ON, "Expected ON in SECURITY LABEL");
+    StringPool::StringId object_type = expectIdentifier("Expected object type after SECURITY LABEL ON");
+    SchemaPath object_path = parseSchemaPath(state_);
+    if (object_path.isEmpty()) {
+        error("Expected object path after SECURITY LABEL ON <object_type>");
+    }
+    expect(TokenType::KW_IS, "Expected IS in SECURITY LABEL");
+
+    std::string label_text;
+    if (match(TokenType::KW_NULL)) {
+        label_text = "NULL";
+    } else if (check(TokenType::STRING_LITERAL)) {
+        label_text = std::string(stringPool().get(current().value.string_id));
+        advance();
+    } else {
+        error("Expected string literal or NULL in SECURITY LABEL");
+    }
+
+    std::string payload;
+    if (!provider.empty()) {
+        payload.append("provider=");
+        payload.append(provider);
+        payload.push_back(';');
+    }
+    payload.append("object_type=");
+    payload.append(std::string(stringPool().get(object_type)));
+    payload.push_back(';');
+    payload.append("object=");
+    payload.append(schemaPathToString(object_path, stringPool()));
+    payload.push_back(';');
+    payload.append("label=");
+    payload.append(label_text);
+
+    stmt->name = stringPool().intern("security.label.set");
+    auto* lit = arena_.create<LiteralExpr>();
+    lit->literal_type = LiteralType::STRING;
+    lit->string_value = stringPool().intern(payload);
+    stmt->value = lit;
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
 AlterIndexStmt* Parser::parseValidateIndex() {
     SourceLocation start = currentLocation();
     auto* stmt = arena_.create<AlterIndexStmt>();
@@ -12183,6 +14195,1277 @@ SweepDatabaseStmt* Parser::parseSweep() {
         return stmt;
     }
 
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseDocPathFilterSurface() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<DocPathFilterStmt>();
+
+    auto parse_u64 = [&](const char* label, uint64_t& out) -> bool {
+        if (!check(TokenType::INTEGER_LITERAL)) {
+            errorCode("PRS_0504", std::string("Expected unsigned integer for ").append(label));
+            return false;
+        }
+        int64_t raw = current().value.int_value;
+        advance();
+        if (raw < 0) {
+            errorCode("PRS_0504", std::string("Expected non-negative integer for ").append(label));
+            return false;
+        }
+        out = static_cast<uint64_t>(raw);
+        return true;
+    };
+
+    auto parse_cmp = [&](uint8_t& out) -> bool {
+        if (match(TokenType::EQUAL)) {
+            out = 0;  // CMP_EQ
+            return true;
+        }
+        if (match(TokenType::NOT_EQUAL)) {
+            out = 1;  // CMP_NE
+            return true;
+        }
+        if (match(TokenType::LESS_THAN)) {
+            out = 2;  // CMP_LT
+            return true;
+        }
+        if (match(TokenType::LESS_EQUAL)) {
+            out = 3;  // CMP_LE
+            return true;
+        }
+        if (match(TokenType::GREATER_THAN)) {
+            out = 4;  // CMP_GT
+            return true;
+        }
+        if (match(TokenType::GREATER_EQUAL)) {
+            out = 5;  // CMP_GE
+            return true;
+        }
+        if (!isIdentifier()) {
+            errorCode("PRS_0504", "Expected comparison operator");
+            return false;
+        }
+        std::string symbol = std::string(stringPool().get(current().value.string_id));
+        advance();
+        for (char& c : symbol) {
+            c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        }
+        if (symbol == "EQ") out = 0;
+        else if (symbol == "NE") out = 1;
+        else if (symbol == "LT") out = 2;
+        else if (symbol == "LE") out = 3;
+        else if (symbol == "GT") out = 4;
+        else if (symbol == "GE") out = 5;
+        else if (symbol == "EXISTS") out = 6;
+        else if (symbol == "NOT_EXISTS") out = 7;
+        else {
+            errorCode("PRS_0504", "Unknown DOC PATH FILTER comparison operator");
+            return false;
+        }
+        return true;
+    };
+
+    if (matchContextual("DOC")) {
+        expectContextual("PATH", "Expected PATH after DOC");
+        expectContextual("FILTER", "Expected FILTER after DOC PATH");
+        if (!matchContextual("PATH_ID")) {
+            errorCode("PRS_0504", "Expected PATH_ID in DOC PATH FILTER statement form");
+        }
+        parse_u64("PATH_ID", stmt->path_expr);
+        if (!matchContextual("OP")) {
+            errorCode("PRS_0504", "Expected OP in DOC PATH FILTER statement form");
+        }
+        parse_cmp(stmt->compare_op);
+        if (!matchContextual("VALUE_REF")) {
+            errorCode("PRS_0504", "Expected VALUE_REF in DOC PATH FILTER statement form");
+        }
+        parse_u64("VALUE_REF", stmt->value_expr);
+    } else if (matchContextual("FILTER")) {
+        expectContextual("DOC", "Expected DOC after FILTER");
+        expectContextual("PATH", "Expected PATH after FILTER DOC");
+        parse_u64("path reference", stmt->path_expr);
+        parse_cmp(stmt->compare_op);
+        parse_u64("value reference", stmt->value_expr);
+    } else {
+        errorCode("PRS_0505", "Unsupported DOC PATH FILTER surface");
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseTimeBucketAggSurface() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<TsBucketAggStmt>();
+
+    auto match_word = [&](TokenType token, const char* word) -> bool {
+        return match(token) || matchContextual(word);
+    };
+
+    auto parse_u64 = [&](const char* label, uint64_t& out) -> bool {
+        if (!check(TokenType::INTEGER_LITERAL)) {
+            errorCode("PRS_0504", std::string("Expected unsigned integer for ").append(label));
+            return false;
+        }
+        int64_t raw = current().value.int_value;
+        advance();
+        if (raw < 0) {
+            errorCode("PRS_0504", std::string("Expected non-negative integer for ").append(label));
+            return false;
+        }
+        out = static_cast<uint64_t>(raw);
+        return true;
+    };
+
+    auto parse_agg_refs = [&]() {
+        if (!expect(TokenType::LEFT_PAREN, "Expected '(' before aggregate reference list")) {
+            return;
+        }
+        do {
+            uint64_t ref = 0;
+            if (parse_u64("aggregate reference", ref)) {
+                stmt->agg_refs.push_back(ref);
+            }
+        } while (match(TokenType::COMMA));
+        expect(TokenType::RIGHT_PAREN, "Expected ')' after aggregate reference list");
+        if (stmt->agg_refs.empty()) {
+            errorCode("PRS_0504", "Aggregate reference list must not be empty");
+        }
+    };
+
+    if (matchContextual("TS")) {
+        expectContextual("BUCKET", "Expected BUCKET after TS");
+        expectContextual("AGG", "Expected AGG after TS BUCKET");
+        if (!matchContextual("TIME_EXPR")) {
+            errorCode("PRS_0504", "Expected TIME_EXPR in TS BUCKET AGG statement form");
+        }
+        parse_u64("TIME_EXPR", stmt->time_expr);
+        if (!matchContextual("BUCKET_NS")) {
+            errorCode("PRS_0504", "Expected BUCKET_NS in TS BUCKET AGG statement form");
+        }
+        parse_u64("BUCKET_NS", stmt->bucket_size);
+        if (!matchContextual("AGG_REFS")) {
+            errorCode("PRS_0504", "Expected AGG_REFS in TS BUCKET AGG statement form");
+        }
+        parse_agg_refs();
+    } else if (matchContextual("AGGREGATE")) {
+        if (!matchContextual("TIME")) {
+            errorCode("PRS_0505", "Expected TIME after AGGREGATE");
+        }
+        expectContextual("BUCKET", "Expected BUCKET after AGGREGATE TIME");
+        parse_u64("bucket size", stmt->bucket_size);
+        if (!matchContextual("BY")) {
+            errorCode("PRS_0505", "Expected BY in AGGREGATE TIME BUCKET clause form");
+        }
+        parse_u64("time expression", stmt->time_expr);
+        if (!match(TokenType::KW_USING) && !matchContextual("USING")) {
+            errorCode("PRS_0505", "Expected USING in AGGREGATE TIME BUCKET clause form");
+        }
+        parse_agg_refs();
+    } else {
+        errorCode("PRS_0505", "Unsupported TS BUCKET AGG surface");
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseSearchDslSurface() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<SearchQueryDslStmt>();
+
+    auto make_alter_system = [&](const std::string& key,
+                                 const std::string& canonical_sql) -> Statement* {
+        auto* alter = arena_.create<AlterSystemStmt>();
+        alter->name = stringPool().intern(key);
+        auto* lit = arena_.create<LiteralExpr>();
+        lit->literal_type = LiteralType::STRING;
+        lit->string_value = stringPool().intern(canonical_sql);
+        alter->value = lit;
+        alter->span = makeSpan(start);
+        return alter;
+    };
+
+    auto parse_u64 = [&](const char* label, uint64_t& out) -> bool {
+        if (!check(TokenType::INTEGER_LITERAL)) {
+            errorCode("PRS_0504", std::string("Expected unsigned integer for ").append(label));
+            return false;
+        }
+        int64_t raw = current().value.int_value;
+        advance();
+        if (raw < 0) {
+            errorCode("PRS_0504", std::string("Expected non-negative integer for ").append(label));
+            return false;
+        }
+        out = static_cast<uint64_t>(raw);
+        return true;
+    };
+
+    auto parse_scalar_text = [&](const char* label) -> std::string {
+        if (check(TokenType::STRING_LITERAL) || isIdentifier()) {
+            std::string value = std::string(stringPool().get(current().value.string_id));
+            advance();
+            return value;
+        }
+        if (check(TokenType::INTEGER_LITERAL)) {
+            std::string value = std::to_string(current().value.int_value);
+            advance();
+            return value;
+        }
+        errorCode("PRS_0504", std::string("Expected scalar value for ").append(label));
+        return {};
+    };
+
+    auto parse_enum = [&](const char* label, std::initializer_list<const char*> allowed) -> std::string {
+        if (!isIdentifier()) {
+            errorCode("PRS_0504", std::string("Expected identifier for ").append(label));
+            return {};
+        }
+        std::string value = std::string(stringPool().get(current().value.string_id));
+        advance();
+        for (char& c : value) {
+            c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        }
+        for (const char* allowed_value : allowed) {
+            if (value == allowed_value) {
+                return value;
+            }
+        }
+        errorCode("PRS_0504", std::string("Unsupported ").append(label).append(" value"));
+        return {};
+    };
+
+    auto parse_scorer = [&]() {
+        if (!isIdentifier()) {
+            errorCode("PRS_0504", "Expected scorer identifier");
+            return;
+        }
+        std::string scorer = std::string(stringPool().get(current().value.string_id));
+        advance();
+        for (char& c : scorer) {
+            c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        }
+        if (scorer == "BM25") stmt->scorer_id = 1;
+        else if (scorer == "TFIDF") stmt->scorer_id = 2;
+        else if (scorer == "DFR") stmt->scorer_id = 3;
+        else errorCode("PRS_0504", "Unknown SEARCH DSL scorer");
+    };
+
+    if (matchContextual("SEARCH")) {
+        if (matchContextual("QUERY")) {
+            expectContextual("DSL", "Expected DSL after SEARCH QUERY");
+            if (!matchContextual("TARGET_INDEX")) {
+                errorCode("PRS_0504", "Expected TARGET_INDEX in SEARCH QUERY DSL statement form");
+            }
+            parse_u64("TARGET_INDEX", stmt->target_index);
+            if (!matchContextual("PAYLOAD")) {
+                errorCode("PRS_0504", "Expected PAYLOAD in SEARCH QUERY DSL statement form");
+            }
+            if (!check(TokenType::STRING_LITERAL)) {
+                errorCode("PRS_0504", "Expected JSON payload string literal");
+            } else {
+                stmt->dsl_payload_json = current().value.string_id;
+                advance();
+            }
+            if (matchContextual("SCORER")) {
+                parse_scorer();
+            }
+        } else if (matchContextual("DSL")) {
+            if (!check(TokenType::STRING_LITERAL)) {
+                errorCode("PRS_0504", "Expected JSON payload string literal after SEARCH DSL");
+            } else {
+                stmt->dsl_payload_json = current().value.string_id;
+                advance();
+            }
+            if (!match(TokenType::KW_ON) && !matchContextual("ON")) {
+                errorCode("PRS_0505", "Expected ON in SEARCH DSL clause form");
+            }
+            if (!matchContextual("INDEX")) {
+                errorCode("PRS_0505", "Expected INDEX in SEARCH DSL clause form");
+            }
+            parse_u64("INDEX", stmt->target_index);
+            if (matchContextual("SCORER")) {
+                parse_scorer();
+            }
+        } else if (match(TokenType::KW_JOIN) || matchContextual("JOIN")) {
+            expectContextual("FIELD", "Expected FIELD after SEARCH JOIN");
+            expectContextual("MAPPING", "Expected MAPPING after SEARCH JOIN FIELD");
+            if (!matchContextual("INDEX")) {
+                errorCode("PRS_0504", "Expected INDEX in SEARCH JOIN FIELD MAPPING statement form");
+            }
+            uint64_t target_index = 0;
+            parse_u64("INDEX", target_index);
+            if (!matchContextual("FIELD")) {
+                errorCode("PRS_0504", "Expected FIELD in SEARCH JOIN FIELD MAPPING statement form");
+            }
+            std::string field_name = parse_scalar_text("FIELD");
+            if (!matchContextual("PARENT")) {
+                errorCode("PRS_0504", "Expected PARENT in SEARCH JOIN FIELD MAPPING statement form");
+            }
+            std::string parent_type = parse_scalar_text("PARENT");
+            if (!matchContextual("CHILD")) {
+                errorCode("PRS_0504", "Expected CHILD in SEARCH JOIN FIELD MAPPING statement form");
+            }
+            std::string child_type = parse_scalar_text("CHILD");
+            std::string routing = "REQUIRED";
+            if (matchContextual("ROUTING")) {
+                routing = parse_enum("ROUTING", {"REQUIRED", "OPTIONAL"});
+            }
+            return make_alter_system(
+                "search.join_field.mapping",
+                "SEARCH JOIN FIELD MAPPING INDEX " + std::to_string(target_index) +
+                    " FIELD " + field_name +
+                    " PARENT " + parent_type +
+                    " CHILD " + child_type +
+                    " ROUTING " + routing);
+        } else if (matchContextual("PERCOLATOR")) {
+            expectContextual("FIELD", "Expected FIELD after SEARCH PERCOLATOR");
+            if (!matchContextual("INDEX")) {
+                errorCode("PRS_0504", "Expected INDEX in SEARCH PERCOLATOR FIELD statement form");
+            }
+            uint64_t target_index = 0;
+            parse_u64("INDEX", target_index);
+            if (!matchContextual("FIELD")) {
+                errorCode("PRS_0504", "Expected FIELD in SEARCH PERCOLATOR FIELD statement form");
+            }
+            std::string field_name = parse_scalar_text("FIELD");
+            std::string parser_mode = "STRICT";
+            if (matchContextual("QUERY_PARSER")) {
+                parser_mode = parse_enum("QUERY_PARSER", {"STRICT", "SIMPLE"});
+            }
+            return make_alter_system(
+                "search.percolator.field",
+                "SEARCH PERCOLATOR FIELD INDEX " + std::to_string(target_index) +
+                    " FIELD " + field_name +
+                    " QUERY_PARSER " + parser_mode);
+        } else {
+            errorCode("PRS_0505", "Unsupported SEARCH surface");
+        }
+    } else if (matchContextual("DSL")) {
+        if (!check(TokenType::STRING_LITERAL)) {
+            errorCode("PRS_0504", "Expected JSON payload string literal after SEARCH DSL");
+        } else {
+            stmt->dsl_payload_json = current().value.string_id;
+            advance();
+        }
+        if (!match(TokenType::KW_ON) && !matchContextual("ON")) {
+            errorCode("PRS_0505", "Expected ON in SEARCH DSL clause form");
+        }
+        if (!matchContextual("INDEX")) {
+            errorCode("PRS_0505", "Expected INDEX in SEARCH DSL clause form");
+        }
+        parse_u64("INDEX", stmt->target_index);
+        if (matchContextual("SCORER")) {
+            parse_scorer();
+        }
+    } else if (match(TokenType::KW_JOIN) || matchContextual("JOIN")) {
+        expectContextual("FIELD", "Expected FIELD after JOIN");
+        std::string field_name = parse_scalar_text("FIELD");
+        if (!match(TokenType::KW_ON) && !matchContextual("ON")) {
+            errorCode("PRS_0505", "Expected ON in JOIN FIELD clause form");
+        }
+        if (!matchContextual("INDEX")) {
+            errorCode("PRS_0505", "Expected INDEX in JOIN FIELD clause form");
+        }
+        uint64_t target_index = 0;
+        parse_u64("INDEX", target_index);
+        if (!matchContextual("PARENT")) {
+            errorCode("PRS_0504", "Expected PARENT in JOIN FIELD clause form");
+        }
+        std::string parent_type = parse_scalar_text("PARENT");
+        if (!matchContextual("CHILD")) {
+            errorCode("PRS_0504", "Expected CHILD in JOIN FIELD clause form");
+        }
+        std::string child_type = parse_scalar_text("CHILD");
+        std::string routing = "REQUIRED";
+        if (matchContextual("ROUTING")) {
+            routing = parse_enum("ROUTING", {"REQUIRED", "OPTIONAL"});
+        }
+        return make_alter_system(
+            "search.join_field.mapping",
+            "SEARCH JOIN FIELD MAPPING INDEX " + std::to_string(target_index) +
+                " FIELD " + field_name +
+                " PARENT " + parent_type +
+                " CHILD " + child_type +
+                " ROUTING " + routing);
+    } else if (matchContextual("PERCOLATOR")) {
+        expectContextual("FIELD", "Expected FIELD after PERCOLATOR");
+        std::string field_name = parse_scalar_text("FIELD");
+        if (!match(TokenType::KW_ON) && !matchContextual("ON")) {
+            errorCode("PRS_0505", "Expected ON in PERCOLATOR FIELD clause form");
+        }
+        if (!matchContextual("INDEX")) {
+            errorCode("PRS_0505", "Expected INDEX in PERCOLATOR FIELD clause form");
+        }
+        uint64_t target_index = 0;
+        parse_u64("INDEX", target_index);
+        std::string parser_mode = "STRICT";
+        if (matchContextual("PARSER")) {
+            parser_mode = parse_enum("PARSER", {"STRICT", "SIMPLE"});
+        }
+        return make_alter_system(
+            "search.percolator.field",
+            "SEARCH PERCOLATOR FIELD INDEX " + std::to_string(target_index) +
+                " FIELD " + field_name +
+                " QUERY_PARSER " + parser_mode);
+    } else {
+        errorCode("PRS_0505", "Unsupported SEARCH DSL surface");
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseVectorAnnSurface() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<VectorAnnQueryStmt>();
+
+    auto parse_u64 = [&](const char* label, uint64_t& out) -> bool {
+        if (!check(TokenType::INTEGER_LITERAL)) {
+            errorCode("PRS_0504", std::string("Expected unsigned integer for ").append(label));
+            return false;
+        }
+        int64_t raw = current().value.int_value;
+        advance();
+        if (raw < 0) {
+            errorCode("PRS_0504", std::string("Expected non-negative integer for ").append(label));
+            return false;
+        }
+        out = static_cast<uint64_t>(raw);
+        return true;
+    };
+
+    auto parse_metric = [&]() {
+        if (!isIdentifier()) {
+            errorCode("PRS_0504", "Expected metric identifier");
+            return;
+        }
+        std::string metric = std::string(stringPool().get(current().value.string_id));
+        advance();
+        for (char& c : metric) {
+            c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        }
+        if (metric == "L2") stmt->metric = 1;
+        else if (metric == "COSINE") stmt->metric = 2;
+        else if (metric == "DOT") stmt->metric = 3;
+        else errorCode("PRS_0504", "Unknown vector metric");
+    };
+
+    if (matchContextual("VECTOR")) {
+        expectContextual("ANN", "Expected ANN after VECTOR");
+        expectContextual("QUERY", "Expected QUERY after VECTOR ANN");
+        if (!matchContextual("INDEX")) {
+            errorCode("PRS_0504", "Expected INDEX in VECTOR ANN QUERY statement form");
+        }
+        parse_u64("INDEX", stmt->vector_expr);
+        if (!matchContextual("METRIC")) {
+            errorCode("PRS_0504", "Expected METRIC in VECTOR ANN QUERY statement form");
+        }
+        parse_metric();
+        if (!matchContextual("TOPK")) {
+            errorCode("PRS_0504", "Expected TOPK in VECTOR ANN QUERY statement form");
+        }
+        parse_u64("TOPK", stmt->k);
+        if (!matchContextual("EF_SEARCH")) {
+            errorCode("PRS_0504", "Expected EF_SEARCH in VECTOR ANN QUERY statement form");
+        }
+        parse_u64("EF_SEARCH", stmt->ef_search);
+    } else if (matchContextual("ANN")) {
+        expectContextual("INDEX", "Expected INDEX after ANN");
+        parse_u64("INDEX", stmt->vector_expr);
+        if (!match(TokenType::KW_WITH) && !matchContextual("WITH")) {
+            errorCode("PRS_0505", "Expected WITH in ANN clause form");
+        }
+        if (!matchContextual("METRIC")) {
+            errorCode("PRS_0504", "Expected METRIC in ANN clause form");
+        }
+        parse_metric();
+        if (!matchContextual("TOPK")) {
+            errorCode("PRS_0504", "Expected TOPK in ANN clause form");
+        }
+        parse_u64("TOPK", stmt->k);
+        if (!matchContextual("EF")) {
+            errorCode("PRS_0504", "Expected EF in ANN clause form");
+        }
+        parse_u64("EF", stmt->ef_search);
+    } else {
+        errorCode("PRS_0505", "Unsupported VECTOR ANN surface");
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseHybridBridgeSurface() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<HybridBridgeStmt>();
+
+    auto parse_u64 = [&](const char* label, uint64_t& out) -> bool {
+        if (!check(TokenType::INTEGER_LITERAL)) {
+            errorCode("PRS_0504", std::string("Expected unsigned integer for ").append(label));
+            return false;
+        }
+        int64_t raw = current().value.int_value;
+        advance();
+        if (raw < 0) {
+            errorCode("PRS_0504", std::string("Expected non-negative integer for ").append(label));
+            return false;
+        }
+        out = static_cast<uint64_t>(raw);
+        return true;
+    };
+
+    auto parse_mode = [&]() {
+        if (!isIdentifier()) {
+            errorCode("PRS_0504", "Expected bridge mode identifier");
+            return;
+        }
+        std::string mode = std::string(stringPool().get(current().value.string_id));
+        advance();
+        for (char& c : mode) {
+            c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        }
+        if (mode == "HASH_SHUFFLE") stmt->bridge_mode = 1;
+        else if (mode == "RANGE_SHUFFLE") stmt->bridge_mode = 2;
+        else if (mode == "BROADCAST") stmt->bridge_mode = 3;
+        else errorCode("PRS_0504", "Unknown hybrid bridge mode");
+    };
+
+    if (matchContextual("HYBRID")) {
+        expectContextual("BRIDGE", "Expected BRIDGE after HYBRID");
+        expectContextual("EXCHANGE", "Expected EXCHANGE after HYBRID BRIDGE");
+        if (!matchContextual("SOURCE_TRACK")) {
+            errorCode("PRS_0504", "Expected SOURCE_TRACK in HYBRID BRIDGE statement form");
+        }
+        parse_u64("SOURCE_TRACK", stmt->source_track);
+        if (!matchContextual("TARGET_TRACK")) {
+            errorCode("PRS_0504", "Expected TARGET_TRACK in HYBRID BRIDGE statement form");
+        }
+        parse_u64("TARGET_TRACK", stmt->target_track);
+        if (!matchContextual("MODE")) {
+            errorCode("PRS_0504", "Expected MODE in HYBRID BRIDGE statement form");
+        }
+        parse_mode();
+    } else if (matchContextual("BRIDGE")) {
+        expectContextual("SOURCE", "Expected SOURCE in BRIDGE clause form");
+        parse_u64("SOURCE", stmt->source_track);
+        expectContextual("TARGET", "Expected TARGET in BRIDGE clause form");
+        parse_u64("TARGET", stmt->target_track);
+        expectContextual("MODE", "Expected MODE in BRIDGE clause form");
+        parse_mode();
+    } else {
+        errorCode("PRS_0505", "Unsupported HYBRID BRIDGE surface");
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseGraphPathSurface() {
+    SourceLocation start = currentLocation();
+
+    auto make_alter_system = [&](const std::string& canonical_sql) -> Statement* {
+        auto* stmt = arena_.create<AlterSystemStmt>();
+        stmt->name = stringPool().intern("graph.path.quantified");
+        auto* lit = arena_.create<LiteralExpr>();
+        lit->literal_type = LiteralType::STRING;
+        lit->string_value = stringPool().intern(canonical_sql);
+        stmt->value = lit;
+        stmt->span = makeSpan(start);
+        return stmt;
+    };
+
+    auto parse_u64 = [&](const char* label, uint64_t& out) -> bool {
+        if (!check(TokenType::INTEGER_LITERAL)) {
+            errorCode("PRS_0504", std::string("Expected unsigned integer for ").append(label));
+            return false;
+        }
+        int64_t raw = current().value.int_value;
+        advance();
+        if (raw < 0) {
+            errorCode("PRS_0504", std::string("Expected non-negative integer for ").append(label));
+            return false;
+        }
+        out = static_cast<uint64_t>(raw);
+        return true;
+    };
+
+    auto parse_scalar_text = [&](const char* label) -> std::string {
+        if (check(TokenType::STRING_LITERAL) || isIdentifier()) {
+            std::string value = std::string(stringPool().get(current().value.string_id));
+            advance();
+            return value;
+        }
+        if (check(TokenType::INTEGER_LITERAL)) {
+            std::string value = std::to_string(current().value.int_value);
+            advance();
+            return value;
+        }
+        errorCode("PRS_0504", std::string("Expected scalar value for ").append(label));
+        return {};
+    };
+
+    auto parse_cycle_policy = [&]() -> std::string {
+        if (!isIdentifier()) {
+            errorCode("PRS_0504", "Expected CYCLE_POLICY value");
+            return {};
+        }
+        std::string value = std::string(stringPool().get(current().value.string_id));
+        advance();
+        for (char& c : value) {
+            c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        }
+        if (value == "NO_REPEAT" || value == "ALLOW") {
+            return value;
+        }
+        errorCode("PRS_0504", "Unsupported CYCLE_POLICY value");
+        return {};
+    };
+
+    std::string pattern_ref;
+    uint64_t min_hops = 0;
+    uint64_t max_hops = 0;
+    std::string cycle_policy = "NO_REPEAT";
+
+    if (matchContextual("GRAPH")) {
+        expectContextual("PATH", "Expected PATH after GRAPH");
+        expectContextual("MATCH", "Expected MATCH after GRAPH PATH");
+        if (!matchContextual("PATTERN")) {
+            errorCode("PRS_0504", "Expected PATTERN in GRAPH PATH MATCH statement form");
+        }
+        pattern_ref = parse_scalar_text("PATTERN");
+        if (!matchContextual("MIN_HOPS")) {
+            errorCode("PRS_0504", "Expected MIN_HOPS in GRAPH PATH MATCH statement form");
+        }
+        parse_u64("MIN_HOPS", min_hops);
+        if (!matchContextual("MAX_HOPS")) {
+            errorCode("PRS_0504", "Expected MAX_HOPS in GRAPH PATH MATCH statement form");
+        }
+        parse_u64("MAX_HOPS", max_hops);
+        if (max_hops < min_hops) {
+            errorCode("PRS_0504", "MAX_HOPS must be greater than or equal to MIN_HOPS");
+        }
+        if (matchContextual("CYCLE_POLICY")) {
+            cycle_policy = parse_cycle_policy();
+        }
+    } else if (matchContextual("MATCH")) {
+        expectContextual("GRAPH", "Expected GRAPH after MATCH");
+        expectContextual("PATH", "Expected PATH after MATCH GRAPH");
+        pattern_ref = parse_scalar_text("path pattern");
+        if (!matchContextual("HOPS")) {
+            errorCode("PRS_0504", "Expected HOPS in MATCH GRAPH PATH clause form");
+        }
+        parse_u64("min hop", min_hops);
+        if (!match(TokenType::DOUBLE_DOT)) {
+            errorCode("PRS_0504", "Expected '..' in MATCH GRAPH PATH HOPS range");
+        }
+        parse_u64("max hop", max_hops);
+        if (max_hops < min_hops) {
+            errorCode("PRS_0504", "MAX_HOPS must be greater than or equal to MIN_HOPS");
+        }
+        if (matchContextual("NO")) {
+            if (!matchContextual("CYCLES")) {
+                errorCode("PRS_0504", "Expected CYCLES after NO");
+            }
+            cycle_policy = "NO_REPEAT";
+        } else if (matchContextual("ALLOW")) {
+            if (!matchContextual("CYCLES")) {
+                errorCode("PRS_0504", "Expected CYCLES after ALLOW");
+            }
+            cycle_policy = "ALLOW";
+        }
+    } else {
+        errorCode("PRS_0505", "Unsupported GRAPH PATH surface");
+    }
+
+    return make_alter_system(
+        "GRAPH PATH MATCH PATTERN " + pattern_ref +
+        " MIN_HOPS " + std::to_string(min_hops) +
+        " MAX_HOPS " + std::to_string(max_hops) +
+        " CYCLE_POLICY " + cycle_policy);
+}
+
+Statement* Parser::parseRedisLuaEvalSurface() {
+    SourceLocation start = currentLocation();
+
+    auto make_alter_system = [&](const std::string& canonical_sql) -> Statement* {
+        auto* stmt = arena_.create<AlterSystemStmt>();
+        stmt->name = stringPool().intern("redis.lua.eval");
+        auto* lit = arena_.create<LiteralExpr>();
+        lit->literal_type = LiteralType::STRING;
+        lit->string_value = stringPool().intern(canonical_sql);
+        stmt->value = lit;
+        stmt->span = makeSpan(start);
+        return stmt;
+    };
+
+    auto parse_scalar_text = [&](const char* label) -> std::string {
+        if (check(TokenType::STRING_LITERAL) || isIdentifier()) {
+            std::string value = std::string(stringPool().get(current().value.string_id));
+            advance();
+            return value;
+        }
+        if (check(TokenType::INTEGER_LITERAL)) {
+            std::string value = std::to_string(current().value.int_value);
+            advance();
+            return value;
+        }
+        errorCode("PRS_0504", std::string("Expected scalar value for ").append(label));
+        return {};
+    };
+
+    auto parse_list = [&](const char* label) -> std::vector<std::string> {
+        std::vector<std::string> values;
+        expect(TokenType::LEFT_PAREN, std::string("Expected '(' before ").append(label).append(" list"));
+        if (!check(TokenType::RIGHT_PAREN)) {
+            do {
+                values.push_back(parse_scalar_text(label));
+            } while (match(TokenType::COMMA));
+        }
+        expect(TokenType::RIGHT_PAREN, std::string("Expected ')' after ").append(label).append(" list"));
+        return values;
+    };
+
+    auto join_csv = [](const std::vector<std::string>& values) -> std::string {
+        std::string out;
+        for (size_t i = 0; i < values.size(); ++i) {
+            if (i > 0) out.push_back(',');
+            out.append(values[i]);
+        }
+        return out;
+    };
+
+    std::string script_body;
+    std::vector<std::string> keys;
+    std::vector<std::string> args;
+    std::string script_sha;
+    uint64_t timeout_ms = 0;
+    bool has_timeout = false;
+
+    if (matchContextual("REDIS")) {
+        expectContextual("LUA", "Expected LUA after REDIS");
+        expectContextual("EVAL", "Expected EVAL after REDIS LUA");
+        if (!matchContextual("SCRIPT")) {
+            errorCode("PRS_0504", "Expected SCRIPT in REDIS LUA EVAL statement form");
+        }
+        script_body = parse_scalar_text("SCRIPT");
+        if (!matchContextual("KEYS")) {
+            errorCode("PRS_0504", "Expected KEYS in REDIS LUA EVAL statement form");
+        }
+        keys = parse_list("KEYS");
+        if (!matchContextual("ARGS")) {
+            errorCode("PRS_0504", "Expected ARGS in REDIS LUA EVAL statement form");
+        }
+        args = parse_list("ARGS");
+        if (matchContextual("SHA")) {
+            script_sha = parse_scalar_text("SHA");
+        }
+        if (matchContextual("TIMEOUT_MS")) {
+            if (!check(TokenType::INTEGER_LITERAL) || current().value.int_value < 0) {
+                errorCode("PRS_0504", "Expected non-negative TIMEOUT_MS");
+            } else {
+                timeout_ms = static_cast<uint64_t>(current().value.int_value);
+                advance();
+                has_timeout = true;
+            }
+        }
+    } else if (matchContextual("EVAL")) {
+        expectContextual("LUA", "Expected LUA after EVAL");
+        script_body = parse_scalar_text("script body");
+        if (!matchContextual("KEYS")) {
+            errorCode("PRS_0504", "Expected KEYS in EVAL LUA clause form");
+        }
+        keys = parse_list("KEYS");
+        if (!matchContextual("ARGS")) {
+            errorCode("PRS_0504", "Expected ARGS in EVAL LUA clause form");
+        }
+        args = parse_list("ARGS");
+    } else {
+        errorCode("PRS_0505", "Unsupported REDIS LUA EVAL surface");
+    }
+
+    std::string canonical =
+        "REDIS LUA EVAL SCRIPT " + script_body +
+        " KEYS (" + join_csv(keys) + ")" +
+        " ARGS (" + join_csv(args) + ")";
+    if (!script_sha.empty()) {
+        canonical.append(" SHA ");
+        canonical.append(script_sha);
+    }
+    if (has_timeout) {
+        canonical.append(" TIMEOUT_MS ");
+        canonical.append(std::to_string(timeout_ms));
+    }
+    return make_alter_system(canonical);
+}
+
+Statement* Parser::parseRedisStreamGroupSurface() {
+    SourceLocation start = currentLocation();
+
+    auto make_alter_system = [&](const std::string& key, const std::string& canonical_sql) -> Statement* {
+        auto* stmt = arena_.create<AlterSystemStmt>();
+        stmt->name = stringPool().intern(key);
+        auto* lit = arena_.create<LiteralExpr>();
+        lit->literal_type = LiteralType::STRING;
+        lit->string_value = stringPool().intern(canonical_sql);
+        stmt->value = lit;
+        stmt->span = makeSpan(start);
+        return stmt;
+    };
+
+    auto parse_scalar_text = [&](const char* label) -> std::string {
+        if (check(TokenType::STRING_LITERAL) || isIdentifier()) {
+            std::string value = std::string(stringPool().get(current().value.string_id));
+            advance();
+            return value;
+        }
+        if (check(TokenType::INTEGER_LITERAL)) {
+            std::string value = std::to_string(current().value.int_value);
+            advance();
+            return value;
+        }
+        errorCode("PRS_0504", std::string("Expected scalar value for ").append(label));
+        return {};
+    };
+
+    auto parse_stream_id = [&](const char* label) -> std::string {
+        if (check(TokenType::STAR)) {
+            advance();
+            return "*";
+        }
+        if (check(TokenType::STRING_LITERAL) || isIdentifier()) {
+            std::string value = std::string(stringPool().get(current().value.string_id));
+            advance();
+            return value;
+        }
+        if (check(TokenType::INTEGER_LITERAL)) {
+            int64_t first = current().value.int_value;
+            if (first < 0) {
+                errorCode("PRS_0504", std::string("Expected non-negative stream id component for ").append(label));
+                return {};
+            }
+            advance();
+            if (match(TokenType::MINUS)) {
+                if (!check(TokenType::INTEGER_LITERAL) || current().value.int_value < 0) {
+                    errorCode("PRS_0504", std::string("Expected non-negative stream id suffix for ").append(label));
+                    return {};
+                }
+                int64_t second = current().value.int_value;
+                advance();
+                return std::to_string(first) + "-" + std::to_string(second);
+            }
+            return std::to_string(first);
+        }
+        errorCode("PRS_0504", std::string("Expected stream id value for ").append(label));
+        return {};
+    };
+
+    auto parse_u64 = [&](const char* label, uint64_t& out) -> bool {
+        if (!check(TokenType::INTEGER_LITERAL)) {
+            errorCode("PRS_0504", std::string("Expected unsigned integer for ").append(label));
+            return false;
+        }
+        int64_t raw = current().value.int_value;
+        advance();
+        if (raw < 0) {
+            errorCode("PRS_0504", std::string("Expected non-negative integer for ").append(label));
+            return false;
+        }
+        out = static_cast<uint64_t>(raw);
+        return true;
+    };
+
+    auto parse_ids = [&]() -> std::vector<std::string> {
+        std::vector<std::string> ids;
+        expect(TokenType::LEFT_PAREN, "Expected '(' before IDS list");
+        if (!check(TokenType::RIGHT_PAREN)) {
+            do {
+                ids.push_back(parse_stream_id("ID"));
+            } while (match(TokenType::COMMA));
+        }
+        expect(TokenType::RIGHT_PAREN, "Expected ')' after IDS list");
+        return ids;
+    };
+
+    auto join_csv = [](const std::vector<std::string>& values) -> std::string {
+        std::string out;
+        for (size_t i = 0; i < values.size(); ++i) {
+            if (i > 0) out.push_back(',');
+            out.append(values[i]);
+        }
+        return out;
+    };
+
+    auto expect_group_keyword = [&](const char* message) -> bool {
+        if (match(TokenType::KW_GROUP) || matchContextual("GROUP")) {
+            return true;
+        }
+        error(message);
+        return false;
+    };
+
+    if (matchContextual("REDIS")) {
+        expectContextual("STREAM", "Expected STREAM after REDIS");
+        expect_group_keyword("Expected GROUP after REDIS STREAM");
+
+        if (match(TokenType::KW_CREATE) || matchContextual("CREATE")) {
+            expectContextual("STREAM", "Expected STREAM in REDIS STREAM GROUP CREATE");
+            std::string stream_name = parse_scalar_text("STREAM");
+            expect_group_keyword("Expected GROUP in REDIS STREAM GROUP CREATE");
+            std::string group_name = parse_scalar_text("GROUP");
+            if (!matchContextual("START_ID")) {
+                errorCode("PRS_0504", "Expected START_ID in REDIS STREAM GROUP CREATE");
+            }
+            std::string start_id = parse_stream_id("START_ID");
+            return make_alter_system(
+                "redis.stream.group.create",
+                "REDIS STREAM GROUP CREATE STREAM " + stream_name +
+                    " GROUP " + group_name +
+                    " START_ID " + start_id);
+        }
+
+        if (matchContextual("READ")) {
+            expectContextual("STREAM", "Expected STREAM in REDIS STREAM GROUP READ");
+            std::string stream_name = parse_scalar_text("STREAM");
+            expect_group_keyword("Expected GROUP in REDIS STREAM GROUP READ");
+            std::string group_name = parse_scalar_text("GROUP");
+            expectContextual("CONSUMER", "Expected CONSUMER in REDIS STREAM GROUP READ");
+            std::string consumer_name = parse_scalar_text("CONSUMER");
+            if (!matchContextual("COUNT")) {
+                errorCode("PRS_0504", "Expected COUNT in REDIS STREAM GROUP READ");
+            }
+            uint64_t count = 0;
+            parse_u64("COUNT", count);
+            if (!matchContextual("BLOCK_MS")) {
+                errorCode("PRS_0504", "Expected BLOCK_MS in REDIS STREAM GROUP READ");
+            }
+            uint64_t block_ms = 0;
+            parse_u64("BLOCK_MS", block_ms);
+            return make_alter_system(
+                "redis.stream.group.read",
+                "REDIS STREAM GROUP READ STREAM " + stream_name +
+                    " GROUP " + group_name +
+                    " CONSUMER " + consumer_name +
+                    " COUNT " + std::to_string(count) +
+                    " BLOCK_MS " + std::to_string(block_ms));
+        }
+
+        if (matchContextual("CLAIM")) {
+            expectContextual("STREAM", "Expected STREAM in REDIS STREAM GROUP CLAIM");
+            std::string stream_name = parse_scalar_text("STREAM");
+            expect_group_keyword("Expected GROUP in REDIS STREAM GROUP CLAIM");
+            std::string group_name = parse_scalar_text("GROUP");
+            expectContextual("CONSUMER", "Expected CONSUMER in REDIS STREAM GROUP CLAIM");
+            std::string consumer_name = parse_scalar_text("CONSUMER");
+            if (!matchContextual("MIN_IDLE_MS")) {
+                errorCode("PRS_0504", "Expected MIN_IDLE_MS in REDIS STREAM GROUP CLAIM");
+            }
+            uint64_t min_idle_ms = 0;
+            parse_u64("MIN_IDLE_MS", min_idle_ms);
+            if (!matchContextual("IDS")) {
+                errorCode("PRS_0504", "Expected IDS in REDIS STREAM GROUP CLAIM");
+            }
+            std::vector<std::string> ids = parse_ids();
+            return make_alter_system(
+                "redis.stream.group.claim",
+                "REDIS STREAM GROUP CLAIM STREAM " + stream_name +
+                    " GROUP " + group_name +
+                    " CONSUMER " + consumer_name +
+                    " MIN_IDLE_MS " + std::to_string(min_idle_ms) +
+                    " IDS (" + join_csv(ids) + ")");
+        }
+
+        errorCode("PRS_0505", "Unsupported REDIS STREAM GROUP surface");
+        auto* fallback = arena_.create<AlterSystemStmt>();
+        fallback->span = makeSpan(start);
+        return fallback;
+    }
+
+    if (matchContextual("XGROUP")) {
+        if (!(match(TokenType::KW_CREATE) || matchContextual("CREATE"))) {
+            errorCode("PRS_0504", "Expected CREATE after XGROUP");
+        }
+        std::string stream_name = parse_scalar_text("stream");
+        std::string group_name = parse_scalar_text("group");
+        std::string start_id = parse_stream_id("start id");
+        return make_alter_system(
+            "redis.stream.group.create",
+            "REDIS STREAM GROUP CREATE STREAM " + stream_name +
+                " GROUP " + group_name +
+                " START_ID " + start_id);
+    }
+
+    if (matchContextual("XREADGROUP")) {
+        expectContextual("STREAM", "Expected STREAM after XREADGROUP");
+        std::string stream_name = parse_scalar_text("STREAM");
+        expect_group_keyword("Expected GROUP in XREADGROUP");
+        std::string group_name = parse_scalar_text("GROUP");
+        expectContextual("CONSUMER", "Expected CONSUMER in XREADGROUP");
+        std::string consumer_name = parse_scalar_text("CONSUMER");
+        if (!matchContextual("COUNT")) {
+            errorCode("PRS_0504", "Expected COUNT in XREADGROUP");
+        }
+        uint64_t count = 0;
+        parse_u64("COUNT", count);
+        if (!matchContextual("BLOCK")) {
+            errorCode("PRS_0504", "Expected BLOCK in XREADGROUP");
+        }
+        uint64_t block_ms = 0;
+        parse_u64("BLOCK", block_ms);
+        return make_alter_system(
+            "redis.stream.group.read",
+            "REDIS STREAM GROUP READ STREAM " + stream_name +
+                " GROUP " + group_name +
+                " CONSUMER " + consumer_name +
+                " COUNT " + std::to_string(count) +
+                " BLOCK_MS " + std::to_string(block_ms));
+    }
+
+    if (matchContextual("XCLAIM")) {
+        expectContextual("STREAM", "Expected STREAM after XCLAIM");
+        std::string stream_name = parse_scalar_text("STREAM");
+        expect_group_keyword("Expected GROUP in XCLAIM");
+        std::string group_name = parse_scalar_text("GROUP");
+        expectContextual("CONSUMER", "Expected CONSUMER in XCLAIM");
+        std::string consumer_name = parse_scalar_text("CONSUMER");
+        if (!matchContextual("MINIDLE")) {
+            errorCode("PRS_0504", "Expected MINIDLE in XCLAIM");
+        }
+        uint64_t min_idle_ms = 0;
+        parse_u64("MINIDLE", min_idle_ms);
+        if (!matchContextual("IDS")) {
+            errorCode("PRS_0504", "Expected IDS in XCLAIM");
+        }
+        std::vector<std::string> ids = parse_ids();
+        return make_alter_system(
+            "redis.stream.group.claim",
+            "REDIS STREAM GROUP CLAIM STREAM " + stream_name +
+                " GROUP " + group_name +
+                " CONSUMER " + consumer_name +
+                " MIN_IDLE_MS " + std::to_string(min_idle_ms) +
+                " IDS (" + join_csv(ids) + ")");
+    }
+
+    errorCode("PRS_0505", "Unsupported REDIS stream group surface");
+    auto* fallback = arena_.create<AlterSystemStmt>();
+    fallback->span = makeSpan(start);
+    return fallback;
+}
+
+Statement* Parser::parseUdrCompileSurface() {
+    SourceLocation start = currentLocation();
+    bool prefixed_by_udr = false;
+    bool validate_only = false;
+
+    auto parse_scalar = [&](const char* label) -> StringPool::StringId {
+        if (check(TokenType::STRING_LITERAL) || isIdentifier()) {
+            StringPool::StringId id = current().value.string_id;
+            advance();
+            return id;
+        }
+        if (check(TokenType::INTEGER_LITERAL)) {
+            StringPool::StringId id = stringPool().intern(std::to_string(current().value.int_value));
+            advance();
+            return id;
+        }
+        if (check(TokenType::FLOAT_LITERAL)) {
+            StringPool::StringId id = stringPool().intern(std::to_string(current().value.float_value));
+            advance();
+            return id;
+        }
+        errorCode("PRS_0504", std::string("Expected scalar token for ").append(label));
+        return StringPool::INVALID_ID;
+    };
+
+    auto match_compile_or_validate = [&]() -> bool {
+        if (matchContextual("COMPILE")) {
+            validate_only = false;
+            return true;
+        }
+        if (matchContextual("VALIDATE")) {
+            validate_only = true;
+            return true;
+        }
+        return false;
+    };
+
+    if (matchContextual("UDR")) {
+        prefixed_by_udr = true;
+        if (!match_compile_or_validate()) {
+            errorCode("PRS_0505", "Expected COMPILE or VALIDATE after UDR");
+        }
+    } else if (!match_compile_or_validate()) {
+        errorCode("PRS_0505", "Expected UDR compile or validate command surface");
+    }
+
+    if (matchContextual("EMBEDDED")) {
+        if (!requireFeature(kFeatureLanguageUdrCompileBridge)) {
+            auto* blocked = arena_.create<AlterSystemStmt>();
+            blocked->span = makeSpan(start);
+            return blocked;
+        }
+        if (!matchContextual("PAYLOAD")) {
+            errorCode("PRS_0505", "Expected PAYLOAD after EMBEDDED");
+        }
+        auto* stmt = arena_.create<UdrCompileDispatchStmt>();
+        stmt->validate_only = validate_only;
+
+        if (prefixed_by_udr) {
+            if (!matchContextual("PROFILE")) {
+                errorCode("PRS_0504", "Expected PROFILE in UDR EMBEDDED PAYLOAD statement form");
+            }
+            stmt->profile_id = parse_scalar("PROFILE");
+            if (!matchContextual("FORMAT")) {
+                errorCode("PRS_0504", "Expected FORMAT in UDR EMBEDDED PAYLOAD statement form");
+            }
+            stmt->payload_format = parse_scalar("FORMAT");
+            if (!matchContextual("BYTES")) {
+                errorCode("PRS_0504", "Expected BYTES in UDR EMBEDDED PAYLOAD statement form");
+            }
+            stmt->payload_bytes = parse_scalar("BYTES");
+            if (!matchContextual("SESSION_SIGNATURE")) {
+                errorCode("PRS_0504", "Expected SESSION_SIGNATURE in UDR EMBEDDED PAYLOAD statement form");
+            }
+            stmt->session_signature = parse_scalar("SESSION_SIGNATURE");
+        } else {
+            stmt->profile_id = parse_scalar("profile_id");
+            if (!match(TokenType::COMMA)) {
+                errorCode("PRS_0504", "Expected ',' after profile_id in EMBEDDED PAYLOAD clause form");
+            }
+            stmt->payload_format = parse_scalar("payload_format");
+            if (!match(TokenType::COMMA)) {
+                errorCode("PRS_0504", "Expected ',' after payload_format in EMBEDDED PAYLOAD clause form");
+            }
+            stmt->payload_bytes = parse_scalar("payload_bytes");
+            if (!match(TokenType::COMMA)) {
+                errorCode("PRS_0504", "Expected ',' after payload_bytes in EMBEDDED PAYLOAD clause form");
+            }
+            stmt->session_signature = parse_scalar("session_signature");
+        }
+
+        stmt->span = makeSpan(start);
+        return stmt;
+    }
+
+    if (matchContextual("SQL")) {
+        if (!requireFeature(kFeatureEmbeddedSqlTemplateCompile)) {
+            auto* blocked = arena_.create<AlterSystemStmt>();
+            blocked->span = makeSpan(start);
+            return blocked;
+        }
+        return parseUdrEmbeddedSqlTemplateSurface(validate_only, prefixed_by_udr);
+    }
+
+    errorCode("PRS_0505", "Unsupported UDR compile/validate surface");
+    auto* fallback = arena_.create<AlterSystemStmt>();
+    fallback->span = makeSpan(start);
+    return fallback;
+}
+
+Statement* Parser::parseUdrEmbeddedSqlTemplateSurface(bool validate_only, bool prefixed_by_udr) {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<UdrEmbeddedSqlCompileStmt>();
+    stmt->validate_only = validate_only;
+
+    auto parse_scalar = [&](const char* label) -> StringPool::StringId {
+        if (check(TokenType::STRING_LITERAL) || isIdentifier()) {
+            StringPool::StringId id = current().value.string_id;
+            advance();
+            return id;
+        }
+        if (check(TokenType::INTEGER_LITERAL)) {
+            StringPool::StringId id = stringPool().intern(std::to_string(current().value.int_value));
+            advance();
+            return id;
+        }
+        if (check(TokenType::FLOAT_LITERAL)) {
+            StringPool::StringId id = stringPool().intern(std::to_string(current().value.float_value));
+            advance();
+            return id;
+        }
+        errorCode("PRS_0504", std::string("Expected scalar token for ").append(label));
+        return StringPool::INVALID_ID;
+    };
+
+    if (!matchContextual("TEMPLATE")) {
+        errorCode("PRS_0505", "Expected TEMPLATE after SQL in UDR compile/validate surface");
+        stmt->span = makeSpan(start);
+        return stmt;
+    }
+
+    if (prefixed_by_udr) {
+        if (!matchContextual("TEMPLATE_ID")) {
+            errorCode("PRS_0504", "Expected TEMPLATE_ID in UDR SQL TEMPLATE statement form");
+        }
+        stmt->template_id = parse_scalar("TEMPLATE_ID");
+        if (!matchContextual("SQL_TEXT")) {
+            errorCode("PRS_0504", "Expected SQL_TEXT in UDR SQL TEMPLATE statement form");
+        }
+        stmt->sql_text = parse_scalar("SQL_TEXT");
+        if (!matchContextual("PROFILE")) {
+            errorCode("PRS_0504", "Expected PROFILE in UDR SQL TEMPLATE statement form");
+        }
+        stmt->profile_id = parse_scalar("PROFILE");
+        if (!matchContextual("SESSION_SIGNATURE")) {
+            errorCode("PRS_0504", "Expected SESSION_SIGNATURE in UDR SQL TEMPLATE statement form");
+        }
+        stmt->session_signature = parse_scalar("SESSION_SIGNATURE");
+    } else {
+        stmt->template_id = parse_scalar("template_id");
+        if (!match(TokenType::KW_USING) && !matchContextual("USING")) {
+            errorCode("PRS_0504", "Expected USING in SQL TEMPLATE clause form");
+        }
+        stmt->sql_text = parse_scalar("sql_text");
+        if (!matchContextual("PROFILE")) {
+            errorCode("PRS_0504", "Expected PROFILE in SQL TEMPLATE clause form");
+        }
+        stmt->profile_id = parse_scalar("PROFILE");
+        if (!(matchContextual("SIGNATURE") || matchContextual("SESSION_SIGNATURE"))) {
+            errorCode("PRS_0504", "Expected SIGNATURE in SQL TEMPLATE clause form");
+        }
+        stmt->session_signature = parse_scalar("SIGNATURE");
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseInstallExtensionSurface(bool is_load_surface) {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    bool if_not_exists = false;
+    if (match(TokenType::KW_IF)) {
+        expect(TokenType::KW_NOT, "Expected NOT after IF");
+        expect(TokenType::KW_EXISTS, "Expected EXISTS after IF NOT");
+        if_not_exists = true;
+    }
+
+    // Support both canonical and short forms:
+    // INSTALL EXTENSION ext / INSTALL ext
+    // LOAD EXTENSION ext / LOAD ext
+    matchContextual("EXTENSION");
+
+    StringPool::StringId extension_name =
+        expectIdentifier("Expected extension name in INSTALL/LOAD EXTENSION");
+    std::string extension = std::string(stringPool().get(extension_name));
+    std::string payload = captureStatementBody();
+    if (if_not_exists) {
+        if (!payload.empty()) {
+            payload.insert(0, ";");
+        }
+        payload.insert(0, "IF_NOT_EXISTS=1");
+    }
+
+    stmt->name =
+        stringPool().intern(std::string("platform.extension.") +
+                            (is_load_surface ? "load." : "install.") + extension);
+    auto* lit = arena_.create<LiteralExpr>();
+    lit->literal_type = LiteralType::STRING;
+    lit->string_value = stringPool().intern(payload);
+    stmt->value = lit;
     stmt->span = makeSpan(start);
     return stmt;
 }
@@ -12736,6 +16019,21 @@ Statement* Parser::parsePSQLStatement() {
     if (checkContextual("CONTINUE")) {
         advance();
         return parseContinueStatement();
+    }
+    if (checkContextual("IN")) {
+        Token lookahead = state_.lexer().peekToken();
+        if (lookahead.type == TokenType::IDENTIFIER &&
+            caseInsensitiveEquals(state_.lexer().getTokenText(lookahead.span), "AUTONOMOUS")) {
+            advance();  // IN
+            expectContextual("AUTONOMOUS", "Expected AUTONOMOUS after IN");
+            expectContextual("TRANSACTION", "Expected TRANSACTION after IN AUTONOMOUS");
+            expectContextual("DO", "Expected DO after IN AUTONOMOUS TRANSACTION");
+            if (check(TokenType::KW_BEGIN)) {
+                advance();
+                return parseBeginEndBlock();
+            }
+            return parsePSQLStatement();
+        }
     }
     if (checkContextual("EXIT")) {
         advance();
@@ -13323,6 +16621,52 @@ ExecuteStatementStmt* Parser::parseExecuteDynamicStatement() {
             } while (match(TokenType::COMMA));
         }
         expect(TokenType::RIGHT_PAREN, "Expected ')' after parameters");
+    }
+
+    while (true) {
+        if (match(TokenType::KW_ON) || matchContextual("ON")) {
+            expectContextual("EXTERNAL", "Expected EXTERNAL after ON");
+            expectContextual("DATA", "Expected DATA after ON EXTERNAL");
+            expectContextual("SOURCE", "Expected SOURCE after ON EXTERNAL DATA");
+            stmt->external_data_source = parseExpression();
+            continue;
+        }
+        if (match(TokenType::KW_AS) || matchContextual("AS")) {
+            if (matchContextual("USER")) {
+                stmt->as_user = parseExpression();
+                continue;
+            }
+            error("Expected USER after AS in EXECUTE STATEMENT");
+            break;
+        }
+        if (matchContextual("PASSWORD")) {
+            stmt->password = parseExpression();
+            continue;
+        }
+        if (matchContextual("ROLE")) {
+            stmt->role = parseExpression();
+            continue;
+        }
+        if (match(TokenType::KW_WITH) || matchContextual("WITH")) {
+            if (matchContextual("AUTONOMOUS")) {
+                expectContextual("TRANSACTION", "Expected TRANSACTION after WITH AUTONOMOUS");
+                stmt->with_autonomous_transaction = true;
+                continue;
+            }
+            if (matchContextual("COMMON")) {
+                expectContextual("TRANSACTION", "Expected TRANSACTION after WITH COMMON");
+                stmt->with_common_transaction = true;
+                continue;
+            }
+            if (matchContextual("CALLER")) {
+                expectContextual("PRIVILEGES", "Expected PRIVILEGES after WITH CALLER");
+                stmt->with_caller_privileges = true;
+                continue;
+            }
+            error("Expected AUTONOMOUS TRANSACTION, COMMON TRANSACTION, or CALLER PRIVILEGES after WITH");
+            break;
+        }
+        break;
     }
 
     if (match(TokenType::KW_INTO) || matchContextual("INTO")) {

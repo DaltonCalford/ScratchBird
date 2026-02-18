@@ -603,6 +603,56 @@ bool V3Emitter::emitVNextContractInstruction(
             payload["mode"] = scratchbird::sblr::v3::Value(bridge_mode);
             break;
         }
+        case parser::v3::ASTKind::AST_UDR_COMPILE_DISPATCH: {
+            uint64_t validate_only = 0;
+            std::string profile_id;
+            std::string payload_format;
+            std::string payload_bytes;
+            std::string session_signature;
+            if (!requireU64("validate_only", validate_only) ||
+                !requireString("profile_id", profile_id) ||
+                !requireString("payload_format", payload_format) ||
+                !requireString("payload_bytes", payload_bytes) ||
+                !requireString("session_signature", session_signature)) {
+                return false;
+            }
+            if (validate_only > 1) {
+                err = "IRX_0407: validate_only enum out of range";
+                return false;
+            }
+            out.opcode = op(Opcode::SBLR3_OP_UDR_COMPILE_DISPATCH);
+            payload["validate_only"] = scratchbird::sblr::v3::Value(validate_only == 1);
+            payload["profile_id"] = scratchbird::sblr::v3::Value(std::move(profile_id));
+            payload["payload_format"] = scratchbird::sblr::v3::Value(std::move(payload_format));
+            payload["payload_bytes"] = scratchbird::sblr::v3::Value(std::move(payload_bytes));
+            payload["session_signature"] = scratchbird::sblr::v3::Value(std::move(session_signature));
+            break;
+        }
+        case parser::v3::ASTKind::AST_UDR_EMBEDDED_SQL_COMPILE: {
+            uint64_t validate_only = 0;
+            std::string template_id;
+            std::string sql_text;
+            std::string profile_id;
+            std::string session_signature;
+            if (!requireU64("validate_only", validate_only) ||
+                !requireString("template_id", template_id) ||
+                !requireString("sql_text", sql_text) ||
+                !requireString("profile_id", profile_id) ||
+                !requireString("session_signature", session_signature)) {
+                return false;
+            }
+            if (validate_only > 1) {
+                err = "IRX_0407: validate_only enum out of range";
+                return false;
+            }
+            out.opcode = op(Opcode::SBLR3_OP_UDR_EMBEDDED_SQL_COMPILE);
+            payload["validate_only"] = scratchbird::sblr::v3::Value(validate_only == 1);
+            payload["template_id"] = scratchbird::sblr::v3::Value(std::move(template_id));
+            payload["sql_text"] = scratchbird::sblr::v3::Value(std::move(sql_text));
+            payload["profile_id"] = scratchbird::sblr::v3::Value(std::move(profile_id));
+            payload["session_signature"] = scratchbird::sblr::v3::Value(std::move(session_signature));
+            break;
+        }
         default:
             err = "IRX_0401: unknown AST vNext node";
             return false;
@@ -796,6 +846,13 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitStatement(parser::v3::Statemen
         case parser::v3::ASTKind::SweepDatabaseStmt:
         case parser::v3::ASTKind::ExecuteJobStmt:
         case parser::v3::ASTKind::CancelJobRunStmt:
+        case parser::v3::ASTKind::AST_DOC_PATH_FILTER:
+        case parser::v3::ASTKind::AST_TS_BUCKET_AGG:
+        case parser::v3::ASTKind::AST_SEARCH_QUERY_DSL:
+        case parser::v3::ASTKind::AST_VECTOR_ANN_QUERY:
+        case parser::v3::ASTKind::AST_HYBRID_BRIDGE:
+        case parser::v3::ASTKind::AST_UDR_COMPILE_DISPATCH:
+        case parser::v3::ASTKind::AST_UDR_EMBEDDED_SQL_COMPILE:
             return emitUtility(stmt);
         case parser::v3::ASTKind::ExecuteBlockStmt:
         case parser::v3::ASTKind::CompoundStmt:
@@ -839,7 +896,10 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitSelect(parser::v3::SelectStmt*
     if (stmt->for_share) flags |= 0x0008;
     if (stmt->nowait) flags |= 0x0010;
     if (stmt->skip_locked) flags |= 0x0020;
+    if (stmt->with_lock) flags |= 0x0040;
     payload["flags"] = Value(static_cast<uint64_t>(flags));
+    payload["lock_strength"] = Value(static_cast<uint64_t>(stmt->lock_strength));
+    payload["distinct_on"] = toExprList(stmt->distinct_on);
 
     payload["select_items"] = toSelectItems(stmt->items);
     if (stmt->from) {
@@ -875,6 +935,19 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitSelect(parser::v3::SelectStmt*
     if (stmt->offset) {
         payload["offset"] = Value(makeInstr(emitExpression(stmt->offset)));
     }
+    if (stmt->optimize_for_rows) {
+        payload["optimize_for_rows"] = Value(makeInstr(emitExpression(stmt->optimize_for_rows)));
+    }
+    if (stmt->firebird_plan) {
+        payload["plan"] = Value(makeInstr(emitExpression(stmt->firebird_plan)));
+    }
+    if (stmt->fetch_mode != parser::v3::FetchMode::NONE && stmt->fetch_row_count) {
+        Value::Object fetch;
+        fetch["mode"] = Value(static_cast<uint64_t>(stmt->fetch_mode));
+        fetch["with_ties"] = Value(stmt->fetch_with_ties);
+        fetch["row_count"] = Value(makeInstr(emitExpression(stmt->fetch_row_count)));
+        payload["fetch"] = Value(std::move(fetch));
+    }
     if (stmt->set_op != parser::v3::SetOpType::NONE && stmt->set_op_right) {
         Value::Object setop;
         setop["type"] = Value(static_cast<uint64_t>(stmt->set_op));
@@ -896,6 +969,48 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitSelect(parser::v3::SelectStmt*
                 c["query"] = Value(makeInstr(emitStatement(cte.query)));
             }
             c["recursive"] = Value(cte.recursive || stmt->with->recursive);
+
+            if (cte.has_search) {
+                auto map_search_order = [](parser::v3::CTE::SearchOrder order) -> uint64_t {
+                    switch (order) {
+                        case parser::v3::CTE::SearchOrder::BREADTH_FIRST:
+                            return 1;
+                        case parser::v3::CTE::SearchOrder::DEPTH_FIRST:
+                            return 2;
+                        case parser::v3::CTE::SearchOrder::NONE:
+                        default:
+                            return 0;
+                    }
+                };
+                Value::Object search;
+                search["order"] = Value(map_search_order(cte.search_order));
+                Value::List by_cols;
+                for (auto id : cte.search_by_columns) {
+                    by_cols.push_back(toIdent(id));
+                }
+                search["by_columns"] = Value(std::move(by_cols));
+                search["set_column"] = toIdent(cte.search_sequence_column);
+                c["search"] = Value(std::move(search));
+            }
+
+            if (cte.has_cycle) {
+                Value::Object cycle;
+                Value::List cycle_cols;
+                for (auto id : cte.cycle_columns) {
+                    cycle_cols.push_back(toIdent(id));
+                }
+                cycle["columns"] = Value(std::move(cycle_cols));
+                cycle["set_column"] = toIdent(cte.cycle_mark_column);
+                if (cte.has_cycle_mark_value && cte.cycle_mark_value) {
+                    cycle["to_value"] = Value(makeInstr(emitExpression(cte.cycle_mark_value)));
+                }
+                if (cte.has_cycle_default_value && cte.cycle_mark_default) {
+                    cycle["default_value"] = Value(makeInstr(emitExpression(cte.cycle_mark_default)));
+                }
+                cycle["path_column"] = toIdent(cte.cycle_path_column);
+                c["cycle"] = Value(std::move(cycle));
+            }
+
             ctes.push_back(Value(std::move(c)));
         }
         payload["with"] = Value(std::move(ctes));
@@ -923,6 +1038,7 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitInsert(parser::v3::InsertStmt*
     if (stmt->source == parser::v3::InsertStmt::Source::SELECT) source = 2;
     if (stmt->source == parser::v3::InsertStmt::Source::DEFAULT) source = 3;
     payload["source"] = Value(static_cast<uint64_t>(source));
+    payload["overriding"] = Value(static_cast<uint64_t>(stmt->overriding));
 
     if (stmt->source == parser::v3::InsertStmt::Source::VALUES) {
         Value::List rows;
@@ -952,6 +1068,21 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitInsert(parser::v3::InsertStmt*
             oc["where"] = Value(makeInstr(emitExpression(stmt->on_conflict->where_action)));
         }
         payload["on_conflict"] = Value(std::move(oc));
+    }
+    if (stmt->consistency_level != parser::v3::StringPool::INVALID_ID) {
+        payload["consistency"] = toIdent(stmt->consistency_level);
+    }
+    if (stmt->serial_consistency_level != parser::v3::StringPool::INVALID_ID) {
+        payload["serial_consistency"] = toIdent(stmt->serial_consistency_level);
+    }
+    if (stmt->conditional_if_exists) {
+        payload["if_exists"] = Value(true);
+    }
+    if (stmt->conditional_if_not_exists) {
+        payload["if_not_exists"] = Value(true);
+    }
+    if (stmt->conditional_if) {
+        payload["if_condition"] = Value(makeInstr(emitExpression(stmt->conditional_if)));
     }
 
     Value::List returning;
@@ -987,6 +1118,18 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitUpdate(parser::v3::UpdateStmt*
     if (stmt->from) payload["from"] = toTableRef(stmt->from);
     payload["joins"] = toJoins(stmt->joins);
     if (stmt->where) payload["where"] = Value(makeInstr(emitExpression(stmt->where)));
+    if (stmt->consistency_level != parser::v3::StringPool::INVALID_ID) {
+        payload["consistency"] = toIdent(stmt->consistency_level);
+    }
+    if (stmt->serial_consistency_level != parser::v3::StringPool::INVALID_ID) {
+        payload["serial_consistency"] = toIdent(stmt->serial_consistency_level);
+    }
+    if (stmt->conditional_if_exists) {
+        payload["if_exists"] = Value(true);
+    }
+    if (stmt->conditional_if) {
+        payload["if_condition"] = Value(makeInstr(emitExpression(stmt->conditional_if)));
+    }
 
     Value::List returning;
     for (auto* item : stmt->returning) {
@@ -1011,6 +1154,18 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDelete(parser::v3::DeleteStmt*
     if (stmt->using_clause) payload["using"] = toTableRef(stmt->using_clause);
     payload["using_joins"] = toJoins(stmt->using_joins);
     if (stmt->where) payload["where"] = Value(makeInstr(emitExpression(stmt->where)));
+    if (stmt->consistency_level != parser::v3::StringPool::INVALID_ID) {
+        payload["consistency"] = toIdent(stmt->consistency_level);
+    }
+    if (stmt->serial_consistency_level != parser::v3::StringPool::INVALID_ID) {
+        payload["serial_consistency"] = toIdent(stmt->serial_consistency_level);
+    }
+    if (stmt->conditional_if_exists) {
+        payload["if_exists"] = Value(true);
+    }
+    if (stmt->conditional_if) {
+        payload["if_condition"] = Value(makeInstr(emitExpression(stmt->conditional_if)));
+    }
 
     Value::List returning;
     for (auto* item : stmt->returning) {
@@ -1148,7 +1303,10 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitCopy(parser::v3::CopyStmt* stm
     for (auto id : stmt->columns) cols.push_back(toIdent(id));
     payload["columns"] = Value(std::move(cols));
     payload["direction"] = Value(static_cast<uint64_t>(stmt->direction == parser::v3::CopyStmt::Direction::FROM ? 1 : 2));
-    if (!stmt->target_is_stdin && !stmt->target_is_stdout) {
+    payload["target_stdin"] = Value(stmt->target_is_stdin);
+    payload["target_stdout"] = Value(stmt->target_is_stdout);
+    payload["target_program"] = Value(stmt->target_is_program);
+    if (!stmt->target_is_stdin && !stmt->target_is_stdout && stmt->target != parser::v3::StringPool::INVALID_ID) {
         payload["filename"] = Value(std::string(pool_.get(stmt->target)));
     }
     payload["format"] = Value(static_cast<uint64_t>(stmt->options.format_set ? static_cast<uint8_t>(stmt->options.format) + 1 : 0));
@@ -1459,6 +1617,10 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlCreate(parser::v3::Statemen
             payload["timing"] = Value(uint64_t(static_cast<uint8_t>(s->timing)));
             payload["event_mask"] = Value(uint64_t(s->event_mask));
             payload["for_each_row"] = Value(s->granularity == parser::v3::TriggerGranularity::FOR_EACH_ROW);
+            payload["is_database_trigger"] = Value(s->is_database_trigger);
+            if (s->has_sql_security) {
+                payload["sql_security"] = Value(uint64_t(static_cast<uint8_t>(s->sql_security)));
+            }
             if (s->body != parser::v3::StringPool::INVALID_ID) {
                 std::string body(pool_.get(s->body));
                 payload["body"] = Value(Value::Bytes(body.begin(), body.end()));
@@ -2988,6 +3150,11 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitSetShowReset(parser::v3::State
         inst.opcode = op(Opcode::SBLR3_EXPLAIN_PLAN);
         auto* s = static_cast<parser::v3::ExplainStmt*>(stmt);
         payload["analyze"] = Value(s->analyze);
+        payload["verbose"] = Value(s->verbose);
+        payload["costs"] = Value(s->costs);
+        payload["buffers"] = Value(s->buffers);
+        payload["wal"] = Value(s->wal);
+        payload["timing"] = Value(s->timing);
         if (s->format_json) {
             payload["format"] = Value(std::string("JSON"));
         } else if (s->format_xml) {
@@ -3023,6 +3190,23 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitSetShowReset(parser::v3::State
                 inst.opcode = op(Opcode::SBLR3_SET_TRANSACTION);
                 payload["key"] = Value(std::string("TRANSACTION"));
                 break;
+            case parser::v3::SetStmt::SetType::CONSTRAINTS:
+            {
+                inst.opcode = op(Opcode::SBLR3_SET_VARIABLE);
+                std::string key = "CONSTRAINTS";
+                if (s->constraints_all) {
+                    key += " ALL";
+                } else if (!s->constraint_names.empty()) {
+                    key += " ";
+                    for (size_t i = 0; i < s->constraint_names.size(); ++i) {
+                        if (i > 0) key += ",";
+                        key += std::string(pool_.get(s->constraint_names[i]));
+                    }
+                }
+                payload["key"] = Value(key);
+                setValueInstr(makeBoolLiteral(s->constraints_deferred));
+                break;
+            }
             case parser::v3::SetStmt::SetType::SQL_DIALECT:
                 inst.opcode = op(Opcode::SBLR3_SET_SQL_DIALECT);
                 payload["key"] = Value(std::string("SQL DIALECT"));
@@ -3325,6 +3509,113 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitUtility(parser::v3::Statement*
             inst.payload = Value(std::move(payload));
             return inst;
         }
+        case parser::v3::ASTKind::AST_DOC_PATH_FILTER: {
+            auto* s = static_cast<parser::v3::DocPathFilterStmt*>(stmt);
+            Value::Object fields;
+            fields["path_expr"] = Value(s->path_expr);
+            fields["operator"] = Value(static_cast<uint64_t>(s->compare_op));
+            fields["value_expr"] = Value(s->value_expr);
+            std::string err;
+            if (!emitVNextContractInstruction(stmt->kind(), fields, inst, err)) {
+                fail(err);
+            }
+            return inst;
+        }
+        case parser::v3::ASTKind::AST_TS_BUCKET_AGG: {
+            auto* s = static_cast<parser::v3::TsBucketAggStmt*>(stmt);
+            Value::Object fields;
+            fields["time_expr"] = Value(s->time_expr);
+            fields["bucket_size"] = Value(s->bucket_size);
+            Value::List agg_list;
+            for (uint64_t ref : s->agg_refs) {
+                agg_list.push_back(Value(ref));
+            }
+            fields["agg_list"] = Value(std::move(agg_list));
+            std::string err;
+            if (!emitVNextContractInstruction(stmt->kind(), fields, inst, err)) {
+                fail(err);
+            }
+            return inst;
+        }
+        case parser::v3::ASTKind::AST_SEARCH_QUERY_DSL: {
+            auto* s = static_cast<parser::v3::SearchQueryDslStmt*>(stmt);
+            Value::Object fields;
+            std::string payload_json;
+            if (s->dsl_payload_json != parser::v3::StringPool::INVALID_ID) {
+                payload_json = std::string(pool_.get(s->dsl_payload_json));
+            }
+            fields["dsl_payload_json"] = Value(std::move(payload_json));
+            fields["target_index"] = Value(s->target_index);
+            fields["scorer_id"] = Value(static_cast<uint64_t>(s->scorer_id));
+            std::string err;
+            if (!emitVNextContractInstruction(stmt->kind(), fields, inst, err)) {
+                fail(err);
+            }
+            return inst;
+        }
+        case parser::v3::ASTKind::AST_VECTOR_ANN_QUERY: {
+            auto* s = static_cast<parser::v3::VectorAnnQueryStmt*>(stmt);
+            Value::Object fields;
+            fields["vector_expr"] = Value(s->vector_expr);
+            fields["metric"] = Value(static_cast<uint64_t>(s->metric));
+            fields["k"] = Value(s->k);
+            fields["ef_search"] = Value(s->ef_search);
+            std::string err;
+            if (!emitVNextContractInstruction(stmt->kind(), fields, inst, err)) {
+                fail(err);
+            }
+            return inst;
+        }
+        case parser::v3::ASTKind::AST_HYBRID_BRIDGE: {
+            auto* s = static_cast<parser::v3::HybridBridgeStmt*>(stmt);
+            Value::Object fields;
+            fields["source_track"] = Value(s->source_track);
+            fields["target_track"] = Value(s->target_track);
+            fields["bridge_mode"] = Value(static_cast<uint64_t>(s->bridge_mode));
+            std::string err;
+            if (!emitVNextContractInstruction(stmt->kind(), fields, inst, err)) {
+                fail(err);
+            }
+            return inst;
+        }
+        case parser::v3::ASTKind::AST_UDR_COMPILE_DISPATCH: {
+            auto* s = static_cast<parser::v3::UdrCompileDispatchStmt*>(stmt);
+            auto id_text = [&](parser::v3::StringPool::StringId id) {
+                return id == parser::v3::StringPool::INVALID_ID
+                           ? std::string()
+                           : std::string(pool_.get(id));
+            };
+            Value::Object fields;
+            fields["validate_only"] = Value(static_cast<uint64_t>(s->validate_only ? 1 : 0));
+            fields["profile_id"] = Value(id_text(s->profile_id));
+            fields["payload_format"] = Value(id_text(s->payload_format));
+            fields["payload_bytes"] = Value(id_text(s->payload_bytes));
+            fields["session_signature"] = Value(id_text(s->session_signature));
+            std::string err;
+            if (!emitVNextContractInstruction(stmt->kind(), fields, inst, err)) {
+                fail(err);
+            }
+            return inst;
+        }
+        case parser::v3::ASTKind::AST_UDR_EMBEDDED_SQL_COMPILE: {
+            auto* s = static_cast<parser::v3::UdrEmbeddedSqlCompileStmt*>(stmt);
+            auto id_text = [&](parser::v3::StringPool::StringId id) {
+                return id == parser::v3::StringPool::INVALID_ID
+                           ? std::string()
+                           : std::string(pool_.get(id));
+            };
+            Value::Object fields;
+            fields["validate_only"] = Value(static_cast<uint64_t>(s->validate_only ? 1 : 0));
+            fields["template_id"] = Value(id_text(s->template_id));
+            fields["sql_text"] = Value(id_text(s->sql_text));
+            fields["profile_id"] = Value(id_text(s->profile_id));
+            fields["session_signature"] = Value(id_text(s->session_signature));
+            std::string err;
+            if (!emitVNextContractInstruction(stmt->kind(), fields, inst, err)) {
+                fail(err);
+            }
+            return inst;
+        }
         default:
             break;
     }
@@ -3574,6 +3865,21 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitPsql(parser::v3::Statement* st
                 payload["record"] = emitVarRefValue(parser::v3::StringPool::INVALID_ID);
             }
             if (s->sql) payload["sql"] = Value(makeInstr(emitExpression(s->sql)));
+            if (s->external_data_source) {
+                payload["external_data_source"] = Value(makeInstr(emitExpression(s->external_data_source)));
+            }
+            if (s->as_user) {
+                payload["as_user"] = Value(makeInstr(emitExpression(s->as_user)));
+            }
+            if (s->password) {
+                payload["password"] = Value(makeInstr(emitExpression(s->password)));
+            }
+            if (s->role) {
+                payload["role"] = Value(makeInstr(emitExpression(s->role)));
+            }
+            payload["with_autonomous_transaction"] = Value(s->with_autonomous_transaction);
+            payload["with_common_transaction"] = Value(s->with_common_transaction);
+            payload["with_caller_privileges"] = Value(s->with_caller_privileges);
             payload["body"] = Value(Value::List{});
             inst.payload = Value(std::move(payload));
             return inst;
@@ -4754,6 +5060,19 @@ Value V3Emitter::toWindowSpec(parser::v3::WindowSpec* spec) {
             }
             return 2;
         };
+        auto map_frame_exclusion = [](parser::FrameExclusion exclusion) -> uint64_t {
+            switch (exclusion) {
+                case parser::FrameExclusion::NO_OTHERS:
+                    return 0;
+                case parser::FrameExclusion::CURRENT_ROW:
+                    return 1;
+                case parser::FrameExclusion::GROUP:
+                    return 2;
+                case parser::FrameExclusion::TIES:
+                    return 3;
+            }
+            return 0;
+        };
 
         Value::Object frame;
         frame["unit"] = Value(map_frame_type(spec->frame_type));
@@ -4774,6 +5093,7 @@ Value V3Emitter::toWindowSpec(parser::v3::WindowSpec* spec) {
 
         frame["explicit_between"] = Value(spec->frame_end != parser::v3::FrameBoundType::CURRENT_ROW ||
                                           spec->frame_end_value != nullptr);
+        frame["exclusion"] = Value(map_frame_exclusion(spec->frame_exclusion));
         w["frame"] = Value(std::move(frame));
     }
 
@@ -4789,7 +5109,33 @@ Value V3Emitter::toTableRef(parser::v3::TableRefNode* node) {
         o["table_path"] = Value(Value::List{});
     }
     if (node->has_alias) o["alias"] = toIdent(node->alias);
-    o["table_flags"] = Value(uint64_t(0));
+    uint64_t table_flags = 0;
+    if (node->lateral) table_flags |= 0x0001;
+    if (node->with_ordinality) table_flags |= 0x0002;
+    if (node->sample_method != parser::v3::TableSampleMethod::NONE) {
+        table_flags |= 0x0004;
+        auto map_sample_method = [](parser::v3::TableSampleMethod method) -> uint64_t {
+            switch (method) {
+                case parser::v3::TableSampleMethod::BERNOULLI:
+                    return 1;
+                case parser::v3::TableSampleMethod::SYSTEM:
+                    return 2;
+                case parser::v3::TableSampleMethod::NONE:
+                default:
+                    return 0;
+            }
+        };
+        Value::Object sample;
+        sample["method"] = Value(map_sample_method(node->sample_method));
+        if (node->sample_percent) {
+            sample["percent"] = Value(makeInstr(emitExpression(node->sample_percent)));
+        }
+        if (node->sample_repeatable_seed) {
+            sample["repeatable_seed"] = Value(makeInstr(emitExpression(node->sample_repeatable_seed)));
+        }
+        o["table_sample"] = Value(std::move(sample));
+    }
+    o["table_flags"] = Value(table_flags);
     return Value(std::move(o));
 }
 
@@ -4853,7 +5199,15 @@ Value V3Emitter::emitColumnDef(parser::v3::ColumnDef* col) {
                 break;
             case parser::v3::ConstraintType::GENERATED:
                 generated_expr = c.generated_expr;
-                if (c.generated_always) flags |= 0x0004;
+                if (c.generated_expr) {
+                    if (c.generated_stored || c.generated_always) {
+                        flags |= 0x0004;
+                    } else {
+                        flags |= 0x0008;
+                    }
+                } else if (c.generated_always) {
+                    flags |= 0x0004;
+                }
                 break;
             case parser::v3::ConstraintType::CHECK:
                 if (c.check_expr) checks.push_back(Value(makeInstr(emitExpression(c.check_expr))));
@@ -4888,6 +5242,7 @@ Value V3Emitter::emitTableConstraint(parser::v3::TableConstraint* c) {
     if (c->type == parser::v3::TableConstraintType::PRIMARY_KEY) type = 1;
     if (c->type == parser::v3::TableConstraintType::UNIQUE) type = 2;
     if (c->type == parser::v3::TableConstraintType::FOREIGN_KEY) type = 3;
+    if (c->type == parser::v3::TableConstraintType::EXCLUDE) type = 5;
     payload["type"] = Value(uint64_t(type));
     if (c->name != parser::v3::StringPool::INVALID_ID) payload["name"] = toIdent(c->name);
     Value::List cols;
@@ -4903,6 +5258,35 @@ Value V3Emitter::emitTableConstraint(parser::v3::TableConstraint* c) {
     }
     if (c->type == parser::v3::TableConstraintType::CHECK && c->check_expr) {
         payload["check_expr"] = Value(makeInstr(emitExpression(c->check_expr)));
+    }
+    if (c->type == parser::v3::TableConstraintType::EXCLUDE) {
+        if (c->index_method != parser::v3::StringPool::INVALID_ID) {
+            payload["index_method"] = toIdent(c->index_method);
+        }
+        Value::List ex_expr;
+        for (auto* expr : c->exclude_expressions) {
+            if (!expr) continue;
+            ex_expr.push_back(Value(makeInstr(emitExpression(expr))));
+        }
+        payload["exclude_expr"] = Value(std::move(ex_expr));
+        Value::List ex_ops;
+        for (auto op_id : c->exclude_operators) {
+            ex_ops.push_back(toIdent(op_id));
+        }
+        payload["exclude_ops"] = Value(std::move(ex_ops));
+        if (c->exclude_where) {
+            payload["exclude_where"] = Value(makeInstr(emitExpression(c->exclude_where)));
+        }
+    }
+    if (c->deferrable) {
+        payload["deferrable"] = Value(true);
+    } else if (c->not_deferrable) {
+        payload["deferrable"] = Value(false);
+    }
+    if (c->initially_deferred) {
+        payload["initially_deferred"] = Value(true);
+    } else if (c->initially_immediate) {
+        payload["initially_deferred"] = Value(false);
     }
     return Value(std::move(payload));
 }
@@ -4941,6 +5325,43 @@ TypeSpec V3Emitter::buildTypeSpec(const parser::v3::TypeName& type) {
     if (upper == "TIME" && type.with_time_zone) upper = "TIME_TZ";
     if (upper == "TIMESTAMP" && type.with_time_zone) upper = "TIMESTAMP_TZ";
 
+    auto type_signature = [&]() -> std::string {
+        std::string signature;
+        if (type.has_schema_path) {
+            signature = schemaPathToString(pool_, type.schema_path);
+        } else {
+            signature = name;
+        }
+
+        if (!type.type_arguments.empty()) {
+            signature.push_back('(');
+            for (size_t i = 0; i < type.type_arguments.size(); ++i) {
+                if (i > 0) {
+                    signature.append(", ");
+                }
+                signature.append(pool_.get(type.type_arguments[i]));
+            }
+            signature.push_back(')');
+        } else if (type.precision.has_value()) {
+            signature.push_back('(');
+            signature.append(std::to_string(*type.precision));
+            if (type.scale.has_value()) {
+                signature.push_back(',');
+                signature.append(std::to_string(*type.scale));
+            }
+            signature.push_back(')');
+        }
+
+        if (type.is_array) {
+            signature.push_back('[');
+            if (type.array_size.has_value()) {
+                signature.append(std::to_string(*type.array_size));
+            }
+            signature.push_back(']');
+        }
+        return signature;
+    };
+
     static const std::unordered_map<std::string, Opcode> kTypeMap = {
         {"INT", Opcode::SBLR3_TYPE_INTEGER},
         {"INTEGER", Opcode::SBLR3_TYPE_INTEGER},
@@ -4958,6 +5379,7 @@ TypeSpec V3Emitter::buildTypeSpec(const parser::v3::TypeName& type) {
         {"UINT128", Opcode::SBLR3_TYPE_UINT128},
         {"DECIMAL", Opcode::SBLR3_TYPE_DECIMAL},
         {"NUMERIC", Opcode::SBLR3_TYPE_DECIMAL},
+        {"BIGNUM", Opcode::SBLR3_TYPE_DECIMAL},
         {"REAL", Opcode::SBLR3_TYPE_FLOAT32},
         {"FLOAT", Opcode::SBLR3_TYPE_FLOAT32},
         {"DOUBLE", Opcode::SBLR3_TYPE_DOUBLE},
@@ -5010,7 +5432,9 @@ TypeSpec V3Emitter::buildTypeSpec(const parser::v3::TypeName& type) {
         {"COMPOSITE", Opcode::SBLR3_TYPE_COMPOSITE},
         {"DOMAIN", Opcode::SBLR3_TYPE_DOMAIN},
         {"VARIANT", Opcode::SBLR3_TYPE_VARIANT},
+        {"DYNAMIC", Opcode::SBLR3_TYPE_VARIANT},
         {"ARRAY", Opcode::SBLR3_TYPE_ARRAY},
+        {"QBIT", Opcode::SBLR3_TYPE_BIT},
         {"INT4RANGE", Opcode::SBLR3_TYPE_INT4RANGE},
         {"INT8RANGE", Opcode::SBLR3_TYPE_INT8RANGE},
         {"NUMRANGE", Opcode::SBLR3_TYPE_NUMRANGE},
@@ -5020,21 +5444,56 @@ TypeSpec V3Emitter::buildTypeSpec(const parser::v3::TypeName& type) {
     };
 
     TypeSpec spec;
-    auto it = kTypeMap.find(upper);
-    if (it != kTypeMap.end()) {
-        spec.type_opcode = op(it->second);
-    } else {
-        std::string domain_ref;
-        if (type.has_schema_path) {
-            domain_ref = schemaPathToString(pool_, type.schema_path);
-        } else if (!name.empty()) {
-            domain_ref = name;
+    if (upper == "AGGREGATEFUNCTION" || upper == "SIMPLEAGGREGATEFUNCTION") {
+        std::string signature = type_signature();
+        spec.type_opcode = op(Opcode::SBLR3_TYPE_DOMAIN);
+        if (!signature.empty()) {
+            spec.type_payload.assign(signature.begin(), signature.end());
         }
-        if (!domain_ref.empty()) {
-            spec.type_opcode = op(Opcode::SBLR3_TYPE_DOMAIN);
-            spec.type_payload.assign(domain_ref.begin(), domain_ref.end());
+    } else {
+        auto it = kTypeMap.find(upper);
+        if (it != kTypeMap.end()) {
+            spec.type_opcode = op(it->second);
         } else {
-            spec.type_opcode = op(Opcode::SBLR3_TYPE_UNKNOWN);
+            std::string domain_ref = type_signature();
+            if (!domain_ref.empty()) {
+                spec.type_opcode = op(Opcode::SBLR3_TYPE_DOMAIN);
+                spec.type_payload.assign(domain_ref.begin(), domain_ref.end());
+            } else {
+                spec.type_opcode = op(Opcode::SBLR3_TYPE_UNKNOWN);
+            }
+        }
+
+        if (spec.type_opcode == op(Opcode::SBLR3_TYPE_DECIMAL) && upper == "BIGNUM") {
+            std::string signature = type_signature();
+            if (!signature.empty()) {
+                spec.type_payload.assign(signature.begin(), signature.end());
+            }
+        }
+        if (spec.type_opcode == op(Opcode::SBLR3_TYPE_VARIANT) && upper == "DYNAMIC") {
+            std::string signature = type_signature();
+            if (!signature.empty()) {
+                spec.type_payload.assign(signature.begin(), signature.end());
+            }
+        }
+        if (spec.type_opcode == op(Opcode::SBLR3_TYPE_BIT) && upper == "QBIT") {
+            std::string signature = type_signature();
+            if (!signature.empty()) {
+                spec.type_payload.assign(signature.begin(), signature.end());
+            }
+        }
+        if (spec.type_opcode == op(Opcode::SBLR3_TYPE_DOMAIN) && type.has_schema_path) {
+            std::string signature = type_signature();
+            if (!signature.empty() && spec.type_payload.empty()) {
+                spec.type_payload.assign(signature.begin(), signature.end());
+            }
+        }
+        if (spec.type_opcode == op(Opcode::SBLR3_TYPE_UNKNOWN)) {
+            std::string signature = type_signature();
+            if (!signature.empty()) {
+                spec.type_opcode = op(Opcode::SBLR3_TYPE_DOMAIN);
+                spec.type_payload.assign(signature.begin(), signature.end());
+            }
         }
     }
 

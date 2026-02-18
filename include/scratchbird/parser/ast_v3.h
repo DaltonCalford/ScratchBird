@@ -258,6 +258,8 @@ enum class ASTKind : uint16_t {
     AST_SEARCH_QUERY_DSL,
     AST_VECTOR_ANN_QUERY,
     AST_HYBRID_BRIDGE,
+    AST_UDR_COMPILE_DISPATCH,
+    AST_UDR_EMBEDDED_SQL_COMPILE,
 };
 
 // =============================================================================
@@ -314,6 +316,9 @@ struct TypeName {
     StringPool::StringId name = StringPool::INVALID_ID;  // INT, VARCHAR, etc.
     bool has_schema_path = false;
     SchemaPath schema_path;
+    // Firebird TYPE OF / TYPE OF COLUMN references.
+    bool is_type_of = false;
+    bool is_type_of_column = false;
 
     // Type parameters (precision, scale, length)
     std::optional<int32_t> length;      // VARCHAR(100)
@@ -326,6 +331,8 @@ struct TypeName {
 
     // Type modifiers
     bool with_time_zone = false;        // TIMESTAMP WITH TIME ZONE
+    // Generic type arguments (for forms such as AggregateFunction(sum, UInt64)).
+    std::vector<StringPool::StringId> type_arguments;
 
     SourceSpan span;
 };
@@ -381,7 +388,14 @@ struct ColumnConstraint {
     // For GENERATED
     bool generated_always = false;
     bool generated_as_identity = false;
+    bool generated_stored = false;
     Expression* generated_expr = nullptr;
+
+    // DEFERRABLE / INITIALLY {DEFERRED|IMMEDIATE}
+    bool deferrable = false;
+    bool not_deferrable = false;
+    bool initially_deferred = false;
+    bool initially_immediate = false;
 
     SourceSpan span;
 };
@@ -435,9 +449,20 @@ struct TableConstraint : public ASTNode {
     ForeignKeyAction on_delete = ForeignKeyAction::NO_ACTION;
     ForeignKeyAction on_update = ForeignKeyAction::NO_ACTION;
 
+    // For EXCLUDE USING
+    std::vector<Expression*> exclude_expressions;
+    std::vector<StringPool::StringId> exclude_operators;
+    Expression* exclude_where = nullptr;
+
     // Index options
     bool using_index = false;
     StringPool::StringId index_method = StringPool::INVALID_ID;  // BTREE, HASH, etc.
+
+    // DEFERRABLE / INITIALLY {DEFERRED|IMMEDIATE}
+    bool deferrable = false;
+    bool not_deferrable = false;
+    bool initially_deferred = false;
+    bool initially_immediate = false;
 };
 
 /**
@@ -943,7 +968,12 @@ enum class TriggerTiming : uint8_t {
 enum class TriggerEvent : uint8_t {
     INSERT = 0,
     UPDATE = 1,
-    DELETE = 2
+    DELETE = 2,
+    CONNECT = 3,
+    DISCONNECT = 4,
+    TRANSACTION_START = 5,
+    TRANSACTION_COMMIT = 6,
+    TRANSACTION_ROLLBACK = 7
 };
 
 enum class TriggerGranularity : uint8_t {
@@ -961,6 +991,9 @@ public:
 
     bool or_replace = false;
     bool active = true;
+    bool is_database_trigger = false;
+    bool has_sql_security = false;
+    RoutineSqlSecurity sql_security = RoutineSqlSecurity::INVOKER;
 
     StringPool::StringId trigger_name = StringPool::INVALID_ID;
     SchemaPath table_path;
@@ -2173,6 +2206,7 @@ public:
     bool verbose = false;        // VERBOSE output
     bool costs = true;           // Show cost estimates (default true)
     bool buffers = false;        // Show buffer usage
+    bool wal = false;            // Show WAL/write-ahead instrumentation
     bool timing = true;          // Show timing (with ANALYZE)
     bool format_json = false;    // JSON output format
     bool format_xml = false;     // XML output format
@@ -2447,6 +2481,13 @@ public:
     Expression* sql = nullptr;
     std::vector<Expression*> parameters;
     std::vector<StringPool::StringId> into_variables;
+    Expression* external_data_source = nullptr;
+    Expression* as_user = nullptr;
+    Expression* password = nullptr;
+    Expression* role = nullptr;
+    bool with_autonomous_transaction = false;
+    bool with_common_transaction = false;
+    bool with_caller_privileges = false;
 };
 
 // =============================================================================
@@ -3211,6 +3252,12 @@ public:
 /**
  * Table reference - can be a table, subquery, or function call
  */
+enum class TableSampleMethod : uint8_t {
+    NONE = 0,
+    BERNOULLI = 1,
+    SYSTEM = 2,
+};
+
 struct TableRefNode : public ASTNode {
     ASTKind kind() const override { return ASTKind::FromClause; }
 
@@ -3235,6 +3282,11 @@ struct TableRefNode : public ASTNode {
     // Alias (optional for TABLE, required for SUBQUERY/FUNCTION)
     StringPool::StringId alias = StringPool::INVALID_ID;
     bool has_alias = false;
+    bool lateral = false;
+    bool with_ordinality = false;
+    TableSampleMethod sample_method = TableSampleMethod::NONE;
+    Expression* sample_percent = nullptr;
+    Expression* sample_repeatable_seed = nullptr;
 
     // Column aliases for derived tables: (SELECT ...) AS t(a, b, c)
     std::vector<StringPool::StringId> column_aliases;
@@ -3337,6 +3389,8 @@ struct WindowSpec : public ASTNode {
     FrameBoundType frame_end = FrameBoundType::CURRENT_ROW;
     Expression* frame_start_value = nullptr;  // For VALUE_PRECEDING/FOLLOWING
     Expression* frame_end_value = nullptr;
+    bool has_frame_exclusion = false;
+    FrameExclusion frame_exclusion = FrameExclusion::NO_OTHERS;
 
     // Named window reference
     StringPool::StringId ref_name = StringPool::INVALID_ID;
@@ -3351,6 +3405,20 @@ enum class SetOpType : uint8_t {
     UNION,
     INTERSECT,
     EXCEPT,
+};
+
+enum class FetchMode : uint8_t {
+    NONE = 0,
+    FIRST = 1,
+    NEXT = 2,
+};
+
+enum class SelectLockStrength : uint8_t {
+    NONE = 0,
+    UPDATE = 1,
+    NO_KEY_UPDATE = 2,
+    SHARE = 3,
+    KEY_SHARE = 4,
 };
 
 // =============================================================================
@@ -3375,6 +3443,7 @@ public:
     // SELECT [DISTINCT | ALL]
     bool distinct = false;
     bool all = false;
+    std::vector<Expression*> distinct_on;
 
     // Select list
     std::vector<SelectItem*> items;
@@ -3403,6 +3472,9 @@ public:
     // LIMIT/OFFSET
     Expression* limit = nullptr;
     Expression* offset = nullptr;
+    FetchMode fetch_mode = FetchMode::NONE;
+    bool fetch_with_ties = false;
+    Expression* fetch_row_count = nullptr;
 
     // Set operations (UNION, INTERSECT, EXCEPT)
     SetOpType set_op = SetOpType::NONE;
@@ -3410,22 +3482,47 @@ public:
     SelectStmt* set_op_right = nullptr;
 
     // FOR UPDATE/SHARE
+    SelectLockStrength lock_strength = SelectLockStrength::NONE;
     bool for_update = false;
     bool for_share = false;
     bool nowait = false;
     bool skip_locked = false;
+    bool with_lock = false;  // Firebird FOR UPDATE ... WITH LOCK
+    Expression* optimize_for_rows = nullptr;  // Firebird OPTIMIZE FOR <n> ROWS
+    Expression* firebird_plan = nullptr;      // Firebird PLAN clause
 };
 
 /**
  * Common Table Expression (CTE)
  */
 struct CTE {
+    enum class SearchOrder : uint8_t {
+        NONE = 0,
+        BREADTH_FIRST = 1,
+        DEPTH_FIRST = 2,
+    };
+
     StringPool::StringId name = StringPool::INVALID_ID;
     std::vector<StringPool::StringId> column_names;  // Optional
     Statement* query = nullptr;
     bool materialized = false;
     bool not_materialized = false;
     bool recursive = false;
+
+    // PostgreSQL SEARCH / CYCLE (recursive CTE traversal controls)
+    bool has_search = false;
+    SearchOrder search_order = SearchOrder::NONE;
+    std::vector<StringPool::StringId> search_by_columns;
+    StringPool::StringId search_sequence_column = StringPool::INVALID_ID;
+
+    bool has_cycle = false;
+    std::vector<StringPool::StringId> cycle_columns;
+    StringPool::StringId cycle_mark_column = StringPool::INVALID_ID;
+    bool has_cycle_mark_value = false;
+    Expression* cycle_mark_value = nullptr;
+    bool has_cycle_default_value = false;
+    Expression* cycle_mark_default = nullptr;
+    StringPool::StringId cycle_path_column = StringPool::INVALID_ID;
 };
 
 /**
@@ -3493,6 +3590,23 @@ public:
     // ON CONFLICT (UPSERT)
     OnConflictClause* on_conflict = nullptr;
 
+    // Firebird OVERRIDING SYSTEM/USER VALUE
+    enum class OverridingMode : uint8_t {
+        NONE = 0,
+        SYSTEM = 1,
+        USER = 2
+    };
+    OverridingMode overriding = OverridingMode::NONE;
+
+    // Cassandra lightweight transaction conditionals.
+    bool conditional_if_exists = false;
+    bool conditional_if_not_exists = false;
+    Expression* conditional_if = nullptr;
+
+    // Per-statement consistency controls.
+    StringPool::StringId consistency_level = StringPool::INVALID_ID;
+    StringPool::StringId serial_consistency_level = StringPool::INVALID_ID;
+
     // RETURNING clause
     std::vector<SelectItem*> returning;
 };
@@ -3523,6 +3637,14 @@ public:
     // WHERE clause
     Expression* where = nullptr;
 
+    // Cassandra lightweight transaction conditionals.
+    bool conditional_if_exists = false;
+    Expression* conditional_if = nullptr;
+
+    // Per-statement consistency controls.
+    StringPool::StringId consistency_level = StringPool::INVALID_ID;
+    StringPool::StringId serial_consistency_level = StringPool::INVALID_ID;
+
     // RETURNING clause
     std::vector<SelectItem*> returning;
 };
@@ -3549,6 +3671,14 @@ public:
 
     // WHERE clause
     Expression* where = nullptr;
+
+    // Cassandra lightweight transaction conditionals.
+    bool conditional_if_exists = false;
+    Expression* conditional_if = nullptr;
+
+    // Per-statement consistency controls.
+    StringPool::StringId consistency_level = StringPool::INVALID_ID;
+    StringPool::StringId serial_consistency_level = StringPool::INVALID_ID;
 
     // RETURNING clause
     std::vector<SelectItem*> returning;
@@ -3623,7 +3753,8 @@ public:
     // Target source/destination
     bool target_is_stdin = false;
     bool target_is_stdout = false;
-    StringPool::StringId target = StringPool::INVALID_ID;  // File path when not STDIN/STDOUT
+    bool target_is_program = false;
+    StringPool::StringId target = StringPool::INVALID_ID;  // File path/program when not STDIN/STDOUT
 
     CopyOptions options;
 };
@@ -3852,6 +3983,7 @@ public:
         VARIABLE,       // SET name = value
         TIME_ZONE,      // SET TIME ZONE ...
         TRANSACTION,    // SET TRANSACTION ...
+        CONSTRAINTS,    // SET CONSTRAINTS ...
         AUTOCOMMIT,     // SET AUTOCOMMIT ...
         SQL_DIALECT,    // SET SQL DIALECT n
         NAMES,          // SET NAMES charset
@@ -3861,7 +3993,7 @@ public:
         // Firebird-specific
         TERM,           // SET TERM new_terminator
         STATISTICS_INDEX,  // SET STATISTICS INDEX index_name
-        GENERATOR,      // SET GENERATOR name TO value
+        GENERATOR,      // SET SEQUENCE name TO value (SET GENERATOR accepted as alias)
     };
     SetType set_type = SetType::VARIABLE;
 
@@ -3882,6 +4014,11 @@ public:
     ReadCommittedMode read_committed_mode = ReadCommittedMode::DEFAULT;
     bool deferrable = false;
     bool not_deferrable = false;
+
+    // For SET CONSTRAINTS
+    bool constraints_all = false;
+    bool constraints_deferred = false;
+    std::vector<StringPool::StringId> constraint_names;
 
     // Firebird legacy options for SET TRANSACTION
     bool has_wait_mode = false;
@@ -3920,6 +4057,81 @@ public:
 
     StringPool::StringId name = StringPool::INVALID_ID;
     Expression* value = nullptr;
+};
+
+/**
+ * vNext section-04 extension statements.
+ *
+ * These nodes intentionally inherit from AlterSystemStmt so they can flow
+ * through existing visitor paths while still materializing dedicated AST kinds
+ * required by the native parser extension matrix.
+ */
+class DocPathFilterStmt : public AlterSystemStmt {
+public:
+    ASTKind kind() const override { return ASTKind::AST_DOC_PATH_FILTER; }
+
+    uint64_t path_expr = 0;
+    uint8_t compare_op = 0;
+    uint64_t value_expr = 0;
+};
+
+class TsBucketAggStmt : public AlterSystemStmt {
+public:
+    ASTKind kind() const override { return ASTKind::AST_TS_BUCKET_AGG; }
+
+    uint64_t time_expr = 0;
+    uint64_t bucket_size = 0;
+    std::vector<uint64_t> agg_refs;
+};
+
+class SearchQueryDslStmt : public AlterSystemStmt {
+public:
+    ASTKind kind() const override { return ASTKind::AST_SEARCH_QUERY_DSL; }
+
+    StringPool::StringId dsl_payload_json = StringPool::INVALID_ID;
+    uint64_t target_index = 0;
+    uint16_t scorer_id = 1;  // BM25 default
+};
+
+class VectorAnnQueryStmt : public AlterSystemStmt {
+public:
+    ASTKind kind() const override { return ASTKind::AST_VECTOR_ANN_QUERY; }
+
+    uint64_t vector_expr = 0;
+    uint8_t metric = 0;
+    uint64_t k = 0;
+    uint64_t ef_search = 0;
+};
+
+class HybridBridgeStmt : public AlterSystemStmt {
+public:
+    ASTKind kind() const override { return ASTKind::AST_HYBRID_BRIDGE; }
+
+    uint64_t source_track = 0;
+    uint64_t target_track = 0;
+    uint8_t bridge_mode = 0;
+};
+
+class UdrCompileDispatchStmt : public AlterSystemStmt {
+public:
+    ASTKind kind() const override { return ASTKind::AST_UDR_COMPILE_DISPATCH; }
+
+    bool validate_only = false;
+    StringPool::StringId profile_id = StringPool::INVALID_ID;
+    StringPool::StringId payload_format = StringPool::INVALID_ID;
+    StringPool::StringId payload_bytes = StringPool::INVALID_ID;
+    StringPool::StringId session_signature = StringPool::INVALID_ID;
+};
+
+class UdrEmbeddedSqlCompileStmt : public AlterSystemStmt {
+public:
+    ASTKind kind() const override { return ASTKind::AST_UDR_EMBEDDED_SQL_COMPILE; }
+
+    bool validate_only = false;
+    StringPool::StringId template_id = StringPool::INVALID_ID;
+    StringPool::StringId sql_text = StringPool::INVALID_ID;
+    StringPool::StringId profile_id = StringPool::INVALID_ID;
+    StringPool::StringId session_signature = StringPool::INVALID_ID;
 };
 
 /**

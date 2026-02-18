@@ -58003,6 +58003,8 @@ namespace scratchbird
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_OP_VECTOR_ANN:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_OP_HYBRID_BRIDGE_EXCHANGE:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_OP_HYBRID_BRIDGE_MATERIALIZE:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_OP_UDR_COMPILE_DISPATCH:
+	                        case scratchbird::sblr::v3::Opcode::SBLR3_OP_UDR_EMBEDDED_SQL_COMPILE:
 
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_SESSION_RESET:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_CONFIG_RESET:
@@ -59829,6 +59831,8 @@ namespace scratchbird
                     case scratchbird::sblr::v3::Opcode::SBLR3_OP_VECTOR_ANN:
                     case scratchbird::sblr::v3::Opcode::SBLR3_OP_HYBRID_BRIDGE_EXCHANGE:
                     case scratchbird::sblr::v3::Opcode::SBLR3_OP_HYBRID_BRIDGE_MATERIALIZE:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_OP_UDR_COMPILE_DISPATCH:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_OP_UDR_EMBEDDED_SQL_COMPILE:
                     case scratchbird::sblr::v3::Opcode::SBLR3_SESSION_RESET:
                     case scratchbird::sblr::v3::Opcode::SBLR3_CONFIG_RESET:
                     case scratchbird::sblr::v3::Opcode::SBLR3_CONFIG_HISTORY:

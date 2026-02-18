@@ -458,6 +458,8 @@ const char* astKindToString(ASTKind kind) {
         case ASTKind::AST_SEARCH_QUERY_DSL: return "AST_SEARCH_QUERY_DSL";
         case ASTKind::AST_VECTOR_ANN_QUERY: return "AST_VECTOR_ANN_QUERY";
         case ASTKind::AST_HYBRID_BRIDGE: return "AST_HYBRID_BRIDGE";
+        case ASTKind::AST_UDR_COMPILE_DISPATCH: return "AST_UDR_COMPILE_DISPATCH";
+        case ASTKind::AST_UDR_EMBEDDED_SQL_COMPILE: return "AST_UDR_EMBEDDED_SQL_COMPILE";
     }
     return "UNKNOWN";
 }

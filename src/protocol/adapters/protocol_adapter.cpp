@@ -21,6 +21,7 @@
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/sblr/bytecode_validator.h"
 #include "scratchbird/sblr/opcodes.h"
+#include "scratchbird/sblr/query_compiler_v3.h"
 #include "scratchbird/sblr/v3_container.h"
 #include "scratchbird/core/telemetry.h"
 #include "scratchbird/parser/v3_compiler.h"
@@ -68,6 +69,27 @@ size_t countParameterPlaceholders(const std::string& sql) {
         i = j;
     }
     return max_index;
+}
+
+std::string buildNativeCompileDiagnostic(core::Database* db,
+                                         const std::string& sql,
+                                         const std::string& fallback_error) {
+    std::string message = fallback_error.empty() ? "Compilation failed" : fallback_error;
+    if (db == nullptr) {
+        return message;
+    }
+
+    sblr::QueryCompilerV3 trace_compiler(db);
+    auto trace = trace_compiler.compileTrace(sql);
+    if (!trace.errors().empty()) {
+        message = trace.errors().front();
+    }
+    if (!trace.diagnostic_sql_context().empty() &&
+        message.find("SQL_CONTEXT:") == std::string::npos) {
+        message.append(" | SQL_CONTEXT: ");
+        message.append(trace.diagnostic_sql_context());
+    }
+    return message;
 }
 } // namespace
 
@@ -589,7 +611,10 @@ core::Status ProtocolAdapter::compileQuery(const std::string& sql,
     if (dialect == "SCRATCHBIRD" && compiler_v3_) {
         auto result = compiler_v3_->compile(sql);
         if (!result.ok) {
-            error_out = result.error.empty() ? "Compilation failed" : result.error;
+            error_out = buildNativeCompileDiagnostic(
+                db,
+                sql,
+                result.error.empty() ? "Compilation failed" : result.error);
             return core::Status::INVALID_ARGUMENT;
         }
         bytecode_out = result.bytecode;

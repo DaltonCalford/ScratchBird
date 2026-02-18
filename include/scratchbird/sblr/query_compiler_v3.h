@@ -23,12 +23,14 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/types.h"
 #include "scratchbird/parser/parser_v3.h"
 #include "scratchbird/parser/v3_emitter.h"
+#include "scratchbird/sblr/native_sql_renderer.h"
 #include "scratchbird/sblr/v3_container.h"
 #include "scratchbird/sblr/v3_opcode_identity.h"
 #include "scratchbird/sblr/v3_payloads.h"
@@ -74,15 +76,18 @@ public:
         const TraceDigest& digest() const { return *digest_; }
         const std::vector<std::string>& errors() const { return errors_; }
         const std::vector<std::string>& warnings() const { return warnings_; }
+        const std::string& diagnostic_sql_context() const { return diagnostic_sql_context_; }
 
         void setDigest(TraceDigest digest) { digest_ = std::move(digest); }
         void addError(const std::string& err) { errors_.push_back(err); }
         void addWarning(const std::string& warn) { warnings_.push_back(warn); }
+        void setDiagnosticSqlContext(std::string value) { diagnostic_sql_context_ = std::move(value); }
 
     private:
         std::optional<TraceDigest> digest_;
         std::vector<std::string> errors_;
         std::vector<std::string> warnings_;
+        std::string diagnostic_sql_context_;
     };
 
     explicit QueryCompilerV3(core::Database* db = nullptr)
@@ -140,26 +145,38 @@ public:
 
     TraceResult compileTrace(const std::string& sql) {
         TraceResult trace;
+        parser::v3::Parser parser(sql);
+        trace.setDiagnosticSqlContext(normalizeSqlForTrace(sql, nullptr, parser.stringPool()));
+
         if (db_ == nullptr) {
             trace.addError("Database context is required for QueryCompilerV3");
             return trace;
         }
 
-        parser::v3::Parser parser(sql);
+        auto addTraceError = [&](std::string message) {
+            if (!trace.diagnostic_sql_context().empty()) {
+                message.append(" | SQL_CONTEXT: ");
+                message.append(trace.diagnostic_sql_context());
+            }
+            trace.addError(message);
+        };
+
         parser::v3::ParseResult parse_result = parser.parseStatement();
         if (!parse_result.success()) {
             for (const auto& err : parse_result.errors()) {
-                trace.addError("Parse error at line " + std::to_string(err.span.start.line) +
-                               ", column " + std::to_string(err.span.start.column) + ": " + err.message);
+                addTraceError("Parse error at line " + std::to_string(err.span.start.line) +
+                              ", column " + std::to_string(err.span.start.column) + ": " + err.message);
             }
             return trace;
         }
+        trace.setDiagnosticSqlContext(
+            normalizeSqlForTrace(sql, parse_result.statement(), parser.stringPool()));
 
         parser::v3::V3Emitter emitter(parser.stringPool());
         sblr::v3::Container container;
         std::string emit_err;
         if (!emitter.emitStatementToContainer(parse_result.statement(), container, emit_err)) {
-            trace.addError(emit_err.empty() ? "V3 emit failed" : emit_err);
+            addTraceError(emit_err.empty() ? "V3 emit failed" : emit_err);
             return trace;
         }
         container.metadata.module_name = "scratchbird_native";
@@ -167,14 +184,14 @@ public:
         std::vector<uint8_t> encoded;
         std::string encode_err;
         if (!sblr::v3::encodeContainer(container, encoded, encode_err)) {
-            trace.addError(encode_err.empty() ? "V3 container encode failed" : encode_err);
+            addTraceError(encode_err.empty() ? "V3 container encode failed" : encode_err);
             return trace;
         }
 
         sblr::v3::Container decoded;
         std::string decode_err;
         if (!sblr::v3::decodeContainer(encoded.data(), encoded.size(), decoded, decode_err)) {
-            trace.addError(decode_err.empty() ? "V3 container decode failed" : decode_err);
+            addTraceError(decode_err.empty() ? "V3 container decode failed" : decode_err);
             return trace;
         }
 
@@ -186,9 +203,9 @@ public:
                                                    offset,
                                                    version_inst,
                                                    instruction_err)) {
-            trace.addError(instruction_err.message.empty()
-                               ? "V3 instruction decode failed for version opcode"
-                               : instruction_err.message);
+            addTraceError(instruction_err.message.empty()
+                              ? "V3 instruction decode failed for version opcode"
+                              : instruction_err.message);
             return trace;
         }
         sblr::v3::Instruction root_inst;
@@ -197,21 +214,29 @@ public:
                                                    offset,
                                                    root_inst,
                                                    instruction_err)) {
-            trace.addError(instruction_err.message.empty()
-                               ? "V3 instruction decode failed for root opcode"
-                               : instruction_err.message);
+            addTraceError(instruction_err.message.empty()
+                              ? "V3 instruction decode failed for root opcode"
+                              : instruction_err.message);
             return trace;
         }
 
         sblr::v3::Buffer root_bytes;
         if (!sblr::v3::encodeInstructionWithSchema(root_inst, root_bytes, instruction_err)) {
-            trace.addError(instruction_err.message.empty()
-                               ? "V3 root instruction encode failed"
-                               : instruction_err.message);
+            addTraceError(instruction_err.message.empty()
+                              ? "V3 root instruction encode failed"
+                              : instruction_err.message);
             return trace;
         }
 
-        const std::string normalized_sql = normalizeSqlForTrace(sql);
+        NativeSqlRenderResult rendered_sql;
+        std::string render_error;
+        if (renderNativeSqlInstruction(root_inst, rendered_sql, render_error) &&
+            !rendered_sql.sql.empty()) {
+            trace.setDiagnosticSqlContext(rendered_sql.sql);
+        }
+
+        const std::string normalized_sql =
+            normalizeSqlForTrace(sql, parse_result.statement(), parser.stringPool());
         const std::string statement_kind = parser::v3::astKindToString(parse_result.statement()->kind());
         const std::string root_symbol = sblr::v3::canonicalOpcodeSymbolForOpcode(root_inst.opcode);
         const std::string root_instruction_hash = hashBytesHex(root_bytes);
@@ -259,7 +284,206 @@ private:
         return toHex64(fnv1a64(bytes.data(), bytes.size()));
     }
 
-    static std::string normalizeSqlForTrace(const std::string& sql) {
+    static std::string toUpperAscii(std::string value) {
+        for (char& c : value) {
+            c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+        }
+        return value;
+    }
+
+    static std::string escapeTraceField(std::string_view value) {
+        std::string out;
+        out.reserve(value.size());
+        for (char c : value) {
+            if (c == '\\' || c == '|') {
+                out.push_back('\\');
+            }
+            out.push_back(c);
+        }
+        return out;
+    }
+
+    static std::string idToTraceText(const parser::v3::StringPool& pool,
+                                     parser::v3::StringPool::StringId id) {
+        if (id == parser::v3::StringPool::INVALID_ID) {
+            return {};
+        }
+        return std::string(pool.get(id));
+    }
+
+    static std::string udrCanonicalKeyValueTrace(std::string_view family,
+                                                 bool validate_only,
+                                                 std::string_view key_a_name,
+                                                 std::string_view key_a_value,
+                                                 std::string_view key_b_name,
+                                                 std::string_view key_b_value,
+                                                 std::string_view key_c_name,
+                                                 std::string_view key_c_value,
+                                                 std::string_view key_d_name,
+                                                 std::string_view key_d_value) {
+        std::string out;
+        out.reserve(256);
+        out.append(family);
+        out.append("|validate=");
+        out.push_back(validate_only ? '1' : '0');
+        out.push_back('|');
+        out.append(key_a_name);
+        out.push_back('=');
+        out.append(escapeTraceField(key_a_value));
+        out.push_back('|');
+        out.append(key_b_name);
+        out.push_back('=');
+        out.append(escapeTraceField(key_b_value));
+        out.push_back('|');
+        out.append(key_c_name);
+        out.push_back('=');
+        out.append(escapeTraceField(key_c_value));
+        out.push_back('|');
+        out.append(key_d_name);
+        out.push_back('=');
+        out.append(escapeTraceField(key_d_value));
+        return out;
+    }
+
+    static std::string canonicalAstTraceSql(const parser::v3::Statement* stmt,
+                                            const parser::v3::StringPool& pool) {
+        if (stmt == nullptr) {
+            return {};
+        }
+
+        switch (stmt->kind()) {
+            case parser::v3::ASTKind::AST_DOC_PATH_FILTER: {
+                auto* s = static_cast<const parser::v3::DocPathFilterStmt*>(stmt);
+                const char* cmp = "EQ";
+                switch (s->compare_op) {
+                    case 0: cmp = "EQ"; break;
+                    case 1: cmp = "NE"; break;
+                    case 2: cmp = "LT"; break;
+                    case 3: cmp = "LE"; break;
+                    case 4: cmp = "GT"; break;
+                    case 5: cmp = "GE"; break;
+                    case 6: cmp = "EXISTS"; break;
+                    case 7: cmp = "NOT_EXISTS"; break;
+                    default: cmp = "UNKNOWN"; break;
+                }
+                return "DOC PATH FILTER PATH_ID " + std::to_string(s->path_expr) + " OP " + cmp +
+                       " VALUE_REF " + std::to_string(s->value_expr);
+            }
+            case parser::v3::ASTKind::AST_TS_BUCKET_AGG: {
+                auto* s = static_cast<const parser::v3::TsBucketAggStmt*>(stmt);
+                std::string out = "TS BUCKET AGG TIME_EXPR " + std::to_string(s->time_expr) +
+                                  " BUCKET_NS " + std::to_string(s->bucket_size) + " AGG_REFS (";
+                for (size_t i = 0; i < s->agg_refs.size(); ++i) {
+                    if (i > 0) {
+                        out.push_back(',');
+                    }
+                    out.append(std::to_string(s->agg_refs[i]));
+                }
+                out.push_back(')');
+                return out;
+            }
+            case parser::v3::ASTKind::AST_SEARCH_QUERY_DSL: {
+                auto* s = static_cast<const parser::v3::SearchQueryDslStmt*>(stmt);
+                const char* scorer = "BM25";
+                switch (s->scorer_id) {
+                    case 1: scorer = "BM25"; break;
+                    case 2: scorer = "TFIDF"; break;
+                    case 3: scorer = "DFR"; break;
+                    default: scorer = "UNKNOWN"; break;
+                }
+                std::string payload = idToTraceText(pool, s->dsl_payload_json);
+                return "SEARCH QUERY DSL TARGET_INDEX " + std::to_string(s->target_index) +
+                       " PAYLOAD '" + payload + "' SCORER " + scorer;
+            }
+            case parser::v3::ASTKind::AST_VECTOR_ANN_QUERY: {
+                auto* s = static_cast<const parser::v3::VectorAnnQueryStmt*>(stmt);
+                const char* metric = "UNKNOWN";
+                switch (s->metric) {
+                    case 1: metric = "L2"; break;
+                    case 2: metric = "COSINE"; break;
+                    case 3: metric = "DOT"; break;
+                    default: metric = "UNKNOWN"; break;
+                }
+                return "VECTOR ANN QUERY INDEX " + std::to_string(s->vector_expr) + " METRIC " + metric +
+                       " TOPK " + std::to_string(s->k) + " EF_SEARCH " + std::to_string(s->ef_search);
+            }
+            case parser::v3::ASTKind::AST_HYBRID_BRIDGE: {
+                auto* s = static_cast<const parser::v3::HybridBridgeStmt*>(stmt);
+                const char* mode = "UNKNOWN";
+                switch (s->bridge_mode) {
+                    case 1: mode = "HASH_SHUFFLE"; break;
+                    case 2: mode = "RANGE_SHUFFLE"; break;
+                    case 3: mode = "BROADCAST"; break;
+                    default: mode = "UNKNOWN"; break;
+                }
+                return "HYBRID BRIDGE EXCHANGE SOURCE_TRACK " + std::to_string(s->source_track) +
+                       " TARGET_TRACK " + std::to_string(s->target_track) + " MODE " + mode;
+            }
+            case parser::v3::ASTKind::AST_UDR_COMPILE_DISPATCH: {
+                auto* s = static_cast<const parser::v3::UdrCompileDispatchStmt*>(stmt);
+                return udrCanonicalKeyValueTrace(
+                    "UDR_COMPILE_DISPATCH",
+                    s->validate_only,
+                    "profile_id",
+                    toUpperAscii(idToTraceText(pool, s->profile_id)),
+                    "payload_format",
+                    toUpperAscii(idToTraceText(pool, s->payload_format)),
+                    "payload_bytes",
+                    idToTraceText(pool, s->payload_bytes),
+                    "session_signature",
+                    idToTraceText(pool, s->session_signature));
+            }
+            case parser::v3::ASTKind::AST_UDR_EMBEDDED_SQL_COMPILE: {
+                auto* s = static_cast<const parser::v3::UdrEmbeddedSqlCompileStmt*>(stmt);
+                return udrCanonicalKeyValueTrace(
+                    "UDR_EMBEDDED_SQL_COMPILE",
+                    s->validate_only,
+                    "template_id",
+                    idToTraceText(pool, s->template_id),
+                    "sql_text",
+                    idToTraceText(pool, s->sql_text),
+                    "profile_id",
+                    toUpperAscii(idToTraceText(pool, s->profile_id)),
+                    "session_signature",
+                    idToTraceText(pool, s->session_signature));
+            }
+            case parser::v3::ASTKind::AlterSystemStmt: {
+                auto* s = static_cast<const parser::v3::AlterSystemStmt*>(stmt);
+                if (s->value == nullptr || s->value->kind() != parser::v3::ASTKind::LiteralExpr) {
+                    break;
+                }
+                const auto* lit = static_cast<const parser::v3::LiteralExpr*>(s->value);
+                if (lit->literal_type != parser::v3::LiteralType::STRING ||
+                    lit->string_value == parser::v3::StringPool::INVALID_ID) {
+                    break;
+                }
+                const std::string key = toUpperAscii(idToTraceText(pool, s->name));
+                if (key == "GRAPH.PATH.QUANTIFIED" ||
+                    key == "SEARCH.JOIN_FIELD.MAPPING" ||
+                    key == "SEARCH.PERCOLATOR.FIELD" ||
+                    key == "REDIS.LUA.EVAL" ||
+                    key == "REDIS.STREAM.GROUP.CREATE" ||
+                    key == "REDIS.STREAM.GROUP.READ" ||
+                    key == "REDIS.STREAM.GROUP.CLAIM") {
+                    return idToTraceText(pool, lit->string_value);
+                }
+                break;
+            }
+            default:
+                break;
+        }
+
+        return {};
+    }
+
+    static std::string normalizeSqlForTrace(const std::string& sql,
+                                            const parser::v3::Statement* stmt,
+                                            const parser::v3::StringPool& pool) {
+        std::string canonical = canonicalAstTraceSql(stmt, pool);
+        if (!canonical.empty()) {
+            return canonical;
+        }
+
         std::string out;
         out.reserve(sql.size());
 
@@ -299,6 +523,18 @@ private:
 
         if (!out.empty() && out.back() == ' ') {
             out.pop_back();
+        }
+
+        // Native canonical rule: generator mutation normalizes to SET SEQUENCE.
+        if (stmt != nullptr && stmt->kind() == parser::v3::ASTKind::SetStmt) {
+            const auto* set_stmt = static_cast<const parser::v3::SetStmt*>(stmt);
+            if (set_stmt->set_type == parser::v3::SetStmt::SetType::GENERATOR) {
+                constexpr const char* kGeneratorPrefix = "SET GENERATOR ";
+                constexpr const char* kSequencePrefix = "SET SEQUENCE ";
+                if (out.rfind(kGeneratorPrefix, 0) == 0) {
+                    out.replace(0, std::char_traits<char>::length(kGeneratorPrefix), kSequencePrefix);
+                }
+            }
         }
         return out;
     }

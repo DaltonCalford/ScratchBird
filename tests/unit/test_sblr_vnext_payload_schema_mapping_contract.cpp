@@ -46,7 +46,7 @@ TEST(SBLRVNextPayloadSchemaMappingContractTest, OpcodeToSchemaMappingsAreDetermi
         uint16_t opcode;
         const char *schema_name;
     };
-    const std::array<MappingCase, 7> mapping = {{
+    const std::array<MappingCase, 9> mapping = {{
         {static_cast<uint16_t>(Opcode::SBLR3_OP_DOC_PATH_FILTER), "SCHEMA_DOC_PATH_FILTER"},
         {static_cast<uint16_t>(Opcode::SBLR3_OP_TS_BUCKET_AGG), "SCHEMA_TS_BUCKET_AGG"},
         {static_cast<uint16_t>(Opcode::SBLR3_OP_COL_SCAN), "SCHEMA_COL_SCAN"},
@@ -54,6 +54,8 @@ TEST(SBLRVNextPayloadSchemaMappingContractTest, OpcodeToSchemaMappingsAreDetermi
         {static_cast<uint16_t>(Opcode::SBLR3_OP_VECTOR_ANN), "SCHEMA_VECTOR_ANN"},
         {static_cast<uint16_t>(Opcode::SBLR3_OP_HYBRID_BRIDGE_EXCHANGE), "SCHEMA_HYBRID_BRIDGE_EXCHANGE"},
         {static_cast<uint16_t>(Opcode::SBLR3_OP_HYBRID_BRIDGE_MATERIALIZE), "SCHEMA_HYBRID_BRIDGE_MATERIALIZE"},
+        {static_cast<uint16_t>(Opcode::SBLR3_OP_UDR_COMPILE_DISPATCH), "SCHEMA_UDR_COMPILE_DISPATCH"},
+        {static_cast<uint16_t>(Opcode::SBLR3_OP_UDR_EMBEDDED_SQL_COMPILE), "SCHEMA_UDR_EMBEDDED_SQL_COMPILE"},
     }};
 
     for (const auto &entry : mapping)
@@ -141,6 +143,26 @@ TEST(SBLRVNextPayloadSchemaMappingContractTest, SchemaFieldContractsMatchSpecifi
     assertField(multi_model, 3, "query_expr", FieldType::OPT);
     assertField(multi_model, 4, "document", FieldType::OPT);
     assertField(multi_model, 5, "options", FieldType::SCHEMA);
+
+    const SchemaDef *udr_compile =
+        scratchbird::sblr::v3::lookupSchema("SCHEMA_UDR_COMPILE_DISPATCH");
+    ASSERT_NE(nullptr, udr_compile);
+    ASSERT_EQ(5u, udr_compile->fields.size());
+    assertField(udr_compile, 0, "validate_only", FieldType::BOOL);
+    assertField(udr_compile, 1, "profile_id", FieldType::STRING);
+    assertField(udr_compile, 2, "payload_format", FieldType::STRING);
+    assertField(udr_compile, 3, "payload_bytes", FieldType::STRING);
+    assertField(udr_compile, 4, "session_signature", FieldType::STRING);
+
+    const SchemaDef *udr_template =
+        scratchbird::sblr::v3::lookupSchema("SCHEMA_UDR_EMBEDDED_SQL_COMPILE");
+    ASSERT_NE(nullptr, udr_template);
+    ASSERT_EQ(5u, udr_template->fields.size());
+    assertField(udr_template, 0, "validate_only", FieldType::BOOL);
+    assertField(udr_template, 1, "template_id", FieldType::STRING);
+    assertField(udr_template, 2, "sql_text", FieldType::STRING);
+    assertField(udr_template, 3, "profile_id", FieldType::STRING);
+    assertField(udr_template, 4, "session_signature", FieldType::STRING);
 }
 
 TEST(SBLRVNextPayloadSchemaMappingContractTest, SchemaRoundTripAndEnumValidation)
@@ -180,6 +202,20 @@ TEST(SBLRVNextPayloadSchemaMappingContractTest, SchemaRoundTripAndEnumValidation
         static_cast<uint16_t>(Opcode::SBLR3_OP_HYBRID_BRIDGE_MATERIALIZE),
         Value::Object{{"buffer_class", Value(static_cast<uint64_t>(2))},
                       {"row_shape_ref", Value(static_cast<uint64_t>(77))}}));
+    instructions.push_back(makeInstruction(
+        static_cast<uint16_t>(Opcode::SBLR3_OP_UDR_COMPILE_DISPATCH),
+        Value::Object{{"validate_only", Value(false)},
+                      {"profile_id", Value(std::string("native"))},
+                      {"payload_format", Value(std::string("SQL_TEXT"))},
+                      {"payload_bytes", Value(std::string("payload_1"))},
+                      {"session_signature", Value(std::string("sig_1"))}}));
+    instructions.push_back(makeInstruction(
+        static_cast<uint16_t>(Opcode::SBLR3_OP_UDR_EMBEDDED_SQL_COMPILE),
+        Value::Object{{"validate_only", Value(true)},
+                      {"template_id", Value(std::string("tpl_1"))},
+                      {"sql_text", Value(std::string("SELECT 1"))},
+                      {"profile_id", Value(std::string("native"))},
+                      {"session_signature", Value(std::string("sig_2"))}}));
     instructions.push_back(makeInstruction(
         static_cast<uint16_t>(Opcode::SBLR3_SESSION_RESET),
         Value::Object{{"action", Value(static_cast<uint64_t>(1))},

@@ -32,6 +32,7 @@
 #include <vector>
 #include <string>
 #include <memory>
+#include <set>
 
 namespace scratchbird::parser::v3 {
 
@@ -67,6 +68,15 @@ private:
 };
 
 /**
+ * Parser capability/profile options used for deterministic feature gates.
+ */
+struct ParserOptions {
+    std::string active_profile = "native";
+    std::set<std::string> enabled_feature_keys;
+    std::set<std::string> disabled_feature_keys;
+};
+
+/**
  * SQL Parser v3.0
  *
  * Parses SQL text into an unresolved AST using the Gatekeeper keyword model.
@@ -78,6 +88,7 @@ public:
      * @param input SQL source text
      */
     explicit Parser(std::string_view input);
+    Parser(std::string_view input, ParserOptions options);
     ~Parser();
 
     // Non-copyable
@@ -121,6 +132,13 @@ private:
     ParserState state_;
     ASTArena arena_;
     std::vector<ParseError> errors_;
+    ParserOptions options_;
+    std::string active_profile_;
+    std::set<std::string> capability_feature_keys_;
+
+    void initializeCapabilityProfile();
+    bool requireFeature(const char* feature_key);
+    static std::set<std::string> defaultCapabilitySetForProfile(std::string_view profile);
 
     // Error handling
     void error(const std::string& message);
@@ -136,6 +154,9 @@ private:
     // ==========================================================================
 
     Statement* parseStatementInternal();
+    Statement* parseRecreate();
+    Statement* parseDeclareTopLevel();
+    CreateUdrStmt* parseDeclareExternalFunction();
 
     // DDL statements
     Statement* parseCreate();
@@ -151,6 +172,12 @@ private:
     Statement* parseCreateConnectionRule();
     Statement* parseCreateToken();
     Statement* parseCreateQuotaProfile();
+    Statement* parseCreateExtension();
+    Statement* parseCreatePublication();
+    Statement* parseCreateSubscription();
+    Statement* parseCreateAccessMethod();
+    Statement* parseCreateStatistics();
+    Statement* parseCreateTransform();
     CreateTableStmt* parseCreateTable(bool or_replace = false,
                                       TempTableType temp_type = TempTableType::NONE);
     CreateIndexStmt* parseCreateIndex();
@@ -186,6 +213,8 @@ private:
     Statement* parseAlterConnectionRule();
     Statement* parseAlterToken();
     Statement* parseAlterQuotaProfile();
+    Statement* parseAlterExtension();
+    Statement* parseAlterUser();
     AlterTableStmt* parseAlterTable();
     AlterSchemaStmt* parseAlterSchema();
     AlterDatabaseStmt* parseAlterDatabase();
@@ -203,6 +232,9 @@ private:
     Statement* parseDropConnectionRule();
     Statement* parseDropToken();
     Statement* parseDropQuotaProfile();
+    Statement* parseDropExtension();
+    Statement* parseDropPublication();
+    Statement* parseDropSubscription();
     DropTableStmt* parseDropTable();
     DropIndexStmt* parseDropIndex();
     DropViewStmt* parseDropView();
@@ -217,6 +249,7 @@ private:
     DropTriggerStmt* parseDropTrigger();
     DropPackageStmt* parseDropPackage();
     DropRoleStmt* parseDropRole();
+    DropUserStmt* parseDropUser();
     DropGroupStmt* parseDropGroup();
     DropPolicyStmt* parseDropPolicy();
     DropExceptionStmt* parseDropException();
@@ -262,9 +295,16 @@ private:
 
     // INSERT statement
     InsertStmt* parseInsert();
+    InsertStmt* parseUpdateOrInsert();
     void parseInsertColumns(InsertStmt* stmt);
     void parseValuesClause(InsertStmt* stmt);
     void parseOnConflict(InsertStmt* stmt);
+    void parseConsistencyClause(StringPool::StringId& consistency_level,
+                                StringPool::StringId& serial_consistency_level);
+    void parseConditionalWriteClause(bool allow_if_not_exists,
+                                     bool& conditional_if_exists,
+                                     bool& conditional_if_not_exists,
+                                     Expression*& conditional_if);
 
     // UPDATE statement
     UpdateStmt* parseUpdate();
@@ -300,11 +340,23 @@ private:
     ShowStmt* parseDescribe();
     ExplainStmt* parseExplain();
     AnalyzeStmt* parseAnalyze();
+    Statement* parseSecurityLabel();
     AlterIndexStmt* parseValidateIndex();
     SweepDatabaseStmt* parseSweep();
     ExecuteJobStmt* parseExecuteJob();
     CancelJobRunStmt* parseCancelJobRun();
     ExecuteProcedureStmt* parseCall();
+    Statement* parseDocPathFilterSurface();
+    Statement* parseTimeBucketAggSurface();
+    Statement* parseSearchDslSurface();
+    Statement* parseVectorAnnSurface();
+    Statement* parseHybridBridgeSurface();
+    Statement* parseGraphPathSurface();
+    Statement* parseRedisLuaEvalSurface();
+    Statement* parseRedisStreamGroupSurface();
+    Statement* parseUdrCompileSurface();
+    Statement* parseUdrEmbeddedSqlTemplateSurface(bool validate_only, bool prefixed_by_udr);
+    Statement* parseInstallExtensionSurface(bool is_load_surface);
 
     // ==========================================================================
     // DCL Statements (Data Control Language)
@@ -388,6 +440,12 @@ private:
     void parseUniqueConstraint(TableConstraint* constraint);
     void parseForeignKeyConstraint(TableConstraint* constraint);
     void parseCheckConstraint(TableConstraint* constraint);
+    void parseExcludeConstraint(TableConstraint* constraint);
+    void parseDeferrabilityClause(bool allow_deferrable,
+                                  bool& deferrable,
+                                  bool& not_deferrable,
+                                  bool& initially_deferred,
+                                  bool& initially_immediate);
     ForeignKeyAction parseForeignKeyAction();
 
     // ==========================================================================
