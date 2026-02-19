@@ -64,6 +64,14 @@ Disabled features fail deterministically with `PRS_0503`.
 - Extension/replication/admin surfaces: `EXTENSION`, `PUBLICATION`, `SUBSCRIPTION`, `ACCESS METHOD`, `STATISTICS`, `TRANSFORM`
 - Native extension objects: `SEARCH INDEX`, `VECTOR INDEX`, `MEASUREMENT`, `SCHEDULE`, `CONNECTION RULE`, `TOKEN`, `QUOTA PROFILE`
 
+`CREATE DATABASE` parser supports both native and emulated forms:
+
+- Native form: `CREATE DATABASE <schema_path> ...`
+- Emulated form: `CREATE DATABASE EMULATED <dialect> [ON SERVER <server>] <source_spec> ...`
+  - Dialect allow-list check is enforced in parser.
+  - Source spec can encode server/path patterns and is normalized into internal remote emulation path components.
+  - Supports `WITH OPTIONS(...)` and `ALIAS/ALIASES ...`.
+
 ### 4.2 ALTER
 
 `parseAlter()` supports:
@@ -335,9 +343,74 @@ Implemented parse coverage includes:
   - `WITH TIES` requires `ORDER BY`
   - `WITH TIES` rejected with `SKIP LOCKED`
 
+### 9.1 WITH / CTE Detail (Requested Audit Depth)
+
+`WITH` clause implementation (`parseWithClause`) supports:
+
+- `WITH RECURSIVE`
+- Per-CTE column list: `cte_name(col1, col2, ...)`
+- `AS (...)` CTE body with nested `WITH` + `SELECT`
+- Materialization hinting:
+  - `AS MATERIALIZED (...)`
+  - `AS NOT MATERIALIZED (...)`
+- Recursive traversal controls:
+  - `SEARCH BREADTH FIRST BY ... SET ...`
+  - `SEARCH DEPTH FIRST BY ... SET ...`
+  - `CYCLE col[, ...] SET mark_col [TO expr] [DEFAULT expr] USING path_col`
+
+CTEs are attached to `SELECT`, and also route through `WITH` statement entry for `INSERT`, `UPDATE`, and `DELETE`.
+
+### 9.2 DML Detail (Requested Audit Depth)
+
+`INSERT`:
+
+- `OVERRIDING SYSTEM|USER VALUE`
+- Sources: `VALUES (...)`, `SELECT ...`, `DEFAULT VALUES`
+- `ON CONFLICT` target by column list or `ON CONSTRAINT ...`
+- Actions: `DO NOTHING` / `DO UPDATE SET ... [WHERE ...]`
+- Native consistency controls: `WITH|USING CONSISTENCY ... [AND SERIAL CONSISTENCY ...]`
+- Conditional write controls: `IF|WHEN EXISTS|NOT EXISTS|<expr>`
+- `RETURNING ...`
+
+`UPDATE`:
+
+- Alias handling
+- `SET ...`
+- PostgreSQL-style `FROM` + joins
+- `WHERE ...`
+- Consistency + conditional write controls
+- `RETURNING ...`
+
+`DELETE`:
+
+- `DELETE FROM ...`
+- Alias handling
+- PostgreSQL-style `USING` + joins
+- `WHERE ...`
+- Consistency + conditional write controls
+- `RETURNING ...`
+
+`COPY`:
+
+- Table or query form: `COPY table ...` or `COPY (SELECT ...) TO ...`
+- Directions/targets: `FROM|TO`, `PROGRAM`, `STDIN`, `STDOUT`, file literal
+- Option block (`WITH (...)` or bare `(...)`) with keys including:
+  - `FORMAT` (`CSV|TEXT|BINARY`)
+  - `DELIMITER`, `NULL`, `HEADER`, `QUOTE`, `ESCAPE`, `ENCODING`
+  - `BATCH_SIZE`, `MAX_ERRORS`, `ON_ERROR` (`ABORT|SKIP`)
+
+`MERGE`:
+
+- `MERGE INTO ... USING ... ON ...`
+- `WHEN MATCHED THEN UPDATE|DELETE`
+- `WHEN NOT MATCHED [BY TARGET] THEN INSERT ... VALUES ...`
+- `WHEN NOT MATCHED BY SOURCE THEN UPDATE|DELETE`
+
 ## 10. Known Partial/Gap Areas In 0.1.0
 
 - `CREATE TYPE` parser is rich, but emitter currently writes minimal placeholder payload for `SBLR3_CREATE_TYPE` (`src/parser/v3_emitter.cpp`), and no `SBLR3_CREATE_TYPE` execution handler is present in `src/sblr/executor.cpp`.
+- `CREATE DATABASE EMULATED` parser is detailed, but `CreateDatabaseStmt` emission currently uses minimal `SBLR3_CREATE_DATABASE` payload fields (`name` + placeholders) and does not carry the full parser-derived emulation contract (`source_spec`, option list, aliases, normalized remote path) in that emitter path.
+- V3 executor opcode routing explicitly handles `SBLR3_CREATE_DATABASE_EMULATED` in vNext-contract dispatch, not `SBLR3_CREATE_DATABASE` in the V3 mutation switch. This means database-create behavior currently spans mixed paths and requires normalization/closure for a single canonical V3 contract.
 - `ALTER SEARCH INDEX` and `ALTER VECTOR INDEX` currently support only `REBUILD` (with optional `ONLINE|OFFLINE`).
 - `SET PARSER VERSION` is explicitly parsed then rejected as unsupported.
 - `REVOKE` privilege token set is narrower than `GRANT` (`TRUNCATE`, `REFERENCES`, `TRIGGER`, `USAGE` are not accepted in current `parseRevoke()`).
