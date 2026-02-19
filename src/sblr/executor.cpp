@@ -40945,11 +40945,32 @@ namespace scratchbird
                     err_out = "DOMAIN type payload empty";
                     return false;
                 }
+                // Array cardinality is carried separately in column metadata; the domain lookup key is the
+                // base domain name/path only.
+                std::string lookup_domain_ref = domain_ref;
+                if (auto bracket = lookup_domain_ref.find('[');
+                    bracket != std::string::npos)
+                {
+                    lookup_domain_ref.erase(bracket);
+                }
+                while (!lookup_domain_ref.empty() &&
+                       std::isspace(static_cast<unsigned char>(lookup_domain_ref.back())) != 0)
+                {
+                    lookup_domain_ref.pop_back();
+                }
+                if (lookup_domain_ref.empty())
+                {
+                    err_out = "DOMAIN type payload empty";
+                    return false;
+                }
 
                 core::ErrorContext ctx;
-                if (schema_hint && domain_ref.find('.') == std::string::npos)
+                if (schema_hint && lookup_domain_ref.find('.') == std::string::npos)
                 {
-                    auto status = domain_mgr->getDomain(*schema_hint, domain_ref, domain_info_out, &ctx);
+                    auto status = domain_mgr->getDomain(*schema_hint,
+                                                        lookup_domain_ref,
+                                                        domain_info_out,
+                                                        &ctx);
                     if (status == core::Status::OK)
                     {
                         domain_id_out = domain_info_out.domain_id;
@@ -40959,7 +40980,7 @@ namespace scratchbird
 
                 core::ID schema_id;
                 std::string resolved_domain_name;
-                auto status = resolveSchemaIdForQualifiedName(domain_ref,
+                auto status = resolveSchemaIdForQualifiedName(lookup_domain_ref,
                                                               resolved_domain_name,
                                                               schema_id,
                                                               &ctx,
@@ -40967,7 +40988,7 @@ namespace scratchbird
                 if (status != core::Status::OK)
                 {
                     err_out = ctx.message.empty()
-                        ? ("Schema not found for domain '" + domain_ref + "'")
+                        ? ("Schema not found for domain '" + lookup_domain_ref + "'")
                         : ctx.message;
                     return false;
                 }
@@ -40976,7 +40997,7 @@ namespace scratchbird
                 if (status != core::Status::OK)
                 {
                     err_out = ctx.message.empty()
-                        ? ("Domain not found: " + domain_ref)
+                        ? ("Domain not found: " + lookup_domain_ref)
                         : ctx.message;
                     return false;
                 }
@@ -58137,6 +58158,86 @@ namespace scratchbird
                             return false;
                         };
 
+                        auto trimAsciiCopy = [](const std::string& input) {
+                            size_t start = 0;
+                            while (start < input.size() &&
+                                   std::isspace(static_cast<unsigned char>(input[start])) != 0)
+                            {
+                                ++start;
+                            }
+                            size_t end = input.size();
+                            while (end > start &&
+                                   std::isspace(static_cast<unsigned char>(input[end - 1])) != 0)
+                            {
+                                --end;
+                            }
+                            return input.substr(start, end - start);
+                        };
+
+                        auto payloadFieldToStringList =
+                            [&](const scratchbird::sblr::v3::Value::Object& obj,
+                                const std::string& key,
+                                std::vector<std::string>& out) -> bool {
+                            auto it = obj.find(key);
+                            if (it == obj.end() || it->second.isNull())
+                            {
+                                return false;
+                            }
+
+                            auto normalize_and_append = [&](const std::string& value) {
+                                std::string item = trimAsciiCopy(value);
+                                if (!item.empty())
+                                {
+                                    out.push_back(std::move(item));
+                                }
+                            };
+
+                            if (auto list = std::get_if<scratchbird::sblr::v3::Value::List>(&it->second.data))
+                            {
+                                for (const auto& item : *list)
+                                {
+                                    if (item.isNull())
+                                    {
+                                        continue;
+                                    }
+                                    if (auto s = std::get_if<std::string>(&item.data))
+                                    {
+                                        normalize_and_append(*s);
+                                        continue;
+                                    }
+                                    if (auto u = std::get_if<uint64_t>(&item.data))
+                                    {
+                                        normalize_and_append(std::to_string(*u));
+                                        continue;
+                                    }
+                                    if (auto i = std::get_if<int64_t>(&item.data))
+                                    {
+                                        normalize_and_append(std::to_string(*i));
+                                        continue;
+                                    }
+                                    if (auto b = std::get_if<bool>(&item.data))
+                                    {
+                                        normalize_and_append(*b ? "true" : "false");
+                                        continue;
+                                    }
+                                }
+                                return true;
+                            }
+
+                            if (auto text = std::get_if<std::string>(&it->second.data))
+                            {
+                                std::string token;
+                                std::stringstream ss(*text);
+                                while (std::getline(ss, token, ','))
+                                {
+                                    normalize_and_append(token);
+                                }
+                                return true;
+                            }
+
+                            return false;
+                        };
+
                         auto executeUdrCompileBridgeOpcode =
                             [&](scratchbird::sblr::v3::Opcode udr_opcode,
                                 const scratchbird::sblr::v3::Value::Object& udr_payload) -> ExecutionResult {
@@ -58234,13 +58335,221 @@ namespace scratchbird
                                 request.sandbox_policy.allow_filesystem_write = bool_opt;
                             }
 
+                            std::string artifact_preference_text;
+                            std::string host_api_abi_version;
+                            std::string optimization_level = "O2";
+                            std::vector<std::string> target_triples;
+                            bool allow_interpreter_fallback = true;
+                            bool has_allow_interpreter_fallback = false;
+                            bool native_artifact_udr_enabled = true;
+                            bool has_native_artifact_udr_enabled = false;
+                            std::string native_execution_mode = "INTERPRETER_ONLY";
+                            std::vector<std::string> native_target_allowlist;
+                            std::string native_host_api_abi_version;
+
+                            const bool has_artifact_preference =
+                                payloadFieldToString(udr_payload, "artifact_preference", artifact_preference_text);
+                            const bool has_target_triples =
+                                payloadFieldToStringList(udr_payload, "target_triples", target_triples);
+                            const bool has_host_api_abi_version =
+                                payloadFieldToString(udr_payload, "host_api_abi_version", host_api_abi_version);
+                            const bool has_optimization_level =
+                                payloadFieldToString(udr_payload, "optimization_level", optimization_level);
+                            if (payloadFieldToBool(udr_payload, "allow_interpreter_fallback", bool_opt))
+                            {
+                                allow_interpreter_fallback = bool_opt;
+                                has_allow_interpreter_fallback = true;
+                            }
+                            const bool has_native_execution_mode =
+                                payloadFieldToString(udr_payload, "native_execution_mode", native_execution_mode);
+                            if (payloadFieldToBool(udr_payload, "native_artifact_udr_enabled", bool_opt))
+                            {
+                                native_artifact_udr_enabled = bool_opt;
+                                has_native_artifact_udr_enabled = true;
+                            }
+                            const bool has_native_target_allowlist =
+                                payloadFieldToStringList(udr_payload, "native_target_triples", native_target_allowlist);
+                            const bool has_native_host_api_abi =
+                                payloadFieldToString(udr_payload, "native_host_api_abi_version", native_host_api_abi_version);
+
+                            auto normalize_upper = [&](const std::string& value) {
+                                return scratchbird::core::IdentifierUtils::toUpper(
+                                    trimAsciiCopy(value));
+                            };
+
+                            const bool has_native_request_shape =
+                                has_target_triples || has_host_api_abi_version ||
+                                has_optimization_level || has_allow_interpreter_fallback;
+                            const bool native_policy_requested =
+                                has_native_execution_mode || has_artifact_preference ||
+                                has_native_request_shape || has_native_artifact_udr_enabled ||
+                                has_native_target_allowlist || has_native_host_api_abi;
+
+                            std::string native_mode_upper = "INTERPRETER_ONLY";
+                            scratchbird::udr::LanguageUdrArtifactPreference artifact_preference =
+                                scratchbird::udr::LanguageUdrArtifactPreference::SBLR_ONLY;
+
+                            if (native_policy_requested)
+                            {
+                                native_mode_upper = normalize_upper(native_execution_mode);
+                                if (has_native_execution_mode)
+                                {
+                                    if (native_mode_upper == "INTERPRETER_ONLY")
+                                    {
+                                        artifact_preference = scratchbird::udr::LanguageUdrArtifactPreference::SBLR_ONLY;
+                                    }
+                                    else if (native_mode_upper == "REQUIRE_NATIVE")
+                                    {
+                                        artifact_preference = scratchbird::udr::LanguageUdrArtifactPreference::NATIVE_REQUIRED;
+                                    }
+                                    else if (native_mode_upper == "PREFER_NATIVE_WITH_FALLBACK" ||
+                                             native_mode_upper.empty())
+                                    {
+                                        artifact_preference = scratchbird::udr::LanguageUdrArtifactPreference::NATIVE_PREFERRED;
+                                    }
+                                    else
+                                    {
+                                        core::VNextMetricsEventModel::recordExecutorEvent(
+                                            "vnext_opcode_dispatch", "reject", "UDR_1506");
+                                        return ExecutionResult("UDR_1506: invalid native_execution_mode");
+                                    }
+                                }
+
+                                if (has_artifact_preference)
+                                {
+                                    const std::string pref_upper = normalize_upper(artifact_preference_text);
+                                    if (pref_upper == "SBLR_ONLY")
+                                    {
+                                        artifact_preference = scratchbird::udr::LanguageUdrArtifactPreference::SBLR_ONLY;
+                                    }
+                                    else if (pref_upper == "NATIVE_PREFERRED")
+                                    {
+                                        artifact_preference = scratchbird::udr::LanguageUdrArtifactPreference::NATIVE_PREFERRED;
+                                    }
+                                    else if (pref_upper == "NATIVE_REQUIRED")
+                                    {
+                                        artifact_preference = scratchbird::udr::LanguageUdrArtifactPreference::NATIVE_REQUIRED;
+                                    }
+                                    else
+                                    {
+                                        core::VNextMetricsEventModel::recordExecutorEvent(
+                                            "vnext_opcode_dispatch", "reject", "UDR_1506");
+                                        return ExecutionResult("UDR_1506: invalid artifact_preference");
+                                    }
+                                }
+                                else if (has_native_request_shape &&
+                                         artifact_preference == scratchbird::udr::LanguageUdrArtifactPreference::SBLR_ONLY)
+                                {
+                                    artifact_preference = scratchbird::udr::LanguageUdrArtifactPreference::NATIVE_PREFERRED;
+                                }
+
+                                if (has_native_execution_mode &&
+                                    native_mode_upper == "INTERPRETER_ONLY")
+                                {
+                                    artifact_preference = scratchbird::udr::LanguageUdrArtifactPreference::SBLR_ONLY;
+                                }
+
+                                if (!has_allow_interpreter_fallback &&
+                                    has_native_execution_mode &&
+                                    native_mode_upper == "REQUIRE_NATIVE")
+                                {
+                                    allow_interpreter_fallback = false;
+                                }
+                            }
+
+                            if (has_native_artifact_udr_enabled && !native_artifact_udr_enabled)
+                            {
+                                if (artifact_preference == scratchbird::udr::LanguageUdrArtifactPreference::NATIVE_REQUIRED)
+                                {
+                                    core::VNextMetricsEventModel::recordExecutorEvent(
+                                        "vnext_opcode_dispatch", "reject", "UDR_1516");
+                                    return ExecutionResult(
+                                        "UDR_1516: native-required requested but native artifact compiler is disabled");
+                                }
+                                artifact_preference = scratchbird::udr::LanguageUdrArtifactPreference::SBLR_ONLY;
+                            }
+
+                            if (has_native_host_api_abi && !has_host_api_abi_version)
+                            {
+                                host_api_abi_version = native_host_api_abi_version;
+                            }
+
+                            if (artifact_preference != scratchbird::udr::LanguageUdrArtifactPreference::SBLR_ONLY)
+                            {
+                                if (!has_target_triples || target_triples.empty())
+                                {
+                                    core::VNextMetricsEventModel::recordExecutorEvent(
+                                        "vnext_opcode_dispatch", "reject", "UDR_1506");
+                                    return ExecutionResult(
+                                        "UDR_1506: target_triples are required for native artifact compile preferences");
+                                }
+                                if (host_api_abi_version.empty())
+                                {
+                                    core::VNextMetricsEventModel::recordExecutorEvent(
+                                        "vnext_opcode_dispatch", "reject", "UDR_1506");
+                                    return ExecutionResult(
+                                        "UDR_1506: host_api_abi_version is required for native artifact compile preferences");
+                                }
+                            }
+
+                            if (has_native_target_allowlist && !native_target_allowlist.empty())
+                            {
+                                std::unordered_set<std::string> allowlist;
+                                for (const auto& triple : native_target_allowlist)
+                                {
+                                    allowlist.insert(triple);
+                                }
+                                for (const auto& requested : target_triples)
+                                {
+                                    if (allowlist.find(requested) == allowlist.end())
+                                    {
+                                        core::VNextMetricsEventModel::recordExecutorEvent(
+                                            "vnext_opcode_dispatch", "reject", "UDR_1517");
+                                        return ExecutionResult(
+                                            "UDR_1517: requested native target triple is not allowed by runtime policy");
+                                    }
+                                }
+                            }
+
+                            if (has_native_host_api_abi && !native_host_api_abi_version.empty() &&
+                                !host_api_abi_version.empty() &&
+                                host_api_abi_version != native_host_api_abi_version)
+                            {
+                                if (artifact_preference == scratchbird::udr::LanguageUdrArtifactPreference::NATIVE_REQUIRED ||
+                                    !allow_interpreter_fallback)
+                                {
+                                    core::VNextMetricsEventModel::recordExecutorEvent(
+                                        "vnext_opcode_dispatch", "reject", "UDR_1520");
+                                    return ExecutionResult(
+                                        "UDR_1520: host API ABI version mismatches runtime native policy");
+                                }
+                                artifact_preference = scratchbird::udr::LanguageUdrArtifactPreference::SBLR_ONLY;
+                            }
+
                             auto& registry = languageUdrCompileRegistry();
                             scratchbird::udr::LanguageUdrTestHarness harness(registry);
                             scratchbird::udr::LanguageUdrCompileResponse response{};
                             core::ErrorContext udr_ctx;
-                            core::Status udr_status = validate_only
-                                ? harness.validateOnly(request, response, &udr_ctx)
-                                : harness.compileSingle(request, response, &udr_ctx);
+                            core::Status udr_status = core::Status::OK;
+                            if (validate_only)
+                            {
+                                udr_status = harness.validateOnly(request, response, &udr_ctx);
+                            }
+                            else if (artifact_preference != scratchbird::udr::LanguageUdrArtifactPreference::SBLR_ONLY)
+                            {
+                                scratchbird::udr::LanguageUdrNativeCompileOptions native_options{};
+                                native_options.artifact_preference = artifact_preference;
+                                native_options.target_triples = target_triples;
+                                native_options.host_api_abi_version = host_api_abi_version;
+                                native_options.optimization_level = optimization_level;
+                                native_options.allow_interpreter_fallback = allow_interpreter_fallback;
+                                udr_status = harness.compileNativeOptional(
+                                    request, native_options, response, &udr_ctx);
+                            }
+                            else
+                            {
+                                udr_status = harness.compileSingle(request, response, &udr_ctx);
+                            }
 
                             if (udr_status != core::Status::OK)
                             {

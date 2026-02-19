@@ -147,22 +147,40 @@ TEST(SBLRVNextPayloadSchemaMappingContractTest, SchemaFieldContractsMatchSpecifi
     const SchemaDef *udr_compile =
         scratchbird::sblr::v3::lookupSchema("SCHEMA_UDR_COMPILE_DISPATCH");
     ASSERT_NE(nullptr, udr_compile);
-    ASSERT_EQ(5u, udr_compile->fields.size());
+    ASSERT_EQ(14u, udr_compile->fields.size());
     assertField(udr_compile, 0, "validate_only", FieldType::BOOL);
     assertField(udr_compile, 1, "profile_id", FieldType::STRING);
     assertField(udr_compile, 2, "payload_format", FieldType::STRING);
     assertField(udr_compile, 3, "payload_bytes", FieldType::STRING);
     assertField(udr_compile, 4, "session_signature", FieldType::STRING);
+    assertField(udr_compile, 5, "artifact_preference", FieldType::OPT);
+    assertField(udr_compile, 6, "target_triples", FieldType::OPT);
+    assertField(udr_compile, 7, "host_api_abi_version", FieldType::OPT);
+    assertField(udr_compile, 8, "optimization_level", FieldType::OPT);
+    assertField(udr_compile, 9, "allow_interpreter_fallback", FieldType::OPT);
+    assertField(udr_compile, 10, "native_execution_mode", FieldType::OPT);
+    assertField(udr_compile, 11, "native_artifact_udr_enabled", FieldType::OPT);
+    assertField(udr_compile, 12, "native_target_triples", FieldType::OPT);
+    assertField(udr_compile, 13, "native_host_api_abi_version", FieldType::OPT);
 
     const SchemaDef *udr_template =
         scratchbird::sblr::v3::lookupSchema("SCHEMA_UDR_EMBEDDED_SQL_COMPILE");
     ASSERT_NE(nullptr, udr_template);
-    ASSERT_EQ(5u, udr_template->fields.size());
+    ASSERT_EQ(14u, udr_template->fields.size());
     assertField(udr_template, 0, "validate_only", FieldType::BOOL);
     assertField(udr_template, 1, "template_id", FieldType::STRING);
     assertField(udr_template, 2, "sql_text", FieldType::STRING);
     assertField(udr_template, 3, "profile_id", FieldType::STRING);
     assertField(udr_template, 4, "session_signature", FieldType::STRING);
+    assertField(udr_template, 5, "artifact_preference", FieldType::OPT);
+    assertField(udr_template, 6, "target_triples", FieldType::OPT);
+    assertField(udr_template, 7, "host_api_abi_version", FieldType::OPT);
+    assertField(udr_template, 8, "optimization_level", FieldType::OPT);
+    assertField(udr_template, 9, "allow_interpreter_fallback", FieldType::OPT);
+    assertField(udr_template, 10, "native_execution_mode", FieldType::OPT);
+    assertField(udr_template, 11, "native_artifact_udr_enabled", FieldType::OPT);
+    assertField(udr_template, 12, "native_target_triples", FieldType::OPT);
+    assertField(udr_template, 13, "native_host_api_abi_version", FieldType::OPT);
 }
 
 TEST(SBLRVNextPayloadSchemaMappingContractTest, SchemaRoundTripAndEnumValidation)

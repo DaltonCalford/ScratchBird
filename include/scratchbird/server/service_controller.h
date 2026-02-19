@@ -67,6 +67,7 @@ struct ProtocolConfig {
     bool ssl_required = false;
     uint32_t pool_min = 4;
     uint32_t pool_max = 64;
+    std::string owner_database = "main";
 };
 
 /**
@@ -501,7 +502,16 @@ private:
     void doShutdown();
     void updateStats();
     void checkListeners();
-    bool launchListenerProcess(ListenerProcess& listener, core::ErrorContext* ctx);
+    bool launchListenerProcess(ListenerProcess& listener,
+                               bool allow_config_file_bootstrap,
+                               const std::string& engine_endpoint,
+                               core::ErrorContext* ctx);
+    bool sendListenerManagementCommand(const ListenerProcess& listener,
+                                       const std::string& command,
+                                       std::string* response = nullptr,
+                                       core::ErrorContext* ctx = nullptr);
+    bool waitForListenerExit(ListenerProcess& listener, uint32_t timeout_ms);
+    void forceTerminateListener(ListenerProcess& listener);
 
     // Log helper
     void log(ServiceConfig::LogLevel level, const std::string& message);
@@ -552,6 +562,8 @@ private:
         ProtocolConfig config;
         std::string name;
         std::string binary;
+        std::string owner_database = "main";
+        std::string engine_endpoint;
         uint64_t start_count = 0;
         uint64_t restart_count = 0;
 #ifdef _WIN32

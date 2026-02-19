@@ -131,6 +131,23 @@ TEST_F(SqlToSblrTraceDeterminismTest, UdrCompileAliasFormsNormalizeToCanonicalTr
     EXPECT_EQ(trace_statement.digest().sblr_hash, trace_clause.digest().sblr_hash);
 }
 
+TEST_F(SqlToSblrTraceDeterminismTest, UdrCompileFunctionFormNormalizesToCanonicalTrace) {
+    const std::string statement_form =
+        "UDR COMPILE EMBEDDED PAYLOAD PROFILE native FORMAT SQL_TEXT BYTES payload_trace SESSION_SIGNATURE sig_trace";
+    const std::string function_form =
+        "SELECT COMPILE_EMBEDDED_PAYLOAD('native','SQL_TEXT','payload_trace','sig_trace')";
+
+    auto trace_statement = trace(statement_form);
+    auto trace_function = trace(function_form);
+    ASSERT_TRUE(trace_statement.success());
+    ASSERT_TRUE(trace_function.success());
+
+    EXPECT_EQ(trace_statement.digest().normalized_sql, trace_function.digest().normalized_sql);
+    EXPECT_EQ(trace_statement.digest().sql_hash, trace_function.digest().sql_hash);
+    EXPECT_EQ(trace_statement.digest().ast_hash, trace_function.digest().ast_hash);
+    EXPECT_EQ(trace_statement.digest().sblr_hash, trace_function.digest().sblr_hash);
+}
+
 TEST_F(SqlToSblrTraceDeterminismTest, UdrTemplateAliasFormsNormalizeToCanonicalTrace) {
     const std::string statement_form =
         "UDR VALIDATE SQL TEMPLATE TEMPLATE_ID tpl_trace SQL_TEXT 'SELECT 1' PROFILE native SESSION_SIGNATURE sig_trace";

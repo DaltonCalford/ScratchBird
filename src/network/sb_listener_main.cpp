@@ -26,6 +26,7 @@
 #include <iostream>
 #include <memory>
 #include <mutex>
+#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
@@ -63,9 +64,12 @@ namespace {
 
 std::atomic<bool> g_shutdown{false};
 std::atomic<bool> g_dump_stats{false};
+std::atomic<bool> g_draining{false};
+std::atomic<bool> g_force_shutdown{false};
 
 struct ListenerConfig {
     std::string protocol = SB_LISTENER_PROTOCOL;
+    std::string database_owner = "main";
     std::string bind_address = "0.0.0.0";
     uint16_t port = 0;
     std::string control_socket_dir;
@@ -144,7 +148,8 @@ std::string controlSocketPath(const ListenerConfig& config) {
     if (protocol.empty()) {
         protocol = "scratchbird";
     }
-    return "\\\\.\\pipe\\scratchbird\\" + protocol + "\\listener";
+    return "\\\\.\\pipe\\scratchbird\\" + protocol + "_" +
+           std::to_string(config.port) + "\\listener";
 #else
     if (config.control_socket_dir.empty()) {
         return std::string();
@@ -153,7 +158,29 @@ std::string controlSocketPath(const ListenerConfig& config) {
     if (!path.empty() && path.back() != '/') {
         path += '/';
     }
-    return path + "sb_listener." + config.protocol + ".sock";
+    return path + "sb_listener." + config.protocol + "." +
+           std::to_string(config.port) + ".sock";
+#endif
+}
+
+std::string managementSocketPath(const ListenerConfig& config) {
+#ifdef _WIN32
+    std::string protocol = config.protocol;
+    if (protocol.empty()) {
+        protocol = "scratchbird";
+    }
+    return "\\\\.\\pipe\\scratchbird\\" + protocol + "_" +
+           std::to_string(config.port) + "\\listener_mgmt";
+#else
+    if (config.control_socket_dir.empty()) {
+        return std::string();
+    }
+    std::string path = config.control_socket_dir;
+    if (!path.empty() && path.back() != '/') {
+        path += '/';
+    }
+    return path + "sb_listener." + config.protocol + "." +
+           std::to_string(config.port) + ".mgmt.sock";
 #endif
 }
 
@@ -185,6 +212,7 @@ struct ParserWorker {
     std::chrono::steady_clock::time_point started_at;
     bool recycle_requested = false;
     std::string recycle_reason;
+    uint64_t active_connection_id = 0;
 };
 
 struct PoolMetrics {
@@ -210,6 +238,7 @@ public:
           queue_wait_histogram_(queue_wait_histogram) {}
 
     bool start() {
+        draining_.store(false, std::memory_order_release);
         if (config_.engine_endpoint.empty()) {
             std::cerr << "Missing engine endpoint; parser pool disabled\n";
             return false;
@@ -224,6 +253,116 @@ public:
         }
         startHealthChecks();
         return true;
+    }
+
+    bool waitForWarm(std::chrono::milliseconds timeout) {
+        auto deadline = std::chrono::steady_clock::now() + timeout;
+        std::unique_lock<std::mutex> lock(mutex_);
+        while (warmWorkerCountLocked() < config_.pool_min) {
+            if (cv_.wait_until(lock, deadline) == std::cv_status::timeout) {
+                break;
+            }
+        }
+        return warmWorkerCountLocked() >= config_.pool_min;
+    }
+
+    size_t activeSessionCount() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return activeSessionCountLocked();
+    }
+
+    size_t warmWorkerCount() const {
+        std::lock_guard<std::mutex> lock(mutex_);
+        return warmWorkerCountLocked();
+    }
+
+    void setDraining(bool value) {
+        draining_.store(value, std::memory_order_release);
+        if (value) {
+            std::lock_guard<std::mutex> lock(mutex_);
+            for (auto& worker : workers_) {
+                if (!worker->running) {
+                    continue;
+                }
+                std::lock_guard<std::mutex> worker_lock(worker->mutex);
+                if (worker->state == WorkerState::IDLE) {
+                    worker->state = WorkerState::DRAINING;
+                }
+            }
+            updateMetricsLocked();
+        } else {
+            updateMetrics();
+            cv_.notify_all();
+        }
+    }
+
+    bool isDraining() const {
+        return draining_.load(std::memory_order_acquire);
+    }
+
+    bool applyRuntimeConfig(uint32_t pool_min,
+                            uint32_t pool_max,
+                            uint32_t health_check_interval_ms,
+                            std::string& error) {
+        if (pool_min == 0 || pool_max == 0 || pool_min > pool_max) {
+            error = "invalid_pool_bounds";
+            return false;
+        }
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            config_.pool_min = pool_min;
+            config_.pool_max = pool_max;
+            config_.health_check_interval_ms = health_check_interval_ms;
+        }
+        ensureMinWorkers();
+        cv_.notify_all();
+        return true;
+    }
+
+    bool terminateConnection(uint64_t connection_id, std::string& error) {
+        std::shared_ptr<ParserWorker> target;
+        {
+            std::lock_guard<std::mutex> lock(mutex_);
+            for (const auto& worker : workers_) {
+                if (!worker->running) {
+                    continue;
+                }
+                std::lock_guard<std::mutex> worker_lock(worker->mutex);
+                if (worker->session_active &&
+                    worker->active_connection_id == connection_id) {
+                    target = worker;
+                    break;
+                }
+            }
+        }
+        if (!target) {
+            error = "connection_not_found";
+            return false;
+        }
+
+#ifdef _WIN32
+        error = "not_implemented_windows";
+        return false;
+#else
+        if (::kill(static_cast<pid_t>(target->worker_pid), SIGTERM) != 0) {
+            error = std::string("kill_failed_errno_") + std::to_string(errno);
+            return false;
+        }
+        {
+            std::lock_guard<std::mutex> lock(target->mutex);
+            target->running = false;
+            target->state = WorkerState::FAULT;
+            target->session_active = false;
+            target->active_connection_id = 0;
+        }
+        if (metrics_.parser_recycle_total) {
+            metrics_.parser_recycle_total->inc(1.0,
+                                               {config_.protocol, "default", "admin_kill"});
+        }
+        updateMetrics();
+        ensureMinWorkers();
+        return true;
+#endif
     }
 
     void stop() {
@@ -328,6 +467,9 @@ public:
     }
 
     std::shared_ptr<ParserWorker> acquireWorker(std::chrono::milliseconds timeout) {
+        if (draining_.load(std::memory_order_acquire)) {
+            return nullptr;
+        }
         auto start = std::chrono::steady_clock::now();
         std::unique_lock<std::mutex> lock(mutex_);
 
@@ -346,6 +488,10 @@ public:
                               << " pid=" << worker->worker_pid << "\n";
                     return worker;
                 }
+            }
+
+            if (draining_.load(std::memory_order_acquire)) {
+                return nullptr;
             }
 
             if (config_.spawn_strategy != "prefork" && runningCountLocked() < config_.pool_max) {
@@ -420,6 +566,7 @@ public:
 
         worker->session_active = true;
         worker->session_start = std::chrono::steady_clock::now();
+        worker->active_connection_id = msg.header.request_id;
         return true;
     }
 
@@ -436,11 +583,12 @@ private:
     scratchbird::core::Histogram* handoff_histogram_;
     scratchbird::core::Histogram* queue_wait_histogram_;
 
-    std::mutex mutex_;
+    mutable std::mutex mutex_;
     std::condition_variable cv_;
     std::vector<std::shared_ptr<ParserWorker>> workers_;
     std::atomic<uint64_t> request_id_{1};
     std::atomic<bool> healthcheck_running_{false};
+    std::atomic<bool> draining_{false};
     std::thread healthcheck_thread_;
 
     uint64_t nextRequestId() {
@@ -460,6 +608,32 @@ private:
             }
         }
         return running;
+    }
+
+    size_t warmWorkerCountLocked() const {
+        size_t warm = 0;
+        for (const auto& worker : workers_) {
+            if (!worker->running) {
+                continue;
+            }
+            if (worker->state == WorkerState::IDLE) {
+                warm++;
+            }
+        }
+        return warm;
+    }
+
+    size_t activeSessionCountLocked() const {
+        size_t active = 0;
+        for (const auto& worker : workers_) {
+            if (!worker->running) {
+                continue;
+            }
+            if (worker->session_active) {
+                active++;
+            }
+        }
+        return active;
     }
 
     void updateMetricsLocked() {
@@ -493,6 +667,8 @@ private:
         std::lock_guard<std::mutex> lock(worker->mutex);
         worker->state = WorkerState::FAULT;
         worker->running = false;
+        worker->session_active = false;
+        worker->active_connection_id = 0;
         if (metrics_.parser_recycle_total) {
             metrics_.parser_recycle_total->inc(1.0, {config_.protocol, "default", reason});
         }
@@ -729,6 +905,7 @@ private:
                 std::chrono::duration_cast<std::chrono::duration<double>>(elapsed).count(),
                 {config_.protocol, "default"});
             worker->session_active = false;
+            worker->active_connection_id = 0;
             worker->sessions_completed += 1;
             maybeRecycleWorker(worker);
         }
@@ -944,6 +1121,7 @@ void printUsage(const char* program) {
               << "  --port <port>               Listen port\n"
               << "  --control-socket-dir <dir>  Control socket directory\n"
               << "  --engine-endpoint <path>    Engine IPC endpoint\n"
+              << "  --database-owner <name>     Owning database name\n"
               << "  --pool-min <n>              Minimum parser pool size\n"
               << "  --pool-max <n>              Maximum parser pool size\n"
               << "  --spawn-strategy <mode>     prefork|on_demand|hybrid\n"
@@ -1086,6 +1264,10 @@ bool applyArgOverrides(int argc, char* argv[], ListenerConfig& config) {
             config.engine_endpoint = argv[++i];
         } else if (arg.rfind("--engine-endpoint=", 0) == 0) {
             config.engine_endpoint = arg.substr(18);
+        } else if (arg == "--database-owner" && i + 1 < argc) {
+            config.database_owner = argv[++i];
+        } else if (arg.rfind("--database-owner=", 0) == 0) {
+            config.database_owner = arg.substr(17);
         } else if (arg == "--pool-min" && i + 1 < argc) {
             try {
                 config.pool_min = static_cast<uint32_t>(std::stoul(argv[++i]));
@@ -1169,7 +1351,172 @@ bool applyArgOverrides(int argc, char* argv[], ListenerConfig& config) {
     return true;
 }
 
-int runListener(const ListenerConfig& config) {
+static std::vector<uint8_t> buildManagementResponsePayload(bool ok, const std::string& text) {
+    std::vector<uint8_t> payload;
+    payload.reserve(1 + text.size());
+    payload.push_back(ok ? 0 : 1);
+    payload.insert(payload.end(), text.begin(), text.end());
+    return payload;
+}
+
+static std::string trimAscii(std::string value) {
+    auto is_space = [](unsigned char c) {
+        return c == ' ' || c == '\t' || c == '\n' || c == '\r';
+    };
+    while (!value.empty() && is_space(static_cast<unsigned char>(value.front()))) {
+        value.erase(value.begin());
+    }
+    while (!value.empty() && is_space(static_cast<unsigned char>(value.back()))) {
+        value.pop_back();
+    }
+    return value;
+}
+
+static bool reloadListenerRuntimeConfig(ListenerConfig& config,
+                                        ParserPool& pool,
+                                        std::string& out_message) {
+    if (config.config_path.empty()) {
+        out_message = "reload_failed:no_config_path";
+        return false;
+    }
+
+    ListenerConfig refreshed = config;
+    if (!applyConfigFile(refreshed)) {
+        out_message = "reload_failed:config_parse";
+        return false;
+    }
+    refreshed.port = config.port;
+    refreshed.bind_address = config.bind_address;
+    refreshed.control_socket_dir = config.control_socket_dir;
+    refreshed.engine_endpoint = config.engine_endpoint;
+
+    std::string error;
+    if (!pool.applyRuntimeConfig(refreshed.pool_min,
+                                 refreshed.pool_max,
+                                 refreshed.health_check_interval_ms,
+                                 error)) {
+        out_message = "reload_failed:" + error;
+        return false;
+    }
+
+    config.pool_min = refreshed.pool_min;
+    config.pool_max = refreshed.pool_max;
+    config.health_check_interval_ms = refreshed.health_check_interval_ms;
+    config.max_requests = refreshed.max_requests;
+    config.max_age_seconds = refreshed.max_age_seconds;
+    config.spawn_strategy = refreshed.spawn_strategy;
+    config.log_level = refreshed.log_level;
+    out_message = "reloaded";
+    return true;
+}
+
+static void handleManagementConnection(std::unique_ptr<scratchbird::network::Socket> socket,
+                                       ListenerConfig& config,
+                                       ParserPool& pool) {
+    scratchbird::core::ErrorContext ctx;
+    scratchbird::network::ControlPlaneMessage request;
+    auto status = scratchbird::network::receiveControlPlaneMessage(*socket, request, nullptr, &ctx);
+    if (status != scratchbird::core::Status::OK) {
+        socket->close();
+        return;
+    }
+
+    scratchbird::network::ControlPlaneMessage response;
+    response.header.message_type = static_cast<uint16_t>(
+        scratchbird::network::ControlPlaneMessageType::MANAGEMENT_RESPONSE);
+    response.header.request_id = request.header.request_id;
+
+    if (request.header.message_type != static_cast<uint16_t>(
+            scratchbird::network::ControlPlaneMessageType::MANAGEMENT_COMMAND)) {
+        response.payload = buildManagementResponsePayload(false, "invalid_message_type");
+        response.header.payload_len = response.payload.size();
+        scratchbird::network::sendControlPlaneMessage(*socket, response,
+                                                      scratchbird::network::INVALID_SOCKET_VALUE,
+                                                      0, nullptr);
+        socket->close();
+        return;
+    }
+
+    std::string command(reinterpret_cast<const char*>(request.payload.data()),
+                        request.payload.size());
+    command = trimAscii(command);
+
+    bool ok = false;
+    std::string message;
+    if (command == "PING") {
+        ok = true;
+        message = "PONG";
+    } else if (command == "STATUS") {
+        std::ostringstream oss;
+        oss << "draining=" << (g_draining.load(std::memory_order_acquire) ? 1 : 0)
+            << ";owner_database=" << config.database_owner
+            << ";active_sessions=" << pool.activeSessionCount()
+            << ";warm_workers=" << pool.warmWorkerCount()
+            << ";pool_min=" << config.pool_min
+            << ";pool_max=" << config.pool_max;
+        ok = true;
+        message = oss.str();
+    } else if (command == "STOP graceful") {
+        g_draining.store(true, std::memory_order_release);
+        pool.setDraining(true);
+        ok = true;
+        message = "draining";
+    } else if (command == "STOP force") {
+        g_force_shutdown.store(true, std::memory_order_release);
+        g_shutdown.store(true, std::memory_order_release);
+        ok = true;
+        message = "force_shutdown";
+    } else if (command == "RELOAD") {
+        ok = reloadListenerRuntimeConfig(config, pool, message);
+    } else if (command.rfind("POOL SET ", 0) == 0) {
+        std::istringstream iss(command.substr(9));
+        uint32_t min_value = 0;
+        uint32_t max_value = 0;
+        if (iss >> min_value >> max_value) {
+            std::string error;
+            ok = pool.applyRuntimeConfig(min_value, max_value,
+                                         config.health_check_interval_ms,
+                                         error);
+            if (ok) {
+                config.pool_min = min_value;
+                config.pool_max = max_value;
+                message = "pool_updated";
+            } else {
+                message = "pool_update_failed:" + error;
+            }
+        } else {
+            ok = false;
+            message = "pool_update_failed:invalid_args";
+        }
+    } else if (command.rfind("KILL ", 0) == 0) {
+        uint64_t connection_id = 0;
+        try {
+            connection_id = static_cast<uint64_t>(std::stoull(command.substr(5)));
+        } catch (...) {
+            connection_id = 0;
+        }
+        if (connection_id == 0) {
+            ok = false;
+            message = "kill_failed:invalid_connection_id";
+        } else {
+            std::string error;
+            ok = pool.terminateConnection(connection_id, error);
+            message = ok ? "killed" : ("kill_failed:" + error);
+        }
+    } else {
+        ok = false;
+        message = "unknown_command";
+    }
+
+    response.payload = buildManagementResponsePayload(ok, message);
+    response.header.payload_len = response.payload.size();
+    scratchbird::network::sendControlPlaneMessage(*socket, response,
+                                                  scratchbird::network::INVALID_SOCKET_VALUE,
+                                                  0, nullptr);
+    socket->close();
+}
+
+int runListener(ListenerConfig config) {
     using scratchbird::network::AddressFamily;
     using scratchbird::network::NetworkAddress;
     using scratchbird::network::Socket;
@@ -1246,42 +1593,13 @@ int runListener(const ListenerConfig& config) {
         scratchbird::core::Histogram::DEFAULT_LATENCY_BUCKETS,
         {"protocol", "pool"});
 
-    scratchbird::core::ErrorContext ctx;
-    auto server_socket = Socket::create(AddressFamily::IPV4, scratchbird::network::SocketType::STREAM, &ctx);
-    if (!server_socket) {
-        std::cerr << "Failed to create socket: " << ctx.message << "\n";
-        return 2;
-    }
-
-    NetworkAddress addr;
-    addr.family = AddressFamily::IPV4;
-    addr.host = config.bind_address;
-    addr.port = config.port;
-
-    if (server_socket->bind(addr, &ctx) != scratchbird::core::Status::OK) {
-        std::cerr << "Bind failed: " << ctx.message << "\n";
-        return 2;
-    }
-    if (server_socket->listen(scratchbird::network::DEFAULT_LISTEN_BACKLOG, &ctx) != scratchbird::core::Status::OK) {
-        std::cerr << "Listen failed: " << ctx.message << "\n";
-        return 2;
-    }
-
-    std::cout << SB_LISTENER_NAME << " listening on "
-              << config.bind_address << ":" << config.port << "\n";
-    std::cout << "Parser pool: min=" << config.pool_min
-              << " max=" << config.pool_max
-              << " strategy=" << config.spawn_strategy << "\n";
-    if (config.engine_endpoint.empty()) {
-        std::cout << "Engine endpoint: (unset)\n";
-    } else {
-        std::cout << "Engine endpoint: " << config.engine_endpoint << "\n";
-    }
-
     std::string control_socket = controlSocketPath(config);
+    std::string management_socket = managementSocketPath(config);
+    scratchbird::core::ErrorContext ctx;
     scratchbird::network::ControlPlaneServer control_plane;
+    scratchbird::network::ControlPlaneServer management_plane;
     std::thread control_thread;
-    bool pool_enabled = false;
+    std::thread management_thread;
     PoolMetrics pool_metrics;
     pool_metrics.parser_spawn_total = parser_spawn_total;
     pool_metrics.parser_recycle_total = parser_recycle_total;
@@ -1293,25 +1611,139 @@ int runListener(const ListenerConfig& config) {
     pool_metrics.parser_healthcheck_seconds = parser_healthcheck_seconds;
 
     ParserPool pool(config, pool_metrics, handoff_seconds, queue_wait_seconds);
+    if (control_socket.empty()) {
+        std::cerr << "Control socket path not configured\n";
+        return 2;
+    }
 
-    if (!control_socket.empty()) {
-        if (control_plane.start(control_socket, &ctx) == scratchbird::core::Status::OK) {
-            std::cout << "Control socket: " << control_socket << "\n";
-            pool_enabled = pool.start();
-            control_thread = std::thread([&]() {
+    if (control_plane.start(control_socket, &ctx) != scratchbird::core::Status::OK) {
+        std::cerr << "Failed to start control socket: " << ctx.message << "\n";
+        return 2;
+    }
+    std::cout << "Control socket: " << control_socket << "\n";
+    control_thread = std::thread([&]() {
+        scratchbird::core::ErrorContext local_ctx;
+        while (!g_shutdown.load(std::memory_order_acquire)) {
+            auto control_conn = control_plane.accept(&local_ctx);
+            if (!control_conn) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                continue;
+            }
+            pool.handleControlConnection(std::move(control_conn));
+        }
+    });
+    if (!pool.start()) {
+        std::cerr << "Failed to start parser pool\n";
+        g_shutdown.store(true, std::memory_order_release);
+        control_plane.stop();
+        if (control_thread.joinable()) {
+            control_thread.join();
+        }
+        g_shutdown.store(false, std::memory_order_release);
+        return 2;
+    }
+    if (!pool.waitForWarm(std::chrono::seconds(10))) {
+        std::cerr << "Failed to reach warm pool minimum before listener startup\n";
+        g_shutdown.store(true, std::memory_order_release);
+        pool.stop();
+        control_plane.stop();
+        if (control_thread.joinable()) {
+            control_thread.join();
+        }
+        g_shutdown.store(false, std::memory_order_release);
+        return 2;
+    }
+
+    if (!management_socket.empty()) {
+        if (management_plane.start(management_socket, &ctx) == scratchbird::core::Status::OK) {
+            std::cout << "Management socket: " << management_socket << "\n";
+            management_thread = std::thread([&]() {
                 scratchbird::core::ErrorContext local_ctx;
                 while (!g_shutdown.load(std::memory_order_acquire)) {
-                    auto control_conn = control_plane.accept(&local_ctx);
-                    if (!control_conn) {
+                    auto mgmt_conn = management_plane.accept(&local_ctx);
+                    if (!mgmt_conn) {
                         std::this_thread::sleep_for(std::chrono::milliseconds(50));
                         continue;
                     }
-                    pool.handleControlConnection(std::move(control_conn));
+                    handleManagementConnection(std::move(mgmt_conn), config, pool);
                 }
             });
         } else {
-            std::cerr << "Failed to start control socket: " << ctx.message << "\n";
+            std::cerr << "Failed to start management socket: " << ctx.message << "\n";
+            g_shutdown.store(true, std::memory_order_release);
+            pool.stop();
+            control_plane.stop();
+            if (control_thread.joinable()) {
+                control_thread.join();
+            }
+            g_shutdown.store(false, std::memory_order_release);
+            return 2;
         }
+    }
+
+    auto server_socket = Socket::create(AddressFamily::IPV4,
+                                        scratchbird::network::SocketType::STREAM,
+                                        &ctx);
+    if (!server_socket) {
+        std::cerr << "Failed to create socket: " << ctx.message << "\n";
+        g_shutdown.store(true, std::memory_order_release);
+        pool.stop();
+        control_plane.stop();
+        management_plane.stop();
+        if (control_thread.joinable()) {
+            control_thread.join();
+        }
+        if (management_thread.joinable()) {
+            management_thread.join();
+        }
+        return 2;
+    }
+
+    NetworkAddress addr;
+    addr.family = AddressFamily::IPV4;
+    addr.host = config.bind_address;
+    addr.port = config.port;
+    server_socket->setNonBlocking(true, nullptr);
+    if (server_socket->bind(addr, &ctx) != scratchbird::core::Status::OK) {
+        std::cerr << "Bind failed: " << ctx.message << "\n";
+        g_shutdown.store(true, std::memory_order_release);
+        pool.stop();
+        control_plane.stop();
+        management_plane.stop();
+        if (control_thread.joinable()) {
+            control_thread.join();
+        }
+        if (management_thread.joinable()) {
+            management_thread.join();
+        }
+        return 2;
+    }
+    if (server_socket->listen(scratchbird::network::DEFAULT_LISTEN_BACKLOG, &ctx) !=
+        scratchbird::core::Status::OK) {
+        std::cerr << "Listen failed: " << ctx.message << "\n";
+        g_shutdown.store(true, std::memory_order_release);
+        pool.stop();
+        control_plane.stop();
+        management_plane.stop();
+        if (control_thread.joinable()) {
+            control_thread.join();
+        }
+        if (management_thread.joinable()) {
+            management_thread.join();
+        }
+        return 2;
+    }
+
+    std::cout << SB_LISTENER_NAME << " listening on "
+              << config.bind_address << ":" << config.port << "\n";
+    std::cout << "Owner database: " << config.database_owner << "\n";
+    std::cout << "Parser pool: min=" << config.pool_min
+              << " max=" << config.pool_max
+              << " strategy=" << config.spawn_strategy << "\n";
+    if (config.engine_endpoint.empty()) {
+        std::cout << "Engine endpoint: (unset)\n";
+    } else {
+        std::cout << "Engine endpoint: " << config.engine_endpoint << "\n";
     }
 
     std::vector<std::string> label = {config.protocol, SB_LISTENER_NAME};
@@ -1333,6 +1765,11 @@ int runListener(const ListenerConfig& config) {
 
     // Accept loop with parser handoff.
     while (!g_shutdown.load(std::memory_order_acquire)) {
+        if (g_draining.load(std::memory_order_acquire) &&
+            pool.activeSessionCount() == 0) {
+            g_shutdown.store(true, std::memory_order_release);
+            break;
+        }
         if (g_dump_stats.exchange(false, std::memory_order_acq_rel)) {
             dumpMetrics(metrics);
         }
@@ -1350,8 +1787,8 @@ int runListener(const ListenerConfig& config) {
         std::cerr << "[listener_debug] accepted client "
                   << client_addr.host << ":" << client_addr.port
                   << " fd=" << client->getFd() << "\n";
-        if (!pool_enabled) {
-            reject_total->inc(1.0, {config.protocol, SB_LISTENER_NAME, "error"});
+        if (g_draining.load(std::memory_order_acquire) || pool.isDraining()) {
+            reject_total->inc(1.0, {config.protocol, SB_LISTENER_NAME, "draining"});
             client->close();
             open_connections->dec(1.0, label);
             continue;
@@ -1377,8 +1814,12 @@ int runListener(const ListenerConfig& config) {
     server_socket->close();
     pool.stop();
     control_plane.stop();
+    management_plane.stop();
     if (control_thread.joinable()) {
         control_thread.join();
+    }
+    if (management_thread.joinable()) {
+        management_thread.join();
     }
     scratchbird::network::cleanupNetwork();
     return 0;
@@ -1418,5 +1859,8 @@ int main(int argc, char* argv[]) {
     std::signal(SIGUSR2, handleSignal);
 #endif
 
+    g_draining.store(false, std::memory_order_release);
+    g_force_shutdown.store(false, std::memory_order_release);
+    g_shutdown.store(false, std::memory_order_release);
     return runListener(config);
 }

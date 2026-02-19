@@ -724,7 +724,13 @@ Statement* Parser::parseStatementInternal() {
     }
 
     // DML statements
-    if (match(TokenType::KW_SELECT))    return parseSelect();
+    if (match(TokenType::KW_SELECT)) {
+        if (checkContextual("COMPILE_EMBEDDED_PAYLOAD") ||
+            checkContextual("VALIDATE_EMBEDDED_PAYLOAD")) {
+            return parseSelectUdrCompileFunctionSurface();
+        }
+        return parseSelect();
+    }
     if (match(TokenType::KW_INSERT))    return parseInsert();
     if (check(TokenType::KW_UPDATE)) {
         Token lookahead = state_.lexer().peekToken();
@@ -12179,7 +12185,6 @@ Expression* Parser::parseFunctionCall(SchemaPath path) {
         expr->arguments.push_back(literal);
 
         advance();  // consume '*'
-        expect(TokenType::RIGHT_PAREN, "Expected ')' after function arguments");
         parsed_count_star = true;
     }
 
@@ -15362,6 +15367,81 @@ Statement* Parser::parseUdrCompileSurface() {
     auto* fallback = arena_.create<AlterSystemStmt>();
     fallback->span = makeSpan(start);
     return fallback;
+}
+
+Statement* Parser::parseSelectUdrCompileFunctionSurface() {
+    // SELECT COMPILE_EMBEDDED_PAYLOAD(...) and
+    // SELECT VALIDATE_EMBEDDED_PAYLOAD(...) are canonical function-form
+    // aliases for the UDR compile bridge dispatch route.
+    SourceLocation start = previous().span.start;
+    bool validate_only = false;
+
+    auto parse_scalar = [&](const char* label) -> StringPool::StringId {
+        if (check(TokenType::STRING_LITERAL) || isIdentifier()) {
+            StringPool::StringId id = current().value.string_id;
+            advance();
+            return id;
+        }
+        if (check(TokenType::INTEGER_LITERAL)) {
+            StringPool::StringId id = stringPool().intern(std::to_string(current().value.int_value));
+            advance();
+            return id;
+        }
+        if (check(TokenType::FLOAT_LITERAL)) {
+            StringPool::StringId id = stringPool().intern(std::to_string(current().value.float_value));
+            advance();
+            return id;
+        }
+        errorCode("PRS_0504", std::string("Expected scalar token for ").append(label));
+        return StringPool::INVALID_ID;
+    };
+
+    if (matchContextual("COMPILE_EMBEDDED_PAYLOAD")) {
+        validate_only = false;
+    } else if (matchContextual("VALIDATE_EMBEDDED_PAYLOAD")) {
+        validate_only = true;
+    } else {
+        // Caller only dispatches here for function-form UDR compile symbols.
+        // Fall back to regular SELECT parsing if the symbol no longer matches.
+        return parseSelect();
+    }
+
+    if (!requireFeature(kFeatureLanguageUdrCompileBridge)) {
+        auto* blocked = arena_.create<AlterSystemStmt>();
+        blocked->span = makeSpan(start);
+        return blocked;
+    }
+
+    expect(TokenType::LEFT_PAREN, "Expected '(' after UDR compile function symbol");
+
+    auto* stmt = arena_.create<UdrCompileDispatchStmt>();
+    stmt->validate_only = validate_only;
+
+    stmt->profile_id = parse_scalar("profile_id");
+    if (!match(TokenType::COMMA)) {
+        errorCode("PRS_0504", "Expected ',' after profile_id in UDR compile function form");
+    }
+    stmt->payload_format = parse_scalar("payload_format");
+    if (!match(TokenType::COMMA)) {
+        errorCode("PRS_0504", "Expected ',' after payload_format in UDR compile function form");
+    }
+    stmt->payload_bytes = parse_scalar("payload_bytes");
+    if (!match(TokenType::COMMA)) {
+        errorCode("PRS_0504", "Expected ',' after payload_bytes in UDR compile function form");
+    }
+    stmt->session_signature = parse_scalar("session_signature");
+    expect(TokenType::RIGHT_PAREN, "Expected ')' after UDR compile function arguments");
+
+    // This function-form route is statement-oriented; extra trailing query
+    // clauses are rejected deterministically so runtime dispatch remains
+    // equivalent to canonical UDR COMPILE/VALIDATE statement surfaces.
+    if (!check(TokenType::SEMICOLON) && !isAtEnd()) {
+        errorCode("PRS_0505",
+                  "Unsupported trailing clause for UDR compile function statement form");
+    }
+
+    stmt->span = makeSpan(start);
+    return stmt;
 }
 
 Statement* Parser::parseUdrEmbeddedSqlTemplateSurface(bool validate_only, bool prefixed_by_udr) {

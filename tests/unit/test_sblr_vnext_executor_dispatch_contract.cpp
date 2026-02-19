@@ -307,6 +307,98 @@ TEST_F(SBLRVNextExecutorDispatchContractTest, UdrCompileDispatchRejectsDetermini
 }
 
 TEST_F(SBLRVNextExecutorDispatchContractTest,
+       UdrCompileDispatchNativePreferredAcceptsPolicyBoundRequest)
+{
+    ExecutionResult result = executeVNext(
+        static_cast<uint16_t>(Opcode::SBLR3_OP_UDR_COMPILE_DISPATCH),
+        Value::Object{
+            {"validate_only", Value(false)},
+            {"profile_id", Value(std::string("PostgreSQL"))},
+            {"payload_format", Value(std::string("SQL_TEXT"))},
+            {"payload_bytes", Value(std::string("SELECT 1"))},
+            {"session_signature", Value(std::string("sig_native_pref"))},
+            {"artifact_preference", Value(std::string("NATIVE_PREFERRED"))},
+            {"target_triples", Value(Value::List{
+                                   Value(std::string("x86_64-pc-linux-gnu"))})},
+            {"host_api_abi_version", Value(std::string("SB_HOST_API_V1"))},
+            {"optimization_level", Value(std::string("O2"))},
+            {"allow_interpreter_fallback", Value(true)},
+            {"native_execution_mode", Value(std::string("PREFER_NATIVE_WITH_FALLBACK"))},
+            {"native_artifact_udr_enabled", Value(true)},
+            {"native_target_triples", Value(Value::List{
+                                          Value(std::string("x86_64-pc-linux-gnu")),
+                                          Value(std::string("x86_64-pc-windows-msvc"))})},
+            {"native_host_api_abi_version", Value(std::string("SB_HOST_API_V1"))},
+        });
+
+    EXPECT_TRUE(result.success()) << result.error();
+}
+
+TEST_F(SBLRVNextExecutorDispatchContractTest,
+       UdrCompileDispatchNativeRequiredRejectsWhenNativeCompilerDisabled)
+{
+    ExecutionResult result = executeVNext(
+        static_cast<uint16_t>(Opcode::SBLR3_OP_UDR_COMPILE_DISPATCH),
+        Value::Object{
+            {"validate_only", Value(false)},
+            {"profile_id", Value(std::string("PostgreSQL"))},
+            {"payload_format", Value(std::string("SQL_TEXT"))},
+            {"payload_bytes", Value(std::string("SELECT 1"))},
+            {"session_signature", Value(std::string("sig_native_req_disabled"))},
+            {"artifact_preference", Value(std::string("NATIVE_REQUIRED"))},
+            {"target_triples", Value(Value::List{
+                                   Value(std::string("x86_64-pc-linux-gnu"))})},
+            {"host_api_abi_version", Value(std::string("SB_HOST_API_V1"))},
+            {"native_artifact_udr_enabled", Value(false)},
+        });
+
+    EXPECT_FALSE(result.success());
+    EXPECT_NE(result.error().find("UDR_1516"), std::string::npos) << result.error();
+}
+
+TEST_F(SBLRVNextExecutorDispatchContractTest,
+       UdrCompileDispatchNativeRequiredRejectsPolicyTargetAllowlistViolation)
+{
+    ExecutionResult result = executeVNext(
+        static_cast<uint16_t>(Opcode::SBLR3_OP_UDR_COMPILE_DISPATCH),
+        Value::Object{
+            {"validate_only", Value(false)},
+            {"profile_id", Value(std::string("PostgreSQL"))},
+            {"payload_format", Value(std::string("SQL_TEXT"))},
+            {"payload_bytes", Value(std::string("SELECT 1"))},
+            {"session_signature", Value(std::string("sig_native_req_allowlist"))},
+            {"artifact_preference", Value(std::string("NATIVE_REQUIRED"))},
+            {"target_triples", Value(Value::List{
+                                   Value(std::string("x86_64-pc-windows-msvc"))})},
+            {"host_api_abi_version", Value(std::string("SB_HOST_API_V1"))},
+            {"native_target_triples", Value(Value::List{
+                                          Value(std::string("x86_64-pc-linux-gnu"))})},
+        });
+
+    EXPECT_FALSE(result.success());
+    EXPECT_NE(result.error().find("UDR_1517"), std::string::npos) << result.error();
+}
+
+TEST_F(SBLRVNextExecutorDispatchContractTest,
+       UdrCompileDispatchNativePreferredRejectsMissingTargetTriples)
+{
+    ExecutionResult result = executeVNext(
+        static_cast<uint16_t>(Opcode::SBLR3_OP_UDR_COMPILE_DISPATCH),
+        Value::Object{
+            {"validate_only", Value(false)},
+            {"profile_id", Value(std::string("PostgreSQL"))},
+            {"payload_format", Value(std::string("SQL_TEXT"))},
+            {"payload_bytes", Value(std::string("SELECT 1"))},
+            {"session_signature", Value(std::string("sig_missing_target"))},
+            {"artifact_preference", Value(std::string("NATIVE_PREFERRED"))},
+            {"host_api_abi_version", Value(std::string("SB_HOST_API_V1"))},
+        });
+
+    EXPECT_FALSE(result.success());
+    EXPECT_NE(result.error().find("UDR_1506"), std::string::npos) << result.error();
+}
+
+TEST_F(SBLRVNextExecutorDispatchContractTest,
        UdrEmbeddedSqlCompileValidateRejectsMalformedPayloadWithDeterministicCode)
 {
     ExecutionResult result = executeVNext(
@@ -319,6 +411,29 @@ TEST_F(SBLRVNextExecutorDispatchContractTest,
 
     EXPECT_FALSE(result.success());
     EXPECT_NE(result.error().find("UDR_1506"), std::string::npos) << result.error();
+}
+
+TEST_F(SBLRVNextExecutorDispatchContractTest,
+       UdrEmbeddedSqlCompileNativeRequiredRejectsPolicyAbiMismatch)
+{
+    ExecutionResult result = executeVNext(
+        static_cast<uint16_t>(Opcode::SBLR3_OP_UDR_EMBEDDED_SQL_COMPILE),
+        Value::Object{
+            {"validate_only", Value(false)},
+            {"template_id", Value(std::string("tpl_native"))},
+            {"sql_text", Value(std::string("SELECT 42"))},
+            {"profile_id", Value(std::string("PostgreSQL"))},
+            {"session_signature", Value(std::string("sig_tpl_native"))},
+            {"artifact_preference", Value(std::string("NATIVE_REQUIRED"))},
+            {"target_triples", Value(Value::List{
+                                   Value(std::string("x86_64-pc-linux-gnu"))})},
+            {"host_api_abi_version", Value(std::string("SB_HOST_API_V2"))},
+            {"native_host_api_abi_version", Value(std::string("SB_HOST_API_V1"))},
+            {"allow_interpreter_fallback", Value(false)},
+        });
+
+    EXPECT_FALSE(result.success());
+    EXPECT_NE(result.error().find("UDR_1520"), std::string::npos) << result.error();
 }
 
 TEST_F(SBLRVNextExecutorDispatchContractTest,

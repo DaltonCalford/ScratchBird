@@ -356,6 +356,7 @@ private:
     Statement* parseRedisStreamGroupSurface();
     Statement* parseUdrCompileSurface();
     Statement* parseUdrEmbeddedSqlTemplateSurface(bool validate_only, bool prefixed_by_udr);
+    Statement* parseSelectUdrCompileFunctionSurface();
     Statement* parseInstallExtensionSurface(bool is_load_surface);
 
     // ==========================================================================

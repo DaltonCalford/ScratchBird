@@ -16,6 +16,8 @@
 #include "scratchbird/server/service_controller.h"
 #include "scratchbird/version.h"
 #include "scratchbird/core/permission_cache.h"
+#include "scratchbird/network/control_plane.h"
+#include "scratchbird/network/socket.h"
 #include "scratchbird/server/ipc_server.h"
 #include "scratchbird/server/scratchbird_server.h"
 
@@ -24,6 +26,7 @@
 #include <sstream>
 #include <algorithm>
 #include <cerrno>
+#include <cctype>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -62,6 +65,35 @@ std::string listenerBinary(network::ProtocolType type) {
     }
 }
 
+std::string toLowerAscii(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char ch) {
+        return static_cast<char>(std::tolower(ch));
+    });
+    return value;
+}
+
+bool parseListenerProtocolType(const std::string& value,
+                               network::ProtocolType& out) {
+    const std::string normalized = toLowerAscii(value);
+    if (normalized == "native" || normalized == "scratchbird") {
+        out = network::ProtocolType::NATIVE;
+        return true;
+    }
+    if (normalized == "postgresql" || normalized == "postgres" || normalized == "pg") {
+        out = network::ProtocolType::POSTGRESQL;
+        return true;
+    }
+    if (normalized == "mysql") {
+        out = network::ProtocolType::MYSQL;
+        return true;
+    }
+    if (normalized == "firebird" || normalized == "fb") {
+        out = network::ProtocolType::FIREBIRD;
+        return true;
+    }
+    return false;
+}
+
 std::string logLevelString(ServiceConfig::LogLevel level) {
     switch (level) {
         case ServiceConfig::LogLevel::DEBUG: return "debug";
@@ -71,6 +103,74 @@ std::string logLevelString(ServiceConfig::LogLevel level) {
         case ServiceConfig::LogLevel::ERROR: return "error";
         default: return "info";
     }
+}
+
+std::string protocolControlName(network::ProtocolType type) {
+    switch (type) {
+        case network::ProtocolType::POSTGRESQL:
+            return "postgresql";
+        case network::ProtocolType::MYSQL:
+            return "mysql";
+        case network::ProtocolType::FIREBIRD:
+            return "firebird";
+        case network::ProtocolType::NATIVE:
+        default:
+            return "scratchbird";
+    }
+}
+
+std::string listenerManagementSocketPath(const ProtocolConfig& proto,
+                                         const std::string& control_socket_dir) {
+#ifdef _WIN32
+    (void)proto;
+    (void)control_socket_dir;
+    return std::string();
+#else
+    if (control_socket_dir.empty()) {
+        return std::string();
+    }
+    std::string path = control_socket_dir;
+    if (!path.empty() && path.back() != '/') {
+        path += '/';
+    }
+    // Port is part of the management endpoint identity so multiple listeners
+    // for the same protocol can run without socket collisions.
+    return path + "sb_listener." + protocolControlName(proto.type) + "." +
+           std::to_string(proto.port) + ".mgmt.sock";
+#endif
+}
+
+bool canBindListenerPort(const std::string& bind_address,
+                         uint16_t port,
+                         core::ErrorContext* ctx) {
+    core::ErrorContext local_ctx;
+    network::AddressFamily family = network::AddressFamily::IPV4;
+    if (bind_address.find(':') != std::string::npos) {
+        family = network::AddressFamily::IPV6;
+    }
+
+    auto socket = network::Socket::create(family, network::SocketType::STREAM, &local_ctx);
+    if (!socket) {
+        if (ctx) {
+            SET_ERROR_CONTEXT(ctx, local_ctx.code, local_ctx.message.c_str());
+        }
+        return false;
+    }
+
+    network::NetworkAddress address;
+    address.family = family;
+    address.host = bind_address;
+    address.port = port;
+    if (socket->bind(address, &local_ctx) != core::Status::OK) {
+        if (ctx) {
+            SET_ERROR_CONTEXT(ctx, local_ctx.code, local_ctx.message.c_str());
+        }
+        socket->close();
+        return false;
+    }
+
+    socket->close();
+    return true;
 }
 
 }  // namespace
@@ -171,6 +271,48 @@ void ServiceConfig::loadFromParser(const ConfigParser& parser) {
     } else {
         // Use defaults
         protocols = getDefaultProtocols();
+    }
+
+    // Extended listener profile sections: [listener.<name>]
+    // If present, these replace legacy network.<family>_port entries and allow
+    // multiple listeners per owner database and parser family.
+    std::vector<ProtocolConfig> explicit_listeners;
+    for (const auto& section_name : parser.sectionNames()) {
+        const std::string normalized_section = toLowerAscii(section_name);
+        if (normalized_section.rfind("listener.", 0) != 0) {
+            continue;
+        }
+
+        const ConfigSection* listener_section = parser.section(section_name);
+        if (!listener_section) {
+            continue;
+        }
+
+        network::ProtocolType type;
+        const std::string protocol_name = listener_section->getString("protocol", "");
+        if (!parseListenerProtocolType(protocol_name, type)) {
+            continue;
+        }
+
+        ProtocolConfig profile{};
+        profile.type = type;
+        profile.bind_address = listener_section->getString("bind_address", bind_address);
+        profile.port = static_cast<uint16_t>(listener_section->getInt("port", 0));
+        profile.enabled = listener_section->getBool("enabled", true);
+        profile.ssl_required = listener_section->getBool("ssl_required", false);
+        profile.pool_min = static_cast<uint32_t>(listener_section->getInt("pool_min", 4));
+        profile.pool_max = static_cast<uint32_t>(listener_section->getInt("pool_max", 64));
+        profile.owner_database = listener_section->getString("owner_database", "main");
+        explicit_listeners.push_back(profile);
+    }
+    if (!explicit_listeners.empty()) {
+        protocols = explicit_listeners;
+        for (const auto& profile : protocols) {
+            if (profile.type == network::ProtocolType::NATIVE && profile.port > 0) {
+                driver_defaults.port = profile.port;
+                break;
+            }
+        }
     }
 
     // Drivers section (native client defaults)
@@ -658,6 +800,20 @@ core::Status ServiceController::reload(core::ErrorContext* ctx) {
         // Note: ports, bind address, buffer sizes are NOT reloadable
     }
 
+    {
+        std::lock_guard<std::mutex> lock(listeners_mutex_);
+        for (const auto& listener : listeners_) {
+            if (!listener.running) {
+                continue;
+            }
+            std::string response;
+            if (!sendListenerManagementCommand(listener, "RELOAD", &response, nullptr)) {
+                log(ServiceConfig::LogLevel::WARNING,
+                    "Listener reload command failed for " + listener.name);
+            }
+        }
+    }
+
     stats_.last_reload = std::chrono::steady_clock::now();
 
     if (reload_callback_) {
@@ -713,6 +869,19 @@ core::Status ServiceController::openDatabase(const std::string& name, const std:
     bool needs_engine_server = (config_.mode == ServiceConfig::Mode::SINGLE_DATABASE);
     if (config_.mode == ServiceConfig::Mode::MULTI_DATABASE && name == "main") {
         needs_engine_server = true;
+    }
+    if (config_.mode == ServiceConfig::Mode::MULTI_DATABASE && !needs_engine_server) {
+        for (const auto& proto : config_.protocols) {
+            if (!proto.enabled) {
+                continue;
+            }
+            const std::string owner_database =
+                proto.owner_database.empty() ? "main" : proto.owner_database;
+            if (owner_database == name) {
+                needs_engine_server = true;
+                break;
+            }
+        }
     }
 
     if (needs_engine_server) {
@@ -925,11 +1094,50 @@ core::Status ServiceController::startListeners(core::ErrorContext* ctx) {
         return core::Status::OK;
     }
 
-    std::lock_guard<std::mutex> lock(listeners_mutex_);
-    listeners_.clear();
+    auto resolve_owner_endpoint = [this](const std::string& owner_database,
+                                         std::string& engine_endpoint,
+                                         core::ErrorContext* err_ctx) -> bool {
+        std::lock_guard<std::mutex> lock(databases_mutex_);
+        auto db_it = std::find_if(databases_.begin(), databases_.end(),
+                                  [&owner_database](const DatabaseInstance& db) {
+                                      return db.name == owner_database;
+                                  });
+        if (db_it == databases_.end()) {
+            if (err_ctx) {
+                std::string message = "Listener owner database not open: " + owner_database;
+                SET_ERROR_CONTEXT(err_ctx, core::Status::NOT_FOUND, message.c_str());
+            }
+            return false;
+        }
+
+        engine_endpoint = getIPCPath(db_it->path, IPCMethod::AUTO);
+        return true;
+    };
+
+    std::vector<ListenerProcess> started_listeners;
 
     for (const auto& proto : config_.protocols) {
         if (!proto.enabled || proto.port == 0) {
+            continue;
+        }
+
+        core::ErrorContext bind_ctx;
+        if (!canBindListenerPort(proto.bind_address, proto.port, &bind_ctx)) {
+            log(ServiceConfig::LogLevel::WARNING,
+                "Listener port collision detected on " + proto.bind_address + ":" +
+                std::to_string(proto.port) + " (" + bind_ctx.message +
+                "); skipping listener launch");
+            continue;
+        }
+
+        std::string owner_database = proto.owner_database.empty() ? "main" : proto.owner_database;
+        std::string engine_endpoint;
+        core::ErrorContext owner_ctx;
+        if (!resolve_owner_endpoint(owner_database, engine_endpoint, &owner_ctx)) {
+            log(ServiceConfig::LogLevel::WARNING,
+                "Listener owner resolution failed for " + protocolName(proto.type) +
+                " on " + proto.bind_address + ":" + std::to_string(proto.port) +
+                " owner=" + owner_database + " (" + owner_ctx.message + ")");
             continue;
         }
 
@@ -937,15 +1145,24 @@ core::Status ServiceController::startListeners(core::ErrorContext* ctx) {
         listener.config = proto;
         listener.name = protocolName(proto.type);
         listener.binary = listenerBinary(proto.type);
+        listener.owner_database = owner_database;
+        listener.engine_endpoint = engine_endpoint;
 
-        if (!launchListenerProcess(listener, ctx)) {
+        const bool allow_config_file_bootstrap = !config_.config_file.empty();
+        if (!launchListenerProcess(listener, allow_config_file_bootstrap,
+                                   engine_endpoint, ctx)) {
             continue;
         }
 
         log(ServiceConfig::LogLevel::INFO,
             "Started " + listener.name + " listener on " + proto.bind_address + ":" +
-            std::to_string(proto.port));
-        listeners_.push_back(listener);
+            std::to_string(proto.port) + " owner_database=" + owner_database);
+        started_listeners.push_back(listener);
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(listeners_mutex_);
+        listeners_ = std::move(started_listeners);
     }
 
     if (!config_.unix_socket.empty()) {
@@ -958,34 +1175,34 @@ core::Status ServiceController::startListeners(core::ErrorContext* ctx) {
 core::Status ServiceController::stopListeners(core::ErrorContext* ctx) {
     log(ServiceConfig::LogLevel::INFO, "Stopping listeners...");
 
+    const bool force_stop = immediate_shutdown_.load(std::memory_order_acquire);
+    const uint32_t timeout_ms = config_.shutdown_timeout_sec * 1000;
+
     std::lock_guard<std::mutex> lock(listeners_mutex_);
     for (auto& listener : listeners_) {
         if (!listener.running) {
             continue;
         }
-#ifdef _WIN32
-        if (listener.process_handle) {
-            TerminateProcess(listener.process_handle, 0);
-            CloseHandle(listener.process_handle);
-            listener.process_handle = nullptr;
+
+        std::string command = force_stop ? "STOP force" : "STOP graceful";
+        std::string response;
+        sendListenerManagementCommand(listener, command, &response, nullptr);
+
+        if (!waitForListenerExit(listener, force_stop ? 1000 : timeout_ms)) {
+            forceTerminateListener(listener);
+            waitForListenerExit(listener, 1000);
         }
         listener.running = false;
-#else
-        if (listener.pid > 0) {
-            kill(listener.pid, SIGTERM);
-            int status = 0;
-            waitpid(listener.pid, &status, 0);
-            listener.pid = 0;
-        }
-        listener.running = false;
-#endif
     }
 
     listeners_.clear();
     return core::Status::OK;
 }
 
-bool ServiceController::launchListenerProcess(ListenerProcess& listener, core::ErrorContext* ctx) {
+bool ServiceController::launchListenerProcess(ListenerProcess& listener,
+                                              bool allow_config_file_bootstrap,
+                                              const std::string& engine_endpoint,
+                                              core::ErrorContext* ctx) {
     const auto& proto = listener.config;
     std::vector<std::string> args;
     args.push_back(listener.binary);
@@ -1012,18 +1229,21 @@ bool ServiceController::launchListenerProcess(ListenerProcess& listener, core::E
         args.push_back("--control-socket-dir");
         args.push_back(config_.control_socket_dir);
     }
-    std::string engine_endpoint;
-    if (config_.mode == ServiceConfig::Mode::SINGLE_DATABASE && !config_.database_path.empty()) {
-        engine_endpoint = getIPCPath(config_.database_path, IPCMethod::AUTO);
-    } else if (config_.mode == ServiceConfig::Mode::MULTI_DATABASE && !config_.data_dir.empty()) {
-        std::string main_path = config_.data_dir + "/main.sbdb";
-        engine_endpoint = getIPCPath(main_path, IPCMethod::AUTO);
+    if (engine_endpoint.empty()) {
+        if (ctx) {
+            SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                              "Listener owner database has no engine endpoint");
+        }
+        log(ServiceConfig::LogLevel::ERROR,
+            "Listener launch aborted: missing engine endpoint for owner database " +
+            listener.owner_database);
+        return false;
     }
-    if (!engine_endpoint.empty()) {
-        args.push_back("--engine-endpoint");
-        args.push_back(engine_endpoint);
-    }
-    if (!config_.config_file.empty()) {
+    args.push_back("--engine-endpoint");
+    args.push_back(engine_endpoint);
+    args.push_back("--database-owner");
+    args.push_back(listener.owner_database);
+    if (allow_config_file_bootstrap && !config_.config_file.empty()) {
         args.push_back("--config");
         args.push_back(config_.config_file);
     }
@@ -1087,6 +1307,128 @@ bool ServiceController::launchListenerProcess(ListenerProcess& listener, core::E
     return true;
 }
 
+bool ServiceController::sendListenerManagementCommand(const ListenerProcess& listener,
+                                                      const std::string& command,
+                                                      std::string* response,
+                                                      core::ErrorContext* ctx) {
+#ifdef _WIN32
+    (void)listener;
+    (void)command;
+    (void)response;
+    SET_ERROR_CONTEXT(ctx, core::Status::NOT_IMPLEMENTED,
+                      "Listener management IPC is not implemented on Windows");
+    return false;
+#else
+    std::string socket_path = listenerManagementSocketPath(listener.config,
+                                                           config_.control_socket_dir);
+    if (socket_path.empty()) {
+        return false;
+    }
+
+    network::NetworkAddress address;
+    address.family = network::AddressFamily::UNIX;
+    address.path = socket_path;
+    core::ErrorContext local_ctx;
+    auto socket = network::Socket::connect(address, network::SocketOptions{}, &local_ctx);
+    if (!socket) {
+        if (ctx) {
+            SET_ERROR_CONTEXT(ctx, local_ctx.code, local_ctx.message.c_str());
+        }
+        return false;
+    }
+
+    network::ControlPlaneMessage request;
+    request.header.message_type = static_cast<uint16_t>(
+        network::ControlPlaneMessageType::MANAGEMENT_COMMAND);
+    request.header.request_id = 1;
+    request.payload.assign(command.begin(), command.end());
+    request.header.payload_len = request.payload.size();
+    if (network::sendControlPlaneMessage(*socket, request,
+                                         network::INVALID_SOCKET_VALUE,
+                                         0, &local_ctx) != core::Status::OK) {
+        if (ctx) {
+            SET_ERROR_CONTEXT(ctx, local_ctx.code, local_ctx.message.c_str());
+        }
+        return false;
+    }
+
+    network::ControlPlaneMessage reply;
+    if (network::receiveControlPlaneMessage(*socket, reply, nullptr, &local_ctx) !=
+        core::Status::OK) {
+        if (ctx) {
+            SET_ERROR_CONTEXT(ctx, local_ctx.code, local_ctx.message.c_str());
+        }
+        return false;
+    }
+    if (reply.header.message_type != static_cast<uint16_t>(
+            network::ControlPlaneMessageType::MANAGEMENT_RESPONSE) ||
+        reply.payload.empty()) {
+        return false;
+    }
+
+    bool ok = (reply.payload[0] == 0);
+    if (response) {
+        response->assign(reinterpret_cast<const char*>(reply.payload.data() + 1),
+                         reply.payload.size() - 1);
+    }
+    return ok;
+#endif
+}
+
+bool ServiceController::waitForListenerExit(ListenerProcess& listener, uint32_t timeout_ms) {
+#ifdef _WIN32
+    if (!listener.process_handle) {
+        return true;
+    }
+    DWORD wait_result = WaitForSingleObject(listener.process_handle, timeout_ms);
+    if (wait_result == WAIT_OBJECT_0) {
+        CloseHandle(listener.process_handle);
+        listener.process_handle = nullptr;
+        listener.running = false;
+        return true;
+    }
+    return false;
+#else
+    if (listener.pid <= 0) {
+        listener.running = false;
+        return true;
+    }
+
+    auto start = std::chrono::steady_clock::now();
+    while (true) {
+        int status = 0;
+        pid_t result = waitpid(listener.pid, &status, WNOHANG);
+        if (result == listener.pid) {
+            listener.pid = 0;
+            listener.running = false;
+            return true;
+        }
+        if (result < 0) {
+            listener.pid = 0;
+            listener.running = false;
+            return true;
+        }
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - start).count() >= timeout_ms) {
+            return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+#endif
+}
+
+void ServiceController::forceTerminateListener(ListenerProcess& listener) {
+#ifdef _WIN32
+    if (listener.process_handle) {
+        TerminateProcess(listener.process_handle, 0);
+    }
+#else
+    if (listener.pid > 0) {
+        ::kill(listener.pid, SIGTERM);
+    }
+#endif
+}
+
 void ServiceController::checkListeners() {
     std::lock_guard<std::mutex> lock(listeners_mutex_);
 
@@ -1107,7 +1449,8 @@ void ServiceController::checkListeners() {
             log(ServiceConfig::LogLevel::WARNING,
                 "Listener exited (" + listener.name + "), restarting");
             if (!shutdown_requested_) {
-                launchListenerProcess(listener, nullptr);
+                launchListenerProcess(listener, !config_.config_file.empty(),
+                                      listener.engine_endpoint, nullptr);
             }
         }
 #else
@@ -1120,7 +1463,8 @@ void ServiceController::checkListeners() {
             log(ServiceConfig::LogLevel::WARNING,
                 "Listener exited (" + listener.name + "), restarting");
             if (!shutdown_requested_) {
-                launchListenerProcess(listener, nullptr);
+                launchListenerProcess(listener, !config_.config_file.empty(),
+                                      listener.engine_endpoint, nullptr);
             }
         }
 #endif

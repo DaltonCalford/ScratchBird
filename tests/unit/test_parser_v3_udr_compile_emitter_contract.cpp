@@ -171,6 +171,56 @@ TEST(ParserV3UdrCompileEmitterContractTest, ValidateEmbeddedPayloadSetsValidateF
     EXPECT_TRUE(*validate_only);
 }
 
+TEST(ParserV3UdrCompileEmitterContractTest,
+     SelectFunctionFormCompileEmbeddedPayloadMapsToCompileDispatchOpcode) {
+    const std::string statement_form =
+        "UDR COMPILE EMBEDDED PAYLOAD PROFILE native FORMAT SQL_TEXT BYTES payload_f SESSION_SIGNATURE sig_f";
+    const std::string function_form =
+        "SELECT COMPILE_EMBEDDED_PAYLOAD('native','SQL_TEXT','payload_f','sig_f')";
+
+    EmittedRoot statement_emit;
+    EmittedRoot function_emit;
+    std::string err;
+    ASSERT_TRUE(emitRootFromSql(statement_form, statement_emit, err)) << err;
+    ASSERT_TRUE(emitRootFromSql(function_form, function_emit, err)) << err;
+
+    EXPECT_EQ(static_cast<uint16_t>(Opcode::SBLR3_OP_UDR_COMPILE_DISPATCH), statement_emit.opcode);
+    EXPECT_EQ(static_cast<uint16_t>(Opcode::SBLR3_OP_UDR_COMPILE_DISPATCH), function_emit.opcode);
+
+    const auto* statement_payload = payloadObject(statement_emit);
+    const auto* function_payload = payloadObject(function_emit);
+    ASSERT_NE(nullptr, statement_payload);
+    ASSERT_NE(nullptr, function_payload);
+
+    const std::string* statement_profile = payloadString(*statement_payload, "profile_id");
+    const std::string* function_profile = payloadString(*function_payload, "profile_id");
+    const std::string* statement_format = payloadString(*statement_payload, "payload_format");
+    const std::string* function_format = payloadString(*function_payload, "payload_format");
+    const std::string* statement_bytes = payloadString(*statement_payload, "payload_bytes");
+    const std::string* function_bytes = payloadString(*function_payload, "payload_bytes");
+    const std::string* statement_sig = payloadString(*statement_payload, "session_signature");
+    const std::string* function_sig = payloadString(*function_payload, "session_signature");
+    const bool* statement_validate = payloadBool(*statement_payload, "validate_only");
+    const bool* function_validate = payloadBool(*function_payload, "validate_only");
+
+    ASSERT_NE(nullptr, statement_profile);
+    ASSERT_NE(nullptr, function_profile);
+    ASSERT_NE(nullptr, statement_format);
+    ASSERT_NE(nullptr, function_format);
+    ASSERT_NE(nullptr, statement_bytes);
+    ASSERT_NE(nullptr, function_bytes);
+    ASSERT_NE(nullptr, statement_sig);
+    ASSERT_NE(nullptr, function_sig);
+    ASSERT_NE(nullptr, statement_validate);
+    ASSERT_NE(nullptr, function_validate);
+
+    EXPECT_EQ(*statement_profile, *function_profile);
+    EXPECT_EQ(*statement_format, *function_format);
+    EXPECT_EQ(*statement_bytes, *function_bytes);
+    EXPECT_EQ(*statement_sig, *function_sig);
+    EXPECT_EQ(*statement_validate, *function_validate);
+}
+
 TEST(ParserV3UdrCompileEmitterContractTest, SqlTemplateFormsEmitDeterministicPayload) {
     const std::string statement_form =
         "UDR COMPILE SQL TEMPLATE TEMPLATE_ID tpl_a SQL_TEXT 'SELECT 1' PROFILE native SESSION_SIGNATURE sig_t";

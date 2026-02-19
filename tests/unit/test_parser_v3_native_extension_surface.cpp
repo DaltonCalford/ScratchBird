@@ -1140,12 +1140,29 @@ TEST(ParserV3NativeExtensionSurfaceTest, ValidatesSection05BuiltinFunctionArityA
         Parser parser("SELECT COMPILE_EMBEDDED_PAYLOAD('p','fmt','bytes','sig')");
         auto result = parser.parseStatement();
         EXPECT_TRUE(result.success());
+        ASSERT_EQ(result.statement()->kind(), ASTKind::AST_UDR_COMPILE_DISPATCH);
+        auto* stmt = static_cast<UdrCompileDispatchStmt*>(result.statement());
+        EXPECT_FALSE(stmt->validate_only);
     }
     {
         Parser parser("SELECT COMPILE_EMBEDDED_PAYLOAD('p','fmt','bytes')");
         auto result = parser.parseStatement();
         EXPECT_FALSE(result.success());
         EXPECT_TRUE(hasErrorCode(result, "PRS_0504"));
+    }
+    {
+        Parser parser("SELECT VALIDATE_EMBEDDED_PAYLOAD('p','fmt','bytes','sig')");
+        auto result = parser.parseStatement();
+        EXPECT_TRUE(result.success());
+        ASSERT_EQ(result.statement()->kind(), ASTKind::AST_UDR_COMPILE_DISPATCH);
+        auto* stmt = static_cast<UdrCompileDispatchStmt*>(result.statement());
+        EXPECT_TRUE(stmt->validate_only);
+    }
+    {
+        Parser parser("SELECT COMPILE_EMBEDDED_PAYLOAD('p','fmt','bytes','sig') FROM docs");
+        auto result = parser.parseStatement();
+        EXPECT_FALSE(result.success());
+        EXPECT_TRUE(hasErrorCode(result, "PRS_0505"));
     }
     {
         Parser parser("SELECT VECTOR_UNKNOWN_FUNC(1, 2)");

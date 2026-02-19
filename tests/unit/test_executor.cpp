@@ -485,7 +485,7 @@ TEST_F(ExecutorTest, TriggerBeforeDeleteVetoStopsFurtherCallbacks) {
     EXPECT_EQ(before_a_calls, 1);
     EXPECT_EQ(before_b_calls, 0);
 
-    auto count_result = executeSQL("SELECT COUNT(*) FROM trg_delete_veto");
+    auto count_result = executeSQL("SELECT COUNT(1) FROM trg_delete_veto");
     ASSERT_TRUE(count_result.success()) << count_result.error();
     auto* rs = count_result.resultSet();
     ASSERT_NE(rs, nullptr);

@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <iomanip>
+#include <mutex>
 #include <optional>
 #include <sstream>
 #include <string>
@@ -34,6 +35,7 @@
 #include "scratchbird/sblr/v3_container.h"
 #include "scratchbird/sblr/v3_opcode_identity.h"
 #include "scratchbird/sblr/v3_payloads.h"
+#include "scratchbird/udr/language_udr_sql_render_endpoint.h"
 
 namespace scratchbird::sblr {
 
@@ -228,11 +230,26 @@ public:
             return trace;
         }
 
-        NativeSqlRenderResult rendered_sql;
-        std::string render_error;
-        if (renderNativeSqlInstruction(root_inst, rendered_sql, render_error) &&
-            !rendered_sql.sql.empty()) {
-            trace.setDiagnosticSqlContext(rendered_sql.sql);
+        udr::LanguageUdrSblrSqlRenderRequest render_request{};
+        render_request.request_id = core::generateUuidV7();
+        render_request.profile_id = "native";
+        render_request.profile_version = "1.0";
+        render_request.native_feature_key = "sblr_to_native_sql_render";
+        render_request.principal_id = core::generateUuidV7();
+        render_request.role_context_signature = "trace";
+        render_request.render_permission_granted = true;
+        render_request.root_instruction = root_inst;
+
+        udr::LanguageUdrSblrSqlRenderResponse render_response{};
+        core::ErrorContext render_ctx;
+        if (udr::renderSblrToNativeSqlEndpoint(
+                traceRenderRegistry(),
+                render_request,
+                render_response,
+                &render_ctx) == core::Status::OK &&
+            render_response.success &&
+            !render_response.sql_text.empty()) {
+            trace.setDiagnosticSqlContext(render_response.sql_text);
         }
 
         const std::string normalized_sql =
@@ -260,6 +277,30 @@ public:
     }
 
 private:
+    static auto traceRenderRegistry() -> const udr::LanguageUdrRegistry& {
+        static udr::LanguageUdrRegistry registry;
+        static std::once_flag init_once;
+        std::call_once(init_once, []() {
+            udr::LanguageUdrRegistration registration{};
+            registration.module_id = core::generateUuidV7();
+            registration.module_name = "sb_udr_render_native";
+            registration.engine_profile_id = "native";
+            registration.engine_profile_version = "1.0";
+            registration.translation_mode = "SQL_REWRITE_TO_NATIVE";
+            registration.module_semver = "1.0.0";
+            registration.artifact_hash = "artifact_native_render";
+            registration.signature_status = udr::LanguageUdrSignatureStatus::TRUSTED;
+            registration.status = udr::LanguageUdrModuleStatus::ACTIVE;
+
+            core::ErrorContext ctx;
+            (void)registry.registerModule(
+                registration,
+                {"sblr_to_native_sql_render"},
+                &ctx);
+        });
+        return registry;
+    }
+
     static uint64_t fnv1a64(const uint8_t* data, size_t len) {
         uint64_t hash = 1469598103934665603ULL;
         for (size_t i = 0; i < len; ++i) {

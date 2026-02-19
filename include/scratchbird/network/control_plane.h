@@ -43,6 +43,8 @@ enum class ControlPlaneMessageType : uint16_t {
     POOL_STATS = 0x0040,
     RECYCLE = 0x0050,
     SHUTDOWN = 0x0051,
+    MANAGEMENT_COMMAND = 0x0060,
+    MANAGEMENT_RESPONSE = 0x0061,
     ERROR = 0x00FF
 };
 
