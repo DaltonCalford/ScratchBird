@@ -25,6 +25,12 @@ using scratchbird::sblr::v3::Value;
 using scratchbird::sblr::v3::Buffer;
 using scratchbird::sblr::v3::DecodeError;
 
+// SBLR3_FUNC_NOW flag bit: 1 means CURRENT_TIMESTAMP semantics (txn-start anchored).
+constexpr uint16_t kFuncNowCurrentTimestampFlag = 0x0001;
+// SBLR3_FUNC_JSON_EXISTS mode flags.
+constexpr uint16_t kFuncJsonExistsAnyFlag = 0x0001;
+constexpr uint16_t kFuncJsonExistsAllFlag = 0x0002;
+
 uint16_t op(Opcode opcode) {
     return static_cast<uint16_t>(opcode);
 }
@@ -2638,6 +2644,190 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlAlter(parser::v3::Statement
         }
         case parser::v3::ASTKind::AlterSystemStmt: {
             auto* s = static_cast<parser::v3::AlterSystemStmt*>(stmt);
+            auto key_text = std::string(pool_.get(s->name));
+
+            auto emit_multi_model = [&](Opcode opcode, uint8_t action_code) {
+                Instruction multi_model_inst;
+                multi_model_inst.opcode = op(opcode);
+                multi_model_inst.flags = 0;
+                Value::Object multi_model_payload;
+                multi_model_payload["action"] = Value(uint64_t(action_code));
+                if (s->value) {
+                    multi_model_payload["query_expr"] =
+                        Value(makeInstr(emitExpression(s->value)));
+                }
+                // OPTION_KV schema payload: empty object encodes deterministic zero-item list.
+                multi_model_payload["options"] = Value(Value::Object{});
+                multi_model_inst.payload = Value(std::move(multi_model_payload));
+                return multi_model_inst;
+            };
+
+            if (key_text == "nosql.cql.keyspace") {
+                return emit_multi_model(Opcode::SBLR3_CQL_KEYSPACE, 1);
+            }
+            if (key_text == "nosql.cql.batch") {
+                return emit_multi_model(Opcode::SBLR3_CQL_BATCH, 2);
+            }
+            if (key_text == "nosql.cql.ttl") {
+                return emit_multi_model(Opcode::SBLR3_CQL_TTL, 3);
+            }
+            if (key_text == "nosql.cql.writetime") {
+                return emit_multi_model(Opcode::SBLR3_CQL_WRITETIME, 4);
+            }
+            if (key_text == "nosql.mongo.find") {
+                return emit_multi_model(Opcode::SBLR3_MONGO_FIND, 5);
+            }
+            if (key_text == "nosql.mongo.aggregate") {
+                return emit_multi_model(Opcode::SBLR3_MONGO_AGGREGATE, 6);
+            }
+            if (key_text == "nosql.mongo.find_and_modify") {
+                return emit_multi_model(Opcode::SBLR3_MONGO_FIND_AND_MODIFY, 7);
+            }
+            if (key_text == "nosql.mongo.bulk_write") {
+                return emit_multi_model(Opcode::SBLR3_MONGO_BULK_WRITE, 8);
+            }
+            if (key_text == "nosql.cypher.match") {
+                return emit_multi_model(Opcode::SBLR3_CYPHER_MATCH, 9);
+            }
+            if (key_text == "nosql.cypher.merge") {
+                return emit_multi_model(Opcode::SBLR3_CYPHER_MERGE, 10);
+            }
+            if (key_text == "nosql.cypher.unwind") {
+                return emit_multi_model(Opcode::SBLR3_CYPHER_UNWIND, 11);
+            }
+            if (key_text == "nosql.cypher.call") {
+                return emit_multi_model(Opcode::SBLR3_CYPHER_CALL, 12);
+            }
+            if (key_text == "nosql.redis.string") {
+                return emit_multi_model(Opcode::SBLR3_REDIS_STRING, 13);
+            }
+            if (key_text == "nosql.redis.hash") {
+                return emit_multi_model(Opcode::SBLR3_REDIS_HASH, 14);
+            }
+            if (key_text == "nosql.redis.list") {
+                return emit_multi_model(Opcode::SBLR3_REDIS_LIST, 15);
+            }
+            if (key_text == "nosql.redis.set") {
+                return emit_multi_model(Opcode::SBLR3_REDIS_SET, 16);
+            }
+            if (key_text == "nosql.redis.zset") {
+                return emit_multi_model(Opcode::SBLR3_REDIS_ZSET, 17);
+            }
+            if (key_text == "nosql.redis.stream") {
+                return emit_multi_model(Opcode::SBLR3_REDIS_STREAM, 18);
+            }
+            if (key_text == "nosql.redis.pubsub") {
+                return emit_multi_model(Opcode::SBLR3_REDIS_PUBSUB, 19);
+            }
+            if (key_text == "nosql.milvus.create_collection") {
+                return emit_multi_model(Opcode::SBLR3_MILVUS_CREATE_COLLECTION, 20);
+            }
+            if (key_text == "nosql.milvus.drop_collection") {
+                return emit_multi_model(Opcode::SBLR3_MILVUS_DROP_COLLECTION, 21);
+            }
+            if (key_text == "nosql.milvus.create_index") {
+                return emit_multi_model(Opcode::SBLR3_MILVUS_CREATE_INDEX, 22);
+            }
+            if (key_text == "nosql.milvus.drop_index") {
+                return emit_multi_model(Opcode::SBLR3_MILVUS_DROP_INDEX, 23);
+            }
+            if (key_text == "nosql.milvus.insert") {
+                return emit_multi_model(Opcode::SBLR3_MILVUS_INSERT, 24);
+            }
+            if (key_text == "nosql.milvus.delete") {
+                return emit_multi_model(Opcode::SBLR3_MILVUS_DELETE, 25);
+            }
+            if (key_text == "nosql.milvus.search") {
+                return emit_multi_model(Opcode::SBLR3_MILVUS_SEARCH, 26);
+            }
+            if (key_text == "nosql.milvus.query") {
+                return emit_multi_model(Opcode::SBLR3_MILVUS_QUERY, 27);
+            }
+            if (key_text == "admin.backup") {
+                return emit_multi_model(Opcode::SBLR3_ADMIN_BACKUP, 28);
+            }
+            if (key_text == "admin.restore") {
+                return emit_multi_model(Opcode::SBLR3_ADMIN_RESTORE, 29);
+            }
+            if (key_text == "admin.validate") {
+                return emit_multi_model(Opcode::SBLR3_ADMIN_VALIDATE, 30);
+            }
+            if (key_text == "admin.vacuum_alias") {
+                return emit_multi_model(Opcode::SBLR3_ADMIN_VACUUM_ALIAS, 31);
+            }
+            if (key_text.rfind("cluster.workload_class.create.", 0) == 0) {
+                return emit_multi_model(Opcode::SBLR3_CLUSTER_WORKLOAD_CLASS, 32);
+            }
+            if (key_text.rfind("cluster.workload_class.alter.", 0) == 0) {
+                return emit_multi_model(Opcode::SBLR3_CLUSTER_WORKLOAD_CLASS, 33);
+            }
+            if (key_text.rfind("cluster.workload_class.drop.", 0) == 0) {
+                return emit_multi_model(Opcode::SBLR3_CLUSTER_WORKLOAD_CLASS, 34);
+            }
+            if (key_text.rfind("cluster.workload_route.create.", 0) == 0) {
+                return emit_multi_model(Opcode::SBLR3_CLUSTER_WORKLOAD_ROUTE, 35);
+            }
+            if (key_text.rfind("cluster.workload_route.alter.", 0) == 0) {
+                return emit_multi_model(Opcode::SBLR3_CLUSTER_WORKLOAD_ROUTE, 36);
+            }
+            if (key_text.rfind("cluster.workload_route.drop.", 0) == 0) {
+                return emit_multi_model(Opcode::SBLR3_CLUSTER_WORKLOAD_ROUTE, 37);
+            }
+            if (key_text.rfind("cluster.admission_policy.create.", 0) == 0) {
+                return emit_multi_model(Opcode::SBLR3_CLUSTER_ADMISSION_POLICY, 38);
+            }
+            if (key_text.rfind("cluster.admission_policy.alter.", 0) == 0) {
+                return emit_multi_model(Opcode::SBLR3_CLUSTER_ADMISSION_POLICY, 39);
+            }
+            if (key_text.rfind("cluster.admission_policy.drop.", 0) == 0) {
+                return emit_multi_model(Opcode::SBLR3_CLUSTER_ADMISSION_POLICY, 40);
+            }
+            if (key_text.rfind("cluster.admission_binding.create.", 0) == 0) {
+                return emit_multi_model(Opcode::SBLR3_CLUSTER_ADMISSION_BINDING, 41);
+            }
+            if (key_text.rfind("cluster.admission_binding.alter.", 0) == 0) {
+                return emit_multi_model(Opcode::SBLR3_CLUSTER_ADMISSION_BINDING, 42);
+            }
+            if (key_text.rfind("cluster.admission_binding.drop.", 0) == 0) {
+                return emit_multi_model(Opcode::SBLR3_CLUSTER_ADMISSION_BINDING, 43);
+            }
+            if (key_text == "cluster.set_state") {
+                return emit_multi_model(Opcode::SBLR3_CLUSTER_SET_STATE, 44);
+            }
+            if (key_text == "cluster.show_state") {
+                return emit_multi_model(Opcode::SBLR3_CLUSTER_SHOW_STATE, 45);
+            }
+            if (key_text == "cluster.show_routing_plan") {
+                return emit_multi_model(Opcode::SBLR3_CLUSTER_SHOW_ROUTING_PLAN, 46);
+            }
+            if (key_text == "cluster.show_admission_status") {
+                return emit_multi_model(Opcode::SBLR3_CLUSTER_SHOW_ADMISSION_STATUS, 47);
+            }
+            if (key_text == "service.channel.backup") {
+                return emit_multi_model(Opcode::SBLR3_SERVICE_CHANNEL_BACKUP, 48);
+            }
+            if (key_text == "service.channel.events") {
+                return emit_multi_model(Opcode::SBLR3_SERVICE_CHANNEL_EVENTS, 49);
+            }
+            if (key_text == "service.channel.progress") {
+                return emit_multi_model(Opcode::SBLR3_SERVICE_CHANNEL_PROGRESS, 50);
+            }
+            if (key_text.rfind("cube.ddl.create.", 0) == 0) {
+                return emit_multi_model(Opcode::SBLR3_CUBE_DDL, 51);
+            }
+            if (key_text.rfind("cube.ddl.alter.", 0) == 0) {
+                return emit_multi_model(Opcode::SBLR3_CUBE_DDL, 52);
+            }
+            if (key_text.rfind("cube.ddl.drop.", 0) == 0) {
+                return emit_multi_model(Opcode::SBLR3_CUBE_DDL, 53);
+            }
+            if (key_text.rfind("cube.refresh.", 0) == 0) {
+                return emit_multi_model(Opcode::SBLR3_CUBE_REFRESH, 54);
+            }
+            if (key_text == "cube.show_stats") {
+                return emit_multi_model(Opcode::SBLR3_CUBE_SHOW_STATS, 55);
+            }
+
             Instruction inst;
             inst.opcode = op(Opcode::SBLR3_ALTER_SYSTEM);
             inst.flags = 0;
@@ -4595,6 +4785,11 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitBinary(parser::v3::BinaryExpr*
         case parser::v3::BinaryOp::JSON_EXISTS_ANY:
         case parser::v3::BinaryOp::JSON_EXISTS_ALL: {
             inst.opcode = op(Opcode::SBLR3_FUNC_JSON_EXISTS);
+            if (expr->op == parser::v3::BinaryOp::JSON_EXISTS_ANY) {
+                inst.flags |= kFuncJsonExistsAnyFlag;
+            } else if (expr->op == parser::v3::BinaryOp::JSON_EXISTS_ALL) {
+                inst.flags |= kFuncJsonExistsAllFlag;
+            }
             Value::Object f;
             Value::List args;
             args.push_back(Value(makeInstr(emitExpression(expr->left))));
@@ -4686,6 +4881,7 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitFunctionCall(parser::v3::Funct
     inst.flags = 0;
 
     std::string name = toUpper(pool_.get(expr->function_path.objectName()));
+    const bool current_timestamp_semantics = (name == "CURRENT_TIMESTAMP");
     static const std::unordered_map<std::string, Opcode> kFuncMap = {
         {"COALESCE", Opcode::SBLR3_COALESCE},
         {"NULLIF", Opcode::SBLR3_NULLIF},
@@ -4695,6 +4891,16 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitFunctionCall(parser::v3::Funct
         {"COS", Opcode::SBLR3_FUNC_COS},
         {"TAN", Opcode::SBLR3_FUNC_TAN},
         {"CONCAT", Opcode::SBLR3_FUNC_CONCAT},
+        {"NOW", Opcode::SBLR3_FUNC_NOW},
+        {"CURRENT_TIMESTAMP", Opcode::SBLR3_FUNC_NOW},
+        {"CURRENT_DATE", Opcode::SBLR3_FUNC_CURRENT_DATE},
+        {"CURRENT_TIME", Opcode::SBLR3_FUNC_CURRENT_TIME},
+        {"CURRENT_USER", Opcode::SBLR3_FUNC_CURRENT_USER},
+        {"SESSION_USER", Opcode::SBLR3_FUNC_CURRENT_USER},
+        {"CURRENT_ROLE", Opcode::SBLR3_FUNC_CURRENT_ROLE},
+        {"CURRENT_CONNECTION", Opcode::SBLR3_FUNC_CURRENT_CONNECTION},
+        {"CURRENT_SESSION", Opcode::SBLR3_FUNC_CURRENT_CONNECTION},
+        {"CURRENT_TRANSACTION", Opcode::SBLR3_FUNC_CURRENT_TRANSACTION},
         {"ARRAY_POSITION", Opcode::SBLR3_FUNC_ARRAY_POSITION},
         {"ARRAY_SLICE", Opcode::SBLR3_ARRAY_SLICE},
         {"ARRAY_SUBSCRIPT", Opcode::SBLR3_ARRAY_SUBSCRIPT},
@@ -4751,6 +4957,16 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitFunctionCall(parser::v3::Funct
             inst.opcode = op(Opcode::SBLR3_WIN_RANK);
         } else if (name == "DENSE_RANK") {
             inst.opcode = op(Opcode::SBLR3_WIN_DENSE_RANK);
+        } else if (name == "LAG") {
+            inst.opcode = op(Opcode::SBLR3_WIN_LAG);
+        } else if (name == "LEAD") {
+            inst.opcode = op(Opcode::SBLR3_WIN_LEAD);
+        } else if (name == "FIRST_VALUE") {
+            inst.opcode = op(Opcode::SBLR3_WIN_FIRST_VALUE);
+        } else if (name == "LAST_VALUE") {
+            inst.opcode = op(Opcode::SBLR3_WIN_LAST_VALUE);
+        } else if (name == "NTH_VALUE") {
+            inst.opcode = op(Opcode::SBLR3_WIN_NTH_VALUE);
         } else {
             // Unsupported window function name in V3 path: keep deterministic opcode.
             inst.opcode = op(Opcode::SBLR3_WIN_ROW_NUMBER);
@@ -4759,6 +4975,9 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitFunctionCall(parser::v3::Funct
         auto it = kFuncMap.find(name);
         if (it != kFuncMap.end()) {
             inst.opcode = op(it->second);
+            if (it->second == Opcode::SBLR3_FUNC_NOW && current_timestamp_semantics) {
+                inst.flags |= kFuncNowCurrentTimestampFlag;
+            }
         } else {
             inst.opcode = op(Opcode::SBLR3_EXPR_FUNCTION_CALL);
         }

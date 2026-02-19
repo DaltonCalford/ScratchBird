@@ -8,6 +8,8 @@ SPEC_REGISTRY_JSON="${1:-${REPO_ROOT}/docs/planning/native_sql/NATIVE_GAP_FEATUR
 SCOPE_TSV="${2:-${REPO_ROOT}/tests/unit/data/native_sql_syn13_registration_scope.tsv}"
 OUT_CSV="${3:-${REPO_ROOT}/build/native_sql_syn13_coverage_report.csv}"
 SUMMARY_OUT="${4:-}"
+SYN13_FORCE_ALL_MANDATORY="${SYN13_FORCE_ALL_MANDATORY:-0}"
+SYN13_ALLOW_MANDATORY_MISS="${SYN13_ALLOW_MANDATORY_MISS:-0}"
 
 if [[ ! -f "${SPEC_REGISTRY_JSON}" ]]; then
     echo "error: registry file not found: ${SPEC_REGISTRY_JSON}" >&2
@@ -19,6 +21,14 @@ if [[ ! -f "${SCOPE_TSV}" ]]; then
 fi
 if ! command -v jq >/dev/null 2>&1; then
     echo "error: jq is required for coverage generation" >&2
+    exit 2
+fi
+if [[ "${SYN13_FORCE_ALL_MANDATORY}" != "0" && "${SYN13_FORCE_ALL_MANDATORY}" != "1" ]]; then
+    echo "error: SYN13_FORCE_ALL_MANDATORY must be 0 or 1" >&2
+    exit 2
+fi
+if [[ "${SYN13_ALLOW_MANDATORY_MISS}" != "0" && "${SYN13_ALLOW_MANDATORY_MISS}" != "1" ]]; then
+    echo "error: SYN13_ALLOW_MANDATORY_MISS must be 0 or 1" >&2
     exit 2
 fi
 
@@ -43,6 +53,14 @@ csv_escape() {
     local value="${1//\"/\"\"}"
     printf '"%s"' "${value}"
 }
+to_repo_path() {
+    local value="${1:-}"
+    if [[ "${value}" == "${REPO_ROOT}/"* ]]; then
+        printf "%s" "${value#${REPO_ROOT}/}"
+    else
+        printf "%s" "${value}"
+    fi
+}
 
 {
     echo "syntax_contract_id,native_feature_key,priority,engine,gap_item_id,status,mandatory_scope,mandatory_miss,scope_feature_key,scope_priority,sql_probe"
@@ -64,22 +82,29 @@ csv_escape() {
         status="unmapped"
         mandatory_scope="0"
         mandatory_miss="0"
+        if [[ "${SYN13_FORCE_ALL_MANDATORY}" == "1" ]]; then
+            mandatory_scope="1"
+        fi
 
         if [[ -n "${scope_feature_key}" ]]; then
             status="mapped"
             ((mapped_count += 1))
-            mandatory_scope="${scope_mandatory}"
+            if [[ "${SYN13_FORCE_ALL_MANDATORY}" == "1" ]]; then
+                mandatory_scope="1"
+            else
+                mandatory_scope="${scope_mandatory:-0}"
+            fi
             if [[ "${scope_feature_key}" != "${feature_key}" ]]; then
                 echo "error: scope mapping mismatch for ${syn_id}: scope=${scope_feature_key}, registry=${feature_key}" >&2
                 exit 3
-            fi
-            if [[ "${scope_mandatory}" == "1" ]]; then
-                ((mandatory_count += 1))
             fi
         else
             ((unmapped_count += 1))
         fi
 
+        if [[ "${mandatory_scope}" == "1" ]]; then
+            ((mandatory_count += 1))
+        fi
         if [[ "${mandatory_scope}" == "1" && "${status}" != "mapped" ]]; then
             mandatory_miss="1"
             ((mandatory_miss_count += 1))
@@ -105,7 +130,9 @@ MAPPED=${mapped_count}
 UNMAPPED=${unmapped_count}
 MANDATORY_SCOPE=${mandatory_count}
 MANDATORY_MISS=${mandatory_miss_count}
-OUTPUT_CSV=${OUT_CSV}"
+FORCE_ALL_MANDATORY=${SYN13_FORCE_ALL_MANDATORY}
+ALLOW_MANDATORY_MISS=${SYN13_ALLOW_MANDATORY_MISS}
+OUTPUT_CSV=$(to_repo_path "${OUT_CSV}")"
 
 if [[ -n "${SUMMARY_OUT}" ]]; then
     mkdir -p "$(dirname "${SUMMARY_OUT}")"
@@ -114,6 +141,6 @@ fi
 
 printf "%s\n" "${summary_text}" >&2
 
-if [[ "${mandatory_miss_count}" -ne 0 ]]; then
+if [[ "${mandatory_miss_count}" -ne 0 && "${SYN13_ALLOW_MANDATORY_MISS}" != "1" ]]; then
     exit 4
 fi

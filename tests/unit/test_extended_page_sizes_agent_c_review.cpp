@@ -24,6 +24,7 @@
 #include <cstddef>
 #include <chrono>
 #include <system_error>
+#include <string>
 #include <unistd.h>
 
 using namespace scratchbird;
@@ -31,10 +32,15 @@ using namespace scratchbird::core;
 
 namespace
 {
+std::string processScopedPrefix()
+{
+    return "test_agent_c_" + std::to_string(getpid()) + "_";
+}
+
 std::string makeTestRunPrefix()
 {
     const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
-    return "test_agent_c_mixed_" + std::to_string(getpid()) + "_" + std::to_string(now) + "_";
+    return processScopedPrefix() + "mixed_" + std::to_string(now) + "_";
 }
 } // namespace
 
@@ -56,13 +62,14 @@ protected:
 private:
     void CleanupTestFiles()
     {
+        const std::string scoped_prefix = processScopedPrefix();
         std::error_code ec;
         std::filesystem::directory_iterator it(".", ec);
         std::filesystem::directory_iterator end;
         while (!ec && it != end)
         {
             const auto filename = it->path().filename().string();
-            if (filename.rfind("test_agent_c_", 0) == 0)
+            if (filename.rfind(scoped_prefix, 0) == 0)
             {
                 std::error_code remove_ec;
                 std::filesystem::remove(it->path(), remove_ec);
@@ -391,7 +398,7 @@ TEST_F(ExtendedPageSizesAgentCReviewTest, ConcurrentLargePageAccess)
 {
     ErrorContext ctx;
     const uint32_t page_size = 131072u; // 128KB
-    const std::string db_path = "/tmp/test_agent_c_concurrent.db";
+    const std::string db_path = "/tmp/" + processScopedPrefix() + "concurrent.db";
 
     // Create database
     std::filesystem::remove(db_path);
@@ -533,7 +540,8 @@ TEST_F(ExtendedPageSizesAgentCReviewTest, PageSizeValidationEntryPoints)
     const std::vector<uint32_t> invalid_sizes = {0, 1024, 4096, 7777, 200000};
     for (uint32_t invalid_size : invalid_sizes)
     {
-        std::string path = "test_agent_c_invalid_" + std::to_string(invalid_size) + ".db";
+        std::string path =
+            processScopedPrefix() + "invalid_" + std::to_string(invalid_size) + ".db";
         ASSERT_NE(Database::create(path, invalid_size, &ctx), Status::OK)
             << "Database::create should reject invalid page size " << invalid_size;
         ASSERT_FALSE(std::filesystem::exists(path));
@@ -578,7 +586,8 @@ TEST_F(ExtendedPageSizesAgentCReviewTest, RegressionExistingPageSizes)
 
     for (uint32_t page_size : original_sizes)
     {
-        std::string path = "test_agent_c_regression_" + std::to_string(page_size) + ".db";
+        std::string path =
+            processScopedPrefix() + "regression_" + std::to_string(page_size) + ".db";
 
         // Create and open database
         ASSERT_EQ(Database::create(path, page_size, &ctx), Status::OK);

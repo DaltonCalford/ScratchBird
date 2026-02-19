@@ -1,21 +1,18 @@
 # Language Guide Index
+Last modified: 2026-02-19
 
-- Version: `0.1.0`
-- Baseline date: `2026-02-19`
+Back links:
+- [User Documentation Index](../index.md)
 
-## Primary Reference (Native Parser)
+Primary entrypoint:
+- [Language Guide README](README.md)
 
-- `NATIVE_PARSER_LANGUAGE_REFERENCE_BETA_0_1_0.md`
-
-## Related Surfaces
-
-- Wiki language guide index: `../../../wiki/content/language-guides/README.md`
-- Native wiki guide: `../../../wiki/content/language-guides/native/README.md`
-- Native wiki language reference:
-  `../../../wiki/content/language-guides/native/Language-Reference.md`
-
-## Notes
-
-Emulated parser parity completion and normalization tracks are part of the 0.2.0
-workplan and are intentionally tracked as partial/planned in current baseline
-docs.
+Section indexes:
+- [DDL](ddl/README.md)
+- [DML](dml/README.md)
+- [PSQL](psql/README.md)
+- [Admin And Session](admin/README.md)
+- [Data Types](data-types/README.md)
+- [Functions](functions/README.md)
+- [Command Groups](command-groups/README.md)
+- [Future TODO (0.2.0)](TODO_BETA_0_2_0.md)

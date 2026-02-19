@@ -7,12 +7,12 @@
 
 | Metric | Value |
 | --- | --- |
-| ctest total | 3355 |
-| ctest pass | 3355 |
+| ctest total | 3390 |
+| ctest pass | 3390 |
 | ctest fail | 0 |
 | Runtime executables in `release/beta/bin` | 12 |
 | Test executables in `release/beta/tests` | 56 |
-| Full beta tarball | `release/scratchbird-beta-20260218-full.tar.gz` (~793M) |
+| Full beta tarball | `release/scratchbird-beta-20260219-full.tar.gz` (~833M) |
 
 ## Source Footprint
 

@@ -498,5 +498,5 @@ WHERE datname = current_database();
 ## Next Steps
 
 - [Monitoring](monitoring.md)
-- [Index documentation](../language-guide/ddl/create-index.md)
-- [Query optimization](../language-guide/dml/select.md)
+- [Index documentation](../language-guide/ddl/data-storage/index/README.md)
+- [Query optimization](../language-guide/dml/query/select/README.md)

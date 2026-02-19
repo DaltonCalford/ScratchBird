@@ -28,4 +28,4 @@ After installation/build:
 ctest --test-dir build -N
 ```
 
-Expected baseline test count: `3355`.
+Expected baseline test count: `3390`.

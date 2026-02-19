@@ -1,0 +1,13 @@
+# Last modified: 2026-02-19
+# Format: <language_guide_directory>\t<parser_emitter_executor_change_basis>
+# Notes:
+# - Directory values are workspace-relative and may be set at any level.
+# - Parent matches cascade to all child directories in BKL-DOC-001 generation.
+# - Update this file at sprint start (or after scope changes) to keep doc closure scoped to active code changes.
+docs/user-documentation/language-guide/admin/	parser_v3.cpp|v3_emitter.cpp|executor.cpp
+docs/user-documentation/language-guide/command-groups/	parser_v3.cpp
+docs/user-documentation/language-guide/data-types/	parser_v3.cpp|expression_evaluator.cpp
+docs/user-documentation/language-guide/ddl/	parser_v3.cpp|v3_emitter.cpp|executor.cpp
+docs/user-documentation/language-guide/dml/	parser_v3.cpp|v3_emitter.cpp|executor.cpp
+docs/user-documentation/language-guide/functions/	parser_v3.cpp|expression_evaluator.cpp
+docs/user-documentation/language-guide/psql/	parser_v3.cpp|v3_emitter.cpp|executor.cpp

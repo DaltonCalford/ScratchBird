@@ -166,7 +166,7 @@ TEST_F(SBLRVNextExecutorDispatchContractTest, KnownVNextOpcodesRejectWithDetermi
 {
     const std::string metric = "scratchbird_vnext_executor_events_total";
     const double reject_before =
-        metricCounterValue(metric, {"vnext_opcode_dispatch", "reject", "IRX_0406"});
+        metricCounterValue(metric, {"vnext_opcode_dispatch", "reject", "BRG_0406"});
 
     struct DispatchCase
     {
@@ -254,14 +254,32 @@ TEST_F(SBLRVNextExecutorDispatchContractTest, KnownVNextOpcodesRejectWithDetermi
     {
         ExecutionResult result = executeVNext(entry.opcode, entry.payload);
         EXPECT_FALSE(result.success()) << "expected deterministic reject for " << entry.symbol;
-        EXPECT_NE(result.error().find("IRX_0406"), std::string::npos) << result.error();
+        EXPECT_NE(result.error().find("BRG_0406"), std::string::npos) << result.error();
         EXPECT_NE(result.error().find(entry.symbol), std::string::npos) << result.error();
         EXPECT_EQ(result.error().find("V3 opcode not implemented in executor"), std::string::npos)
             << result.error();
     }
 
     EXPECT_EQ(reject_before + static_cast<double>(cases.size()),
-              metricCounterValue(metric, {"vnext_opcode_dispatch", "reject", "IRX_0406"}));
+              metricCounterValue(metric, {"vnext_opcode_dispatch", "reject", "BRG_0406"}));
+}
+
+TEST_F(SBLRVNextExecutorDispatchContractTest, VacuumAliasMapsToSweepGarbageCollection)
+{
+    const std::string metric = "scratchbird_vnext_executor_events_total";
+    const double ok_before =
+        metricCounterValue(metric, {"vnext_opcode_dispatch", "ok", "SBLR3_ADMIN_VACUUM_ALIAS"});
+
+    ExecutionResult result = executeVNext(
+        static_cast<uint16_t>(Opcode::SBLR3_ADMIN_VACUUM_ALIAS),
+        Value::Object{
+            {"action", Value(static_cast<uint64_t>(31))},
+            {"options", Value(Value::Object{})},
+        });
+
+    EXPECT_TRUE(result.success()) << result.error();
+    EXPECT_EQ(ok_before + 1.0,
+              metricCounterValue(metric, {"vnext_opcode_dispatch", "ok", "SBLR3_ADMIN_VACUUM_ALIAS"}));
 }
 
 TEST_F(SBLRVNextExecutorDispatchContractTest, UdrCompileDispatchAcceptsValidProfilePayload)
@@ -441,7 +459,7 @@ TEST_F(SBLRVNextExecutorDispatchContractTest,
 {
     const std::string metric = "scratchbird_vnext_executor_events_total";
     const double reject_before =
-        metricCounterValue(metric, {"vnext_opcode_dispatch", "reject", "IRX_0406"});
+        metricCounterValue(metric, {"vnext_opcode_dispatch", "reject", "BRG_0406"});
 
     ExecutionResult result = executeVNext(
         static_cast<uint16_t>(Opcode::SBLR3_CREATE_DATABASE),
@@ -451,20 +469,20 @@ TEST_F(SBLRVNextExecutorDispatchContractTest,
                       {"options", Value(Value::Object{{"engine", Value(std::string("native"))}})}});
 
     ASSERT_FALSE(result.success());
-    EXPECT_NE(result.error().find("IRX_0406"), std::string::npos) << result.error();
+    EXPECT_NE(result.error().find("BRG_0406"), std::string::npos) << result.error();
     EXPECT_NE(result.error().find("SBLR3_CREATE_DATABASE"), std::string::npos) << result.error();
     EXPECT_EQ(result.error().find("V3 opcode not implemented in executor"), std::string::npos)
         << result.error();
 
     EXPECT_EQ(reject_before + 1.0,
-              metricCounterValue(metric, {"vnext_opcode_dispatch", "reject", "IRX_0406"}));
+              metricCounterValue(metric, {"vnext_opcode_dispatch", "reject", "BRG_0406"}));
 }
 
 TEST_F(SBLRVNextExecutorDispatchContractTest, BridgeOpcodeFamilyMatrixRejectsDeterministically)
 {
     const std::string metric = "scratchbird_vnext_executor_events_total";
     const double reject_before =
-        metricCounterValue(metric, {"vnext_opcode_dispatch", "reject", "IRX_0406"});
+        metricCounterValue(metric, {"vnext_opcode_dispatch", "reject", "BRG_0406"});
 
     auto makeDocPathPayload = []() -> Value::Object {
         return Value::Object{
@@ -553,7 +571,7 @@ TEST_F(SBLRVNextExecutorDispatchContractTest, BridgeOpcodeFamilyMatrixRejectsDet
         const std::string symbol = symbol_c ? symbol_c : "UNKNOWN";
         ExecutionResult result = executeVNext(static_cast<uint16_t>(opcode), std::move(payload));
         EXPECT_FALSE(result.success()) << "expected deterministic reject for " << symbol;
-        EXPECT_NE(result.error().find("IRX_0406"), std::string::npos) << result.error();
+        EXPECT_NE(result.error().find("BRG_0406"), std::string::npos) << result.error();
         EXPECT_NE(result.error().find(symbol), std::string::npos) << result.error();
         EXPECT_EQ(result.error().find("V3 opcode not implemented in executor"), std::string::npos)
             << result.error();
@@ -590,7 +608,7 @@ TEST_F(SBLRVNextExecutorDispatchContractTest, BridgeOpcodeFamilyMatrixRejectsDet
         Opcode::SBLR3_IDX_SHOW_CONTENTION,
     }};
 
-    const std::array<Opcode, 18> bridge_control_admin = {{
+    const std::array<Opcode, 17> bridge_control_admin = {{
         Opcode::SBLR3_SESSION_RESET,
         Opcode::SBLR3_CONFIG_RESET,
         Opcode::SBLR3_CONFIG_HISTORY,
@@ -608,7 +626,6 @@ TEST_F(SBLRVNextExecutorDispatchContractTest, BridgeOpcodeFamilyMatrixRejectsDet
         Opcode::SBLR3_ADMIN_BACKUP,
         Opcode::SBLR3_ADMIN_RESTORE,
         Opcode::SBLR3_ADMIN_VALIDATE,
-        Opcode::SBLR3_ADMIN_VACUUM_ALIAS,
     }};
 
     const std::array<Opcode, 27> bridge_multi_model = {{
@@ -741,7 +758,7 @@ TEST_F(SBLRVNextExecutorDispatchContractTest, BridgeOpcodeFamilyMatrixRejectsDet
                                bridge_index.size() + bridge_control_admin.size() +
                                bridge_multi_model.size() + bridge_control_cluster_security.size();
     EXPECT_EQ(reject_before + static_cast<double>(total_cases),
-              metricCounterValue(metric, {"vnext_opcode_dispatch", "reject", "IRX_0406"}));
+              metricCounterValue(metric, {"vnext_opcode_dispatch", "reject", "BRG_0406"}));
 }
 
 TEST_F(SBLRVNextExecutorDispatchContractTest, UnknownVNextOpcodeRejectedBeforeDispatch)

@@ -170,6 +170,12 @@ namespace scratchbird
                 return out;
             }
 
+            // SBLR3_FUNC_NOW flag bit: 1 means CURRENT_TIMESTAMP semantics (txn-start anchored).
+            constexpr uint16_t kFuncNowCurrentTimestampFlag = 0x0001;
+            // SBLR3_FUNC_JSON_EXISTS mode flags.
+            constexpr uint16_t kFuncJsonExistsAnyFlag = 0x0001;
+            constexpr uint16_t kFuncJsonExistsAllFlag = 0x0002;
+
             static void initializeLanguageUdrCompileRegistry(scratchbird::udr::LanguageUdrRegistry& registry)
             {
                 for (const auto& seed : kLanguageUdrCompileProfiles)
@@ -41933,6 +41939,176 @@ namespace scratchbird
                         }
                         return Value::makeInt64(~val.toInt64());
                     }
+                    case Opcode::SBLR3_IN_LIST:
+                    case Opcode::SBLR3_SUBQUERY_IN:
+                    case Opcode::SBLR3_SUBQUERY_NOT_IN: {
+                        const auto* obj = std::get_if<scratchbird::sblr::v3::Value::Object>(&inst.payload.data);
+                        if (!obj)
+                        {
+                            return Value::makeNull();
+                        }
+
+                        scratchbird::sblr::v3::Instruction value_inst;
+                        auto it_value = obj->find("value");
+                        if (it_value == obj->end() || !getInstrFromValue(it_value->second, value_inst))
+                        {
+                            return Value::makeNull();
+                        }
+                        Value probe = evalExpr(value_inst);
+                        if (probe.isNull())
+                        {
+                            return Value::makeNull();
+                        }
+
+                        bool negated = false;
+                        getBool(*obj, "negated", negated);
+                        if (op == Opcode::SBLR3_SUBQUERY_IN)
+                        {
+                            negated = false;
+                        }
+                        else if (op == Opcode::SBLR3_SUBQUERY_NOT_IN)
+                        {
+                            negated = true;
+                        }
+
+                        auto it_list = obj->find("list");
+                        const auto* list = (it_list != obj->end())
+                            ? std::get_if<scratchbird::sblr::v3::Value::List>(&it_list->second.data)
+                            : nullptr;
+                        if (!list)
+                        {
+                            return Value::makeNull();
+                        }
+
+                        const bool strict_mode = isOperatorStrictModeEnabled(conn_ctx_);
+                        auto equals_with_implicit = [&](Value lhs, Value rhs) -> bool {
+                            std::string implicit_error;
+                            if (!normalizeImplicitOperandsForBinaryOp(
+                                    scratchbird::sblr::v3::Opcode::SBLR3_EXPR_EQ,
+                                    lhs,
+                                    rhs,
+                                    implicit_error,
+                                    strict_mode))
+                            {
+                                error(implicit_error);
+                            }
+
+                            if (core::TypeSystem::isString(lhs.type()) ||
+                                core::TypeSystem::isString(rhs.type()))
+                            {
+                                return compareStrings(lhs.toString(), rhs.toString()) == 0;
+                            }
+                            if (isDecfloatType(lhs.type()) || isDecfloatType(rhs.type()))
+                            {
+                                uint8_t precision =
+                                    (lhs.type() == core::DataType::DECFLOAT34 ||
+                                     rhs.type() == core::DataType::DECFLOAT34)
+                                        ? 34
+                                        : 16;
+                                core::DecFloat lhs_dec = coerceToDecfloat(lhs, precision);
+                                core::DecFloat rhs_dec = coerceToDecfloat(rhs, precision);
+                                return core::DecFloat::compare(lhs_dec, rhs_dec, nullptr) == 0;
+                            }
+                            if (lhs.type() == core::DataType::UUID &&
+                                rhs.type() == core::DataType::UUID)
+                            {
+                                return lhs.getUUID() == rhs.getUUID();
+                            }
+                            if (isTemporalType(lhs.type()) && isTemporalType(rhs.type()))
+                            {
+                                return temporalComparisonKeyMicros(lhs) ==
+                                       temporalComparisonKeyMicros(rhs);
+                            }
+                            if (isIntegerType(lhs.type()) && isIntegerType(rhs.type()))
+                            {
+                                return compareIntegerValues(lhs, rhs) == 0;
+                            }
+                            if (isNumericType(lhs.type()) && isNumericType(rhs.type()))
+                            {
+                                return coerceToDouble(lhs) == coerceToDouble(rhs);
+                            }
+                            return lhs.toInt64() == rhs.toInt64();
+                        };
+
+                        bool saw_null = false;
+                        for (const auto& entry : *list)
+                        {
+                            scratchbird::sblr::v3::Instruction elem_inst;
+                            if (!getInstrFromValue(entry, elem_inst))
+                            {
+                                continue;
+                            }
+                            Value elem = evalExpr(elem_inst);
+                            if (elem.isNull())
+                            {
+                                saw_null = true;
+                                continue;
+                            }
+                            if (equals_with_implicit(probe, elem))
+                            {
+                                return Value::makeBoolean(!negated);
+                            }
+                        }
+
+                        if (saw_null)
+                        {
+                            return Value::makeNull();
+                        }
+                        return Value::makeBoolean(negated);
+                    }
+                    case Opcode::SBLR3_EXPR_LIKE:
+                    case Opcode::SBLR3_EXPR_ILIKE: {
+                        const auto* obj = std::get_if<scratchbird::sblr::v3::Value::Object>(&inst.payload.data);
+                        if (!obj)
+                        {
+                            return Value::makeNull();
+                        }
+
+                        scratchbird::sblr::v3::Instruction value_inst;
+                        scratchbird::sblr::v3::Instruction pattern_inst;
+                        auto it_value = obj->find("value");
+                        auto it_pattern = obj->find("pattern");
+                        if (it_value == obj->end() || it_pattern == obj->end() ||
+                            !getInstrFromValue(it_value->second, value_inst) ||
+                            !getInstrFromValue(it_pattern->second, pattern_inst))
+                        {
+                            return Value::makeNull();
+                        }
+
+                        Value value = evalExpr(value_inst);
+                        Value pattern = evalExpr(pattern_inst);
+                        if (value.isNull() || pattern.isNull())
+                        {
+                            return Value::makeNull();
+                        }
+
+                        char escape_char = '\\';
+                        auto it_escape = obj->find("escape");
+                        if (it_escape != obj->end())
+                        {
+                            scratchbird::sblr::v3::Instruction escape_inst;
+                            if (getInstrFromValue(it_escape->second, escape_inst))
+                            {
+                                Value escape_value = evalExpr(escape_inst);
+                                if (!escape_value.isNull())
+                                {
+                                    std::string esc = escape_value.toString();
+                                    escape_char = esc.empty() ? '\0' : esc.front();
+                                }
+                            }
+                        }
+
+                        bool negated = false;
+                        getBool(*obj, "negated", negated);
+                        const bool case_insensitive = (op == Opcode::SBLR3_EXPR_ILIKE);
+                        bool matched = matchSqlLikeCase(
+                            value.toString(), pattern.toString(), escape_char, case_insensitive);
+                        if (negated)
+                        {
+                            matched = !matched;
+                        }
+                        return Value::makeBoolean(matched);
+                    }
                     case Opcode::SBLR3_EXPR_ADD:
                     case Opcode::SBLR3_EXPR_SUBTRACT:
                     case Opcode::SBLR3_EXPR_MULTIPLY:
@@ -41955,8 +42131,17 @@ namespace scratchbird
                     case Opcode::SBLR3_BIT_SHIFT_RIGHT:
                     case Opcode::SBLR3_PRED_STARTING_WITH:
                     case Opcode::SBLR3_PRED_CONTAINING:
+                    case Opcode::SBLR3_REGEX_MATCH:
+                    case Opcode::SBLR3_REGEX_MATCH_CI:
+                    case Opcode::SBLR3_REGEX_NOT_MATCH:
+                    case Opcode::SBLR3_REGEX_NOT_MATCH_CI:
                     case Opcode::SBLR3_JSON_EXTRACT:
-                    case Opcode::SBLR3_JSON_DOUBLE_ARROW: {
+                    case Opcode::SBLR3_JSON_DOUBLE_ARROW:
+                    case Opcode::SBLR3_JSON_HASH_ARROW:
+                    case Opcode::SBLR3_JSON_HASH_DOUBLE_ARROW:
+                    case Opcode::SBLR3_ARRAY_CONTAINS:
+                    case Opcode::SBLR3_ARRAY_CONTAINED_BY:
+                    case Opcode::SBLR3_ARRAY_OVERLAP: {
                         const auto* obj = std::get_if<scratchbird::sblr::v3::Value::Object>(&inst.payload.data);
                         if (!obj)
                         {
@@ -42056,7 +42241,26 @@ namespace scratchbird
                             return Value::makeBoolean(
                                 lower_haystack.find(lower_needle) != std::string::npos);
                         }
-                        if (op == Opcode::SBLR3_JSON_EXTRACT || op == Opcode::SBLR3_JSON_DOUBLE_ARROW)
+                        if (op == Opcode::SBLR3_REGEX_MATCH ||
+                            op == Opcode::SBLR3_REGEX_MATCH_CI ||
+                            op == Opcode::SBLR3_REGEX_NOT_MATCH ||
+                            op == Opcode::SBLR3_REGEX_NOT_MATCH_CI)
+                        {
+                            const bool case_insensitive =
+                                op == Opcode::SBLR3_REGEX_MATCH_CI ||
+                                op == Opcode::SBLR3_REGEX_NOT_MATCH_CI;
+                            bool matched = matchRegex(lhs.toString(), rhs.toString(), case_insensitive);
+                            if (op == Opcode::SBLR3_REGEX_NOT_MATCH ||
+                                op == Opcode::SBLR3_REGEX_NOT_MATCH_CI)
+                            {
+                                matched = !matched;
+                            }
+                            return Value::makeBoolean(matched);
+                        }
+                        if (op == Opcode::SBLR3_JSON_EXTRACT ||
+                            op == Opcode::SBLR3_JSON_DOUBLE_ARROW ||
+                            op == Opcode::SBLR3_JSON_HASH_ARROW ||
+                            op == Opcode::SBLR3_JSON_HASH_DOUBLE_ARROW)
                         {
                             if (lhs.isNull() || rhs.isNull())
                             {
@@ -42073,7 +42277,8 @@ namespace scratchbird
                                 {
                                     output_type = core::DataType::JSONB;
                                 }
-                                if (op == Opcode::SBLR3_JSON_DOUBLE_ARROW)
+                                if (op == Opcode::SBLR3_JSON_DOUBLE_ARROW ||
+                                    op == Opcode::SBLR3_JSON_HASH_DOUBLE_ARROW)
                                 {
                                     output_type = core::DataType::TEXT;
                                 }
@@ -42083,6 +42288,81 @@ namespace scratchbird
                             {
                                 return Value::makeNull();
                             }
+                        }
+                        if (op == Opcode::SBLR3_ARRAY_CONTAINS ||
+                            op == Opcode::SBLR3_ARRAY_CONTAINED_BY ||
+                            op == Opcode::SBLR3_ARRAY_OVERLAP)
+                        {
+                            auto to_array_json = [&](const Value& array_value, json& out) -> bool {
+                                try
+                                {
+                                    if (array_value.type() == core::DataType::ARRAY)
+                                    {
+                                        out = valueToJSON(array_value);
+                                        return out.is_array();
+                                    }
+                                    if (array_value.type() == core::DataType::JSON ||
+                                        array_value.type() == core::DataType::JSONB)
+                                    {
+                                        out = json::parse(array_value.toString());
+                                        return out.is_array();
+                                    }
+                                    out = json::parse(array_value.toString());
+                                    return out.is_array();
+                                }
+                                catch (...)
+                                {
+                                    return false;
+                                }
+                            };
+
+                            auto contains_all = [](const json& haystack, const json& needles) -> bool {
+                                for (const auto& needle : needles)
+                                {
+                                    bool found = false;
+                                    for (const auto& candidate : haystack)
+                                    {
+                                        if (candidate == needle)
+                                        {
+                                            found = true;
+                                            break;
+                                        }
+                                    }
+                                    if (!found)
+                                    {
+                                        return false;
+                                    }
+                                }
+                                return true;
+                            };
+
+                            json lhs_array;
+                            json rhs_array;
+                            if (!to_array_json(lhs, lhs_array) || !to_array_json(rhs, rhs_array))
+                            {
+                                return Value::makeNull();
+                            }
+
+                            if (op == Opcode::SBLR3_ARRAY_CONTAINS)
+                            {
+                                return Value::makeBoolean(contains_all(lhs_array, rhs_array));
+                            }
+                            if (op == Opcode::SBLR3_ARRAY_CONTAINED_BY)
+                            {
+                                return Value::makeBoolean(contains_all(rhs_array, lhs_array));
+                            }
+
+                            for (const auto& lhs_entry : lhs_array)
+                            {
+                                for (const auto& rhs_entry : rhs_array)
+                                {
+                                    if (lhs_entry == rhs_entry)
+                                    {
+                                        return Value::makeBoolean(true);
+                                    }
+                                }
+                            }
+                            return Value::makeBoolean(false);
                         }
                         if (op == Opcode::SBLR3_EXPR_EQ)
                         {
@@ -42693,8 +42973,22 @@ namespace scratchbird
                     case Opcode::SBLR3_ARRAY_SUBSCRIPT:
                     case Opcode::SBLR3_ARRAY_SLICE:
                     case Opcode::SBLR3_FUNC_ARRAY_POSITION:
+                    case Opcode::SBLR3_FUNC_ABS:
+                    case Opcode::SBLR3_FUNC_SIN:
+                    case Opcode::SBLR3_FUNC_COS:
+                    case Opcode::SBLR3_FUNC_TAN:
+                    case Opcode::SBLR3_FUNC_POWER:
+                    case Opcode::SBLR3_FUNC_CONCAT:
+                    case Opcode::SBLR3_FUNC_CONCAT_WS:
                     case Opcode::SBLR3_FUNC_REPLACE:
                     case Opcode::SBLR3_FUNC_ENDS_WITH:
+                    case Opcode::SBLR3_FUNC_NOW:
+                    case Opcode::SBLR3_FUNC_CURRENT_DATE:
+                    case Opcode::SBLR3_FUNC_CURRENT_TIME:
+                    case Opcode::SBLR3_FUNC_CURRENT_USER:
+                    case Opcode::SBLR3_FUNC_CURRENT_ROLE:
+                    case Opcode::SBLR3_FUNC_CURRENT_CONNECTION:
+                    case Opcode::SBLR3_FUNC_CURRENT_TRANSACTION:
                     case Opcode::SBLR3_FUNC_JSON_EXISTS:
                     case Opcode::SBLR3_FUNC_JSON_HAS_KEY:
                     case Opcode::SBLR3_FUNC_TO_CHAR:
@@ -42714,7 +43008,12 @@ namespace scratchbird
                     case Opcode::SBLR3_TS_RANK:
                     case Opcode::SBLR3_WIN_ROW_NUMBER:
                     case Opcode::SBLR3_WIN_RANK:
-                    case Opcode::SBLR3_WIN_DENSE_RANK: {
+                    case Opcode::SBLR3_WIN_DENSE_RANK:
+                    case Opcode::SBLR3_WIN_LAG:
+                    case Opcode::SBLR3_WIN_LEAD:
+                    case Opcode::SBLR3_WIN_FIRST_VALUE:
+                    case Opcode::SBLR3_WIN_LAST_VALUE:
+                    case Opcode::SBLR3_WIN_NTH_VALUE: {
                         const auto* obj = std::get_if<scratchbird::sblr::v3::Value::Object>(&inst.payload.data);
                         if (!obj)
                         {
@@ -42738,6 +43037,253 @@ namespace scratchbird
                                     args.push_back(evalExpr(arg_inst));
                                 }
                             }
+                        }
+
+                        if (op == Opcode::SBLR3_FUNC_ABS)
+                        {
+                            if (args.size() != 1 || args[0].isNull())
+                            {
+                                return Value::makeNull();
+                            }
+                            if (args[0].type() == core::DataType::INT32)
+                            {
+                                const int32_t value = args[0].getInt32();
+                                return Value::makeInt32(value < 0 ? -value : value);
+                            }
+                            if (args[0].type() == core::DataType::INT64)
+                            {
+                                const int64_t value = args[0].getInt64();
+                                return Value::makeInt64(value < 0 ? -value : value);
+                            }
+                            return Value::makeFloat64(std::abs(coerceToDouble(args[0])));
+                        }
+
+                        if (op == Opcode::SBLR3_FUNC_SIN ||
+                            op == Opcode::SBLR3_FUNC_COS ||
+                            op == Opcode::SBLR3_FUNC_TAN)
+                        {
+                            if (args.size() != 1 || args[0].isNull())
+                            {
+                                return Value::makeNull();
+                            }
+                            const double value = coerceToDouble(args[0]);
+                            if (op == Opcode::SBLR3_FUNC_SIN)
+                            {
+                                return Value::makeFloat64(std::sin(value));
+                            }
+                            if (op == Opcode::SBLR3_FUNC_COS)
+                            {
+                                return Value::makeFloat64(std::cos(value));
+                            }
+                            return Value::makeFloat64(std::tan(value));
+                        }
+
+                        if (op == Opcode::SBLR3_FUNC_POWER)
+                        {
+                            if (args.size() != 2 || args[0].isNull() || args[1].isNull())
+                            {
+                                return Value::makeNull();
+                            }
+                            const double base = coerceToDouble(args[0]);
+                            const double exponent = coerceToDouble(args[1]);
+                            return Value::makeFloat64(std::pow(base, exponent));
+                        }
+
+                        if (op == Opcode::SBLR3_FUNC_CONCAT)
+                        {
+                            if (args.empty())
+                            {
+                                return Value::makeNull();
+                            }
+                            std::string result;
+                            for (const auto& arg : args)
+                            {
+                                if (arg.isNull())
+                                {
+                                    return Value::makeNull();
+                                }
+                                result += arg.toString();
+                            }
+                            return Value::makeVarchar(result);
+                        }
+
+                        if (op == Opcode::SBLR3_FUNC_CONCAT_WS)
+                        {
+                            if (args.size() < 2 || args[0].isNull())
+                            {
+                                return Value::makeNull();
+                            }
+                            const std::string separator = args[0].toString();
+                            std::string result;
+                            bool first = true;
+                            for (size_t i = 1; i < args.size(); ++i)
+                            {
+                                if (args[i].isNull())
+                                {
+                                    continue;
+                                }
+                                if (!first)
+                                {
+                                    result += separator;
+                                }
+                                first = false;
+                                result += args[i].toString();
+                            }
+                            return Value::makeVarchar(result);
+                        }
+
+                        if (op == Opcode::SBLR3_FUNC_NOW)
+                        {
+                            if (!args.empty())
+                            {
+                                return Value::makeNull();
+                            }
+                            const bool use_transaction_anchor =
+                                (inst.flags & kFuncNowCurrentTimestampFlag) != 0;
+                            int64_t gmt_micros = 0;
+                            if (use_transaction_anchor && conn_ctx_)
+                            {
+                                gmt_micros = static_cast<int64_t>(
+                                    conn_ctx_->getTransactionStartTime().count());
+                            }
+                            if (gmt_micros == 0)
+                            {
+                                auto now = std::chrono::system_clock::now();
+                                gmt_micros =
+                                    std::chrono::duration_cast<std::chrono::microseconds>(
+                                        now.time_since_epoch()).count();
+                            }
+                            uint16_t tz_id = db_ ? db_->getConnectionTimezone()
+                                                 : timezone_manager_.getDefaultTimezone();
+                            core::TimezoneOffset offset = timezone_manager_.getOffset(
+                                tz_id, static_cast<int64_t>(gmt_micros));
+                            int32_t offset_seconds = offset.offset_minutes * 60;
+                            return Value::makeTimestamp(static_cast<int64_t>(gmt_micros), offset_seconds);
+                        }
+
+                        if (op == Opcode::SBLR3_FUNC_CURRENT_DATE)
+                        {
+                            if (!args.empty())
+                            {
+                                return Value::makeNull();
+                            }
+                            auto now = std::chrono::system_clock::now();
+                            auto gmt_micros =
+                                std::chrono::duration_cast<std::chrono::microseconds>(
+                                    now.time_since_epoch()).count();
+                            uint16_t tz_id = db_ ? db_->getConnectionTimezone()
+                                                 : timezone_manager_.getDefaultTimezone();
+                            core::TimezoneOffset offset = timezone_manager_.getOffset(
+                                tz_id, static_cast<int64_t>(gmt_micros));
+                            int32_t offset_seconds = offset.offset_minutes * 60;
+
+                            int64_t local_seconds = floorDiv(
+                                static_cast<int64_t>(gmt_micros) +
+                                static_cast<int64_t>(offset_seconds) * 1000000,
+                                1000000);
+                            int64_t default_micros = defaultDateTimeMicros();
+                            int64_t default_seconds = default_micros / 1000000;
+                            int64_t days = floorDiv(
+                                local_seconds - default_seconds,
+                                core::FirebirdDateTime::SECONDS_PER_DAY);
+                            return Value::makeDate(days, offset_seconds);
+                        }
+
+                        if (op == Opcode::SBLR3_FUNC_CURRENT_TIME)
+                        {
+                            if (!args.empty())
+                            {
+                                return Value::makeNull();
+                            }
+                            auto now = std::chrono::system_clock::now();
+                            auto gmt_micros =
+                                std::chrono::duration_cast<std::chrono::microseconds>(
+                                    now.time_since_epoch()).count();
+                            uint16_t tz_id = db_ ? db_->getConnectionTimezone()
+                                                 : timezone_manager_.getDefaultTimezone();
+                            core::TimezoneOffset offset = timezone_manager_.getOffset(
+                                tz_id, static_cast<int64_t>(gmt_micros));
+                            int32_t offset_seconds = offset.offset_minutes * 60;
+                            int64_t micros_per_day =
+                                static_cast<int64_t>(core::FirebirdDateTime::SECONDS_PER_DAY) * 1000000;
+                            int64_t utc_time_micros = static_cast<int64_t>(gmt_micros) % micros_per_day;
+                            if (utc_time_micros < 0)
+                            {
+                                utc_time_micros += micros_per_day;
+                            }
+                            return Value::makeTime(utc_time_micros, offset_seconds);
+                        }
+
+                        if (op == Opcode::SBLR3_FUNC_CURRENT_USER)
+                        {
+                            if (!args.empty())
+                            {
+                                return Value::makeNull();
+                            }
+                            std::string user_name;
+                            if (conn_ctx_)
+                            {
+                                core::CatalogManager::UserInfo user_info;
+                                core::ErrorContext user_ctx;
+                                if (!isZeroUuid(conn_ctx_->getCurrentUserId()) &&
+                                    db_->catalog_manager()->getUser(conn_ctx_->getCurrentUserId(),
+                                                                    user_info,
+                                                                    &user_ctx) == core::Status::OK)
+                                {
+                                    user_name = user_info.username;
+                                }
+                            }
+                            return user_name.empty() ? Value::makeNull() : Value::makeVarchar(user_name);
+                        }
+
+                        if (op == Opcode::SBLR3_FUNC_CURRENT_ROLE)
+                        {
+                            if (!args.empty())
+                            {
+                                return Value::makeNull();
+                            }
+                            std::string role_name;
+                            if (conn_ctx_)
+                            {
+                                core::CatalogManager::RoleInfo role_info;
+                                core::ErrorContext role_ctx;
+                                if (!isZeroUuid(conn_ctx_->getActiveRoleId()) &&
+                                    db_->catalog_manager()->getRole(conn_ctx_->getActiveRoleId(),
+                                                                    role_info,
+                                                                    &role_ctx) == core::Status::OK)
+                                {
+                                    role_name = role_info.role_name;
+                                }
+                            }
+                            return role_name.empty() ? Value::makeNull() : Value::makeVarchar(role_name);
+                        }
+
+                        if (op == Opcode::SBLR3_FUNC_CURRENT_CONNECTION)
+                        {
+                            if (!args.empty())
+                            {
+                                return Value::makeNull();
+                            }
+                            std::string conn_id;
+                            if (conn_ctx_)
+                            {
+                                core::ID session_id = conn_ctx_->effectiveSessionId();
+                                if (!isZeroUuid(session_id))
+                                {
+                                    conn_id = session_id.toString();
+                                }
+                            }
+                            return conn_id.empty() ? Value::makeNull() : Value::makeVarchar(conn_id);
+                        }
+
+                        if (op == Opcode::SBLR3_FUNC_CURRENT_TRANSACTION)
+                        {
+                            if (!args.empty())
+                            {
+                                return Value::makeNull();
+                            }
+                            int64_t xid = conn_ctx_ ? static_cast<int64_t>(conn_ctx_->getCurrentXid()) : 0;
+                            return xid == 0 ? Value::makeNull() : Value::makeInt64(xid);
                         }
 
                         auto to_array_json = [&](const Value& array_value, json& out) -> bool {
@@ -42924,6 +43470,144 @@ namespace scratchbird
                             try
                             {
                                 json j = json::parse(args[0].toString());
+                                const bool any_mode =
+                                    (inst.flags & kFuncJsonExistsAnyFlag) != 0 &&
+                                    (inst.flags & kFuncJsonExistsAllFlag) == 0;
+                                const bool all_mode =
+                                    (inst.flags & kFuncJsonExistsAllFlag) != 0;
+
+                                auto trim_copy = [](const std::string& input) -> std::string {
+                                    size_t start = 0;
+                                    while (start < input.size() &&
+                                           std::isspace(static_cast<unsigned char>(input[start])) != 0)
+                                    {
+                                        ++start;
+                                    }
+                                    size_t end = input.size();
+                                    while (end > start &&
+                                           std::isspace(static_cast<unsigned char>(input[end - 1])) != 0)
+                                    {
+                                        --end;
+                                    }
+                                    return input.substr(start, end - start);
+                                };
+
+                                auto unquote_copy = [&](std::string value) -> std::string {
+                                    value = trim_copy(value);
+                                    if (value.size() >= 2)
+                                    {
+                                        const char first = value.front();
+                                        const char last = value.back();
+                                        if ((first == '"' && last == '"') ||
+                                            (first == '\'' && last == '\''))
+                                        {
+                                            return value.substr(1, value.size() - 2);
+                                        }
+                                    }
+                                    return value;
+                                };
+
+                                auto extract_key_list = [&](const Value& raw) {
+                                    std::vector<std::string> keys;
+                                    auto append_key = [&](const std::string& key) {
+                                        std::string normalized = unquote_copy(key);
+                                        if (!normalized.empty())
+                                        {
+                                            keys.push_back(std::move(normalized));
+                                        }
+                                    };
+
+                                    if (raw.type() == core::DataType::ARRAY ||
+                                        raw.type() == core::DataType::LIST)
+                                    {
+                                        for (const auto& item : raw.getArray())
+                                        {
+                                            if (!item.isNull())
+                                            {
+                                                append_key(item.toString());
+                                            }
+                                        }
+                                        return keys;
+                                    }
+
+                                    std::string text = trim_copy(raw.toString());
+                                    if (text.empty())
+                                    {
+                                        return keys;
+                                    }
+
+                                    if ((text.front() == '[' && text.back() == ']') ||
+                                        (text.front() == '{' && text.back() == '}'))
+                                    {
+                                        std::string json_text = text;
+                                        if (text.front() == '{')
+                                        {
+                                            json_text = "[" + text.substr(1, text.size() - 2) + "]";
+                                        }
+
+                                        try
+                                        {
+                                            json parsed = json::parse(json_text);
+                                            if (parsed.is_array())
+                                            {
+                                                for (const auto& entry : parsed)
+                                                {
+                                                    if (entry.is_string())
+                                                    {
+                                                        append_key(entry.get<std::string>());
+                                                    }
+                                                    else if (!entry.is_null())
+                                                    {
+                                                        append_key(entry.dump());
+                                                    }
+                                                }
+                                                return keys;
+                                            }
+                                        }
+                                        catch (...)
+                                        {
+                                            // Fall through to scalar handling below.
+                                        }
+                                    }
+
+                                    append_key(text);
+                                    return keys;
+                                };
+
+                                if (any_mode || all_mode)
+                                {
+                                    if (!j.is_object())
+                                    {
+                                        return Value::makeBoolean(false);
+                                    }
+                                    const auto keys = extract_key_list(args[1]);
+                                    if (keys.empty())
+                                    {
+                                        return Value::makeBoolean(false);
+                                    }
+
+                                    if (all_mode)
+                                    {
+                                        for (const auto& key : keys)
+                                        {
+                                            if (!j.contains(key))
+                                            {
+                                                return Value::makeBoolean(false);
+                                            }
+                                        }
+                                        return Value::makeBoolean(true);
+                                    }
+
+                                    for (const auto& key : keys)
+                                    {
+                                        if (j.contains(key))
+                                        {
+                                            return Value::makeBoolean(true);
+                                        }
+                                    }
+                                    return Value::makeBoolean(false);
+                                }
+
                                 std::vector<std::string> path_components = parseJSONPath(args[1].toString());
                                 return Value::makeBoolean(jsonPathExists(j, path_components));
                             }
@@ -43333,6 +44017,47 @@ namespace scratchbird
                         {
                             int64_t value = current_window_row_number > 0 ? current_window_row_number : 1;
                             return Value::makeInt64(value);
+                        }
+
+                        if (op == Opcode::SBLR3_WIN_FIRST_VALUE ||
+                            op == Opcode::SBLR3_WIN_LAST_VALUE)
+                        {
+                            if (args.empty())
+                            {
+                                return Value::makeNull();
+                            }
+                            return args[0];
+                        }
+
+                        if (op == Opcode::SBLR3_WIN_NTH_VALUE)
+                        {
+                            if (args.size() != 2 || args[1].isNull())
+                            {
+                                return Value::makeNull();
+                            }
+                            int64_t nth = 0;
+                            if (isNumericType(args[1].type()))
+                            {
+                                nth = args[1].toInt64();
+                            }
+                            if (nth == 1 && !args[0].isNull())
+                            {
+                                return args[0];
+                            }
+                            return Value::makeNull();
+                        }
+
+                        if (op == Opcode::SBLR3_WIN_LAG || op == Opcode::SBLR3_WIN_LEAD)
+                        {
+                            if (args.empty())
+                            {
+                                return Value::makeNull();
+                            }
+                            if (args.size() >= 3)
+                            {
+                                return args[2];
+                            }
+                            return Value::makeNull();
                         }
 
                         if (op == Opcode::SBLR3_TO_TSVECTOR ||
@@ -58073,12 +58798,12 @@ namespace scratchbird
 	                        static_cast<uint16_t>(opcode));
 	                    const std::string symbol = opcode_name ? opcode_name : "UNKNOWN";
 
-	                    auto semanticBridgeReject = [&](const std::string& feature) -> ExecutionResult {
+                            auto semanticBridgeReject = [&](const std::string& feature) -> ExecutionResult {
                             core::VNextMetricsEventModel::recordExecutorEvent(
-                                "vnext_opcode_dispatch", "reject", "IRX_0406");
-	                        return ExecutionResult(
-	                            "IRX_0406: semantic class change requires explicit bridge for " + feature);
-	                    };
+                                "vnext_opcode_dispatch", "reject", "BRG_0406");
+		                        return ExecutionResult(
+		                            "BRG_0406: semantic class bridge requires explicit runtime closure for " + feature);
+		                    };
 
                         auto payloadFieldToString =
                             [&](const scratchbird::sblr::v3::Value::Object& obj,
@@ -58574,6 +59299,35 @@ namespace scratchbird
                             case scratchbird::sblr::v3::Opcode::SBLR3_OP_UDR_COMPILE_DISPATCH:
                             case scratchbird::sblr::v3::Opcode::SBLR3_OP_UDR_EMBEDDED_SQL_COMPILE:
                                 return executeUdrCompileBridgeOpcode(opcode, payload);
+                            case scratchbird::sblr::v3::Opcode::SBLR3_ADMIN_VACUUM_ALIAS: {
+                                // Native MGA engines use sweep/garbage-collection semantics.
+                                // VACUUM is accepted as compatibility alias and mapped to sweep.
+                                if (!db_)
+                                {
+                                    return ExecutionResult("Database not available");
+                                }
+                                auto* sweep_mgr = db_->sweep_manager();
+                                if (!sweep_mgr)
+                                {
+                                    return ExecutionResult("Sweep manager not available");
+                                }
+
+                                core::ErrorContext err_ctx;
+                                auto status = sweep_mgr->executeSweep(true, &err_ctx);
+                                if (status != core::Status::OK)
+                                {
+                                    std::string err_msg = "Sweep failed";
+                                    if (!err_ctx.message.empty())
+                                    {
+                                        err_msg += ": " + err_ctx.message;
+                                    }
+                                    return ExecutionResult(err_msg);
+                                }
+
+                                core::VNextMetricsEventModel::recordExecutorEvent(
+                                    "vnext_opcode_dispatch", "ok", symbol);
+                                return ExecutionResult();
+                            }
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_OP_DOC_PATH_FILTER:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_OP_TS_BUCKET_AGG:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_OP_COL_SCAN:
@@ -58611,7 +59365,6 @@ namespace scratchbird
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_ADMIN_BACKUP:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_ADMIN_RESTORE:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_ADMIN_VALIDATE:
-	                        case scratchbird::sblr::v3::Opcode::SBLR3_ADMIN_VACUUM_ALIAS:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_CQL_KEYSPACE:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_CQL_BATCH:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_CQL_TTL:
@@ -59337,6 +60090,109 @@ namespace scratchbird
                                 return ExecutionResult();
                             }
 
+                            if (normalized_key == "SCHEMA" ||
+                                normalized_key == "CURRENT_SCHEMA" ||
+                                normalized_key == "SCHEMA_PATH")
+                            {
+                                if (scope != 0)
+                                {
+                                    return ExecutionResult("SET LOCAL SCHEMA is not supported");
+                                }
+                                if (!conn_ctx_)
+                                {
+                                    return ExecutionResult(
+                                        "SET search_path/schema requires connection context");
+                                }
+                                auto* catalog = db_ ? db_->catalog_manager() : nullptr;
+                                if (!catalog)
+                                {
+                                    return ExecutionResult("Catalog manager not available");
+                                }
+
+                                std::string schema_name;
+                                bool default_requested = (action == 3);
+                                auto it_value = payload.find("value");
+                                if (!default_requested &&
+                                    (it_value == payload.end() || it_value->second.isNull()))
+                                {
+                                    default_requested = true;
+                                }
+
+                                if (!default_requested)
+                                {
+                                    if (!getPayloadStringValue(payload, "value", schema_name))
+                                    {
+                                        return ExecutionResult("V3 SET SCHEMA value is invalid");
+                                    }
+                                    std::string trimmed = schema_name;
+                                    size_t start = trimmed.find_first_not_of(" \t");
+                                    size_t end = trimmed.find_last_not_of(" \t");
+                                    if (start == std::string::npos)
+                                    {
+                                        default_requested = true;
+                                    }
+                                    else
+                                    {
+                                        trimmed = trimmed.substr(start, end - start + 1);
+                                        std::string upper =
+                                            scratchbird::core::IdentifierUtils::toUpper(trimmed);
+                                        if (upper == "DEFAULT" || upper == "LOCAL")
+                                        {
+                                            default_requested = true;
+                                        }
+                                        else
+                                        {
+                                            schema_name = normalizeSchemaPath(trimmed);
+                                        }
+                                    }
+                                }
+
+                                if (default_requested)
+                                {
+                                    schema_name = "public";
+                                }
+
+                                if (schema_name.empty())
+                                {
+                                    return ExecutionResult("Schema path cannot be empty");
+                                }
+
+                                std::string expanded_schema;
+                                core::ErrorContext alias_ctx;
+                                auto alias_status = expandEmulatedAliasPath(
+                                    catalog, schema_name, expanded_schema, &alias_ctx);
+                                if (alias_status != core::Status::OK)
+                                {
+                                    std::string msg = "Failed to resolve schema path: " + schema_name;
+                                    if (!alias_ctx.message.empty())
+                                    {
+                                        msg += ": " + alias_ctx.message;
+                                    }
+                                    return ExecutionResult(msg);
+                                }
+                                schema_name = expanded_schema;
+
+                                core::CatalogManager::SchemaInfo schema_info;
+                                core::ErrorContext schema_ctx;
+                                auto schema_status = catalog->getSchema(schema_name, schema_info, &schema_ctx);
+                                if (schema_status != core::Status::OK)
+                                {
+                                    std::string msg = "Schema not found: " + schema_name;
+                                    if (!schema_ctx.message.empty())
+                                    {
+                                        msg += ": " + schema_ctx.message;
+                                    }
+                                    return ExecutionResult(msg);
+                                }
+
+                                conn_ctx_->setCurrentSchemaId(schema_info.schema_id);
+                                conn_ctx_->set_current_schema(schema_info.full_path.empty()
+                                                                  ? schema_info.schema_name
+                                                                  : schema_info.full_path);
+                                conn_ctx_->set_search_path({schema_name});
+                                return ExecutionResult();
+                            }
+
                             std::vector<uint8_t> arg_stream;
                             arg_stream.reserve(128);
                             auto append_string = [&](const std::string& value) {
@@ -59655,9 +60511,9 @@ namespace scratchbird
                             if (defaults_scope)
                             {
                                 core::VNextMetricsEventModel::recordExecutorEvent(
-                                    "vnext_opcode_dispatch", "reject", "IRX_0406");
+                                    "vnext_opcode_dispatch", "reject", "BRG_0406");
                                 return ExecutionResult(
-                                    "IRX_0406: semantic class change requires explicit bridge for "
+                                    "BRG_0406: semantic class bridge requires explicit runtime closure for "
                                     "SBLR3_ALTER_INDEX_DEFAULTS");
                             }
 
@@ -60524,9 +61380,9 @@ namespace scratchbird
                     if (scratchbird::sblr::v3::opcodeMapsToCanonicalFeature(inst.opcode))
                     {
                         core::VNextMetricsEventModel::recordExecutorEvent(
-                            "vnext_opcode_dispatch", "reject", "IRX_0406");
+                            "vnext_opcode_dispatch", "reject", "BRG_0406");
                         return ExecutionResult(
-                            "IRX_0406: semantic class change requires explicit bridge for " + name);
+                            "BRG_0406: semantic class bridge requires explicit runtime closure for " + name);
                     }
 
                     core::VNextMetricsEventModel::recordExecutorEvent(
@@ -67785,14 +68641,19 @@ namespace scratchbird
                 error("SET LOCAL is only supported for statement_timeout");
             }
 
-            if (normalized != "SEARCH_PATH")
+            const bool set_search_path = (normalized == "SEARCH_PATH");
+            const bool set_current_schema = (normalized == "SCHEMA" ||
+                                             normalized == "CURRENT_SCHEMA" ||
+                                             normalized == "SCHEMA_PATH");
+
+            if (!set_search_path && !set_current_schema)
             {
                 error("SET variable not supported: " + var_name);
             }
 
             if (!conn_ctx_)
             {
-                error("SET search_path requires connection context");
+                error("SET search_path/schema requires connection context");
             }
 
             auto* catalog = db_ ? db_->catalog_manager() : nullptr;
@@ -67941,6 +68802,10 @@ namespace scratchbird
             }
             else if (next == static_cast<uint8_t>(Opcode::BEGIN_LIST))
             {
+                if (set_current_schema)
+                {
+                    error("SET SCHEMA expects a single schema value");
+                }
                 readByte();
                 uint32_t count = readInt32();
                 for (uint32_t i = 0; i < count; ++i)
@@ -67986,6 +68851,20 @@ namespace scratchbird
             if (new_paths.empty())
             {
                 error("search_path cannot be empty");
+            }
+
+            if (set_current_schema)
+            {
+                const std::string& schema_name = new_paths.front();
+                core::CatalogManager::SchemaInfo schema_info;
+                core::ErrorContext schema_ctx;
+                if (catalog->getSchema(schema_name, schema_info, &schema_ctx) == core::Status::OK)
+                {
+                    conn_ctx_->setCurrentSchemaId(schema_info.schema_id);
+                }
+                conn_ctx_->set_current_schema(schema_name);
+                conn_ctx_->set_search_path({schema_name});
+                return;
             }
 
             conn_ctx_->set_search_path(new_paths);

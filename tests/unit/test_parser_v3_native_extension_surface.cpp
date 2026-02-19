@@ -8,6 +8,7 @@
 #include <string>
 #include <set>
 #include <utility>
+#include <vector>
 
 #include "scratchbird/parser/ast_v3.h"
 #include "scratchbird/parser/parser_v3.h"
@@ -124,6 +125,105 @@ TEST(ParserV3NativeExtensionSurfaceTest, ParsesMeasurementSurface) {
         auto result = parser.parseStatement();
         ASSERT_TRUE(result.success()) << "expected parse success";
         ASSERT_EQ(result.statement()->kind(), ASTKind::AlterSystemStmt);
+    }
+}
+
+TEST(ParserV3NativeExtensionSurfaceTest, ParsesAdminClusterAndServiceControlSurfaces) {
+    struct Case {
+        const char* sql;
+        const char* key;
+    };
+
+    const std::vector<Case> cases = {
+        {"BACKUP DATABASE '/tmp/scratchbird.sbk'", "admin.backup"},
+        {"RESTORE DATABASE '/tmp/scratchbird.sbk'", "admin.restore"},
+        {"VALIDATE DATABASE", "admin.validate"},
+        {"VACUUM", "admin.vacuum_alias"},
+        {"VACUUM DATABASE", "admin.vacuum_alias"},
+        {"CREATE CLUSTER WORKLOAD CLASS wl_oltp 'MAX_CONCURRENCY=64'",
+         "cluster.workload_class.create.wl_oltp"},
+        {"ALTER CLUSTER WORKLOAD ROUTE rt_hot 'CLASS=wl_oltp'",
+         "cluster.workload_route.alter.rt_hot"},
+        {"DROP CLUSTER ADMISSION POLICY ap_main", "cluster.admission_policy.drop.ap_main"},
+        {"CLUSTER SET STATE 'READ_WRITE'", "cluster.set_state"},
+        {"CLUSTER SHOW ROUTING PLAN", "cluster.show_routing_plan"},
+        {"SHOW CLUSTER ADMISSION STATUS", "cluster.show_admission_status"},
+        {"SERVICE CHANNEL EVENTS 'SINCE=0'", "service.channel.events"},
+    };
+
+    for (const auto& c : cases) {
+        Parser parser(c.sql);
+        auto result = parser.parseStatement();
+        ASSERT_TRUE(result.success()) << c.sql;
+        ASSERT_EQ(result.statement()->kind(), ASTKind::AlterSystemStmt) << c.sql;
+        auto* stmt = static_cast<AlterSystemStmt*>(result.statement());
+        EXPECT_EQ(std::string(parser.stringPool().get(stmt->name)), std::string(c.key)) << c.sql;
+    }
+}
+
+TEST(ParserV3NativeExtensionSurfaceTest, RejectsVacuumOptionsThatImplyPostgreSqlVacuumSemantics) {
+    Parser parser("VACUUM FULL");
+    auto result = parser.parseStatement();
+    EXPECT_FALSE(result.success());
+    EXPECT_TRUE(hasErrorCode(result, "PRS_0505"));
+}
+
+TEST(ParserV3NativeExtensionSurfaceTest, ParsesCubeObjectControlSurfaces) {
+    struct Case {
+        const char* sql;
+        const char* key;
+    };
+
+    const std::vector<Case> cases = {
+        {"CREATE CUBE sales_cube AS SELECT region, product, sum(amount) FROM sales GROUP BY CUBE(region, product)",
+         "cube.ddl.create.sales_cube"},
+        {"ALTER CUBE sales_cube REBUILD INCREMENTAL",
+         "cube.ddl.alter.sales_cube"},
+        {"DROP CUBE IF EXISTS sales_cube",
+         "cube.ddl.drop.sales_cube"},
+        {"REFRESH CUBE sales_cube FULL",
+         "cube.refresh.sales_cube"},
+        {"CUBE SHOW STATS sales_cube",
+         "cube.show_stats"},
+        {"SHOW CUBE STATS sales_cube",
+         "cube.show_stats"},
+    };
+
+    for (const auto& c : cases) {
+        Parser parser(c.sql);
+        auto result = parser.parseStatement();
+        ASSERT_TRUE(result.success()) << c.sql;
+        ASSERT_EQ(result.statement()->kind(), ASTKind::AlterSystemStmt) << c.sql;
+        auto* stmt = static_cast<AlterSystemStmt*>(result.statement());
+        EXPECT_EQ(std::string(parser.stringPool().get(stmt->name)), std::string(c.key)) << c.sql;
+    }
+}
+
+TEST(ParserV3NativeExtensionSurfaceTest, ParsesSetTermSurfaces) {
+    {
+        Parser parser("SET TERM ^^");
+        auto result = parser.parseStatement();
+        ASSERT_TRUE(result.success());
+        ASSERT_EQ(result.statement()->kind(), ASTKind::SetStmt);
+        auto* stmt = static_cast<SetStmt*>(result.statement());
+        EXPECT_EQ(stmt->set_type, SetStmt::SetType::TERM);
+        ASSERT_NE(stmt->value, nullptr);
+        ASSERT_EQ(stmt->value->kind(), ASTKind::LiteralExpr);
+        auto* lit = static_cast<LiteralExpr*>(stmt->value);
+        EXPECT_EQ(std::string(parser.stringPool().get(lit->string_value)), "^^");
+    }
+
+    {
+        Parser parser("SET TERM ; ^^");
+        auto result = parser.parseStatement();
+        ASSERT_TRUE(result.success());
+        ASSERT_EQ(result.statement()->kind(), ASTKind::SetStmt);
+        auto* stmt = static_cast<SetStmt*>(result.statement());
+        EXPECT_EQ(stmt->set_type, SetStmt::SetType::TERM);
+        ASSERT_NE(stmt->value, nullptr);
+        ASSERT_EQ(stmt->value->kind(), ASTKind::LiteralExpr);
+        auto* lit = static_cast<LiteralExpr*>(stmt->value);
+        EXPECT_EQ(std::string(parser.stringPool().get(lit->string_value)), "; ^^");
     }
 }
 
@@ -828,6 +928,166 @@ TEST(ParserV3NativeExtensionSurfaceTest, ParsesPublicationSubscriptionSurfaces) 
         auto result = parser.parseStatement();
         ASSERT_TRUE(result.success());
         ASSERT_EQ(result.statement()->kind(), ASTKind::AlterSystemStmt);
+    }
+}
+
+TEST(ParserV3NativeExtensionSurfaceTest, ParsesReplicationChannelAndResyncSurfaces) {
+    {
+        Parser parser("CREATE REPLICATION CHANNEL repl_one DIRECTION ONE_WAY SOURCE db_a TARGET db_b");
+        auto result = parser.parseStatement();
+        ASSERT_TRUE(result.success());
+        ASSERT_EQ(result.statement()->kind(), ASTKind::AlterSystemStmt);
+        auto* stmt = static_cast<AlterSystemStmt*>(result.statement());
+        EXPECT_EQ(std::string(parser.stringPool().get(stmt->name)), "replication.channel.create.repl_one");
+    }
+    {
+        Parser parser("CREATE REPLICATION CHANNEL repl_bi DIRECTION BIDIRECTIONAL SOURCE db_a TARGET db_b");
+        auto result = parser.parseStatement();
+        ASSERT_TRUE(result.success());
+        ASSERT_EQ(result.statement()->kind(), ASTKind::AlterSystemStmt);
+        auto* stmt = static_cast<AlterSystemStmt*>(result.statement());
+        EXPECT_EQ(std::string(parser.stringPool().get(stmt->name)), "replication.channel.create.repl_bi");
+    }
+    {
+        Parser parser("ALTER REPLICATION CHANNEL repl_one SET DIRECTION BIDIRECTIONAL");
+        auto result = parser.parseStatement();
+        ASSERT_TRUE(result.success());
+        ASSERT_EQ(result.statement()->kind(), ASTKind::AlterSystemStmt);
+        auto* stmt = static_cast<AlterSystemStmt*>(result.statement());
+        EXPECT_EQ(std::string(parser.stringPool().get(stmt->name)), "replication.channel.alter.repl_one");
+    }
+    {
+        Parser parser("RESYNC REPLICATION CHANNEL repl_one FORCE");
+        auto result = parser.parseStatement();
+        ASSERT_TRUE(result.success());
+        ASSERT_EQ(result.statement()->kind(), ASTKind::AlterSystemStmt);
+        auto* stmt = static_cast<AlterSystemStmt*>(result.statement());
+        EXPECT_EQ(std::string(parser.stringPool().get(stmt->name)), "replication.channel.resync.repl_one");
+    }
+    {
+        Parser parser("DROP REPLICATION CHANNEL IF EXISTS repl_one CASCADE");
+        auto result = parser.parseStatement();
+        ASSERT_TRUE(result.success());
+        ASSERT_EQ(result.statement()->kind(), ASTKind::AlterSystemStmt);
+        auto* stmt = static_cast<AlterSystemStmt*>(result.statement());
+        EXPECT_EQ(std::string(parser.stringPool().get(stmt->name)), "replication.channel.drop.repl_one");
+    }
+}
+
+TEST(ParserV3NativeExtensionSurfaceTest, RejectsInvalidReplicationChannelDirectionSurfaces) {
+    {
+        Parser parser("CREATE REPLICATION CHANNEL repl_bad SOURCE db_a TARGET db_b");
+        auto result = parser.parseStatement();
+        EXPECT_FALSE(result.success());
+        EXPECT_TRUE(hasErrorCode(result, "PRS_0504"));
+    }
+    {
+        Parser parser("ALTER REPLICATION CHANNEL repl_bad SET DIRECTION FORWARD");
+        auto result = parser.parseStatement();
+        EXPECT_FALSE(result.success());
+        EXPECT_TRUE(hasErrorCode(result, "PRS_0504"));
+    }
+}
+
+TEST(ParserV3NativeExtensionSurfaceTest, ParsesCdcTableAndDatabaseConnectionSurfaces) {
+    {
+        Parser parser("CREATE CDC TABLE sales.orders TRACK (LAST_MODIFIED_TXN_ID, ROW_UUID)");
+        auto result = parser.parseStatement();
+        ASSERT_TRUE(result.success());
+        ASSERT_EQ(result.statement()->kind(), ASTKind::AlterSystemStmt);
+        auto* stmt = static_cast<AlterSystemStmt*>(result.statement());
+        EXPECT_EQ(std::string(parser.stringPool().get(stmt->name)), "etl.cdc.table.create.sales.orders");
+    }
+    {
+        Parser parser("ALTER CDC TABLE sales.orders TRACK (LAST_MODIFIED_TXN_ID, ROW_UUID)");
+        auto result = parser.parseStatement();
+        ASSERT_TRUE(result.success());
+        ASSERT_EQ(result.statement()->kind(), ASTKind::AlterSystemStmt);
+        auto* stmt = static_cast<AlterSystemStmt*>(result.statement());
+        EXPECT_EQ(std::string(parser.stringPool().get(stmt->name)), "etl.cdc.table.alter.sales.orders");
+    }
+    {
+        Parser parser("DROP CDC TABLE IF EXISTS sales.orders");
+        auto result = parser.parseStatement();
+        ASSERT_TRUE(result.success());
+        ASSERT_EQ(result.statement()->kind(), ASTKind::AlterSystemStmt);
+        auto* stmt = static_cast<AlterSystemStmt*>(result.statement());
+        EXPECT_EQ(std::string(parser.stringPool().get(stmt->name)), "etl.cdc.table.drop.sales.orders");
+    }
+    {
+        Parser parser(
+            "CREATE DATABASE CONNECTION ext_pg "
+            "HOST '127.0.0.1' PORT 5432 AUTH_MODE SHARED "
+            "PASSWORD 'secret' ROLE repl GROUP etl_ops MOUNT '/mnt/ext'");
+        auto result = parser.parseStatement();
+        ASSERT_TRUE(result.success());
+        ASSERT_EQ(result.statement()->kind(), ASTKind::AlterSystemStmt);
+        auto* stmt = static_cast<AlterSystemStmt*>(result.statement());
+        EXPECT_EQ(std::string(parser.stringPool().get(stmt->name)), "external.database_connection.create.ext_pg");
+    }
+    {
+        Parser parser("ALTER DATABASE CONNECTION ext_pg SET AUTH_MODE NAMED ROLE repl GROUP etl_ops");
+        auto result = parser.parseStatement();
+        ASSERT_TRUE(result.success());
+        ASSERT_EQ(result.statement()->kind(), ASTKind::AlterSystemStmt);
+        auto* stmt = static_cast<AlterSystemStmt*>(result.statement());
+        EXPECT_EQ(std::string(parser.stringPool().get(stmt->name)), "external.database_connection.alter.ext_pg");
+    }
+    {
+        Parser parser("DROP DATABASE CONNECTION ext_pg");
+        auto result = parser.parseStatement();
+        ASSERT_TRUE(result.success());
+        ASSERT_EQ(result.statement()->kind(), ASTKind::AlterSystemStmt);
+        auto* stmt = static_cast<AlterSystemStmt*>(result.statement());
+        EXPECT_EQ(std::string(parser.stringPool().get(stmt->name)), "external.database_connection.drop.ext_pg");
+    }
+}
+
+TEST(ParserV3NativeExtensionSurfaceTest, RejectsInvalidCdcAndDatabaseConnectionSurfaces) {
+    {
+        Parser parser("CREATE CDC TABLE orders TRACK (ROW_UUID)");
+        auto result = parser.parseStatement();
+        EXPECT_FALSE(result.success());
+        EXPECT_TRUE(hasErrorCode(result, "PRS_0504"));
+    }
+    {
+        Parser parser(
+            "CREATE DATABASE CONNECTION ext_bad AUTH_MODE SHARED "
+            "PASSWORD 'secret' ROLE repl GROUP etl_ops MOUNT '/mnt/ext'");
+        auto result = parser.parseStatement();
+        EXPECT_FALSE(result.success());
+        EXPECT_TRUE(hasErrorCode(result, "PRS_0504"));
+    }
+    {
+        Parser parser(
+            "CREATE DATABASE CONNECTION ext_bad HOST '127.0.0.1' AUTH_MODE TOKEN "
+            "PASSWORD 'secret' ROLE repl GROUP etl_ops MOUNT '/mnt/ext'");
+        auto result = parser.parseStatement();
+        EXPECT_FALSE(result.success());
+        EXPECT_TRUE(hasErrorCode(result, "PRS_0504"));
+    }
+}
+
+TEST(ParserV3NativeExtensionSurfaceTest, ParsesExtendedIndexTypeAliases) {
+    struct IndexCase {
+        const char* sql;
+        IndexType expected_type;
+    };
+
+    const std::vector<IndexCase> cases = {
+        {"CREATE INDEX idx_spatial ON docs USING SPATIAL (id)", IndexType::RTREE},
+        {"CREATE INDEX idx_spgist ON docs USING SP-GIST (id)", IndexType::SPGIST},
+        {"CREATE INDEX idx_vector_alias ON docs USING VECTOR (id)", IndexType::HNSW},
+        {"CREATE INDEX idx_zone_map ON docs USING ZONE_MAP (id)", IndexType::ZONEMAP},
+    };
+
+    for (const auto& c : cases) {
+        Parser parser(c.sql);
+        auto result = parser.parseStatement();
+        ASSERT_TRUE(result.success()) << c.sql;
+        ASSERT_EQ(result.statement()->kind(), ASTKind::CreateIndexStmt) << c.sql;
+        auto* stmt = static_cast<CreateIndexStmt*>(result.statement());
+        EXPECT_EQ(stmt->index_type, c.expected_type) << c.sql;
     }
 }
 
@@ -1605,6 +1865,108 @@ TEST(ParserV3NativeExtensionSurfaceTest, RejectsInvalidRedisStreamGroupSurfaces)
         auto result = parser.parseStatement();
         EXPECT_FALSE(result.success());
         EXPECT_TRUE(hasErrorCode(result, "PRS_0504"));
+    }
+}
+
+TEST(ParserV3NativeExtensionSurfaceTest, ParsesBareContextFunctionKeywordsAsFunctionCalls) {
+    Parser parser(
+        "SELECT CURRENT_USER, SESSION_USER, CURRENT_ROLE, CURRENT_CONNECTION, CURRENT_SESSION, "
+        "CURRENT_TRANSACTION, NOW, CURRENT_DATE, CURRENT_TIME, CURRENT_TIMESTAMP");
+    auto result = parser.parseStatement();
+    ASSERT_TRUE(result.success());
+    ASSERT_EQ(result.statement()->kind(), ASTKind::SelectStmt);
+
+    auto* stmt = static_cast<SelectStmt*>(result.statement());
+    ASSERT_EQ(stmt->items.size(), 10u);
+
+    const std::vector<std::string> expected = {
+        "CURRENT_USER",
+        "SESSION_USER",
+        "CURRENT_ROLE",
+        "CURRENT_CONNECTION",
+        "CURRENT_CONNECTION",
+        "CURRENT_TRANSACTION",
+        "NOW",
+        "CURRENT_DATE",
+        "CURRENT_TIME",
+        "CURRENT_TIMESTAMP",
+    };
+
+    for (size_t i = 0; i < expected.size(); ++i) {
+        ASSERT_EQ(stmt->items[i]->item_type, SelectItem::Type::EXPRESSION) << "item=" << i;
+        ASSERT_NE(stmt->items[i]->expr, nullptr) << "item=" << i;
+        ASSERT_EQ(stmt->items[i]->expr->kind(), ASTKind::FunctionCallExpr) << "item=" << i;
+        auto* fn = static_cast<FunctionCallExpr*>(stmt->items[i]->expr);
+        ASSERT_FALSE(fn->function_path.components.empty()) << "item=" << i;
+        EXPECT_EQ(std::string(parser.stringPool().get(fn->function_path.objectName())), expected[i]) << "item=" << i;
+    }
+}
+
+TEST(ParserV3NativeExtensionSurfaceTest, ParsesNoSqlOpcodeEquivalentSurfaces) {
+    struct Case {
+        const char* sql;
+        const char* key;
+    };
+
+    const std::vector<Case> cases = {
+        {"CQL KEYSPACE ks_main", "nosql.cql.keyspace"},
+        {"CQL BATCH 'BEGIN BATCH ...'", "nosql.cql.batch"},
+        {"CQL TTL 'ttl(users)=600'", "nosql.cql.ttl"},
+        {"CQL WRITETIME 'writetime(users.email)'", "nosql.cql.writetime"},
+        {"MONGO FIND '{\"active\":true}'", "nosql.mongo.find"},
+        {"MONGO AGGREGATE '[{\"$match\":{}}]'", "nosql.mongo.aggregate"},
+        {"MONGO FIND_AND_MODIFY '{\"_id\":1}'", "nosql.mongo.find_and_modify"},
+        {"MONGO BULK_WRITE '[{\"insertOne\":{}}]'", "nosql.mongo.bulk_write"},
+        {"CYPHER MATCH 'MATCH (n) RETURN n'", "nosql.cypher.match"},
+        {"CYPHER MERGE 'MERGE (n:Person {id:1})'", "nosql.cypher.merge"},
+        {"CYPHER UNWIND 'UNWIND [1,2] AS n RETURN n'", "nosql.cypher.unwind"},
+        {"CYPHER CALL 'CALL db.labels()'", "nosql.cypher.call"},
+        {"REDIS STRING 'SET k v'", "nosql.redis.string"},
+        {"REDIS HASH 'HSET h k v'", "nosql.redis.hash"},
+        {"REDIS LIST 'LPUSH l v'", "nosql.redis.list"},
+        {"REDIS SET 'SADD s v'", "nosql.redis.set"},
+        {"REDIS ZSET 'ZADD z 1 v'", "nosql.redis.zset"},
+        {"REDIS STREAM 'XADD s * f v'", "nosql.redis.stream"},
+        {"REDIS PUBSUB 'PUBLISH c msg'", "nosql.redis.pubsub"},
+        {"MILVUS CREATE COLLECTION vecs_main", "nosql.milvus.create_collection"},
+        {"MILVUS DROP COLLECTION vecs_main", "nosql.milvus.drop_collection"},
+        {"MILVUS CREATE INDEX vecs_hnsw", "nosql.milvus.create_index"},
+        {"MILVUS DROP INDEX vecs_hnsw", "nosql.milvus.drop_index"},
+        {"MILVUS INSERT '[{\"id\":1}]'", "nosql.milvus.insert"},
+        {"MILVUS DELETE 'id in [1,2]'", "nosql.milvus.delete"},
+        {"MILVUS SEARCH 'vector=[0.1,0.2]'", "nosql.milvus.search"},
+        {"MILVUS QUERY 'id >= 10'", "nosql.milvus.query"},
+    };
+
+    for (const auto& c : cases) {
+        Parser parser(c.sql);
+        auto result = parser.parseStatement();
+        ASSERT_TRUE(result.success()) << c.sql;
+        ASSERT_EQ(result.statement()->kind(), ASTKind::AlterSystemStmt);
+        auto* stmt = static_cast<AlterSystemStmt*>(result.statement());
+        EXPECT_EQ(std::string(parser.stringPool().get(stmt->name)), c.key) << c.sql;
+        EXPECT_NE(stmt->value, nullptr) << c.sql;
+    }
+}
+
+TEST(ParserV3NativeExtensionSurfaceTest, RejectsUnsupportedNoSqlSurfaceDeterministically) {
+    {
+        Parser parser("CQL UPSERT foo");
+        auto result = parser.parseStatement();
+        EXPECT_FALSE(result.success());
+        EXPECT_TRUE(hasErrorCode(result, "PRS_0505"));
+    }
+    {
+        Parser parser("MONGO UPSERT '{}'");
+        auto result = parser.parseStatement();
+        EXPECT_FALSE(result.success());
+        EXPECT_TRUE(hasErrorCode(result, "PRS_0505"));
+    }
+    {
+        Parser parser("REDIS BITMAP 'SETBIT b 1 1'");
+        auto result = parser.parseStatement();
+        EXPECT_FALSE(result.success());
+        EXPECT_TRUE(hasErrorCode(result, "PRS_0505"));
     }
 }
 

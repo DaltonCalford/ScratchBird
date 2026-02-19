@@ -4,7 +4,8 @@
 
 - Version: `0.1.0` (initial early beta)
 - Build state: clean build completed
-- Test state: `3355/3355` ctest pass
+- Test state: `3390/3390` ctest pass
+- Gate evidence: `docs/planning/gates/BETA-GATE-001/BETA_GATE_001_MANIFEST_20260219T160318Z.md`
 
 ## Implemented and Verified
 
@@ -31,7 +32,9 @@
 ### Packaging Baseline
 
 - Runtime package and QA package created under `release/beta/packages/`.
-- Full tarball artifact created under `release/`.
+- Full tarball artifact created under `release/`:
+  - `release/scratchbird-beta-20260219-full.tar.gz`
+  - `release/scratchbird-beta-20260219-full.tar.gz.sha256`
 
 ## Partially Implemented / Planned (0.2.0)
 

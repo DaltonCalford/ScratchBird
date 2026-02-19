@@ -15,6 +15,7 @@
 #include "scratchbird/core/firebird_datetime.h"
 #include "scratchbird/core/storage_engine.h"
 #include "scratchbird/core/heap_page.h"
+#include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/timezone.h"
 #include "scratchbird/core/type_extractor.h"
 #include "scratchbird/sblr/extract_element_catalog.h"
@@ -1479,7 +1480,7 @@ namespace scratchbird::sblr
                 return TypedValue::makeNull();
             return TypedValue::makeFloat64(1.0 / tan_val);
         }
-        else if (func_name == "NOW" || func_name == "CURRENT_TIMESTAMP")
+        else if (func_name == "NOW")
         {
             if (!arg_values.empty())
                 throw std::runtime_error("NOW requires 0 arguments");
@@ -1487,6 +1488,31 @@ namespace scratchbird::sblr
             auto gmt_micros =
                 std::chrono::duration_cast<std::chrono::microseconds>(
                     now.time_since_epoch()).count();
+            uint16_t tz_id = db_ ? db_->getConnectionTimezone()
+                                 : timezoneManager().getDefaultTimezone();
+            core::TimezoneOffset offset = timezoneManager().getOffset(
+                tz_id, static_cast<int64_t>(gmt_micros));
+            int32_t offset_seconds = offset.offset_minutes * 60;
+            return TypedValue::makeTimestamp(static_cast<int64_t>(gmt_micros), offset_seconds);
+        }
+        else if (func_name == "CURRENT_TIMESTAMP")
+        {
+            if (!arg_values.empty())
+                throw std::runtime_error("CURRENT_TIMESTAMP requires 0 arguments");
+
+            int64_t gmt_micros = 0;
+            if (auto* conn_ctx = core::ConnectionContext::getCurrent())
+            {
+                gmt_micros = static_cast<int64_t>(conn_ctx->getTransactionStartTime().count());
+            }
+            if (gmt_micros == 0)
+            {
+                auto now = std::chrono::system_clock::now();
+                gmt_micros =
+                    std::chrono::duration_cast<std::chrono::microseconds>(
+                        now.time_since_epoch()).count();
+            }
+
             uint16_t tz_id = db_ ? db_->getConnectionTimezone()
                                  : timezoneManager().getDefaultTimezone();
             core::TimezoneOffset offset = timezoneManager().getOffset(

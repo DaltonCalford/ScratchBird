@@ -164,6 +164,45 @@ TEST_F(QueryCompilerV3Test, CompileSelectWithCast) {
     ASSERT_TRUE(result.success()) << "Compilation failed";
 }
 
+TEST_F(QueryCompilerV3Test, ExecuteCountDistinctAggregate) {
+    auto create_table = compileAndExecute("CREATE TABLE count_distinct_t (id INT)");
+    ASSERT_TRUE(create_table.success()) << create_table.error();
+
+    ASSERT_TRUE(compileAndExecute("INSERT INTO count_distinct_t (id) VALUES (1)").success());
+    ASSERT_TRUE(compileAndExecute("INSERT INTO count_distinct_t (id) VALUES (1)").success());
+    ASSERT_TRUE(compileAndExecute("INSERT INTO count_distinct_t (id) VALUES (2)").success());
+
+    auto select_count = compileAndExecute("SELECT COUNT(DISTINCT id) FROM count_distinct_t");
+    ASSERT_TRUE(select_count.success()) << select_count.error();
+    ASSERT_TRUE(select_count.hasResultSet());
+    ASSERT_EQ(select_count.resultSet()->rowCount(), 1u);
+    EXPECT_EQ(select_count.resultSet()->getValue(0, 0).toInt64(), 2);
+}
+
+TEST_F(QueryCompilerV3Test, ExecuteJsonExistsOperatorSpecificity) {
+    auto query = compileAndExecute(
+        "SELECT "
+        "'{\"a\":1,\"b\":2}' ? 'a', "
+        "'{\"a\":1,\"b\":2}' ? 'z', "
+        "'{\"a\":1,\"b\":2}' ?| ARRAY['a','z'], "
+        "'{\"a\":1,\"b\":2}' ?& ARRAY['a','b'], "
+        "'{\"a\":1,\"b\":2}' ?& ARRAY['a','z']");
+
+    ASSERT_TRUE(query.success()) << query.error();
+    ASSERT_TRUE(query.hasResultSet());
+    ASSERT_EQ(query.resultSet()->rowCount(), 1u);
+    EXPECT_EQ(query.resultSet()->getValue(0, 0).toString(), "true");
+    EXPECT_EQ(query.resultSet()->getValue(0, 1).toString(), "false");
+    EXPECT_EQ(query.resultSet()->getValue(0, 2).toString(), "true");
+    EXPECT_EQ(query.resultSet()->getValue(0, 3).toString(), "true");
+    EXPECT_EQ(query.resultSet()->getValue(0, 4).toString(), "false");
+}
+
+TEST_F(QueryCompilerV3Test, ExecuteVacuumAliasMapsToSweepGc) {
+    auto result = compileAndExecute("VACUUM");
+    ASSERT_TRUE(result.success()) << result.error();
+}
+
 TEST_F(QueryCompilerV3Test, ExecuteCreateTableWithDomainColumn) {
     compiler_->setCurrentSchema(test_schema_id_);
     executor_->setCurrentSchema(test_schema_id_);
@@ -412,6 +451,250 @@ TEST_F(QueryCompilerV3Test, ExecuteSelectMultipleColumns) {
     ASSERT_NE(rs, nullptr);
     EXPECT_EQ(rs->rowCount(), 1);
     EXPECT_EQ(rs->columnCount(), 3);
+}
+
+TEST_F(QueryCompilerV3Test, ExecuteContextFunctionsRuntimeClosed) {
+    auto begin_result = compileAndExecute("BEGIN");
+    ASSERT_TRUE(begin_result.success()) << "BEGIN failed: " << begin_result.error();
+
+    auto result = compileAndExecute(
+        "SELECT CURRENT_USER, CURRENT_CONNECTION, CURRENT_TRANSACTION, NOW()");
+    ASSERT_TRUE(result.success()) << "Execution failed: " << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+
+    auto* rs = result.resultSet();
+    ASSERT_NE(rs, nullptr);
+    ASSERT_EQ(rs->rowCount(), 1);
+    ASSERT_EQ(rs->columnCount(), 4);
+
+    EXPECT_FALSE(rs->getValue(0, 0).isNull()); // CURRENT_USER
+    EXPECT_FALSE(rs->getValue(0, 1).isNull()); // CURRENT_CONNECTION
+    EXPECT_FALSE(rs->getValue(0, 2).isNull()); // CURRENT_TRANSACTION
+    EXPECT_FALSE(rs->getValue(0, 3).isNull()); // NOW()
+
+    auto commit_result = compileAndExecute("COMMIT");
+    ASSERT_TRUE(commit_result.success()) << "COMMIT failed: " << commit_result.error();
+}
+
+TEST_F(QueryCompilerV3Test, ExecuteBareContextKeywordsRuntimeClosed) {
+    auto begin_result = compileAndExecute("BEGIN");
+    ASSERT_TRUE(begin_result.success()) << "BEGIN failed: " << begin_result.error();
+
+    auto result = compileAndExecute(
+        "SELECT NOW, CURRENT_DATE, CURRENT_TIME, CURRENT_TIMESTAMP, SESSION_USER, CURRENT_SESSION");
+    ASSERT_TRUE(result.success()) << "Execution failed: " << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+
+    auto* rs = result.resultSet();
+    ASSERT_NE(rs, nullptr);
+    ASSERT_EQ(rs->rowCount(), 1);
+    ASSERT_EQ(rs->columnCount(), 6);
+
+    EXPECT_FALSE(rs->getValue(0, 0).isNull());
+    EXPECT_FALSE(rs->getValue(0, 1).isNull());
+    EXPECT_FALSE(rs->getValue(0, 2).isNull());
+    EXPECT_FALSE(rs->getValue(0, 3).isNull());
+    EXPECT_FALSE(rs->getValue(0, 4).isNull());
+    EXPECT_FALSE(rs->getValue(0, 5).isNull());
+
+    auto commit_result = compileAndExecute("COMMIT");
+    ASSERT_TRUE(commit_result.success()) << "COMMIT failed: " << commit_result.error();
+}
+
+TEST_F(QueryCompilerV3Test, ExecuteNowVsCurrentTimestampSemantics) {
+    auto begin_result = compileAndExecute("BEGIN");
+    ASSERT_TRUE(begin_result.success()) << "BEGIN failed: " << begin_result.error();
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+
+    auto first = compileAndExecute("SELECT CURRENT_TIMESTAMP, NOW(), 1");
+    ASSERT_TRUE(first.success()) << "Execution failed: " << first.error();
+    ASSERT_TRUE(first.hasResultSet());
+    auto* first_rs = first.resultSet();
+    ASSERT_NE(first_rs, nullptr);
+    ASSERT_EQ(first_rs->rowCount(), 1);
+    ASSERT_EQ(first_rs->columnCount(), 3);
+
+    const auto first_current_ts = first_rs->getValue(0, 0);
+    const auto first_now_ts = first_rs->getValue(0, 1);
+    ASSERT_FALSE(first_current_ts.isNull());
+    ASSERT_FALSE(first_now_ts.isNull());
+
+    const int64_t first_current_micros = first_current_ts.getTimestamp();
+    const int64_t first_now_micros = first_now_ts.getTimestamp();
+    EXPECT_GE(first_now_micros, first_current_micros);
+    EXPECT_GE(first_now_micros - first_current_micros, 5000);
+
+    std::this_thread::sleep_for(std::chrono::milliseconds(15));
+
+    auto second = compileAndExecute("SELECT CURRENT_TIMESTAMP, NOW(), 2");
+    ASSERT_TRUE(second.success()) << "Execution failed: " << second.error();
+    ASSERT_TRUE(second.hasResultSet());
+    auto* second_rs = second.resultSet();
+    ASSERT_NE(second_rs, nullptr);
+    ASSERT_EQ(second_rs->rowCount(), 1);
+    ASSERT_EQ(second_rs->columnCount(), 3);
+
+    const auto second_current_ts = second_rs->getValue(0, 0);
+    const auto second_now_ts = second_rs->getValue(0, 1);
+    ASSERT_FALSE(second_current_ts.isNull());
+    ASSERT_FALSE(second_now_ts.isNull());
+
+    const int64_t second_current_micros = second_current_ts.getTimestamp();
+    const int64_t second_now_micros = second_now_ts.getTimestamp();
+
+    EXPECT_EQ(second_current_micros, first_current_micros);
+    EXPECT_GE(second_now_micros, first_now_micros + 5000);
+    EXPECT_GE(second_now_micros, second_current_micros);
+    EXPECT_GE(second_now_micros - second_current_micros, 5000);
+
+    auto commit_result = compileAndExecute("COMMIT");
+    ASSERT_TRUE(commit_result.success()) << "COMMIT failed: " << commit_result.error();
+}
+
+TEST_F(QueryCompilerV3Test, ExecuteV3AbsFunctionEvaluates) {
+    auto result = compileAndExecute("SELECT ABS(-5)");
+    ASSERT_TRUE(result.success()) << "Execution failed: " << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+
+    auto* rs = result.resultSet();
+    ASSERT_NE(rs, nullptr);
+    ASSERT_EQ(rs->rowCount(), 1);
+    ASSERT_EQ(rs->columnCount(), 1);
+    EXPECT_FALSE(rs->getValue(0, 0).isNull());
+    EXPECT_EQ(rs->getValue(0, 0).toInt64(), 5);
+}
+
+TEST_F(QueryCompilerV3Test, ExecuteV3LikeOperatorEvaluates) {
+    auto result = compileAndExecute("SELECT 'alpha' LIKE 'a%'");
+    ASSERT_TRUE(result.success()) << "Execution failed: " << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+
+    auto* rs = result.resultSet();
+    ASSERT_NE(rs, nullptr);
+    ASSERT_EQ(rs->rowCount(), 1);
+    EXPECT_FALSE(rs->getValue(0, 0).isNull());
+    EXPECT_TRUE(rs->getValue(0, 0).toBoolean());
+}
+
+TEST_F(QueryCompilerV3Test, ExecuteV3InListEvaluates) {
+    auto result = compileAndExecute("SELECT 1 IN (1, 2, 3)");
+    ASSERT_TRUE(result.success()) << "Execution failed: " << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+
+    auto* rs = result.resultSet();
+    ASSERT_NE(rs, nullptr);
+    ASSERT_EQ(rs->rowCount(), 1);
+    EXPECT_FALSE(rs->getValue(0, 0).isNull());
+    EXPECT_TRUE(rs->getValue(0, 0).toBoolean());
+}
+
+TEST_F(QueryCompilerV3Test, ExecuteV3RegexOperatorEvaluates) {
+    auto result = compileAndExecute("SELECT 'alpha' ~ 'a.*'");
+    ASSERT_TRUE(result.success()) << "Execution failed: " << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+
+    auto* rs = result.resultSet();
+    ASSERT_NE(rs, nullptr);
+    ASSERT_EQ(rs->rowCount(), 1);
+    EXPECT_FALSE(rs->getValue(0, 0).isNull());
+    EXPECT_TRUE(rs->getValue(0, 0).toBoolean());
+}
+
+TEST_F(QueryCompilerV3Test, ExecuteV3MathAndConcatFunctionsEvaluate) {
+    auto result = compileAndExecute(
+        "SELECT POWER(2, 3), SIN(0), COS(0), TAN(0), CONCAT('a', 'b')");
+    ASSERT_TRUE(result.success()) << "Execution failed: " << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+
+    auto* rs = result.resultSet();
+    ASSERT_NE(rs, nullptr);
+    ASSERT_EQ(rs->rowCount(), 1);
+    ASSERT_EQ(rs->columnCount(), 5);
+
+    EXPECT_NEAR(rs->getValue(0, 0).toDouble(), 8.0, 1e-9);
+    EXPECT_NEAR(rs->getValue(0, 1).toDouble(), 0.0, 1e-9);
+    EXPECT_NEAR(rs->getValue(0, 2).toDouble(), 1.0, 1e-9);
+    EXPECT_NEAR(rs->getValue(0, 3).toDouble(), 0.0, 1e-9);
+    EXPECT_EQ(rs->getValue(0, 4).toString(), "ab");
+}
+
+TEST_F(QueryCompilerV3Test, ExecuteV3ConcatOperatorEvaluates) {
+    auto result = compileAndExecute("SELECT 'a' || 'b'");
+    ASSERT_TRUE(result.success()) << "Execution failed: " << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+
+    auto* rs = result.resultSet();
+    ASSERT_NE(rs, nullptr);
+    ASSERT_EQ(rs->rowCount(), 1);
+    ASSERT_EQ(rs->columnCount(), 1);
+    EXPECT_EQ(rs->getValue(0, 0).toString(), "ab");
+}
+
+TEST_F(QueryCompilerV3Test, ExecuteOperatorStrictModeBlocksImplicitNumericCast) {
+    auto relaxed = compileAndExecute("SELECT '2' + 3");
+    ASSERT_TRUE(relaxed.success()) << "Execution failed: " << relaxed.error();
+    ASSERT_TRUE(relaxed.hasResultSet());
+    EXPECT_FALSE(relaxed.resultSet()->getValue(0, 0).isNull());
+
+    auto set_mode = compileAndExecute("SET operator.strict_mode ON");
+    ASSERT_TRUE(set_mode.success()) << "Failed to enable strict mode: " << set_mode.error();
+
+    auto strict = compileAndExecute("SELECT '2' + 3");
+    if (strict.success()) {
+        ASSERT_TRUE(strict.hasResultSet());
+        EXPECT_TRUE(strict.resultSet()->getValue(0, 0).isNull());
+    } else {
+        EXPECT_NE(strict.error().find("Implicit casts disabled"), std::string::npos);
+    }
+
+    auto reset_mode = compileAndExecute("SET operator.strict_mode OFF");
+    ASSERT_TRUE(reset_mode.success()) << "Failed to disable strict mode: " << reset_mode.error();
+}
+
+TEST_F(QueryCompilerV3Test, ExecuteSetSchemaShorthandUpdatesSchemaContext) {
+    auto set_schema = compileAndExecute("SET SCHEMA test");
+    ASSERT_TRUE(set_schema.success()) << "SET SCHEMA failed: " << set_schema.error();
+
+    auto show_current = compileAndExecute("SHOW current_schema");
+    ASSERT_TRUE(show_current.success()) << "SHOW current_schema failed: " << show_current.error();
+    ASSERT_TRUE(show_current.hasResultSet());
+    ASSERT_EQ(show_current.resultSet()->rowCount(), 1u);
+    ASSERT_EQ(show_current.resultSet()->columnCount(), 2u);
+    const auto current_schema = show_current.resultSet()->getValue(0, 1).toString();
+    EXPECT_NE(current_schema.find("test"), std::string::npos);
+
+    auto show_path = compileAndExecute("SHOW search_path");
+    ASSERT_TRUE(show_path.success()) << "SHOW search_path failed: " << show_path.error();
+    ASSERT_TRUE(show_path.hasResultSet());
+    ASSERT_EQ(show_path.resultSet()->rowCount(), 1u);
+    ASSERT_EQ(show_path.resultSet()->columnCount(), 2u);
+    const auto search_path = show_path.resultSet()->getValue(0, 1).toString();
+    EXPECT_NE(search_path.find("test"), std::string::npos);
+}
+
+TEST_F(QueryCompilerV3Test, ExecuteSetCurrentSchemaSupportsToAndDefault) {
+    auto set_schema = compileAndExecute("SET CURRENT_SCHEMA TO test");
+    ASSERT_TRUE(set_schema.success()) << "SET CURRENT_SCHEMA failed: " << set_schema.error();
+
+    auto show_current = compileAndExecute("SHOW current_schema");
+    ASSERT_TRUE(show_current.success()) << "SHOW current_schema failed: " << show_current.error();
+    ASSERT_TRUE(show_current.hasResultSet());
+    ASSERT_EQ(show_current.resultSet()->rowCount(), 1u);
+    const auto current_schema = show_current.resultSet()->getValue(0, 1).toString();
+    EXPECT_NE(current_schema.find("test"), std::string::npos);
+
+    auto reset_schema = compileAndExecute("SET CURRENT_SCHEMA DEFAULT");
+    ASSERT_TRUE(reset_schema.success()) << "SET CURRENT_SCHEMA DEFAULT failed: "
+                                        << reset_schema.error();
+
+    auto show_after_reset = compileAndExecute("SHOW current_schema");
+    ASSERT_TRUE(show_after_reset.success()) << "SHOW current_schema failed: "
+                                            << show_after_reset.error();
+    ASSERT_TRUE(show_after_reset.hasResultSet());
+    ASSERT_EQ(show_after_reset.resultSet()->rowCount(), 1u);
+    const auto reset_schema_value = show_after_reset.resultSet()->getValue(0, 1).toString();
+    EXPECT_NE(reset_schema_value.find("public"), std::string::npos);
 }
 
 TEST_F(QueryCompilerV3Test, ExecuteCastUsingHex) {

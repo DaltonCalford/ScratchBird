@@ -677,13 +677,23 @@ Statement* Parser::parseStatementInternal() {
             return parseGraphPathSurface();
         }
     }
+    if (checkContextual("CQL") ||
+        checkContextual("MONGO") ||
+        checkContextual("CYPHER") ||
+        checkContextual("MILVUS")) {
+        return parseNoSqlSurface();
+    }
     if (checkContextual("REDIS")) {
         Token lookahead = state_.lexer().peekToken();
+        if (lookahead.type == TokenType::IDENTIFIER &&
+            caseInsensitiveEquals(state_.lexer().getTokenText(lookahead.span), "LUA")) {
+            return parseRedisLuaEvalSurface();
+        }
         if (lookahead.type == TokenType::IDENTIFIER &&
             caseInsensitiveEquals(state_.lexer().getTokenText(lookahead.span), "STREAM")) {
             return parseRedisStreamGroupSurface();
         }
-        return parseRedisLuaEvalSurface();
+        return parseNoSqlSurface();
     }
     if (checkContextual("EVAL")) {
         return parseRedisLuaEvalSurface();
@@ -722,6 +732,30 @@ Statement* Parser::parseStatementInternal() {
     if (matchContextual("LOAD")) {
         return parseInstallExtensionSurface(true);
     }
+    if (matchContextual("RESYNC")) {
+        return parseResyncReplicationChannel();
+    }
+    if (matchContextual("BACKUP")) {
+        return parseAdminControlSurface("BACKUP");
+    }
+    if (matchContextual("RESTORE")) {
+        return parseAdminControlSurface("RESTORE");
+    }
+    if (matchContextual("VACUUM")) {
+        return parseAdminControlSurface("VACUUM");
+    }
+    if (matchContextual("REFRESH")) {
+        return parseRefreshCubeControl();
+    }
+    if (matchContextual("CLUSTER")) {
+        return parseClusterControlSurface();
+    }
+    if (matchContextual("CUBE")) {
+        return parseCubeControlSurface();
+    }
+    if (matchContextual("SERVICE")) {
+        return parseServiceChannelSurface();
+    }
 
     // DML statements
     if (match(TokenType::KW_SELECT)) {
@@ -756,7 +790,21 @@ Statement* Parser::parseStatementInternal() {
 
     // Session statements
     if (match(TokenType::KW_SET))       return parseSet();
-    if (match(TokenType::KW_SHOW))      return parseShow();
+    if (check(TokenType::KW_SHOW)) {
+        Token lookahead = state_.lexer().peekToken();
+        if (lookahead.type != TokenType::END_OF_FILE) {
+            if (caseInsensitiveEquals(state_.lexer().getTokenText(lookahead.span), "CLUSTER")) {
+                match(TokenType::KW_SHOW);
+                return parseShowClusterControlSurface();
+            }
+            if (caseInsensitiveEquals(state_.lexer().getTokenText(lookahead.span), "CUBE")) {
+                match(TokenType::KW_SHOW);
+                return parseShowCubeControlSurface();
+            }
+        }
+        match(TokenType::KW_SHOW);
+        return parseShow();
+    }
     if (matchContextual("RESET"))       return parseReset();
     if (matchContextual("DESCRIBE") || matchContextual("DESC")) return parseDescribe();
     if (checkContextual("SECURITY")) {
@@ -771,7 +819,12 @@ Statement* Parser::parseStatementInternal() {
     // Utility statements
     if (match(TokenType::KW_EXPLAIN))   return parseExplain();
     if (match(TokenType::KW_ANALYZE))   return parseAnalyze();
-    if (matchContextual("VALIDATE"))    return parseValidateIndex();
+    if (matchContextual("VALIDATE")) {
+        if (checkContextual("INDEX")) {
+            return parseValidateIndex();
+        }
+        return parseAdminControlSurface("VALIDATE");
+    }
     if (matchContextual("SWEEP"))       return parseSweep();
     if (matchContextual("CANCEL")) {
         if (matchContextual("JOB")) {
@@ -1098,6 +1151,16 @@ Statement* Parser::parseCreate() {
         }
         return parseCreateExtension();
     }
+    if (matchContextual("REPLICATION")) {
+        if (!matchContextual("CHANNEL")) {
+            errorCode("PRS_0505", "Expected CHANNEL after CREATE REPLICATION");
+            return nullptr;
+        }
+        if (or_alter) {
+            errorCode("PRS_0505", "CREATE OR ALTER is not supported for REPLICATION CHANNEL");
+        }
+        return parseCreateReplicationChannel();
+    }
     if (matchContextual("PUBLICATION")) {
         if (or_alter) {
             errorCode("PRS_0505", "CREATE OR ALTER is not supported for PUBLICATION");
@@ -1133,6 +1196,20 @@ Statement* Parser::parseCreate() {
         return parseCreateTransform();
     }
 
+    if (matchContextual("CLUSTER")) {
+        if (or_alter) {
+            errorCode("PRS_0505", "CREATE OR ALTER is not supported for CLUSTER controls");
+        }
+        return parseCreateClusterControl();
+    }
+
+    if (matchContextual("CUBE")) {
+        if (or_alter) {
+            errorCode("PRS_0505", "CREATE OR ALTER is not supported for CUBE controls");
+        }
+        return parseCreateCubeControl();
+    }
+
     if (matchContextual("SCHEMA")) {
         if (or_alter) {
             error("CREATE OR ALTER is only supported for JOB");
@@ -1141,10 +1218,27 @@ Statement* Parser::parseCreate() {
     }
 
     if (matchContextual("DATABASE")) {
+        if (matchContextual("CONNECTION")) {
+            if (or_alter) {
+                errorCode("PRS_0505", "CREATE OR ALTER is not supported for DATABASE CONNECTION");
+            }
+            return parseCreateDatabaseConnection();
+        }
         if (or_alter) {
             error("CREATE OR ALTER is only supported for JOB");
         }
         return parseCreateDatabase();
+    }
+
+    if (matchContextual("CDC")) {
+        if (!matchContextual("TABLE")) {
+            errorCode("PRS_0505", "Expected TABLE after CREATE CDC");
+            return nullptr;
+        }
+        if (or_alter) {
+            errorCode("PRS_0505", "CREATE OR ALTER is not supported for CDC TABLE");
+        }
+        return parseCreateCdcTable();
     }
 
     if (matchContextual("TABLESPACE")) {
@@ -2331,6 +2425,52 @@ Statement* Parser::parseCreateExtension() {
     return stmt;
 }
 
+Statement* Parser::parseCreateReplicationChannel() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    bool if_not_exists = false;
+    if (match(TokenType::KW_IF)) {
+        expect(TokenType::KW_NOT, "Expected NOT after IF");
+        expect(TokenType::KW_EXISTS, "Expected EXISTS after IF NOT");
+        if_not_exists = true;
+    }
+
+    StringPool::StringId channel_name = expectIdentifier("Expected replication channel name");
+    std::string channel = std::string(stringPool().get(channel_name));
+    std::string payload = captureStatementBody();
+
+    if (payload.empty()) {
+        errorCode("PRS_0504", "CREATE REPLICATION CHANNEL requires channel configuration");
+    }
+
+    const std::string payload_upper = toUpperAscii(payload);
+    const bool has_one_way = payload_upper.find("ONE_WAY") != std::string::npos ||
+                             payload_upper.find("ONEWAY") != std::string::npos;
+    const bool has_bidirectional = payload_upper.find("BIDIRECTIONAL") != std::string::npos ||
+                                   payload_upper.find("TWO_WAY") != std::string::npos;
+    if (!has_one_way && !has_bidirectional) {
+        errorCode("PRS_0504",
+                  "CREATE REPLICATION CHANNEL requires DIRECTION ONE_WAY or DIRECTION BIDIRECTIONAL");
+    }
+    if (has_one_way && has_bidirectional) {
+        errorCode("PRS_0504", "REPLICATION CHANNEL direction must be either ONE_WAY or BIDIRECTIONAL");
+    }
+
+    if (if_not_exists) {
+        if (!payload.empty()) payload.insert(0, ";");
+        payload.insert(0, "IF_NOT_EXISTS=1");
+    }
+
+    stmt->name = stringPool().intern("replication.channel.create." + channel);
+    auto* lit = arena_.create<LiteralExpr>();
+    lit->literal_type = LiteralType::STRING;
+    lit->string_value = stringPool().intern(payload);
+    stmt->value = lit;
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
 Statement* Parser::parseCreatePublication() {
     SourceLocation start = currentLocation();
     auto* stmt = arena_.create<AlterSystemStmt>();
@@ -2365,6 +2505,48 @@ Statement* Parser::parseCreateSubscription() {
     }
 
     stmt->name = stringPool().intern("replication.subscription.create." + subscription);
+    auto* lit = arena_.create<LiteralExpr>();
+    lit->literal_type = LiteralType::STRING;
+    lit->string_value = stringPool().intern(payload);
+    stmt->value = lit;
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseCreateCdcTable() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    bool if_not_exists = false;
+    if (match(TokenType::KW_IF)) {
+        expect(TokenType::KW_NOT, "Expected NOT after IF");
+        expect(TokenType::KW_EXISTS, "Expected EXISTS after IF NOT");
+        if_not_exists = true;
+    }
+
+    SchemaPath table_path = parseSchemaPath(state_);
+    if (table_path.isEmpty()) {
+        errorCode("PRS_0504", "Expected CDC table name");
+    }
+
+    std::string table_name = schemaPathToString(table_path, stringPool());
+    std::string payload = captureStatementBody();
+    const std::string payload_upper = toUpperAscii(payload);
+    const bool has_track = payload_upper.find("TRACK") != std::string::npos;
+    const bool has_last_modified = payload_upper.find("LAST_MODIFIED_TXN_ID") != std::string::npos ||
+                                   payload_upper.find("LAST_EDIT_TXID") != std::string::npos;
+    const bool has_row_uuid = payload_upper.find("ROW_UUID") != std::string::npos;
+    if (!has_track || !has_last_modified || !has_row_uuid) {
+        errorCode("PRS_0504",
+                  "CREATE CDC TABLE requires TRACK (LAST_MODIFIED_TXN_ID, ROW_UUID)");
+    }
+
+    if (if_not_exists) {
+        if (!payload.empty()) payload.insert(0, ";");
+        payload.insert(0, "IF_NOT_EXISTS=1");
+    }
+
+    stmt->name = stringPool().intern("etl.cdc.table.create." + table_name);
     auto* lit = arena_.create<LiteralExpr>();
     lit->literal_type = LiteralType::STRING;
     lit->string_value = stringPool().intern(payload);
@@ -3626,14 +3808,25 @@ CreateIndexStmt* Parser::parseCreateIndex() {
         if (!isIdentifier()) {
             error("Expected index type after USING");
         } else {
-            stmt->index_method_name = current().value.string_id;
-            auto parsed = indexTypeFromName(stringPool().get(stmt->index_method_name));
+            std::string method_name = std::string(stringPool().get(current().value.string_id));
+            advance();
+            while (match(TokenType::MINUS)) {
+                if (!isIdentifier()) {
+                    error("Expected index type segment after '-'");
+                    break;
+                }
+                method_name.push_back('-');
+                method_name.append(stringPool().get(current().value.string_id));
+                advance();
+            }
+
+            stmt->index_method_name = stringPool().intern(method_name);
+            auto parsed = indexTypeFromName(method_name);
             if (!parsed.has_value()) {
                 error("Unknown index type");
             } else {
                 stmt->index_type = *parsed;
             }
-            advance();
         }
     }
 
@@ -4261,6 +4454,57 @@ CreateDatabaseStmt* Parser::parseCreateDatabase() {
         }
     }
 
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseCreateDatabaseConnection() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    bool if_not_exists = false;
+    if (match(TokenType::KW_IF)) {
+        expect(TokenType::KW_NOT, "Expected NOT after IF");
+        expect(TokenType::KW_EXISTS, "Expected EXISTS after IF NOT");
+        if_not_exists = true;
+    }
+
+    StringPool::StringId connection_name = expectIdentifier("Expected database connection name");
+    std::string connection = std::string(stringPool().get(connection_name));
+    std::string payload = captureStatementBody();
+    if (payload.empty()) {
+        errorCode("PRS_0504", "CREATE DATABASE CONNECTION requires connection parameters");
+    }
+
+    const std::string payload_upper = toUpperAscii(payload);
+    const bool has_endpoint = payload_upper.find("HOST") != std::string::npos ||
+                              payload_upper.find("ENDPOINT") != std::string::npos ||
+                              payload_upper.find("URI") != std::string::npos;
+    const bool has_mount = payload_upper.find("MOUNT") != std::string::npos;
+    const bool has_auth_mode = payload_upper.find("AUTH_MODE") != std::string::npos ||
+                               payload_upper.find("SECURITY") != std::string::npos;
+    const bool has_shared_or_named = payload_upper.find("SHARED") != std::string::npos ||
+                                     payload_upper.find("NAMED") != std::string::npos;
+    const bool has_identity_detail = payload_upper.find("PASSWORD") != std::string::npos ||
+                                     payload_upper.find("ROLE") != std::string::npos ||
+                                     payload_upper.find("GROUP") != std::string::npos;
+
+    if (!has_endpoint || !has_mount || !has_auth_mode || !has_shared_or_named || !has_identity_detail) {
+        errorCode(
+            "PRS_0504",
+            "CREATE DATABASE CONNECTION requires endpoint, mount, AUTH_MODE SHARED|NAMED, and password/role/group detail");
+    }
+
+    if (if_not_exists) {
+        if (!payload.empty()) payload.insert(0, ";");
+        payload.insert(0, "IF_NOT_EXISTS=1");
+    }
+
+    stmt->name = stringPool().intern("external.database_connection.create." + connection);
+    auto* lit = arena_.create<LiteralExpr>();
+    lit->literal_type = LiteralType::STRING;
+    lit->string_value = stringPool().intern(payload);
+    stmt->value = lit;
     stmt->span = makeSpan(start);
     return stmt;
 }
@@ -6316,6 +6560,99 @@ Statement* Parser::parseAlterExtension() {
     return stmt;
 }
 
+Statement* Parser::parseAlterReplicationChannel() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    StringPool::StringId channel_name = expectIdentifier("Expected replication channel name");
+    std::string channel = std::string(stringPool().get(channel_name));
+    std::string payload = captureStatementBody();
+    if (payload.empty()) {
+        errorCode("PRS_0504", "ALTER REPLICATION CHANNEL requires action clause");
+    }
+
+    const std::string payload_upper = toUpperAscii(payload);
+    const bool has_one_way = payload_upper.find("ONE_WAY") != std::string::npos ||
+                             payload_upper.find("ONEWAY") != std::string::npos;
+    const bool has_bidirectional = payload_upper.find("BIDIRECTIONAL") != std::string::npos ||
+                                   payload_upper.find("TWO_WAY") != std::string::npos;
+    const bool mentions_direction = payload_upper.find("DIRECTION") != std::string::npos;
+    if (mentions_direction && !has_one_way && !has_bidirectional) {
+        errorCode("PRS_0504", "ALTER REPLICATION CHANNEL DIRECTION requires ONE_WAY or BIDIRECTIONAL");
+    }
+    if (has_one_way && has_bidirectional) {
+        errorCode("PRS_0504", "REPLICATION CHANNEL direction must be either ONE_WAY or BIDIRECTIONAL");
+    }
+
+    stmt->name = stringPool().intern("replication.channel.alter." + channel);
+    auto* lit = arena_.create<LiteralExpr>();
+    lit->literal_type = LiteralType::STRING;
+    lit->string_value = stringPool().intern(payload);
+    stmt->value = lit;
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseAlterCdcTable() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    SchemaPath table_path = parseSchemaPath(state_);
+    if (table_path.isEmpty()) {
+        errorCode("PRS_0504", "Expected CDC table name");
+    }
+
+    std::string table_name = schemaPathToString(table_path, stringPool());
+    std::string payload = captureStatementBody();
+    if (payload.empty()) {
+        errorCode("PRS_0504", "ALTER CDC TABLE requires action clause");
+    }
+
+    const std::string payload_upper = toUpperAscii(payload);
+    const bool mentions_track = payload_upper.find("TRACK") != std::string::npos;
+    const bool has_last_modified = payload_upper.find("LAST_MODIFIED_TXN_ID") != std::string::npos ||
+                                   payload_upper.find("LAST_EDIT_TXID") != std::string::npos;
+    const bool has_row_uuid = payload_upper.find("ROW_UUID") != std::string::npos;
+    if (mentions_track && (!has_last_modified || !has_row_uuid)) {
+        errorCode("PRS_0504", "ALTER CDC TABLE TRACK requires LAST_MODIFIED_TXN_ID and ROW_UUID");
+    }
+
+    stmt->name = stringPool().intern("etl.cdc.table.alter." + table_name);
+    auto* lit = arena_.create<LiteralExpr>();
+    lit->literal_type = LiteralType::STRING;
+    lit->string_value = stringPool().intern(payload);
+    stmt->value = lit;
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseAlterDatabaseConnection() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    StringPool::StringId connection_name = expectIdentifier("Expected database connection name");
+    std::string connection = std::string(stringPool().get(connection_name));
+    std::string payload = captureStatementBody();
+    if (payload.empty()) {
+        errorCode("PRS_0504", "ALTER DATABASE CONNECTION requires action clause");
+    }
+
+    const std::string payload_upper = toUpperAscii(payload);
+    if (payload_upper.find("AUTH_MODE") != std::string::npos &&
+        payload_upper.find("SHARED") == std::string::npos &&
+        payload_upper.find("NAMED") == std::string::npos) {
+        errorCode("PRS_0504", "ALTER DATABASE CONNECTION AUTH_MODE requires SHARED or NAMED");
+    }
+
+    stmt->name = stringPool().intern("external.database_connection.alter." + connection);
+    auto* lit = arena_.create<LiteralExpr>();
+    lit->literal_type = LiteralType::STRING;
+    lit->string_value = stringPool().intern(payload);
+    stmt->value = lit;
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
 Statement* Parser::parseAlterUser() {
     SourceLocation start = currentLocation();
     SchemaPath user_path = parseSchemaPath(state_);
@@ -6459,10 +6796,33 @@ Statement* Parser::parseAlter() {
     if (matchContextual("EXTENSION")) {
         return parseAlterExtension();
     }
+    if (matchContextual("REPLICATION")) {
+        if (!matchContextual("CHANNEL")) {
+            errorCode("PRS_0505", "Expected CHANNEL after ALTER REPLICATION");
+            return nullptr;
+        }
+        return parseAlterReplicationChannel();
+    }
+    if (matchContextual("CDC")) {
+        if (!matchContextual("TABLE")) {
+            errorCode("PRS_0505", "Expected TABLE after ALTER CDC");
+            return nullptr;
+        }
+        return parseAlterCdcTable();
+    }
+    if (matchContextual("CLUSTER")) {
+        return parseAlterClusterControl();
+    }
+    if (matchContextual("CUBE")) {
+        return parseAlterCubeControl();
+    }
 
     if (matchContextual("TABLE")) return parseAlterTable();
     if (matchContextual("SCHEMA")) return parseAlterSchema();
-    if (matchContextual("DATABASE")) return parseAlterDatabase();
+    if (matchContextual("DATABASE")) {
+        if (matchContextual("CONNECTION")) return parseAlterDatabaseConnection();
+        return parseAlterDatabase();
+    }
     if (matchContextual("TABLESPACE")) return parseAlterTablespace();
     if (matchContextual("TYPE")) return parseAlterType();
     if (matchContextual("DOMAIN")) return parseAlterDomain();
@@ -7866,15 +8226,38 @@ Statement* Parser::parseDrop() {
     if (matchContextual("EXTENSION")) {
         return parseDropExtension();
     }
+    if (matchContextual("REPLICATION")) {
+        if (!matchContextual("CHANNEL")) {
+            errorCode("PRS_0505", "Expected CHANNEL after DROP REPLICATION");
+            return nullptr;
+        }
+        return parseDropReplicationChannel();
+    }
     if (matchContextual("PUBLICATION")) {
         return parseDropPublication();
     }
     if (matchContextual("SUBSCRIPTION")) {
         return parseDropSubscription();
     }
+    if (matchContextual("CDC")) {
+        if (!matchContextual("TABLE")) {
+            errorCode("PRS_0505", "Expected TABLE after DROP CDC");
+            return nullptr;
+        }
+        return parseDropCdcTable();
+    }
+    if (matchContextual("CLUSTER")) {
+        return parseDropClusterControl();
+    }
+    if (matchContextual("CUBE")) {
+        return parseDropCubeControl();
+    }
 
     if (matchContextual("SCHEMA")) return parseDropSchema();
-    if (matchContextual("DATABASE")) return parseDropDatabase();
+    if (matchContextual("DATABASE")) {
+        if (matchContextual("CONNECTION")) return parseDropDatabaseConnection();
+        return parseDropDatabase();
+    }
     if (matchContextual("TABLESPACE")) return parseDropTablespace();
     if (matchContextual("TABLE")) return parseDropTable();
     if (matchContextual("INDEX")) return parseDropIndex();
@@ -8046,6 +8429,39 @@ Statement* Parser::parseDropExtension() {
     return stmt;
 }
 
+Statement* Parser::parseDropReplicationChannel() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    bool if_exists = false;
+    if (match(TokenType::KW_IF)) {
+        expect(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+        if_exists = true;
+    }
+
+    StringPool::StringId channel_name = expectIdentifier("Expected replication channel name");
+    std::string channel = std::string(stringPool().get(channel_name));
+    std::string payload;
+    if (if_exists) {
+        payload = "IF_EXISTS=1";
+    }
+    if (matchContextual("CASCADE")) {
+        if (!payload.empty()) payload.push_back(';');
+        payload.append("CASCADE=1");
+    } else if (matchContextual("RESTRICT")) {
+        if (!payload.empty()) payload.push_back(';');
+        payload.append("RESTRICT=1");
+    }
+
+    stmt->name = stringPool().intern("replication.channel.drop." + channel);
+    auto* lit = arena_.create<LiteralExpr>();
+    lit->literal_type = LiteralType::STRING;
+    lit->string_value = stringPool().intern(payload);
+    stmt->value = lit;
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
 Statement* Parser::parseDropPublication() {
     SourceLocation start = currentLocation();
     auto* stmt = arena_.create<AlterSystemStmt>();
@@ -8097,6 +8513,69 @@ Statement* Parser::parseDropSubscription() {
     }
 
     stmt->name = stringPool().intern("replication.subscription.drop." + subscription);
+    auto* lit = arena_.create<LiteralExpr>();
+    lit->literal_type = LiteralType::STRING;
+    lit->string_value = stringPool().intern(payload);
+    stmt->value = lit;
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseDropCdcTable() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    bool if_exists = false;
+    if (match(TokenType::KW_IF)) {
+        expect(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+        if_exists = true;
+    }
+
+    SchemaPath table_path = parseSchemaPath(state_);
+    if (table_path.isEmpty()) {
+        errorCode("PRS_0504", "Expected CDC table name");
+    }
+
+    std::string table_name = schemaPathToString(table_path, stringPool());
+    std::string payload;
+    if (if_exists) {
+        payload = "IF_EXISTS=1";
+    }
+    if (matchContextual("CASCADE")) {
+        if (!payload.empty()) payload.push_back(';');
+        payload.append("CASCADE=1");
+    } else if (matchContextual("RESTRICT")) {
+        if (!payload.empty()) payload.push_back(';');
+        payload.append("RESTRICT=1");
+    }
+
+    stmt->name = stringPool().intern("etl.cdc.table.drop." + table_name);
+    auto* lit = arena_.create<LiteralExpr>();
+    lit->literal_type = LiteralType::STRING;
+    lit->string_value = stringPool().intern(payload);
+    stmt->value = lit;
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseDropDatabaseConnection() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    bool if_exists = false;
+    if (match(TokenType::KW_IF)) {
+        expect(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+        if_exists = true;
+    }
+
+    StringPool::StringId connection_name = expectIdentifier("Expected database connection name");
+    std::string connection = std::string(stringPool().get(connection_name));
+    std::string payload;
+    if (if_exists) {
+        payload = "IF_EXISTS=1";
+    }
+
+    stmt->name = stringPool().intern("external.database_connection.drop." + connection);
     auto* lit = arena_.create<LiteralExpr>();
     lit->literal_type = LiteralType::STRING;
     lit->string_value = stringPool().intern(payload);
@@ -9176,6 +9655,18 @@ void Parser::parseSelectList(SelectStmt* stmt) {
 SelectItem* Parser::parseSelectItem() {
     auto* item = arena_.create<SelectItem>();
     SourceLocation start = currentLocation();
+    auto isContextFunctionKeyword = [&]() {
+        return checkContextual("CURRENT_USER") ||
+               checkContextual("SESSION_USER") ||
+               checkContextual("CURRENT_ROLE") ||
+               checkContextual("CURRENT_CONNECTION") ||
+               checkContextual("CURRENT_SESSION") ||
+               checkContextual("CURRENT_TRANSACTION") ||
+               checkContextual("NOW") ||
+               checkContextual("CURRENT_DATE") ||
+               checkContextual("CURRENT_TIME") ||
+               checkContextual("CURRENT_TIMESTAMP");
+    };
 
     // Check for * (select all)
     if (match(TokenType::STAR)) {
@@ -9194,6 +9685,12 @@ SelectItem* Parser::parseSelectItem() {
                 item->span = makeSpan(start);
                 return item;
             }
+        }
+        if (isContextFunctionKeyword()) {
+            item->item_type = SelectItem::Type::EXPRESSION;
+            item->expr = parseExpression();
+            item->span = makeSpan(start);
+            return item;
         }
         SchemaPath path = parseSchemaPath(state_);
         bool saw_trailing_dot = (previous().type == TokenType::DOT);
@@ -12021,26 +12518,34 @@ Expression* Parser::parsePrimaryExpr() {
         }
     }
 
-    if (!expr && matchContextual("CURRENT_USER")) {
+    auto parseContextFunction = [&](const char* keyword, const char* function_name) {
+        if (expr || !matchContextual(keyword)) {
+            return;
+        }
         auto* fn = arena_.create<FunctionCallExpr>();
-        fn->function_path.components.push_back(stringPool().intern("CURRENT_USER"));
+        fn->function_path.components.push_back(stringPool().intern(function_name));
+        if (match(TokenType::LEFT_PAREN)) {
+            if (!match(TokenType::RIGHT_PAREN)) {
+                error(std::string(function_name).append(" does not accept arguments"));
+                while (!isAtEnd() && !check(TokenType::RIGHT_PAREN) &&
+                       !check(TokenType::SEMICOLON)) {
+                    advance();
+                }
+                match(TokenType::RIGHT_PAREN);
+            }
+        }
         expr = fn;
-    }
-    if (!expr && matchContextual("CURRENT_ROLE")) {
-        auto* fn = arena_.create<FunctionCallExpr>();
-        fn->function_path.components.push_back(stringPool().intern("CURRENT_ROLE"));
-        expr = fn;
-    }
-    if (!expr && matchContextual("CURRENT_CONNECTION")) {
-        auto* fn = arena_.create<FunctionCallExpr>();
-        fn->function_path.components.push_back(stringPool().intern("CURRENT_CONNECTION"));
-        expr = fn;
-    }
-    if (!expr && matchContextual("CURRENT_TRANSACTION")) {
-        auto* fn = arena_.create<FunctionCallExpr>();
-        fn->function_path.components.push_back(stringPool().intern("CURRENT_TRANSACTION"));
-        expr = fn;
-    }
+    };
+    parseContextFunction("CURRENT_USER", "CURRENT_USER");
+    parseContextFunction("SESSION_USER", "SESSION_USER");
+    parseContextFunction("CURRENT_ROLE", "CURRENT_ROLE");
+    parseContextFunction("CURRENT_CONNECTION", "CURRENT_CONNECTION");
+    parseContextFunction("CURRENT_SESSION", "CURRENT_CONNECTION");
+    parseContextFunction("CURRENT_TRANSACTION", "CURRENT_TRANSACTION");
+    parseContextFunction("NOW", "NOW");
+    parseContextFunction("CURRENT_DATE", "CURRENT_DATE");
+    parseContextFunction("CURRENT_TIME", "CURRENT_TIME");
+    parseContextFunction("CURRENT_TIMESTAMP", "CURRENT_TIMESTAMP");
 
     // Column reference or function call
     if (!expr && (isIdentifier() || check(TokenType::DOT) || check(TokenType::DOUBLE_DOT))) {
@@ -12240,12 +12745,23 @@ Expression* Parser::parseFunctionCall(SchemaPath path) {
             return expr;
         }
 
-        // Parse arguments (allow ORDER BY within aggregate call)
+        // Parse arguments (allow ORDER BY within aggregate call).
         if (!check(TokenType::RIGHT_PAREN)) {
-            expr->arguments.push_back(parseExpression());
-            while (match(TokenType::COMMA)) {
-                expr->arguments.push_back(parseExpression());
+            if (matchContextual("DISTINCT")) {
+                expr->distinct = true;
+            } else if (matchContextual("ALL")) {
+                expr->distinct = false;
             }
+
+            if (!check(TokenType::RIGHT_PAREN)) {
+                expr->arguments.push_back(parseExpression());
+                while (match(TokenType::COMMA)) {
+                    expr->arguments.push_back(parseExpression());
+                }
+            } else if (expr->distinct) {
+                error("DISTINCT requires at least one argument");
+            }
+
             if (match(TokenType::KW_ORDER) || matchContextual("ORDER")) {
                 expectContextual("BY", "Expected BY after ORDER in aggregate");
                 do {
@@ -13423,18 +13939,143 @@ SetStmt* Parser::parseSet() {
         return stmt;
     }
 
+    if (matchContextual("TERM")) {
+        stmt->set_type = SetStmt::SetType::TERM;
+        stmt->name = stringPool().intern("TERM");
+
+        auto parseTermToken = [&](bool allow_semicolon) -> std::string {
+            if (isAtEnd()) {
+                return {};
+            }
+
+            if (check(TokenType::SEMICOLON)) {
+                if (!allow_semicolon) {
+                    return {};
+                }
+                advance();
+                return ";";
+            }
+
+            if (check(TokenType::STRING_LITERAL) || isIdentifier()) {
+                std::string token = std::string(state_.getTokenText(current()));
+                advance();
+                return token;
+            }
+
+            TokenType punctuation = current().type;
+            if (punctuation == TokenType::END_OF_FILE) {
+                return {};
+            }
+
+            std::string token;
+            if (punctuation == TokenType::CARET) {
+                while (check(TokenType::CARET)) {
+                    token.append(state_.getTokenText(current()));
+                    advance();
+                }
+                return token;
+            }
+
+            token = std::string(state_.getTokenText(current()));
+            advance();
+            return token;
+        };
+
+        std::string new_terminator = parseTermToken(true);
+        if (new_terminator.empty()) {
+            errorCode("PRS_0504", "SET TERM requires new terminator token");
+        }
+
+        std::string old_terminator;
+        if (!isAtEnd() && !check(TokenType::SEMICOLON)) {
+            old_terminator = parseTermToken(true);
+        }
+
+        if (!isAtEnd() && !check(TokenType::SEMICOLON)) {
+            errorCode("PRS_0504", "SET TERM supports only new and optional old terminator tokens");
+        }
+
+        std::string payload = new_terminator;
+        if (!old_terminator.empty()) {
+            payload.push_back(' ');
+            payload.append(old_terminator);
+        }
+        stmt->value = makeStringLiteral(payload);
+
+        stmt->span = makeSpan(start);
+        return stmt;
+    }
+
+    auto parseSchemaSettingValue = [&]() -> Expression* {
+        if (check(TokenType::STRING_LITERAL)) {
+            auto* lit = arena_.create<LiteralExpr>();
+            lit->literal_type = LiteralType::STRING;
+            lit->string_value = current().value.string_id;
+            advance();
+            return lit;
+        }
+
+        if (isIdentifier() || check(TokenType::DOT) || check(TokenType::EXCLAIM_COLON)) {
+            SchemaPath path = parseSchemaPath(state_);
+            return makeStringLiteral(schemaPathToString(path, stringPool()));
+        }
+
+        errorCode("PRS_0504", "Expected schema path or DEFAULT");
+        return makeStringLiteral("");
+    };
+
+    if (matchContextual("SCHEMA") || matchContextual("CURRENT_SCHEMA")) {
+        stmt->set_type = SetStmt::SetType::VARIABLE;
+        stmt->name = stringPool().intern("CURRENT_SCHEMA");
+
+        // Accept both SQL-standard form (SET SCHEMA name) and assignment form.
+        match(TokenType::EQUAL);
+        matchContextual("TO");
+
+        if (match(TokenType::KW_DEFAULT) || matchContextual("DEFAULT")) {
+            stmt->is_default = true;
+        } else {
+            stmt->value = parseSchemaSettingValue();
+        }
+
+        stmt->span = makeSpan(start);
+        return stmt;
+    }
+
     auto parseVariableAssignment = [&](StringPool::StringId name_id) -> SetStmt* {
         stmt->set_type = SetStmt::SetType::VARIABLE;
         stmt->name = name_id;
 
+        auto makeBooleanLiteral = [&](bool value) -> Expression* {
+            auto* lit = arena_.create<LiteralExpr>();
+            lit->literal_type = LiteralType::BOOLEAN;
+            lit->bool_value = value;
+            return lit;
+        };
+
         // = or TO
-        if (!match(TokenType::EQUAL) && !matchContextual("TO")) {
-            error("Expected '=' or TO after variable name");
+        const bool has_assignment_operator =
+            match(TokenType::EQUAL) || matchContextual("TO");
+        if (!has_assignment_operator) {
+            // Support shorthand assignments (for example: SET operator.strict_mode ON).
+            if (!check(TokenType::KW_DEFAULT) && !checkContextual("DEFAULT") &&
+                !check(TokenType::KW_ON) && !checkContextual("ON") &&
+                !checkContextual("OFF") &&
+                !check(TokenType::KW_TRUE) && !check(TokenType::KW_FALSE) &&
+                !check(TokenType::INTEGER_LITERAL) && !check(TokenType::FLOAT_LITERAL) &&
+                !check(TokenType::STRING_LITERAL) && !check(TokenType::BLOB_LITERAL) &&
+                !check(TokenType::LEFT_PAREN) && !isIdentifier()) {
+                error("Expected '=' or TO after variable name");
+            }
         }
 
         // Value can be DEFAULT or an expression (or list of values)
         if (match(TokenType::KW_DEFAULT) || matchContextual("DEFAULT")) {
             stmt->is_default = true;
+        } else if (match(TokenType::KW_ON) || matchContextual("ON")) {
+            stmt->value = makeBooleanLiteral(true);
+        } else if (matchContextual("OFF")) {
+            stmt->value = makeBooleanLiteral(false);
         } else {
             // Parse value(s) - some settings accept comma-separated lists
             stmt->value = parseExpression();
@@ -14204,6 +14845,25 @@ SweepDatabaseStmt* Parser::parseSweep() {
     return stmt;
 }
 
+Statement* Parser::parseResyncReplicationChannel() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    expectContextual("REPLICATION", "Expected REPLICATION after RESYNC");
+    expectContextual("CHANNEL", "Expected CHANNEL after RESYNC REPLICATION");
+    StringPool::StringId channel_name = expectIdentifier("Expected replication channel name");
+    std::string channel = std::string(stringPool().get(channel_name));
+    std::string payload = captureStatementBody();
+
+    stmt->name = stringPool().intern("replication.channel.resync." + channel);
+    auto* lit = arena_.create<LiteralExpr>();
+    lit->literal_type = LiteralType::STRING;
+    lit->string_value = stringPool().intern(payload);
+    stmt->value = lit;
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
 Statement* Parser::parseDocPathFilterSurface() {
     SourceLocation start = currentLocation();
     auto* stmt = arena_.create<DocPathFilterStmt>();
@@ -14623,6 +15283,710 @@ Statement* Parser::parseSearchDslSurface() {
     return stmt;
 }
 
+Statement* Parser::parseAdminControlSurface(const char* command_keyword) {
+    SourceLocation start = previous().span.start;
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    auto parse_payload_literal = [&]() -> Expression* {
+        std::string payload = captureStatementBody();
+        if (payload.empty()) {
+            return nullptr;
+        }
+        auto* lit = arena_.create<LiteralExpr>();
+        lit->literal_type = LiteralType::STRING;
+        lit->string_value = stringPool().intern(payload);
+        return lit;
+    };
+
+    std::string key;
+    bool enforce_empty_payload = false;
+    std::string keyword = command_keyword ? command_keyword : "";
+    if (keyword == "BACKUP") {
+        matchContextual("DATABASE");
+        key = "admin.backup";
+    } else if (keyword == "RESTORE") {
+        matchContextual("DATABASE");
+        key = "admin.restore";
+    } else if (keyword == "VALIDATE") {
+        matchContextual("DATABASE");
+        key = "admin.validate";
+    } else if (keyword == "VACUUM") {
+        matchContextual("DATABASE");
+        key = "admin.vacuum_alias";
+        enforce_empty_payload = true;
+    } else {
+        errorCode("PRS_0505", "Unsupported admin control command");
+        stmt->span = makeSpan(start);
+        return stmt;
+    }
+
+    stmt->name = stringPool().intern(key);
+    Expression* payload = parse_payload_literal();
+    if (enforce_empty_payload && payload != nullptr) {
+        auto* literal = static_cast<LiteralExpr*>(payload);
+        std::string_view raw = stringPool().get(literal->string_value);
+        const bool has_non_whitespace =
+            std::any_of(raw.begin(), raw.end(), [](char ch) {
+                return std::isspace(static_cast<unsigned char>(ch)) == 0;
+            });
+        if (has_non_whitespace) {
+            errorCode("PRS_0505",
+                      "VACUUM options are not supported in V3; VACUUM maps to SWEEP/GC");
+        }
+        payload = nullptr;
+    }
+    stmt->value = payload;
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseCreateClusterControl() {
+    SourceLocation start = previous().span.start;
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    auto make_payload_literal = [&](const std::string& payload) -> Expression* {
+        auto* lit = arena_.create<LiteralExpr>();
+        lit->literal_type = LiteralType::STRING;
+        lit->string_value = stringPool().intern(payload);
+        return lit;
+    };
+
+    std::string family;
+    if (matchContextual("WORKLOAD")) {
+        if (matchContextual("CLASS")) {
+            family = "workload_class";
+        } else if (matchContextual("ROUTE")) {
+            family = "workload_route";
+        } else {
+            errorCode("PRS_0505", "Expected CLASS or ROUTE after CREATE CLUSTER WORKLOAD");
+        }
+    } else if (matchContextual("ADMISSION")) {
+        if (matchContextual("POLICY")) {
+            family = "admission_policy";
+        } else if (matchContextual("BINDING")) {
+            family = "admission_binding";
+        } else {
+            errorCode("PRS_0505", "Expected POLICY or BINDING after CREATE CLUSTER ADMISSION");
+        }
+    } else {
+        errorCode("PRS_0505", "Expected WORKLOAD or ADMISSION after CREATE CLUSTER");
+    }
+
+    StringPool::StringId object_name = expectIdentifier("Expected cluster object name");
+    std::string name = std::string(stringPool().get(object_name));
+    std::string payload = captureStatementBody();
+
+    if (payload.empty()) {
+        errorCode("PRS_0504", "CREATE CLUSTER control requires configuration payload");
+    }
+
+    stmt->name = stringPool().intern("cluster." + family + ".create." + name);
+    stmt->value = make_payload_literal(payload);
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseAlterClusterControl() {
+    SourceLocation start = previous().span.start;
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    auto make_payload_literal = [&](const std::string& payload) -> Expression* {
+        auto* lit = arena_.create<LiteralExpr>();
+        lit->literal_type = LiteralType::STRING;
+        lit->string_value = stringPool().intern(payload);
+        return lit;
+    };
+
+    std::string family;
+    if (matchContextual("SET")) {
+        expectContextual("STATE", "Expected STATE after ALTER CLUSTER SET");
+        std::string payload = captureStatementBody();
+        if (payload.empty()) {
+            errorCode("PRS_0504", "ALTER CLUSTER SET STATE requires payload");
+        }
+        stmt->name = stringPool().intern("cluster.set_state");
+        stmt->value = make_payload_literal(payload);
+        stmt->span = makeSpan(start);
+        return stmt;
+    }
+
+    if (matchContextual("WORKLOAD")) {
+        if (matchContextual("CLASS")) {
+            family = "workload_class";
+        } else if (matchContextual("ROUTE")) {
+            family = "workload_route";
+        } else {
+            errorCode("PRS_0505", "Expected CLASS or ROUTE after ALTER CLUSTER WORKLOAD");
+        }
+    } else if (matchContextual("ADMISSION")) {
+        if (matchContextual("POLICY")) {
+            family = "admission_policy";
+        } else if (matchContextual("BINDING")) {
+            family = "admission_binding";
+        } else {
+            errorCode("PRS_0505", "Expected POLICY or BINDING after ALTER CLUSTER ADMISSION");
+        }
+    } else {
+        errorCode("PRS_0505", "Expected WORKLOAD, ADMISSION, or SET after ALTER CLUSTER");
+    }
+
+    StringPool::StringId object_name = expectIdentifier("Expected cluster object name");
+    std::string name = std::string(stringPool().get(object_name));
+    std::string payload = captureStatementBody();
+    if (payload.empty()) {
+        errorCode("PRS_0504", "ALTER CLUSTER control requires action payload");
+    }
+
+    stmt->name = stringPool().intern("cluster." + family + ".alter." + name);
+    stmt->value = make_payload_literal(payload);
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseDropClusterControl() {
+    SourceLocation start = previous().span.start;
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    auto make_payload_literal = [&](const std::string& payload) -> Expression* {
+        auto* lit = arena_.create<LiteralExpr>();
+        lit->literal_type = LiteralType::STRING;
+        lit->string_value = stringPool().intern(payload);
+        return lit;
+    };
+
+    std::string family;
+    if (matchContextual("WORKLOAD")) {
+        if (matchContextual("CLASS")) {
+            family = "workload_class";
+        } else if (matchContextual("ROUTE")) {
+            family = "workload_route";
+        } else {
+            errorCode("PRS_0505", "Expected CLASS or ROUTE after DROP CLUSTER WORKLOAD");
+        }
+    } else if (matchContextual("ADMISSION")) {
+        if (matchContextual("POLICY")) {
+            family = "admission_policy";
+        } else if (matchContextual("BINDING")) {
+            family = "admission_binding";
+        } else {
+            errorCode("PRS_0505", "Expected POLICY or BINDING after DROP CLUSTER ADMISSION");
+        }
+    } else {
+        errorCode("PRS_0505", "Expected WORKLOAD or ADMISSION after DROP CLUSTER");
+    }
+
+    StringPool::StringId object_name = expectIdentifier("Expected cluster object name");
+    std::string name = std::string(stringPool().get(object_name));
+    std::string payload = captureStatementBody();
+
+    stmt->name = stringPool().intern("cluster." + family + ".drop." + name);
+    if (!payload.empty()) {
+        stmt->value = make_payload_literal(payload);
+    }
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseClusterControlSurface() {
+    SourceLocation start = previous().span.start;
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    auto make_payload_literal = [&](const std::string& payload) -> Expression* {
+        auto* lit = arena_.create<LiteralExpr>();
+        lit->literal_type = LiteralType::STRING;
+        lit->string_value = stringPool().intern(payload);
+        return lit;
+    };
+
+    if (match(TokenType::KW_SET) || matchContextual("SET")) {
+        expectContextual("STATE", "Expected STATE after CLUSTER SET");
+        std::string payload = captureStatementBody();
+        if (payload.empty()) {
+            errorCode("PRS_0504", "CLUSTER SET STATE requires payload");
+        }
+        stmt->name = stringPool().intern("cluster.set_state");
+        stmt->value = make_payload_literal(payload);
+        stmt->span = makeSpan(start);
+        return stmt;
+    }
+
+    if (match(TokenType::KW_SHOW) || matchContextual("SHOW")) {
+        if (matchContextual("STATE")) {
+            stmt->name = stringPool().intern("cluster.show_state");
+        } else if (matchContextual("ROUTING")) {
+            expectContextual("PLAN", "Expected PLAN after CLUSTER SHOW ROUTING");
+            stmt->name = stringPool().intern("cluster.show_routing_plan");
+        } else if (matchContextual("ADMISSION")) {
+            expectContextual("STATUS", "Expected STATUS after CLUSTER SHOW ADMISSION");
+            stmt->name = stringPool().intern("cluster.show_admission_status");
+        } else {
+            errorCode("PRS_0505",
+                      "Expected STATE, ROUTING PLAN, or ADMISSION STATUS after CLUSTER SHOW");
+        }
+
+        std::string payload = captureStatementBody();
+        if (!payload.empty()) {
+            stmt->value = make_payload_literal(payload);
+        }
+        stmt->span = makeSpan(start);
+        return stmt;
+    }
+
+    errorCode("PRS_0505", "Expected SET or SHOW after CLUSTER");
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseShowClusterControlSurface() {
+    SourceLocation start = previous().span.start;
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    auto make_payload_literal = [&](const std::string& payload) -> Expression* {
+        auto* lit = arena_.create<LiteralExpr>();
+        lit->literal_type = LiteralType::STRING;
+        lit->string_value = stringPool().intern(payload);
+        return lit;
+    };
+
+    expectContextual("CLUSTER", "Expected CLUSTER after SHOW");
+    if (matchContextual("STATE")) {
+        stmt->name = stringPool().intern("cluster.show_state");
+    } else if (matchContextual("ROUTING")) {
+        expectContextual("PLAN", "Expected PLAN after SHOW CLUSTER ROUTING");
+        stmt->name = stringPool().intern("cluster.show_routing_plan");
+    } else if (matchContextual("ADMISSION")) {
+        expectContextual("STATUS", "Expected STATUS after SHOW CLUSTER ADMISSION");
+        stmt->name = stringPool().intern("cluster.show_admission_status");
+    } else {
+        errorCode("PRS_0505",
+                  "Expected STATE, ROUTING PLAN, or ADMISSION STATUS after SHOW CLUSTER");
+    }
+
+    std::string payload = captureStatementBody();
+    if (!payload.empty()) {
+        stmt->value = make_payload_literal(payload);
+    }
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseCreateCubeControl() {
+    SourceLocation start = previous().span.start;
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    auto make_payload_literal = [&](const std::string& payload) -> Expression* {
+        auto* lit = arena_.create<LiteralExpr>();
+        lit->literal_type = LiteralType::STRING;
+        lit->string_value = stringPool().intern(payload);
+        return lit;
+    };
+
+    bool if_not_exists = false;
+    if (match(TokenType::KW_IF)) {
+        expect(TokenType::KW_NOT, "Expected NOT after IF");
+        expect(TokenType::KW_EXISTS, "Expected EXISTS after IF NOT");
+        if_not_exists = true;
+    }
+
+    StringPool::StringId cube_name_id = expectIdentifier("Expected cube name after CREATE CUBE");
+    std::string cube_name = std::string(stringPool().get(cube_name_id));
+    std::string payload = captureStatementBody();
+    if (payload.empty()) {
+        errorCode("PRS_0504", "CREATE CUBE requires definition payload");
+    }
+
+    if (if_not_exists) {
+        if (!payload.empty()) {
+            payload.insert(0, ";");
+        }
+        payload.insert(0, "IF_NOT_EXISTS=1");
+    }
+
+    stmt->name = stringPool().intern("cube.ddl.create." + cube_name);
+    stmt->value = make_payload_literal(payload);
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseAlterCubeControl() {
+    SourceLocation start = previous().span.start;
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    auto make_payload_literal = [&](const std::string& payload) -> Expression* {
+        auto* lit = arena_.create<LiteralExpr>();
+        lit->literal_type = LiteralType::STRING;
+        lit->string_value = stringPool().intern(payload);
+        return lit;
+    };
+
+    StringPool::StringId cube_name_id = expectIdentifier("Expected cube name after ALTER CUBE");
+    std::string cube_name = std::string(stringPool().get(cube_name_id));
+    std::string payload = captureStatementBody();
+    if (payload.empty()) {
+        errorCode("PRS_0504", "ALTER CUBE requires action payload");
+    }
+
+    stmt->name = stringPool().intern("cube.ddl.alter." + cube_name);
+    stmt->value = make_payload_literal(payload);
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseDropCubeControl() {
+    SourceLocation start = previous().span.start;
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    auto make_payload_literal = [&](const std::string& payload) -> Expression* {
+        auto* lit = arena_.create<LiteralExpr>();
+        lit->literal_type = LiteralType::STRING;
+        lit->string_value = stringPool().intern(payload);
+        return lit;
+    };
+
+    bool if_exists = false;
+    if (match(TokenType::KW_IF)) {
+        expect(TokenType::KW_EXISTS, "Expected EXISTS after IF");
+        if_exists = true;
+    }
+
+    StringPool::StringId cube_name_id = expectIdentifier("Expected cube name after DROP CUBE");
+    std::string cube_name = std::string(stringPool().get(cube_name_id));
+    std::string payload = captureStatementBody();
+
+    if (if_exists) {
+        if (!payload.empty()) {
+            payload.insert(0, ";");
+        }
+        payload.insert(0, "IF_EXISTS=1");
+    }
+
+    stmt->name = stringPool().intern("cube.ddl.drop." + cube_name);
+    if (!payload.empty()) {
+        stmt->value = make_payload_literal(payload);
+    }
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseRefreshCubeControl() {
+    SourceLocation start = previous().span.start;
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    auto make_payload_literal = [&](const std::string& payload) -> Expression* {
+        auto* lit = arena_.create<LiteralExpr>();
+        lit->literal_type = LiteralType::STRING;
+        lit->string_value = stringPool().intern(payload);
+        return lit;
+    };
+
+    expectContextual("CUBE", "Expected CUBE after REFRESH");
+    StringPool::StringId cube_name_id = expectIdentifier("Expected cube name after REFRESH CUBE");
+    std::string cube_name = std::string(stringPool().get(cube_name_id));
+    std::string payload = captureStatementBody();
+
+    stmt->name = stringPool().intern("cube.refresh." + cube_name);
+    if (!payload.empty()) {
+        stmt->value = make_payload_literal(payload);
+    }
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseCubeControlSurface() {
+    SourceLocation start = previous().span.start;
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    auto make_payload_literal = [&](const std::string& payload) -> Expression* {
+        auto* lit = arena_.create<LiteralExpr>();
+        lit->literal_type = LiteralType::STRING;
+        lit->string_value = stringPool().intern(payload);
+        return lit;
+    };
+
+    if (matchContextual("REFRESH")) {
+        StringPool::StringId cube_name_id = expectIdentifier("Expected cube name after CUBE REFRESH");
+        std::string cube_name = std::string(stringPool().get(cube_name_id));
+        std::string payload = captureStatementBody();
+        stmt->name = stringPool().intern("cube.refresh." + cube_name);
+        if (!payload.empty()) {
+            stmt->value = make_payload_literal(payload);
+        }
+        stmt->span = makeSpan(start);
+        return stmt;
+    }
+
+    if (match(TokenType::KW_SHOW) || matchContextual("SHOW")) {
+        std::string cube_name;
+        if (matchContextual("STATS")) {
+            if (isIdentifier()) {
+                cube_name = std::string(stringPool().get(expectIdentifier("Expected cube name")));
+            }
+        } else if (isIdentifier()) {
+            cube_name = std::string(stringPool().get(expectIdentifier("Expected cube name")));
+            matchContextual("STATS");
+        }
+
+        stmt->name = stringPool().intern("cube.show_stats");
+        std::string payload = captureStatementBody();
+        if (!cube_name.empty()) {
+            if (!payload.empty()) {
+                payload.insert(0, " ");
+            }
+            payload.insert(0, cube_name);
+        }
+        if (!payload.empty()) {
+            stmt->value = make_payload_literal(payload);
+        }
+        stmt->span = makeSpan(start);
+        return stmt;
+    }
+
+    errorCode("PRS_0505", "Expected REFRESH or SHOW after CUBE");
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseShowCubeControlSurface() {
+    SourceLocation start = previous().span.start;
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    auto make_payload_literal = [&](const std::string& payload) -> Expression* {
+        auto* lit = arena_.create<LiteralExpr>();
+        lit->literal_type = LiteralType::STRING;
+        lit->string_value = stringPool().intern(payload);
+        return lit;
+    };
+
+    expectContextual("CUBE", "Expected CUBE after SHOW");
+    std::string cube_name;
+    if (matchContextual("STATS")) {
+        if (isIdentifier()) {
+            cube_name = std::string(stringPool().get(expectIdentifier("Expected cube name")));
+        }
+    } else if (isIdentifier()) {
+        cube_name = std::string(stringPool().get(expectIdentifier("Expected cube name")));
+        matchContextual("STATS");
+    }
+
+    stmt->name = stringPool().intern("cube.show_stats");
+    std::string payload = captureStatementBody();
+    if (!cube_name.empty()) {
+        if (!payload.empty()) {
+            payload.insert(0, " ");
+        }
+        payload.insert(0, cube_name);
+    }
+    if (!payload.empty()) {
+        stmt->value = make_payload_literal(payload);
+    }
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseServiceChannelSurface() {
+    SourceLocation start = previous().span.start;
+    auto* stmt = arena_.create<AlterSystemStmt>();
+
+    auto make_payload_literal = [&](const std::string& payload) -> Expression* {
+        auto* lit = arena_.create<LiteralExpr>();
+        lit->literal_type = LiteralType::STRING;
+        lit->string_value = stringPool().intern(payload);
+        return lit;
+    };
+
+    expectContextual("CHANNEL", "Expected CHANNEL after SERVICE");
+    if (matchContextual("BACKUP")) {
+        stmt->name = stringPool().intern("service.channel.backup");
+    } else if (matchContextual("EVENTS")) {
+        stmt->name = stringPool().intern("service.channel.events");
+    } else if (matchContextual("PROGRESS")) {
+        stmt->name = stringPool().intern("service.channel.progress");
+    } else {
+        errorCode("PRS_0505", "Expected BACKUP, EVENTS, or PROGRESS after SERVICE CHANNEL");
+    }
+
+    std::string payload = captureStatementBody();
+    if (!payload.empty()) {
+        stmt->value = make_payload_literal(payload);
+    }
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+Statement* Parser::parseNoSqlSurface() {
+    SourceLocation start = currentLocation();
+
+    auto make_nosql_stmt = [&](const std::string& key, Expression* payload_expr) -> Statement* {
+        auto* stmt = arena_.create<AlterSystemStmt>();
+        stmt->name = stringPool().intern(key);
+        stmt->value = payload_expr;
+        stmt->span = makeSpan(start);
+        return stmt;
+    };
+
+    auto parse_payload_expr = [&](const char* label) -> Expression* {
+        if (check(TokenType::SEMICOLON) || isAtEnd()) {
+            errorCode("PRS_0504", std::string("Expected payload expression for ").append(label));
+            return nullptr;
+        }
+        return parseExpression();
+    };
+
+    auto parse_query_expr = [&](const char* label) -> Expression* {
+        matchContextual("QUERY");
+        return parse_payload_expr(label);
+    };
+
+    if (matchContextual("CQL")) {
+        if (matchContextual("KEYSPACE")) {
+            return make_nosql_stmt("nosql.cql.keyspace", parse_payload_expr("CQL KEYSPACE"));
+        }
+        if (matchContextual("BATCH")) {
+            return make_nosql_stmt("nosql.cql.batch", parse_query_expr("CQL BATCH"));
+        }
+        if (matchContextual("TTL")) {
+            return make_nosql_stmt("nosql.cql.ttl", parse_query_expr("CQL TTL"));
+        }
+        if (matchContextual("WRITETIME")) {
+            return make_nosql_stmt("nosql.cql.writetime", parse_query_expr("CQL WRITETIME"));
+        }
+        errorCode("PRS_0505", "Unsupported CQL surface");
+        auto* fallback = arena_.create<AlterSystemStmt>();
+        fallback->span = makeSpan(start);
+        return fallback;
+    }
+
+    if (matchContextual("MONGO")) {
+        if (matchContextual("FIND_AND_MODIFY")) {
+            return make_nosql_stmt("nosql.mongo.find_and_modify", parse_query_expr("MONGO FIND_AND_MODIFY"));
+        }
+        if (matchContextual("FIND")) {
+            if (match(TokenType::KW_AND) || matchContextual("AND")) {
+                expectContextual("MODIFY", "Expected MODIFY after FIND AND");
+                return make_nosql_stmt("nosql.mongo.find_and_modify", parse_query_expr("MONGO FIND AND MODIFY"));
+            }
+            return make_nosql_stmt("nosql.mongo.find", parse_query_expr("MONGO FIND"));
+        }
+        if (matchContextual("AGGREGATE")) {
+            return make_nosql_stmt("nosql.mongo.aggregate", parse_query_expr("MONGO AGGREGATE"));
+        }
+        if (matchContextual("BULK_WRITE")) {
+            return make_nosql_stmt("nosql.mongo.bulk_write", parse_query_expr("MONGO BULK_WRITE"));
+        }
+        if (matchContextual("BULK")) {
+            expectContextual("WRITE", "Expected WRITE after MONGO BULK");
+            return make_nosql_stmt("nosql.mongo.bulk_write", parse_query_expr("MONGO BULK WRITE"));
+        }
+        errorCode("PRS_0505", "Unsupported MONGO surface");
+        auto* fallback = arena_.create<AlterSystemStmt>();
+        fallback->span = makeSpan(start);
+        return fallback;
+    }
+
+    if (matchContextual("CYPHER")) {
+        if (matchContextual("MATCH")) {
+            return make_nosql_stmt("nosql.cypher.match", parse_query_expr("CYPHER MATCH"));
+        }
+        if (match(TokenType::KW_MERGE) || matchContextual("MERGE")) {
+            return make_nosql_stmt("nosql.cypher.merge", parse_query_expr("CYPHER MERGE"));
+        }
+        if (matchContextual("UNWIND")) {
+            return make_nosql_stmt("nosql.cypher.unwind", parse_query_expr("CYPHER UNWIND"));
+        }
+        if (match(TokenType::KW_CALL) || matchContextual("CALL")) {
+            return make_nosql_stmt("nosql.cypher.call", parse_query_expr("CYPHER CALL"));
+        }
+        errorCode("PRS_0505", "Unsupported CYPHER surface");
+        auto* fallback = arena_.create<AlterSystemStmt>();
+        fallback->span = makeSpan(start);
+        return fallback;
+    }
+
+    if (matchContextual("REDIS")) {
+        if (matchContextual("STRING")) {
+            return make_nosql_stmt("nosql.redis.string", parse_query_expr("REDIS STRING"));
+        }
+        if (matchContextual("HASH")) {
+            return make_nosql_stmt("nosql.redis.hash", parse_query_expr("REDIS HASH"));
+        }
+        if (matchContextual("LIST")) {
+            return make_nosql_stmt("nosql.redis.list", parse_query_expr("REDIS LIST"));
+        }
+        if (match(TokenType::KW_SET) || matchContextual("SET")) {
+            return make_nosql_stmt("nosql.redis.set", parse_query_expr("REDIS SET"));
+        }
+        if (matchContextual("ZSET")) {
+            return make_nosql_stmt("nosql.redis.zset", parse_query_expr("REDIS ZSET"));
+        }
+        if (matchContextual("STREAM")) {
+            return make_nosql_stmt("nosql.redis.stream", parse_query_expr("REDIS STREAM"));
+        }
+        if (matchContextual("PUBSUB")) {
+            return make_nosql_stmt("nosql.redis.pubsub", parse_query_expr("REDIS PUBSUB"));
+        }
+        errorCode("PRS_0505", "Unsupported REDIS surface");
+        auto* fallback = arena_.create<AlterSystemStmt>();
+        fallback->span = makeSpan(start);
+        return fallback;
+    }
+
+    if (matchContextual("MILVUS")) {
+        if (match(TokenType::KW_CREATE) || matchContextual("CREATE")) {
+            if (matchContextual("COLLECTION")) {
+                return make_nosql_stmt(
+                    "nosql.milvus.create_collection",
+                    parse_payload_expr("MILVUS CREATE COLLECTION"));
+            }
+            if (matchContextual("INDEX")) {
+                return make_nosql_stmt(
+                    "nosql.milvus.create_index",
+                    parse_payload_expr("MILVUS CREATE INDEX"));
+            }
+            errorCode("PRS_0505", "Unsupported MILVUS CREATE surface");
+            auto* fallback = arena_.create<AlterSystemStmt>();
+            fallback->span = makeSpan(start);
+            return fallback;
+        }
+        if (match(TokenType::KW_DROP) || matchContextual("DROP")) {
+            if (matchContextual("COLLECTION")) {
+                return make_nosql_stmt(
+                    "nosql.milvus.drop_collection",
+                    parse_payload_expr("MILVUS DROP COLLECTION"));
+            }
+            if (matchContextual("INDEX")) {
+                return make_nosql_stmt(
+                    "nosql.milvus.drop_index",
+                    parse_payload_expr("MILVUS DROP INDEX"));
+            }
+            errorCode("PRS_0505", "Unsupported MILVUS DROP surface");
+            auto* fallback = arena_.create<AlterSystemStmt>();
+            fallback->span = makeSpan(start);
+            return fallback;
+        }
+        if (match(TokenType::KW_INSERT) || matchContextual("INSERT")) {
+            return make_nosql_stmt("nosql.milvus.insert", parse_query_expr("MILVUS INSERT"));
+        }
+        if (match(TokenType::KW_DELETE) || matchContextual("DELETE")) {
+            return make_nosql_stmt("nosql.milvus.delete", parse_query_expr("MILVUS DELETE"));
+        }
+        if (matchContextual("SEARCH")) {
+            return make_nosql_stmt("nosql.milvus.search", parse_query_expr("MILVUS SEARCH"));
+        }
+        if (matchContextual("QUERY")) {
+            return make_nosql_stmt("nosql.milvus.query", parse_query_expr("MILVUS QUERY"));
+        }
+        errorCode("PRS_0505", "Unsupported MILVUS surface");
+        auto* fallback = arena_.create<AlterSystemStmt>();
+        fallback->span = makeSpan(start);
+        return fallback;
+    }
+
+    errorCode("PRS_0505", "Unsupported NoSQL surface");
+    auto* fallback = arena_.create<AlterSystemStmt>();
+    fallback->span = makeSpan(start);
+    return fallback;
+}
+
 Statement* Parser::parseVectorAnnSurface() {
     SourceLocation start = currentLocation();
     auto* stmt = arena_.create<VectorAnnQueryStmt>();
@@ -15020,6 +16384,14 @@ Statement* Parser::parseRedisStreamGroupSurface() {
         return stmt;
     };
 
+    auto make_nosql_stmt = [&](const std::string& key, Expression* payload_expr) -> Statement* {
+        auto* stmt = arena_.create<AlterSystemStmt>();
+        stmt->name = stringPool().intern(key);
+        stmt->value = payload_expr;
+        stmt->span = makeSpan(start);
+        return stmt;
+    };
+
     auto parse_scalar_text = [&](const char* label) -> std::string {
         if (check(TokenType::STRING_LITERAL) || isIdentifier()) {
             std::string value = std::string(stringPool().get(current().value.string_id));
@@ -15113,6 +16485,18 @@ Statement* Parser::parseRedisStreamGroupSurface() {
 
     if (matchContextual("REDIS")) {
         expectContextual("STREAM", "Expected STREAM after REDIS");
+
+        if (!(check(TokenType::KW_GROUP) || checkContextual("GROUP"))) {
+            matchContextual("QUERY");
+            if (check(TokenType::SEMICOLON) || isAtEnd()) {
+                errorCode("PRS_0504", "Expected payload expression for REDIS STREAM");
+                auto* fallback = arena_.create<AlterSystemStmt>();
+                fallback->span = makeSpan(start);
+                return fallback;
+            }
+            return make_nosql_stmt("nosql.redis.stream", parseExpression());
+        }
+
         expect_group_keyword("Expected GROUP after REDIS STREAM");
 
         if (match(TokenType::KW_CREATE) || matchContextual("CREATE")) {

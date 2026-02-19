@@ -8,11 +8,14 @@
 
 | Metric | Value |
 | --- | --- |
-| Total ctest tests | 3355 |
-| Passed | 3355 |
+| Total ctest tests | 3390 |
+| Passed | 3390 |
 | Failed | 0 |
 | Runtime executables | 12 |
 | Staged test executables | 56 |
+
+Gate evidence:
+- `docs/planning/gates/BETA-GATE-001/BETA_GATE_001_MANIFEST_20260219T160318Z.md`
 
 ## Implemented (0.1.0)
 

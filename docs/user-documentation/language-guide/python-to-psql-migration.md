@@ -1,4 +1,5 @@
 # Python to PSQL Migration Guide (Draft)
+Last modified: 2026-02-19
 
 This guide maps common Python client-side idioms to ScratchBird PSQL equivalents. The goal is
 functionality parity using Firebird/V2-style operators and functions (not Python syntax).

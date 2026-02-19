@@ -59,7 +59,7 @@ cmake --build build -j$(nproc)
 ctest --test-dir build --output-on-failure
 ```
 
-Expected 0.1.0 baseline: `3355` tests, all passing.
+Expected 0.1.0 baseline: `3390` tests, all passing.
 
 ### 5.3 Release Packaging
 

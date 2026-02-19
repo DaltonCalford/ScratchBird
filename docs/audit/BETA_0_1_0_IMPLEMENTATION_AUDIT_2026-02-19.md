@@ -19,8 +19,8 @@ No speculative capability claims are included without local source/test evidence
 
 ### 2.1 Test Gate
 
-- `ctest` total: `3355`
-- passed: `3355`
+- `ctest` total: `3390`
+- passed: `3390`
 - failed: `0`
 
 ### 2.2 Runtime Artifacts

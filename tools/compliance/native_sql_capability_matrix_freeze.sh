@@ -10,6 +10,7 @@ BINDING_REPORT_CSV="${3:-${REPO_ROOT}/docs/planning/native_sql/gates/NSQL-GATE-0
 OUT_MATRIX_CSV="${4:-${REPO_ROOT}/docs/planning/native_sql/gates/NSQL-GATE-04/NATIVE_CAPABILITY_MATRIX.csv}"
 OUT_ENGINE_CSV="${5:-${REPO_ROOT}/docs/planning/native_sql/gates/NSQL-GATE-04/ENGINE_SURFACE_PACK_COVERAGE.csv}"
 SUMMARY_OUT="${6:-}"
+NATIVE_SQL_ALLOW_OPEN_MANDATORY="${NATIVE_SQL_ALLOW_OPEN_MANDATORY:-0}"
 
 if [[ ! -f "${REGISTRY_JSON}" ]]; then
     echo "error: registry file not found: ${REGISTRY_JSON}" >&2
@@ -27,6 +28,10 @@ if ! command -v jq >/dev/null 2>&1; then
     echo "error: jq is required" >&2
     exit 2
 fi
+if [[ "${NATIVE_SQL_ALLOW_OPEN_MANDATORY}" != "0" && "${NATIVE_SQL_ALLOW_OPEN_MANDATORY}" != "1" ]]; then
+    echo "error: NATIVE_SQL_ALLOW_OPEN_MANDATORY must be 0 or 1" >&2
+    exit 2
+fi
 
 mkdir -p "$(dirname "${OUT_MATRIX_CSV}")"
 mkdir -p "$(dirname "${OUT_ENGINE_CSV}")"
@@ -42,6 +47,14 @@ csv_escape() {
     local value="${1:-}"
     value="${value//\"/\"\"}"
     printf '"%s"' "${value}"
+}
+to_repo_path() {
+    local value="${1:-}"
+    if [[ "${value}" == "${REPO_ROOT}/"* ]]; then
+        printf "%s" "${value#${REPO_ROOT}/}"
+    else
+        printf "%s" "${value}"
+    fi
 }
 
 declare -A SYN_STATUS
@@ -195,6 +208,8 @@ mandatory_scope_rows="$(awk -F, 'NR > 1 && $11 == "\"1\"" { ++n } END { print n 
 mandatory_closed_rows="$(awk -F, 'NR > 1 && $11 == "\"1\"" && $18 == "\"1\"" { ++n } END { print n + 0 }' "${OUT_MATRIX_CSV}")"
 mandatory_open_rows="$(awk -F, 'NR > 1 && $11 == "\"1\"" && $18 != "\"1\"" { ++n } END { print n + 0 }' "${OUT_MATRIX_CSV}")"
 phase4_pack_rows="$(awk -F, 'NR > 1 && $17 == "\"1\"" { ++n } END { print n + 0 }' "${OUT_MATRIX_CSV}")"
+unmapped_rows="$(awk -F, 'NR > 1 && $10 == "\"unmapped\"" { ++n } END { print n + 0 }' "${OUT_MATRIX_CSV}")"
+out_of_scope_rows="$(awk -F, 'NR > 1 && $19 == "\"out_of_scope_registry_row\"" { ++n } END { print n + 0 }' "${OUT_MATRIX_CSV}")"
 matrix_sha="$(sha256sum "${OUT_MATRIX_CSV}" | awk '{ print $1 }')"
 engine_sha="$(sha256sum "${OUT_ENGINE_CSV}" | awk '{ print $1 }')"
 
@@ -203,10 +218,13 @@ MANDATORY_SCOPE_ROWS=${mandatory_scope_rows}
 MANDATORY_CLOSED_ROWS=${mandatory_closed_rows}
 MANDATORY_OPEN_ROWS=${mandatory_open_rows}
 PH4_PACK_ROWS=${phase4_pack_rows}
+UNMAPPED_ROWS=${unmapped_rows}
+OUT_OF_SCOPE_ROWS=${out_of_scope_rows}
+ALLOW_OPEN_MANDATORY=${NATIVE_SQL_ALLOW_OPEN_MANDATORY}
 MATRIX_SHA256=${matrix_sha}
 ENGINE_SHA256=${engine_sha}
-OUTPUT_MATRIX=${OUT_MATRIX_CSV}
-OUTPUT_ENGINE=${OUT_ENGINE_CSV}"
+OUTPUT_MATRIX=$(to_repo_path "${OUT_MATRIX_CSV}")
+OUTPUT_ENGINE=$(to_repo_path "${OUT_ENGINE_CSV}")"
 
 if [[ -n "${SUMMARY_OUT}" ]]; then
     mkdir -p "$(dirname "${SUMMARY_OUT}")"
@@ -215,6 +233,6 @@ fi
 
 printf "%s\n" "${summary_text}" >&2
 
-if [[ "${mandatory_open_rows}" -ne 0 ]]; then
+if [[ "${mandatory_open_rows}" -ne 0 && "${NATIVE_SQL_ALLOW_OPEN_MANDATORY}" != "1" ]]; then
     exit 4
 fi
