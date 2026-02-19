@@ -1,29 +1,26 @@
 # User Guides
 
-**Last Updated:** 2026-02-03
+- Version: `0.1.0`
+- Baseline date: `2026-02-19`
 
----
+## Guide Set
 
-## Overview
+- `Transactions.md`
+- `Sequences.md`
+- `Indexes.md`
+- `Triggers.md`
+- `Trigger-Cheat-Sheet.md`
+- `Procedures.md`
+- `Security.md`
+- `Backup-Restore.md`
+- `Performance-Tuning.md`
+- `Vector-Search.md`
 
-This section collects user-facing guides. For canonical behavior, use the
-specifications and the language guides for your dialect.
+## Notes
 
----
+User guides are operational overlays; implementation truth and release state are
+tracked in:
 
-## Guides
-
-- [Transactions](Transactions.md)
-- [Sequences](Sequences.md)
-- [Triggers](Triggers.md)
-- [Trigger Cheat Sheet](Trigger-Cheat-Sheet.md)
-- [Procedures](Procedures.md)
-- [Indexes](Indexes.md)
-- [Performance Tuning](Performance-Tuning.md)
-- [Vector Search](Vector-Search.md)
-- [Security](Security.md)
-- [Backup and Restore](Backup-Restore.md)
-
----
-
-*Last updated: 2026-02-03 | Wiki version synced with codebase*
+- `../../../docs/status/PROJECT_STATUS_2026-02-19.md`
+- `../../../docs/FEATURE_CATALOG.md`
+- `../../../docs/user-documentation/language-guide/NATIVE_PARSER_LANGUAGE_REFERENCE_BETA_0_1_0.md`

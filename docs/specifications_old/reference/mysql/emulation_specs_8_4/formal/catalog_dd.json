@@ -1,5 +1,5 @@
 {
-  "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables",
+  "source": "docs/specifications_old/reference/mysql/emulation_specs_8_4/source_copies/sql/dd/impl/tables",
   "tables": [
     {
       "name": "character_sets",
@@ -36,7 +36,7 @@
         }
       ],
       "foreign_keys": [],
-      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/character_sets.cc"
+      "source": "docs/specifications_old/reference/mysql/emulation_specs_8_4/source_copies/sql/dd/impl/tables/character_sets.cc"
     },
     {
       "name": "check_constraints",
@@ -81,7 +81,7 @@
         }
       ],
       "foreign_keys": [],
-      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/check_constraints.cc"
+      "source": "docs/specifications_old/reference/mysql/emulation_specs_8_4/source_copies/sql/dd/impl/tables/check_constraints.cc"
     },
     {
       "name": "collations",
@@ -126,7 +126,7 @@
         }
       ],
       "foreign_keys": [],
-      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/collations.cc"
+      "source": "docs/specifications_old/reference/mysql/emulation_specs_8_4/source_copies/sql/dd/impl/tables/collations.cc"
     },
     {
       "name": "column_statistics",
@@ -176,7 +176,7 @@
           "definition": "FOREIGN KEY (catalog_id) REFERENCES \\\n                                catalogs (id)"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/column_statistics.cc"
+      "source": "docs/specifications_old/reference/mysql/emulation_specs_8_4/source_copies/sql/dd/impl/tables/column_statistics.cc"
     },
     {
       "name": "column_type_elements",
@@ -201,7 +201,7 @@
         }
       ],
       "foreign_keys": [],
-      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/column_type_elements.cc"
+      "source": "docs/specifications_old/reference/mysql/emulation_specs_8_4/source_copies/sql/dd/impl/tables/column_type_elements.cc"
     },
     {
       "name": "columns",
@@ -355,7 +355,7 @@
           "definition": "FOREIGN KEY (table_id) REFERENCES tables(id)"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/columns.cc"
+      "source": "docs/specifications_old/reference/mysql/emulation_specs_8_4/source_copies/sql/dd/impl/tables/columns.cc"
     },
     {
       "name": "dd_properties",
@@ -367,7 +367,7 @@
       ],
       "indexes": [],
       "foreign_keys": [],
-      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/dd_properties.cc"
+      "source": "docs/specifications_old/reference/mysql/emulation_specs_8_4/source_copies/sql/dd/impl/tables/dd_properties.cc"
     },
     {
       "name": "events",
@@ -484,7 +484,7 @@
         }
       ],
       "foreign_keys": [],
-      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/events.cc"
+      "source": "docs/specifications_old/reference/mysql/emulation_specs_8_4/source_copies/sql/dd/impl/tables/events.cc"
     },
     {
       "name": "foreign_key_column_usage",
@@ -513,7 +513,7 @@
         }
       ],
       "foreign_keys": [],
-      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/foreign_key_column_usage.cc"
+      "source": "docs/specifications_old/reference/mysql/emulation_specs_8_4/source_copies/sql/dd/impl/tables/foreign_key_column_usage.cc"
     },
     {
       "name": "foreign_keys",
@@ -554,7 +554,7 @@
         }
       ],
       "foreign_keys": [],
-      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/foreign_keys.cc"
+      "source": "docs/specifications_old/reference/mysql/emulation_specs_8_4/source_copies/sql/dd/impl/tables/foreign_keys.cc"
     },
     {
       "name": "index_column_usage",
@@ -595,7 +595,7 @@
         }
       ],
       "foreign_keys": [],
-      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/index_column_usage.cc"
+      "source": "docs/specifications_old/reference/mysql/emulation_specs_8_4/source_copies/sql/dd/impl/tables/index_column_usage.cc"
     },
     {
       "name": "index_partitions",
@@ -636,7 +636,7 @@
         }
       ],
       "foreign_keys": [],
-      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/index_partitions.cc"
+      "source": "docs/specifications_old/reference/mysql/emulation_specs_8_4/source_copies/sql/dd/impl/tables/index_partitions.cc"
     },
     {
       "name": "index_stats",
@@ -668,7 +668,7 @@
       ],
       "indexes": [],
       "foreign_keys": [],
-      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/index_stats.cc"
+      "source": "docs/specifications_old/reference/mysql/emulation_specs_8_4/source_copies/sql/dd/impl/tables/index_stats.cc"
     },
     {
       "name": "indexes",
@@ -745,7 +745,7 @@
         }
       ],
       "foreign_keys": [],
-      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/indexes.cc"
+      "source": "docs/specifications_old/reference/mysql/emulation_specs_8_4/source_copies/sql/dd/impl/tables/indexes.cc"
     },
     {
       "name": "parameter_type_elements",
@@ -770,7 +770,7 @@
         }
       ],
       "foreign_keys": [],
-      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/parameter_type_elements.cc"
+      "source": "docs/specifications_old/reference/mysql/emulation_specs_8_4/source_copies/sql/dd/impl/tables/parameter_type_elements.cc"
     },
     {
       "name": "parameters",
@@ -843,7 +843,7 @@
         }
       ],
       "foreign_keys": [],
-      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/parameters.cc"
+      "source": "docs/specifications_old/reference/mysql/emulation_specs_8_4/source_copies/sql/dd/impl/tables/parameters.cc"
     },
     {
       "name": "resource_groups",
@@ -884,7 +884,7 @@
         }
       ],
       "foreign_keys": [],
-      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/resource_groups.cc"
+      "source": "docs/specifications_old/reference/mysql/emulation_specs_8_4/source_copies/sql/dd/impl/tables/resource_groups.cc"
     },
     {
       "name": "routines",
@@ -1021,7 +1021,7 @@
         }
       ],
       "foreign_keys": [],
-      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/routines.cc"
+      "source": "docs/specifications_old/reference/mysql/emulation_specs_8_4/source_copies/sql/dd/impl/tables/routines.cc"
     },
     {
       "name": "schemata",
@@ -1083,7 +1083,7 @@
           "definition": "FOREIGN KEY (default_collation_id) \\\n                                REFERENCES collations(id)"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/schemata.cc"
+      "source": "docs/specifications_old/reference/mysql/emulation_specs_8_4/source_copies/sql/dd/impl/tables/schemata.cc"
     },
     {
       "name": "st_spatial_reference_systems",
@@ -1125,7 +1125,7 @@
           "definition": "FOREIGN KEY (catalog_id) REFERENCES \\\n                                  catalogs(id)"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/spatial_reference_systems.cc"
+      "source": "docs/specifications_old/reference/mysql/emulation_specs_8_4/source_copies/sql/dd/impl/tables/spatial_reference_systems.cc"
     },
     {
       "name": "table_partition_values",
@@ -1158,7 +1158,7 @@
         }
       ],
       "foreign_keys": [],
-      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/table_partition_values.cc"
+      "source": "docs/specifications_old/reference/mysql/emulation_specs_8_4/source_copies/sql/dd/impl/tables/table_partition_values.cc"
     },
     {
       "name": "table_partitions",
@@ -1239,7 +1239,7 @@
         }
       ],
       "foreign_keys": [],
-      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/table_partitions.cc"
+      "source": "docs/specifications_old/reference/mysql/emulation_specs_8_4/source_copies/sql/dd/impl/tables/table_partitions.cc"
     },
     {
       "name": "table_stats",
@@ -1304,7 +1304,7 @@
         }
       ],
       "foreign_keys": [],
-      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/table_stats.cc"
+      "source": "docs/specifications_old/reference/mysql/emulation_specs_8_4/source_copies/sql/dd/impl/tables/table_stats.cc"
     },
     {
       "name": "tables",
@@ -1470,7 +1470,7 @@
           "definition": "FOREIGN KEY (view_connection_collation_id) REFERENCES collations(id)"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/tables.cc"
+      "source": "docs/specifications_old/reference/mysql/emulation_specs_8_4/source_copies/sql/dd/impl/tables/tables.cc"
     },
     {
       "name": "tablespace_files",
@@ -1508,7 +1508,7 @@
           "definition": "FOREIGN KEY (tablespace_id) \\\n                                REFERENCES tablespaces(id)"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/tablespace_files.cc"
+      "source": "docs/specifications_old/reference/mysql/emulation_specs_8_4/source_copies/sql/dd/impl/tables/tablespace_files.cc"
     },
     {
       "name": "tablespaces",
@@ -1549,7 +1549,7 @@
         }
       ],
       "foreign_keys": [],
-      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/tablespaces.cc"
+      "source": "docs/specifications_old/reference/mysql/emulation_specs_8_4/source_copies/sql/dd/impl/tables/tablespaces.cc"
     },
     {
       "name": "triggers",
@@ -1638,7 +1638,7 @@
         }
       ],
       "foreign_keys": [],
-      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/triggers.cc"
+      "source": "docs/specifications_old/reference/mysql/emulation_specs_8_4/source_copies/sql/dd/impl/tables/triggers.cc"
     },
     {
       "name": "view_routine_usage",
@@ -1650,7 +1650,7 @@
       ],
       "indexes": [],
       "foreign_keys": [],
-      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/view_routine_usage.cc"
+      "source": "docs/specifications_old/reference/mysql/emulation_specs_8_4/source_copies/sql/dd/impl/tables/view_routine_usage.cc"
     },
     {
       "name": "view_table_usage",
@@ -1667,7 +1667,7 @@
         }
       ],
       "foreign_keys": [],
-      "source": "/home/dcalford/CliWork/emulation_specs/mysql-8.4/source_copies/sql/dd/impl/tables/view_table_usage.cc"
+      "source": "docs/specifications_old/reference/mysql/emulation_specs_8_4/source_copies/sql/dd/impl/tables/view_table_usage.cc"
     }
   ]
 }

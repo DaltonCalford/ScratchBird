@@ -1,19 +1,21 @@
-# Native ScratchBird SQL (V2)
+# Native Parser Guide
 
-**Last Updated:** 2026-02-03
+- Version: `0.1.0`
+- Baseline date: `2026-02-19`
 
----
+## Primary Reference
 
-The native V2 dialect is ScratchBird's primary SQL surface. It is compiled into
-SBLR bytecode and executed by the engine core.
+- Full language reference: `Language-Reference.md`
 
-Highlights:
-- Recursive schemas and a clean database/schema split.
-- Advanced index types (B-tree, GIN, BRIN, HNSW, Columnstore, Full-text, etc.).
-- Modern data types (JSONB, UUID, vectors, spatial).
+## Coverage Highlights
 
-Use the sections below for detailed syntax and examples.
+- Core DDL/DML/transaction/session parse surfaces
+- Native index-management extensions
+- Native measurement/schedule extensions
+- Deterministic rejection behavior for invalid extension forms
 
----
+## Validation Sources
 
-*Last updated: 2026-02-03 | Wiki version synced with codebase*
+- `tests/unit/test_parser_v3_native_extension_surface.cpp`
+- `tests/unit/test_parser_v3_index_management.cpp`
+- `tests/unit/test_parser_v3_udr_compile_emitter_contract.cpp`

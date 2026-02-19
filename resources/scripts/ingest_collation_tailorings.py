@@ -16,7 +16,8 @@ TAILORINGS_DIR = os.path.join(ROOT, "collations", "tailorings")
 MYSQL_TARBALL_URL = "https://cdn.mysql.com/Downloads/MySQL-8.0/mysql-8.0.37.tar.gz"
 MYSQL_CHARSET_PREFIX = "share/charsets/"
 
-FIREBIRD_SRC = "/home/dcalford/CliWork/Firebird-6.0.0.1124-1ccdf1c-source"
+DEFAULT_FIREBIRD_SRC = os.path.join(TAILORINGS_DIR, "firebird", "source_snapshot")
+FIREBIRD_SRC = os.environ.get("FIREBIRD_SRC", DEFAULT_FIREBIRD_SRC)
 FIREBIRD_COLLATIONS_DIR = os.path.join(FIREBIRD_SRC, "src", "intl", "collations")
 
 USER_AGENT = "ScratchBird-Tailorings/1.0"
@@ -49,7 +50,10 @@ def ingest_mysql_tailorings() -> None:
 
 def ingest_firebird_tailorings() -> None:
     if not os.path.isdir(FIREBIRD_COLLATIONS_DIR):
-        raise FileNotFoundError(f"Missing Firebird collations directory: {FIREBIRD_COLLATIONS_DIR}")
+        raise FileNotFoundError(
+            "Missing Firebird collations directory: "
+            f"{FIREBIRD_COLLATIONS_DIR}. Set FIREBIRD_SRC to an extracted Firebird source tree."
+        )
     target_dir = os.path.join(TAILORINGS_DIR, "firebird", "tables")
     os.makedirs(target_dir, exist_ok=True)
     for name in os.listdir(FIREBIRD_COLLATIONS_DIR):
@@ -58,8 +62,12 @@ def ingest_firebird_tailorings() -> None:
         src = os.path.join(FIREBIRD_COLLATIONS_DIR, name)
         dst = os.path.join(target_dir, name)
         shutil.copyfile(src, dst)
+    if os.path.commonpath([ROOT, FIREBIRD_SRC]) == ROOT:
+        source_ref = os.path.relpath(FIREBIRD_SRC, ROOT)
+    else:
+        source_ref = "external override via FIREBIRD_SRC"
     with open(os.path.join(TAILORINGS_DIR, "firebird", "source_version.txt"), "w", encoding="utf-8") as fh:
-        fh.write(f"Firebird source: {FIREBIRD_SRC}\n")
+        fh.write(f"Firebird source: {source_ref}\n")
 
 
 def main() -> None:

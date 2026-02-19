@@ -1,24 +1,17 @@
-# SQL Language Guides
+# Language Guides
 
-**Last Updated:** 2026-02-03
+- Version: `0.1.0`
+- Baseline date: `2026-02-19`
 
----
+## Guides
 
-## Overview
+- Native parser guide: `native/README.md`
+- Native parser language reference: `native/Language-Reference.md`
+- PostgreSQL emulation guide: `postgresql/README.md`
+- MySQL emulation guide: `mysql/README.md`
+- Firebird emulation guide: `firebirdsql/README.md`
 
-ScratchBird supports a native V2 SQL dialect and emulated dialects for
-PostgreSQL, MySQL, and Firebird. Listener ports and availability are configured
-in `sb_server.conf`.
+## Status
 
----
-
-## Dialects
-
-- [Native V2](native/README.md)
-- [PostgreSQL](postgresql/README.md)
-- [MySQL](mysql/README.md)
-- [FirebirdSQL](firebirdsql/README.md)
-
----
-
-*Last updated: 2026-02-03 | Wiki version synced with codebase*
+Native parser baseline is release-ready for 0.1.0.
+Emulation parser parity closure remains an explicit 0.2.0 track.

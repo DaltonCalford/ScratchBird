@@ -1,4 +1,4 @@
 {
-  "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_proc.dat",
+  "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_proc.dat",
   "functions": []
 }

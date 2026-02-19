@@ -4,7 +4,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
-SPEC_REGISTRY_JSON="${1:-/home/dcalford/CliWork/local_work/docs/specifications_vnext/13_Native_Dialect_Gap_Closure/NATIVE_GAP_FEATURE_REGISTRY.json}"
+SPEC_REGISTRY_JSON="${1:-${REPO_ROOT}/docs/planning/native_sql/NATIVE_GAP_FEATURE_REGISTRY.json}"
 SCOPE_TSV="${2:-${REPO_ROOT}/tests/unit/data/native_sql_syn13_registration_scope.tsv}"
 OUT_CSV="${3:-${REPO_ROOT}/build/native_sql_syn13_coverage_report.csv}"
 SUMMARY_OUT="${4:-}"

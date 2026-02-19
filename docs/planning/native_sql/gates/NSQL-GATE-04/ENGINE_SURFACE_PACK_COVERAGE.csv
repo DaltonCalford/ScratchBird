@@ -1,0 +1,14 @@
+engine,total_rows,mapped_rows,mandatory_scope_rows,mandatory_miss_rows,binding_pass_rows,binding_fail_rows,phase4_ready_rows,p0_rows,p1_rows,p2_rows
+Cassandra,9,2,2,0,2,0,2,2,5,2
+ClickHouse,8,2,2,0,2,0,2,2,5,1
+DuckDB,8,2,2,0,2,0,2,3,4,1
+FirebirdSQL,26,14,14,0,14,0,14,19,7,0
+InfluxDB,6,0,0,0,0,0,0,2,3,1
+MariaDB,9,0,0,0,0,0,0,2,5,2
+Milvus,8,1,1,0,1,0,1,1,5,2
+MongoDB,9,0,0,0,0,0,0,3,4,2
+MySQL,32,0,0,0,0,0,0,20,12,0
+Neo4j,8,1,1,0,1,0,1,1,4,3
+OpenSearch,8,2,2,0,2,0,2,2,4,2
+PostgreSQL,38,11,11,0,11,0,11,25,13,0
+Redis,9,2,2,0,2,0,2,2,3,4

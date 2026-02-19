@@ -1,10 +1,10 @@
 {
-  "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog",
+  "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog",
   "catalogs": [
     {
       "name": "pg_aggregate",
       "fields": [],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_aggregate.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_aggregate.h"
     },
     {
       "name": "pg_am",
@@ -22,7 +22,7 @@
           "type": "char"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_am.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_am.h"
     },
     {
       "name": "pg_amop",
@@ -36,7 +36,7 @@
           "type": "int16"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_amop.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_amop.h"
     },
     {
       "name": "pg_amproc",
@@ -50,7 +50,7 @@
           "type": "int16"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_amproc.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_amproc.h"
     },
     {
       "name": "pg_attrdef",
@@ -64,7 +64,7 @@
           "type": "int16"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_attrdef.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_attrdef.h"
     },
     {
       "name": "pg_cast",
@@ -82,7 +82,7 @@
           "type": "char"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_cast.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_cast.h"
     },
     {
       "name": "pg_collation",
@@ -104,7 +104,7 @@
           "type": "int32"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_collation.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_collation.h"
     },
     {
       "name": "pg_constraint",
@@ -170,7 +170,7 @@
           "type": "pg_node_tree"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_constraint.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_constraint.h"
     },
     {
       "name": "pg_conversion",
@@ -184,7 +184,7 @@
           "type": "NameData"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_conversion.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_conversion.h"
     },
     {
       "name": "pg_default_acl",
@@ -198,7 +198,7 @@
           "type": "char"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_default_acl.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_default_acl.h"
     },
     {
       "name": "pg_depend",
@@ -224,7 +224,7 @@
           "type": "char"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_depend.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_depend.h"
     },
     {
       "name": "pg_description",
@@ -242,7 +242,7 @@
           "type": "int32"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_description.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_description.h"
     },
     {
       "name": "pg_enum",
@@ -260,7 +260,7 @@
           "type": "NameData"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_enum.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_enum.h"
     },
     {
       "name": "pg_event_trigger",
@@ -282,7 +282,7 @@
           "type": "char"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_event_trigger.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_event_trigger.h"
     },
     {
       "name": "pg_extension",
@@ -300,7 +300,7 @@
           "type": "bool"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_extension.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_extension.h"
     },
     {
       "name": "pg_foreign_data_wrapper",
@@ -314,7 +314,7 @@
           "type": "NameData"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_foreign_data_wrapper.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_foreign_data_wrapper.h"
     },
     {
       "name": "pg_foreign_server",
@@ -336,12 +336,12 @@
           "type": "text"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_foreign_server.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_foreign_server.h"
     },
     {
       "name": "pg_foreign_table",
       "fields": [],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_foreign_table.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_foreign_table.h"
     },
     {
       "name": "pg_inherits",
@@ -355,7 +355,7 @@
           "type": "bool"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_inherits.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_inherits.h"
     },
     {
       "name": "pg_init_privs",
@@ -373,7 +373,7 @@
           "type": "char"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_init_privs.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_init_privs.h"
     },
     {
       "name": "pg_language",
@@ -387,7 +387,7 @@
           "type": "NameData"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_language.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_language.h"
     },
     {
       "name": "pg_largeobject",
@@ -397,7 +397,7 @@
           "type": "int32"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_largeobject.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_largeobject.h"
     },
     {
       "name": "pg_largeobject_metadata",
@@ -407,7 +407,7 @@
           "type": "Oid"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_largeobject_metadata.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_largeobject_metadata.h"
     },
     {
       "name": "pg_namespace",
@@ -421,7 +421,7 @@
           "type": "NameData"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_namespace.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_namespace.h"
     },
     {
       "name": "pg_opclass",
@@ -435,7 +435,7 @@
           "type": "NameData"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_opclass.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_opclass.h"
     },
     {
       "name": "pg_operator",
@@ -449,7 +449,7 @@
           "type": "NameData"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_operator.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_operator.h"
     },
     {
       "name": "pg_opfamily",
@@ -463,7 +463,7 @@
           "type": "NameData"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_opfamily.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_opfamily.h"
     },
     {
       "name": "pg_partitioned_table",
@@ -481,7 +481,7 @@
           "type": "pg_node_tree"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_partitioned_table.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_partitioned_table.h"
     },
     {
       "name": "pg_policy",
@@ -511,7 +511,7 @@
           "type": "pg_node_tree"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_policy.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_policy.h"
     },
     {
       "name": "pg_publication",
@@ -553,7 +553,7 @@
           "type": "char"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_publication.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_publication.h"
     },
     {
       "name": "pg_publication_namespace",
@@ -563,7 +563,7 @@
           "type": "Oid"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_publication_namespace.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_publication_namespace.h"
     },
     {
       "name": "pg_publication_rel",
@@ -581,12 +581,12 @@
           "type": "int2vector"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_publication_rel.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_publication_rel.h"
     },
     {
       "name": "pg_range",
       "fields": [],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_range.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_range.h"
     },
     {
       "name": "pg_rewrite",
@@ -612,7 +612,7 @@
           "type": "bool"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_rewrite.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_rewrite.h"
     },
     {
       "name": "pg_seclabel",
@@ -626,7 +626,7 @@
           "type": "int32"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_seclabel.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_seclabel.h"
     },
     {
       "name": "pg_sequence",
@@ -656,7 +656,7 @@
           "type": "bool"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_sequence.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_sequence.h"
     },
     {
       "name": "pg_statistic",
@@ -722,7 +722,7 @@
           "type": "anyarray"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_statistic.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_statistic.h"
     },
     {
       "name": "pg_statistic_ext",
@@ -740,7 +740,7 @@
           "type": "pg_node_tree"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_statistic_ext.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_statistic_ext.h"
     },
     {
       "name": "pg_statistic_ext_data",
@@ -762,7 +762,7 @@
           "type": "pg_mcv_list"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_statistic_ext_data.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_statistic_ext_data.h"
     },
     {
       "name": "pg_subscription_rel",
@@ -772,7 +772,7 @@
           "type": "char"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_subscription_rel.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_subscription_rel.h"
     },
     {
       "name": "pg_transform",
@@ -782,7 +782,7 @@
           "type": "Oid"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_transform.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_transform.h"
     },
     {
       "name": "pg_trigger",
@@ -832,7 +832,7 @@
           "type": "NameData"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_trigger.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_trigger.h"
     },
     {
       "name": "pg_ts_config",
@@ -846,7 +846,7 @@
           "type": "NameData"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_ts_config.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_ts_config.h"
     },
     {
       "name": "pg_ts_config_map",
@@ -860,7 +860,7 @@
           "type": "int32"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_ts_config_map.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_ts_config_map.h"
     },
     {
       "name": "pg_ts_dict",
@@ -878,7 +878,7 @@
           "type": "text"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_ts_dict.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_ts_dict.h"
     },
     {
       "name": "pg_ts_parser",
@@ -892,7 +892,7 @@
           "type": "NameData"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_ts_parser.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_ts_parser.h"
     },
     {
       "name": "pg_ts_template",
@@ -906,7 +906,7 @@
           "type": "NameData"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_ts_template.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_ts_template.h"
     },
     {
       "name": "pg_user_mapping",
@@ -916,7 +916,7 @@
           "type": "Oid"
         }
       ],
-      "source": "/home/dcalford/CliWork/emulation_specs/postgresql-18.1/src/include/catalog/pg_user_mapping.h"
+      "source": "docs/specifications_old/reference/postgresql/emulation_specs_18_1/src/include/catalog/pg_user_mapping.h"
     }
   ]
 }

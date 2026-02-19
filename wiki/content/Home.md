@@ -1,64 +1,32 @@
-![ScratchBird Logo](../images/logos/TransparentScratchBirdLogoHeader.png)
+# ScratchBird Wiki
 
-# Welcome to ScratchBird Wiki
+- Version: `0.1.0` (initial early beta)
+- Baseline date: `2026-02-19`
 
-**Version:** Alpha
-**Last Updated:** 2026-02-03
+## Start Here
 
-> 🎯 **ScratchBird** is a high-performance database that implements **Firebird's Multi-Generational Architecture (MGA)** transaction model with a native V2 SQL dialect and emulated Firebird/MySQL/PostgreSQL dialects.
+- Getting started: `Getting-Started.md`
+- Developer guide index: `developer-guide/README.md`
+- Full developer guide: `developer-guide/Developer-Guide.md`
+- Language guides index: `language-guides/README.md`
+- Native parser reference: `language-guides/native/Language-Reference.md`
+- User guides index: `user-guides/README.md`
 
----
+## Current Release Summary
 
-## Quick Links
+- Native parser, listener stack, and core engine are in early beta baseline.
+- Full clean build and test pass baseline is `3355/3355` tests.
+- Release packaging includes runtime-only and QA package variants.
 
-### Introduction
-- [How this all started](How-this-all-started.md)
-- [What makes ScratchBird different](What-makes-ScratchBird-different.md)
+## Specification and Planning Sources
 
-### Getting Started
-- [Getting Started Guide](Getting-Started.md)
-- [Installation Guides](installation/README.md)
+Active audit/planning docs are maintained in-tree:
 
-### Documentation
-- [Developers Guide](developer-guide/README.md)
-- [Command Line Tools](cli-tools/README.md)
-- [Language Guides](language-guides/README.md)
-- [User Guides](user-guides/README.md)
-- [Tutorials](tutorials/README.md)
+- `../../docs/audit/BETA_0_1_0_IMPLEMENTATION_AUDIT_2026-02-19.md`
+- `../../docs/planning/BETA_0_2_0_WORKPLAN_2026-02-19.md`
+- `../../docs/planning/BETA_0_2_0_SPEC_BACKLOG_2026-02-19.md`
 
-### Migration Guides
-- [From Firebird](migration/From-Firebird.md)
-- [From PostgreSQL](migration/From-PostgreSQL.md)
-- [From MySQL](migration/From-MySQL.md)
-- [Migration Checklist](migration/Migration-Checklist.md)
+## Archive Notice
 
----
-
-## Feature Catalog
-
-ScratchBird exposes a broad set of types, operators, functions, and SQL objects.
-For the canonical list and V2-only feature details, see:
-
-- [Feature Catalog](reference/Feature-Catalog.md)
-
----
-
-## Language Drivers
-
-Drivers and CLI tools are distributed separately. This wiki focuses on engine
-and SQL behavior.
-
----
-
-## Status
-
-ScratchBird is Alpha. The core engine and parser infrastructure are implemented and
-actively evolving. Expect changes before 1.0 release.
-
----
-
-**Welcome to ScratchBird!** Start with the [Getting Started Guide](Getting-Started.md) →
-
----
-
-*Last updated: 2026-02-03 | Wiki version synced with codebase*
+Historical alpha-era and legacy documents remain available for traceability, but
+active planning and implementation should use the 0.1.0+ baseline documents.

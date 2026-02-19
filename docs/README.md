@@ -1,10 +1,28 @@
-# ScratchBird Documentation
+# ScratchBird Documentation (Active Baseline)
 
-Entry points:
-- `docs/INDEX.md` - Documentation index
-- `docs/specifications/README.md` - Technical specs index
-- `docs/IMPLEMENTATION_STATUS_DASHBOARD.md` - Status dashboard
-- `docs/planning/ALPHA_COMPLETION_MASTER_PLAN.md` - Alpha completion tracker
-- `docs/DOCUMENTATION_COVERAGE.md` - Coverage report
-- `docs/planning/` - Plans and remediation
-- `docs/findings/` - Audits and findings
+This directory contains implementation-repository documentation for the active
+beta baseline.
+
+## Active Entry Points
+
+- `docs/INDEX.md` - master index for active docs
+- `docs/status/PROJECT_STATUS_2026-02-19.md` - current implementation status
+- `docs/IMPLEMENTATION_STATUS_DASHBOARD.md` - implemented vs partial/planned matrix
+- `docs/PROJECT_STATISTICS.md` - current quantitative project statistics
+- `docs/FEATURE_CATALOG.md` - feature audit with status labels
+- `docs/guides/DEVELOPER_GUIDE_BETA_0_1_0.md` - full developer guide
+- `docs/user-documentation/index.md` - user docs index
+
+## In-Tree Spec/Planning Baseline
+
+For the beta documentation reset, active audit/planning artifacts are maintained
+in this tree:
+
+- `docs/audit/BETA_0_1_0_IMPLEMENTATION_AUDIT_2026-02-19.md`
+- `docs/planning/BETA_0_2_0_WORKPLAN_2026-02-19.md`
+- `docs/planning/BETA_0_2_0_SPEC_BACKLOG_2026-02-19.md`
+
+## Archive Boundary
+
+Legacy alpha and historical artifacts remain in archive paths (for traceability)
+but are not authoritative for beta planning or implementation decisions.

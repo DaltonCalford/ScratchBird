@@ -1,7 +1,16 @@
-# Wiki Documentation Improvement Tracker
+# Documentation Improvement Tracker
 
-**Last Updated:** 2026-02-03
+- Baseline date: `2026-02-19`
+- Release baseline: `0.1.0`
 
-This tracker is historical and no longer reflects current wiki status.
+## Tracker
 
-*Last updated: 2026-02-03 | Wiki version synced with codebase*
+| Item | Status |
+| --- | --- |
+| Reset active docs to beta 0.1.0 | Complete |
+| Add implementation-backed status dashboard | Complete |
+| Add full developer guide | Complete |
+| Add native parser language reference | Complete |
+| Mark archive boundary for alpha/legacy docs | Complete |
+| Publish 0.2.0 workplan links | Complete |
+| Keep docs synchronized with 0.2.0 refactor tracks | In progress |

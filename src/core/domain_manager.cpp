@@ -142,8 +142,8 @@ namespace scratchbird::core
             {"[sb_dom]PERMISSIONS_MASK", DataType::UINT32, 0, 0}
         };
 
-        // Authoritative fixed registry imported from:
-        // local_work/docs/specifications/15_Complex_Types/SYSTEM_DOMAIN_UUID_REGISTRY.md
+        // Canonical fixed registry rows imported from:
+        // include/scratchbird/core/system_domain_registry_rows.inc
         const SystemDomainDef kCanonicalSystemDomains[] = {
 #include "scratchbird/core/system_domain_registry_rows.inc"
         };

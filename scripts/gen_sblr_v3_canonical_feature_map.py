@@ -2,9 +2,8 @@
 """
 Generate canonical SBLR feature/opcode map from authoritative section-22 matrix.
 
-Primary source candidates (first existing path wins):
-1) ../local_work/docs/specifications/22_.../SBLR_FEATURE_TO_OPCODE_MATRIX.md
-2) docs/specifications/22_.../SBLR_FEATURE_TO_OPCODE_MATRIX.md
+Primary source candidate:
+1) docs/specifications/22_.../SBLR_FEATURE_TO_OPCODE_MATRIX.md
 """
 
 import re
@@ -14,8 +13,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_CANDIDATES = [
-    ROOT.parent
-    / "local_work/docs/specifications/22_SBLR_Canonical_Model_and_Opcodes/SBLR_FEATURE_TO_OPCODE_MATRIX.md",
     ROOT
     / "docs/specifications/22_SBLR_Canonical_Model_and_Opcodes/SBLR_FEATURE_TO_OPCODE_MATRIX.md",
 ]
@@ -135,4 +132,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

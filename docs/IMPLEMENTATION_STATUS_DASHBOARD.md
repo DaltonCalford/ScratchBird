@@ -1,187 +1,46 @@
 # Implementation Status Dashboard
 
-**Last updated:** 2026-02-06  
-**Status:** ✅ **Alpha Complete - All Workstreams Finished**
+- Baseline date: `2026-02-19`
+- Release: `0.1.0` (initial early beta)
+- Evidence source: clean build + full `ctest` run + staged beta artifacts
 
----
-
-## Quick Status
+## Quality Gate Snapshot
 
 | Metric | Value |
-|--------|-------|
-| NOT_IMPLEMENTED Stubs | 0/84+ (100% complete) |
-| Alpha Components | 10/10 (100% complete) |
-| Test Pass Rate | 99.8% (3,593/3,600 tests) |
-| New Lines Added | ~19,400 |
-| New Test Cases | 670+ |
+| --- | --- |
+| Total ctest tests | 3355 |
+| Passed | 3355 |
+| Failed | 0 |
+| Runtime executables | 12 |
+| Staged test executables | 56 |
 
----
+## Implemented (0.1.0)
 
-## Alpha Status ✅ COMPLETE
+| Area | Status | Evidence |
+| --- | --- | --- |
+| Core engine (storage/catalog/transactions/locks/GC) | Implemented | `src/core/`, broad unit/integration labels |
+| Native parser -> SBLR -> executor path | Implemented | `src/parser/parser_v3.cpp`, `src/sblr/executor.cpp`, parser/executor tests |
+| Listener + parser agent process model | Implemented | `src/server/service_controller.cpp`, `src/network/sb_listener_main.cpp` |
+| Multi-protocol listener binaries | Implemented | `src/CMakeLists.txt` targets `sb_listener_*` |
+| Multi-protocol parser binaries | Implemented | `src/CMakeLists.txt` targets `sb_parser_*` |
+| Listener ownership + collision prevention | Implemented | `tests/unit/test_service_controller_listener_bootstrap.cpp` |
+| UDR SQL render endpoint contracts | Implemented | `src/sblr/language_udr_sql_render_endpoint.cpp`, dedicated contract tests |
+| Beta packaging (runtime + QA split) | Implemented | `release/beta/packages/runtime-only`, `release/beta/packages/qa` |
 
-### Core Engine ✅
-- **Completed:** storage engine, MGA transactions, scheduler/jobs, constraint enforcement,
-  security enforcement wiring, cache/buffer plan.
-- **Completed:** tablespace routing defaults + root page allocation
-- **Completed:** index migration safety for SPGIST/BITMAP/COLUMNSTORE/LSM
-- **Completed:** monitoring parity (sys.* catalog tables)
-- **Completed:** backup/restore parity across tablespaces/catalogs
-- **Completed:** timezone/charset/collation resource loading + catalog persistence
+## Partial or Planned (Target: 0.2.0)
 
-### Parser + PSQL ✅
-- **Completed:** V2 parser base, dialect parsers, semantic analyzer v2, baseline bytecode
-- **Completed:** V2 parser completeness (DDL/DML/utility/PSQL surface)
-- **Completed:** PSQL bytecode emission + executor parity (FOR/CASE/SUSPEND/etc)
-- **Completed:** MERGE statements, COPY FROM/TO
+| Item | Current State | 0.2.0 Target |
+| --- | --- | --- |
+| (a) Partial/planned features full specs/workplans | Partial | Complete detailed spec + task plans per feature |
+| (b) Catalog refactor/optimization | Planned | Refactored catalog model with migration + perf validation |
+| (c) Emulation parser completion and source-suite parity | Partial | Parser parity gates + conformance harness pass criteria |
+| (d) Native parser renormalization | Partial | Canonical style/behavior consistency pass and regression suite |
+| (e) Driver regression after refactor/normalization | Planned | Full driver compatibility revalidation |
+| (f) Cross-engine benchmark testing | Planned | Reproducible benchmark suite on identical hardware/OS |
+| (g) Go/no-go/redesign decisions | Planned | Formal gate docs driven by benchmark outcomes |
+| (h) Installer bundles vs release packages | Partial | Packaging strategy decision and implementation plan |
 
-### Network & Service ✅
-- **Completed:** listener/pool/parser/server process and wire adapters (FB/MySQL/PG/native)
-- **Completed:** dialect parity test suites
-- **Completed:** auth/config wiring
-- **Completed:** full wire protocol implementations
+## Notes
 
-### Parser Agents ✅ (NEW - COMPLETE)
-
-| Parser Agent | Protocol | Status | Tests |
-|--------------|----------|--------|-------|
-| PostgreSQL | Wire Protocol 3.0 | ✅ Complete | 59 |
-| MySQL | Protocol 4.1+ | ✅ Complete | 114 |
-| Firebird | XDR Protocol | ✅ Complete | 60 |
-
-**Features:**
-- Full SSL/TLS support
-- Authentication (SCRAM, mysql_native_password, SRP)
-- Simple and extended query protocols
-- Prepared statements
-- COPY/BLOB operations
-
-### IPC Infrastructure ✅ (NEW - COMPLETE)
-
-| Component | Status | Tests |
-|-----------|--------|-------|
-| EngineIPCSessionHandler | ✅ Complete | 82 |
-| UnixSocketIPCChannel | ✅ Complete | 40 |
-| COPY Flow Control | ✅ Complete | 40 |
-| IPC Contract | ✅ Complete | 55 |
-
-**Features:**
-- LRU statement cache (configurable, default 1000)
-- Multi-transport support (Unix socket, TCP loopback)
-- Credit-based backpressure
-- Message framing
-- Session lifecycle management
-
-### Authentication ✅ (NEW - COMPLETE)
-
-| Component | Status | Tests |
-|-----------|--------|-------|
-| SCRAM-SHA-256 | ✅ Complete | RFC 5802 |
-| SCRAM-SHA-512 | ✅ Complete | RFC 7677 |
-| Test Suite | ✅ Complete | 47 tests |
-
-**Features:**
-- PBKDF2 key derivation
-- HMAC-SHA-256/512
-- Constant-time comparison
-- Secure memory clearing
-
-### Type System ✅ (NEW - COMPLETE)
-
-| Component | Status | Tests |
-|-----------|--------|-------|
-| PostgreSQL Mapping | ✅ Complete | 76 |
-| MySQL Mapping | ✅ Complete | 82 |
-| Firebird Mapping | ✅ Complete | 53 |
-| SBWP Types | ✅ Complete | 60 |
-
-**Features:**
-- 140+ type conversions
-- 80+ PostgreSQL OIDs
-- 35+ MySQL types
-- Array type support
-
-### Schema Introspection ✅ (NEW - COMPLETE)
-
-| Component | Status | Tests |
-|-----------|--------|-------|
-| pg_catalog Views | ✅ Complete | 8 |
-| information_schema | ✅ Complete | 6 |
-| MySQL Compatibility | ✅ Complete | 5 |
-| Firebird Compatibility | ✅ Complete | 4 |
-
-**Features:**
-- pg_class, pg_attribute, pg_type, pg_index, pg_constraint
-- information_schema.tables, columns, constraints
-- RDB$ system tables
-
----
-
-## Outstanding Detail (ALL RESOLVED)
-
-All previously outstanding items have been completed:
-
-1. ✅ ~~Tablespace routing defaults + root page allocation~~ - COMPLETE
-2. ✅ ~~Index migration safety for SPGIST/BITMAP/COLUMNSTORE/LSM~~ - COMPLETE  
-3. ✅ ~~Monitoring parity~~ - COMPLETE (sys.* tables)
-4. ✅ ~~Backup/restore parity~~ - COMPLETE
-5. ✅ ~~V2 parser completeness + PSQL bytecode/executor parity~~ - COMPLETE
-6. ✅ ~~Timezone/charset/collation resource loaders~~ - COMPLETE
-7. ✅ ~~IVF/Zone Maps/inverted GC index gaps~~ - Deferred to Beta
-
----
-
-## Plan Progress (All Complete)
-
-| Plan | Status |
-|------|--------|
-| Alpha Completion Master Plan | ✅ Complete |
-| Engine Core Alpha Completion | ✅ Complete |
-| V2 Parser Completion | ✅ Complete |
-| Resources I18N/Timezone | ✅ Complete |
-| Index Spec Gap Tracker | ✅ Complete (remaining items Beta scope) |
-| Cache/Buffer Remediation | ✅ Complete |
-
----
-
-## Known Alpha Limitations (By Design)
-
-These limitations are explicitly documented and acceptable for Alpha:
-
-| Feature | Status | Notes |
-|---------|--------|-------|
-| TRUNCATE CASCADE/RESTART IDENTITY | ⚠️ Warning | Proceeds without cascade/restart |
-| SIMILAR TO ... ESCAPE | ⚠️ Warning | ESCAPE ignored |
-| COPY ENCODING BINARY | ❌ Unsupported | UTF8/UTF-8 only |
-| Aggregation with joins/CTE + SELECT * | ⚠️ Limitation | Tracked in engine plan |
-| MySQL partition clauses | ❌ Error | Rejected by allowlist |
-| LOCK/UNLOCK TABLES | ❌ Error | Rejected by allowlist |
-
----
-
-## Beta Status 📋
-
-### Specifications Complete
-
-All Beta specifications are complete and ready for implementation:
-
-| Area | Status |
-|------|--------|
-| Cluster Specification Work | ✅ Complete |
-| Replication Suite | ✅ Complete |
-| Parallel Execution | ✅ Complete |
-| Remote DB UDRs | ✅ Complete |
-| NoSQL Models | ✅ Complete |
-| Streaming (Kafka) | ✅ Complete |
-
----
-
-## Links
-
-- **Alpha Completion Report:** `../ALPHA_COMPLETION_REPORT.md`
-- **Alpha Completion Summary:** `../ALPHA_COMPLETION_SUMMARY_2026-02-06.md`
-- **Roadmap:** `../OFFICIAL_ROADMAP.md`
-- **Alpha/Beta Scope:** `findings/ALPHA_BETA_SCOPE_STATUS.md`
-- **Current Context:** `../PROJECT_CONTEXT.md`
-- **Where We're Going (Beta):** `WHERE_WE_ARE_GOING_BETA.md`
-- **Planning:** `planning/`
-- **Specs:** `specifications/`
+- Archive documentation remains available but is not the active beta baseline.
+- Active spec/planning work is tracked under `docs/audit/` and `docs/planning/`.

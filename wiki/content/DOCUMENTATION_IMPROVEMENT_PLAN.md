@@ -1,7 +1,18 @@
-# Wiki Documentation Improvement Plan
+# Documentation Improvement Plan
 
-**Last Updated:** 2026-02-03
+- Baseline date: `2026-02-19`
+- Scope: beta `0.1.0` documentation reset and 0.2.0 planning alignment
 
-This plan is historical and no longer reflects current wiki priorities.
+## Completed in This Reset
 
-*Last updated: 2026-02-03 | Wiki version synced with codebase*
+- Replaced alpha-era framing in active entry-point docs.
+- Rebased active docs to implementation-backed 0.1.0 state.
+- Added full developer guide and native parser language reference.
+- Added implemented vs partial/planned feature status tracking.
+- Linked canonical spec/planning paths for 0.2.0 workstream execution.
+
+## Next Phase (0.2.0)
+
+- Keep active docs synchronized with catalog/parser refactor milestones.
+- Keep emulation parity and benchmark outcomes reflected in status dashboards.
+- Publish installer-bundle decision and rollout docs once decided.

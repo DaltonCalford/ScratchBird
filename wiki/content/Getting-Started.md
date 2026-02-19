@@ -1,119 +1,40 @@
 # Getting Started
 
-**Last Updated:** 2026-02-03
+- Version: `0.1.0`
+- Baseline date: `2026-02-19`
 
----
-
-## Overview
-
-This guide helps you install ScratchBird, connect for the first time, and run SQL queries.
-
----
-
-## Quick Start
-
-### 1. Choose Your Platform
-
-| Platform | Guide |
-|----------|-------|
-| Linux | [installation/Linux.md](installation/Linux.md) |
-| Windows | [installation/Windows.md](installation/Windows.md) |
-| macOS | [installation/macOS.md](installation/macOS.md) |
-| Docker | [installation/Docker.md](installation/Docker.md) |
-| Kubernetes | [installation/Kubernetes.md](installation/Kubernetes.md) |
-
-### 2. Start the Server
-
-After installation, start the ScratchBird server:
+## Build and Verify
 
 ```bash
-# Linux (systemd)
-sudo systemctl start scratchbird
-
-# Foreground mode (development)
-sb_server -F --config /etc/scratchbird/sb_server.conf
+cmake -S . -B build
+cmake --build build -j$(nproc)
+ctest --test-dir build --output-on-failure
 ```
 
-### 3. Connect
+Expected baseline: `3355` tests, all passing.
 
-ScratchBird supports multiple protocols via listeners configured in `sb_server.conf`.
-Common setups enable the native protocol and optional PostgreSQL compatibility.
-
-Use a compatible client:
+## Start Core Server
 
 ```bash
-# Native protocol client
-sb_isql -H localhost -p 3092 -U SYSARCH -P ScratchBirdBeta1! -d scratchbird
-
-# PostgreSQL protocol client (if enabled)
-psql -h localhost -p 5432 -U SYSARCH -d scratchbird
+./build/src/sb_server --config ./sb_config.ini.example
 ```
 
-See [First Connection](getting-started/first-connection.md) for detailed instructions.
+## Listener/Parser Binaries
 
-### 4. Run Your First Query
+- `sb_listener_native`, `sb_parser_native`
+- `sb_listener_pg`, `sb_parser_pg`
+- `sb_listener_mysql`, `sb_parser_mysql`
+- `sb_listener_fb`, `sb_parser_fb`
 
-```sql
--- Create a table
-CREATE TABLE users (
-    id SERIAL PRIMARY KEY,
-    name VARCHAR(100) NOT NULL,
-    email VARCHAR(255) UNIQUE
-);
+## First Steps
 
--- Insert data
-INSERT INTO users (name, email) VALUES ('Alice', 'alice@example.com');
+1. Create/open a database.
+2. Start listener(s) for required protocol(s).
+3. Connect with protocol-appropriate client.
+4. Run first DDL/DML and validate responses.
 
--- Query data
-SELECT * FROM users;
-```
+## Read Next
 
-See [Basic SQL](getting-started/basic-sql.md) for a complete tutorial.
-
----
-
-## Connection Quick Reference
-
-### Default Ports
-
-Ports are configured per listener. Common defaults:
-
-| Protocol | Port |
-|----------|------|
-| Native | 3092 |
-| PostgreSQL | 5432 |
-
-### Connection Strings
-
-**Native:**
-```
-host=localhost port=3092 dbname=scratchbird user=SYSARCH password=ScratchBirdBeta1!
-```
-
-**PostgreSQL:**
-```
-postgresql://SYSARCH:ScratchBirdBeta1!@localhost:5432/scratchbird
-```
-
-### Default Credentials
-
-| Setting | Default Value |
-|---------|---------------|
-| Username | `SYSARCH` |
-| Password | `ScratchBirdBeta1!` |
-
----
-
-## Verify Your Installation
-
-```bash
-# Check server status
-sudo systemctl status scratchbird
-
-# Check listening ports
-ss -tlnp | grep -E '3092|5432'
-```
-
----
-
-*Last updated: 2026-02-03 | Wiki version synced with codebase*
+- Full developer guide: `developer-guide/Developer-Guide.md`
+- Native parser reference: `language-guides/native/Language-Reference.md`
+- User docs index: `../../docs/user-documentation/index.md`

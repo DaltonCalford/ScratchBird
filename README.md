@@ -1,125 +1,77 @@
-# ScratchBird Database Engine
+# ScratchBird
 
-**Firebird-style MGA database engine** with multi-dialect wire compatibility and advanced distributed cluster capabilities.
+ScratchBird is a Firebird-style MGA database engine with a native SQL parser,
+SBLR runtime, and multi-protocol listener layer.
 
-**Current Phase:** ✅ **Alpha Complete and Beta Release in Preparation** - final code updates and test structures being implemented
-**Project Started:** July 2025  
-**Status:** All Alpha workstreams complete; 3,600+ tests passing (100%)
+## Release State
 
----
+- Version: `0.1.0` (initial early beta)
+- Release date: `2026-02-19`
+- Test baseline: `3355/3355` passing (`ctest`)
+- Runtime package baseline: `release/beta/bin` with 12 executables
 
-### **Note to new visitors**
+## What Is Implemented in 0.1.0
 
-ScratchBird Alpha is **complete and fully functional**. New beta functionality including new NoSQL support and cluster work being applied to main tree
+- Core engine lifecycle: database create/open/close, catalog/bootstrap, storage,
+  transaction/MGA visibility, locking, GC/sweep, and runtime services.
+- Native parser and SBLR pipeline: SQL -> AST -> SBLR container -> executor.
+- Listener/server stack:
+  - `sb_server`
+  - `sb_listener_native`, `sb_listener_pg`, `sb_listener_mysql`, `sb_listener_fb`
+  - `sb_parser_native`, `sb_parser_pg`, `sb_parser_mysql`, `sb_parser_fb`
+- Listener ownership model:
+  - listeners are database-owned
+  - startup checks port collisions before listener/parser bootstrap
+  - listener startup passes database owner and engine endpoint metadata
+- UDR native SQL render endpoint contracts and deterministic error-code handling.
 
-If you are curious, clone the directories and have your friendly local AI analyze the code base - tell it to find out the capabilities of the project from the implemented source code. This will give you a good understanding of what is done.
+## 0.2.0 Focus (Next Milestone)
 
-The initial preview will be a Docker container with the database engine and an AppImage or standalone executable so that you can test the project without any problems of getting rid of it afterward.
+- Complete detailed specs + implementation plans for every partial/planned item.
+- Catalog refactor and optimization.
+- Finish emulation parser parity and run source-engine conformance suites.
+- Native parser normalization for dialect-style consistency.
+- Driver regression validation after parser/catalog work.
+- Performance benchmarking against emulated source engines on identical hardware.
+- Go/no-go and redesign gates based on benchmark outcomes.
+- Installation bundle strategy (installers) in addition to release packages.
 
-This project has become my answer to the constant "Damn I wish I had the ability to...." issues I have encountered over 35 years of database use.
-
-I have been seeing multiple clones of my project(s) via the tracker but I have not received any feedback yet - don't be afraid, I need feedback and I don't bite.
-
-I am sure there are things others have encountered over the years and wish they had a tool to cover it.
-
-Thanks for your interest in the project.
-
----
-
-## Quick Overview
-
-ScratchBird is a next-generation database management system that combines:
-
-- **Firebird MGA Architecture** - Multi-Generational Architecture for true MVCC
-- **Multi-Dialect Support** - ScratchBird native + Firebird/PostgreSQL/MySQL wire protocol compatibility (full protocol implementation)
-- **Advanced Security** - Built-in encryption, masking, RLS/CLS, cryptographic audit chain, SCRAM-SHA-256/512 authentication
-- **Distributed Ready** - Beta cluster specifications complete; implementation deferred to Beta
-- **Modern C++** - High-performance C++17/20 implementation
-
----
-
-## Related Projects
-
-ScratchBird has been split into multiple repositories for parallel development:
-
-| Repository                  | Description                                                                          | Link                                                          |
-| --------------------------- | ------------------------------------------------------------------------------------ | ------------------------------------------------------------- |
-| **ScratchBird** (this repo) | Core database engine - storage, transactions, SBLR runtime, parsers, network layer   | You are here                                                  |
-| **ScratchBird-driver**      | Language drivers and CLI tools (ODBC/JDBC/Python/Node.js/Go/Rust, sb_admin, sb_isql) | [GitHub](https://github.com/DaltonCalford/ScratchBird-driver) |
-| **ScratchRobin**            | GUI database management and administration tools                                     | [GitHub](https://github.com/DaltonCalford/ScratchRobin)       |
-
----
-
-## Beta (Planned)
-
-- Drivers and CLI tools have moved to [ScratchBird-driver](https://github.com/DaltonCalford/ScratchBird-driver). GUI tools are in [ScratchRobin](https://github.com/DaltonCalford/ScratchRobin).
-
----
-
-## Quick Start
-
-### Build from Source
+## Build and Test
 
 ```bash
-# Prerequisites: C++17 compiler, CMake 3.15+, OpenSSL
-
-# Clone repository
-git clone https://github.com/DaltonCalford/ScratchBird.git
-cd ScratchBird
-
-# Build
 cmake -S . -B build
 cmake --build build -j$(nproc)
-
-# Run tests
 ctest --test-dir build --output-on-failure
 ```
 
-### Run the Server
+## Release Packaging
 
-```bash
-# Start ScratchBird server
-./build/bin/sb_server
+Current beta packaging output:
 
-# Native: 3092 | PostgreSQL: 5432 | MySQL: 3306 | Firebird: 3050
-```
+- `release/beta/bin` (runtime executables)
+- `release/beta/tests` (test executables)
+- `release/beta/packages/runtime-only`
+- `release/beta/packages/qa`
+- `release/scratchbird-beta-20260218-full.tar.gz`
 
-### Test Server (for Development)
+## Documentation
 
-For driver development, GUI testing, and security validation:
+- Main docs index: `docs/INDEX.md`
+- Current project status: `docs/status/PROJECT_STATUS_2026-02-19.md`
+- Developer guide (full): `docs/guides/DEVELOPER_GUIDE_BETA_0_1_0.md`
+- Native parser language reference (full):
+  `docs/user-documentation/language-guide/NATIVE_PARSER_LANGUAGE_REFERENCE_BETA_0_1_0.md`
+- Wiki home: `wiki/content/Home.md`
+- In-tree planning/audit baseline:
+  - `docs/audit/BETA_0_1_0_IMPLEMENTATION_AUDIT_2026-02-19.md`
+  - `docs/planning/BETA_0_2_0_WORKPLAN_2026-02-19.md`
+  - `docs/planning/BETA_0_2_0_SPEC_BACKLOG_2026-02-19.md`
 
-```bash
-# Setup test server
-./scripts/test-server-user.sh setup
+## Archive Policy
 
-# Start test server
-./scripts/test-server-user.sh start
-
-# Connect (bootstrap mode - any user/pass)
-scratchbird://anyuser:anypass@127.0.0.1:3092/testdb
-
-# View status
-./scripts/test-server-user.sh status
-```
-
-**Documentation:**
-
-- [Test Server Docs](docs/testing/test_server/README.md)
-- [Test Server Quick Reference](docs/testing/test_server/TEST_SERVER_QUICK_REFERENCE.md)
-- [Public Test Server Setup](docs/testing/test_server/PUBLIC_TEST_SERVER_SETUP.md)
-
----
+Alpha and legacy artifacts are retained for traceability in archive directories,
+but they are not the active baseline for beta planning or implementation.
 
 ## License
 
-Licensed under the [Initial Developer's Public License Version 1.0 (IPL 1.0)](https://www.firebirdsql.org/en/initial-developer-s-public-license-version-1-0/).
-
----
-
-- **Core Repository:** https://github.com/DaltonCalford/ScratchBird
-- **Driver Repository:** https://github.com/DaltonCalford/ScratchBird-driver
-- **GUI Tools:** https://github.com/DaltonCalford/ScratchRobin
-
-**Last Updated:** February 6, 2026  
-**Status:** ✅ Alpha Complete - 19,400+ lines, 84+ stubs implemented, 3,600+ tests passing  
-**Next Milestone:** Pre-Beta integration testing and benchmarking
+Licensed under the Initial Developer's Public License Version 1.0 (IDPL 1.0).

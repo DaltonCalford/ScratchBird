@@ -4,7 +4,7 @@
 Only files listed in `/docs/specifications/parser/v3/AUTHORITATIVE_SPEC_INVENTORY.md` are authoritative.
 
 
-**Scope:** Address all issues identified in `~/CliWork/GapAuditReport/SCRATCHBIRD_GAP_AUDIT_REPORT.md`.
+**Scope:** Address all issues identified in `docs/audit/SCRATCHBIRD_GAP_AUDIT_REPORT_2026-02-07.md`.
 
 **Primary Specs:**
 - `/docs/specifications/parser/v3/SCRATCHBIRD_SERVER_ARCHITECTURE_CONSOLIDATED.md`

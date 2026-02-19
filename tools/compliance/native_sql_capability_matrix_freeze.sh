@@ -4,11 +4,11 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 
-REGISTRY_JSON="${1:-/home/dcalford/CliWork/local_work/docs/specifications_vnext/13_Native_Dialect_Gap_Closure/NATIVE_GAP_FEATURE_REGISTRY.json}"
-SYN_REPORT_CSV="${2:-/home/dcalford/CliWork/local_work/docs/planning/NATIVE_SQL_IMPLEMENTATION_WORKTREE/gates/NSQL-GATE-04/SYN13_COVERAGE_REPORT.csv}"
-BINDING_REPORT_CSV="${3:-/home/dcalford/CliWork/local_work/docs/planning/NATIVE_SQL_IMPLEMENTATION_WORKTREE/gates/NSQL-GATE-04/AST_SBLR_BINDING_REPORT.csv}"
-OUT_MATRIX_CSV="${4:-/home/dcalford/CliWork/local_work/docs/planning/NATIVE_SQL_IMPLEMENTATION_WORKTREE/gates/NSQL-GATE-04/NATIVE_CAPABILITY_MATRIX.csv}"
-OUT_ENGINE_CSV="${5:-/home/dcalford/CliWork/local_work/docs/planning/NATIVE_SQL_IMPLEMENTATION_WORKTREE/gates/NSQL-GATE-04/ENGINE_SURFACE_PACK_COVERAGE.csv}"
+REGISTRY_JSON="${1:-${REPO_ROOT}/docs/planning/native_sql/NATIVE_GAP_FEATURE_REGISTRY.json}"
+SYN_REPORT_CSV="${2:-${REPO_ROOT}/docs/planning/native_sql/gates/NSQL-GATE-04/SYN13_COVERAGE_REPORT.csv}"
+BINDING_REPORT_CSV="${3:-${REPO_ROOT}/docs/planning/native_sql/gates/NSQL-GATE-04/AST_SBLR_BINDING_REPORT.csv}"
+OUT_MATRIX_CSV="${4:-${REPO_ROOT}/docs/planning/native_sql/gates/NSQL-GATE-04/NATIVE_CAPABILITY_MATRIX.csv}"
+OUT_ENGINE_CSV="${5:-${REPO_ROOT}/docs/planning/native_sql/gates/NSQL-GATE-04/ENGINE_SURFACE_PACK_COVERAGE.csv}"
 SUMMARY_OUT="${6:-}"
 
 if [[ ! -f "${REGISTRY_JSON}" ]]; then

@@ -1,1 +1,1 @@
-Firebird source: /home/dcalford/CliWork/Firebird-6.0.0.1124-1ccdf1c-source
+Firebird source: resources/collations/tailorings/firebird/tables (in-tree imported snapshot)

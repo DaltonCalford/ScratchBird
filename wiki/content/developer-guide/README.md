@@ -1,82 +1,26 @@
-# Developer Guide
+# Developer Guide Index
 
-**Last Updated:** 2026-02-03
+- Version: `0.1.0`
+- Baseline date: `2026-02-19`
 
----
+## Primary Guide
 
-## Purpose
+- Full developer guide: `Developer-Guide.md`
 
-This guide summarizes ScratchBird's architecture and where to make changes.
+## Module-Focused Pages
 
----
+- `Architecture.md`
+- `Core-Engine.md`
+- `Storage.md`
+- `Transactions.md`
+- `SBLR.md`
+- `Parsers.md`
+- `Network-Listeners.md`
+- `Security.md`
+- `Testing-and-Audit.md`
 
-## Core Design Principles
+## Source and Build Entry Points
 
-1. **MGA Transactions:** Firebird-style Multi-Generational Architecture for
-   isolation and visibility.
-2. **Parser/Engine Separation:** SQL parsing is separate from execution. The
-   engine only consumes SBLR bytecode.
-3. **Dialect Isolation:** Each dialect parser is isolated and maps to SBLR.
-
----
-
-## Architecture Overview
-
-```
-Client
-  └─ Wire protocol listener
-      └─ Dialect parser
-          └─ SBLR bytecode
-              └─ Engine core (storage, transactions, indexes)
-```
-
-**Key rule:** Dialect-specific behavior belongs in the parser layer. The core
-engine remains dialect-agnostic.
-
----
-
-## Guide Sections
-
-- [Architecture](Architecture.md)
-- [Core Engine](Core-Engine.md)
-- [Storage](Storage.md)
-- [Transactions (MGA)](Transactions.md)
-- [SBLR](SBLR.md)
-- [Parsers and Emulation](Parsers.md)
-- [Network and Listeners](Network-Listeners.md)
-- [Security](Security.md)
-- [Testing and Audit](Testing-and-Audit.md)
-
----
-
-## Critical Documents
-
-- `MGA_RULES.md`
-- `ARCHITECTURAL_LAYERS.md`
-- `IMPLEMENTATION_STANDARDS.md`
-- `COMPLETION_VERIFICATION_CHECKLIST.md`
-
----
-
-## Source Code Organization (High-Level)
-
-```
-src/
-  core/        # Storage, transactions, catalog, indexes
-  network/     # Connection handling and listeners
-  protocol/    # Wire protocols and adapters
-  parser/      # V2 + emulated dialect parsers
-  sblr/        # Bytecode generator, semantic analysis, executor
-  server/      # Server bootstrap and IPC
-  testing/     # Test infrastructure
-```
-
----
-
-## Build and Test (Local)
-
-Refer to the repository README for the current build and test commands.
-
----
-
-*Last updated: 2026-02-03 | Wiki version synced with codebase*
+- Repo README: `../../../README.md`
+- Docs index: `../../../docs/INDEX.md`
+- Release status: `../../../docs/status/PROJECT_STATUS_2026-02-19.md`

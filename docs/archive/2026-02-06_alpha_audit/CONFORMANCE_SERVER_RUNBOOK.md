@@ -15,7 +15,7 @@ This document tells another agent how to verify driver conformance against the r
 
 If you need TLS-enabled driver runs, use the pre-staged config at:
 
-- `/home/dcalford/CliWork/sb_server_conformance_tls.conf`
+- `~/CliWork/ScratchBird/etc/sb_server_conformance_tls.conf`
 
 Example TLS DSN:
 
@@ -87,7 +87,7 @@ Notes:
 ## ScratchBird Wire Protocol (SBWP) Reference
 
 The **canonical** protocol specification is:
-- `docs/specifications/wire_protocols/scratchbird_native_wire_protocol.md`
+- `docs/specifications_old/wire_protocols/scratchbird_native_wire_protocol.md`
 
 Use that file for the full and authoritative details. Below is a compact guide to the essentials to orient new contributors.
 
@@ -153,4 +153,4 @@ Server → Client:
 - For auth failures, the server returns `AUTH_REQUEST` with a failure reason or `ERROR`.
 
 For full detail (including exact field layouts, message structures, and type encodings), use:
-- `docs/specifications/wire_protocols/scratchbird_native_wire_protocol.md`
+- `docs/specifications_old/wire_protocols/scratchbird_native_wire_protocol.md`
