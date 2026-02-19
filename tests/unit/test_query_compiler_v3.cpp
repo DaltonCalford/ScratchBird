@@ -356,6 +356,80 @@ TEST_F(QueryCompilerV3Test, DomainArrayEnforcesConstraintsAndSize) {
     EXPECT_FALSE(insert_bad_value.success());
 }
 
+TEST_F(QueryCompilerV3Test, UniqueArrayIndexWholeModeUsesWholeArrayKey) {
+    compiler_->setCurrentSchema(test_schema_id_);
+    executor_->setCurrentSchema(test_schema_id_);
+    connection_ctx_->setCurrentSchemaId(test_schema_id_);
+
+    auto create_table = compileAndExecute("CREATE TABLE array_whole_table (id INT, vals INT[8])");
+    ASSERT_TRUE(create_table.success()) << create_table.error();
+
+    auto create_index = compileAndExecute(
+        "CREATE UNIQUE INDEX uq_array_whole ON array_whole_table USING BTREE (vals) "
+        "WITH (ARRAY_UNIQUENESS = 'WHOLE')");
+    ASSERT_TRUE(create_index.success()) << create_index.error();
+
+    auto insert_first =
+        compileAndExecute("INSERT INTO array_whole_table (id, vals) VALUES (1, ARRAY[1, 2])");
+    ASSERT_TRUE(insert_first.success()) << insert_first.error();
+
+    auto insert_same =
+        compileAndExecute("INSERT INTO array_whole_table (id, vals) VALUES (2, ARRAY[1, 2])");
+    EXPECT_FALSE(insert_same.success());
+    EXPECT_NE(insert_same.error().find("UNIQUE index violation"), std::string::npos)
+        << insert_same.error();
+
+    auto insert_different_order =
+        compileAndExecute("INSERT INTO array_whole_table (id, vals) VALUES (3, ARRAY[2, 1])");
+    EXPECT_TRUE(insert_different_order.success()) << insert_different_order.error();
+
+}
+
+TEST_F(QueryCompilerV3Test, UniqueArrayIndexElementModeRejectsElementOverlap) {
+    compiler_->setCurrentSchema(test_schema_id_);
+    executor_->setCurrentSchema(test_schema_id_);
+    connection_ctx_->setCurrentSchemaId(test_schema_id_);
+
+    auto create_table = compileAndExecute("CREATE TABLE array_element_table (id INT, vals INT[8])");
+    ASSERT_TRUE(create_table.success()) << create_table.error();
+
+    auto create_index = compileAndExecute(
+        "CREATE UNIQUE INDEX uq_array_element ON array_element_table USING BTREE (vals) "
+        "WITH (ARRAY_UNIQUENESS = 'ELEMENT')");
+    ASSERT_TRUE(create_index.success()) << create_index.error();
+
+    auto insert_first =
+        compileAndExecute("INSERT INTO array_element_table (id, vals) VALUES (1, ARRAY[1, 2])");
+    ASSERT_TRUE(insert_first.success()) << insert_first.error();
+
+    auto insert_overlap =
+        compileAndExecute("INSERT INTO array_element_table (id, vals) VALUES (2, ARRAY[2, 3])");
+    EXPECT_FALSE(insert_overlap.success());
+    EXPECT_NE(insert_overlap.error().find("duplicate array element"), std::string::npos)
+        << insert_overlap.error();
+
+    auto insert_disjoint =
+        compileAndExecute("INSERT INTO array_element_table (id, vals) VALUES (3, ARRAY[4, 5])");
+    EXPECT_TRUE(insert_disjoint.success()) << insert_disjoint.error();
+
+}
+
+TEST_F(QueryCompilerV3Test, ArrayUniquenessOptionRequiresUniqueIndex) {
+    compiler_->setCurrentSchema(test_schema_id_);
+    executor_->setCurrentSchema(test_schema_id_);
+    connection_ctx_->setCurrentSchemaId(test_schema_id_);
+
+    auto create_table = compileAndExecute("CREATE TABLE array_option_table (id INT, vals INT[8])");
+    ASSERT_TRUE(create_table.success()) << create_table.error();
+
+    auto create_index = compileAndExecute(
+        "CREATE INDEX idx_array_option ON array_option_table USING BTREE (vals) "
+        "WITH (ARRAY_UNIQUENESS = 'ELEMENT')");
+    EXPECT_FALSE(create_index.success());
+    EXPECT_NE(create_index.error().find("requires a UNIQUE index"), std::string::npos)
+        << create_index.error();
+}
+
 TEST_F(QueryCompilerV3Test, ExecuteCreateViewStoresDefinition) {
     compiler_->setCurrentSchema(test_schema_id_);
     executor_->setCurrentSchema(test_schema_id_);

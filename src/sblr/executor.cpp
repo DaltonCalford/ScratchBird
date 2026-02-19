@@ -170,6 +170,109 @@ namespace scratchbird
                 return out;
             }
 
+            static std::string toUpperAsciiCopy(const std::string& input)
+            {
+                return core::IdentifierUtils::toUpper(input);
+            }
+
+            static std::string trimAsciiCopy(const std::string& input)
+            {
+                size_t begin = 0;
+                while (begin < input.size() &&
+                       std::isspace(static_cast<unsigned char>(input[begin])) != 0)
+                {
+                    ++begin;
+                }
+
+                size_t end = input.size();
+                while (end > begin &&
+                       std::isspace(static_cast<unsigned char>(input[end - 1])) != 0)
+                {
+                    --end;
+                }
+
+                return input.substr(begin, end - begin);
+            }
+
+            enum class ArrayUniquenessMode : uint8_t
+            {
+                WHOLE = 0,
+                ELEMENT = 1
+            };
+
+            constexpr const char* kIndexParamArrayUniqueness = "sb.array_uniqueness";
+
+            static const char* arrayUniquenessModeToText(ArrayUniquenessMode mode)
+            {
+                return mode == ArrayUniquenessMode::ELEMENT ? "ELEMENT" : "WHOLE";
+            }
+
+            static bool parseArrayUniquenessMode(const std::string& input,
+                                                 ArrayUniquenessMode* mode_out)
+            {
+                if (!mode_out)
+                {
+                    return false;
+                }
+
+                std::string upper = toUpperAsciiCopy(trimAsciiCopy(input));
+                if (upper.empty() || upper == "WHOLE" || upper == "WHOLE_ARRAY" ||
+                    upper == "ARRAY")
+                {
+                    *mode_out = ArrayUniquenessMode::WHOLE;
+                    return true;
+                }
+                if (upper == "ELEMENT" || upper == "ELEMENTS" ||
+                    upper == "PER_ELEMENT" || upper == "ELEMENT_LEVEL")
+                {
+                    *mode_out = ArrayUniquenessMode::ELEMENT;
+                    return true;
+                }
+                return false;
+            }
+
+            static bool tryGetIndexParamValue(const std::string& params,
+                                              const std::string& key,
+                                              std::string* value_out)
+            {
+                if (!value_out)
+                {
+                    return false;
+                }
+
+                const std::string key_upper = toUpperAsciiCopy(trimAsciiCopy(key));
+                size_t start = 0;
+                while (start <= params.size())
+                {
+                    size_t end = params.find(';', start);
+                    std::string token =
+                        (end == std::string::npos) ? params.substr(start)
+                                                   : params.substr(start, end - start);
+                    token = trimAsciiCopy(token);
+                    if (!token.empty())
+                    {
+                        size_t eq = token.find('=');
+                        if (eq != std::string::npos)
+                        {
+                            std::string token_key = toUpperAsciiCopy(trimAsciiCopy(token.substr(0, eq)));
+                            if (token_key == key_upper)
+                            {
+                                *value_out = trimAsciiCopy(token.substr(eq + 1));
+                                return true;
+                            }
+                        }
+                    }
+
+                    if (end == std::string::npos)
+                    {
+                        break;
+                    }
+                    start = end + 1;
+                }
+
+                return false;
+            }
+
             // SBLR3_FUNC_NOW flag bit: 1 means CURRENT_TIMESTAMP semantics (txn-start anchored).
             constexpr uint16_t kFuncNowCurrentTimestampFlag = 0x0001;
             // SBLR3_FUNC_JSON_EXISTS mode flags.
@@ -9291,6 +9394,12 @@ namespace scratchbird
                                           std::vector<uint8_t> &key_bytes_out)
         {
             key_bytes_out.clear();
+            auto appendU32 = [&](uint32_t value) {
+                key_bytes_out.push_back(static_cast<uint8_t>((value >> 24) & 0xFF));
+                key_bytes_out.push_back(static_cast<uint8_t>((value >> 16) & 0xFF));
+                key_bytes_out.push_back(static_cast<uint8_t>((value >> 8) & 0xFF));
+                key_bytes_out.push_back(static_cast<uint8_t>(value & 0xFF));
+            };
 
             for (const auto &val : key_values)
             {
@@ -9353,8 +9462,31 @@ namespace scratchbird
                         break;
                     }
                     default:
-                        // Unsupported - use NULL
-                        key_bytes_out.push_back(0xFF);
+                    {
+                        std::vector<uint8_t> serialized;
+                        core::ErrorContext ser_ctx;
+                        if (val.serializePlainValue(serialized, &ser_ctx) == core::Status::OK &&
+                            serialized.size() <= static_cast<size_t>(std::numeric_limits<uint32_t>::max()))
+                        {
+                            key_bytes_out.push_back(0x7F); // Generic typed payload marker
+                            uint16_t type_tag = static_cast<uint16_t>(val.type());
+                            key_bytes_out.push_back(static_cast<uint8_t>((type_tag >> 8) & 0xFF));
+                            key_bytes_out.push_back(static_cast<uint8_t>(type_tag & 0xFF));
+                            appendU32(static_cast<uint32_t>(serialized.size()));
+                            key_bytes_out.insert(key_bytes_out.end(),
+                                                 serialized.begin(),
+                                                 serialized.end());
+                        }
+                        else
+                        {
+                            // Last resort: keep key stable via text payload instead of collapsing to NULL.
+                            std::string text = val.toString();
+                            key_bytes_out.push_back(0x7E);
+                            appendU32(static_cast<uint32_t>(text.size()));
+                            key_bytes_out.insert(key_bytes_out.end(), text.begin(), text.end());
+                        }
+                        break;
+                    }
                     }
                 }
             }
@@ -44646,6 +44778,7 @@ namespace scratchbird
                 uint64_t flags = 0;
                 getU64(payload, "flags", flags);
                 bool if_not_exists = (flags & 0x0001) != 0;
+                bool is_unique = (flags & 0x0002) != 0;
 
                 core::CatalogManager::TableInfo table_info;
                 std::string err_out;
@@ -45079,6 +45212,80 @@ namespace scratchbird
                     }
                     return std::nullopt;
                 };
+
+                ArrayUniquenessMode array_uniqueness_mode = ArrayUniquenessMode::WHOLE;
+                bool array_uniqueness_specified = false;
+                {
+                    std::string raw_array_uniqueness;
+                    if (auto err = readStringOption("ARRAY_UNIQUENESS", false, &raw_array_uniqueness))
+                    {
+                        return ExecutionResult(*err);
+                    }
+                    if (!raw_array_uniqueness.empty())
+                    {
+                        array_uniqueness_specified = true;
+                        if (!parseArrayUniquenessMode(raw_array_uniqueness, &array_uniqueness_mode))
+                        {
+                            return ExecutionResult(
+                                "CREATE INDEX option ARRAY_UNIQUENESS invalid (expected WHOLE or ELEMENT)");
+                        }
+                    }
+                }
+
+                if (array_uniqueness_specified && !is_unique)
+                {
+                    return ExecutionResult(
+                        "CREATE INDEX option ARRAY_UNIQUENESS requires a UNIQUE index");
+                }
+
+                if (array_uniqueness_mode == ArrayUniquenessMode::ELEMENT)
+                {
+                    if (has_expressions)
+                    {
+                        return ExecutionResult(
+                            "CREATE INDEX option ARRAY_UNIQUENESS=ELEMENT is not supported for expression indexes");
+                    }
+                    if (column_names.size() != 1)
+                    {
+                        return ExecutionResult(
+                            "CREATE INDEX option ARRAY_UNIQUENESS=ELEMENT requires exactly one key column");
+                    }
+
+                    std::vector<core::CatalogManager::ColumnInfo> table_columns;
+                    core::ErrorContext table_columns_ctx;
+                    auto table_columns_status =
+                        db_->catalog_manager()->getColumns(table_info.table_id, table_columns, &table_columns_ctx);
+                    if (table_columns_status != core::Status::OK)
+                    {
+                        std::string msg = table_columns_ctx.message.empty()
+                            ? "CREATE INDEX failed to validate ARRAY_UNIQUENESS against table metadata"
+                            : table_columns_ctx.message;
+                        return ExecutionResult(msg);
+                    }
+
+                    const std::string target_col =
+                        core::IdentifierUtils::toUpper(column_names.front());
+                    bool found_array_column = false;
+                    for (const auto& column_info : table_columns)
+                    {
+                        if (core::IdentifierUtils::toUpper(column_info.column_name) != target_col)
+                        {
+                            continue;
+                        }
+                        auto column_type = static_cast<core::DataType>(column_info.data_type);
+                        if (column_info.is_array || column_type == core::DataType::ARRAY)
+                        {
+                            found_array_column = true;
+                        }
+                        break;
+                    }
+
+                    if (!found_array_column)
+                    {
+                        return ExecutionResult(
+                            "CREATE INDEX option ARRAY_UNIQUENESS=ELEMENT requires an ARRAY key column");
+                    }
+                }
 
                 auto validateMetricOption =
                     [&](bool binary_allowed,
@@ -46235,7 +46442,7 @@ namespace scratchbird
                                                                  expression_strings,
                                                                  predicate_string,
                                                                  index_id,
-                                                                 false,
+                                                                 is_unique,
                                                                  index_type,
                                                                  table_info.tablespace_id,
                                                                  &ctx);
@@ -46247,7 +46454,7 @@ namespace scratchbird
                                                                  column_names,
                                                                  include_columns,
                                                                  index_id,
-                                                                 false,
+                                                                 is_unique,
                                                                  index_type,
                                                                  table_info.tablespace_id,
                                                                  &ctx);
@@ -46264,6 +46471,24 @@ namespace scratchbird
                         : ctx.message;
                     return ExecutionResult(err_msg);
                 }
+
+                if (array_uniqueness_specified)
+                {
+                    session_index_array_uniqueness_[index_id] =
+                        static_cast<uint8_t>(array_uniqueness_mode);
+
+                    core::ErrorContext params_ctx;
+                    const std::string params_value = std::string(kIndexParamArrayUniqueness) + "=" +
+                        arrayUniquenessModeToText(array_uniqueness_mode);
+                    auto params_status = db_->catalog_manager()->updateIndexParams(
+                        index_id, params_value, &params_ctx);
+                    if (params_status != core::Status::OK)
+                    {
+                        DEBUG_LOG_DB("CREATE INDEX warning: failed to persist ARRAY_UNIQUENESS for index '"
+                                     << index_name << "'");
+                    }
+                }
+
                 recordObjectDefinition(core::CatalogManager::ObjectType::INDEX, index_id);
                 return ExecutionResult();
             };
@@ -76772,6 +76997,39 @@ namespace scratchbird
                     continue;
                 }
 
+                ArrayUniquenessMode array_uniqueness_mode = ArrayUniquenessMode::WHOLE;
+                auto session_mode_it = session_index_array_uniqueness_.find(index_info.index_id);
+                if (session_mode_it != session_index_array_uniqueness_.end())
+                {
+                    array_uniqueness_mode =
+                        (session_mode_it->second == static_cast<uint8_t>(ArrayUniquenessMode::ELEMENT))
+                            ? ArrayUniquenessMode::ELEMENT
+                            : ArrayUniquenessMode::WHOLE;
+                }
+                else if (!isZeroId(index_info.index_params_oid))
+                {
+                    std::string params_blob;
+                    core::ErrorContext params_ctx;
+                    if (db_->catalog_manager()->loadStringFromToast(
+                            index_info.index_params_oid,
+                            0,
+                            params_blob,
+                            &params_ctx) == core::Status::OK)
+                    {
+                        std::string raw_mode;
+                        if (tryGetIndexParamValue(params_blob, kIndexParamArrayUniqueness, &raw_mode))
+                        {
+                            ArrayUniquenessMode parsed_mode = ArrayUniquenessMode::WHOLE;
+                            if (parseArrayUniquenessMode(raw_mode, &parsed_mode))
+                            {
+                                array_uniqueness_mode = parsed_mode;
+                                session_index_array_uniqueness_[index_info.index_id] =
+                                    static_cast<uint8_t>(parsed_mode);
+                            }
+                        }
+                    }
+                }
+
                 if (!index_info.is_expression_index && !index_info.is_partial_index)
                 {
                     std::vector<core::ID> key_ids = index_info.column_ids;
@@ -76946,6 +77204,105 @@ namespace scratchbird
                     continue;
                 }
 
+                if (array_uniqueness_mode == ArrayUniquenessMode::ELEMENT)
+                {
+                    if (index_info.is_expression_index ||
+                        index_info.is_partial_index ||
+                        key_values.size() != 1 ||
+                        key_values[0].type() != core::DataType::ARRAY)
+                    {
+                        error("UNIQUE index '" + index_info.index_name +
+                              "' is configured for ARRAY_UNIQUENESS=ELEMENT but is not a single-column ARRAY index");
+                    }
+
+                    const auto& incoming_elements = key_values[0].getArray();
+                    bool has_non_null_element = false;
+                    for (const auto& element : incoming_elements)
+                    {
+                        if (!element.isNull())
+                        {
+                            has_non_null_element = true;
+                            break;
+                        }
+                    }
+                    if (!has_non_null_element)
+                    {
+                        continue;
+                    }
+
+                    auto scan_iter = db_->storage_engine()->createScan(table_id, nullptr);
+                    if (!scan_iter)
+                    {
+                        error("UNIQUE index violation check failed for index '" + index_info.index_name + "'");
+                    }
+
+                    core::Tuple tuple;
+                    while (scan_iter->next(&tuple, nullptr) == core::Status::OK)
+                    {
+                        if (exclude_tid && tuple.tid == *exclude_tid)
+                        {
+                            continue;
+                        }
+
+                        std::vector<Value> existing_values;
+                        if (!deserializeTuple(tuple.data, tuple.data_size, all_columns, existing_values))
+                        {
+                            continue;
+                        }
+
+                        std::vector<Value> existing_key;
+                        bool existing_matches = true;
+                        if (!build_key(existing_values, existing_key, existing_matches))
+                        {
+                            continue;
+                        }
+                        if (!existing_matches ||
+                            existing_key.size() != 1 ||
+                            existing_key[0].isNull() ||
+                            existing_key[0].type() != core::DataType::ARRAY)
+                        {
+                            continue;
+                        }
+
+                        const auto& existing_elements = existing_key[0].getArray();
+                        bool overlap = false;
+                        for (const auto& incoming_element : incoming_elements)
+                        {
+                            if (incoming_element.isNull())
+                            {
+                                continue;
+                            }
+
+                            for (const auto& existing_element : existing_elements)
+                            {
+                                if (existing_element.isNull())
+                                {
+                                    continue;
+                                }
+
+                                if (valuesEqual(incoming_element, existing_element))
+                                {
+                                    overlap = true;
+                                    break;
+                                }
+                            }
+
+                            if (overlap)
+                            {
+                                break;
+                            }
+                        }
+
+                        if (overlap)
+                        {
+                            error("UNIQUE index violation: duplicate array element in index '" +
+                                  index_info.index_name + "'");
+                        }
+                    }
+
+                    continue;
+                }
+
                 std::vector<core::TID> matching_tids;
                 auto status = searchIndexForValues(index_info, key_values, xid, matching_tids);
                 if (status == core::Status::OK)
@@ -77046,9 +77403,47 @@ namespace scratchbird
                     return a.getChar() == b.getChar();
                 case core::DataType::BOOLEAN:
                     return a.getBoolean() == b.getBoolean();
+                case core::DataType::ARRAY:
+                case core::DataType::LIST:
+                case core::DataType::MAP:
+                {
+                    const auto& left = a.getArray();
+                    const auto& right = b.getArray();
+                    if (left.size() != right.size())
+                    {
+                        return false;
+                    }
+                    for (size_t i = 0; i < left.size(); ++i)
+                    {
+                        if (left[i].isNull() || right[i].isNull())
+                        {
+                            if (!(left[i].isNull() && right[i].isNull()))
+                            {
+                                return false;
+                            }
+                            continue;
+                        }
+                        if (!valuesEqual(left[i], right[i]))
+                        {
+                            return false;
+                        }
+                    }
+                    return true;
+                }
                 default:
-                    // For other types, conservatively return false
-                    return false;
+                {
+                    // Fallback to canonical binary payload comparison for types not explicitly listed.
+                    std::vector<uint8_t> left_bytes;
+                    std::vector<uint8_t> right_bytes;
+                    core::ErrorContext left_ctx;
+                    core::ErrorContext right_ctx;
+                    if (a.serializePlainValue(left_bytes, &left_ctx) != core::Status::OK ||
+                        b.serializePlainValue(right_bytes, &right_ctx) != core::Status::OK)
+                    {
+                        return false;
+                    }
+                    return left_bytes == right_bytes;
+                }
             }
         }
 

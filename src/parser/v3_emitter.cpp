@@ -1408,7 +1408,10 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlCreate(parser::v3::Statemen
             inst.opcode = op(Opcode::SBLR3_CREATE_INDEX);
             inst.flags = 0;
             Value::Object payload;
-            payload["flags"] = Value(uint64_t(s->if_not_exists ? 0x0001 : 0));
+            uint64_t flags = 0;
+            if (s->if_not_exists) flags |= 0x0001;
+            if (s->unique) flags |= 0x0002;
+            payload["flags"] = Value(flags);
             payload["index_path"] = toSchemaPath(parser::v3::SchemaPath(parser::v3::PathType::UNQUALIFIED, {s->index_name}));
             payload["table"] = toSchemaPath(s->table_path);
             Value::List keys;

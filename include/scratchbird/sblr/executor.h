@@ -428,6 +428,11 @@ namespace scratchbird
             // Session state for CURRVAL (ALPHA Phase 1 - Sequences)
             std::unordered_map<core::ID, int64_t> session_sequence_currval_;
 
+            // Session-local override for CREATE INDEX ARRAY_UNIQUENESS options.
+            // Catalog persistence can lag/fail in some bootstrap-heavy fixtures; this
+            // keeps enforcement deterministic for the active executor session.
+            std::unordered_map<core::ID, uint8_t> session_index_array_uniqueness_;
+
             // Task 17 MGA Phase 2.2: Index maintenance statistics
             IndexMaintenanceStats index_stats_;
 
