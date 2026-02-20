@@ -3,6 +3,8 @@ root
 root.sys	root
 root.connections	root
 root.users	root
+root.group	root
+root.cluster	root
 root.remote	root
 root.local	root
 root.nosql	root
@@ -16,6 +18,7 @@ root.sys.connections	root.sys
 root.sys.emulation	root.sys
 root.sys.jobs	root.sys
 root.users.public	root.users
+root.users.app_data	root.users
 root.users.roles	root.users
 root.users.groups	root.users
 root.remote.emulation	root.remote
