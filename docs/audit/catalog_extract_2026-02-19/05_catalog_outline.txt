@@ -282,6 +282,10 @@ daily_sweep [o] (JOB)
 rebuild_indexes [o] (JOB)
 root [o] (SCHEMA)
 root [s]
+root.connections [o] (SCHEMA)
+root.connections [s]
+root.emulated [o] (SCHEMA)
+root.emulated [s]
 root.local [o] (SCHEMA)
 root.local [s]
 root.local.instances [o] (SCHEMA)
@@ -326,19 +330,23 @@ root.remote.links [o] (SCHEMA)
 root.remote.links [s]
 root.sys [o] (SCHEMA)
 root.sys [s]
-root.sys.config [o] (SCHEMA)
-root.sys.config [s]
+root.sys.cluster [o] (SCHEMA)
+root.sys.cluster [s]
+root.sys.connections [o] (SCHEMA)
+root.sys.connections [s]
+root.sys.emulation [o] (SCHEMA)
+root.sys.emulation [s]
 root.sys.information [o] (SCHEMA)
 root.sys.information [s]
 root.sys.jobs [o] (SCHEMA)
 root.sys.jobs [s]
-root.sys.monitor [o] (SCHEMA)
-root.sys.monitor [s]
-root.sys.sb_toast_019c7734-8280-7846-be6c-b27e1cd3852c [o] (TABLE)
-root.sys.sb_toast_019c7734-8280-7846-be6c-b27e1cd3852c.chunk_data [o] (COLUMN)
-root.sys.sb_toast_019c7734-8280-7846-be6c-b27e1cd3852c.chunk_id [o] (COLUMN)
-root.sys.sb_toast_019c7734-8280-7846-be6c-b27e1cd3852c.chunk_seq [o] (COLUMN)
-root.sys.sb_toast_019c7734-8280-7846-be6c-b27e1cd3852c.sb_toast_019c7734-8280-7846-be6c-b27e1cd3852c_idx [o] (INDEX)
+root.sys.sb_toast_019c793e-5faf-7dda-b5fc-a66c805e5a65 [o] (TABLE)
+root.sys.sb_toast_019c793e-5faf-7dda-b5fc-a66c805e5a65.chunk_data [o] (COLUMN)
+root.sys.sb_toast_019c793e-5faf-7dda-b5fc-a66c805e5a65.chunk_id [o] (COLUMN)
+root.sys.sb_toast_019c793e-5faf-7dda-b5fc-a66c805e5a65.chunk_seq [o] (COLUMN)
+root.sys.sb_toast_019c793e-5faf-7dda-b5fc-a66c805e5a65.sb_toast_019c793e-5faf-7dda-b5fc-a66c805e5a65_idx [o] (INDEX)
+root.sys.schema [o] (SCHEMA)
+root.sys.schema [s]
 root.sys.security [o] (SCHEMA)
 root.sys.security [s]
 root.sys.security.auth [o] (SCHEMA)

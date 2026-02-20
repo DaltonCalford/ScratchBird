@@ -11285,18 +11285,22 @@ bool hasTriggerNameConflictInTable(
             bool force_database_uuid;
         };
 
-        static constexpr std::array<BootstrapSchemaNode, 37> kBootstrapSchemas = {{
+        static constexpr std::array<BootstrapSchemaNode, 41> kBootstrapSchemas = {{
             {"root", "root", nullptr, true},
             {"root.sys", "sys", "root", false},
+            {"root.connections", "connections", "root", false},
             {"root.users", "users", "root", false},
             {"root.remote", "remote", "root", false},
             {"root.local", "local", "root", false},
             {"root.nosql", "nosql", "root", false},
+            {"root.emulated", "emulated", "root", false},
             {"root.sys.information", "information", "root.sys", false},
             {"root.sys.security", "security", "root.sys", false},
             {"root.sys.system", "system", "root.sys", false},
-            {"root.sys.monitor", "monitor", "root.sys", false},
-            {"root.sys.config", "config", "root.sys", false},
+            {"root.sys.schema", "schema", "root.sys", false},
+            {"root.sys.cluster", "cluster", "root.sys", false},
+            {"root.sys.connections", "connections", "root.sys", false},
+            {"root.sys.emulation", "emulation", "root.sys", false},
             {"root.sys.jobs", "jobs", "root.sys", false},
             {"root.users.public", "public", "root.users", false},
             {"root.users.roles", "roles", "root.users", false},
@@ -11372,7 +11376,8 @@ bool hasTriggerNameConflictInTable(
         }
         public_id = public_it->second;
 
-        DEBUG_LOG_DB("System catalog initialized with canonical bootstrap schema tree (37 nodes)");
+        DEBUG_LOG_DB("System catalog initialized with canonical bootstrap schema tree ("
+                     << kBootstrapSchemas.size() << " nodes)");
         DEBUG_LOG_DB("  schemas page=" << schemas_table_page_
                      << ", tables page=" << tables_table_page_
                      << ", columns page=" << columns_table_page_);
@@ -13107,17 +13112,21 @@ bool hasTriggerNameConflictInTable(
                     const char* legacy_parent_path;
                 };
 
-                static constexpr std::array<CanonicalSchemaNode, 36> kCanonicalNodes = {{
+                static constexpr std::array<CanonicalSchemaNode, 40> kCanonicalNodes = {{
                     {"root.sys", "sys", "root", nullptr},
+                    {"root.connections", "connections", "root", nullptr},
                     {"root.users", "users", "root", nullptr},
                     {"root.remote", "remote", "root", nullptr},
                     {"root.local", "local", "root", nullptr},
                     {"root.nosql", "nosql", "root", nullptr},
+                    {"root.emulated", "emulated", "root", nullptr},
                     {"root.sys.information", "information", "root.sys", nullptr},
                     {"root.sys.security", "security", "root.sys", nullptr},
                     {"root.sys.system", "system", "root.sys", nullptr},
-                    {"root.sys.monitor", "monitor", "root.sys", nullptr},
-                    {"root.sys.config", "config", "root.sys", nullptr},
+                    {"root.sys.schema", "schema", "root.sys", nullptr},
+                    {"root.sys.cluster", "cluster", "root.sys", nullptr},
+                    {"root.sys.connections", "connections", "root.sys", nullptr},
+                    {"root.sys.emulation", "emulation", "root.sys", nullptr},
                     {"root.sys.jobs", "jobs", "root.sys", nullptr},
                     {"root.users.public", "public", "root.users", "root"},
                     {"root.users.roles", "roles", "root.users", nullptr},
@@ -13147,7 +13156,7 @@ bool hasTriggerNameConflictInTable(
                 }};
 
                 std::unordered_map<std::string, ID> canonical_schema_ids;
-                canonical_schema_ids.reserve(37);
+                canonical_schema_ids.reserve(kCanonicalNodes.size() + 1);
                 canonical_schema_ids.emplace("root", root_id);
 
                 for (const auto& node : kCanonicalNodes)

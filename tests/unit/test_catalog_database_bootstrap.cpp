@@ -485,15 +485,19 @@ TEST(CatalogDatabaseBootstrapTest, CreatesCanonicalFixedSchemaTree)
     static constexpr const char* kCanonicalPaths[] = {
         "root",
         "root.sys",
+        "root.connections",
         "root.users",
         "root.remote",
         "root.local",
         "root.nosql",
+        "root.emulated",
         "root.sys.information",
         "root.sys.security",
         "root.sys.system",
-        "root.sys.monitor",
-        "root.sys.config",
+        "root.sys.schema",
+        "root.sys.cluster",
+        "root.sys.connections",
+        "root.sys.emulation",
         "root.sys.jobs",
         "root.users.public",
         "root.users.roles",
@@ -537,6 +541,8 @@ TEST(CatalogDatabaseBootstrapTest, CreatesCanonicalFixedSchemaTree)
     CatalogManager::SchemaInfo legacy;
     EXPECT_EQ(catalog->getSchema("root.app", legacy, &ctx), Status::INVALID_ARGUMENT);
     EXPECT_EQ(catalog->getSchema("root.sys.sec", legacy, &ctx), Status::INVALID_ARGUMENT);
+    EXPECT_EQ(catalog->getSchema("root.sys.config", legacy, &ctx), Status::INVALID_ARGUMENT);
+    EXPECT_EQ(catalog->getSchema("root.sys.monitor", legacy, &ctx), Status::INVALID_ARGUMENT);
     EXPECT_EQ(catalog->getSchema("root.remote.emulation.mssql", legacy, &ctx), Status::INVALID_ARGUMENT);
 
     db.close();
