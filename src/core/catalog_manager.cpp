@@ -68130,10 +68130,14 @@ auto CatalogManager::upsertNodeCatalogEntry(const NodeCatalogInfo& info,
         return row.node_id == info.node_id && row.is_valid == 1;
     };
     auto existing = findRecordInHeapPage<NodeRecord>(node_table_page_, existing_predicate, ctx);
+    ID previous_cluster_id{};
+    std::string previous_node_name;
     if (existing.status == Status::OK)
     {
         rec.created_time = existing.record.created_time;
         rec.created_txid = existing.record.created_txid;
+        previous_cluster_id = existing.record.cluster_id;
+        previous_node_name = fixedNameFromBuffer(existing.record.node_name, sizeof(existing.record.node_name));
     }
     else if (existing.status != Status::NOT_FOUND)
     {
@@ -68143,7 +68147,83 @@ auto CatalogManager::upsertNodeCatalogEntry(const NodeCatalogInfo& info,
     auto matcher = [&info](const NodeRecord& row) {
         return row.node_id == info.node_id && row.is_valid == 1;
     };
-    return updateRecordInHeapPage(node_table_page_, matcher, rec, ctx);
+    status = updateRecordInHeapPage(node_table_page_, matcher, rec, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    if (rec.is_valid == 1)
+    {
+        ClusterCatalogInfo cluster_info{};
+        status = getClusterCatalogEntry(rec.cluster_id, cluster_info, nullptr);
+        if (status == Status::OK)
+        {
+            status = ensureOverlaySchemaChildUnlocked("cluster", cluster_info.cluster_name, nullptr, ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, status, "Failed to materialize cluster overlay schema for node");
+                return status;
+            }
+
+            status = ensureOverlaySchemaChildUnlocked("cluster." + cluster_info.cluster_name,
+                                                      info.node_name,
+                                                      nullptr,
+                                                      ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, status, "Failed to materialize cluster node overlay schema");
+                return status;
+            }
+        }
+        else if (status != Status::NOT_FOUND)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to resolve cluster for node overlay path");
+            return status;
+        }
+
+        if (!previous_node_name.empty())
+        {
+            ClusterCatalogInfo previous_cluster_info{};
+            if (getClusterCatalogEntry(previous_cluster_id, previous_cluster_info, nullptr) == Status::OK)
+            {
+                bool drop_previous_overlay = false;
+                if (status == Status::OK)
+                {
+                    const bool cluster_changed =
+                        !IdentifierUtils::namesConflict(cluster_info.cluster_name,
+                                                        false /*new_is_delimited*/,
+                                                        previous_cluster_info.cluster_name,
+                                                        false /*stored_delimited*/);
+                    const bool node_renamed =
+                        !IdentifierUtils::namesConflict(info.node_name,
+                                                        false /*new_is_delimited*/,
+                                                        previous_node_name,
+                                                        false /*stored_delimited*/);
+                    drop_previous_overlay = cluster_changed || node_renamed;
+                }
+                else if (status == Status::NOT_FOUND)
+                {
+                    // Cluster row is absent for the updated node binding; remove stale mount if one existed.
+                    drop_previous_overlay = true;
+                }
+
+                if (drop_previous_overlay)
+                {
+                    status = dropOverlaySchemaChildUnlocked("cluster." + previous_cluster_info.cluster_name,
+                                                            previous_node_name,
+                                                            ctx);
+                    if (status != Status::OK)
+                    {
+                        SET_ERROR_CONTEXT(ctx, status, "Failed to drop previous cluster node overlay schema");
+                        return status;
+                    }
+                }
+            }
+        }
+    }
+
+    return Status::OK;
 }
 
 auto CatalogManager::getNodeCatalogEntry(const ID& node_id,
@@ -68237,6 +68317,22 @@ auto CatalogManager::deleteNodeCatalogEntry(const ID& node_id,
     {
         return Status::NOT_FOUND;
     }
+
+    ClusterCatalogInfo cluster_info{};
+    if (getClusterCatalogEntry(result.record.cluster_id, cluster_info, nullptr) == Status::OK)
+    {
+        const std::string node_name =
+            fixedNameFromBuffer(result.record.node_name, sizeof(result.record.node_name));
+        Status status = dropOverlaySchemaChildUnlocked("cluster." + cluster_info.cluster_name,
+                                                       node_name,
+                                                       ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to drop cluster node overlay schema");
+            return status;
+        }
+    }
+
     NodeRecord updated = result.record;
     updated.is_valid = 0;
     updated.last_modified_time = catalogNowTicks();

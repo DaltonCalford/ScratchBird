@@ -842,6 +842,107 @@ TEST(CatalogDatabaseBootstrapTest, ClusterRenameMovesDynamicOverlaySchema)
     std::remove(db_path.c_str());
 }
 
+TEST(CatalogDatabaseBootstrapTest, ClusterNodeLifecycleMaterializesDynamicOverlaySchema)
+{
+    std::string db_path = uniqueTestDbPath("test_catalog_cluster_node_overlay_lifecycle");
+    std::remove(db_path.c_str());
+
+    ErrorContext ctx;
+    ASSERT_EQ(Database::create(db_path, 8192, &ctx), Status::OK) << ctx.message;
+
+    {
+        Database db;
+        ASSERT_EQ(db.open(db_path, &ctx), Status::OK) << ctx.message;
+        auto* catalog = db.catalog_manager();
+        ASSERT_NE(catalog, nullptr);
+
+        ID cluster_id = generateUuidV7();
+        CatalogManager::ClusterCatalogInfo cluster{};
+        cluster.cluster_id = cluster_id;
+        cluster.cluster_name = "alpha";
+        cluster.cluster_mode = CatalogManager::ClusterMode::CLUSTER;
+        cluster.cluster_state = CatalogManager::ClusterState::ONLINE;
+        cluster.consensus_mode = CatalogManager::ConsensusMode::RAFT;
+        cluster.config_version = 1;
+        cluster.cluster_state_version = 1;
+        ASSERT_EQ(catalog->upsertClusterCatalogEntry(cluster, &ctx), Status::OK) << ctx.message;
+
+        CatalogManager::NodeCatalogInfo node{};
+        node.node_id = generateUuidV7();
+        node.cluster_id = cluster_id;
+        node.node_name = "node_a";
+        node.node_role = CatalogManager::ClusterNodeRole::METADATA;
+        node.host = "127.0.0.1";
+        node.port = 7101;
+        node.transport = CatalogManager::ConnectionTransport::INET;
+        node.state = CatalogManager::ClusterNodeState::ONLINE;
+        ASSERT_EQ(catalog->upsertNodeCatalogEntry(node, &ctx), Status::OK) << ctx.message;
+
+        CatalogManager::SchemaInfo schema_info{};
+        EXPECT_EQ(catalog->getSchema("cluster.alpha.node_a", schema_info, &ctx), Status::OK)
+            << ctx.message;
+        EXPECT_EQ(catalog->getSchema("root.cluster.alpha.node_a", schema_info, &ctx), Status::OK)
+            << ctx.message;
+
+        ASSERT_EQ(catalog->deleteNodeCatalogEntry(node.node_id, &ctx), Status::OK) << ctx.message;
+        EXPECT_NE(catalog->getSchema("cluster.alpha.node_a", schema_info, &ctx), Status::OK);
+
+        db.close();
+    }
+
+    std::remove(db_path.c_str());
+}
+
+TEST(CatalogDatabaseBootstrapTest, ClusterNodeRenameMovesDynamicOverlaySchema)
+{
+    std::string db_path = uniqueTestDbPath("test_catalog_cluster_node_overlay_rename");
+    std::remove(db_path.c_str());
+
+    ErrorContext ctx;
+    ASSERT_EQ(Database::create(db_path, 8192, &ctx), Status::OK) << ctx.message;
+
+    {
+        Database db;
+        ASSERT_EQ(db.open(db_path, &ctx), Status::OK) << ctx.message;
+        auto* catalog = db.catalog_manager();
+        ASSERT_NE(catalog, nullptr);
+
+        ID cluster_id = generateUuidV7();
+        CatalogManager::ClusterCatalogInfo cluster{};
+        cluster.cluster_id = cluster_id;
+        cluster.cluster_name = "alpha";
+        cluster.cluster_mode = CatalogManager::ClusterMode::CLUSTER;
+        cluster.cluster_state = CatalogManager::ClusterState::ONLINE;
+        cluster.consensus_mode = CatalogManager::ConsensusMode::RAFT;
+        cluster.config_version = 1;
+        cluster.cluster_state_version = 1;
+        ASSERT_EQ(catalog->upsertClusterCatalogEntry(cluster, &ctx), Status::OK) << ctx.message;
+
+        CatalogManager::NodeCatalogInfo node{};
+        node.node_id = generateUuidV7();
+        node.cluster_id = cluster_id;
+        node.node_name = "node_old";
+        node.node_role = CatalogManager::ClusterNodeRole::METADATA;
+        node.host = "127.0.0.1";
+        node.port = 7101;
+        node.transport = CatalogManager::ConnectionTransport::INET;
+        node.state = CatalogManager::ClusterNodeState::ONLINE;
+        ASSERT_EQ(catalog->upsertNodeCatalogEntry(node, &ctx), Status::OK) << ctx.message;
+
+        node.node_name = "node_new";
+        ASSERT_EQ(catalog->upsertNodeCatalogEntry(node, &ctx), Status::OK) << ctx.message;
+
+        CatalogManager::SchemaInfo schema_info{};
+        EXPECT_EQ(catalog->getSchema("cluster.alpha.node_new", schema_info, &ctx), Status::OK)
+            << ctx.message;
+        EXPECT_NE(catalog->getSchema("cluster.alpha.node_old", schema_info, &ctx), Status::OK);
+
+        db.close();
+    }
+
+    std::remove(db_path.c_str());
+}
+
 TEST(CatalogDatabaseBootstrapTest, EmulatedDatabaseLifecycleMaterializesDynamicOverlaySchema)
 {
     std::string db_path = uniqueTestDbPath("test_catalog_emulated_overlay_lifecycle");
