@@ -18,6 +18,7 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/ondisk.h"
+#include "scratchbird/core/uuidv7.h"
 #include "test_helpers.h"
 
 using namespace scratchbird::core;
@@ -617,6 +618,86 @@ TEST(CatalogDatabaseBootstrapTest, CreatesTypeCatalogFamilyPages)
         ASSERT_EQ(assertHeapCatalogPage(db, catalog->typeCastsTablePage(), &ctx), Status::OK) << ctx.message;
         ASSERT_EQ(assertHeapCatalogPage(db, catalog->typeTransformsTablePage(), &ctx), Status::OK) << ctx.message;
         ASSERT_EQ(assertHeapCatalogPage(db, catalog->encodingConversionsTablePage(), &ctx), Status::OK) << ctx.message;
+
+        db.close();
+    }
+
+    std::remove(db_path.c_str());
+}
+
+TEST(CatalogDatabaseBootstrapTest, GroupLifecycleMaterializesDynamicOverlaySchema)
+{
+    std::string db_path = uniqueTestDbPath("test_catalog_group_overlay_lifecycle");
+    std::remove(db_path.c_str());
+
+    ErrorContext ctx;
+    ASSERT_EQ(Database::create(db_path, 8192, &ctx), Status::OK) << ctx.message;
+
+    {
+        Database db;
+        ASSERT_EQ(db.open(db_path, &ctx), Status::OK) << ctx.message;
+        auto* catalog = db.catalog_manager();
+        ASSERT_NE(catalog, nullptr);
+
+        ID group_id{};
+        ASSERT_EQ(catalog->createGroup("qa_team",
+                                       CatalogManager::GroupType::LOCAL,
+                                       "",
+                                       ID{},
+                                       group_id,
+                                       &ctx),
+                  Status::OK)
+            << ctx.message;
+
+        CatalogManager::SchemaInfo schema_info{};
+        EXPECT_EQ(catalog->getSchema("group.qa_team", schema_info, &ctx), Status::OK)
+            << ctx.message;
+        EXPECT_EQ(catalog->getSchema("root.group.qa_team", schema_info, &ctx), Status::OK)
+            << ctx.message;
+
+        ASSERT_EQ(catalog->deleteGroup(group_id, true, &ctx), Status::OK) << ctx.message;
+        EXPECT_NE(catalog->getSchema("group.qa_team", schema_info, &ctx), Status::OK);
+
+        db.close();
+    }
+
+    std::remove(db_path.c_str());
+}
+
+TEST(CatalogDatabaseBootstrapTest, ClusterLifecycleMaterializesDynamicOverlaySchema)
+{
+    std::string db_path = uniqueTestDbPath("test_catalog_cluster_overlay_lifecycle");
+    std::remove(db_path.c_str());
+
+    ErrorContext ctx;
+    ASSERT_EQ(Database::create(db_path, 8192, &ctx), Status::OK) << ctx.message;
+
+    {
+        Database db;
+        ASSERT_EQ(db.open(db_path, &ctx), Status::OK) << ctx.message;
+        auto* catalog = db.catalog_manager();
+        ASSERT_NE(catalog, nullptr);
+
+        ID cluster_id = generateUuidV7();
+        CatalogManager::ClusterCatalogInfo cluster{};
+        cluster.cluster_id = cluster_id;
+        cluster.cluster_name = "alpha";
+        cluster.cluster_mode = CatalogManager::ClusterMode::CLUSTER;
+        cluster.cluster_state = CatalogManager::ClusterState::ONLINE;
+        cluster.consensus_mode = CatalogManager::ConsensusMode::RAFT;
+        cluster.config_version = 1;
+        cluster.cluster_state_version = 1;
+
+        ASSERT_EQ(catalog->upsertClusterCatalogEntry(cluster, &ctx), Status::OK) << ctx.message;
+
+        CatalogManager::SchemaInfo schema_info{};
+        EXPECT_EQ(catalog->getSchema("cluster.alpha", schema_info, &ctx), Status::OK)
+            << ctx.message;
+        EXPECT_EQ(catalog->getSchema("root.cluster.alpha", schema_info, &ctx), Status::OK)
+            << ctx.message;
+
+        ASSERT_EQ(catalog->deleteClusterCatalogEntry(cluster_id, &ctx), Status::OK) << ctx.message;
+        EXPECT_NE(catalog->getSchema("cluster.alpha", schema_info, &ctx), Status::OK);
 
         db.close();
     }

@@ -12531,6 +12531,13 @@ public:
                                   ID &schema_id, const ID &parent_schema_id = ID(),
                                   ErrorContext *ctx = nullptr,
                                   const std::optional<ID> &forced_schema_id = std::nullopt) -> Status;
+        auto ensureOverlaySchemaChildUnlocked(const std::string& root_schema_name,
+                                              const std::string& child_name,
+                                              ID* schema_id_out,
+                                              ErrorContext* ctx) -> Status;
+        auto dropOverlaySchemaChildUnlocked(const std::string& root_schema_name,
+                                            const std::string& child_name,
+                                            ErrorContext* ctx) -> Status;
 
         // Helper to resolve owner name to UUID (Phase 5.1 - Owner UUID References)
         // Uses Users table lookup; "SYSTEM" resolves to the system user UUID.

@@ -13873,6 +13873,106 @@ bool hasTriggerNameConflictInTable(
         return createSchemaInternal(schema_name, owner, schema_id, parent_schema_id, ctx);
     }
 
+    auto CatalogManager::ensureOverlaySchemaChildUnlocked(const std::string& root_schema_name,
+                                                          const std::string& child_name,
+                                                          ID* schema_id_out,
+                                                          ErrorContext* ctx) -> Status
+    {
+        if (child_name.empty())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Overlay child schema name cannot be empty");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        SchemaInfo root_schema;
+        Status status = getSchema(root_schema_name, root_schema, ctx);
+        if (status != Status::OK)
+        {
+            status = getSchema("root." + root_schema_name, root_schema, ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, status, "Overlay root schema not found");
+                return status;
+            }
+        }
+
+        for (const auto& [id, info] : schema_cache_)
+        {
+            if (info.parent_schema_id != root_schema.schema_id)
+            {
+                continue;
+            }
+            if (!IdentifierUtils::namesConflict(child_name, false /*new_is_delimited*/,
+                                                info.schema_name, info.name_is_delimited))
+            {
+                continue;
+            }
+            if (schema_id_out != nullptr)
+            {
+                *schema_id_out = id;
+            }
+            return Status::OK;
+        }
+
+        ID schema_id{};
+        status = createSchemaInternal(child_name, "system", schema_id, root_schema.schema_id, ctx);
+        if (status == Status::OK && schema_id_out != nullptr)
+        {
+            *schema_id_out = schema_id;
+        }
+        return status;
+    }
+
+    auto CatalogManager::dropOverlaySchemaChildUnlocked(const std::string& root_schema_name,
+                                                        const std::string& child_name,
+                                                        ErrorContext* ctx) -> Status
+    {
+        if (child_name.empty())
+        {
+            return Status::OK;
+        }
+
+        SchemaInfo root_schema;
+        Status status = getSchema(root_schema_name, root_schema, nullptr);
+        if (status != Status::OK)
+        {
+            status = getSchema("root." + root_schema_name, root_schema, nullptr);
+            if (status != Status::OK)
+            {
+                return Status::OK;
+            }
+        }
+
+        ID child_schema_id{};
+        for (const auto& [id, info] : schema_cache_)
+        {
+            if (info.parent_schema_id != root_schema.schema_id)
+            {
+                continue;
+            }
+            if (!IdentifierUtils::namesConflict(child_name, false /*new_is_delimited*/,
+                                                info.schema_name, info.name_is_delimited))
+            {
+                continue;
+            }
+            child_schema_id = id;
+            break;
+        }
+
+        if (isZeroUuidLocal(child_schema_id))
+        {
+            return Status::OK;
+        }
+
+        status = dropSchema(child_schema_id, true /*cascade*/, ctx);
+        if (status == Status::NOT_FOUND)
+        {
+            return Status::OK;
+        }
+        return status;
+    }
+
     auto CatalogManager::getSystemUserId(ErrorContext* ctx) -> ID
     {
         std::lock_guard<CatalogMutex> lock(mutex_);
@@ -41716,6 +41816,19 @@ auto CatalogManager::createGroup(const std::string& group_name, GroupType group_
         return status;
     }
 
+    status = ensureOverlaySchemaChildUnlocked("group", group_name, nullptr, ctx);
+    if (status != Status::OK)
+    {
+        auto rollback_predicate = [&group_id_out](const GroupRecord& rec) {
+            return rec.is_valid && rec.group_id == group_id_out;
+        };
+        ErrorContext rollback_ctx;
+        (void)deleteRecordFromHeapPage<GroupRecord>(
+            groups_table_page_, rollback_predicate, &rollback_ctx);
+        SET_ERROR_CONTEXT(ctx, status, "Failed to create group overlay schema");
+        return status;
+    }
+
     DEBUG_LOG_DB("Created group: " << group_name << " (ID: " << group_id_out.toString() << ")");
     return Status::OK;
 }
@@ -41797,6 +41910,12 @@ auto CatalogManager::getGroupByName(const std::string& group_name, GroupInfo& gr
 auto CatalogManager::deleteGroup(const ID& group_id, bool cascade, ErrorContext* ctx) -> Status
 {
     std::lock_guard<CatalogMutex> lock(mutex_);
+    GroupInfo group_info;
+    Status status = getGroup(group_id, group_info, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
 
     // Security Phase 3.0: CASCADE implementation
     if (cascade)
@@ -41804,7 +41923,7 @@ auto CatalogManager::deleteGroup(const ID& group_id, bool cascade, ErrorContext*
         // CASCADE: Delete all dependent objects
         // 1. Remove all members from group
         std::vector<ID> members;
-        Status status = getGroupMembers(group_id, members, ctx);
+        status = getGroupMembers(group_id, members, ctx);
         if (status == Status::OK)
         {
             for (const auto& member_id : members)
@@ -41835,7 +41954,7 @@ auto CatalogManager::deleteGroup(const ID& group_id, bool cascade, ErrorContext*
         // RESTRICT (default): Check for dependencies
         // Check if group has any members
         std::vector<ID> members;
-        Status status = getGroupMembers(group_id, members, ctx);
+        status = getGroupMembers(group_id, members, ctx);
         if (status == Status::OK && !members.empty())
         {
             SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION,
@@ -41869,8 +41988,14 @@ auto CatalogManager::deleteGroup(const ID& group_id, bool cascade, ErrorContext*
         return rec.is_valid && rec.group_id == group_id;
     };
 
-    Status status = deleteRecordFromHeapPage<GroupRecord>(groups_table_page_,
-                                                           predicate, ctx);
+    status = dropOverlaySchemaChildUnlocked("group", group_info.group_name, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to drop group overlay schema");
+        return status;
+    }
+
+    status = deleteRecordFromHeapPage<GroupRecord>(groups_table_page_, predicate, ctx);
     if (status != Status::OK)
     {
         SET_ERROR_CONTEXT(ctx, status, "Failed to delete group");
@@ -68953,7 +69078,23 @@ auto CatalogManager::upsertClusterCatalogEntry(const ClusterCatalogInfo& info,
     auto matcher = [&info](const ClusterRecord& row) {
         return row.cluster_id == info.cluster_id && row.is_valid == 1;
     };
-    return updateRecordInHeapPage(cluster_table_page_, matcher, rec, ctx);
+    status = updateRecordInHeapPage(cluster_table_page_, matcher, rec, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    if (rec.is_valid == 1)
+    {
+        status = ensureOverlaySchemaChildUnlocked("cluster", info.cluster_name, nullptr, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to create cluster overlay schema");
+            return status;
+        }
+    }
+
+    return Status::OK;
 }
 
 auto CatalogManager::getClusterCatalogEntry(const ID& cluster_id,
@@ -69049,10 +69190,25 @@ auto CatalogManager::deleteClusterCatalogEntry(const ID& cluster_id,
     {
         return Status::NOT_FOUND;
     }
+    const std::string cluster_name =
+        fixedNameFromBuffer(result.record.cluster_name, sizeof(result.record.cluster_name));
     ClusterRecord updated = result.record;
     updated.is_valid = 0;
     updated.last_state_change_time = catalogNowTicks();
-    return updateRecordInHeapPage(cluster_table_page_, result.slot_index, updated, ctx);
+    Status status = updateRecordInHeapPage(cluster_table_page_, result.slot_index, updated, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    status = dropOverlaySchemaChildUnlocked("cluster", cluster_name, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to drop cluster overlay schema");
+        return status;
+    }
+
+    return Status::OK;
 }
 
 auto CatalogManager::upsertShardPolicyCatalogEntry(const ShardPolicyCatalogInfo& info,
