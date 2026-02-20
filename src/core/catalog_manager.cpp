@@ -13973,6 +13973,251 @@ bool hasTriggerNameConflictInTable(
         return status;
     }
 
+    auto CatalogManager::ensureOverlaySchemaChildByParentUnlocked(const ID& parent_schema_id,
+                                                                  const std::string& child_name,
+                                                                  ID* schema_id_out,
+                                                                  ErrorContext* ctx) -> Status
+    {
+        if (child_name.empty())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Overlay child schema name cannot be empty");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        auto parent_it = schema_cache_.find(parent_schema_id);
+        if (parent_it == schema_cache_.end())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Overlay parent schema not found");
+            return Status::NOT_FOUND;
+        }
+
+        for (const auto& [id, info] : schema_cache_)
+        {
+            if (info.parent_schema_id != parent_schema_id)
+            {
+                continue;
+            }
+            if (!IdentifierUtils::namesConflict(child_name, false /*new_is_delimited*/,
+                                                info.schema_name, info.name_is_delimited))
+            {
+                continue;
+            }
+            if (schema_id_out != nullptr)
+            {
+                *schema_id_out = id;
+            }
+            return Status::OK;
+        }
+
+        ID schema_id{};
+        Status status = createSchemaInternal(child_name, "system", schema_id, parent_schema_id, ctx);
+        if (status == Status::OK && schema_id_out != nullptr)
+        {
+            *schema_id_out = schema_id;
+        }
+        return status;
+    }
+
+    auto CatalogManager::resolveEmulatedEngineNameUnlocked(const ID& server_id,
+                                                           std::string& engine_name_out,
+                                                           ErrorContext* ctx) -> Status
+    {
+        if (isZeroUuidLocal(server_id))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Emulation server ID is required");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        EmulationServerInfo server_info;
+        Status status = getEmulationServer(server_id, server_info, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Emulation server not found for overlay path");
+            return status;
+        }
+
+        EmulationTypeInfo emulation_type;
+        status = getEmulationType(server_info.emulation_type_id, emulation_type, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Emulation type not found for overlay path");
+            return status;
+        }
+
+        if (emulation_type.emulation_name.empty())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Emulation type has empty name");
+            return Status::PAGE_CORRUPT;
+        }
+
+        engine_name_out = emulation_type.emulation_name;
+        return Status::OK;
+    }
+
+    auto CatalogManager::ensureEmulatedDatabaseOverlayUnlocked(const ID& server_id,
+                                                               const std::string& database_name,
+                                                               ErrorContext* ctx) -> Status
+    {
+        if (database_name.empty())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Emulated database name cannot be empty");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        std::string engine_name;
+        Status status = resolveEmulatedEngineNameUnlocked(server_id, engine_name, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        SchemaInfo emulated_root;
+        status = getSchema("emulated", emulated_root, nullptr);
+        if (status != Status::OK)
+        {
+            status = getSchema("root.emulated", emulated_root, nullptr);
+        }
+        if (status != Status::OK)
+        {
+            SchemaInfo root_schema;
+            status = getSchema("root", root_schema, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            ID emulated_root_id{};
+            status = createSchemaInternal("emulated", "system", emulated_root_id, root_schema.schema_id, ctx);
+            if (status != Status::OK && status != Status::FILE_EXISTS)
+            {
+                return status;
+            }
+
+            status = getSchema("emulated", emulated_root, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+        }
+
+        ID engine_schema_id{};
+        status = ensureOverlaySchemaChildByParentUnlocked(emulated_root.schema_id,
+                                                          engine_name,
+                                                          &engine_schema_id,
+                                                          ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        return ensureOverlaySchemaChildByParentUnlocked(engine_schema_id,
+                                                        database_name,
+                                                        nullptr,
+                                                        ctx);
+    }
+
+    auto CatalogManager::dropEmulatedDatabaseOverlayUnlocked(const ID& server_id,
+                                                             const std::string& database_name,
+                                                             ErrorContext* ctx) -> Status
+    {
+        if (database_name.empty())
+        {
+            return Status::OK;
+        }
+
+        std::string engine_name;
+        Status status = resolveEmulatedEngineNameUnlocked(server_id, engine_name, nullptr);
+        if (status == Status::NOT_FOUND)
+        {
+            return Status::OK;
+        }
+        if (status != Status::OK)
+        {
+            return status;
+        }
+
+        SchemaInfo emulated_root;
+        status = getSchema("emulated", emulated_root, nullptr);
+        if (status != Status::OK)
+        {
+            status = getSchema("root.emulated", emulated_root, nullptr);
+            if (status != Status::OK)
+            {
+                return Status::OK;
+            }
+        }
+
+        ID engine_schema_id{};
+        for (const auto& [id, info] : schema_cache_)
+        {
+            if (info.parent_schema_id != emulated_root.schema_id)
+            {
+                continue;
+            }
+            if (!IdentifierUtils::namesConflict(engine_name, false /*new_is_delimited*/,
+                                                info.schema_name, info.name_is_delimited))
+            {
+                continue;
+            }
+            engine_schema_id = id;
+            break;
+        }
+        if (isZeroUuidLocal(engine_schema_id))
+        {
+            return Status::OK;
+        }
+
+        ID database_schema_id{};
+        for (const auto& [id, info] : schema_cache_)
+        {
+            if (info.parent_schema_id != engine_schema_id)
+            {
+                continue;
+            }
+            if (!IdentifierUtils::namesConflict(database_name, false /*new_is_delimited*/,
+                                                info.schema_name, info.name_is_delimited))
+            {
+                continue;
+            }
+            database_schema_id = id;
+            break;
+        }
+        if (isZeroUuidLocal(database_schema_id))
+        {
+            return Status::OK;
+        }
+
+        status = dropSchema(database_schema_id, true /*cascade*/, ctx);
+        if (status != Status::OK && status != Status::NOT_FOUND)
+        {
+            return status;
+        }
+
+        bool engine_has_children = false;
+        for (const auto& [id, info] : schema_cache_)
+        {
+            (void)id;
+            if (info.parent_schema_id == engine_schema_id)
+            {
+                engine_has_children = true;
+                break;
+            }
+        }
+
+        if (!engine_has_children)
+        {
+            status = dropSchema(engine_schema_id, true /*cascade*/, ctx);
+            if (status != Status::OK && status != Status::NOT_FOUND)
+            {
+                return status;
+            }
+        }
+
+        return Status::OK;
+    }
+
     auto CatalogManager::getSystemUserId(ErrorContext* ctx) -> ID
     {
         std::lock_guard<CatalogMutex> lock(mutex_);
@@ -89822,6 +90067,19 @@ auto CatalogManager::createEmulatedDatabase(const std::string& database_name,
         return status;
     }
 
+    status = ensureEmulatedDatabaseOverlayUnlocked(server_id, database_name, ctx);
+    if (status != Status::OK)
+    {
+        auto rollback_predicate = [&emulated_db_id_out](const EmulatedDatabaseRecord& row) {
+            return row.is_valid == 1 && row.emulated_db_id == emulated_db_id_out;
+        };
+        ErrorContext rollback_ctx;
+        (void)deleteRecordFromHeapPage<EmulatedDatabaseRecord>(
+            emulated_dbs_table_page_, rollback_predicate, &rollback_ctx);
+        SET_ERROR_CONTEXT(ctx, status, "Failed to materialize emulated database overlay");
+        return status;
+    }
+
     return Status::OK;
 }
 
@@ -89898,47 +90156,32 @@ auto CatalogManager::updateEmulatedDatabase(const ID& emulated_db_id,
 {
     std::lock_guard<CatalogMutex> lock(mutex_);
 
-    BufferPool *bp = db_->buffer_pool();
-    void *page_data;
-    Status status = bp->pinPage(emulated_dbs_table_page_, &page_data, ctx);
-    if (status != Status::OK) return status;
-
-    HeapPage heap_page(static_cast<uint8_t *>(page_data), db_->page_size());
-    uint16_t item_count = heap_page.getItemCount();
-    bool found = false;
-    auto *mutable_page_data = static_cast<uint8_t *>(page_data);
-
-    for (uint16_t i = 0; i < item_count; ++i)
+    auto predicate = [&emulated_db_id](const EmulatedDatabaseRecord& rec) {
+        return rec.emulated_db_id == emulated_db_id && rec.is_valid == 1;
+    };
+    auto existing = findRecordInHeapPage<EmulatedDatabaseRecord>(emulated_dbs_table_page_, predicate, ctx);
+    if (existing.status != Status::OK)
     {
-        const uint8_t *tuple_data;
-        uint32_t tuple_size;
-        if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
-        {
-            if (tuple_size >= sizeof(TupleHeader) + sizeof(EmulatedDatabaseRecord))
-            {
-                const ptrdiff_t offset = tuple_data - static_cast<const uint8_t *>(page_data);
-                auto *record = reinterpret_cast<EmulatedDatabaseRecord *>(
-                    mutable_page_data + offset + sizeof(TupleHeader));
-
-                if (record->emulated_db_id == emulated_db_id && record->is_valid == 1)
-                {
-                    if (new_metadata.has_value())
-                    {
-                        uint64_t xmin = 0;
-                        storeStringInToast(new_metadata.value(), xmin, record->db_metadata_oid, ctx);
-                    }
-                    if (is_active.has_value())
-                        record->is_active = is_active.value() ? 1 : 0;
-                    record->last_modified_time = std::chrono::system_clock::now().time_since_epoch().count();
-                    found = true;
-                    break;
-                }
-            }
-        }
+        return Status::NOT_FOUND;
     }
 
-    bp->unpinPage(emulated_dbs_table_page_, found, ctx);
-    return found ? Status::OK : Status::NOT_FOUND;
+    EmulatedDatabaseRecord updated = existing.record;
+    if (new_metadata.has_value())
+    {
+        uint64_t xmin = 0;
+        Status status = storeStringInToast(new_metadata.value(), xmin, updated.db_metadata_oid, ctx);
+        if (status != Status::OK)
+        {
+            return status;
+        }
+    }
+    if (is_active.has_value())
+    {
+        updated.is_active = is_active.value() ? 1 : 0;
+    }
+    updated.last_modified_time = std::chrono::system_clock::now().time_since_epoch().count();
+
+    return updateRecordInHeapPage(emulated_dbs_table_page_, predicate, updated, ctx);
 }
 
 auto CatalogManager::renameEmulatedDatabase(const ID& emulated_db_id,
@@ -89961,83 +90204,83 @@ auto CatalogManager::renameEmulatedDatabase(const ID& emulated_db_id,
 
     std::lock_guard<CatalogMutex> lock(mutex_);
 
-    BufferPool *bp = db_->buffer_pool();
-    void *page_data;
-    status = bp->pinPage(emulated_dbs_table_page_, &page_data, ctx);
-    if (status != Status::OK) return status;
-
-    HeapPage heap_page(static_cast<uint8_t *>(page_data), db_->page_size());
-    uint16_t item_count = heap_page.getItemCount();
-    auto *mutable_page_data = static_cast<uint8_t *>(page_data);
-
-    EmulatedDatabaseRecord* target_record = nullptr;
-    ID server_id{};
-
-    for (uint16_t i = 0; i < item_count; ++i)
+    auto target_predicate = [&emulated_db_id](const EmulatedDatabaseRecord& rec) {
+        return rec.emulated_db_id == emulated_db_id && rec.is_valid == 1;
+    };
+    auto target = findRecordInHeapPage<EmulatedDatabaseRecord>(emulated_dbs_table_page_,
+                                                               target_predicate, ctx);
+    if (target.status != Status::OK)
     {
-        const uint8_t *tuple_data;
-        uint32_t tuple_size;
-        if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
-        {
-            if (tuple_size >= sizeof(TupleHeader) + sizeof(EmulatedDatabaseRecord))
-            {
-                const ptrdiff_t offset = tuple_data - static_cast<const uint8_t *>(page_data);
-                auto *record = reinterpret_cast<EmulatedDatabaseRecord *>(
-                    mutable_page_data + offset + sizeof(TupleHeader));
-
-                if (record->emulated_db_id == emulated_db_id && record->is_valid == 1)
-                {
-                    target_record = record;
-                    server_id = record->server_id;
-                    break;
-                }
-            }
-        }
-    }
-
-    if (!target_record)
-    {
-        bp->unpinPage(emulated_dbs_table_page_, false, ctx);
         SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Emulated database not found");
         return Status::NOT_FOUND;
     }
 
-    for (uint16_t i = 0; i < item_count; ++i)
-    {
-        const uint8_t *tuple_data;
-        uint32_t tuple_size;
-        if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
+    auto duplicate_predicate = [&target, &emulated_db_id, &new_name](const EmulatedDatabaseRecord& rec) {
+        if (rec.is_valid != 1 || rec.server_id != target.record.server_id ||
+            rec.emulated_db_id == emulated_db_id)
         {
-            if (tuple_size >= sizeof(TupleHeader) + sizeof(EmulatedDatabaseRecord))
-            {
-                const ptrdiff_t offset = tuple_data - static_cast<const uint8_t *>(page_data);
-                auto *record = reinterpret_cast<EmulatedDatabaseRecord *>(
-                    mutable_page_data + offset + sizeof(TupleHeader));
+            return false;
+        }
+        return IdentifierUtils::namesConflict(new_name, false /*new_is_delimited*/,
+                                              rec.database_name, false /*stored*/);
+    };
+    auto duplicate = findRecordInHeapPage<EmulatedDatabaseRecord>(emulated_dbs_table_page_,
+                                                                  duplicate_predicate, ctx);
+    if (duplicate.status == Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS, "Emulated database already exists");
+        return Status::FILE_EXISTS;
+    }
+    if (duplicate.status != Status::NOT_FOUND)
+    {
+        return duplicate.status;
+    }
 
-                if (record->is_valid == 1 && record->server_id == server_id &&
-                    record->emulated_db_id != emulated_db_id)
-                {
-                    if (IdentifierUtils::namesConflict(new_name, false /*new_is_delimited*/,
-                                                       record->database_name, false /*stored*/))
-                    {
-                        bp->unpinPage(emulated_dbs_table_page_, false, ctx);
-                        SET_ERROR_CONTEXT(ctx, Status::FILE_EXISTS,
-                                          "Emulated database already exists");
-                        return Status::FILE_EXISTS;
-                    }
-                }
-            }
+    const std::string old_name = fixedNameFromBuffer(target.record.database_name,
+                                                     sizeof(target.record.database_name));
+    const bool renamed =
+        !IdentifierUtils::namesConflict(new_name, false /*new_is_delimited*/,
+                                        old_name, false /*stored_delimited*/);
+
+    if (renamed)
+    {
+        status = ensureEmulatedDatabaseOverlayUnlocked(target.record.server_id, new_name, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status,
+                              "Failed to materialize renamed emulated database overlay");
+            return status;
         }
     }
 
-    std::string truncated = UTF8Utils::truncateToBytes(new_name, sizeof(target_record->database_name));
-    std::memset(target_record->database_name, 0, sizeof(target_record->database_name));
-    std::strncpy(target_record->database_name, truncated.c_str(),
-                 sizeof(target_record->database_name) - 1);
-    target_record->last_modified_time =
-        std::chrono::system_clock::now().time_since_epoch().count();
+    EmulatedDatabaseRecord updated = target.record;
+    std::string truncated = UTF8Utils::truncateToBytes(new_name, sizeof(updated.database_name));
+    std::memset(updated.database_name, 0, sizeof(updated.database_name));
+    std::strncpy(updated.database_name, truncated.c_str(), sizeof(updated.database_name) - 1);
+    updated.last_modified_time = std::chrono::system_clock::now().time_since_epoch().count();
 
-    bp->unpinPage(emulated_dbs_table_page_, true, ctx);
+    status = updateRecordInHeapPage(emulated_dbs_table_page_, target_predicate, updated, ctx);
+    if (status != Status::OK)
+    {
+        if (renamed)
+        {
+            ErrorContext rollback_ctx;
+            (void)dropEmulatedDatabaseOverlayUnlocked(target.record.server_id, new_name, &rollback_ctx);
+        }
+        return status;
+    }
+
+    if (renamed)
+    {
+        status = dropEmulatedDatabaseOverlayUnlocked(target.record.server_id, old_name, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status,
+                              "Failed to remove previous emulated database overlay");
+            return status;
+        }
+    }
+
     return Status::OK;
 }
 
@@ -90059,82 +90302,46 @@ auto CatalogManager::updateEmulatedDatabaseOwner(const ID& emulated_db_id,
         return ctx ? ctx->code : Status::NOT_FOUND;
     }
 
-    BufferPool *bp = db_->buffer_pool();
-    void *page_data;
-    Status status = bp->pinPage(emulated_dbs_table_page_, &page_data, ctx);
-    if (status != Status::OK) return status;
-
-    HeapPage heap_page(static_cast<uint8_t *>(page_data), db_->page_size());
-    uint16_t item_count = heap_page.getItemCount();
-    bool found = false;
-    auto *mutable_page_data = static_cast<uint8_t *>(page_data);
-
-    for (uint16_t i = 0; i < item_count; ++i)
+    auto predicate = [&emulated_db_id](const EmulatedDatabaseRecord& rec) {
+        return rec.emulated_db_id == emulated_db_id && rec.is_valid == 1;
+    };
+    auto existing = findRecordInHeapPage<EmulatedDatabaseRecord>(emulated_dbs_table_page_, predicate, ctx);
+    if (existing.status != Status::OK)
     {
-        const uint8_t *tuple_data;
-        uint32_t tuple_size;
-        if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
-        {
-            if (tuple_size >= sizeof(TupleHeader) + sizeof(EmulatedDatabaseRecord))
-            {
-                const ptrdiff_t offset = tuple_data - static_cast<const uint8_t *>(page_data);
-                auto *record = reinterpret_cast<EmulatedDatabaseRecord *>(
-                    mutable_page_data + offset + sizeof(TupleHeader));
-
-                if (record->emulated_db_id == emulated_db_id && record->is_valid == 1)
-                {
-                    record->owner_id = owner_id;
-                    record->last_modified_time =
-                        std::chrono::system_clock::now().time_since_epoch().count();
-                    found = true;
-                    break;
-                }
-            }
-        }
+        return Status::NOT_FOUND;
     }
 
-    bp->unpinPage(emulated_dbs_table_page_, found, ctx);
-    return found ? Status::OK : Status::NOT_FOUND;
+    EmulatedDatabaseRecord updated = existing.record;
+    updated.owner_id = owner_id;
+    updated.last_modified_time = std::chrono::system_clock::now().time_since_epoch().count();
+    return updateRecordInHeapPage(emulated_dbs_table_page_, predicate, updated, ctx);
 }
 
 auto CatalogManager::dropEmulatedDatabase(const ID& emulated_db_id, ErrorContext* ctx) -> Status
 {
     std::lock_guard<CatalogMutex> lock(mutex_);
 
-    BufferPool *bp = db_->buffer_pool();
-    void *page_data;
-    Status status = bp->pinPage(emulated_dbs_table_page_, &page_data, ctx);
-    if (status != Status::OK) return status;
-
-    HeapPage heap_page(static_cast<uint8_t *>(page_data), db_->page_size());
-    uint16_t item_count = heap_page.getItemCount();
-    bool found = false;
-    auto *mutable_page_data = static_cast<uint8_t *>(page_data);
-
-    for (uint16_t i = 0; i < item_count; ++i)
+    auto predicate = [&emulated_db_id](const EmulatedDatabaseRecord& rec) {
+        return rec.emulated_db_id == emulated_db_id && rec.is_valid == 1;
+    };
+    auto existing = findRecordInHeapPage<EmulatedDatabaseRecord>(emulated_dbs_table_page_, predicate, ctx);
+    if (existing.status != Status::OK)
     {
-        const uint8_t *tuple_data;
-        uint32_t tuple_size;
-        if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
-        {
-            if (tuple_size >= sizeof(TupleHeader) + sizeof(EmulatedDatabaseRecord))
-            {
-                const ptrdiff_t offset = tuple_data - static_cast<const uint8_t *>(page_data);
-                auto *record = reinterpret_cast<EmulatedDatabaseRecord *>(
-                    mutable_page_data + offset + sizeof(TupleHeader));
-
-                if (record->emulated_db_id == emulated_db_id && record->is_valid == 1)
-                {
-                    record->is_valid = 0;
-                    found = true;
-                    break;
-                }
-            }
-        }
+        return Status::NOT_FOUND;
     }
 
-    bp->unpinPage(emulated_dbs_table_page_, found, ctx);
-    return found ? Status::OK : Status::NOT_FOUND;
+    const std::string database_name = fixedNameFromBuffer(existing.record.database_name,
+                                                          sizeof(existing.record.database_name));
+    Status status = dropEmulatedDatabaseOverlayUnlocked(existing.record.server_id, database_name, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    EmulatedDatabaseRecord updated = existing.record;
+    updated.is_valid = 0;
+    updated.last_modified_time = std::chrono::system_clock::now().time_since_epoch().count();
+    return updateRecordInHeapPage(emulated_dbs_table_page_, predicate, updated, ctx);
 }
 
 auto CatalogManager::listEmulatedDatabases(const ID& server_id,

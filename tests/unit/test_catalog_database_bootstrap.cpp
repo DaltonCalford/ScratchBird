@@ -792,6 +792,104 @@ TEST(CatalogDatabaseBootstrapTest, ClusterRenameMovesDynamicOverlaySchema)
     std::remove(db_path.c_str());
 }
 
+TEST(CatalogDatabaseBootstrapTest, EmulatedDatabaseLifecycleMaterializesDynamicOverlaySchema)
+{
+    std::string db_path = uniqueTestDbPath("test_catalog_emulated_overlay_lifecycle");
+    std::remove(db_path.c_str());
+
+    ErrorContext ctx;
+    ASSERT_EQ(Database::create(db_path, 8192, &ctx), Status::OK) << ctx.message;
+
+    {
+        Database db;
+        ASSERT_EQ(db.open(db_path, &ctx), Status::OK) << ctx.message;
+        auto* catalog = db.catalog_manager();
+        ASSERT_NE(catalog, nullptr);
+
+        ID emulation_type_id{};
+        ASSERT_EQ(catalog->createEmulationType("firebird", 5, 0, "", emulation_type_id, &ctx),
+                  Status::OK)
+            << ctx.message;
+
+        ID server_id{};
+        ASSERT_EQ(catalog->createEmulationServer("fb_local", emulation_type_id, "", server_id, &ctx),
+                  Status::OK)
+            << ctx.message;
+
+        ID emulated_db_id{};
+        ASSERT_EQ(catalog->createEmulatedDatabase("example_db",
+                                                  server_id,
+                                                  ID{},
+                                                  "",
+                                                  emulated_db_id,
+                                                  &ctx),
+                  Status::OK)
+            << ctx.message;
+
+        CatalogManager::SchemaInfo schema_info{};
+        EXPECT_EQ(catalog->getSchema("emulated.firebird.example_db", schema_info, &ctx), Status::OK)
+            << ctx.message;
+        EXPECT_EQ(catalog->getSchema("root.emulated.firebird.example_db", schema_info, &ctx), Status::OK)
+            << ctx.message;
+
+        ASSERT_EQ(catalog->dropEmulatedDatabase(emulated_db_id, &ctx), Status::OK) << ctx.message;
+        EXPECT_NE(catalog->getSchema("emulated.firebird.example_db", schema_info, &ctx), Status::OK);
+        EXPECT_NE(catalog->getSchema("emulated.firebird", schema_info, &ctx), Status::OK);
+
+        db.close();
+    }
+
+    std::remove(db_path.c_str());
+}
+
+TEST(CatalogDatabaseBootstrapTest, EmulatedDatabaseRenameMovesDynamicOverlaySchema)
+{
+    std::string db_path = uniqueTestDbPath("test_catalog_emulated_overlay_rename");
+    std::remove(db_path.c_str());
+
+    ErrorContext ctx;
+    ASSERT_EQ(Database::create(db_path, 8192, &ctx), Status::OK) << ctx.message;
+
+    {
+        Database db;
+        ASSERT_EQ(db.open(db_path, &ctx), Status::OK) << ctx.message;
+        auto* catalog = db.catalog_manager();
+        ASSERT_NE(catalog, nullptr);
+
+        ID emulation_type_id{};
+        ASSERT_EQ(catalog->createEmulationType("firebird", 5, 0, "", emulation_type_id, &ctx),
+                  Status::OK)
+            << ctx.message;
+
+        ID server_id{};
+        ASSERT_EQ(catalog->createEmulationServer("fb_local", emulation_type_id, "", server_id, &ctx),
+                  Status::OK)
+            << ctx.message;
+
+        ID emulated_db_id{};
+        ASSERT_EQ(catalog->createEmulatedDatabase("old_db",
+                                                  server_id,
+                                                  ID{},
+                                                  "",
+                                                  emulated_db_id,
+                                                  &ctx),
+                  Status::OK)
+            << ctx.message;
+
+        ASSERT_EQ(catalog->renameEmulatedDatabase(emulated_db_id, "new_db", &ctx), Status::OK)
+            << ctx.message;
+
+        CatalogManager::SchemaInfo schema_info{};
+        EXPECT_EQ(catalog->getSchema("emulated.firebird.new_db", schema_info, &ctx), Status::OK)
+            << ctx.message;
+        EXPECT_NE(catalog->getSchema("emulated.firebird.old_db", schema_info, &ctx), Status::OK);
+
+        db.close();
+    }
+
+    std::remove(db_path.c_str());
+}
+
 TEST(CatalogDatabaseBootstrapTest, CreatesDomainExtensionCatalogFamilyPages)
 {
     std::string db_path = uniqueTestDbPath("test_catalog_domain_extension_pages_bootstrap");
