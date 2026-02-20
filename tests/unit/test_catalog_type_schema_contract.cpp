@@ -90,8 +90,8 @@ protected:
 
 TEST_F(CatalogTypeSchemaContractTest, TypeNameUniquenessIsSchemaScoped)
 {
-    ID schema_a = createSchemaPath("root.users.public.cat010_schema_a");
-    ID schema_b = createSchemaPath("root.users.public.cat010_schema_b");
+    ID schema_a = createSchemaPath("users.public.cat010_schema_a");
+    ID schema_b = createSchemaPath("users.public.cat010_schema_b");
 
     ID type_a = upsertType(schema_a, "Amount");
     ASSERT_NE(type_a, ID{});
@@ -118,7 +118,7 @@ TEST_F(CatalogTypeSchemaContractTest, TypeNameUniquenessIsSchemaScoped)
 
 TEST_F(CatalogTypeSchemaContractTest, TypeModifierEnforcesSingleValueAndKindMatch)
 {
-    ID schema_id = createSchemaPath("root.users.public.cat010_modifier");
+    ID schema_id = createSchemaPath("users.public.cat010_modifier");
     ID type_id = upsertType(schema_id, "varchar_like");
 
     CatalogManager::TypeModifierInfo mismatch{};
@@ -154,7 +154,7 @@ TEST_F(CatalogTypeSchemaContractTest, TypeModifierEnforcesSingleValueAndKindMatc
 
 TEST_F(CatalogTypeSchemaContractTest, TypeIoIsUniquePerTypeAndUpsertedInPlace)
 {
-    ID schema_id = createSchemaPath("root.users.public.cat010_type_io");
+    ID schema_id = createSchemaPath("users.public.cat010_type_io");
     ID type_id = upsertType(schema_id, "bytea_like");
 
     CatalogManager::TypeIoInfo invalid{};
@@ -186,7 +186,7 @@ TEST_F(CatalogTypeSchemaContractTest, TypeIoIsUniquePerTypeAndUpsertedInPlace)
 
 TEST_F(CatalogTypeSchemaContractTest, TypeCastIsUniqueBySourceTargetAndKind)
 {
-    ID schema_id = createSchemaPath("root.users.public.cat010_type_cast");
+    ID schema_id = createSchemaPath("users.public.cat010_type_cast");
     ID source_type = upsertType(schema_id, "src_type");
     ID target_type = upsertType(schema_id, "dst_type");
 
@@ -221,7 +221,7 @@ TEST_F(CatalogTypeSchemaContractTest, TypeCastIsUniqueBySourceTargetAndKind)
 
 TEST_F(CatalogTypeSchemaContractTest, TypeTransformRequiresProcAndUniqueTypeLanguagePair)
 {
-    ID schema_id = createSchemaPath("root.users.public.cat010_transform");
+    ID schema_id = createSchemaPath("users.public.cat010_transform");
     ID type_id = upsertType(schema_id, "json_like");
 
     CatalogManager::TypeTransformInfo invalid{};

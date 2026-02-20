@@ -482,10 +482,7 @@ TEST_F(SchemaPathResolutionTest, CrossTypeAmbiguityReturnsError)
 TEST_F(SchemaPathResolutionTest, GetSchemaHonorsDelimitedNames)
 {
     ErrorContext ctx;
-    CatalogManager::SchemaInfo root;
-    ASSERT_EQ(catalog_->getSchema("root", root, &ctx), Status::OK) << ctx.message;
-
-    ID delimited_id = createDelimitedSchema(root.schema_id, "MixedCase");
+    ID delimited_id = createDelimitedSchema(ID{}, "MixedCase");
 
     CatalogManager::SchemaInfo info;
     Status status = catalog_->getSchema("MixedCase", info, &ctx);
@@ -506,10 +503,7 @@ TEST_F(SchemaPathResolutionTest, GetSchemaHonorsDelimitedNames)
 TEST_F(SchemaPathResolutionTest, ResolverHonorsDelimitedSchemaNames)
 {
     ErrorContext ctx;
-    CatalogManager::SchemaInfo root;
-    ASSERT_EQ(catalog_->getSchema("root", root, &ctx), Status::OK) << ctx.message;
-
-    ID delimited_id = createDelimitedSchema(root.schema_id, "MixedCase");
+    ID delimited_id = createDelimitedSchema(ID{}, "MixedCase");
     ID table_id = createTable(delimited_id, "widget");
 
     ID resolved_id;

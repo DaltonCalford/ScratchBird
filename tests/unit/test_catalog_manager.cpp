@@ -78,10 +78,10 @@ protected:
         ASSERT_NE(catalog, nullptr);
 
         CatalogManager::SchemaInfo default_schema;
-        Status schema_status = catalog->getSchema("public", default_schema, &ctx);
+        Status schema_status = catalog->getSchema("users.public", default_schema, &ctx);
         if (schema_status != Status::OK)
         {
-            schema_status = catalog->getSchema("root", default_schema, &ctx);
+            schema_status = catalog->getSchema("public", default_schema, &ctx);
         }
         ASSERT_EQ(schema_status, Status::OK);
 

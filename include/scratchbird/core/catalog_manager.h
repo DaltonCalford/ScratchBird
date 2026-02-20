@@ -337,7 +337,7 @@ public:
         struct SchemaInfo
         {
             ID schema_id;
-            ID parent_schema_id;                // Parent schema UUID (zero UUID for root)
+            ID parent_schema_id;                // Parent schema UUID (zero UUID for top-level schemas)
             std::string schema_name;            // Short name (not full path)
             bool name_is_delimited = false;     // True if name was double-quoted (case-sensitive)
             std::string full_path;              // Cached full dotted path (e.g., "emulation.firebird")

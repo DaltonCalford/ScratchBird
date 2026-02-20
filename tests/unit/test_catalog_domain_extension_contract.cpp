@@ -99,7 +99,7 @@ protected:
 
 TEST_F(CatalogDomainExtensionContractTest, DomainParamKeyAndParameterContracts)
 {
-    ID schema_id = createSchemaPath("root.users.public.cat011_domain_params");
+    ID schema_id = createSchemaPath("users.public.cat011_domain_params");
     ID domain_id = createBasicDomain(schema_id, "cat011_domain");
 
     CatalogManager::DomainParamKeyCatalogInfo key{};
@@ -151,7 +151,7 @@ TEST_F(CatalogDomainExtensionContractTest, DomainParamKeyAndParameterContracts)
 
 TEST_F(CatalogDomainExtensionContractTest, DomainConstraintCatalogContracts)
 {
-    ID schema_id = createSchemaPath("root.users.public.cat011_constraints");
+    ID schema_id = createSchemaPath("users.public.cat011_constraints");
     ID domain_id = createBasicDomain(schema_id, "constraint_domain");
 
     ErrorContext ctx;
@@ -192,7 +192,7 @@ TEST_F(CatalogDomainExtensionContractTest, DomainConstraintCatalogContracts)
 
 TEST_F(CatalogDomainExtensionContractTest, DomainSecurityValidationIntegrityContracts)
 {
-    ID schema_id = createSchemaPath("root.users.public.cat011_security_validation_integrity");
+    ID schema_id = createSchemaPath("users.public.cat011_security_validation_integrity");
     ID domain_id = createBasicDomain(schema_id, "quality_domain");
 
     ErrorContext ctx;

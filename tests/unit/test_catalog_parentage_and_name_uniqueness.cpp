@@ -109,7 +109,7 @@ protected:
 
 TEST_F(CatalogParentageAndNameUniquenessTest, TriggerNameCollisionIsParentScoped)
 {
-    ID schema_id = createSchemaPath("root.users.public.catalog_parentage");
+    ID schema_id = createSchemaPath("users.public.catalog_parentage");
     ID table_id = createTable(schema_id, "orders");
 
     ErrorContext ctx;
@@ -125,7 +125,7 @@ TEST_F(CatalogParentageAndNameUniquenessTest, TriggerNameCollisionIsParentScoped
 
 TEST_F(CatalogParentageAndNameUniquenessTest, SameTriggerNameOnDifferentTablesIsAllowed)
 {
-    ID schema_id = createSchemaPath("root.users.public.catalog_parentage");
+    ID schema_id = createSchemaPath("users.public.catalog_parentage");
     ID table_a = createTable(schema_id, "events_a");
     ID table_b = createTable(schema_id, "events_b");
 
@@ -152,7 +152,7 @@ TEST_F(CatalogParentageAndNameUniquenessTest, SameTriggerNameOnDifferentTablesIs
 
 TEST_F(CatalogParentageAndNameUniquenessTest, TriggerListingOrderIsDeterministic)
 {
-    ID schema_id = createSchemaPath("root.users.public.catalog_parentage");
+    ID schema_id = createSchemaPath("users.public.catalog_parentage");
     ID table_id = createTable(schema_id, "events_det");
 
     ErrorContext ctx;
@@ -215,7 +215,7 @@ TEST_F(CatalogParentageAndNameUniquenessTest, TriggerListingOrderIsDeterministic
 
 TEST_F(CatalogParentageAndNameUniquenessTest, IndexNameCollisionIsParentScoped)
 {
-    ID schema_id = createSchemaPath("root.users.public.catalog_parentage");
+    ID schema_id = createSchemaPath("users.public.catalog_parentage");
     ID table_a = createTable(schema_id, "customer_a");
     ID table_b = createTable(schema_id, "customer_b");
 

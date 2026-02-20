@@ -278,99 +278,97 @@ SYSTEM [o] (USER)
 [sb_redis_dom]set [o] (DOMAIN)
 [sb_redis_dom]stream [o] (DOMAIN)
 [sb_redis_dom]zset [o] (DOMAIN)
+cluster [o] (SCHEMA)
+cluster [s]
+connections [o] (SCHEMA)
+connections [s]
 daily_sweep [o] (JOB)
+emulated [o] (SCHEMA)
+emulated [s]
+group [o] (SCHEMA)
+group [s]
+local [o] (SCHEMA)
+local [s]
+local.instances [o] (SCHEMA)
+local.instances [s]
+local.links [o] (SCHEMA)
+local.links [s]
+nosql [o] (SCHEMA)
+nosql [s]
+nosql.cassandra [o] (SCHEMA)
+nosql.cassandra [s]
+nosql.milvus [o] (SCHEMA)
+nosql.milvus [s]
+nosql.mongodb [o] (SCHEMA)
+nosql.mongodb [s]
+nosql.neo4j [o] (SCHEMA)
+nosql.neo4j [s]
+nosql.redis [o] (SCHEMA)
+nosql.redis [s]
 rebuild_indexes [o] (JOB)
-root [o] (SCHEMA)
-root [s]
-root.cluster [o] (SCHEMA)
-root.cluster [s]
-root.connections [o] (SCHEMA)
-root.connections [s]
-root.emulated [o] (SCHEMA)
-root.emulated [s]
-root.group [o] (SCHEMA)
-root.group [s]
-root.local [o] (SCHEMA)
-root.local [s]
-root.local.instances [o] (SCHEMA)
-root.local.instances [s]
-root.local.links [o] (SCHEMA)
-root.local.links [s]
-root.nosql [o] (SCHEMA)
-root.nosql [s]
-root.nosql.cassandra [o] (SCHEMA)
-root.nosql.cassandra [s]
-root.nosql.milvus [o] (SCHEMA)
-root.nosql.milvus [s]
-root.nosql.mongodb [o] (SCHEMA)
-root.nosql.mongodb [s]
-root.nosql.neo4j [o] (SCHEMA)
-root.nosql.neo4j [s]
-root.nosql.redis [o] (SCHEMA)
-root.nosql.redis [s]
-root.remote [o] (SCHEMA)
-root.remote [s]
-root.remote.emulation [o] (SCHEMA)
-root.remote.emulation [s]
-root.remote.emulation.cassandra [o] (SCHEMA)
-root.remote.emulation.cassandra [s]
-root.remote.emulation.firebird [o] (SCHEMA)
-root.remote.emulation.firebird [s]
-root.remote.emulation.milvus [o] (SCHEMA)
-root.remote.emulation.milvus [s]
-root.remote.emulation.mongodb [o] (SCHEMA)
-root.remote.emulation.mongodb [s]
-root.remote.emulation.mysql [o] (SCHEMA)
-root.remote.emulation.mysql [s]
-root.remote.emulation.neo4j [o] (SCHEMA)
-root.remote.emulation.neo4j [s]
-root.remote.emulation.postgresql [o] (SCHEMA)
-root.remote.emulation.postgresql [s]
-root.remote.emulation.redis [o] (SCHEMA)
-root.remote.emulation.redis [s]
-root.remote.fdw [o] (SCHEMA)
-root.remote.fdw [s]
-root.remote.links [o] (SCHEMA)
-root.remote.links [s]
-root.sys [o] (SCHEMA)
-root.sys [s]
-root.sys.cluster [o] (SCHEMA)
-root.sys.cluster [s]
-root.sys.connections [o] (SCHEMA)
-root.sys.connections [s]
-root.sys.emulation [o] (SCHEMA)
-root.sys.emulation [s]
-root.sys.information [o] (SCHEMA)
-root.sys.information [s]
-root.sys.jobs [o] (SCHEMA)
-root.sys.jobs [s]
-root.sys.sb_toast_019c7bf0-7542-7bd8-bff2-430d0943a9a3 [o] (TABLE)
-root.sys.sb_toast_019c7bf0-7542-7bd8-bff2-430d0943a9a3.chunk_data [o] (COLUMN)
-root.sys.sb_toast_019c7bf0-7542-7bd8-bff2-430d0943a9a3.chunk_id [o] (COLUMN)
-root.sys.sb_toast_019c7bf0-7542-7bd8-bff2-430d0943a9a3.chunk_seq [o] (COLUMN)
-root.sys.sb_toast_019c7bf0-7542-7bd8-bff2-430d0943a9a3.sb_toast_019c7bf0-7542-7bd8-bff2-430d0943a9a3_idx [o] (INDEX)
-root.sys.schema [o] (SCHEMA)
-root.sys.schema [s]
-root.sys.security [o] (SCHEMA)
-root.sys.security [s]
-root.sys.security.auth [o] (SCHEMA)
-root.sys.security.auth [s]
-root.sys.security.groups [o] (SCHEMA)
-root.sys.security.groups [s]
-root.sys.security.roles [o] (SCHEMA)
-root.sys.security.roles [s]
-root.sys.security.users [o] (SCHEMA)
-root.sys.security.users [s]
-root.sys.system [o] (SCHEMA)
-root.sys.system [s]
-root.users [o] (SCHEMA)
-root.users [s]
-root.users.app_data [o] (SCHEMA)
-root.users.app_data [s]
-root.users.groups [o] (SCHEMA)
-root.users.groups [s]
-root.users.public [o] (SCHEMA)
-root.users.public [s]
-root.users.roles [o] (SCHEMA)
-root.users.roles [s]
+remote [o] (SCHEMA)
+remote [s]
+remote.emulation [o] (SCHEMA)
+remote.emulation [s]
+remote.emulation.cassandra [o] (SCHEMA)
+remote.emulation.cassandra [s]
+remote.emulation.firebird [o] (SCHEMA)
+remote.emulation.firebird [s]
+remote.emulation.milvus [o] (SCHEMA)
+remote.emulation.milvus [s]
+remote.emulation.mongodb [o] (SCHEMA)
+remote.emulation.mongodb [s]
+remote.emulation.mysql [o] (SCHEMA)
+remote.emulation.mysql [s]
+remote.emulation.neo4j [o] (SCHEMA)
+remote.emulation.neo4j [s]
+remote.emulation.postgresql [o] (SCHEMA)
+remote.emulation.postgresql [s]
+remote.emulation.redis [o] (SCHEMA)
+remote.emulation.redis [s]
+remote.fdw [o] (SCHEMA)
+remote.fdw [s]
+remote.links [o] (SCHEMA)
+remote.links [s]
+sys [o] (SCHEMA)
+sys [s]
+sys.cluster [o] (SCHEMA)
+sys.cluster [s]
+sys.connections [o] (SCHEMA)
+sys.connections [s]
+sys.emulation [o] (SCHEMA)
+sys.emulation [s]
+sys.information [o] (SCHEMA)
+sys.information [s]
+sys.jobs [o] (SCHEMA)
+sys.jobs [s]
+sys.sb_toast_019c7c20-1894-7473-a41e-7587c5abafd5 [o] (TABLE)
+sys.sb_toast_019c7c20-1894-7473-a41e-7587c5abafd5.chunk_data [o] (COLUMN)
+sys.sb_toast_019c7c20-1894-7473-a41e-7587c5abafd5.chunk_id [o] (COLUMN)
+sys.sb_toast_019c7c20-1894-7473-a41e-7587c5abafd5.chunk_seq [o] (COLUMN)
+sys.sb_toast_019c7c20-1894-7473-a41e-7587c5abafd5.sb_toast_019c7c20-1894-7473-a41e-7587c5abafd5_idx [o] (INDEX)
+sys.schema [o] (SCHEMA)
+sys.schema [s]
+sys.security [o] (SCHEMA)
+sys.security [s]
+sys.security.auth [o] (SCHEMA)
+sys.security.auth [s]
+sys.security.groups [o] (SCHEMA)
+sys.security.groups [s]
+sys.security.roles [o] (SCHEMA)
+sys.security.roles [s]
+sys.security.users [o] (SCHEMA)
+sys.security.users [s]
+sys.system [o] (SCHEMA)
+sys.system [s]
 update_stats [o] (JOB)
+users [o] (SCHEMA)
+users [s]
+users.app_data [o] (SCHEMA)
+users.app_data [s]
+users.groups [o] (SCHEMA)
+users.groups [s]
+users.public [o] (SCHEMA)
+users.public [s]
+users.roles [o] (SCHEMA)
+users.roles [s]

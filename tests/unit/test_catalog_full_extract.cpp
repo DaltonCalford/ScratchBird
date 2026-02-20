@@ -393,8 +393,8 @@ std::vector<std::pair<std::string, std::string>> parseBootstrapSchemaNodes(const
 
         // Parse manually to avoid brittle regex groups on nullptr variant.
         // Expected forms:
-        // {"root", "root", nullptr, true},
-        // {"root.sys", "sys", "root", false},
+        // {"sys", "sys", nullptr, false},
+        // {"sys.security", "security", "sys", false},
         std::vector<std::string> quoted;
         std::string token;
         bool in_quote = false;
@@ -666,7 +666,7 @@ TEST(CatalogFullExtractAudit, ExportCatalogStructureAndUsage)
             std::string canonical_guess;
             if (!alias.empty())
             {
-                canonical_guess = "root.sys.catalog." + logical_name;
+                canonical_guess = "sys.catalog." + logical_name;
             }
 
             size_t refs_core_cpp = 0;

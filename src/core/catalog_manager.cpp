@@ -3366,6 +3366,22 @@ std::vector<std::string> splitSchemaPath(const std::string& path) {
     return components;
 }
 
+bool isLegacyRootComponent(const std::string& component)
+{
+    return IdentifierUtils::namesMatch(component,
+                                       false /*search_delimited*/,
+                                       "root",
+                                       false /*stored_delimited*/);
+}
+
+void stripLegacyRootPrefix(std::vector<std::string>& components)
+{
+    if (!components.empty() && isLegacyRootComponent(components.front()))
+    {
+        components.erase(components.begin());
+    }
+}
+
 uint32_t readUint32LE(const uint8_t* data) {
     return static_cast<uint32_t>(data[0]) |
            (static_cast<uint32_t>(data[1]) << 8) |
@@ -4312,7 +4328,7 @@ bool hasTriggerNameConflictInTable(
     struct SchemaRecord
     {
         ID schema_id;
-        ID parent_schema_id;            // Parent schema UUID (zero UUID for root schemas)
+        ID parent_schema_id;            // Parent schema UUID (zero UUID for top-level schemas)
         char schema_name[512];          // SQL standard: 128 characters (512 bytes = 128 chars × 4 bytes/char max UTF-8)
         ID owner_id;                    // Owner UUID reference (NOT name - allows rename without breaking dependencies)
         ID default_tablespace_id;       // Default tablespace UUID ([sb_dom]KEY_TABLESPACE)
@@ -11285,51 +11301,50 @@ bool hasTriggerNameConflictInTable(
             bool force_database_uuid;
         };
 
-        static constexpr std::array<BootstrapSchemaNode, 44> kBootstrapSchemas = {{
-            {"root", "root", nullptr, true},
-            {"root.sys", "sys", "root", false},
-            {"root.connections", "connections", "root", false},
-            {"root.users", "users", "root", false},
-            {"root.group", "group", "root", false},
-            {"root.cluster", "cluster", "root", false},
-            {"root.remote", "remote", "root", false},
-            {"root.local", "local", "root", false},
-            {"root.nosql", "nosql", "root", false},
-            {"root.emulated", "emulated", "root", false},
-            {"root.sys.information", "information", "root.sys", false},
-            {"root.sys.security", "security", "root.sys", false},
-            {"root.sys.system", "system", "root.sys", false},
-            {"root.sys.schema", "schema", "root.sys", false},
-            {"root.sys.cluster", "cluster", "root.sys", false},
-            {"root.sys.connections", "connections", "root.sys", false},
-            {"root.sys.emulation", "emulation", "root.sys", false},
-            {"root.sys.jobs", "jobs", "root.sys", false},
-            {"root.users.public", "public", "root.users", false},
-            {"root.users.app_data", "app_data", "root.users", false},
-            {"root.users.roles", "roles", "root.users", false},
-            {"root.users.groups", "groups", "root.users", false},
-            {"root.remote.emulation", "emulation", "root.remote", false},
-            {"root.remote.fdw", "fdw", "root.remote", false},
-            {"root.remote.links", "links", "root.remote", false},
-            {"root.local.instances", "instances", "root.local", false},
-            {"root.local.links", "links", "root.local", false},
-            {"root.nosql.cassandra", "cassandra", "root.nosql", false},
-            {"root.nosql.mongodb", "mongodb", "root.nosql", false},
-            {"root.nosql.neo4j", "neo4j", "root.nosql", false},
-            {"root.nosql.redis", "redis", "root.nosql", false},
-            {"root.nosql.milvus", "milvus", "root.nosql", false},
-            {"root.sys.security.users", "users", "root.sys.security", false},
-            {"root.sys.security.roles", "roles", "root.sys.security", false},
-            {"root.sys.security.groups", "groups", "root.sys.security", false},
-            {"root.sys.security.auth", "auth", "root.sys.security", false},
-            {"root.remote.emulation.firebird", "firebird", "root.remote.emulation", false},
-            {"root.remote.emulation.postgresql", "postgresql", "root.remote.emulation", false},
-            {"root.remote.emulation.mysql", "mysql", "root.remote.emulation", false},
-            {"root.remote.emulation.cassandra", "cassandra", "root.remote.emulation", false},
-            {"root.remote.emulation.mongodb", "mongodb", "root.remote.emulation", false},
-            {"root.remote.emulation.neo4j", "neo4j", "root.remote.emulation", false},
-            {"root.remote.emulation.redis", "redis", "root.remote.emulation", false},
-            {"root.remote.emulation.milvus", "milvus", "root.remote.emulation", false},
+        static constexpr std::array<BootstrapSchemaNode, 43> kBootstrapSchemas = {{
+            {"sys", "sys", nullptr, false},
+            {"connections", "connections", nullptr, false},
+            {"users", "users", nullptr, false},
+            {"group", "group", nullptr, false},
+            {"cluster", "cluster", nullptr, false},
+            {"remote", "remote", nullptr, false},
+            {"local", "local", nullptr, false},
+            {"nosql", "nosql", nullptr, false},
+            {"emulated", "emulated", nullptr, false},
+            {"sys.information", "information", "sys", false},
+            {"sys.security", "security", "sys", false},
+            {"sys.system", "system", "sys", false},
+            {"sys.schema", "schema", "sys", false},
+            {"sys.cluster", "cluster", "sys", false},
+            {"sys.connections", "connections", "sys", false},
+            {"sys.emulation", "emulation", "sys", false},
+            {"sys.jobs", "jobs", "sys", false},
+            {"users.public", "public", "users", false},
+            {"users.app_data", "app_data", "users", false},
+            {"users.roles", "roles", "users", false},
+            {"users.groups", "groups", "users", false},
+            {"remote.emulation", "emulation", "remote", false},
+            {"remote.fdw", "fdw", "remote", false},
+            {"remote.links", "links", "remote", false},
+            {"local.instances", "instances", "local", false},
+            {"local.links", "links", "local", false},
+            {"nosql.cassandra", "cassandra", "nosql", false},
+            {"nosql.mongodb", "mongodb", "nosql", false},
+            {"nosql.neo4j", "neo4j", "nosql", false},
+            {"nosql.redis", "redis", "nosql", false},
+            {"nosql.milvus", "milvus", "nosql", false},
+            {"sys.security.users", "users", "sys.security", false},
+            {"sys.security.roles", "roles", "sys.security", false},
+            {"sys.security.groups", "groups", "sys.security", false},
+            {"sys.security.auth", "auth", "sys.security", false},
+            {"remote.emulation.firebird", "firebird", "remote.emulation", false},
+            {"remote.emulation.postgresql", "postgresql", "remote.emulation", false},
+            {"remote.emulation.mysql", "mysql", "remote.emulation", false},
+            {"remote.emulation.cassandra", "cassandra", "remote.emulation", false},
+            {"remote.emulation.mongodb", "mongodb", "remote.emulation", false},
+            {"remote.emulation.neo4j", "neo4j", "remote.emulation", false},
+            {"remote.emulation.redis", "redis", "remote.emulation", false},
+            {"remote.emulation.milvus", "milvus", "remote.emulation", false},
         }};
 
         std::unordered_map<std::string, ID> bootstrap_schema_ids;
@@ -11371,7 +11386,7 @@ bool hasTriggerNameConflictInTable(
         }
 
         ID public_id{};
-        auto public_it = bootstrap_schema_ids.find("root.users.public");
+        auto public_it = bootstrap_schema_ids.find("users.public");
         if (public_it == bootstrap_schema_ids.end())
         {
             SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Bootstrap public schema missing");
@@ -13084,7 +13099,7 @@ bool hasTriggerNameConflictInTable(
                     return createSchemaInternal(name, "system", id_out, parent_id, ctx);
                 };
 
-                ID root_id{};
+                ID legacy_root_id{};
                 for (const auto& [id, info] : schema_cache_)
                 {
                     if (isZeroUuidLocal(info.parent_schema_id) &&
@@ -13092,19 +13107,9 @@ bool hasTriggerNameConflictInTable(
                                                     info.schema_name,
                                                     info.name_is_delimited))
                     {
-                        root_id = id;
+                        legacy_root_id = id;
                         break;
                     }
-                }
-                if (isZeroUuidLocal(root_id))
-                {
-                    SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Root schema missing");
-                    return Status::PAGE_CORRUPT;
-                }
-                if (root_id != db_->uuid())
-                {
-                    SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Root schema UUID mismatch");
-                    return Status::PAGE_CORRUPT;
                 }
 
                 struct CanonicalSchemaNode
@@ -13116,62 +13121,71 @@ bool hasTriggerNameConflictInTable(
                 };
 
                 static constexpr std::array<CanonicalSchemaNode, 43> kCanonicalNodes = {{
-                    {"root.sys", "sys", "root", nullptr},
-                    {"root.connections", "connections", "root", nullptr},
-                    {"root.users", "users", "root", nullptr},
-                    {"root.group", "group", "root", nullptr},
-                    {"root.cluster", "cluster", "root", nullptr},
-                    {"root.remote", "remote", "root", nullptr},
-                    {"root.local", "local", "root", nullptr},
-                    {"root.nosql", "nosql", "root", nullptr},
-                    {"root.emulated", "emulated", "root", nullptr},
-                    {"root.sys.information", "information", "root.sys", nullptr},
-                    {"root.sys.security", "security", "root.sys", nullptr},
-                    {"root.sys.system", "system", "root.sys", nullptr},
-                    {"root.sys.schema", "schema", "root.sys", nullptr},
-                    {"root.sys.cluster", "cluster", "root.sys", nullptr},
-                    {"root.sys.connections", "connections", "root.sys", nullptr},
-                    {"root.sys.emulation", "emulation", "root.sys", nullptr},
-                    {"root.sys.jobs", "jobs", "root.sys", nullptr},
-                    {"root.users.public", "public", "root.users", "root"},
-                    {"root.users.app_data", "app_data", "root.users", nullptr},
-                    {"root.users.roles", "roles", "root.users", nullptr},
-                    {"root.users.groups", "groups", "root.users", nullptr},
-                    {"root.remote.emulation", "emulation", "root.remote", "root"},
-                    {"root.remote.fdw", "fdw", "root.remote", nullptr},
-                    {"root.remote.links", "links", "root.remote", nullptr},
-                    {"root.local.instances", "instances", "root.local", nullptr},
-                    {"root.local.links", "links", "root.local", nullptr},
-                    {"root.nosql.cassandra", "cassandra", "root.nosql", nullptr},
-                    {"root.nosql.mongodb", "mongodb", "root.nosql", nullptr},
-                    {"root.nosql.neo4j", "neo4j", "root.nosql", nullptr},
-                    {"root.nosql.redis", "redis", "root.nosql", nullptr},
-                    {"root.nosql.milvus", "milvus", "root.nosql", nullptr},
-                    {"root.sys.security.users", "users", "root.sys.security", nullptr},
-                    {"root.sys.security.roles", "roles", "root.sys.security", nullptr},
-                    {"root.sys.security.groups", "groups", "root.sys.security", nullptr},
-                    {"root.sys.security.auth", "auth", "root.sys.security", nullptr},
-                    {"root.remote.emulation.firebird", "firebird", "root.remote.emulation", nullptr},
-                    {"root.remote.emulation.postgresql", "postgresql", "root.remote.emulation", nullptr},
-                    {"root.remote.emulation.mysql", "mysql", "root.remote.emulation", nullptr},
-                    {"root.remote.emulation.cassandra", "cassandra", "root.remote.emulation", nullptr},
-                    {"root.remote.emulation.mongodb", "mongodb", "root.remote.emulation", nullptr},
-                    {"root.remote.emulation.neo4j", "neo4j", "root.remote.emulation", nullptr},
-                    {"root.remote.emulation.redis", "redis", "root.remote.emulation", nullptr},
-                    {"root.remote.emulation.milvus", "milvus", "root.remote.emulation", nullptr},
+                    {"sys", "sys", nullptr, "root"},
+                    {"connections", "connections", nullptr, "root"},
+                    {"users", "users", nullptr, "root"},
+                    {"group", "group", nullptr, "root"},
+                    {"cluster", "cluster", nullptr, "root"},
+                    {"remote", "remote", nullptr, "root"},
+                    {"local", "local", nullptr, "root"},
+                    {"nosql", "nosql", nullptr, "root"},
+                    {"emulated", "emulated", nullptr, "root"},
+                    {"sys.information", "information", "sys", nullptr},
+                    {"sys.security", "security", "sys", nullptr},
+                    {"sys.system", "system", "sys", nullptr},
+                    {"sys.schema", "schema", "sys", nullptr},
+                    {"sys.cluster", "cluster", "sys", nullptr},
+                    {"sys.connections", "connections", "sys", nullptr},
+                    {"sys.emulation", "emulation", "sys", nullptr},
+                    {"sys.jobs", "jobs", "sys", nullptr},
+                    {"users.public", "public", "users", "root"},
+                    {"users.app_data", "app_data", "users", nullptr},
+                    {"users.roles", "roles", "users", nullptr},
+                    {"users.groups", "groups", "users", nullptr},
+                    {"remote.emulation", "emulation", "remote", "root"},
+                    {"remote.fdw", "fdw", "remote", nullptr},
+                    {"remote.links", "links", "remote", nullptr},
+                    {"local.instances", "instances", "local", nullptr},
+                    {"local.links", "links", "local", nullptr},
+                    {"nosql.cassandra", "cassandra", "nosql", nullptr},
+                    {"nosql.mongodb", "mongodb", "nosql", nullptr},
+                    {"nosql.neo4j", "neo4j", "nosql", nullptr},
+                    {"nosql.redis", "redis", "nosql", nullptr},
+                    {"nosql.milvus", "milvus", "nosql", nullptr},
+                    {"sys.security.users", "users", "sys.security", nullptr},
+                    {"sys.security.roles", "roles", "sys.security", nullptr},
+                    {"sys.security.groups", "groups", "sys.security", nullptr},
+                    {"sys.security.auth", "auth", "sys.security", nullptr},
+                    {"remote.emulation.firebird", "firebird", "remote.emulation", nullptr},
+                    {"remote.emulation.postgresql", "postgresql", "remote.emulation", nullptr},
+                    {"remote.emulation.mysql", "mysql", "remote.emulation", nullptr},
+                    {"remote.emulation.cassandra", "cassandra", "remote.emulation", nullptr},
+                    {"remote.emulation.mongodb", "mongodb", "remote.emulation", nullptr},
+                    {"remote.emulation.neo4j", "neo4j", "remote.emulation", nullptr},
+                    {"remote.emulation.redis", "redis", "remote.emulation", nullptr},
+                    {"remote.emulation.milvus", "milvus", "remote.emulation", nullptr},
                 }};
 
                 std::unordered_map<std::string, ID> canonical_schema_ids;
                 canonical_schema_ids.reserve(kCanonicalNodes.size() + 1);
-                canonical_schema_ids.emplace("root", root_id);
+                if (!isZeroUuidLocal(legacy_root_id))
+                {
+                    canonical_schema_ids.emplace("root", legacy_root_id);
+                }
 
                 for (const auto& node : kCanonicalNodes)
                 {
-                    auto parent_it = canonical_schema_ids.find(node.parent_path);
-                    if (parent_it == canonical_schema_ids.end())
+                    ID parent_id{};
+                    if (node.parent_path != nullptr)
                     {
-                        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "Canonical schema parent missing");
-                        return Status::PAGE_CORRUPT;
+                        auto parent_it = canonical_schema_ids.find(node.parent_path);
+                        if (parent_it == canonical_schema_ids.end())
+                        {
+                            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT,
+                                              "Canonical schema parent missing");
+                            return Status::PAGE_CORRUPT;
+                        }
+                        parent_id = parent_it->second;
                     }
 
                     std::optional<ID> legacy_parent_id;
@@ -13185,12 +13199,72 @@ bool hasTriggerNameConflictInTable(
                     }
 
                     ID schema_id{};
-                    status = ensure_schema(node.name, parent_it->second, legacy_parent_id, schema_id);
+                    status = ensure_schema(node.name, parent_id, legacy_parent_id, schema_id);
                     if (status != Status::OK)
                     {
                         return status;
                     }
                     canonical_schema_ids.emplace(node.path, schema_id);
+                }
+
+                bool removed_legacy_root = false;
+                if (!isZeroUuidLocal(legacy_root_id))
+                {
+                    bool has_children = false;
+                    for (const auto& [id, info] : schema_cache_)
+                    {
+                        (void)id;
+                        if (info.parent_schema_id == legacy_root_id)
+                        {
+                            has_children = true;
+                            break;
+                        }
+                    }
+
+                    if (!has_children)
+                    {
+                        auto root_it = schema_cache_.find(legacy_root_id);
+                        if (root_it != schema_cache_.end())
+                        {
+                            auto predicate = [&](const SchemaRecord& rec) {
+                                return rec.schema_id == legacy_root_id && rec.is_valid == 1;
+                            };
+                            auto result = findRecordInHeapPage<SchemaRecord>(
+                                schemas_table_page_, predicate, ctx);
+                            if (result.status != Status::OK && result.status != Status::NOT_FOUND)
+                            {
+                                return result.status;
+                            }
+                            if (result.status == Status::OK)
+                            {
+                                SchemaRecord updated = result.record;
+                                updated.is_valid = 0;
+                                updated.last_modified_time =
+                                    std::chrono::system_clock::now().time_since_epoch().count();
+                                Status update_status = updateRecordInHeapPage(
+                                    schemas_table_page_, result.slot_index, updated, ctx);
+                                if (update_status != Status::OK)
+                                {
+                                    return update_status;
+                                }
+                            }
+                            schema_cache_.erase(root_it);
+                            if (schema_count_ > 0)
+                            {
+                                --schema_count_;
+                            }
+                            removed_legacy_root = true;
+                        }
+                    }
+                }
+
+                if (removed_legacy_root)
+                {
+                    status = writeCatalogRoot(ctx);
+                    if (status != Status::OK)
+                    {
+                        return status;
+                    }
                 }
 
                 ID system_user_id = getSystemUserIdUnlocked(ctx);
@@ -13858,18 +13932,7 @@ bool hasTriggerNameConflictInTable(
                                       ID &schema_id, ErrorContext *ctx) -> Status
     {
         std::lock_guard<CatalogMutex> lock(mutex_);
-        const std::string root_name = "root";
         ID parent_schema_id{};
-        for (const auto& [id, info] : schema_cache_)
-        {
-            if (isZeroUuidLocal(info.parent_schema_id) &&
-                IdentifierUtils::namesMatch(root_name, false /*search_delimited*/,
-                                            info.schema_name, info.name_is_delimited))
-            {
-                parent_schema_id = info.schema_id;
-                break;
-            }
-        }
         return createSchemaInternal(schema_name, owner, schema_id, parent_schema_id, ctx);
     }
 
@@ -13889,12 +13952,8 @@ bool hasTriggerNameConflictInTable(
         Status status = getSchema(root_schema_name, root_schema, ctx);
         if (status != Status::OK)
         {
-            status = getSchema("root." + root_schema_name, root_schema, ctx);
-            if (status != Status::OK)
-            {
-                SET_ERROR_CONTEXT(ctx, status, "Overlay root schema not found");
-                return status;
-            }
+            SET_ERROR_CONTEXT(ctx, status, "Overlay root schema not found");
+            return status;
         }
 
         for (const auto& [id, info] : schema_cache_)
@@ -13937,11 +13996,7 @@ bool hasTriggerNameConflictInTable(
         Status status = getSchema(root_schema_name, root_schema, nullptr);
         if (status != Status::OK)
         {
-            status = getSchema("root." + root_schema_name, root_schema, nullptr);
-            if (status != Status::OK)
-            {
-                return Status::OK;
-            }
+            return Status::OK;
         }
 
         ID child_schema_id{};
@@ -14077,19 +14132,8 @@ bool hasTriggerNameConflictInTable(
         status = getSchema("emulated", emulated_root, nullptr);
         if (status != Status::OK)
         {
-            status = getSchema("root.emulated", emulated_root, nullptr);
-        }
-        if (status != Status::OK)
-        {
-            SchemaInfo root_schema;
-            status = getSchema("root", root_schema, ctx);
-            if (status != Status::OK)
-            {
-                return status;
-            }
-
             ID emulated_root_id{};
-            status = createSchemaInternal("emulated", "system", emulated_root_id, root_schema.schema_id, ctx);
+            status = createSchemaInternal("emulated", "system", emulated_root_id, ID{}, ctx);
             if (status != Status::OK && status != Status::FILE_EXISTS)
             {
                 return status;
@@ -14142,11 +14186,7 @@ bool hasTriggerNameConflictInTable(
         status = getSchema("emulated", emulated_root, nullptr);
         if (status != Status::OK)
         {
-            status = getSchema("root.emulated", emulated_root, nullptr);
-            if (status != Status::OK)
-            {
-                return Status::OK;
-            }
+            return Status::OK;
         }
 
         ID engine_schema_id{};
@@ -14665,25 +14705,19 @@ bool hasTriggerNameConflictInTable(
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Schema name is empty");
             return Status::INVALID_ARGUMENT;
         }
-
-        const std::string root_name = "root";
-        ID root_schema_id{};
-        bool has_root = false;
+        stripLegacyRootPrefix(components);
+        if (components.empty())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Schema name resolves to database root, not a schema");
+            return Status::INVALID_ARGUMENT;
+        }
 
         std::unordered_map<ID, std::vector<ID>, IDHash> children;
         children.reserve(schema_cache_.size());
         for (const auto& [id, schema_info] : schema_cache_)
         {
             children[schema_info.parent_schema_id].push_back(schema_info.schema_id);
-            if (!has_root &&
-                isZeroUuidLocal(schema_info.parent_schema_id) &&
-                IdentifierUtils::namesMatch(root_name, false /*search_delimited*/,
-                                            schema_info.schema_name,
-                                            schema_info.name_is_delimited))
-            {
-                root_schema_id = schema_info.schema_id;
-                has_root = true;
-            }
         }
 
         auto resolve_from_start = [&](const ID& start, ID& resolved_out) -> bool {
@@ -14717,25 +14751,8 @@ bool hasTriggerNameConflictInTable(
             return true;
         };
 
-        ID start;
-        if (has_root &&
-            !components.empty() &&
-            !IdentifierUtils::namesMatch(components.front(), false /*search_delimited*/,
-                                         root_name, false /*stored_delimited*/))
-        {
-            start = root_schema_id;
-        }
-        else
-        {
-            start = ID{};
-        }
-
-        ID resolved;
-        bool resolved_ok = resolve_from_start(start, resolved);
-        if (!resolved_ok && has_root && start == root_schema_id)
-        {
-            resolved_ok = resolve_from_start(ID{}, resolved);
-        }
+        ID resolved{};
+        bool resolved_ok = resolve_from_start(ID{}, resolved);
         if (!resolved_ok &&
             IdentifierUtils::namesMatch(components.front(), false /*search_delimited*/,
                                         "public", false /*stored_delimited*/))
@@ -14775,11 +14792,7 @@ bool hasTriggerNameConflictInTable(
                 return true;
             };
 
-            if (has_root && fallback_resolve(root_schema_id))
-            {
-                resolved_ok = true;
-            }
-            else if (fallback_resolve(ID{}))
+            if (fallback_resolve(ID{}))
             {
                 resolved_ok = true;
             }
@@ -14913,6 +14926,12 @@ bool hasTriggerNameConflictInTable(
                 SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Schema not found for path");
                 return Status::NOT_FOUND;
             }
+            if (isZeroUuidLocal(info_it->second.parent_schema_id) &&
+                isLegacyRootComponent(info_it->second.schema_name))
+            {
+                info_it->second.full_path = current_path;
+                continue;
+            }
             if (current_path.empty())
             {
                 current_path = info_it->second.schema_name;
@@ -14942,30 +14961,15 @@ bool hasTriggerNameConflictInTable(
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Schema path is empty");
             return Status::INVALID_ARGUMENT;
         }
-
-        const std::string root_name = "root";
-        ID root_schema_id{};
-        bool has_root = false;
-        for (const auto& [id, info] : schema_cache_)
+        stripLegacyRootPrefix(components);
+        if (components.empty())
         {
-            if (!has_root &&
-                isZeroUuidLocal(info.parent_schema_id) &&
-                IdentifierUtils::namesMatch(root_name, false /*search_delimited*/,
-                                            info.schema_name, info.name_is_delimited))
-            {
-                root_schema_id = info.schema_id;
-                has_root = true;
-            }
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Schema path resolves to database root, not a schema");
+            return Status::INVALID_ARGUMENT;
         }
 
         ID current_parent{};
-        if (has_root &&
-            !components.empty() &&
-            !IdentifierUtils::namesMatch(components.front(), false /*search_delimited*/,
-                                         root_name, false /*stored_delimited*/))
-        {
-            current_parent = root_schema_id;
-        }
         for (const auto& component : components)
         {
             ID existing_id;
@@ -16101,17 +16105,6 @@ bool hasTriggerNameConflictInTable(
             return Status::OK;
         };
 
-        const std::string root_name = "root";
-        ID root_schema_id{};
-        bool has_root = false;
-        auto root_key = std::make_pair(ID{}, normalizeResolverName(root_name, false));
-        auto root_it = schema_name_lookup_.find(root_key);
-        if (root_it != schema_name_lookup_.end())
-        {
-            root_schema_id = root_it->second;
-            has_root = true;
-        }
-
         auto find_schema_child = [&](const ID& parent,
                                      const std::string& component,
                                      ID& child_out) -> bool {
@@ -16160,41 +16153,33 @@ bool hasTriggerNameConflictInTable(
 
             if (type == PathType::ABSOLUTE)
             {
+                std::vector<std::string> absolute_components = components;
+                stripLegacyRootPrefix(absolute_components);
+                if (absolute_components.empty())
+                {
+                    SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Schema path not found");
+                    return Status::NOT_FOUND;
+                }
+
                 ID resolved;
-                bool tried_root = false;
-                ID start = ID{};
-                if (has_root &&
-                    !components.empty() &&
-                    !IdentifierUtils::namesMatch(components.front(), false /*search_delimited*/,
-                                                 root_name, false /*stored_delimited*/))
-                {
-                    start = root_schema_id;
-                    tried_root = true;
-                }
-
-                if (resolve_from_start(start, components, resolved))
+                if (resolve_from_start(ID{}, absolute_components, resolved))
                 {
                     schema_id_out = resolved;
                     return Status::OK;
                 }
 
-                if (tried_root && resolve_from_start(ID{}, components, resolved))
-                {
-                    schema_id_out = resolved;
-                    return Status::OK;
-                }
-
-                if (!components.empty() &&
-                    IdentifierUtils::namesMatch(components.front(), false /*search_delimited*/,
+                if (!absolute_components.empty() &&
+                    IdentifierUtils::namesMatch(absolute_components.front(), false /*search_delimited*/,
                                                 "public", false /*stored_delimited*/))
                 {
                     std::vector<std::string> public_fallback;
-                    public_fallback.reserve(components.size() + 1);
+                    public_fallback.reserve(absolute_components.size() + 1);
                     public_fallback.emplace_back("users");
-                    public_fallback.insert(public_fallback.end(), components.begin(), components.end());
+                    public_fallback.insert(public_fallback.end(),
+                                           absolute_components.begin(),
+                                           absolute_components.end());
 
-                    if (resolve_from_start(root_schema_id, public_fallback, resolved) ||
-                        resolve_from_start(ID{}, public_fallback, resolved))
+                    if (resolve_from_start(ID{}, public_fallback, resolved))
                     {
                         schema_id_out = resolved;
                         return Status::OK;

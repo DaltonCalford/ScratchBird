@@ -53,8 +53,8 @@ protected:
 
         // Ensure default schema exists
         CatalogManager::SchemaInfo schema_info;
-        if (catalog->getSchema("public", schema_info, &ctx) != Status::OK) {
-            if (catalog->getSchema("root", schema_info, &ctx) != Status::OK) {
+        if (catalog->getSchema("users.public", schema_info, &ctx) != Status::OK) {
+            if (catalog->getSchema("public", schema_info, &ctx) != Status::OK) {
                 ID schema_id;
                 ASSERT_EQ(catalog->createSchema("public", "system", schema_id, &ctx), Status::OK);
             }

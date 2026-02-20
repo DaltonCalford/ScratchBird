@@ -1,45 +1,44 @@
 path	parent_path
-root	
-root.sys	root
-root.connections	root
-root.users	root
-root.group	root
-root.cluster	root
-root.remote	root
-root.local	root
-root.nosql	root
-root.emulated	root
-root.sys.information	root.sys
-root.sys.security	root.sys
-root.sys.system	root.sys
-root.sys.schema	root.sys
-root.sys.cluster	root.sys
-root.sys.connections	root.sys
-root.sys.emulation	root.sys
-root.sys.jobs	root.sys
-root.users.public	root.users
-root.users.app_data	root.users
-root.users.roles	root.users
-root.users.groups	root.users
-root.remote.emulation	root.remote
-root.remote.fdw	root.remote
-root.remote.links	root.remote
-root.local.instances	root.local
-root.local.links	root.local
-root.nosql.cassandra	root.nosql
-root.nosql.mongodb	root.nosql
-root.nosql.neo4j	root.nosql
-root.nosql.redis	root.nosql
-root.nosql.milvus	root.nosql
-root.sys.security.users	root.sys.security
-root.sys.security.roles	root.sys.security
-root.sys.security.groups	root.sys.security
-root.sys.security.auth	root.sys.security
-root.remote.emulation.firebird	root.remote.emulation
-root.remote.emulation.postgresql	root.remote.emulation
-root.remote.emulation.mysql	root.remote.emulation
-root.remote.emulation.cassandra	root.remote.emulation
-root.remote.emulation.mongodb	root.remote.emulation
-root.remote.emulation.neo4j	root.remote.emulation
-root.remote.emulation.redis	root.remote.emulation
-root.remote.emulation.milvus	root.remote.emulation
+sys	
+connections	
+users	
+group	
+cluster	
+remote	
+local	
+nosql	
+emulated	
+sys.information	sys
+sys.security	sys
+sys.system	sys
+sys.schema	sys
+sys.cluster	sys
+sys.connections	sys
+sys.emulation	sys
+sys.jobs	sys
+users.public	users
+users.app_data	users
+users.roles	users
+users.groups	users
+remote.emulation	remote
+remote.fdw	remote
+remote.links	remote
+local.instances	local
+local.links	local
+nosql.cassandra	nosql
+nosql.mongodb	nosql
+nosql.neo4j	nosql
+nosql.redis	nosql
+nosql.milvus	nosql
+sys.security.users	sys.security
+sys.security.roles	sys.security
+sys.security.groups	sys.security
+sys.security.auth	sys.security
+remote.emulation.firebird	remote.emulation
+remote.emulation.postgresql	remote.emulation
+remote.emulation.mysql	remote.emulation
+remote.emulation.cassandra	remote.emulation
+remote.emulation.mongodb	remote.emulation
+remote.emulation.neo4j	remote.emulation
+remote.emulation.redis	remote.emulation
+remote.emulation.milvus	remote.emulation

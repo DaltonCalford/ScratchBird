@@ -82307,10 +82307,11 @@ namespace scratchbird
                 if (!catalog) { return schema_id; }
                 core::CatalogManager::SchemaInfo schema_info;
                 core::ErrorContext ctx;
-            if (catalog->getSchema("root", schema_info, &ctx) == core::Status::OK)
-            {
-                schema_id = schema_info.schema_id;
-            }
+                if (catalog->getSchema("users.public", schema_info, &ctx) == core::Status::OK ||
+                    catalog->getSchema("public", schema_info, &ctx) == core::Status::OK)
+                {
+                    schema_id = schema_info.schema_id;
+                }
                 return schema_id;
             }
 

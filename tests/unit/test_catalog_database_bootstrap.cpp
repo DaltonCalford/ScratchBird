@@ -484,50 +484,49 @@ TEST(CatalogDatabaseBootstrapTest, CreatesCanonicalFixedSchemaTree)
     ASSERT_NE(catalog, nullptr);
 
     static constexpr const char* kCanonicalPaths[] = {
-        "root",
-        "root.sys",
-        "root.connections",
-        "root.users",
-        "root.group",
-        "root.cluster",
-        "root.remote",
-        "root.local",
-        "root.nosql",
-        "root.emulated",
-        "root.sys.information",
-        "root.sys.security",
-        "root.sys.system",
-        "root.sys.schema",
-        "root.sys.cluster",
-        "root.sys.connections",
-        "root.sys.emulation",
-        "root.sys.jobs",
-        "root.users.public",
-        "root.users.app_data",
-        "root.users.roles",
-        "root.users.groups",
-        "root.remote.emulation",
-        "root.remote.fdw",
-        "root.remote.links",
-        "root.local.instances",
-        "root.local.links",
-        "root.nosql.cassandra",
-        "root.nosql.mongodb",
-        "root.nosql.neo4j",
-        "root.nosql.redis",
-        "root.nosql.milvus",
-        "root.sys.security.users",
-        "root.sys.security.roles",
-        "root.sys.security.groups",
-        "root.sys.security.auth",
-        "root.remote.emulation.firebird",
-        "root.remote.emulation.postgresql",
-        "root.remote.emulation.mysql",
-        "root.remote.emulation.cassandra",
-        "root.remote.emulation.mongodb",
-        "root.remote.emulation.neo4j",
-        "root.remote.emulation.redis",
-        "root.remote.emulation.milvus",
+        "sys",
+        "connections",
+        "users",
+        "group",
+        "cluster",
+        "remote",
+        "local",
+        "nosql",
+        "emulated",
+        "sys.information",
+        "sys.security",
+        "sys.system",
+        "sys.schema",
+        "sys.cluster",
+        "sys.connections",
+        "sys.emulation",
+        "sys.jobs",
+        "users.public",
+        "users.app_data",
+        "users.roles",
+        "users.groups",
+        "remote.emulation",
+        "remote.fdw",
+        "remote.links",
+        "local.instances",
+        "local.links",
+        "nosql.cassandra",
+        "nosql.mongodb",
+        "nosql.neo4j",
+        "nosql.redis",
+        "nosql.milvus",
+        "sys.security.users",
+        "sys.security.roles",
+        "sys.security.groups",
+        "sys.security.auth",
+        "remote.emulation.firebird",
+        "remote.emulation.postgresql",
+        "remote.emulation.mysql",
+        "remote.emulation.cassandra",
+        "remote.emulation.mongodb",
+        "remote.emulation.neo4j",
+        "remote.emulation.redis",
+        "remote.emulation.milvus",
     };
 
     for (const char* path : kCanonicalPaths)
@@ -535,14 +534,15 @@ TEST(CatalogDatabaseBootstrapTest, CreatesCanonicalFixedSchemaTree)
         CatalogManager::SchemaInfo info;
         EXPECT_EQ(catalog->getSchema(path, info, &ctx), Status::OK)
             << "missing canonical schema path: " << path << " err=" << ctx.message;
+
+        CatalogManager::SchemaInfo legacy_info;
+        EXPECT_EQ(catalog->getSchema(std::string("root.") + path, legacy_info, &ctx), Status::OK)
+            << "missing legacy root-prefixed alias path: root." << path
+            << " err=" << ctx.message;
     }
 
-    CatalogManager::SchemaInfo root;
-    ASSERT_EQ(catalog->getSchema("root", root, &ctx), Status::OK) << ctx.message;
-    EXPECT_EQ(root.schema_id, db.uuid());
-    EXPECT_TRUE(isZeroUuid(root.parent_schema_id));
-
     CatalogManager::SchemaInfo legacy;
+    EXPECT_EQ(catalog->getSchema("root", legacy, &ctx), Status::INVALID_ARGUMENT);
     EXPECT_EQ(catalog->getSchema("root.app", legacy, &ctx), Status::INVALID_ARGUMENT);
     EXPECT_EQ(catalog->getSchema("root.sys.sec", legacy, &ctx), Status::INVALID_ARGUMENT);
     EXPECT_EQ(catalog->getSchema("root.sys.config", legacy, &ctx), Status::INVALID_ARGUMENT);
