@@ -8,6 +8,7 @@
  * https://www.firebirdsql.org/en/initial-developer-s-public-license-version-1-0/
  */
 #include "scratchbird/sblr/executor.h"
+#include <array>
 #include <unordered_set>
 #include <unordered_map>
 #include <algorithm>
@@ -5156,29 +5157,7 @@ namespace scratchbird
             // Resolution rules (current/search path, relative vs absolute) are defined in
             // docs/specifications/SCHEMA_PATH_RESOLUTION.md and should be normalized by the parser.
             std::string root_path;
-            bool enforce_root = false;
-            if (conn_ctx_)
-            {
-                std::string dialect = scratchbird::core::IdentifierUtils::toUpper(
-                    conn_ctx_->dialect_tag());
-                enforce_root = !dialect.empty() && dialect != "SCRATCHBIRD";
-                if (enforce_root)
-                {
-                    std::string expected_prefix = "EMULATION." + dialect;
-                    const auto& paths = conn_ctx_->search_path();
-                    if (!paths.empty())
-                    {
-                        std::string candidate = normalizeSchemaPath(paths.front());
-                        std::string candidate_upper =
-                            scratchbird::core::IdentifierUtils::toUpper(candidate);
-                        if (candidate_upper == expected_prefix ||
-                            candidate_upper.rfind(expected_prefix + ".", 0) == 0)
-                        {
-                            root_path = candidate;
-                        }
-                    }
-                }
-            }
+            bool enforce_root = resolveEmulatedRootPath(conn_ctx_, root_path);
 
             if (!schema_path.empty())
             {
@@ -64625,7 +64604,7 @@ namespace scratchbird
                 error("PREPARE requires a SQL statement");
             }
 
-            std::string default_schema = "/remote/emulated/mysql/localhost/";
+            std::string default_schema = "/emulated/mysql/localhost/";
             if (conn_ctx_)
             {
                 const std::string& current_schema = conn_ctx_->current_schema();
@@ -68888,25 +68867,24 @@ namespace scratchbird
             }
 
             std::string root_path;
-            bool enforce_root = false;
-            std::string expected_prefix;
+            bool enforce_root = resolveEmulatedRootPath(conn_ctx_, root_path);
             std::string dialect = scratchbird::core::IdentifierUtils::toUpper(conn_ctx_->dialect_tag());
-            if (!dialect.empty() && dialect != "SCRATCHBIRD")
-            {
-                enforce_root = true;
-                expected_prefix = "EMULATION." + dialect;
-                const auto& existing_paths = conn_ctx_->search_path();
-                if (!existing_paths.empty())
+            auto matches_emulated_prefix = [&](const std::string& entry_upper) {
+                std::array<std::string, 4> prefixes = {
+                    "EMULATED." + dialect,
+                    "REMOTE.EMULATION." + dialect,
+                    "REMOTE.EMULATED." + dialect,
+                    "EMULATION." + dialect};
+                for (const auto& prefix : prefixes)
                 {
-                    std::string candidate = normalizeSchemaPath(existing_paths.front());
-                    std::string candidate_upper = scratchbird::core::IdentifierUtils::toUpper(candidate);
-                    if (candidate_upper == expected_prefix ||
-                        candidate_upper.rfind(expected_prefix + ".", 0) == 0)
+                    if (entry_upper == prefix ||
+                        entry_upper.rfind(prefix + ".", 0) == 0)
                     {
-                        root_path = candidate;
+                        return true;
                     }
                 }
-            }
+                return false;
+            };
 
             auto add_path_entry = [&](const std::string& raw,
                                       std::vector<std::string>& out_paths) {
@@ -68935,8 +68913,7 @@ namespace scratchbird
                     std::string entry_upper = scratchbird::core::IdentifierUtils::toUpper(entry);
                     if (root_path.empty())
                     {
-                        if (entry_upper != expected_prefix &&
-                            entry_upper.rfind(expected_prefix + ".", 0) != 0)
+                        if (!matches_emulated_prefix(entry_upper))
                         {
                             error("search_path entry outside emulated root: " + raw);
                         }
@@ -83066,6 +83043,21 @@ namespace scratchbird
                     start = 1;
                 }
 
+                // Legacy path support:
+                //   remote.emulation.<dialect>.<server>...
+                // Canonical path:
+                //   emulated.<dialect>.<server>...
+                if (components.size() > start + 1 &&
+                    scratchbird::core::IdentifierUtils::namesMatch(
+                        components[start], false, "remote", false) &&
+                    (scratchbird::core::IdentifierUtils::namesMatch(
+                         components[start + 1], false, "emulation", false) ||
+                     scratchbird::core::IdentifierUtils::namesMatch(
+                         components[start + 1], false, "emulated", false)))
+                {
+                    start += 1;
+                }
+
                 if (components.size() - start < 4)
                 {
                     SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
@@ -83073,14 +83065,17 @@ namespace scratchbird
                     return core::Status::INVALID_ARGUMENT;
                 }
 
-                if (!scratchbird::core::IdentifierUtils::namesMatch(
-                        components[start], false, "emulation", false))
+                if (!(scratchbird::core::IdentifierUtils::namesMatch(
+                          components[start], false, "emulated", false) ||
+                      scratchbird::core::IdentifierUtils::namesMatch(
+                          components[start], false, "emulation", false)))
                 {
                     SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
-                                      "Emulated database path must start with emulation");
+                                      "Emulated database path must start with emulated");
                     return core::Status::INVALID_ARGUMENT;
                 }
 
+                components[start] = "emulated";
                 dialect_out = components[start + 1];
                 server_out = components[start + 2];
                 database_out = components.back();
@@ -83115,24 +83110,43 @@ namespace scratchbird
                     start = 1;
                 }
 
-                if (components.size() <= start + 3)
+                size_t dialect_index = 0;
+                size_t alias_index = 0;
+                size_t suffix_index = 0;
+                bool is_emulated_path = false;
+
+                if (components.size() > start + 3 &&
+                    scratchbird::core::IdentifierUtils::namesMatch(
+                        components[start], false, "remote", false) &&
+                    (scratchbird::core::IdentifierUtils::namesMatch(
+                         components[start + 1], false, "emulation", false) ||
+                     scratchbird::core::IdentifierUtils::namesMatch(
+                         components[start + 1], false, "emulated", false)))
+                {
+                    dialect_index = start + 2;
+                    alias_index = start + 3;
+                    suffix_index = start + 4;
+                    is_emulated_path = true;
+                }
+                else if (components.size() > start + 2 &&
+                         (scratchbird::core::IdentifierUtils::namesMatch(
+                              components[start], false, "emulated", false) ||
+                          scratchbird::core::IdentifierUtils::namesMatch(
+                              components[start], false, "emulation", false)))
+                {
+                    dialect_index = start + 1;
+                    alias_index = start + 2;
+                    suffix_index = start + 3;
+                    is_emulated_path = true;
+                }
+
+                if (!is_emulated_path)
                 {
                     return core::Status::OK;
                 }
 
-                if (!scratchbird::core::IdentifierUtils::namesMatch(
-                        components[start], false, "remote", false))
-                {
-                    return core::Status::OK;
-                }
-                if (!scratchbird::core::IdentifierUtils::namesMatch(
-                        components[start + 1], false, "emulation", false))
-                {
-                    return core::Status::OK;
-                }
-
-                std::string dialect = components[start + 2];
-                std::string alias = components[start + 3];
+                std::string dialect = components[dialect_index];
+                std::string alias = components[alias_index];
                 if (alias.empty())
                 {
                     SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
@@ -83140,20 +83154,44 @@ namespace scratchbird
                     return core::Status::INVALID_ARGUMENT;
                 }
 
-                std::string alias_schema_path = "remote.emulation." + dialect;
-                core::CatalogManager::SchemaInfo alias_schema;
-                auto status = catalog->getSchema(alias_schema_path, alias_schema, ctx);
-                if (status != core::Status::OK)
+                core::CatalogManager::SynonymInfo synonym;
+                bool found_synonym = false;
+                std::array<std::string, 3> alias_schema_candidates = {
+                    "emulated." + dialect,
+                    "remote.emulation." + dialect,
+                    "remote.emulated." + dialect};
+
+                for (const auto& alias_schema_path : alias_schema_candidates)
+                {
+                    core::CatalogManager::SchemaInfo alias_schema;
+                    core::ErrorContext schema_ctx;
+                    auto status = catalog->getSchema(alias_schema_path, alias_schema, &schema_ctx);
+                    if (status != core::Status::OK)
+                    {
+                        continue;
+                    }
+
+                    core::ErrorContext synonym_ctx;
+                    status = catalog->getSynonymByName(alias_schema.schema_id, alias, synonym, &synonym_ctx);
+                    if (status == core::Status::OK)
+                    {
+                        found_synonym = true;
+                        break;
+                    }
+                    if (status == core::Status::INVALID_ARGUMENT ||
+                        status == core::Status::NOT_FOUND)
+                    {
+                        continue;
+                    }
+                    copyErrorContext(ctx, synonym_ctx);
+                    return status;
+                }
+
+                if (!found_synonym)
                 {
                     return core::Status::OK;
                 }
 
-                core::CatalogManager::SynonymInfo synonym;
-                status = catalog->getSynonymByName(alias_schema.schema_id, alias, synonym, ctx);
-                if (status != core::Status::OK)
-                {
-                    return core::Status::OK;
-                }
                 if (synonym.target_type != core::CatalogManager::ObjectType::SCHEMA)
                 {
                     SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
@@ -83164,11 +83202,11 @@ namespace scratchbird
                 std::string target_path = normalizeSchemaPath(synonym.target_path);
                 auto target_components = splitSchemaComponents(target_path);
                 std::vector<std::string> expanded = target_components;
-                if (components.size() > start + 4)
+                if (components.size() > suffix_index)
                 {
                     expanded.insert(expanded.end(),
                                     components.begin() +
-                                        static_cast<std::vector<std::string>::difference_type>(start + 4),
+                                        static_cast<std::vector<std::string>::difference_type>(suffix_index),
                                     components.end());
                 }
                 path_out = joinSchemaComponents(expanded, 0);
@@ -83200,23 +83238,51 @@ namespace scratchbird
                     return core::Status::INVALID_ARGUMENT;
                 }
 
-                std::string alias_schema_path = "remote.emulation." + dialect;
                 core::CatalogManager::SchemaInfo alias_schema;
-                auto status = catalog->getSchema(alias_schema_path, alias_schema, ctx);
-                if (status != core::Status::OK)
+                core::Status status = core::Status::NOT_FOUND;
+                std::array<std::string, 3> alias_schema_candidates = {
+                    "emulated." + dialect,
+                    "remote.emulation." + dialect,
+                    "remote.emulated." + dialect};
+
+                bool found_schema = false;
+                for (const auto& alias_schema_path : alias_schema_candidates)
                 {
-                    SET_ERROR_CONTEXT(ctx, status, "Emulated alias schema not found");
-                    return status;
+                    core::ErrorContext schema_ctx;
+                    status = catalog->getSchema(alias_schema_path, alias_schema, &schema_ctx);
+                    if (status == core::Status::OK)
+                    {
+                        found_schema = true;
+                        break;
+                    }
+                    if (status != core::Status::INVALID_ARGUMENT &&
+                        status != core::Status::NOT_FOUND)
+                    {
+                        copyErrorContext(ctx, schema_ctx);
+                        return status;
+                    }
+                }
+
+                if (!found_schema)
+                {
+                    SET_ERROR_CONTEXT(ctx, core::Status::NOT_FOUND,
+                                      "Emulated alias schema not found");
+                    return core::Status::NOT_FOUND;
                 }
 
                 core::ID synonym_id;
-                return catalog->createSynonym(alias_schema.schema_id,
-                                              alias,
-                                              target_path,
-                                              core::CatalogManager::ObjectType::SCHEMA,
-                                              true,
-                                              synonym_id,
-                                              ctx);
+                status = catalog->createSynonym(alias_schema.schema_id,
+                                                alias,
+                                                target_path,
+                                                core::CatalogManager::ObjectType::SCHEMA,
+                                                true,
+                                                synonym_id,
+                                                ctx);
+                if (status != core::Status::OK)
+                {
+                    return status;
+                }
+                return core::Status::OK;
             }
 
             core::Status dropEmulatedAliasSynonym(core::CatalogManager* catalog,
@@ -83237,23 +83303,58 @@ namespace scratchbird
                     return core::Status::INVALID_ARGUMENT;
                 }
 
-                std::string alias_schema_path = "remote.emulation." + dialect;
-                core::CatalogManager::SchemaInfo alias_schema;
-                auto status = catalog->getSchema(alias_schema_path, alias_schema, ctx);
-                if (status != core::Status::OK)
+                std::array<std::string, 3> alias_schema_candidates = {
+                    "emulated." + dialect,
+                    "remote.emulation." + dialect,
+                    "remote.emulated." + dialect};
+
+                bool dropped_any = false;
+                for (const auto& alias_schema_path : alias_schema_candidates)
                 {
-                    SET_ERROR_CONTEXT(ctx, status, "Emulated alias schema not found");
-                    return status;
+                    core::CatalogManager::SchemaInfo alias_schema;
+                    core::ErrorContext schema_ctx;
+                    auto status = catalog->getSchema(alias_schema_path, alias_schema, &schema_ctx);
+                    if (status == core::Status::INVALID_ARGUMENT ||
+                        status == core::Status::NOT_FOUND)
+                    {
+                        continue;
+                    }
+                    if (status != core::Status::OK)
+                    {
+                        copyErrorContext(ctx, schema_ctx);
+                        return status;
+                    }
+
+                    core::CatalogManager::SynonymInfo synonym;
+                    core::ErrorContext synonym_ctx;
+                    status = catalog->getSynonymByName(alias_schema.schema_id, alias, synonym, &synonym_ctx);
+                    if (status == core::Status::INVALID_ARGUMENT ||
+                        status == core::Status::NOT_FOUND)
+                    {
+                        continue;
+                    }
+                    if (status != core::Status::OK)
+                    {
+                        copyErrorContext(ctx, synonym_ctx);
+                        return status;
+                    }
+
+                    status = catalog->dropSynonym(synonym.synonym_id, ctx);
+                    if (status != core::Status::OK)
+                    {
+                        return status;
+                    }
+                    dropped_any = true;
                 }
 
-                core::CatalogManager::SynonymInfo synonym;
-                status = catalog->getSynonymByName(alias_schema.schema_id, alias, synonym, ctx);
-                if (status != core::Status::OK)
+                if (!dropped_any)
                 {
-                    return status;
+                    SET_ERROR_CONTEXT(ctx, core::Status::NOT_FOUND,
+                                      "Emulated alias not found");
+                    return core::Status::NOT_FOUND;
                 }
 
-                return catalog->dropSynonym(synonym.synonym_id, ctx);
+                return core::Status::OK;
             }
 
             core::Status buildObjectPathFromName(const std::string& qualified_name,
@@ -83384,15 +83485,24 @@ namespace scratchbird
                     return false;
                 }
 
-                std::string expected_prefix = "REMOTE.EMULATION." + dialect;
+                std::string canonical_prefix = "EMULATED." + dialect;
+                std::string legacy_prefix = "REMOTE.EMULATION." + dialect;
+                std::string legacy_alt_prefix = "REMOTE.EMULATED." + dialect;
+                std::string compatibility_prefix = "EMULATION." + dialect;
                 const auto& paths = conn_ctx->search_path();
                 if (!paths.empty())
                 {
                     std::string candidate = normalizeSchemaPath(paths.front());
                     std::string candidate_upper =
                         scratchbird::core::IdentifierUtils::toUpper(candidate);
-                    if (candidate_upper == expected_prefix ||
-                        candidate_upper.rfind(expected_prefix + ".", 0) == 0)
+                    auto has_prefix = [&](const std::string& prefix) {
+                        return candidate_upper == prefix ||
+                               candidate_upper.rfind(prefix + ".", 0) == 0;
+                    };
+                    if (has_prefix(canonical_prefix) ||
+                        has_prefix(legacy_prefix) ||
+                        has_prefix(legacy_alt_prefix) ||
+                        has_prefix(compatibility_prefix))
                     {
                         root_path_out = candidate;
                     }

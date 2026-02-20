@@ -124,6 +124,23 @@ std::string deriveFirebirdDatabaseName(std::string_view file_path) {
 std::string buildEmulatedFirebirdSchemaPath(const std::string& server,
                                             const std::vector<std::string>& path_components,
                                             const std::string& db_name) {
+    std::string schema = "emulated.firebird." + server;
+    for (const auto& comp : path_components) {
+        if (!comp.empty()) {
+            schema.push_back('.');
+            schema += comp;
+        }
+    }
+    if (!db_name.empty()) {
+        schema.push_back('.');
+        schema += db_name;
+    }
+    return schema;
+}
+
+std::string buildLegacyEmulatedFirebirdSchemaPath(const std::string& server,
+                                                  const std::vector<std::string>& path_components,
+                                                  const std::string& db_name) {
     std::string schema = "remote.emulation.firebird." + server;
     for (const auto& comp : path_components) {
         if (!comp.empty()) {
@@ -717,10 +734,20 @@ core::Status FirebirdAdapter::ensureFirebirdSystemTables(core::ErrorContext* ctx
     }
     auto path_components = splitFirebirdPathComponents(spec.file_path);
     auto schema_name = buildEmulatedFirebirdSchemaPath(server, path_components, db_name);
+    auto legacy_schema_name = buildLegacyEmulatedFirebirdSchemaPath(server, path_components, db_name);
     firebird_schema_name_ = schema_name;
 
     core::CatalogManager::SchemaInfo fb_schema;
     auto status = catalog->getSchema(schema_name, fb_schema, ctx);
+    if (status != core::Status::OK) {
+        if (status == core::Status::INVALID_ARGUMENT || status == core::Status::NOT_FOUND) {
+            core::ErrorContext legacy_ctx;
+            if (catalog->getSchema(legacy_schema_name, fb_schema, &legacy_ctx) == core::Status::OK) {
+                firebird_schema_name_ = legacy_schema_name;
+                status = core::Status::OK;
+            }
+        }
+    }
     if (status != core::Status::OK) {
         if (status != core::Status::INVALID_ARGUMENT && status != core::Status::NOT_FOUND) {
             return status;

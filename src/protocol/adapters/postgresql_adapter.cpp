@@ -47,6 +47,40 @@ namespace protocol {
 std::mutex PostgresqlAdapter::backend_registry_mutex_;
 std::unordered_map<int32_t, PostgresqlAdapter::BackendEntry> PostgresqlAdapter::backend_registry_;
 
+namespace {
+
+std::string buildPostgresqlSchemaPath(const std::string& db_name) {
+    return "emulated.postgresql.localhost.databases." + db_name;
+}
+
+std::string buildLegacyPostgresqlSchemaPath(const std::string& db_name) {
+    return "remote.emulation.postgresql.localhost.databases." + db_name;
+}
+
+std::string resolvePostgresqlSchemaPath(core::CatalogManager* catalog,
+                                        const std::string& db_name) {
+    std::string canonical = buildPostgresqlSchemaPath(db_name);
+    if (!catalog) {
+        return canonical;
+    }
+
+    core::CatalogManager::SchemaInfo schema_info;
+    core::ErrorContext check_ctx;
+    if (catalog->getSchema(canonical, schema_info, &check_ctx) == core::Status::OK) {
+        return canonical;
+    }
+
+    std::string legacy = buildLegacyPostgresqlSchemaPath(db_name);
+    core::ErrorContext legacy_ctx;
+    if (catalog->getSchema(legacy, schema_info, &legacy_ctx) == core::Status::OK) {
+        return legacy;
+    }
+
+    return canonical;
+}
+
+} // namespace
+
 // ============================================================================
 // Constructor/Destructor
 // ============================================================================
@@ -149,14 +183,20 @@ core::Status PostgresqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
     // Set search_path to emulated schema (if it exists or can be created)
     if (!search_path_set_) {
         std::string db_name = database_name_.empty() ? std::string("default") : database_name_;
-        std::string schema_name = "remote.emulation.postgresql.localhost.databases." + db_name;
-        std::string set_path = "SET search_path TO '" + escapeLiteral(schema_name) + "'";
-        client::ResultSet rs;
-        parser::v3::Compiler compiler;
-        auto compile_result = compiler.compile(set_path);
-        core::Status set_status = core::Status::INVALID_ARGUMENT;
-        if (compile_result.ok) {
-            set_status = client_->executeBytecode(compile_result.bytecode, set_path, &rs, ctx);
+        std::string schema_name = buildPostgresqlSchemaPath(db_name);
+        auto execute_set = [&](const std::string& target) -> core::Status {
+            std::string set_path = "SET search_path TO '" + escapeLiteral(target) + "'";
+            client::ResultSet rs;
+            parser::v3::Compiler compiler;
+            auto compile_result = compiler.compile(set_path);
+            if (!compile_result.ok) {
+                return core::Status::INVALID_ARGUMENT;
+            }
+            return client_->executeBytecode(compile_result.bytecode, set_path, &rs, ctx);
+        };
+        core::Status set_status = execute_set(schema_name);
+        if (set_status != core::Status::OK) {
+            set_status = execute_set(buildLegacyPostgresqlSchemaPath(db_name));
         }
         if (set_status == core::Status::OK) {
             search_path_set_ = true;
@@ -1614,7 +1654,7 @@ core::Status PostgresqlAdapter::ensurePostgresSystemCatalog(core::ErrorContext* 
         db_name = "default";
     }
 
-    std::string schema_name = "remote.emulation.postgresql.localhost.databases." + db_name;
+    std::string schema_name = resolvePostgresqlSchemaPath(catalog, db_name);
 
     core::CatalogManager::SchemaInfo schema_info;
     auto status = catalog->getSchema(schema_name, schema_info, ctx);
@@ -1622,17 +1662,27 @@ core::Status PostgresqlAdapter::ensurePostgresSystemCatalog(core::ErrorContext* 
         if (status != core::Status::INVALID_ARGUMENT && status != core::Status::NOT_FOUND) {
             return status;
         }
-        core::ID schema_id;
-        status = catalog->createSchemaPath(schema_name,
-                                           core::CatalogManager::SchemaType::REMOTE_EMULATED,
-                                           schema_id,
-                                           ctx);
-        if (status != core::Status::OK) {
-            return status;
+        if (schema_name != buildLegacyPostgresqlSchemaPath(db_name)) {
+            core::ErrorContext legacy_ctx;
+            std::string legacy_schema = buildLegacyPostgresqlSchemaPath(db_name);
+            if (catalog->getSchema(legacy_schema, schema_info, &legacy_ctx) == core::Status::OK) {
+                schema_name = legacy_schema;
+                status = core::Status::OK;
+            }
         }
-        status = catalog->getSchema(schema_id, schema_info, ctx);
         if (status != core::Status::OK) {
-            return status;
+            core::ID schema_id;
+            status = catalog->createSchemaPath(schema_name,
+                                               core::CatalogManager::SchemaType::REMOTE_EMULATED,
+                                               schema_id,
+                                               ctx);
+            if (status != core::Status::OK) {
+                return status;
+            }
+            status = catalog->getSchema(schema_id, schema_info, ctx);
+            if (status != core::Status::OK) {
+                return status;
+            }
         }
     }
     pg_schema_id_ = schema_info.schema_id;
@@ -1689,7 +1739,9 @@ core::Status PostgresqlAdapter::compileQuery(const std::string& sql,
 
     sblr::PostgreSQLQueryCompiler compiler(engineDatabase());
     std::string db_name = database_name_.empty() ? std::string("default") : database_name_;
-    compiler.setDefaultSchema("remote.emulation.postgresql.localhost.databases." + db_name);
+    compiler.setDefaultSchema(
+        resolvePostgresqlSchemaPath(engineDatabase() ? engineDatabase()->catalog_manager() : nullptr,
+                                    db_name));
     if (pg_schema_id_ != core::ID{}) {
         compiler.setCurrentSchema(pg_schema_id_);
     }

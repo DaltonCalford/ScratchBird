@@ -51,6 +51,36 @@ namespace {
 
 using MySQLCompatMode = scratchbird::parser::mysql::MySQLCompatMode;
 
+std::string buildMySqlSchemaPath(const std::string& db_name) {
+    return "emulated.mysql.localhost.databases." + db_name;
+}
+
+std::string buildLegacyMySqlSchemaPath(const std::string& db_name) {
+    return "remote.emulation.mysql.localhost.databases." + db_name;
+}
+
+std::string resolveMySqlSchemaPath(core::CatalogManager* catalog,
+                                   const std::string& db_name) {
+    std::string canonical = buildMySqlSchemaPath(db_name);
+    if (!catalog) {
+        return canonical;
+    }
+
+    core::CatalogManager::SchemaInfo schema_info;
+    core::ErrorContext check_ctx;
+    if (catalog->getSchema(canonical, schema_info, &check_ctx) == core::Status::OK) {
+        return canonical;
+    }
+
+    std::string legacy = buildLegacyMySqlSchemaPath(db_name);
+    core::ErrorContext legacy_ctx;
+    if (catalog->getSchema(legacy, schema_info, &legacy_ctx) == core::Status::OK) {
+        return legacy;
+    }
+
+    return canonical;
+}
+
 MySQLCompatMode parseMysqlCompatValue(const std::string& value) {
     std::string normalized;
     normalized.reserve(value.size());
@@ -451,14 +481,20 @@ core::Status MySqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
     // Switch to emulated MySQL schema for this database if possible
     if (!default_db_set_) {
         std::string db_name = database_name_.empty() ? std::string("default") : database_name_;
-        std::string schema_name = "remote.emulation.mysql.localhost.databases." + db_name;
-        std::string use_stmt = "SET search_path TO '" + escapeLiteral(schema_name) + "'";
-        client::ResultSet rs;
-        parser::v3::Compiler compiler;
-        auto compile_result = compiler.compile(use_stmt);
-        core::Status set_status = core::Status::INVALID_ARGUMENT;
-        if (compile_result.ok) {
-            set_status = client_->executeBytecode(compile_result.bytecode, use_stmt, &rs, ctx);
+        auto execute_set = [&](const std::string& schema_name) -> core::Status {
+            std::string use_stmt = "SET search_path TO '" + escapeLiteral(schema_name) + "'";
+            client::ResultSet rs;
+            parser::v3::Compiler compiler;
+            auto compile_result = compiler.compile(use_stmt);
+            if (!compile_result.ok) {
+                return core::Status::INVALID_ARGUMENT;
+            }
+            return client_->executeBytecode(compile_result.bytecode, use_stmt, &rs, ctx);
+        };
+
+        core::Status set_status = execute_set(buildMySqlSchemaPath(db_name));
+        if (set_status != core::Status::OK) {
+            set_status = execute_set(buildLegacyMySqlSchemaPath(db_name));
         }
         if (set_status == core::Status::OK) {
             default_db_set_ = true;
@@ -737,7 +773,9 @@ core::Status MySqlAdapter::compileQuery(const std::string& sql,
 
     sblr::MySQLQueryCompiler compiler(engineDatabase());
     std::string db_name = database_name_.empty() ? std::string("default") : database_name_;
-    compiler.setDefaultSchema("remote.emulation.mysql.localhost.databases." + db_name);
+    compiler.setDefaultSchema(
+        resolveMySqlSchemaPath(engineDatabase() ? engineDatabase()->catalog_manager() : nullptr,
+                               db_name));
     compiler.setCompatibilityMode(resolveMysqlCompat(engineDatabase(), db_name, &ctx));
     auto result = compiler.compile(sql);
     last_warnings_ = result.warnings();
@@ -1125,10 +1163,15 @@ bool MySqlAdapter::validateDatabaseExists(const std::string& db_name, core::Erro
     }
     
     // Check if database exists by trying to set search_path
-    std::string check_sql = "SET search_path TO 'remote.emulation.mysql.localhost.databases." + 
-                            escapeLiteral(db_name) + "'";
+    std::string check_sql = "SET search_path TO '" +
+                            escapeLiteral(buildMySqlSchemaPath(db_name)) + "'";
     client::ResultSet rs;
     status = executeRemoteNativeSQL(check_sql, &rs, ctx);
+    if (status != core::Status::OK) {
+        std::string legacy_check_sql = "SET search_path TO '" +
+                                       escapeLiteral(buildLegacyMySqlSchemaPath(db_name)) + "'";
+        status = executeRemoteNativeSQL(legacy_check_sql, &rs, ctx);
+    }
     
     return status == core::Status::OK;
 }
@@ -2491,7 +2534,9 @@ void MySqlAdapter::bootstrapInformationSchema(core::ErrorContext* ctx) {
     }
 
     std::string db_name = database_name_.empty() ? "default" : database_name_;
-    std::string base_schema = "remote.emulation.mysql.localhost.databases." + db_name;
+    std::string base_schema =
+        resolveMySqlSchemaPath(engineDatabase() ? engineDatabase()->catalog_manager() : nullptr,
+                               db_name);
     std::string info_schema = base_schema + ".information_schema";
 
     auto safeExec = [&](const std::string& sql) {

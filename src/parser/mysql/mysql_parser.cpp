@@ -267,8 +267,44 @@ static std::string buildEmulatedServerRoot(const std::string& default_schema) {
         parts.push_back(current);
     }
 
-    if (parts.size() > 3) {
-        parts.resize(3);
+    size_t start = 0;
+    if (!parts.empty() &&
+        core::IdentifierUtils::namesMatch(parts[0], false, "root", false)) {
+        start = 1;
+    }
+
+    // Canonical emulated root: emulated.<dialect>.<server>
+    // Legacy compatibility roots accepted:
+    //   emulation.<dialect>.<server>
+    //   remote.emulation.<dialect>.<server>
+    //   remote.emulated.<dialect>.<server>
+    if (parts.size() > start &&
+        core::IdentifierUtils::namesMatch(parts[start], false, "remote", false) &&
+        parts.size() > start + 1 &&
+        (core::IdentifierUtils::namesMatch(parts[start + 1], false, "emulation", false) ||
+         core::IdentifierUtils::namesMatch(parts[start + 1], false, "emulated", false))) {
+        std::vector<std::string> canonical{"emulated"};
+        if (parts.size() > start + 2) canonical.push_back(parts[start + 2]);
+        if (parts.size() > start + 3) canonical.push_back(parts[start + 3]);
+        if (canonical.size() == 2) canonical.push_back("localhost");
+        return canonical[0] + "." + canonical[1] + "." + canonical[2];
+    }
+
+    if (parts.size() > start &&
+        (core::IdentifierUtils::namesMatch(parts[start], false, "emulated", false) ||
+         core::IdentifierUtils::namesMatch(parts[start], false, "emulation", false))) {
+        std::vector<std::string> canonical{"emulated"};
+        if (parts.size() > start + 1) canonical.push_back(parts[start + 1]);
+        if (parts.size() > start + 2) canonical.push_back(parts[start + 2]);
+        if (canonical.size() == 2) canonical.push_back("localhost");
+        return canonical[0] + "." + canonical[1] + "." + canonical[2];
+    }
+
+    if (parts.size() > start + 3) {
+        parts.resize(start + 3);
+    } else if (start > 0) {
+        parts.erase(parts.begin(),
+                    parts.begin() + static_cast<std::vector<std::string>::difference_type>(start));
     }
 
     std::string root;
@@ -3697,8 +3733,14 @@ void Parser::resolveTableName(std::string& schema, std::string& table) {
     }
 
     std::string normalized_schema = normalize_path(schema);
-    if (normalized_schema.rfind("remote.emulation.mysql.", 0) == 0 ||
-        normalized_schema == "remote.emulation.mysql")
+    auto has_prefix = [&](const std::string& prefix) {
+        return normalized_schema == prefix ||
+               normalized_schema.rfind(prefix + ".", 0) == 0;
+    };
+    if (has_prefix("emulated.mysql") ||
+        has_prefix("emulation.mysql") ||
+        has_prefix("remote.emulated.mysql") ||
+        has_prefix("remote.emulation.mysql"))
     {
         schema = normalized_schema;
         return;
@@ -11418,7 +11460,7 @@ void Parser::parseUseStmt() {
     // Update default schema to include the database
     std::string server_root = buildEmulatedServerRoot(default_schema_);
     if (server_root.empty()) {
-        server_root = "remote.emulation.mysql.localhost";
+        server_root = "emulated.mysql.localhost";
     }
     default_schema_ = server_root + ".databases." + db;
 
