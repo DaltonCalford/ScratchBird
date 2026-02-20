@@ -76329,9 +76329,12 @@ auto CatalogManager::upsertRemoteConnectorCatalogEntry(const RemoteConnectorCata
     };
     auto existing = findRecordInHeapPage<RemoteConnectorRecord>(
         remote_connector_table_page_, existing_predicate, ctx);
+    std::string previous_connector_name;
     if (existing.status == Status::OK)
     {
         rec.created_time = existing.record.created_time;
+        previous_connector_name = fixedNameFromBuffer(existing.record.connector_name,
+                                                      sizeof(existing.record.connector_name));
     }
     else if (existing.status != Status::NOT_FOUND)
     {
@@ -76341,7 +76344,44 @@ auto CatalogManager::upsertRemoteConnectorCatalogEntry(const RemoteConnectorCata
     auto matcher = [&info](const RemoteConnectorRecord& row) {
         return row.remote_connector_id == info.remote_connector_id && row.is_valid == 1;
     };
-    return updateRecordInHeapPage(remote_connector_table_page_, matcher, rec, ctx);
+    Status status = updateRecordInHeapPage(remote_connector_table_page_, matcher, rec, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    if (rec.is_valid == 1)
+    {
+        status = ensureOverlaySchemaChildUnlocked("connections", info.connector_name, nullptr, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to create connection mount schema");
+            return status;
+        }
+
+        if (!previous_connector_name.empty() &&
+            !IdentifierUtils::namesConflict(info.connector_name, false /*new_is_delimited*/,
+                                            previous_connector_name, false /*stored_delimited*/))
+        {
+            status = dropOverlaySchemaChildUnlocked("connections", previous_connector_name, ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, status, "Failed to drop previous connection mount schema");
+                return status;
+            }
+        }
+    }
+    else if (!previous_connector_name.empty())
+    {
+        status = dropOverlaySchemaChildUnlocked("connections", previous_connector_name, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to drop connection mount schema");
+            return status;
+        }
+    }
+
+    return Status::OK;
 }
 
 auto CatalogManager::getRemoteConnectorCatalogEntry(const ID& remote_connector_id,
@@ -76452,6 +76492,16 @@ auto CatalogManager::deleteRemoteConnectorCatalogEntry(const ID& remote_connecto
     {
         return Status::NOT_FOUND;
     }
+
+    const std::string connector_name =
+        fixedNameFromBuffer(result.record.connector_name, sizeof(result.record.connector_name));
+    Status status = dropOverlaySchemaChildUnlocked("connections", connector_name, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to drop connection mount schema");
+        return status;
+    }
+
     RemoteConnectorRecord updated = result.record;
     updated.is_valid = 0;
     updated.last_modified_time = catalogNowTicks();

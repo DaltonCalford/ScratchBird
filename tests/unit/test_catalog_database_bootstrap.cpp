@@ -890,6 +890,142 @@ TEST(CatalogDatabaseBootstrapTest, EmulatedDatabaseRenameMovesDynamicOverlaySche
     std::remove(db_path.c_str());
 }
 
+TEST(CatalogDatabaseBootstrapTest, RemoteConnectorLifecycleMaterializesDynamicOverlaySchema)
+{
+    std::string db_path = uniqueTestDbPath("test_catalog_remote_connector_overlay_lifecycle");
+    std::remove(db_path.c_str());
+
+    ErrorContext ctx;
+    ASSERT_EQ(Database::create(db_path, 8192, &ctx), Status::OK) << ctx.message;
+
+    {
+        Database db;
+        ASSERT_EQ(db.open(db_path, &ctx), Status::OK) << ctx.message;
+        auto* catalog = db.catalog_manager();
+        ASSERT_NE(catalog, nullptr);
+
+        const ID system_user_id = catalog->getSystemUserId(&ctx);
+        ASSERT_FALSE(isZeroUuid(system_user_id)) << ctx.message;
+
+        ID fdw_server_id{};
+        ASSERT_EQ(catalog->createForeignServer("rc_fdw_server",
+                                               "postgresql",
+                                               "127.0.0.1",
+                                               5432,
+                                               "{}",
+                                               fdw_server_id,
+                                               &ctx),
+                  Status::OK)
+            << ctx.message;
+
+        ID mapping_id{};
+        ASSERT_EQ(catalog->createUserMapping(system_user_id,
+                                             fdw_server_id,
+                                             "sb_user",
+                                             "sb_secret",
+                                             mapping_id,
+                                             &ctx),
+                  Status::OK)
+            << ctx.message;
+
+        CatalogManager::RemoteConnectorCatalogInfo connector{};
+        connector.remote_connector_id = generateUuidV7();
+        connector.fdw_server_id = fdw_server_id;
+        connector.fdw_id = generateUuidV7();
+        connector.connector_name = "corp_primary";
+        connector.engine_name = "postgresql";
+        connector.endpoint_uri = "tcp://127.0.0.1:5432";
+        connector.has_default_mapping_id = true;
+        connector.default_mapping_id = mapping_id;
+        connector.state = CatalogManager::RemoteConnectorState::READY;
+
+        ASSERT_EQ(catalog->upsertRemoteConnectorCatalogEntry(connector, &ctx), Status::OK)
+            << ctx.message;
+
+        CatalogManager::SchemaInfo schema_info{};
+        EXPECT_EQ(catalog->getSchema("connections.corp_primary", schema_info, &ctx), Status::OK)
+            << ctx.message;
+        EXPECT_EQ(catalog->getSchema("root.connections.corp_primary", schema_info, &ctx), Status::OK)
+            << ctx.message;
+
+        ASSERT_EQ(catalog->deleteRemoteConnectorCatalogEntry(connector.remote_connector_id, &ctx),
+                  Status::OK)
+            << ctx.message;
+        EXPECT_NE(catalog->getSchema("connections.corp_primary", schema_info, &ctx), Status::OK);
+
+        db.close();
+    }
+
+    std::remove(db_path.c_str());
+}
+
+TEST(CatalogDatabaseBootstrapTest, RemoteConnectorRenameMovesDynamicOverlaySchema)
+{
+    std::string db_path = uniqueTestDbPath("test_catalog_remote_connector_overlay_rename");
+    std::remove(db_path.c_str());
+
+    ErrorContext ctx;
+    ASSERT_EQ(Database::create(db_path, 8192, &ctx), Status::OK) << ctx.message;
+
+    {
+        Database db;
+        ASSERT_EQ(db.open(db_path, &ctx), Status::OK) << ctx.message;
+        auto* catalog = db.catalog_manager();
+        ASSERT_NE(catalog, nullptr);
+
+        const ID system_user_id = catalog->getSystemUserId(&ctx);
+        ASSERT_FALSE(isZeroUuid(system_user_id)) << ctx.message;
+
+        ID fdw_server_id{};
+        ASSERT_EQ(catalog->createForeignServer("rc_fdw_server",
+                                               "postgresql",
+                                               "127.0.0.1",
+                                               5432,
+                                               "{}",
+                                               fdw_server_id,
+                                               &ctx),
+                  Status::OK)
+            << ctx.message;
+
+        ID mapping_id{};
+        ASSERT_EQ(catalog->createUserMapping(system_user_id,
+                                             fdw_server_id,
+                                             "sb_user",
+                                             "sb_secret",
+                                             mapping_id,
+                                             &ctx),
+                  Status::OK)
+            << ctx.message;
+
+        CatalogManager::RemoteConnectorCatalogInfo connector{};
+        connector.remote_connector_id = generateUuidV7();
+        connector.fdw_server_id = fdw_server_id;
+        connector.fdw_id = generateUuidV7();
+        connector.connector_name = "corp_old";
+        connector.engine_name = "postgresql";
+        connector.endpoint_uri = "tcp://127.0.0.1:5432";
+        connector.has_default_mapping_id = true;
+        connector.default_mapping_id = mapping_id;
+        connector.state = CatalogManager::RemoteConnectorState::READY;
+
+        ASSERT_EQ(catalog->upsertRemoteConnectorCatalogEntry(connector, &ctx), Status::OK)
+            << ctx.message;
+
+        connector.connector_name = "corp_new";
+        ASSERT_EQ(catalog->upsertRemoteConnectorCatalogEntry(connector, &ctx), Status::OK)
+            << ctx.message;
+
+        CatalogManager::SchemaInfo schema_info{};
+        EXPECT_EQ(catalog->getSchema("connections.corp_new", schema_info, &ctx), Status::OK)
+            << ctx.message;
+        EXPECT_NE(catalog->getSchema("connections.corp_old", schema_info, &ctx), Status::OK);
+
+        db.close();
+    }
+
+    std::remove(db_path.c_str());
+}
+
 TEST(CatalogDatabaseBootstrapTest, CreatesDomainExtensionCatalogFamilyPages)
 {
     std::string db_path = uniqueTestDbPath("test_catalog_domain_extension_pages_bootstrap");
