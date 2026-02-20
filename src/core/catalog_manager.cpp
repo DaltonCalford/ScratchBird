@@ -11285,11 +11285,13 @@ bool hasTriggerNameConflictInTable(
             bool force_database_uuid;
         };
 
-        static constexpr std::array<BootstrapSchemaNode, 41> kBootstrapSchemas = {{
+        static constexpr std::array<BootstrapSchemaNode, 44> kBootstrapSchemas = {{
             {"root", "root", nullptr, true},
             {"root.sys", "sys", "root", false},
             {"root.connections", "connections", "root", false},
             {"root.users", "users", "root", false},
+            {"root.group", "group", "root", false},
+            {"root.cluster", "cluster", "root", false},
             {"root.remote", "remote", "root", false},
             {"root.local", "local", "root", false},
             {"root.nosql", "nosql", "root", false},
@@ -11303,6 +11305,7 @@ bool hasTriggerNameConflictInTable(
             {"root.sys.emulation", "emulation", "root.sys", false},
             {"root.sys.jobs", "jobs", "root.sys", false},
             {"root.users.public", "public", "root.users", false},
+            {"root.users.app_data", "app_data", "root.users", false},
             {"root.users.roles", "roles", "root.users", false},
             {"root.users.groups", "groups", "root.users", false},
             {"root.remote.emulation", "emulation", "root.remote", false},
@@ -13112,10 +13115,12 @@ bool hasTriggerNameConflictInTable(
                     const char* legacy_parent_path;
                 };
 
-                static constexpr std::array<CanonicalSchemaNode, 40> kCanonicalNodes = {{
+                static constexpr std::array<CanonicalSchemaNode, 43> kCanonicalNodes = {{
                     {"root.sys", "sys", "root", nullptr},
                     {"root.connections", "connections", "root", nullptr},
                     {"root.users", "users", "root", nullptr},
+                    {"root.group", "group", "root", nullptr},
+                    {"root.cluster", "cluster", "root", nullptr},
                     {"root.remote", "remote", "root", nullptr},
                     {"root.local", "local", "root", nullptr},
                     {"root.nosql", "nosql", "root", nullptr},
@@ -13129,6 +13134,7 @@ bool hasTriggerNameConflictInTable(
                     {"root.sys.emulation", "emulation", "root.sys", nullptr},
                     {"root.sys.jobs", "jobs", "root.sys", nullptr},
                     {"root.users.public", "public", "root.users", "root"},
+                    {"root.users.app_data", "app_data", "root.users", nullptr},
                     {"root.users.roles", "roles", "root.users", nullptr},
                     {"root.users.groups", "groups", "root.users", nullptr},
                     {"root.remote.emulation", "emulation", "root.remote", "root"},
