@@ -664,6 +664,56 @@ TEST(CatalogDatabaseBootstrapTest, GroupLifecycleMaterializesDynamicOverlaySchem
     std::remove(db_path.c_str());
 }
 
+TEST(CatalogDatabaseBootstrapTest, GroupMemberLifecycleMaterializesDynamicOverlaySchema)
+{
+    std::string db_path = uniqueTestDbPath("test_catalog_group_member_overlay_lifecycle");
+    std::remove(db_path.c_str());
+
+    ErrorContext ctx;
+    ASSERT_EQ(Database::create(db_path, 8192, &ctx), Status::OK) << ctx.message;
+
+    {
+        Database db;
+        ASSERT_EQ(db.open(db_path, &ctx), Status::OK) << ctx.message;
+        auto* catalog = db.catalog_manager();
+        ASSERT_NE(catalog, nullptr);
+
+        ID group_id{};
+        ASSERT_EQ(catalog->createGroup("qa_team",
+                                       CatalogManager::GroupType::LOCAL,
+                                       "",
+                                       ID{},
+                                       group_id,
+                                       &ctx),
+                  Status::OK)
+            << ctx.message;
+
+        const ID system_user_id = catalog->getSystemUserId(&ctx);
+        ASSERT_FALSE(isZeroUuid(system_user_id)) << ctx.message;
+
+        CatalogManager::BasicUserInfo system_user{};
+        ASSERT_EQ(catalog->getUserBasic(system_user_id, system_user, &ctx), Status::OK)
+            << ctx.message;
+
+        ASSERT_EQ(catalog->addGroupMember(group_id, system_user_id, false, system_user_id, &ctx),
+                  Status::OK)
+            << ctx.message;
+
+        const std::string member_schema = "group.qa_team." + system_user.username;
+        CatalogManager::SchemaInfo schema_info{};
+        EXPECT_EQ(catalog->getSchema(member_schema, schema_info, &ctx), Status::OK)
+            << ctx.message;
+
+        ASSERT_EQ(catalog->removeGroupMember(group_id, system_user_id, &ctx), Status::OK)
+            << ctx.message;
+        EXPECT_NE(catalog->getSchema(member_schema, schema_info, &ctx), Status::OK);
+
+        db.close();
+    }
+
+    std::remove(db_path.c_str());
+}
+
 TEST(CatalogDatabaseBootstrapTest, ClusterLifecycleMaterializesDynamicOverlaySchema)
 {
     std::string db_path = uniqueTestDbPath("test_catalog_cluster_overlay_lifecycle");

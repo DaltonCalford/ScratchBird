@@ -42752,6 +42752,65 @@ auto CatalogManager::addGroupMember(const ID& group_id, const ID& member_id, boo
         return status;
     }
 
+    GroupInfo group_info;
+    std::string member_name;
+    Status group_status = getGroup(group_id, group_info, nullptr);
+    if (group_status == Status::OK)
+    {
+        if (is_group)
+        {
+            GroupInfo member_group;
+            if (getGroup(member_id, member_group, nullptr) == Status::OK)
+            {
+                member_name = member_group.group_name;
+            }
+        }
+        else
+        {
+            BasicUserInfo member_user;
+            if (getUserBasicUnlocked(member_id, member_user, nullptr) == Status::OK)
+            {
+                member_name = member_user.username;
+            }
+        }
+
+        Status overlay_status = ensureOverlaySchemaChildUnlocked("group",
+                                                                 group_info.group_name,
+                                                                 nullptr,
+                                                                 ctx);
+        if (overlay_status != Status::OK)
+        {
+            auto rollback_predicate = [&membership_rec](const GroupMembershipRecord& rec) {
+                return rec.is_valid && rec.membership_id == membership_rec.membership_id;
+            };
+            ErrorContext rollback_ctx;
+            (void)deleteRecordFromHeapPage<GroupMembershipRecord>(
+                group_memberships_table_page_, rollback_predicate, &rollback_ctx);
+            SET_ERROR_CONTEXT(ctx, overlay_status, "Failed to materialize group membership mount");
+            return overlay_status;
+        }
+
+        if (!member_name.empty())
+        {
+            overlay_status = ensureOverlaySchemaChildUnlocked("group." + group_info.group_name,
+                                                              member_name,
+                                                              nullptr,
+                                                              ctx);
+            if (overlay_status != Status::OK)
+            {
+                auto rollback_predicate = [&membership_rec](const GroupMembershipRecord& rec) {
+                    return rec.is_valid && rec.membership_id == membership_rec.membership_id;
+                };
+                ErrorContext rollback_ctx;
+                (void)deleteRecordFromHeapPage<GroupMembershipRecord>(
+                    group_memberships_table_page_, rollback_predicate, &rollback_ctx);
+                SET_ERROR_CONTEXT(ctx, overlay_status,
+                                  "Failed to materialize group member overlay schema");
+                return overlay_status;
+            }
+        }
+    }
+
     DEBUG_LOG_DB("Added member " << member_id.toString() << " to group " << group_id.toString());
     return Status::OK;
 }
@@ -42761,17 +42820,64 @@ auto CatalogManager::removeGroupMember(const ID& group_id, const ID& member_id,
 {
     std::lock_guard<CatalogMutex> lock(mutex_);
 
-    // Find and delete membership
     auto predicate = [&group_id, &member_id](const GroupMembershipRecord& rec) {
         return rec.is_valid && rec.group_id == group_id && rec.user_id == member_id;
     };
+    auto existing = findRecordInHeapPage<GroupMembershipRecord>(
+        group_memberships_table_page_, predicate, ctx);
+    if (existing.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, existing.status, "Failed to remove group member");
+        return existing.status;
+    }
 
+    GroupInfo group_info;
+    std::string member_name;
+    if (getGroup(group_id, group_info, nullptr) == Status::OK)
+    {
+        if (existing.record.member_type == 1)
+        {
+            GroupInfo member_group;
+            if (getGroup(member_id, member_group, nullptr) == Status::OK)
+            {
+                member_name = member_group.group_name;
+            }
+        }
+        else
+        {
+            BasicUserInfo member_user;
+            if (getUserBasicUnlocked(member_id, member_user, nullptr) == Status::OK)
+            {
+                member_name = member_user.username;
+            }
+        }
+    }
+
+    // Find and delete membership
     Status status = deleteRecordFromHeapPage<GroupMembershipRecord>(
         group_memberships_table_page_, predicate, ctx);
     if (status != Status::OK)
     {
         SET_ERROR_CONTEXT(ctx, status, "Failed to remove group member");
         return status;
+    }
+
+    if (!group_info.group_name.empty() && !member_name.empty())
+    {
+        auto remaining_predicate = [&group_id, &member_id](const GroupMembershipRecord& rec) {
+            return rec.is_valid && rec.group_id == group_id && rec.user_id == member_id;
+        };
+        auto remaining = findRecordInHeapPage<GroupMembershipRecord>(
+            group_memberships_table_page_, remaining_predicate, nullptr);
+        if (remaining.status == Status::NOT_FOUND)
+        {
+            status = dropOverlaySchemaChildUnlocked("group." + group_info.group_name, member_name, ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, status, "Failed to remove group member overlay schema");
+                return status;
+            }
+        }
     }
 
     DEBUG_LOG_DB("Removed member " << member_id.toString() << " from group " << group_id.toString());
