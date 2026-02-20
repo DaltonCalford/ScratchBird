@@ -705,6 +705,93 @@ TEST(CatalogDatabaseBootstrapTest, ClusterLifecycleMaterializesDynamicOverlaySch
     std::remove(db_path.c_str());
 }
 
+TEST(CatalogDatabaseBootstrapTest, GroupRenameMovesDynamicOverlaySchema)
+{
+    std::string db_path = uniqueTestDbPath("test_catalog_group_overlay_rename");
+    std::remove(db_path.c_str());
+
+    ErrorContext ctx;
+    ASSERT_EQ(Database::create(db_path, 8192, &ctx), Status::OK) << ctx.message;
+
+    {
+        Database db;
+        ASSERT_EQ(db.open(db_path, &ctx), Status::OK) << ctx.message;
+        auto* catalog = db.catalog_manager();
+        ASSERT_NE(catalog, nullptr);
+
+        ID group_id{};
+        ASSERT_EQ(catalog->createGroup("qa_group_old",
+                                       CatalogManager::GroupType::LOCAL,
+                                       "",
+                                       ID{},
+                                       group_id,
+                                       &ctx),
+                  Status::OK)
+            << ctx.message;
+
+        ASSERT_EQ(catalog->updateGroup(group_id,
+                                       std::optional<std::string>("qa_group_new"),
+                                       std::nullopt,
+                                       std::nullopt,
+                                       std::nullopt,
+                                       std::nullopt,
+                                       &ctx),
+                  Status::OK)
+            << ctx.message;
+
+        CatalogManager::SchemaInfo schema_info{};
+        EXPECT_EQ(catalog->getSchema("group.qa_group_new", schema_info, &ctx), Status::OK)
+            << ctx.message;
+        EXPECT_NE(catalog->getSchema("group.qa_group_old", schema_info, &ctx), Status::OK);
+
+        db.close();
+    }
+
+    std::remove(db_path.c_str());
+}
+
+TEST(CatalogDatabaseBootstrapTest, ClusterRenameMovesDynamicOverlaySchema)
+{
+    std::string db_path = uniqueTestDbPath("test_catalog_cluster_overlay_rename");
+    std::remove(db_path.c_str());
+
+    ErrorContext ctx;
+    ASSERT_EQ(Database::create(db_path, 8192, &ctx), Status::OK) << ctx.message;
+
+    {
+        Database db;
+        ASSERT_EQ(db.open(db_path, &ctx), Status::OK) << ctx.message;
+        auto* catalog = db.catalog_manager();
+        ASSERT_NE(catalog, nullptr);
+
+        ID cluster_id = generateUuidV7();
+        CatalogManager::ClusterCatalogInfo cluster{};
+        cluster.cluster_id = cluster_id;
+        cluster.cluster_name = "alpha_old";
+        cluster.cluster_mode = CatalogManager::ClusterMode::CLUSTER;
+        cluster.cluster_state = CatalogManager::ClusterState::ONLINE;
+        cluster.consensus_mode = CatalogManager::ConsensusMode::RAFT;
+        cluster.config_version = 1;
+        cluster.cluster_state_version = 1;
+
+        ASSERT_EQ(catalog->upsertClusterCatalogEntry(cluster, &ctx), Status::OK) << ctx.message;
+
+        cluster.cluster_name = "alpha_new";
+        cluster.config_version = 2;
+        cluster.cluster_state_version = 2;
+        ASSERT_EQ(catalog->upsertClusterCatalogEntry(cluster, &ctx), Status::OK) << ctx.message;
+
+        CatalogManager::SchemaInfo schema_info{};
+        EXPECT_EQ(catalog->getSchema("cluster.alpha_new", schema_info, &ctx), Status::OK)
+            << ctx.message;
+        EXPECT_NE(catalog->getSchema("cluster.alpha_old", schema_info, &ctx), Status::OK);
+
+        db.close();
+    }
+
+    std::remove(db_path.c_str());
+}
+
 TEST(CatalogDatabaseBootstrapTest, CreatesDomainExtensionCatalogFamilyPages)
 {
     std::string db_path = uniqueTestDbPath("test_catalog_domain_extension_pages_bootstrap");

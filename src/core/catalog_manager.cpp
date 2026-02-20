@@ -42322,6 +42322,8 @@ auto CatalogManager::updateGroup(const ID& group_id, const std::optional<std::st
                                  ErrorContext* ctx) -> Status
 {
     std::unique_lock<CatalogMutex> lock(mutex_);
+    const bool renamed = new_name.has_value();
+    const std::string requested_name = new_name.value_or(std::string{});
 
     // Find existing group
     GroupInfo existing;
@@ -42371,101 +42373,96 @@ auto CatalogManager::updateGroup(const ID& group_id, const std::optional<std::st
         }
     }
 
-    // Update group record on disk
-    BufferPool *bp = db_->buffer_pool();
-    void *page_data;
-    status = bp->pinPage(groups_table_page_, &page_data, ctx);
-    if (status != Status::OK)
-    {
-        return status;
-    }
-
-    HeapPage heap_page(static_cast<uint8_t *>(page_data), db_->page_size());
-    uint16_t item_count = heap_page.getItemCount();
-    bool found = false;
-
-    auto *mutable_page_data = static_cast<uint8_t *>(page_data);
-
-    for (uint16_t i = 0; i < item_count; ++i)
-    {
-        const uint8_t *tuple_data;
-        uint32_t tuple_size;
-
-        if (heap_page.getTuple(i, &tuple_data, &tuple_size, ctx) == Status::OK)
-        {
-            if (tuple_size >= sizeof(TupleHeader) + sizeof(GroupRecord))
-            {
-                const ptrdiff_t offset = tuple_data - static_cast<const uint8_t *>(page_data);
-                uint8_t *mutable_tuple_data = mutable_page_data + offset;
-
-                auto *record =
-                    reinterpret_cast<GroupRecord *>(mutable_tuple_data + sizeof(TupleHeader));
-
-                if (record->group_id == group_id && record->is_valid == 1)
-                {
-                    // Apply updates
-                    if (new_name.has_value())
-                    {
-                        std::string truncated = UTF8Utils::truncateToBytes(new_name.value(),
-                            sizeof(record->group_name));
-                        memset(record->group_name, 0, sizeof(record->group_name));
-                        strncpy(record->group_name, truncated.c_str(),
-                                sizeof(record->group_name) - 1);
-                    }
-                    if (new_type.has_value())
-                    {
-                        record->group_type = static_cast<uint8_t>(new_type.value());
-                    }
-                    if (new_external_id.has_value())
-                    {
-                        std::string truncated = UTF8Utils::truncateToBytes(new_external_id.value(),
-                            sizeof(record->external_id));
-                        memset(record->external_id, 0, sizeof(record->external_id));
-                        strncpy(record->external_id, truncated.c_str(),
-                                sizeof(record->external_id) - 1);
-                    }
-                    if (new_default_schema_id.has_value())
-                    {
-                        record->default_schema_id = new_default_schema_id.value();
-                    }
-                    if (new_metadata.has_value())
-                    {
-                        ID old_oid = record->group_metadata_oid;
-                        ID new_oid{};
-                        uint64_t xmin = ConnectionContext::getCurrentTransactionId();
-                        if (xmin == 0)
-                        {
-                            xmin = config::DEFAULT_INITIAL_XID;
-                        }
-
-                        Status toast_status = storeStringInToast(new_metadata.value(),
-                                                                xmin, new_oid, ctx);
-                        if (toast_status != Status::OK)
-                        {
-                            bp->unpinPage(groups_table_page_, false, ctx);
-                            return toast_status;
-                        }
-
-                        if (!isZeroUuidLocal(old_oid) && policy_toast_manager_)
-                        {
-                            policy_toast_manager_->deleteToastValue(old_oid, xmin, ctx);
-                        }
-                        record->group_metadata_oid = new_oid;
-                    }
-                    record->last_modified_time = std::chrono::system_clock::now().time_since_epoch().count();
-                    found = true;
-                    break;
-                }
-            }
-        }
-    }
-
-    bp->unpinPage(groups_table_page_, found, ctx);
-
-    if (!found)
+    // Update group record on disk using overflow-safe predicate update.
+    auto record_predicate = [&group_id](const GroupRecord& rec) {
+        return rec.is_valid == 1 && rec.group_id == group_id;
+    };
+    auto group_row = findRecordInHeapPage<GroupRecord>(groups_table_page_, record_predicate, ctx);
+    if (group_row.status != Status::OK)
     {
         SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Group not found on disk");
         return Status::NOT_FOUND;
+    }
+
+    GroupRecord updated = group_row.record;
+    if (new_name.has_value())
+    {
+        std::string truncated = UTF8Utils::truncateToBytes(new_name.value(), sizeof(updated.group_name));
+        memset(updated.group_name, 0, sizeof(updated.group_name));
+        strncpy(updated.group_name, truncated.c_str(), sizeof(updated.group_name) - 1);
+    }
+    if (new_type.has_value())
+    {
+        updated.group_type = static_cast<uint8_t>(new_type.value());
+    }
+    if (new_external_id.has_value())
+    {
+        std::string truncated = UTF8Utils::truncateToBytes(new_external_id.value(),
+                                                           sizeof(updated.external_id));
+        memset(updated.external_id, 0, sizeof(updated.external_id));
+        strncpy(updated.external_id, truncated.c_str(), sizeof(updated.external_id) - 1);
+    }
+    if (new_default_schema_id.has_value())
+    {
+        updated.default_schema_id = new_default_schema_id.value();
+    }
+
+    ID old_metadata_oid = updated.group_metadata_oid;
+    ID new_metadata_oid{};
+    bool metadata_oid_replaced = false;
+    uint64_t xmin = ConnectionContext::getCurrentTransactionId();
+    if (xmin == 0)
+    {
+        xmin = config::DEFAULT_INITIAL_XID;
+    }
+
+    if (new_metadata.has_value())
+    {
+        Status toast_status = storeStringInToast(new_metadata.value(), xmin, new_metadata_oid, ctx);
+        if (toast_status != Status::OK)
+        {
+            return toast_status;
+        }
+        updated.group_metadata_oid = new_metadata_oid;
+        metadata_oid_replaced = true;
+    }
+
+    updated.last_modified_time = std::chrono::system_clock::now().time_since_epoch().count();
+    status = updateRecordInHeapPage(groups_table_page_, record_predicate, updated, ctx);
+    if (status != Status::OK)
+    {
+        if (metadata_oid_replaced && !isZeroUuidLocal(new_metadata_oid) && policy_toast_manager_)
+        {
+            ErrorContext cleanup_ctx;
+            (void)policy_toast_manager_->deleteToastValue(new_metadata_oid, xmin, &cleanup_ctx);
+        }
+        SET_ERROR_CONTEXT(ctx, status, "Failed to persist group update");
+        return status;
+    }
+
+    if (metadata_oid_replaced && !isZeroUuidLocal(old_metadata_oid) && policy_toast_manager_)
+    {
+        ErrorContext cleanup_ctx;
+        (void)policy_toast_manager_->deleteToastValue(old_metadata_oid, xmin, &cleanup_ctx);
+    }
+
+    if (renamed &&
+        !IdentifierUtils::namesConflict(requested_name, false /*new_is_delimited*/,
+                                        existing.group_name, false /*stored_delimited*/))
+    {
+        status = ensureOverlaySchemaChildUnlocked("group", requested_name, nullptr, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to materialize renamed group overlay schema");
+            return status;
+        }
+
+        status = dropOverlaySchemaChildUnlocked("group", existing.group_name, ctx);
+        if (status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, status, "Failed to remove previous group overlay schema");
+            return status;
+        }
     }
 
     return Status::OK;
@@ -69065,10 +69062,13 @@ auto CatalogManager::upsertClusterCatalogEntry(const ClusterCatalogInfo& info,
         return row.cluster_id == info.cluster_id && row.is_valid == 1;
     };
     auto existing = findRecordInHeapPage<ClusterRecord>(cluster_table_page_, existing_predicate, ctx);
+    std::string previous_cluster_name;
     if (existing.status == Status::OK)
     {
         rec.created_time = existing.record.created_time;
         rec.created_txid = existing.record.created_txid;
+        previous_cluster_name = fixedNameFromBuffer(existing.record.cluster_name,
+                                                    sizeof(existing.record.cluster_name));
     }
     else if (existing.status != Status::NOT_FOUND)
     {
@@ -69091,6 +69091,18 @@ auto CatalogManager::upsertClusterCatalogEntry(const ClusterCatalogInfo& info,
         {
             SET_ERROR_CONTEXT(ctx, status, "Failed to create cluster overlay schema");
             return status;
+        }
+
+        if (!previous_cluster_name.empty() &&
+            !IdentifierUtils::namesConflict(info.cluster_name, false /*new_is_delimited*/,
+                                            previous_cluster_name, false /*stored_delimited*/))
+        {
+            status = dropOverlaySchemaChildUnlocked("cluster", previous_cluster_name, ctx);
+            if (status != Status::OK)
+            {
+                SET_ERROR_CONTEXT(ctx, status, "Failed to drop previous cluster overlay schema");
+                return status;
+            }
         }
     }
 
