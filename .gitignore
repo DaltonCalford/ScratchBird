@@ -15,6 +15,9 @@ tests/Makefile
 tests/cmake_install.cmake
 tests/scratchbird_tests[1]_include.cmake
 
+# Release staging output (local-only until formal release publication)
+/release/
+
 # Object files and compiled artifacts
 *.o
 *.a
