@@ -15,6 +15,7 @@
  */
 
 #include <atomic>
+#include <array>
 #include <chrono>
 #include <condition_variable>
 #include <csignal>
@@ -23,6 +24,7 @@
 #include <cstring>
 #include <cerrno>
 #include <ctime>
+#include <deque>
 #include <iostream>
 #include <memory>
 #include <mutex>
@@ -86,6 +88,18 @@ struct ListenerConfig {
     bool show_help = false;
     bool show_version = false;
     bool tls_enabled = false;  // Parsed from TLS config
+    uint32_t listener_id = 0;
+    std::string dbbt_keyring_path;
+    uint32_t dbbt_clock_skew_ms = 2000;
+    uint32_t dbbt_replay_cache_size = 4096;
+    bool require_proxy_binding = false;
+};
+
+struct ListenerHandoffBindingContext {
+    std::array<uint8_t, 16> db_uuid{};
+    std::array<uint8_t, 16> dbbt_id{};
+    std::array<uint8_t, 16> manager_session_id{};
+    uint32_t listener_id = 0;
 };
 
 void handleSignal(int signal) {
@@ -114,6 +128,29 @@ uint16_t defaultPortForProtocol(const std::string& protocol) {
         return DEFAULT_FIREBIRD_PORT;
     }
     return DEFAULT_NATIVE_PORT;
+}
+
+uint64_t fnv1a64(const std::string& value, uint64_t seed) {
+    constexpr uint64_t kPrime = 1099511628211ull;
+    uint64_t hash = seed;
+    for (unsigned char c : value) {
+        hash ^= static_cast<uint64_t>(c);
+        hash *= kPrime;
+    }
+    return hash;
+}
+
+std::array<uint8_t, 16> deriveDatabaseUuid(const std::string& database_name) {
+    std::array<uint8_t, 16> out{};
+    const uint64_t hi = fnv1a64(database_name, 1469598103934665603ull);
+    const uint64_t lo = fnv1a64(database_name, 1099511628211ull);
+    for (int i = 0; i < 8; ++i) {
+        out[static_cast<size_t>(i)] = static_cast<uint8_t>((hi >> (i * 8)) & 0xFF);
+        out[static_cast<size_t>(8 + i)] = static_cast<uint8_t>((lo >> (i * 8)) & 0xFF);
+    }
+    out[6] = static_cast<uint8_t>((out[6] & 0x0F) | 0x40);
+    out[8] = static_cast<uint8_t>((out[8] & 0x3F) | 0x80);
+    return out;
 }
 
 std::string protocolKey(const std::string& protocol) {
@@ -235,7 +272,10 @@ public:
         : config_(config),
           metrics_(metrics),
           handoff_histogram_(handoff_histogram),
-          queue_wait_histogram_(queue_wait_histogram) {}
+          queue_wait_histogram_(queue_wait_histogram) {
+        db_uuid_template_ = deriveDatabaseUuid(config_.database_owner);
+        listener_id_template_ = config_.listener_id;
+    }
 
     bool start() {
         draining_.store(false, std::memory_order_release);
@@ -274,6 +314,15 @@ public:
     size_t warmWorkerCount() const {
         std::lock_guard<std::mutex> lock(mutex_);
         return warmWorkerCountLocked();
+    }
+
+    void queueBindingContext(const ListenerHandoffBindingContext& binding) {
+        std::lock_guard<std::mutex> lock(binding_mutex_);
+        constexpr size_t kMaxQueuedBindings = 1024;
+        if (pending_bindings_.size() >= kMaxQueuedBindings) {
+            pending_bindings_.pop_front();
+        }
+        pending_bindings_.push_back(binding);
     }
 
     void setDraining(bool value) {
@@ -519,7 +568,25 @@ public:
         msg.header.message_type = static_cast<uint16_t>(
             scratchbird::network::ControlPlaneMessageType::HANDOFF_SOCKET);
         msg.header.request_id = nextRequestId();
-        msg.payload = buildHandoffPayload(msg.header.request_id, client_addr, tls_active);
+        ListenerHandoffBindingContext binding;
+        bool has_pending_binding = false;
+        {
+            std::lock_guard<std::mutex> lock(binding_mutex_);
+            if (!pending_bindings_.empty()) {
+                binding = pending_bindings_.front();
+                pending_bindings_.pop_front();
+                has_pending_binding = true;
+            }
+        }
+        if (!has_pending_binding) {
+            if (config_.require_proxy_binding) {
+                std::cerr << "[listener_debug] handoff denied: missing proxy binding context\n";
+                return false;
+            }
+            binding.db_uuid = db_uuid_template_;
+            binding.listener_id = listener_id_template_;
+        }
+        msg.payload = buildHandoffPayload(msg.header.request_id, client_addr, tls_active, binding);
         msg.header.payload_len = msg.payload.size();
         std::cerr << "[listener_debug] handoff req=" << msg.header.request_id
                   << " worker_id=" << worker->worker_id
@@ -582,6 +649,10 @@ private:
     PoolMetrics metrics_;
     scratchbird::core::Histogram* handoff_histogram_;
     scratchbird::core::Histogram* queue_wait_histogram_;
+    std::array<uint8_t, 16> db_uuid_template_{};
+    uint32_t listener_id_template_ = 0;
+    mutable std::mutex binding_mutex_;
+    std::deque<ListenerHandoffBindingContext> pending_bindings_;
 
     mutable std::mutex mutex_;
     std::condition_variable cv_;
@@ -696,6 +767,8 @@ private:
         args.push_back(controlSocketPath(config_));
         args.push_back("--engine-endpoint");
         args.push_back(config_.engine_endpoint);
+        args.push_back("--default-database");
+        args.push_back(config_.database_owner);
         args.push_back("--log-level");
         args.push_back(config_.log_level);
         if (!config_.tls_config.empty()) {
@@ -948,9 +1021,10 @@ private:
 
     std::vector<uint8_t> buildHandoffPayload(uint64_t connection_id,
                                              const scratchbird::network::NetworkAddress& addr,
-                                             bool tls_active) const {
+                                             bool tls_active,
+                                             const ListenerHandoffBindingContext& binding) const {
         std::vector<uint8_t> payload;
-        payload.reserve(8 + 16 + 48 + 2 + 1 + 2 + 64);
+        payload.reserve(8 + 16 + 48 + 2 + 1 + 2 + 64 + 16 + 16 + 16 + 4);
         appendU64(payload, connection_id);
         char protocol[16];
         std::memset(protocol, 0, sizeof(protocol));
@@ -967,6 +1041,12 @@ private:
         payload.push_back(tls_active ? 1 : 0);
         appendU16(payload, 0);
         payload.insert(payload.end(), 64, 0);
+        payload.insert(payload.end(), binding.db_uuid.begin(), binding.db_uuid.end());
+        payload.insert(payload.end(), binding.dbbt_id.begin(), binding.dbbt_id.end());
+        payload.insert(payload.end(),
+                       binding.manager_session_id.begin(),
+                       binding.manager_session_id.end());
+        appendU32(payload, binding.listener_id);
         return payload;
     }
 
@@ -979,6 +1059,13 @@ private:
         for (int i = 0; i < 8; ++i) {
             out.push_back(static_cast<uint8_t>((value >> (i * 8)) & 0xFF));
         }
+    }
+
+    static void appendU32(std::vector<uint8_t>& out, uint32_t value) {
+        out.push_back(static_cast<uint8_t>(value & 0xFF));
+        out.push_back(static_cast<uint8_t>((value >> 8) & 0xFF));
+        out.push_back(static_cast<uint8_t>((value >> 16) & 0xFF));
+        out.push_back(static_cast<uint8_t>((value >> 24) & 0xFF));
     }
 
     static uint32_t readU32(const uint8_t* data) {
@@ -1128,6 +1215,11 @@ void printUsage(const char* program) {
               << "  --max-requests <n>          Recycle parser after N sessions\n"
               << "  --max-age-seconds <n>       Recycle parser after seconds\n"
               << "  --health-check-interval-ms <n>  Health check interval (0 disables)\n"
+              << "  --listener-id <n>           DBBT listener id (default: port)\n"
+              << "  --dbbt-keyring <file>       DBBT keyring file\n"
+              << "  --dbbt-clock-skew-ms <n>    DBBT clock skew tolerance\n"
+              << "  --dbbt-replay-cache-size <n> DBBT replay cache entries\n"
+              << "  --require-proxy-binding     Require LPREFACE binding before handoff\n"
               << "  --log-level <level>         info|debug|warn|error\n"
               << "  --help, -h                  Show this help\n"
               << "  --version                   Show version\n";
@@ -1227,6 +1319,20 @@ bool applyConfigFile(ListenerConfig& config) {
 
     if (!config.config_path.empty() && parser.hasSection("ssl")) {
         config.tls_config = config.config_path;
+    }
+
+    const auto* manager = parser.section("manager");
+    if (manager) {
+        config.listener_id = static_cast<uint32_t>(
+            manager->getInt("listener_id", config.listener_id));
+        config.dbbt_keyring_path = manager->getString(
+            "dbbt_keyring", config.dbbt_keyring_path);
+        config.dbbt_clock_skew_ms = static_cast<uint32_t>(
+            manager->getInt("dbbt_clock_skew_ms", config.dbbt_clock_skew_ms));
+        config.dbbt_replay_cache_size = static_cast<uint32_t>(
+            manager->getInt("dbbt_replay_cache_size", config.dbbt_replay_cache_size));
+        config.require_proxy_binding = manager->getBool(
+            "require_proxy_binding", config.require_proxy_binding);
     }
 
     // Load TLS settings from the already parsed config
@@ -1346,6 +1452,54 @@ bool applyArgOverrides(int argc, char* argv[], ListenerConfig& config) {
             config.log_level = argv[++i];
         } else if (arg.rfind("--log-level=", 0) == 0) {
             config.log_level = arg.substr(12);
+        } else if (arg == "--listener-id" && i + 1 < argc) {
+            try {
+                config.listener_id = static_cast<uint32_t>(std::stoul(argv[++i]));
+            } catch (...) {
+                std::cerr << "Invalid listener-id value\n";
+                return false;
+            }
+        } else if (arg.rfind("--listener-id=", 0) == 0) {
+            try {
+                config.listener_id = static_cast<uint32_t>(std::stoul(arg.substr(14)));
+            } catch (...) {
+                std::cerr << "Invalid listener-id value\n";
+                return false;
+            }
+        } else if (arg == "--dbbt-keyring" && i + 1 < argc) {
+            config.dbbt_keyring_path = argv[++i];
+        } else if (arg.rfind("--dbbt-keyring=", 0) == 0) {
+            config.dbbt_keyring_path = arg.substr(15);
+        } else if (arg == "--dbbt-clock-skew-ms" && i + 1 < argc) {
+            try {
+                config.dbbt_clock_skew_ms = static_cast<uint32_t>(std::stoul(argv[++i]));
+            } catch (...) {
+                std::cerr << "Invalid dbbt-clock-skew-ms value\n";
+                return false;
+            }
+        } else if (arg.rfind("--dbbt-clock-skew-ms=", 0) == 0) {
+            try {
+                config.dbbt_clock_skew_ms = static_cast<uint32_t>(std::stoul(arg.substr(21)));
+            } catch (...) {
+                std::cerr << "Invalid dbbt-clock-skew-ms value\n";
+                return false;
+            }
+        } else if (arg == "--dbbt-replay-cache-size" && i + 1 < argc) {
+            try {
+                config.dbbt_replay_cache_size = static_cast<uint32_t>(std::stoul(argv[++i]));
+            } catch (...) {
+                std::cerr << "Invalid dbbt-replay-cache-size value\n";
+                return false;
+            }
+        } else if (arg.rfind("--dbbt-replay-cache-size=", 0) == 0) {
+            try {
+                config.dbbt_replay_cache_size = static_cast<uint32_t>(std::stoul(arg.substr(25)));
+            } catch (...) {
+                std::cerr << "Invalid dbbt-replay-cache-size value\n";
+                return false;
+            }
+        } else if (arg == "--require-proxy-binding") {
+            config.require_proxy_binding = true;
         }
     }
     return true;
@@ -1370,6 +1524,48 @@ static std::string trimAscii(std::string value) {
         value.pop_back();
     }
     return value;
+}
+
+static bool loadListenerDbbtKeyRing(const ListenerConfig& config,
+                                    scratchbird::network::DatabaseBindingKeyRing& key_ring,
+                                    std::string& source,
+                                    scratchbird::core::ErrorContext* ctx) {
+    using scratchbird::network::DatabaseBindingKeyRing;
+    using scratchbird::core::Status;
+
+    if (!config.dbbt_keyring_path.empty()) {
+        auto status = DatabaseBindingKeyRing::loadFromTextFile(
+            config.dbbt_keyring_path, key_ring, ctx);
+        if (status != Status::OK) {
+            return false;
+        }
+        source = config.dbbt_keyring_path;
+        return true;
+    }
+
+    const char* shared_hex = std::getenv("SCRATCHBIRD_DBBT_SHARED_KEY_HEX");
+    if (shared_hex != nullptr && shared_hex[0] != '\0') {
+        std::vector<uint8_t> key_bytes;
+        if (!scratchbird::network::hexToBytes(shared_hex, key_bytes) ||
+            !key_ring.addKey("env", key_bytes, true, ctx)) {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                              "Invalid SCRATCHBIRD_DBBT_SHARED_KEY_HEX");
+            return false;
+        }
+        source = "env:SCRATCHBIRD_DBBT_SHARED_KEY_HEX";
+        return true;
+    }
+
+    constexpr const char* kDevFallbackHex =
+        "73637261746368626972645f6465765f646262745f7368617265645f6b65795f7631";
+    std::vector<uint8_t> fallback_key;
+    if (!scratchbird::network::hexToBytes(kDevFallbackHex, fallback_key) ||
+        !key_ring.addKey("default", fallback_key, true, ctx)) {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Failed to initialize default DBBT key");
+        return false;
+    }
+    source = "builtin:default";
+    return true;
 }
 
 static bool reloadListenerRuntimeConfig(ListenerConfig& config,
@@ -1412,7 +1608,9 @@ static bool reloadListenerRuntimeConfig(ListenerConfig& config,
 
 static void handleManagementConnection(std::unique_ptr<scratchbird::network::Socket> socket,
                                        ListenerConfig& config,
-                                       ParserPool& pool) {
+                                       ParserPool& pool,
+                                       scratchbird::network::DatabaseBindingKeyRing& dbbt_key_ring,
+                                       scratchbird::network::DatabaseBindingReplayCache& dbbt_replay_cache) {
     scratchbird::core::ErrorContext ctx;
     scratchbird::network::ControlPlaneMessage request;
     auto status = scratchbird::network::receiveControlPlaneMessage(*socket, request, nullptr, &ctx);
@@ -1503,6 +1701,110 @@ static void handleManagementConnection(std::unique_ptr<scratchbird::network::Soc
             ok = pool.terminateConnection(connection_id, error);
             message = ok ? "killed" : ("kill_failed:" + error);
         }
+    } else if (command.rfind("DBBT_VALIDATE ", 0) == 0) {
+        std::string hex_token = trimAscii(command.substr(14));
+        std::vector<uint8_t> encoded_token;
+        if (!scratchbird::network::hexToBytes(hex_token, encoded_token)) {
+            ok = false;
+            message = "dbbt_invalid_hex";
+        } else {
+            scratchbird::network::DatabaseBindingValidationOptions opts;
+            opts.expected_listener_id = config.listener_id;
+            opts.now_ms = scratchbird::network::currentEpochMillis();
+            opts.clock_skew_ms = config.dbbt_clock_skew_ms;
+            opts.enforce_replay = true;
+
+            scratchbird::network::DatabaseBindingToken token;
+            scratchbird::core::ErrorContext validate_ctx;
+            auto validate_status = scratchbird::network::validateDatabaseBindingToken(
+                encoded_token, dbbt_key_ring, opts, &dbbt_replay_cache, &token, &validate_ctx);
+            if (validate_status == scratchbird::core::Status::OK) {
+                ok = true;
+                const auto token_id = scratchbird::network::databaseBindingTokenId(token);
+                message = std::string("dbbt_valid:") +
+                          scratchbird::network::bytesToHex(token_id);
+            } else {
+                ok = false;
+                if (validate_ctx.message.empty()) {
+                    message = "dbbt_invalid";
+                } else {
+                    message = "dbbt_invalid:" + validate_ctx.message;
+                }
+            }
+        }
+    } else if (command.rfind("LPREFACE_VALIDATE ", 0) == 0) {
+        std::string hex_preface = trimAscii(command.substr(17));
+        std::vector<uint8_t> encoded_preface;
+        if (!scratchbird::network::hexToBytes(hex_preface, encoded_preface)) {
+            ok = false;
+            scratchbird::network::ListenerPrefaceAck nack;
+            nack.accepted = false;
+            nack.nack_code = scratchbird::network::ListenerPrefaceNackCode::INVALID_FORMAT;
+            nack.message = "invalid_hex";
+            std::vector<uint8_t> ack_payload;
+            scratchbird::network::encodeListenerPrefaceAck(nack, ack_payload, nullptr);
+            message = std::string("lpreface_nack:") + scratchbird::network::bytesToHex(ack_payload);
+        } else {
+            scratchbird::network::DatabaseBindingValidationOptions opts;
+            opts.expected_listener_id = config.listener_id;
+            opts.now_ms = scratchbird::network::currentEpochMillis();
+            opts.clock_skew_ms = config.dbbt_clock_skew_ms;
+            opts.enforce_replay = true;
+
+            scratchbird::network::ListenerPrefaceV1 preface;
+            scratchbird::network::DatabaseBindingToken token;
+            scratchbird::core::ErrorContext validate_ctx;
+            const auto validate_status = scratchbird::network::validateListenerPrefaceV1(
+                encoded_preface,
+                dbbt_key_ring,
+                opts,
+                &dbbt_replay_cache,
+                &preface,
+                &token,
+                &validate_ctx);
+
+            if (validate_status == scratchbird::core::Status::OK) {
+                ok = true;
+                ListenerHandoffBindingContext binding;
+                binding.db_uuid = token.db_uuid;
+                binding.manager_session_id = token.manager_session_id;
+                const auto token_id = scratchbird::network::databaseBindingTokenId(token);
+                if (token_id.size() == binding.dbbt_id.size()) {
+                    std::copy(token_id.begin(), token_id.end(), binding.dbbt_id.begin());
+                }
+                binding.listener_id =
+                    preface.listener_id != 0 ? preface.listener_id : token.listener_id;
+                if (binding.listener_id == 0) {
+                    binding.listener_id = config.listener_id;
+                }
+                pool.queueBindingContext(binding);
+
+                scratchbird::network::ListenerPrefaceAck ack;
+                ack.accepted = true;
+                ack.nack_code = scratchbird::network::ListenerPrefaceNackCode::NONE;
+                ack.message = "ok";
+                std::vector<uint8_t> ack_payload;
+                scratchbird::network::encodeListenerPrefaceAck(ack, ack_payload, nullptr);
+                message = std::string("lpreface_ack:") + scratchbird::network::bytesToHex(ack_payload);
+            } else {
+                ok = false;
+                scratchbird::network::ListenerPrefaceNackCode nack_code =
+                    scratchbird::network::ListenerPrefaceNackCode::INVALID_DBBT;
+                if (validate_status == scratchbird::core::Status::PROTOCOL_VIOLATION) {
+                    nack_code = scratchbird::network::ListenerPrefaceNackCode::INVALID_FORMAT;
+                } else if (validate_ctx.message.find("listener") != std::string::npos) {
+                    nack_code = scratchbird::network::ListenerPrefaceNackCode::LISTENER_MISMATCH;
+                }
+                scratchbird::network::ListenerPrefaceAck nack;
+                nack.accepted = false;
+                nack.nack_code = nack_code;
+                nack.message = validate_ctx.message.empty() ? "invalid_lpreface" : validate_ctx.message;
+                std::vector<uint8_t> ack_payload;
+                scratchbird::network::encodeListenerPrefaceAck(nack, ack_payload, nullptr);
+                message = std::string("lpreface_nack:") +
+                          scratchbird::network::bytesToHex(ack_payload);
+            }
+        }
     } else {
         ok = false;
         message = "unknown_command";
@@ -1526,6 +1828,21 @@ int runListener(ListenerConfig config) {
         std::cerr << "Failed to initialize network subsystem\n";
         return 2;
     }
+
+    if (config.listener_id == 0) {
+        config.listener_id = config.port;
+    }
+
+    scratchbird::network::DatabaseBindingKeyRing dbbt_key_ring;
+    std::string dbbt_keyring_source;
+    scratchbird::core::ErrorContext key_ctx;
+    if (!loadListenerDbbtKeyRing(config, dbbt_key_ring, dbbt_keyring_source, &key_ctx)) {
+        std::cerr << "Failed to initialize DBBT keyring: " << key_ctx.message << "\n";
+        return 2;
+    }
+    (void)dbbt_keyring_source;
+    scratchbird::network::DatabaseBindingReplayCache dbbt_replay_cache(
+        std::max<uint32_t>(1u, config.dbbt_replay_cache_size));
 
     auto& metrics = MetricsRegistry::getInstance();
     auto* connections_total = metrics.registerCounter(
@@ -1665,7 +1982,8 @@ int runListener(ListenerConfig config) {
                         std::this_thread::sleep_for(std::chrono::milliseconds(50));
                         continue;
                     }
-                    handleManagementConnection(std::move(mgmt_conn), config, pool);
+                    handleManagementConnection(std::move(mgmt_conn), config, pool,
+                                               dbbt_key_ring, dbbt_replay_cache);
                 }
             });
         } else {
@@ -1851,6 +2169,15 @@ int main(int argc, char* argv[]) {
     if (config.port == 0) {
         std::cerr << "Invalid port\n";
         return 1;
+    }
+    if (config.listener_id == 0) {
+        config.listener_id = config.port;
+    }
+    if (config.dbbt_clock_skew_ms == 0) {
+        config.dbbt_clock_skew_ms = 2000;
+    }
+    if (config.dbbt_replay_cache_size == 0) {
+        config.dbbt_replay_cache_size = 4096;
     }
 
     std::signal(SIGINT, handleSignal);

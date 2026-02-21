@@ -24,6 +24,7 @@ ScratchBird uses several configuration files:
 | Guide | Description |
 |-------|-------------|
 | [sb_server.conf Reference](sb_server.conf.md) | Complete server configuration reference |
+| [Front-Door Modes](front-door-modes.md) | `direct` vs `manager_proxy` topology and security controls |
 | [Host-Based Authentication](hba.conf.md) | Connection security rules |
 | [SSL/TLS Setup](ssl-setup.md) | Configure encrypted connections |
 | [Environment Variables](environment-vars.md) | Runtime configuration options |
@@ -170,6 +171,7 @@ If a setting is not specified, defaults are used:
 | `pg_port` | `5432` |
 | `mysql_port` | `3306` |
 | `fb_port` | `3050` |
+| `front_door_mode` | `direct` |
 | `log_level` | `info` |
 | `ssl.enabled` | `false` |
 
@@ -197,5 +199,6 @@ Plan to migrate to the canonical names when support is implemented.
 ## Next Steps
 
 - [Complete sb_server.conf reference](sb_server.conf.md)
+- [Choose front-door mode](front-door-modes.md)
 - [Set up authentication rules](hba.conf.md)
 - [Enable SSL/TLS](ssl-setup.md)

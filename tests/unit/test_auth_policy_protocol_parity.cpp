@@ -11,6 +11,7 @@
 #include <gtest/gtest.h>
 
 #include <atomic>
+#include <array>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -118,6 +119,29 @@ std::string makeUniquePolicyName(const std::string& prefix) {
     return prefix + "_" + std::to_string(getpid()) + "_" + std::to_string(counter.fetch_add(1));
 }
 
+uint64_t fnv1a64(const std::string& value, uint64_t seed) {
+    constexpr uint64_t kPrime = 1099511628211ull;
+    uint64_t hash = seed;
+    for (unsigned char c : value) {
+        hash ^= static_cast<uint64_t>(c);
+        hash *= kPrime;
+    }
+    return hash;
+}
+
+std::array<uint8_t, 16> deriveBindingUuid(const std::string& database_name) {
+    std::array<uint8_t, 16> out{};
+    const uint64_t hi = fnv1a64(database_name, 1469598103934665603ull);
+    const uint64_t lo = fnv1a64(database_name, 1099511628211ull);
+    for (int i = 0; i < 8; ++i) {
+        out[static_cast<size_t>(i)] = static_cast<uint8_t>((hi >> (i * 8)) & 0xFF);
+        out[static_cast<size_t>(8 + i)] = static_cast<uint8_t>((lo >> (i * 8)) & 0xFF);
+    }
+    out[6] = static_cast<uint8_t>((out[6] & 0x0F) | 0x40);
+    out[8] = static_cast<uint8_t>((out[8] & 0x3F) | 0x80);
+    return out;
+}
+
 core::Status configurePolicyForUser(CatalogManager* catalog,
                                     const std::string& username,
                                     const std::string& policy_name,
@@ -189,6 +213,30 @@ core::Status configurePolicyForUser(CatalogManager* catalog,
     account.has_locked_reason = false;
 
     return catalog->upsertPrincipalAccountCatalogEntry(account, ctx);
+}
+
+core::Status configureIngressRuleProfile(CatalogManager* catalog,
+                                         const std::string& profile_name,
+                                         CatalogManager::ConnectionRuleTransportKind allow_transport,
+                                         ErrorContext* ctx) {
+    CatalogManager::ConnectionRuleCatalogInfo allow{};
+    allow.rule_id = generateUuidV7();
+    allow.profile_scope = profile_name;
+    allow.rule_order = 1;
+    allow.transport_kind = allow_transport;
+    allow.action = CatalogManager::ConnectionRuleAction::ALLOW;
+    core::Status status = catalog->upsertConnectionRuleCatalogEntry(allow, ctx);
+    if (status != core::Status::OK) {
+        return status;
+    }
+
+    CatalogManager::ConnectionRuleCatalogInfo deny{};
+    deny.rule_id = generateUuidV7();
+    deny.profile_scope = profile_name;
+    deny.rule_order = 2;
+    deny.transport_kind = allow_transport;
+    deny.action = CatalogManager::ConnectionRuleAction::DENY;
+    return catalog->upsertConnectionRuleCatalogEntry(deny, ctx);
 }
 
 struct SessionThreadResult {
@@ -291,7 +339,9 @@ protected:
     core::Status connectWithProfile(const ProtocolProfile& profile,
                                     const std::string& socket_path,
                                     std::string* last_error_out,
-                                    ErrorContext* ctx) {
+                                    ErrorContext* ctx,
+                                    uint16_t connect_flags = 0,
+                                    const std::array<uint8_t, 16>* bound_db_uuid = nullptr) {
         ConnectionConfig config;
         config.database_name = "auth_policy_protocol_parity";
         config.username = "SYSARCH";
@@ -300,6 +350,11 @@ protected:
         config.auto_start_server = false;
         config.ipc_method = IPCMethod::UNIX_SOCKET;
         config.socket_path = socket_path;
+        config.connect_client_flags = connect_flags;
+        if (bound_db_uuid) {
+            config.has_bound_db_uuid = true;
+            config.bound_db_uuid = *bound_db_uuid;
+        }
 
         Connection conn;
         core::Status status = conn.connect(config, ctx);
@@ -402,6 +457,134 @@ TEST_F(AuthPolicyProtocolParityTest, TokenOnlyPolicyDeniesPasswordProfiles) {
 
         server_thread.stop();
     }
+}
+
+TEST_F(AuthPolicyProtocolParityTest, IngressRuleChainAppliesTrustedProxyChecksAtConnect) {
+    if (!scratchbird::testing::networkTestsEnabled()) {
+        GTEST_SKIP() << "Network tests disabled; set SCRATCHBIRD_TEST_NETWORK=1 to enable.";
+    }
+
+    const std::string policy_name = makeUniquePolicyName("INGRESS_PROXY_POLICY");
+    ScopedEnvVar policy_env("SCRATCHBIRD_AUTH_POLICY_NAME", policy_name);
+
+    ErrorContext ctx;
+    ASSERT_EQ(configurePolicyForUser(catalog_,
+                                     "SYSARCH",
+                                     policy_name,
+                                     CatalogManager::AUTH_POLICY_METHOD_SCRAM_SHA_256,
+                                     CatalogManager::ConnectionAuthMethod::SCRAM_SHA_256,
+                                     &ctx),
+              core::Status::OK)
+        << ctx.message;
+
+    ASSERT_EQ(configureIngressRuleProfile(
+                  catalog_,
+                  "native",
+                  CatalogManager::ConnectionRuleTransportKind::UNIX_SOCKET,
+                  &ctx),
+              core::Status::OK)
+        << ctx.message;
+
+    const ProtocolProfile profile = {"native", {AuthMethod::SCRAM_SHA_256}};
+
+    {
+        const std::string socket_path = makeUniqueSocketPath("auth_ingress_direct");
+        SessionThreadHarness server_thread(db_.get(), socket_path);
+
+        core::Status start_status = server_thread.start(&ctx);
+        if (start_status != core::Status::OK && isNetworkRestrictedError(ctx)) {
+            GTEST_SKIP() << "Socket setup restricted: " << ctx.message;
+        }
+        ASSERT_EQ(start_status, core::Status::OK) << ctx.message;
+
+        std::string last_error;
+        core::Status connect_status = connectWithProfile(profile, socket_path, &last_error, &ctx);
+        EXPECT_EQ(connect_status, core::Status::OK)
+            << "ctx=" << ctx.message << " last_error=" << last_error;
+
+        server_thread.stop();
+    }
+
+    {
+        const std::string socket_path = makeUniqueSocketPath("auth_ingress_manager");
+        SessionThreadHarness server_thread(db_.get(), socket_path);
+
+        core::Status start_status = server_thread.start(&ctx);
+        if (start_status != core::Status::OK && isNetworkRestrictedError(ctx)) {
+            GTEST_SKIP() << "Socket setup restricted: " << ctx.message;
+        }
+        ASSERT_EQ(start_status, core::Status::OK) << ctx.message;
+
+        const auto bound_uuid = deriveBindingUuid("auth_policy_protocol_parity");
+        std::string last_error;
+        core::Status connect_status = connectWithProfile(profile,
+                                                         socket_path,
+                                                         &last_error,
+                                                         &ctx,
+                                                         CONNECT_FLAG_MANAGER_DBBT,
+                                                         &bound_uuid);
+        EXPECT_NE(connect_status, core::Status::OK);
+        EXPECT_TRUE(last_error.find("SEC_1230") != std::string::npos ||
+                    last_error.find("SEC_1231") != std::string::npos ||
+                    last_error.find("SEC_1233") != std::string::npos)
+            << "ctx=" << ctx.message << " last_error=" << last_error;
+
+        server_thread.stop();
+    }
+}
+
+TEST_F(AuthPolicyProtocolParityTest, ManagerBoundConnectRejectsDatabaseUuidMismatch) {
+    if (!scratchbird::testing::networkTestsEnabled()) {
+        GTEST_SKIP() << "Network tests disabled; set SCRATCHBIRD_TEST_NETWORK=1 to enable.";
+    }
+
+    const std::string policy_name = makeUniquePolicyName("INGRESS_PROXY_UUID_MISMATCH");
+    ScopedEnvVar policy_env("SCRATCHBIRD_AUTH_POLICY_NAME", policy_name);
+    ScopedEnvVar ingress_env("SCRATCHBIRD_CONNECTION_RULE_PROFILE", "native");
+
+    ErrorContext ctx;
+    ASSERT_EQ(configurePolicyForUser(catalog_,
+                                     "SYSARCH",
+                                     policy_name,
+                                     CatalogManager::AUTH_POLICY_METHOD_SCRAM_SHA_256,
+                                     CatalogManager::ConnectionAuthMethod::SCRAM_SHA_256,
+                                     &ctx),
+              core::Status::OK)
+        << ctx.message;
+
+    ASSERT_EQ(configureIngressRuleProfile(
+                  catalog_,
+                  "native",
+                  CatalogManager::ConnectionRuleTransportKind::UNIX_SOCKET,
+                  &ctx),
+              core::Status::OK)
+        << ctx.message;
+
+    const std::string socket_path = makeUniqueSocketPath("auth_ingress_uuid_mismatch");
+    SessionThreadHarness server_thread(db_.get(), socket_path);
+
+    core::Status start_status = server_thread.start(&ctx);
+    if (start_status != core::Status::OK && isNetworkRestrictedError(ctx)) {
+        GTEST_SKIP() << "Socket setup restricted: " << ctx.message;
+    }
+    ASSERT_EQ(start_status, core::Status::OK) << ctx.message;
+
+    std::array<uint8_t, 16> wrong_uuid = deriveBindingUuid("auth_policy_protocol_parity");
+    wrong_uuid[0] ^= 0xFF;
+
+    const ProtocolProfile profile = {"native", {AuthMethod::SCRAM_SHA_256}};
+    std::string last_error;
+    core::Status connect_status = connectWithProfile(profile,
+                                                     socket_path,
+                                                     &last_error,
+                                                     &ctx,
+                                                     CONNECT_FLAG_MANAGER_DBBT,
+                                                     &wrong_uuid);
+    EXPECT_NE(connect_status, core::Status::OK);
+    EXPECT_NE(last_error.find("database UUID mismatch"), std::string::npos)
+        << "ctx=" << ctx.message << " last_error=" << last_error;
+
+    server_thread.stop();
 }
 
 }  // namespace

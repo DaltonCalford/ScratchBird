@@ -35,6 +35,7 @@
  */
 
 #include <cstdint>
+#include <array>
 #include <memory>
 #include <string>
 #include <vector>
@@ -93,6 +94,9 @@ struct ConnectionConfig {
     // Behavior settings
     bool auto_commit = true;                // Auto-commit mode (no explicit transaction)
     bool manual_auth = false;               // Caller handles AUTH_REQUEST/RESPONSE
+    uint16_t connect_client_flags = 0;      // CONNECT_REQUEST client capability flags
+    bool has_bound_db_uuid = false;         // Include bound DB UUID extension on CONNECT
+    std::array<uint8_t, 16> bound_db_uuid{};// Bound DB UUID extension payload
 
     // Default constructor
     ConnectionConfig() = default;

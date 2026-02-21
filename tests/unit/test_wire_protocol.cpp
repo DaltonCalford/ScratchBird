@@ -21,6 +21,7 @@
  */
 
 #include <gtest/gtest.h>
+#include <array>
 #include <cstring>
 #include <thread>
 #include <chrono>
@@ -321,6 +322,44 @@ TEST_F(ProtocolCodecTest, ConnectRequest) {
     EXPECT_EQ(database, "testdb");
     EXPECT_EQ(client_name, "test_client");
     EXPECT_EQ(client_pid, 12345u);
+}
+
+TEST_F(ProtocolCodecTest, ConnectRequestCarriesManagerBoundDatabaseUuid) {
+    std::array<uint8_t, 16> bound_uuid{};
+    for (size_t i = 0; i < bound_uuid.size(); ++i) {
+        bound_uuid[i] = static_cast<uint8_t>(i + 1);
+    }
+
+    Message msg = ProtocolCodec::buildConnectRequest("main",
+                                                     "proxy_parser",
+                                                     777,
+                                                     CONNECT_FLAG_MANAGER_DBBT,
+                                                     bound_uuid.data());
+    EXPECT_EQ(msg.getType(), MessageType::CONNECT_REQUEST);
+
+    std::string database;
+    std::string client_name;
+    uint32_t client_pid = 0;
+    uint16_t client_flags = 0;
+    bool has_bound_uuid = false;
+    std::array<uint8_t, 16> parsed_bound_uuid{};
+    ErrorContext ctx;
+
+    Status status = ProtocolCodec::parseConnectRequest(msg,
+                                                       database,
+                                                       client_name,
+                                                       client_pid,
+                                                       &client_flags,
+                                                       &ctx,
+                                                       &parsed_bound_uuid,
+                                                       &has_bound_uuid);
+    EXPECT_EQ(status, Status::OK) << ctx.message;
+    EXPECT_EQ(database, "main");
+    EXPECT_EQ(client_name, "proxy_parser");
+    EXPECT_EQ(client_pid, 777u);
+    EXPECT_EQ(client_flags & CONNECT_FLAG_MANAGER_DBBT, CONNECT_FLAG_MANAGER_DBBT);
+    EXPECT_TRUE(has_bound_uuid);
+    EXPECT_EQ(parsed_bound_uuid, bound_uuid);
 }
 
 TEST_F(ProtocolCodecTest, ConnectResponse) {
@@ -673,6 +712,100 @@ TEST_F(ProtocolCodecTest, StatusRequestResponse) {
     EXPECT_EQ(parsed_entries[1].value, "123s");
 }
 
+TEST_F(ProtocolCodecTest, McpHelloRoundTrip) {
+    Message msg = ProtocolCodec::buildMcpHello(MCP_PROTOCOL_VERSION, 0x0003);
+    EXPECT_EQ(msg.getType(), MessageType::MCP_HELLO);
+
+    uint16_t requested_version = 0;
+    uint16_t client_flags = 0;
+    ErrorContext ctx;
+    Status status = ProtocolCodec::parseMcpHello(msg, requested_version, client_flags, &ctx);
+    EXPECT_EQ(status, Status::OK) << ctx.message;
+    EXPECT_EQ(requested_version, MCP_PROTOCOL_VERSION);
+    EXPECT_EQ(client_flags, 0x0003);
+}
+
+TEST_F(ProtocolCodecTest, McpAuthStartRoundTrip) {
+    const std::vector<uint8_t> initial_data = {'n', ',', ',', 'n', '=', 'a', 'd', 'm', 'i', 'n'};
+    Message msg = ProtocolCodec::buildMcpAuthStart("admin", AuthMethod::SCRAM_SHA_256, initial_data);
+    EXPECT_EQ(msg.getType(), MessageType::MCP_AUTH_START);
+
+    std::string username;
+    AuthMethod method = AuthMethod::PASSWORD;
+    std::vector<uint8_t> parsed_initial_data;
+    ErrorContext ctx;
+    Status status = ProtocolCodec::parseMcpAuthStart(
+        msg, username, method, parsed_initial_data, &ctx);
+    EXPECT_EQ(status, Status::OK) << ctx.message;
+    EXPECT_EQ(username, "admin");
+    EXPECT_EQ(method, AuthMethod::SCRAM_SHA_256);
+    EXPECT_EQ(parsed_initial_data, initial_data);
+}
+
+TEST_F(ProtocolCodecTest, McpAuthContinueRoundTrip) {
+    const std::vector<uint8_t> continuation_data = {'c', '=', 'b', 'i', 'w', 's'};
+    Message msg = ProtocolCodec::buildMcpAuthContinue(continuation_data);
+    EXPECT_EQ(msg.getType(), MessageType::MCP_AUTH_CONTINUE);
+
+    std::vector<uint8_t> parsed_data;
+    ErrorContext ctx;
+    Status status = ProtocolCodec::parseMcpAuthContinue(msg, parsed_data, &ctx);
+    EXPECT_EQ(status, Status::OK) << ctx.message;
+    EXPECT_EQ(parsed_data, continuation_data);
+}
+
+TEST_F(ProtocolCodecTest, McpDbListAndConnectRoundTrip) {
+    Message list_msg = ProtocolCodec::buildMcpDbList();
+    EXPECT_EQ(list_msg.getType(), MessageType::MCP_DB_LIST);
+
+    ErrorContext ctx;
+    Status status = ProtocolCodec::parseMcpDbList(list_msg, &ctx);
+    EXPECT_EQ(status, Status::OK) << ctx.message;
+
+    Message connect_msg = ProtocolCodec::buildMcpDbConnect("main");
+    EXPECT_EQ(connect_msg.getType(), MessageType::MCP_DB_CONNECT);
+
+    std::string database_name;
+    status = ProtocolCodec::parseMcpDbConnect(connect_msg, database_name, &ctx);
+    EXPECT_EQ(status, Status::OK) << ctx.message;
+    EXPECT_EQ(database_name, "main");
+
+    const std::vector<uint8_t> client_nonce = {
+        0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+        0x18, 0x19, 0x1A, 0x1B, 0x1C, 0x1D, 0x1E, 0x1F
+    };
+    Message extended_connect = ProtocolCodec::buildMcpDbConnect(
+        "main", "native_v3", "native_v3", client_nonce);
+    EXPECT_EQ(extended_connect.getType(), MessageType::MCP_DB_CONNECT);
+
+    std::string extended_database_name;
+    std::string connection_profile;
+    std::string client_intent;
+    std::vector<uint8_t> parsed_client_nonce;
+    status = ProtocolCodec::parseMcpDbConnect(extended_connect,
+                                              extended_database_name,
+                                              connection_profile,
+                                              client_intent,
+                                              parsed_client_nonce,
+                                              &ctx);
+    EXPECT_EQ(status, Status::OK) << ctx.message;
+    EXPECT_EQ(extended_database_name, "main");
+    EXPECT_EQ(connection_profile, "native_v3");
+    EXPECT_EQ(client_intent, "native_v3");
+    EXPECT_EQ(parsed_client_nonce, client_nonce);
+}
+
+TEST_F(ProtocolCodecTest, McpDbInfoRoundTrip) {
+    Message info_msg = ProtocolCodec::buildMcpDbInfo("main");
+    EXPECT_EQ(info_msg.getType(), MessageType::MCP_DB_INFO);
+
+    std::string database_name;
+    ErrorContext ctx;
+    Status status = ProtocolCodec::parseMcpDbInfo(info_msg, database_name, &ctx);
+    EXPECT_EQ(status, Status::OK) << ctx.message;
+    EXPECT_EQ(database_name, "main");
+}
+
 TEST_F(ProtocolCodecTest, Pong) {
     Message msg = ProtocolCodec::buildPong(9876543210ULL, 99);
     EXPECT_EQ(msg.getType(), MessageType::PONG);
@@ -704,6 +837,8 @@ TEST_F(UtilityFunctionTest, MessageTypeToString) {
     EXPECT_STREQ(messageTypeToString(MessageType::QUERY), "QUERY");
     EXPECT_STREQ(messageTypeToString(MessageType::ROW_DATA), "ROW_DATA");
     EXPECT_STREQ(messageTypeToString(MessageType::PING), "PING");
+    EXPECT_STREQ(messageTypeToString(MessageType::MCP_DB_CONNECT), "MCP_DB_CONNECT");
+    EXPECT_STREQ(messageTypeToString(MessageType::MCP_DB_INFO), "MCP_DB_INFO");
 }
 
 TEST_F(UtilityFunctionTest, WireTypeToString) {

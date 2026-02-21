@@ -193,6 +193,29 @@ std::string toUpperAscii(std::string value) {
     return value;
 }
 
+uint64_t fnv1a64(const std::string& value, uint64_t seed) {
+    constexpr uint64_t kPrime = 1099511628211ull;
+    uint64_t hash = seed;
+    for (unsigned char c : value) {
+        hash ^= static_cast<uint64_t>(c);
+        hash *= kPrime;
+    }
+    return hash;
+}
+
+std::array<uint8_t, 16> deriveBindingDatabaseUuid(const std::string& database_name) {
+    std::array<uint8_t, 16> out{};
+    const uint64_t hi = fnv1a64(database_name, 1469598103934665603ull);
+    const uint64_t lo = fnv1a64(database_name, 1099511628211ull);
+    for (int i = 0; i < 8; ++i) {
+        out[static_cast<size_t>(i)] = static_cast<uint8_t>((hi >> (i * 8)) & 0xFF);
+        out[static_cast<size_t>(8 + i)] = static_cast<uint8_t>((lo >> (i * 8)) & 0xFF);
+    }
+    out[6] = static_cast<uint8_t>((out[6] & 0x0F) | 0x40);
+    out[8] = static_cast<uint8_t>((out[8] & 0x3F) | 0x80);
+    return out;
+}
+
 bool parseUint32Strict(const char* text, uint32_t& value_out) {
     if (!text || text[0] == '\0') {
         return false;
@@ -846,6 +869,103 @@ bool isTransportAllowedByMask(core::CatalogManager::ConnectionTransport transpor
     return bit != 0 && (mask & bit) != 0;
 }
 
+core::CatalogManager::ConnectionRuleTransportKind resolveConnectionRuleTransportKind(
+    const IPCConnection* connection,
+    bool trusted_proxy_channel) {
+    using CRT = core::CatalogManager::ConnectionRuleTransportKind;
+    if (trusted_proxy_channel) {
+        return CRT::MTLS;
+    }
+    if (!connection) {
+        return CRT::IPC_LOCAL;
+    }
+
+    switch (connection->getMethod()) {
+        case IPCMethod::UNIX_SOCKET:
+            return CRT::UNIX_SOCKET;
+        case IPCMethod::NAMED_PIPE:
+            return CRT::IPC_LOCAL;
+        case IPCMethod::TCP_LOCALHOST:
+            return CRT::TCP;
+        case IPCMethod::AUTO:
+        default:
+            return CRT::IPC_LOCAL;
+    }
+}
+
+std::string resolveConnectionRuleProfileScope() {
+    const char* env = std::getenv("SCRATCHBIRD_CONNECTION_RULE_PROFILE");
+    if (!env || env[0] == '\0') {
+        return "native";
+    }
+    return env;
+}
+
+bool evaluateIngressConnectionRules(core::CatalogManager* catalog,
+                                    const IPCConnection* connection,
+                                    const std::string& target_database,
+                                    bool trusted_proxy_channel,
+                                    std::string& reject_code_out,
+                                    std::string& reject_reason_out) {
+    reject_code_out.clear();
+    reject_reason_out.clear();
+    if (!catalog) {
+        return true;
+    }
+
+    const std::string profile_scope = resolveConnectionRuleProfileScope();
+    std::vector<core::CatalogManager::ConnectionRuleCatalogInfo> rules;
+    core::ErrorContext list_ctx;
+    const core::Status list_status =
+        catalog->listConnectionRuleCatalogEntries(profile_scope, rules, &list_ctx);
+    if (list_status == core::Status::NOT_FOUND ||
+        (list_status == core::Status::OK && rules.empty())) {
+        return true;
+    }
+    if (list_status != core::Status::OK) {
+        reject_code_out = list_ctx.vnext_code.empty() ? "SEC_1230" : list_ctx.vnext_code;
+        reject_reason_out = list_ctx.message.empty()
+            ? "ingress_connection_rule_lookup_failed"
+            : list_ctx.message;
+        return false;
+    }
+
+    core::CatalogManager::ConnectionRuleEvaluationRequest request{};
+    request.profile_scope = profile_scope;
+    request.transport_kind =
+        resolveConnectionRuleTransportKind(connection, trusted_proxy_channel);
+    request.target_db = target_database;
+    if (connection) {
+        request.remote_address = connection->getRemoteAddress();
+        const IPCMethod method = connection->getMethod();
+        if (method == IPCMethod::UNIX_SOCKET || method == IPCMethod::NAMED_PIPE) {
+            request.source_socket = request.remote_address;
+            request.source_host = request.remote_address;
+        } else {
+            request.source_ip = request.remote_address;
+            request.source_host = request.remote_address;
+        }
+    }
+    if (trusted_proxy_channel) {
+        request.has_forwarded_identity = true;
+        request.trusted_proxy_channel = true;
+        request.proxy_identity = "manager_proxy";
+    }
+
+    core::CatalogManager::ConnectionRuleEvaluationDecision decision{};
+    core::ErrorContext eval_ctx;
+    const core::Status eval_status =
+        catalog->evaluateConnectionRuleChain(request, decision, &eval_ctx);
+    if (eval_status != core::Status::OK) {
+        reject_code_out = eval_ctx.vnext_code.empty() ? "SEC_1231" : eval_ctx.vnext_code;
+        reject_reason_out = eval_ctx.message.empty()
+            ? "ingress_connection_denied"
+            : eval_ctx.message;
+        return false;
+    }
+    return true;
+}
+
 std::vector<protocol::AuthMethod> authMethodsFromMask(uint16_t mask) {
     std::vector<protocol::AuthMethod> methods;
     if ((mask & core::CatalogManager::AUTH_POLICY_METHOD_PASSWORD) != 0) {
@@ -1397,13 +1517,63 @@ core::Status ServerSession::handleConnect(const protocol::Message& msg, core::Er
     // Parse connect request using the ProtocolCodec
     std::string database, client_name;
     uint32_t client_pid;
+    uint16_t client_flags = 0;
+    std::array<uint8_t, 16> bound_db_uuid{};
+    bool has_bound_db_uuid = false;
 
     core::Status status = protocol::ProtocolCodec::parseConnectRequest(
-        msg, database, client_name, client_pid, nullptr, ctx);
+        msg, database, client_name, client_pid, &client_flags, ctx, &bound_db_uuid,
+        &has_bound_db_uuid);
 
     if (status != core::Status::OK) {
         sendError("Invalid connect request");
         return status;
+    }
+
+    if ((client_flags & protocol::CONNECT_FLAG_MANAGER_DBBT) != 0) {
+        if (!has_bound_db_uuid) {
+            protocol::Message response = protocol::ProtocolCodec::buildConnectResponse(
+                false, session_id_, "Manager-bound connect missing database UUID");
+            protocol_session_->sendMessage(response, ctx);
+            return core::Status::INVALID_AUTHORIZATION;
+        }
+
+        const std::array<uint8_t, 16> resolved_db_uuid =
+            deriveBindingDatabaseUuid(database);
+        const bool matches_engine_uuid =
+            database_ && (bound_db_uuid == database_->uuid().bytes);
+        const bool matches_resolved_uuid = bound_db_uuid == resolved_db_uuid;
+        if (!matches_engine_uuid && !matches_resolved_uuid) {
+            protocol::Message response = protocol::ProtocolCodec::buildConnectResponse(
+                false, session_id_, "Manager-bound connect database UUID mismatch");
+            protocol_session_->sendMessage(response, ctx);
+            return core::Status::INVALID_AUTHORIZATION;
+        }
+    }
+
+    {
+        std::string reject_code;
+        std::string reject_reason;
+        const bool trusted_proxy_channel =
+            (client_flags & protocol::CONNECT_FLAG_MANAGER_DBBT) != 0;
+        if (!evaluateIngressConnectionRules(
+                database_ ? database_->catalog_manager() : nullptr,
+                connection_,
+                database,
+                trusted_proxy_channel,
+                reject_code,
+                reject_reason)) {
+            std::string error = reject_reason.empty()
+                ? "Connection denied by ingress policy"
+                : reject_reason;
+            if (!reject_code.empty()) {
+                error = reject_code + ": " + error;
+            }
+            protocol::Message response = protocol::ProtocolCodec::buildConnectResponse(
+                false, session_id_, error);
+            protocol_session_->sendMessage(response, ctx);
+            return core::Status::INVALID_AUTHORIZATION;
+        }
     }
 
     client_info_ = client_name + " (pid=" + std::to_string(client_pid) + ")";

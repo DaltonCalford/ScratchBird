@@ -30,6 +30,7 @@
 
 - `configuration/index.md`
 - `configuration/sb_server.conf.md`
+- `configuration/front-door-modes.md`
 - `configuration/hba.conf.md`
 - `configuration/environment-vars.md`
 
@@ -40,6 +41,7 @@
 - `admin/backup-restore.md`
 - `admin/monitoring.md`
 - `admin/security.md`
+- `admin/manager-proxy-migration-runbook.md`
 - `admin/troubleshooting.md`
 
 ### Language Guides

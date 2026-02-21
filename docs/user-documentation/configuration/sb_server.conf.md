@@ -61,6 +61,19 @@ Automatically create database files when connecting to non-existent databases.
 | `false` | Error on missing database (default) |
 | `true` | Create new database file |
 
+### front_door_mode
+
+```ini
+front_door_mode = direct
+```
+
+Controls ingress topology.
+
+| Value | Behavior |
+|-------|----------|
+| `direct` | Listener is the public front door (default) |
+| `manager_proxy` | `sb_manager` is the public front door and proxies to an internal native listener |
+
 ### pid_file
 
 ```ini
@@ -224,6 +237,89 @@ tcp_keepalive = 60      # Keepalive interval (seconds)
 listen_backlog = 128    # Connection queue size
 tcp_nodelay = true      # Disable Nagle's algorithm
 ```
+
+---
+
+## [manager] Section
+
+Used when `server.front_door_mode = manager_proxy`.
+
+### bind_address / port
+
+```ini
+bind_address = 0.0.0.0
+port = 3090
+```
+
+External manager endpoint for MCP and proxy entry.
+
+### internal_native_bind / internal_native_port
+
+```ini
+internal_native_bind = 127.0.0.1
+internal_native_port = 3392
+```
+
+Internal native listener endpoint used by manager.
+
+### owner_database
+
+```ini
+owner_database = main
+```
+
+Default owner database for manager-routed native listener startup wiring.
+
+### binary
+
+```ini
+binary = sb_manager
+```
+
+Manager executable name/path.
+
+### mcp_auth_secret
+
+```ini
+mcp_auth_secret = <high-entropy-secret>
+```
+
+Required shared secret for manager MCP token authentication. `sb_server` passes this to
+`sb_manager` as `--mcp-auth-secret`.
+
+### listener_id
+
+```ini
+listener_id = 1
+```
+
+Logical listener identifier embedded in DB binding tokens.
+
+### dbbt_ttl_ms / dbbt_clock_skew_ms / dbbt_replay_cache_size
+
+```ini
+dbbt_ttl_ms = 30000
+dbbt_clock_skew_ms = 2000
+dbbt_replay_cache_size = 4096
+```
+
+DB binding token validity and replay protection settings.
+
+### require_proxy_binding
+
+```ini
+require_proxy_binding = true
+```
+
+Require valid LPREFACE + DBBT binding before listener handoff.
+
+### dbbt_keyring (optional)
+
+```ini
+dbbt_keyring = /etc/scratchbird/dbbt.keys
+```
+
+Path to keyring used for manager/listener DBBT verification.
 
 ---
 

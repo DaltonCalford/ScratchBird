@@ -27,6 +27,8 @@
 #include <string>
 #include <memory>
 #include <vector>
+#include <map>
+#include <mutex>
 #include <atomic>
 #include <thread>
 #include <functional>
@@ -100,6 +102,29 @@ struct ServiceConfig {
         MULTI_DATABASE      // Multiple databases
     };
     Mode mode = Mode::MULTI_DATABASE;
+
+    // Front-door networking topology
+    enum class FrontDoorMode {
+        DIRECT,             // Listeners connect directly to clients
+        MANAGER_PROXY       // External clients connect through sb_manager
+    };
+    FrontDoorMode front_door_mode = FrontDoorMode::DIRECT;
+
+    struct ManagerProxyConfig {
+        std::string bind_address = "0.0.0.0";
+        uint16_t port = 3090;
+        std::string internal_native_bind = "127.0.0.1";
+        uint16_t internal_native_port = 3392;
+        std::string owner_database = "main";
+        std::string binary = "sb_manager";
+        std::string mcp_auth_secret;
+        std::string dbbt_keyring;
+        uint32_t listener_id = 1;
+        uint32_t dbbt_ttl_ms = 30000;
+        uint32_t dbbt_clock_skew_ms = 2000;
+        uint32_t dbbt_replay_cache_size = 4096;
+    };
+    ManagerProxyConfig manager_proxy;
 
     // Paths
     std::string data_dir = "/var/lib/scratchbird";
@@ -491,27 +516,34 @@ public:
 
 private:
     struct ListenerProcess;
+    struct ManagerProcess;
 
     // Internal methods
     core::Status daemonize(core::ErrorContext* ctx);
     core::Status openDatabases(core::ErrorContext* ctx);
     core::Status startListeners(core::ErrorContext* ctx);
     core::Status stopListeners(core::ErrorContext* ctx);
+    core::Status startManager(core::ErrorContext* ctx);
+    core::Status stopManager(core::ErrorContext* ctx);
     void mainLoop();
     void handleSignal(DaemonSignal signal);
     void doShutdown();
     void updateStats();
     void checkListeners();
+    void checkManager();
     bool launchListenerProcess(ListenerProcess& listener,
                                bool allow_config_file_bootstrap,
                                const std::string& engine_endpoint,
                                core::ErrorContext* ctx);
+    bool launchManagerProcess(ManagerProcess& manager, core::ErrorContext* ctx);
     bool sendListenerManagementCommand(const ListenerProcess& listener,
                                        const std::string& command,
                                        std::string* response = nullptr,
                                        core::ErrorContext* ctx = nullptr);
     bool waitForListenerExit(ListenerProcess& listener, uint32_t timeout_ms);
+    bool waitForManagerExit(ManagerProcess& manager, uint32_t timeout_ms);
     void forceTerminateListener(ListenerProcess& listener);
+    void forceTerminateManager(ManagerProcess& manager);
 
     // Log helper
     void log(ServiceConfig::LogLevel level, const std::string& message);
@@ -575,8 +607,34 @@ private:
         bool running = false;
     };
 
+    struct ManagerProcess {
+        std::string binary = "sb_manager";
+        std::string bind_address = "0.0.0.0";
+        uint16_t port = 3090;
+        std::string internal_native_bind = "127.0.0.1";
+        uint16_t internal_native_port = 3392;
+        std::string owner_database = "main";
+        std::string mcp_auth_secret;
+        std::string dbbt_keyring;
+        uint32_t listener_id = 1;
+        uint32_t dbbt_ttl_ms = 30000;
+        uint32_t dbbt_clock_skew_ms = 2000;
+        uint32_t dbbt_replay_cache_size = 4096;
+        uint64_t start_count = 0;
+        uint64_t restart_count = 0;
+#ifdef _WIN32
+        void* process_handle = nullptr;
+        uint32_t process_id = 0;
+#else
+        pid_t pid = 0;
+#endif
+        bool running = false;
+    };
+
     std::vector<ListenerProcess> listeners_;
     mutable std::mutex listeners_mutex_;
+    ManagerProcess manager_;
+    mutable std::mutex manager_mutex_;
 };
 
 // ============================================================================

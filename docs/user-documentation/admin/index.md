@@ -14,6 +14,7 @@ Server administration and maintenance tasks.
 | [Backup & Restore](backup-restore.md) | Database backup and recovery |
 | [Monitoring](monitoring.md) | Prometheus metrics and logging |
 | [Security](security.md) | Security best practices |
+| [Direct to Manager Proxy Migration](manager-proxy-migration-runbook.md) | Cutover and rollback procedure |
 | [Performance Tuning](performance-tuning.md) | Optimization techniques |
 | [Troubleshooting](troubleshooting.md) | Common issues and solutions |
 

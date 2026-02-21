@@ -741,7 +741,32 @@ core::Status NativeAdapter::handleConnectRequest(network::Connection* conn) {
         return it->second;
     };
 
-    database_name_ = get_param("database");
+    auto equalsDatabaseName = [](const std::string& lhs, const std::string& rhs) {
+        if (lhs.size() != rhs.size()) {
+            return false;
+        }
+        for (size_t i = 0; i < lhs.size(); ++i) {
+            if (std::tolower(static_cast<unsigned char>(lhs[i])) !=
+                std::tolower(static_cast<unsigned char>(rhs[i]))) {
+                return false;
+            }
+        }
+        return true;
+    };
+
+    const std::string requested_database = get_param("database");
+    if (config_.enforce_bound_database &&
+        !config_.default_database.empty() &&
+        !requested_database.empty() &&
+        !equalsDatabaseName(requested_database, config_.default_database)) {
+        sendQueryError(conn, static_cast<uint32_t>(core::Status::INVALID_AUTHORIZATION),
+                      "28000", "Database switch denied by manager binding context");
+        return sendBuffer(conn);
+    }
+
+    database_name_ = config_.enforce_bound_database
+        ? config_.default_database
+        : requested_database;
     if (database_name_.empty()) {
         database_name_ = config_.default_database;
     }
@@ -1975,6 +2000,9 @@ core::Status NativeAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
     client_config_.write_timeout_ms = config_.write_timeout_ms;
     client_config_.auto_commit = true;
     client_config_.auto_start_server = false;
+    client_config_.connect_client_flags = config_.connect_client_flags;
+    client_config_.has_bound_db_uuid = config_.has_bound_db_uuid;
+    client_config_.bound_db_uuid = config_.bound_db_uuid;
     client_config_.manual_auth = !username_.empty();
     if (client_config_.manual_auth) {
         client_config_.username = username_;

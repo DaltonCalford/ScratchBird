@@ -15,6 +15,7 @@
  */
 
 #include <atomic>
+#include <array>
 #include <chrono>
 #include <csignal>
 #include <cstdint>
@@ -61,6 +62,7 @@ struct ParserConfig {
     std::string protocol = SB_PARSER_PROTOCOL;
     std::string control_socket;
     std::string engine_endpoint;
+    std::string default_database;
     std::string tls_config;
     scratchbird::security::TLSConfig tls_settings;
     std::shared_ptr<scratchbird::security::TLSContext> tls_context;
@@ -79,6 +81,11 @@ struct HandoffInfo {
     uint16_t client_port = 0;
     bool tls_active = false;
     std::vector<uint8_t> initial_bytes;
+    std::array<uint8_t, 16> db_uuid{};
+    std::array<uint8_t, 16> dbbt_id{};
+    std::array<uint8_t, 16> manager_session_id{};
+    uint32_t listener_id = 0;
+    bool has_binding_context = false;
 };
 
 bool tryParseProtocolType(const std::string& protocol,
@@ -95,6 +102,7 @@ void printUsage(const char* program) {
               << "Options:\n"
               << "  --control-socket <path>   Control-plane socket path\n"
               << "  --engine-endpoint <path>  Engine IPC endpoint\n"
+              << "  --default-database <name> Bound/default database for engine attach\n"
               << "  --tls-config <file>       TLS configuration file\n"
               << "  --protocol-version <n>    Dialect protocol version\n"
               << "  --max-requests <n>        Max sessions before recycle (0 = unlimited)\n"
@@ -123,6 +131,10 @@ bool parseArgs(int argc, char* argv[], ParserConfig& config) {
             config.engine_endpoint = argv[++i];
         } else if (arg.rfind("--engine-endpoint=", 0) == 0) {
             config.engine_endpoint = arg.substr(18);
+        } else if (arg == "--default-database" && i + 1 < argc) {
+            config.default_database = argv[++i];
+        } else if (arg.rfind("--default-database=", 0) == 0) {
+            config.default_database = arg.substr(19);
         } else if (arg == "--tls-config" && i + 1 < argc) {
             config.tls_config = argv[++i];
         } else if (arg.rfind("--tls-config=", 0) == 0) {
@@ -360,6 +372,8 @@ std::vector<uint8_t> buildHandoffAck(uint64_t connection_id, uint8_t status) {
 bool parseHandoffPayload(const scratchbird::network::ControlPlaneMessage& msg,
                          HandoffInfo& info) {
     constexpr size_t kHeaderSize = 8 + 16 + 48 + 2 + 1 + 2;
+    constexpr size_t kLegacyReservedTailBytes = 64;
+    constexpr size_t kBindingTailBytes = 16 + 16 + 16 + 4;
     if (msg.payload.size() < kHeaderSize) {
         return false;
     }
@@ -394,6 +408,35 @@ bool parseHandoffPayload(const scratchbird::network::ControlPlaneMessage& msg,
         info.initial_bytes.assign(msg.payload.begin() + offset,
                                   msg.payload.begin() + offset + initial_len);
     }
+    offset += initial_len;
+
+    // Legacy listeners append a 64-byte reserved tail. New listeners may append
+    // immutable manager binding context after the reserved block.
+    if (msg.payload.size() == offset) {
+        return true;
+    }
+    if (msg.payload.size() < offset + kLegacyReservedTailBytes) {
+        return false;
+    }
+    offset += kLegacyReservedTailBytes;
+
+    if (msg.payload.size() == offset) {
+        return true;
+    }
+    if (msg.payload.size() < offset + kBindingTailBytes) {
+        return false;
+    }
+
+    std::memcpy(info.db_uuid.data(), msg.payload.data() + offset, info.db_uuid.size());
+    offset += info.db_uuid.size();
+    std::memcpy(info.dbbt_id.data(), msg.payload.data() + offset, info.dbbt_id.size());
+    offset += info.dbbt_id.size();
+    std::memcpy(info.manager_session_id.data(),
+                msg.payload.data() + offset,
+                info.manager_session_id.size());
+    offset += info.manager_session_id.size();
+    info.listener_id = readU32(msg.payload.data() + offset);
+    info.has_binding_context = true;
     return true;
 }
 
@@ -498,6 +541,12 @@ uint32_t runSession(const ParserConfig& config,
                                           static_cast<scratchbird::network::ConnectionId>(
                                               info.connection_id));
 
+    auto hasNonZeroBytes = [](const auto& bytes) {
+        return std::any_of(bytes.begin(), bytes.end(), [](uint8_t value) {
+            return value != 0;
+        });
+    };
+
     scratchbird::network::ProtocolType protocol_type =
         scratchbird::network::ProtocolType::AUTO_DETECT;
     if (!tryParseProtocolType(config.protocol, protocol_type)) {
@@ -508,6 +557,16 @@ uint32_t runSession(const ParserConfig& config,
 
     scratchbird::protocol::ProtocolAdapterConfig adapter_config;
     adapter_config.engine_endpoint = config.engine_endpoint;
+    adapter_config.default_database = config.default_database;
+    const bool manager_bound =
+        info.has_binding_context &&
+        (hasNonZeroBytes(info.dbbt_id) || hasNonZeroBytes(info.manager_session_id));
+    if (manager_bound) {
+        adapter_config.enforce_bound_database = true;
+        adapter_config.connect_client_flags |= scratchbird::protocol::CONNECT_FLAG_MANAGER_DBBT;
+        adapter_config.has_bound_db_uuid = true;
+        adapter_config.bound_db_uuid = info.db_uuid;
+    }
     auto adapter = scratchbird::protocol::createProtocolAdapter(protocol_type, adapter_config);
     if (!adapter) {
         conn.close(scratchbird::network::CloseReason::PROTOCOL_ERROR);
@@ -575,6 +634,9 @@ int runParser(ParserConfig& config) {
               << "Protocol: " << config.protocol << "\n"
               << "Control socket: " << config.control_socket << "\n"
               << "Engine endpoint: " << config.engine_endpoint << "\n";
+    if (!config.default_database.empty()) {
+        std::cout << "Default database: " << config.default_database << "\n";
+    }
 
     if (!config.tls_config.empty()) {
         std::cout << "TLS config: " << config.tls_config << "\n";

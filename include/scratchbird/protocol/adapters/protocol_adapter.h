@@ -35,6 +35,7 @@
 #include <string>
 #include <vector>
 #include <functional>
+#include <array>
 
 namespace scratchbird {
 namespace parser::v3 {
@@ -78,6 +79,12 @@ struct ProtocolAdapterConfig {
     std::string default_database;           // Default database if not specified
     bool require_authentication = true;     // Require authentication
     AuthMethod auth_method = AuthMethod::SCRAM_SHA_256;
+
+    // Manager-proxy binding enforcement (optional)
+    bool enforce_bound_database = false;    // Reject client-driven DB switch
+    uint16_t connect_client_flags = 0;      // CONNECT_REQUEST client flags for engine attach
+    bool has_bound_db_uuid = false;         // Whether bound_db_uuid is valid
+    std::array<uint8_t, 16> bound_db_uuid{};// Bound database UUID (manager-proxy)
 };
 
 // ============================================================================

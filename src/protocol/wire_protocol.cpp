@@ -304,9 +304,11 @@ bool Message::validateHeader(const MessageHeader& header) {
 Message ProtocolCodec::buildConnectRequest(const std::string& database,
                                            const std::string& client_name,
                                            uint32_t client_pid,
-                                           uint16_t client_flags) {
+                                           uint16_t client_flags,
+                                           const uint8_t* bound_db_uuid) {
     Message msg(MessageType::CONNECT_REQUEST);
-    msg.reservePayload(sizeof(ConnectRequestPayload));
+    msg.reservePayload(sizeof(ConnectRequestPayload) +
+                       (bound_db_uuid ? SESSION_ID_SIZE : 0));
 
     msg.writeUInt16(PROTOCOL_VERSION);
     msg.writeUInt16(client_flags);
@@ -314,6 +316,9 @@ Message ProtocolCodec::buildConnectRequest(const std::string& database,
     msg.writeNullTerminatedString(database, 256);
     msg.writeNullTerminatedString(client_name, 64);
     msg.writeNullTerminatedString("1.0.0", 32);  // client_version
+    if (bound_db_uuid) {
+        msg.writeBytes(bound_db_uuid, SESSION_ID_SIZE);
+    }
 
     return msg;
 }
@@ -323,9 +328,18 @@ core::Status ProtocolCodec::parseConnectRequest(const Message& msg,
                                                 std::string& client_name,
                                                 uint32_t& client_pid,
                                                 uint16_t* client_flags_out,
-                                                core::ErrorContext* ctx) {
+                                                core::ErrorContext* ctx,
+                                                std::array<uint8_t, 16>* bound_db_uuid_out,
+                                                bool* has_bound_db_uuid_out) {
     Message& m = const_cast<Message&>(msg);
     m.resetReadOffset();
+
+    if (bound_db_uuid_out) {
+        bound_db_uuid_out->fill(0);
+    }
+    if (has_bound_db_uuid_out) {
+        *has_bound_db_uuid_out = false;
+    }
 
     uint16_t version = 0;
     uint16_t flags = 0;
@@ -340,6 +354,41 @@ core::Status ProtocolCodec::parseConnectRequest(const Message& msg,
         SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
                           "Invalid CONNECT_REQUEST strings");
         return core::Status::PROTOCOL_VIOLATION;
+    }
+
+    std::string client_version;
+    if (!m.readNullTerminatedString(client_version, 32)) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "Invalid CONNECT_REQUEST client version");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+
+    if (m.getRemainingBytes() != 0) {
+        if (m.getRemainingBytes() < SESSION_ID_SIZE) {
+            SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                              "Truncated CONNECT_REQUEST bound UUID");
+            return core::Status::PROTOCOL_VIOLATION;
+        }
+
+        uint8_t uuid_bytes[SESSION_ID_SIZE];
+        if (!m.readBytes(uuid_bytes, SESSION_ID_SIZE)) {
+            SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                              "Truncated CONNECT_REQUEST bound UUID payload");
+            return core::Status::PROTOCOL_VIOLATION;
+        }
+
+        if (bound_db_uuid_out) {
+            std::copy(uuid_bytes, uuid_bytes + SESSION_ID_SIZE, bound_db_uuid_out->begin());
+        }
+        if (has_bound_db_uuid_out) {
+            *has_bound_db_uuid_out = true;
+        }
+
+        if (m.getRemainingBytes() != 0) {
+            SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                              "CONNECT_REQUEST trailing bytes");
+            return core::Status::PROTOCOL_VIOLATION;
+        }
     }
 
     if (client_flags_out) {
@@ -1959,6 +2008,292 @@ core::Status ProtocolCodec::parseStatusResponse(const Message& msg,
     return core::Status::OK;
 }
 
+// Manager Control Protocol (MCP) Messages
+
+Message ProtocolCodec::buildMcpHello(uint16_t requested_version,
+                                     uint16_t client_flags) {
+    Message msg(MessageType::MCP_HELLO);
+    msg.writeUInt16(requested_version);
+    msg.writeUInt16(client_flags);
+    return msg;
+}
+
+core::Status ProtocolCodec::parseMcpHello(const Message& msg,
+                                          uint16_t& requested_version,
+                                          uint16_t& client_flags,
+                                          core::ErrorContext* ctx) {
+    if (msg.getType() != MessageType::MCP_HELLO) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "Expected MCP_HELLO");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+
+    Message& m = const_cast<Message&>(msg);
+    m.resetReadOffset();
+    if (!m.readUInt16(requested_version) || !m.readUInt16(client_flags)) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "Truncated MCP_HELLO");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+    return core::Status::OK;
+}
+
+Message ProtocolCodec::buildMcpAuthStart(const std::string& username,
+                                         AuthMethod method,
+                                         const std::vector<uint8_t>& initial_data) {
+    Message msg(MessageType::MCP_AUTH_START);
+    msg.writeLengthPrefixedString(username);
+    msg.writeUInt8(static_cast<uint8_t>(method));
+    msg.writeUInt32(static_cast<uint32_t>(initial_data.size()));
+    if (!initial_data.empty()) {
+        msg.writeBytes(initial_data.data(), initial_data.size());
+    }
+    return msg;
+}
+
+core::Status ProtocolCodec::parseMcpAuthStart(const Message& msg,
+                                              std::string& username,
+                                              AuthMethod& method,
+                                              std::vector<uint8_t>& initial_data,
+                                              core::ErrorContext* ctx) {
+    if (msg.getType() != MessageType::MCP_AUTH_START) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "Expected MCP_AUTH_START");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+
+    Message& m = const_cast<Message&>(msg);
+    m.resetReadOffset();
+
+    uint8_t method_u8 = 0;
+    uint32_t data_length = 0;
+    if (!m.readLengthPrefixedString(username) ||
+        !m.readUInt8(method_u8) ||
+        !m.readUInt32(data_length)) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "Truncated MCP_AUTH_START");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+    if (data_length > MAX_MESSAGE_SIZE || m.getRemainingBytes() < data_length) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "Invalid MCP_AUTH_START payload length");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+
+    method = static_cast<AuthMethod>(method_u8);
+    initial_data.resize(data_length);
+    if (data_length > 0 &&
+        !m.readBytes(initial_data.data(), data_length)) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "Truncated MCP_AUTH_START auth payload");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+    return core::Status::OK;
+}
+
+Message ProtocolCodec::buildMcpAuthContinue(const std::vector<uint8_t>& continuation_data) {
+    Message msg(MessageType::MCP_AUTH_CONTINUE);
+    msg.writeUInt32(static_cast<uint32_t>(continuation_data.size()));
+    if (!continuation_data.empty()) {
+        msg.writeBytes(continuation_data.data(), continuation_data.size());
+    }
+    return msg;
+}
+
+core::Status ProtocolCodec::parseMcpAuthContinue(const Message& msg,
+                                                 std::vector<uint8_t>& continuation_data,
+                                                 core::ErrorContext* ctx) {
+    if (msg.getType() != MessageType::MCP_AUTH_CONTINUE) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "Expected MCP_AUTH_CONTINUE");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+
+    Message& m = const_cast<Message&>(msg);
+    m.resetReadOffset();
+
+    uint32_t data_length = 0;
+    if (!m.readUInt32(data_length)) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "Truncated MCP_AUTH_CONTINUE");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+    if (data_length > MAX_MESSAGE_SIZE || m.getRemainingBytes() < data_length) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "Invalid MCP_AUTH_CONTINUE payload length");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+
+    continuation_data.resize(data_length);
+    if (data_length > 0 &&
+        !m.readBytes(continuation_data.data(), data_length)) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "Truncated MCP_AUTH_CONTINUE auth payload");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+    return core::Status::OK;
+}
+
+Message ProtocolCodec::buildMcpDbList() {
+    return Message(MessageType::MCP_DB_LIST);
+}
+
+core::Status ProtocolCodec::parseMcpDbList(const Message& msg,
+                                           core::ErrorContext* ctx) {
+    if (msg.getType() != MessageType::MCP_DB_LIST) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "Expected MCP_DB_LIST");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+    if (msg.getPayloadLength() != 0) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "MCP_DB_LIST payload must be empty");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+    return core::Status::OK;
+}
+
+Message ProtocolCodec::buildMcpDbConnect(const std::string& database_name) {
+    Message msg(MessageType::MCP_DB_CONNECT);
+    msg.writeLengthPrefixedString(database_name);
+    return msg;
+}
+
+Message ProtocolCodec::buildMcpDbConnect(const std::string& database_name,
+                                         const std::string& connection_profile,
+                                         const std::string& client_intent,
+                                         const std::vector<uint8_t>& client_nonce) {
+    Message msg(MessageType::MCP_DB_CONNECT);
+    constexpr uint8_t kExtendedMagic[4] = {'M', 'C', 'P', '1'};
+    msg.writeBytes(kExtendedMagic, sizeof(kExtendedMagic));
+    msg.writeLengthPrefixedString(database_name);
+    msg.writeLengthPrefixedString(connection_profile);
+    msg.writeLengthPrefixedString(client_intent);
+    msg.writeUInt16(static_cast<uint16_t>(std::min<size_t>(client_nonce.size(), UINT16_MAX)));
+    if (!client_nonce.empty()) {
+        msg.writeBytes(client_nonce.data(),
+                       static_cast<uint16_t>(std::min<size_t>(client_nonce.size(), UINT16_MAX)));
+    }
+    return msg;
+}
+
+core::Status ProtocolCodec::parseMcpDbConnect(const Message& msg,
+                                              std::string& database_name,
+                                              core::ErrorContext* ctx) {
+    std::string connection_profile;
+    std::string client_intent;
+    std::vector<uint8_t> client_nonce;
+    return parseMcpDbConnect(msg,
+                             database_name,
+                             connection_profile,
+                             client_intent,
+                             client_nonce,
+                             ctx);
+}
+
+core::Status ProtocolCodec::parseMcpDbConnect(const Message& msg,
+                                              std::string& database_name,
+                                              std::string& connection_profile,
+                                              std::string& client_intent,
+                                              std::vector<uint8_t>& client_nonce,
+                                              core::ErrorContext* ctx) {
+    if (msg.getType() != MessageType::MCP_DB_CONNECT) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "Expected MCP_DB_CONNECT");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+
+    Message& m = const_cast<Message&>(msg);
+    m.resetReadOffset();
+
+    database_name.clear();
+    connection_profile.clear();
+    client_intent.clear();
+    client_nonce.clear();
+
+    constexpr uint8_t kExtendedMagic[4] = {'M', 'C', 'P', '1'};
+    if (m.getRemainingBytes() >= sizeof(kExtendedMagic)) {
+        uint8_t magic[sizeof(kExtendedMagic)] = {0};
+        if (!m.readBytes(magic, sizeof(magic))) {
+            SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                              "Truncated MCP_DB_CONNECT");
+            return core::Status::PROTOCOL_VIOLATION;
+        }
+        if (std::memcmp(magic, kExtendedMagic, sizeof(kExtendedMagic)) == 0) {
+            uint16_t nonce_len = 0;
+            if (!m.readLengthPrefixedString(database_name) ||
+                !m.readLengthPrefixedString(connection_profile) ||
+                !m.readLengthPrefixedString(client_intent) ||
+                !m.readUInt16(nonce_len)) {
+                SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                                  "Truncated MCP_DB_CONNECT extended payload");
+                return core::Status::PROTOCOL_VIOLATION;
+            }
+            if (m.getRemainingBytes() < nonce_len) {
+                SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                                  "Invalid MCP_DB_CONNECT client_nonce length");
+                return core::Status::PROTOCOL_VIOLATION;
+            }
+            client_nonce.resize(nonce_len);
+            if (nonce_len > 0 && !m.readBytes(client_nonce.data(), nonce_len)) {
+                SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                                  "Truncated MCP_DB_CONNECT client_nonce");
+                return core::Status::PROTOCOL_VIOLATION;
+            }
+            if (m.getRemainingBytes() != 0) {
+                SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                                  "MCP_DB_CONNECT trailing bytes");
+                return core::Status::PROTOCOL_VIOLATION;
+            }
+            return core::Status::OK;
+        }
+
+        m.resetReadOffset();
+    }
+
+    if (!m.readLengthPrefixedString(database_name)) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "Truncated MCP_DB_CONNECT");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+    if (m.getRemainingBytes() != 0) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "MCP_DB_CONNECT trailing bytes");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+    return core::Status::OK;
+}
+
+Message ProtocolCodec::buildMcpDbInfo(const std::string& database_name) {
+    Message msg(MessageType::MCP_DB_INFO);
+    msg.writeLengthPrefixedString(database_name);
+    return msg;
+}
+
+core::Status ProtocolCodec::parseMcpDbInfo(const Message& msg,
+                                           std::string& database_name,
+                                           core::ErrorContext* ctx) {
+    if (msg.getType() != MessageType::MCP_DB_INFO) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "Expected MCP_DB_INFO");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+
+    Message& m = const_cast<Message&>(msg);
+    m.resetReadOffset();
+    if (!m.readLengthPrefixedString(database_name)) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "Truncated MCP_DB_INFO");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+    if (m.getRemainingBytes() != 0) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "MCP_DB_INFO trailing bytes");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+    return core::Status::OK;
+}
+
 Message ProtocolCodec::buildDisconnect() {
     return Message(MessageType::DISCONNECT);
 }
@@ -2094,6 +2429,12 @@ const char* messageTypeToString(MessageType type) {
         case MessageType::PONG:               return "PONG";
         case MessageType::STATUS_REQUEST:     return "STATUS_REQUEST";
         case MessageType::STATUS_RESPONSE:    return "STATUS_RESPONSE";
+        case MessageType::MCP_HELLO:          return "MCP_HELLO";
+        case MessageType::MCP_AUTH_START:     return "MCP_AUTH_START";
+        case MessageType::MCP_AUTH_CONTINUE:  return "MCP_AUTH_CONTINUE";
+        case MessageType::MCP_DB_LIST:        return "MCP_DB_LIST";
+        case MessageType::MCP_DB_CONNECT:     return "MCP_DB_CONNECT";
+        case MessageType::MCP_DB_INFO:        return "MCP_DB_INFO";
         case MessageType::COPY_DATA:          return "COPY_DATA";
         case MessageType::COPY_DONE:          return "COPY_DONE";
         case MessageType::COPY_FAIL:          return "COPY_FAIL";

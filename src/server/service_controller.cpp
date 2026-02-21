@@ -96,6 +96,20 @@ bool parseListenerProtocolType(const std::string& value,
     return false;
 }
 
+bool parseFrontDoorMode(const std::string& value,
+                        ServiceConfig::FrontDoorMode& out) {
+    const std::string normalized = toLowerAscii(value);
+    if (normalized == "direct") {
+        out = ServiceConfig::FrontDoorMode::DIRECT;
+        return true;
+    }
+    if (normalized == "manager_proxy" || normalized == "manager-proxy") {
+        out = ServiceConfig::FrontDoorMode::MANAGER_PROXY;
+        return true;
+    }
+    return false;
+}
+
 std::string logLevelString(ServiceConfig::LogLevel level) {
     switch (level) {
         case ServiceConfig::LogLevel::DEBUG: return "debug";
@@ -234,6 +248,13 @@ void ServiceConfig::loadFromParser(const ConfigParser& parser) {
             mode = Mode::MULTI_DATABASE;
         }
 
+        ServiceConfig::FrontDoorMode parsed_front_door_mode = front_door_mode;
+        const std::string front_door_mode_str =
+            server->getString("front_door_mode", "direct");
+        if (parseFrontDoorMode(front_door_mode_str, parsed_front_door_mode)) {
+            front_door_mode = parsed_front_door_mode;
+        }
+
         data_dir = server->getString("data_dir", data_dir);
         database_path = server->getString("database", database_path);
         pid_file = server->getString("pid_file", pid_file);
@@ -345,6 +366,34 @@ void ServiceConfig::loadFromParser(const ConfigParser& parser) {
                 break;
             }
         }
+    }
+
+    // Manager-proxy section (front-door process + internal native listener).
+    const ConfigSection* manager = parser.section("manager");
+    if (manager) {
+        manager_proxy.bind_address =
+            manager->getString("bind_address", manager_proxy.bind_address);
+        manager_proxy.port = static_cast<uint16_t>(
+            manager->getInt("port", manager_proxy.port));
+        manager_proxy.internal_native_bind = manager->getString(
+            "internal_native_bind", manager_proxy.internal_native_bind);
+        manager_proxy.internal_native_port = static_cast<uint16_t>(
+            manager->getInt("internal_native_port", manager_proxy.internal_native_port));
+        manager_proxy.owner_database =
+            manager->getString("owner_database", manager_proxy.owner_database);
+        manager_proxy.binary = manager->getString("binary", manager_proxy.binary);
+        manager_proxy.mcp_auth_secret = manager->getString(
+            "mcp_auth_secret", manager_proxy.mcp_auth_secret);
+        manager_proxy.dbbt_keyring =
+            manager->getString("dbbt_keyring", manager_proxy.dbbt_keyring);
+        manager_proxy.listener_id = static_cast<uint32_t>(
+            manager->getInt("listener_id", manager_proxy.listener_id));
+        manager_proxy.dbbt_ttl_ms = static_cast<uint32_t>(
+            manager->getInt("dbbt_ttl_ms", manager_proxy.dbbt_ttl_ms));
+        manager_proxy.dbbt_clock_skew_ms = static_cast<uint32_t>(
+            manager->getInt("dbbt_clock_skew_ms", manager_proxy.dbbt_clock_skew_ms));
+        manager_proxy.dbbt_replay_cache_size = static_cast<uint32_t>(
+            manager->getInt("dbbt_replay_cache_size", manager_proxy.dbbt_replay_cache_size));
     }
 
     // Drivers section (native client defaults)
@@ -759,6 +808,15 @@ core::Status ServiceController::run(core::ErrorContext* ctx) {
         return status;
     }
 
+    if (config_.front_door_mode == ServiceConfig::FrontDoorMode::MANAGER_PROXY) {
+        status = startManager(ctx);
+        if (status != core::Status::OK) {
+            state_ = ServiceState::FAILED;
+            doShutdown();
+            return status;
+        }
+    }
+
     // Record start time
     stats_.started_at = std::chrono::steady_clock::now();
 
@@ -1164,9 +1222,75 @@ core::Status ServiceController::startListeners(core::ErrorContext* ctx) {
         return true;
     };
 
+    std::vector<ProtocolConfig> effective_protocols;
+    if (config_.front_door_mode == ServiceConfig::FrontDoorMode::MANAGER_PROXY) {
+        ProtocolConfig internal_native{};
+        bool copied_native_template = false;
+        for (const auto& configured : config_.protocols) {
+            if (!configured.enabled || configured.port == 0) {
+                continue;
+            }
+            if (configured.type == network::ProtocolType::NATIVE) {
+                internal_native = configured;
+                copied_native_template = true;
+                break;
+            }
+        }
+        if (!copied_native_template) {
+            internal_native.type = network::ProtocolType::NATIVE;
+            internal_native.ssl_required = false;
+            internal_native.pool_min = 4;
+            internal_native.pool_max = 64;
+            internal_native.owner_database = "main";
+        }
+        internal_native.type = network::ProtocolType::NATIVE;
+        internal_native.bind_address = config_.manager_proxy.internal_native_bind;
+        internal_native.port = config_.manager_proxy.internal_native_port;
+        internal_native.enabled = true;
+        if (!config_.manager_proxy.owner_database.empty()) {
+            internal_native.owner_database = config_.manager_proxy.owner_database;
+        } else if (internal_native.owner_database.empty()) {
+            internal_native.owner_database = "main";
+        }
+
+        if (internal_native.port == 0) {
+            if (ctx) {
+                SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                  "Manager proxy requires manager.internal_native_port > 0");
+            }
+            return core::Status::INVALID_ARGUMENT;
+        }
+        if (config_.manager_proxy.port == internal_native.port) {
+            if (ctx) {
+                SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                                  "manager.port must differ from manager.internal_native_port");
+            }
+            return core::Status::INVALID_ARGUMENT;
+        }
+
+        size_t external_listener_count = 0;
+        for (const auto& configured : config_.protocols) {
+            if (!configured.enabled || configured.port == 0) {
+                continue;
+            }
+            if (configured.type != network::ProtocolType::NATIVE) {
+                ++external_listener_count;
+            }
+        }
+        if (external_listener_count > 0) {
+            log(ServiceConfig::LogLevel::INFO,
+                "Manager proxy mode active: non-native listeners are disabled and "
+                "traffic is routed through sb_manager");
+        }
+
+        effective_protocols.push_back(internal_native);
+    } else {
+        effective_protocols = config_.protocols;
+    }
+
     std::vector<ListenerProcess> started_listeners;
 
-    for (const auto& proto : config_.protocols) {
+    for (const auto& proto : effective_protocols) {
         if (!proto.enabled || proto.port == 0) {
             continue;
         }
@@ -1249,6 +1373,191 @@ core::Status ServiceController::stopListeners(core::ErrorContext* ctx) {
     return core::Status::OK;
 }
 
+core::Status ServiceController::startManager(core::ErrorContext* ctx) {
+    log(ServiceConfig::LogLevel::INFO, "Starting manager proxy...");
+
+    ManagerProcess manager;
+    manager.binary = config_.manager_proxy.binary.empty() ? "sb_manager"
+                                                          : config_.manager_proxy.binary;
+    manager.bind_address = config_.manager_proxy.bind_address;
+    manager.port = config_.manager_proxy.port;
+    manager.internal_native_bind = config_.manager_proxy.internal_native_bind;
+    manager.internal_native_port = config_.manager_proxy.internal_native_port;
+    manager.owner_database = config_.manager_proxy.owner_database.empty()
+                                 ? "main"
+                                 : config_.manager_proxy.owner_database;
+    manager.mcp_auth_secret = config_.manager_proxy.mcp_auth_secret;
+    manager.dbbt_keyring = config_.manager_proxy.dbbt_keyring;
+    manager.listener_id = config_.manager_proxy.listener_id;
+    manager.dbbt_ttl_ms = config_.manager_proxy.dbbt_ttl_ms;
+    manager.dbbt_clock_skew_ms = config_.manager_proxy.dbbt_clock_skew_ms;
+    manager.dbbt_replay_cache_size = config_.manager_proxy.dbbt_replay_cache_size;
+
+    if (manager.port == 0) {
+        if (ctx) {
+            SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                              "Manager proxy requires manager.port > 0");
+        }
+        return core::Status::INVALID_ARGUMENT;
+    }
+    if (manager.internal_native_port == 0) {
+        if (ctx) {
+            SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                              "Manager proxy requires manager.internal_native_port > 0");
+        }
+        return core::Status::INVALID_ARGUMENT;
+    }
+    if (manager.mcp_auth_secret.empty()) {
+        if (ctx) {
+            SET_ERROR_CONTEXT(ctx,
+                              core::Status::INVALID_ARGUMENT,
+                              "Manager proxy requires manager.mcp_auth_secret");
+        }
+        return core::Status::INVALID_ARGUMENT;
+    }
+    if (manager.port == manager.internal_native_port) {
+        if (ctx) {
+            SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT,
+                              "manager.port must differ from manager.internal_native_port");
+        }
+        return core::Status::INVALID_ARGUMENT;
+    }
+
+    core::ErrorContext bind_ctx;
+    if (!canBindListenerPort(manager.bind_address, manager.port, &bind_ctx)) {
+        if (ctx) {
+            std::string message = "Manager port collision on " + manager.bind_address + ":" +
+                                  std::to_string(manager.port) + " (" + bind_ctx.message + ")";
+            SET_ERROR_CONTEXT(ctx, core::Status::IO_ERROR, message.c_str());
+        }
+        return core::Status::IO_ERROR;
+    }
+
+    if (!launchManagerProcess(manager, ctx)) {
+        return core::Status::IO_ERROR;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(manager_mutex_);
+        manager_ = manager;
+    }
+
+    log(ServiceConfig::LogLevel::INFO,
+        "Started manager proxy on " + manager.bind_address + ":" +
+        std::to_string(manager.port) + " (internal_native=" +
+        manager.internal_native_bind + ":" +
+        std::to_string(manager.internal_native_port) + ")");
+    return core::Status::OK;
+}
+
+core::Status ServiceController::stopManager(core::ErrorContext* ctx) {
+    (void)ctx;
+    const bool force_stop = immediate_shutdown_.load(std::memory_order_acquire);
+    const uint32_t timeout_ms = config_.shutdown_timeout_sec * 1000;
+
+    std::lock_guard<std::mutex> lock(manager_mutex_);
+    if (!manager_.running) {
+        return core::Status::OK;
+    }
+
+    if (!waitForManagerExit(manager_, force_stop ? 1000 : timeout_ms)) {
+        forceTerminateManager(manager_);
+        waitForManagerExit(manager_, 1000);
+    }
+    manager_.running = false;
+    return core::Status::OK;
+}
+
+bool ServiceController::launchManagerProcess(ManagerProcess& manager,
+                                             core::ErrorContext* ctx) {
+    std::vector<std::string> args;
+    args.push_back(manager.binary);
+    args.push_back("--bind");
+    args.push_back(manager.bind_address);
+    args.push_back("--port");
+    args.push_back(std::to_string(manager.port));
+    args.push_back("--native-bind");
+    args.push_back(manager.internal_native_bind);
+    args.push_back("--native-port");
+    args.push_back(std::to_string(manager.internal_native_port));
+    args.push_back("--database-owner");
+    args.push_back(manager.owner_database.empty() ? "main" : manager.owner_database);
+    args.push_back("--mcp-auth-secret");
+    args.push_back(manager.mcp_auth_secret);
+    args.push_back("--listener-id");
+    args.push_back(std::to_string(manager.listener_id));
+    args.push_back("--dbbt-ttl-ms");
+    args.push_back(std::to_string(manager.dbbt_ttl_ms));
+    if (!manager.dbbt_keyring.empty()) {
+        args.push_back("--dbbt-keyring");
+        args.push_back(manager.dbbt_keyring);
+    }
+
+    if (!config_.control_socket_dir.empty()) {
+        args.push_back("--control-socket-dir");
+        args.push_back(config_.control_socket_dir);
+    }
+    if (!config_.config_file.empty()) {
+        args.push_back("--config");
+        args.push_back(config_.config_file);
+    }
+    args.push_back("--log-level");
+    args.push_back(logLevelString(config_.log_level));
+
+#ifdef _WIN32
+    std::string command_line;
+    for (const auto& item : args) {
+        if (!command_line.empty()) command_line += " ";
+        command_line += item;
+    }
+
+    STARTUPINFOA si{};
+    PROCESS_INFORMATION pi{};
+    si.cb = sizeof(si);
+    BOOL ok = CreateProcessA(nullptr, command_line.data(), nullptr, nullptr, FALSE,
+                             CREATE_NEW_PROCESS_GROUP, nullptr, nullptr, &si, &pi);
+    if (!ok) {
+        if (ctx) {
+            SET_ERROR_CONTEXT(ctx, core::Status::IO_ERROR,
+                              "Failed to spawn manager process");
+        }
+        log(ServiceConfig::LogLevel::ERROR, "Failed to spawn manager proxy process");
+        return false;
+    }
+    manager.process_handle = pi.hProcess;
+    manager.process_id = pi.dwProcessId;
+    manager.running = true;
+    manager.start_count++;
+    CloseHandle(pi.hThread);
+#else
+    pid_t pid = fork();
+    if (pid < 0) {
+        if (ctx) {
+            SET_ERROR_CONTEXT(ctx, core::Status::IO_ERROR,
+                              "Failed to fork manager process");
+        }
+        log(ServiceConfig::LogLevel::ERROR, "Failed to fork manager proxy process");
+        return false;
+    }
+
+    if (pid == 0) {
+        std::vector<char*> argv;
+        argv.reserve(args.size() + 1);
+        for (auto& item : args) {
+            argv.push_back(const_cast<char*>(item.c_str()));
+        }
+        argv.push_back(nullptr);
+        execvp(argv[0], argv.data());
+        _exit(127);
+    }
+
+    manager.pid = pid;
+    manager.running = true;
+    manager.start_count++;
+#endif
+    return true;
+}
+
 bool ServiceController::launchListenerProcess(ListenerProcess& listener,
                                               bool allow_config_file_bootstrap,
                                               const std::string& engine_endpoint,
@@ -1293,6 +1602,20 @@ bool ServiceController::launchListenerProcess(ListenerProcess& listener,
     args.push_back(engine_endpoint);
     args.push_back("--database-owner");
     args.push_back(listener.owner_database);
+    if (config_.front_door_mode == ServiceConfig::FrontDoorMode::MANAGER_PROXY &&
+        proto.type == network::ProtocolType::NATIVE) {
+        args.push_back("--listener-id");
+        args.push_back(std::to_string(config_.manager_proxy.listener_id));
+        args.push_back("--dbbt-clock-skew-ms");
+        args.push_back(std::to_string(config_.manager_proxy.dbbt_clock_skew_ms));
+        args.push_back("--dbbt-replay-cache-size");
+        args.push_back(std::to_string(config_.manager_proxy.dbbt_replay_cache_size));
+        args.push_back("--require-proxy-binding");
+        if (!config_.manager_proxy.dbbt_keyring.empty()) {
+            args.push_back("--dbbt-keyring");
+            args.push_back(config_.manager_proxy.dbbt_keyring);
+        }
+    }
     if (allow_config_file_bootstrap && !config_.config_file.empty()) {
         args.push_back("--config");
         args.push_back(config_.config_file);
@@ -1467,6 +1790,48 @@ bool ServiceController::waitForListenerExit(ListenerProcess& listener, uint32_t 
 #endif
 }
 
+bool ServiceController::waitForManagerExit(ManagerProcess& manager, uint32_t timeout_ms) {
+#ifdef _WIN32
+    if (!manager.process_handle) {
+        return true;
+    }
+    DWORD wait_result = WaitForSingleObject(manager.process_handle, timeout_ms);
+    if (wait_result == WAIT_OBJECT_0) {
+        CloseHandle(manager.process_handle);
+        manager.process_handle = nullptr;
+        manager.running = false;
+        return true;
+    }
+    return false;
+#else
+    if (manager.pid <= 0) {
+        manager.running = false;
+        return true;
+    }
+
+    auto start = std::chrono::steady_clock::now();
+    while (true) {
+        int status = 0;
+        pid_t result = waitpid(manager.pid, &status, WNOHANG);
+        if (result == manager.pid) {
+            manager.pid = 0;
+            manager.running = false;
+            return true;
+        }
+        if (result < 0) {
+            manager.pid = 0;
+            manager.running = false;
+            return true;
+        }
+        if (std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - start).count() >= timeout_ms) {
+            return false;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+#endif
+}
+
 void ServiceController::forceTerminateListener(ListenerProcess& listener) {
 #ifdef _WIN32
     if (listener.process_handle) {
@@ -1475,6 +1840,18 @@ void ServiceController::forceTerminateListener(ListenerProcess& listener) {
 #else
     if (listener.pid > 0) {
         ::kill(listener.pid, SIGTERM);
+    }
+#endif
+}
+
+void ServiceController::forceTerminateManager(ManagerProcess& manager) {
+#ifdef _WIN32
+    if (manager.process_handle) {
+        TerminateProcess(manager.process_handle, 0);
+    }
+#else
+    if (manager.pid > 0) {
+        ::kill(manager.pid, SIGTERM);
     }
 #endif
 }
@@ -1521,6 +1898,49 @@ void ServiceController::checkListeners() {
     }
 }
 
+void ServiceController::checkManager() {
+    if (config_.front_door_mode != ServiceConfig::FrontDoorMode::MANAGER_PROXY) {
+        return;
+    }
+
+    std::lock_guard<std::mutex> lock(manager_mutex_);
+    if (!manager_.running) {
+        return;
+    }
+
+#ifdef _WIN32
+    if (!manager_.process_handle) {
+        return;
+    }
+    DWORD exit_code = 0;
+    if (GetExitCodeProcess(manager_.process_handle, &exit_code) && exit_code != STILL_ACTIVE) {
+        CloseHandle(manager_.process_handle);
+        manager_.process_handle = nullptr;
+        manager_.running = false;
+        manager_.restart_count++;
+        log(ServiceConfig::LogLevel::WARNING, "Manager proxy exited, restarting");
+        if (!shutdown_requested_) {
+            launchManagerProcess(manager_, nullptr);
+        }
+    }
+#else
+    if (manager_.pid <= 0) {
+        return;
+    }
+    int status = 0;
+    pid_t result = waitpid(manager_.pid, &status, WNOHANG);
+    if (result == manager_.pid) {
+        manager_.running = false;
+        manager_.pid = 0;
+        manager_.restart_count++;
+        log(ServiceConfig::LogLevel::WARNING, "Manager proxy exited, restarting");
+        if (!shutdown_requested_) {
+            launchManagerProcess(manager_, nullptr);
+        }
+    }
+#endif
+}
+
 void ServiceController::mainLoop() {
     while (!shutdown_requested_) {
         // Check for signals
@@ -1528,6 +1948,7 @@ void ServiceController::mainLoop() {
             daemon_->checkSignals();
         }
 
+        checkManager();
         checkListeners();
 
         // Update stats periodically
@@ -1613,6 +2034,9 @@ void ServiceController::doShutdown() {
 
     // Stop watchdog
     watchdog_running_ = false;
+
+    // Stop manager proxy first so no new front-door traffic is accepted.
+    stopManager(nullptr);
 
     // Stop listeners
     stopListeners(nullptr);

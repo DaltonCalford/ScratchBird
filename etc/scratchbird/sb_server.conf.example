@@ -30,6 +30,9 @@ pid_file = /var/run/scratchbird/sb_server.pid
 run_as_user = scratchbird
 run_as_group = scratchbird
 
+# Front-door mode: direct | manager_proxy
+front_door_mode = direct
+
 # Maximum time to wait for graceful shutdown (seconds)
 shutdown_timeout = 30
 
@@ -87,6 +90,47 @@ listen_backlog = 128
 
 # Enable TCP_NODELAY (disable Nagle's algorithm)
 tcp_nodelay = true
+
+#==============================================================================
+# MANAGER PROXY SECTION (used when server.front_door_mode = manager_proxy)
+#==============================================================================
+[manager]
+# External front-door bind/port managed by sb_manager
+bind_address = 0.0.0.0
+port = 3090
+
+# Internal native listener endpoint used by sb_manager to reach engine services
+internal_native_bind = 127.0.0.1
+internal_native_port = 3392
+
+# Database owner used for internal native listener wiring
+owner_database = main
+
+# Manager binary name/path
+binary = sb_manager
+
+# Required manager MCP authentication secret.
+# Set to a high-entropy value. This is passed to sb_manager as --mcp-auth-secret.
+mcp_auth_secret = change-me-manager-mcp-secret
+
+# DB Binding Token (DBBT) keyring for manager<->listener binding checks.
+# Format: key_id=hex:... and optional active=<key_id>
+# dbbt_keyring = /etc/scratchbird/dbbt.keys
+
+# Logical listener instance id embedded in DBBT.
+listener_id = 1
+
+# DBBT expiration window in milliseconds.
+dbbt_ttl_ms = 30000
+
+# Listener DBBT validation skew tolerance (milliseconds).
+dbbt_clock_skew_ms = 2000
+
+# Listener replay-cache capacity for seen DBBT ids.
+dbbt_replay_cache_size = 4096
+
+# Require validated LPREFACE/DBBT binding before listener handoff (manager mode).
+require_proxy_binding = true
 
 #==============================================================================
 # SSL/TLS SECTION

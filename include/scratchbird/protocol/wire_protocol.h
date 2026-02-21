@@ -24,6 +24,7 @@
  */
 
 #include <cstdint>
+#include <array>
 #include <string>
 #include <vector>
 #include <mutex>
@@ -151,6 +152,12 @@ enum class MessageType : uint8_t {
     PONG                = 0x62,
     STATUS_REQUEST      = 0x63,
     STATUS_RESPONSE     = 0x64,
+    MCP_HELLO           = 0x65,
+    MCP_AUTH_START      = 0x66,
+    MCP_AUTH_CONTINUE   = 0x67,
+    MCP_DB_LIST         = 0x68,
+    MCP_DB_CONNECT      = 0x69,
+    MCP_DB_INFO         = 0x6A,
 
     // Streaming/COPY (0x70-0x7F)
     COPY_DATA           = 0x70,
@@ -207,6 +214,7 @@ constexpr uint16_t CONNECT_FLAG_LOB_STREAM       = 0x0004;
 constexpr uint16_t CONNECT_FLAG_PORTAL_PAGING    = 0x0008;
 constexpr uint16_t CONNECT_FLAG_NOTIFICATIONS    = 0x0010;
 constexpr uint16_t CONNECT_FLAG_PROGRESS         = 0x0020;
+constexpr uint16_t CONNECT_FLAG_MANAGER_DBBT     = 0x0040;
 
 constexpr uint16_t CONNECT_FLAG_BASE_CAPABILITIES =
     CONNECT_FLAG_COPY |
@@ -214,6 +222,9 @@ constexpr uint16_t CONNECT_FLAG_BASE_CAPABILITIES =
     CONNECT_FLAG_PORTAL_PAGING |
     CONNECT_FLAG_PROGRESS |
     CONNECT_FLAG_NOTIFICATIONS;
+
+/// Manager Control Protocol (MCP) version used by manager_proxy mode
+constexpr uint16_t MCP_PROTOCOL_VERSION = 0x0100;
 
 // ============================================================================
 // Data Type Encoding
@@ -702,14 +713,17 @@ public:
     static Message buildConnectRequest(const std::string& database,
                                        const std::string& client_name,
                                        uint32_t client_pid,
-                                       uint16_t client_flags = 0);
+                                       uint16_t client_flags = 0,
+                                       const uint8_t* bound_db_uuid = nullptr);
 
     static core::Status parseConnectRequest(const Message& msg,
                                             std::string& database,
                                             std::string& client_name,
                                             uint32_t& client_pid,
                                             uint16_t* client_flags_out = nullptr,
-                                            core::ErrorContext* ctx = nullptr);
+                                            core::ErrorContext* ctx = nullptr,
+                                            std::array<uint8_t, 16>* bound_db_uuid_out = nullptr,
+                                            bool* has_bound_db_uuid_out = nullptr);
 
     static Message buildConnectResponse(bool success,
                                         const uint8_t session_id[16],
@@ -1060,6 +1074,55 @@ public:
                                             StatusRequestType& request_type,
                                             std::vector<StatusEntry>& entries,
                                             core::ErrorContext* ctx = nullptr);
+
+    // ========================================
+    // Manager Control Protocol (MCP) Messages
+    // ========================================
+
+    static Message buildMcpHello(uint16_t requested_version,
+                                 uint16_t client_flags = 0);
+    static core::Status parseMcpHello(const Message& msg,
+                                      uint16_t& requested_version,
+                                      uint16_t& client_flags,
+                                      core::ErrorContext* ctx = nullptr);
+
+    static Message buildMcpAuthStart(const std::string& username,
+                                     AuthMethod method,
+                                     const std::vector<uint8_t>& initial_data);
+    static core::Status parseMcpAuthStart(const Message& msg,
+                                          std::string& username,
+                                          AuthMethod& method,
+                                          std::vector<uint8_t>& initial_data,
+                                          core::ErrorContext* ctx = nullptr);
+
+    static Message buildMcpAuthContinue(const std::vector<uint8_t>& continuation_data);
+    static core::Status parseMcpAuthContinue(const Message& msg,
+                                             std::vector<uint8_t>& continuation_data,
+                                             core::ErrorContext* ctx = nullptr);
+
+    static Message buildMcpDbList();
+    static core::Status parseMcpDbList(const Message& msg,
+                                       core::ErrorContext* ctx = nullptr);
+
+    static Message buildMcpDbConnect(const std::string& database_name);
+    static Message buildMcpDbConnect(const std::string& database_name,
+                                     const std::string& connection_profile,
+                                     const std::string& client_intent,
+                                     const std::vector<uint8_t>& client_nonce);
+    static core::Status parseMcpDbConnect(const Message& msg,
+                                          std::string& database_name,
+                                          core::ErrorContext* ctx = nullptr);
+    static core::Status parseMcpDbConnect(const Message& msg,
+                                          std::string& database_name,
+                                          std::string& connection_profile,
+                                          std::string& client_intent,
+                                          std::vector<uint8_t>& client_nonce,
+                                          core::ErrorContext* ctx = nullptr);
+
+    static Message buildMcpDbInfo(const std::string& database_name);
+    static core::Status parseMcpDbInfo(const Message& msg,
+                                       std::string& database_name,
+                                       core::ErrorContext* ctx = nullptr);
 
     static Message buildDisconnect();
     static Message buildShutdown();

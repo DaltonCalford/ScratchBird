@@ -1346,10 +1346,16 @@ public:
         );
 
         // Send CONNECT_REQUEST
+        const uint8_t* bound_db_uuid_ptr = nullptr;
+        if (config_.has_bound_db_uuid) {
+            bound_db_uuid_ptr = config_.bound_db_uuid.data();
+        }
         auto connect_msg = protocol::ProtocolCodec::buildConnectRequest(
             config_.database_name,
             "scratchbird_client",
-            getpid()
+            getpid(),
+            config_.connect_client_flags,
+            bound_db_uuid_ptr
         );
 
         status = protocol_session_->sendMessage(connect_msg, ctx);
