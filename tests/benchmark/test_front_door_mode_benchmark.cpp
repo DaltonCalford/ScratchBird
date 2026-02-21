@@ -12,7 +12,10 @@
 
 #include <algorithm>
 #include <array>
+#include <cerrno>
 #include <chrono>
+#include <cmath>
+#include <cstdlib>
 #include <cstdint>
 #include <filesystem>
 #include <string>
@@ -44,6 +47,10 @@ using scratchbird::protocol::MessageType;
 using scratchbird::protocol::ProtocolCodec;
 
 namespace {
+
+constexpr char kManagerAuthSecret[] = "manager-token-secret";
+constexpr double kDefaultOverheadRatioMeanMax = 6.0;
+constexpr double kDefaultOverheadRatioP95Max = 10.0;
 
 Status sendWireMessage(Socket& socket, const Message& message, ErrorContext* ctx) {
     std::vector<uint8_t> wire_bytes;
@@ -99,6 +106,22 @@ uint16_t reserveEphemeralPort() {
     return port;
 }
 
+double readPositiveEnvDoubleOrDefault(const char* name, double fallback) {
+    const char* raw = std::getenv(name);
+    if (!raw || raw[0] == '\0') {
+        return fallback;
+    }
+
+    errno = 0;
+    char* end = nullptr;
+    const double parsed = std::strtod(raw, &end);
+    if (errno == ERANGE || end == raw || (end && *end != '\0') || !std::isfinite(parsed) ||
+        parsed <= 0.0) {
+        return fallback;
+    }
+    return parsed;
+}
+
 std::unique_ptr<Socket> connectWithRetry(const std::string& host,
                                          uint16_t port,
                                          std::chrono::milliseconds timeout) {
@@ -139,7 +162,8 @@ public:
 
     bool start(const std::filesystem::path& binary,
                uint16_t front_port,
-               uint16_t native_port) {
+               uint16_t native_port,
+               const std::string& mcp_auth_secret = kManagerAuthSecret) {
         stop();
         if (binary.empty()) {
             return false;
@@ -152,6 +176,7 @@ public:
             "--native-bind", "127.0.0.1",
             "--native-port", std::to_string(native_port),
             "--database-owner", "main",
+            "--mcp-auth-secret", mcp_auth_secret,
             "--log-level", "error"
         };
 
@@ -255,22 +280,17 @@ Status runNativeConnectAuthQueryFlow(Socket& socket) {
     return Status::OK;
 }
 
-void runMcpAuthHandshake(Socket& manager_socket) {
+void runMcpAuthHandshake(Socket& manager_socket,
+                         const std::string& mcp_auth_secret = kManagerAuthSecret) {
     ErrorContext ctx;
+    const std::vector<uint8_t> secret_payload(mcp_auth_secret.begin(), mcp_auth_secret.end());
     Message auth_start = ProtocolCodec::buildMcpAuthStart(
-        "admin", AuthMethod::SCRAM_SHA_256, {'n', ',', ',', 'n', '=', 'a', 'd', 'm', 'i', 'n'});
+        "admin", AuthMethod::TOKEN, secret_payload);
     ASSERT_EQ(sendWireMessage(manager_socket, auth_start, &ctx), Status::OK) << ctx.message;
 
     Message response;
     ASSERT_EQ(receiveWireMessage(manager_socket, response, &ctx), Status::OK) << ctx.message;
-    ASSERT_EQ(response.getType(), MessageType::AUTH_CHALLENGE);
-
-    Message auth_continue = ProtocolCodec::buildMcpAuthContinue({'c', '=', 'b', 'i', 'w', 's'});
-    ASSERT_EQ(sendWireMessage(manager_socket, auth_continue, &ctx), Status::OK) << ctx.message;
-
-    ASSERT_EQ(receiveWireMessage(manager_socket, response, &ctx), Status::OK) << ctx.message;
     ASSERT_EQ(response.getType(), MessageType::AUTH_RESPONSE);
-
     AuthStatus auth_status = AuthStatus::ERROR;
     uint32_t user_id = 0;
     std::string error_message;
@@ -497,6 +517,12 @@ TEST(FrontDoorModeBenchmarkTest, DirectVsManagerProxyConnectAuthQueryLatency) {
     const double manager_proxy_native_p95 = p95Micros(manager_proxy_native_us);
     const double overhead_ratio_mean = direct_mean > 0.0 ? (manager_mean / direct_mean) : 0.0;
     const double overhead_ratio_p95 = direct_p95 > 0.0 ? (manager_p95 / direct_p95) : 0.0;
+    const double overhead_ratio_mean_max = readPositiveEnvDoubleOrDefault(
+        "SCRATCHBIRD_FRONT_DOOR_OVERHEAD_RATIO_MEAN_MAX",
+        kDefaultOverheadRatioMeanMax);
+    const double overhead_ratio_p95_max = readPositiveEnvDoubleOrDefault(
+        "SCRATCHBIRD_FRONT_DOOR_OVERHEAD_RATIO_P95_MAX",
+        kDefaultOverheadRatioP95Max);
 
     std::cout << "[Benchmark][FrontDoorMode] direct_mean_us=" << direct_mean
               << " direct_p95_us=" << direct_p95
@@ -510,11 +536,17 @@ TEST(FrontDoorModeBenchmarkTest, DirectVsManagerProxyConnectAuthQueryLatency) {
               << " manager_proxy_native_p95_us=" << manager_proxy_native_p95
               << " overhead_ratio_mean=" << overhead_ratio_mean
               << " overhead_ratio_p95=" << overhead_ratio_p95
+              << " overhead_ratio_mean_max=" << overhead_ratio_mean_max
+              << " overhead_ratio_p95_max=" << overhead_ratio_p95_max
               << std::endl;
 
     ASSERT_GT(direct_mean, 0.0);
     ASSERT_GT(manager_mean, 0.0);
     ASSERT_GT(direct_p95, 0.0);
     ASSERT_GT(manager_p95, 0.0);
+    ASSERT_LE(overhead_ratio_mean, overhead_ratio_mean_max)
+        << "manager_proxy mean overhead budget exceeded";
+    ASSERT_LE(overhead_ratio_p95, overhead_ratio_p95_max)
+        << "manager_proxy p95 overhead budget exceeded";
 #endif
 }

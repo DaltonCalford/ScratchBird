@@ -44,6 +44,8 @@ using scratchbird::protocol::StatusRequestType;
 
 namespace {
 
+constexpr char kManagerAuthSecret[] = "manager-token-secret";
+
 Status sendWireMessage(Socket& socket, const Message& message, ErrorContext* ctx) {
     std::vector<uint8_t> wire_bytes;
     Status status = message.serialize(wire_bytes);
@@ -122,7 +124,8 @@ public:
     bool start(const std::filesystem::path& binary,
                uint16_t front_port,
                uint16_t native_port,
-               const std::string& owner_database = "main") {
+               const std::string& owner_database = "main",
+               const std::string& mcp_auth_secret = kManagerAuthSecret) {
         stop();
         if (binary.empty()) {
             return false;
@@ -135,6 +138,7 @@ public:
             "--native-bind", "127.0.0.1",
             "--native-port", std::to_string(native_port),
             "--database-owner", owner_database,
+            "--mcp-auth-secret", mcp_auth_secret,
             "--log-level", "error"
         };
 
@@ -197,17 +201,44 @@ std::unique_ptr<Socket> connectWithRetry(const std::string& host,
     return nullptr;
 }
 
-void runMcpAuthHandshake(Socket& manager_socket) {
+void runMcpAuthHandshake(Socket& manager_socket,
+                         const std::string& mcp_auth_secret = kManagerAuthSecret) {
     ErrorContext ctx;
     Message auth_start = ProtocolCodec::buildMcpAuthStart(
-        "admin", AuthMethod::SCRAM_SHA_256, {'n', ',', ',', 'n', '=', 'a', 'd', 'm', 'i', 'n'});
+        "admin", AuthMethod::TOKEN, {'t', 'o', 'k', 'e', 'n'});
     ASSERT_EQ(sendWireMessage(manager_socket, auth_start, &ctx), Status::OK) << ctx.message;
 
     Message response;
     ASSERT_EQ(receiveWireMessage(manager_socket, response, &ctx), Status::OK) << ctx.message;
     ASSERT_EQ(response.getType(), MessageType::AUTH_CHALLENGE);
 
-    Message auth_continue = ProtocolCodec::buildMcpAuthContinue({'c', '=', 'b', 'i', 'w', 's'});
+    uint8_t challenge_session_id[16] = {0};
+    std::string challenge_username;
+    std::vector<AuthMethod> allowed_methods;
+    bool has_required_method = false;
+    AuthMethod required_method = AuthMethod::PASSWORD;
+    uint8_t allowed_transport_mask = 0;
+    std::vector<uint8_t> challenge_nonce;
+    ASSERT_EQ(
+        ProtocolCodec::parseAuthChallenge(response,
+                                          challenge_session_id,
+                                          challenge_username,
+                                          allowed_methods,
+                                          has_required_method,
+                                          required_method,
+                                          allowed_transport_mask,
+                                          challenge_nonce,
+                                          &ctx),
+        Status::OK) << ctx.message;
+    EXPECT_EQ(challenge_username, "admin");
+    ASSERT_EQ(allowed_methods.size(), 1U);
+    EXPECT_EQ(allowed_methods[0], AuthMethod::TOKEN);
+    EXPECT_TRUE(has_required_method);
+    EXPECT_EQ(required_method, AuthMethod::TOKEN);
+    EXPECT_FALSE(challenge_nonce.empty());
+
+    const std::vector<uint8_t> secret_payload(mcp_auth_secret.begin(), mcp_auth_secret.end());
+    Message auth_continue = ProtocolCodec::buildMcpAuthContinue(secret_payload);
     ASSERT_EQ(sendWireMessage(manager_socket, auth_continue, &ctx), Status::OK) << ctx.message;
 
     ASSERT_EQ(receiveWireMessage(manager_socket, response, &ctx), Status::OK) << ctx.message;
@@ -279,7 +310,26 @@ TEST(ManagerProxyMcpTest, HelloAuthListConnectFlowWithReadyInternalEndpoint) {
         << ctx.message;
     ASSERT_EQ(request_type, StatusRequestType::DATABASE_INFO);
 
-    Message db_connect = ProtocolCodec::buildMcpDbConnect("main");
+    Message db_info = ProtocolCodec::buildMcpDbInfo("main");
+    ASSERT_EQ(sendWireMessage(*manager_socket, db_info, &ctx), Status::OK) << ctx.message;
+    ASSERT_EQ(receiveWireMessage(*manager_socket, response, &ctx), Status::OK) << ctx.message;
+    ASSERT_EQ(response.getType(), MessageType::STATUS_RESPONSE);
+    entries.clear();
+    request_type = StatusRequestType::SERVER_INFO;
+    ASSERT_EQ(ProtocolCodec::parseStatusResponse(response, request_type, entries, &ctx), Status::OK)
+        << ctx.message;
+    ASSERT_EQ(request_type, StatusRequestType::DATABASE_INFO);
+    bool saw_db_main = false;
+    for (const auto& entry : entries) {
+        if (entry.key == "db" && entry.value == "main") {
+            saw_db_main = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(saw_db_main);
+
+    Message db_connect = ProtocolCodec::buildMcpDbConnect(
+        "main", "native_v3", "native_v3", std::vector<uint8_t>(16, 0xAB));
     ASSERT_EQ(sendWireMessage(*manager_socket, db_connect, &ctx), Status::OK) << ctx.message;
     ASSERT_EQ(receiveWireMessage(*manager_socket, response, &ctx), Status::OK) << ctx.message;
     ASSERT_EQ(response.getType(), MessageType::CONNECT_RESPONSE);
@@ -546,5 +596,110 @@ TEST(ManagerProxyMcpTest, DbConnectFailsWhenInternalEndpointNotReady) {
               Status::OK) << ctx.message;
     EXPECT_FALSE(success);
     EXPECT_NE(error_message.find("not ready"), std::string::npos);
+#endif
+}
+
+TEST(ManagerProxyMcpTest, AuthFailsWithWrongManagerToken) {
+#ifdef _WIN32
+    GTEST_SKIP() << "Test relies on POSIX fork/exec behavior.";
+#else
+    const auto manager_binary = managerBinaryPath();
+    if (manager_binary.empty()) {
+        GTEST_SKIP() << "sb_manager binary not found in build tree";
+    }
+
+    const uint16_t manager_port = reserveEphemeralPort();
+    const uint16_t native_port = reserveEphemeralPort();
+    ASSERT_GT(manager_port, 0);
+    ASSERT_GT(native_port, 0);
+
+    ErrorContext listener_ctx;
+    auto internal_listener = Socket::create(AddressFamily::IPV4, SocketType::STREAM, &listener_ctx);
+    ASSERT_NE(internal_listener, nullptr) << listener_ctx.message;
+    ASSERT_EQ(internal_listener->bind(NetworkAddress("127.0.0.1", native_port, AddressFamily::IPV4),
+                                      &listener_ctx),
+              Status::OK) << listener_ctx.message;
+    ASSERT_EQ(internal_listener->listen(8, &listener_ctx), Status::OK) << listener_ctx.message;
+
+    ScopedManagerProcess manager;
+    ASSERT_TRUE(manager.start(manager_binary, manager_port, native_port, "main", kManagerAuthSecret));
+
+    auto manager_socket = connectWithRetry("127.0.0.1", manager_port, std::chrono::milliseconds(2000));
+    ASSERT_NE(manager_socket, nullptr);
+
+    ErrorContext ctx;
+    Message auth_start = ProtocolCodec::buildMcpAuthStart(
+        "admin", AuthMethod::TOKEN, {'t', 'o', 'k', 'e', 'n'});
+    ASSERT_EQ(sendWireMessage(*manager_socket, auth_start, &ctx), Status::OK) << ctx.message;
+
+    Message response;
+    ASSERT_EQ(receiveWireMessage(*manager_socket, response, &ctx), Status::OK) << ctx.message;
+    ASSERT_EQ(response.getType(), MessageType::AUTH_CHALLENGE);
+
+    Message auth_continue = ProtocolCodec::buildMcpAuthContinue(
+        {'w', 'r', 'o', 'n', 'g', '-', 's', 'e', 'c', 'r', 'e', 't'});
+    ASSERT_EQ(sendWireMessage(*manager_socket, auth_continue, &ctx), Status::OK) << ctx.message;
+    ASSERT_EQ(receiveWireMessage(*manager_socket, response, &ctx), Status::OK) << ctx.message;
+    ASSERT_EQ(response.getType(), MessageType::AUTH_RESPONSE);
+
+    AuthStatus auth_status = AuthStatus::OK;
+    uint32_t user_id = 0;
+    std::string error_message;
+    std::vector<uint8_t> auth_data;
+    ASSERT_EQ(ProtocolCodec::parseAuthResponse(
+                  response, auth_status, user_id, error_message, &auth_data, &ctx),
+              Status::OK) << ctx.message;
+    EXPECT_EQ(auth_status, AuthStatus::ERROR);
+    EXPECT_NE(error_message.find("failed"), std::string::npos);
+#endif
+}
+
+TEST(ManagerProxyMcpTest, AuthStartFastPathAcceptsTokenPayload) {
+#ifdef _WIN32
+    GTEST_SKIP() << "Test relies on POSIX fork/exec behavior.";
+#else
+    const auto manager_binary = managerBinaryPath();
+    if (manager_binary.empty()) {
+        GTEST_SKIP() << "sb_manager binary not found in build tree";
+    }
+
+    const uint16_t manager_port = reserveEphemeralPort();
+    const uint16_t native_port = reserveEphemeralPort();
+    ASSERT_GT(manager_port, 0);
+    ASSERT_GT(native_port, 0);
+
+    ErrorContext listener_ctx;
+    auto internal_listener = Socket::create(AddressFamily::IPV4, SocketType::STREAM, &listener_ctx);
+    ASSERT_NE(internal_listener, nullptr) << listener_ctx.message;
+    ASSERT_EQ(internal_listener->bind(NetworkAddress("127.0.0.1", native_port, AddressFamily::IPV4),
+                                      &listener_ctx),
+              Status::OK) << listener_ctx.message;
+    ASSERT_EQ(internal_listener->listen(8, &listener_ctx), Status::OK) << listener_ctx.message;
+
+    ScopedManagerProcess manager;
+    ASSERT_TRUE(manager.start(manager_binary, manager_port, native_port, "main", kManagerAuthSecret));
+
+    auto manager_socket = connectWithRetry("127.0.0.1", manager_port, std::chrono::milliseconds(2000));
+    ASSERT_NE(manager_socket, nullptr);
+
+    ErrorContext ctx;
+    const std::vector<uint8_t> secret_payload(
+        kManagerAuthSecret, kManagerAuthSecret + std::strlen(kManagerAuthSecret));
+    Message auth_start = ProtocolCodec::buildMcpAuthStart(
+        "admin", AuthMethod::TOKEN, secret_payload);
+    ASSERT_EQ(sendWireMessage(*manager_socket, auth_start, &ctx), Status::OK) << ctx.message;
+
+    Message response;
+    ASSERT_EQ(receiveWireMessage(*manager_socket, response, &ctx), Status::OK) << ctx.message;
+    ASSERT_EQ(response.getType(), MessageType::AUTH_RESPONSE);
+
+    AuthStatus auth_status = AuthStatus::ERROR;
+    uint32_t user_id = 0;
+    std::string error_message;
+    std::vector<uint8_t> auth_data;
+    ASSERT_EQ(ProtocolCodec::parseAuthResponse(
+                  response, auth_status, user_id, error_message, &auth_data, &ctx),
+              Status::OK) << ctx.message;
+    EXPECT_EQ(auth_status, AuthStatus::OK);
 #endif
 }

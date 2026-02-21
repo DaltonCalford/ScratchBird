@@ -33,6 +33,9 @@
 #include <string>
 #include <thread>
 #include <vector>
+#ifndef _WIN32
+#include <poll.h>
+#endif
 
 namespace {
 
@@ -66,6 +69,7 @@ struct ManagerOptions {
     std::string config_path;
     std::string log_level = "info";
     std::string dbbt_keyring_path;
+    std::string mcp_auth_secret;
     uint32_t listener_id = 1;
     uint32_t dbbt_ttl_ms = 30000;
 };
@@ -74,11 +78,13 @@ struct ManagerSessionContext {
     uint8_t session_id[16] = {0};
     bool auth_started = false;
     bool authenticated = false;
+    AuthMethod auth_method = AuthMethod::PASSWORD;
     std::string username;
     std::string selected_database;
     std::vector<uint8_t> last_dbbt;
     std::vector<uint8_t> last_dbbt_id;
     uint64_t last_dbbt_expires_at_ms = 0;
+    std::unique_ptr<Socket> prepared_upstream;
 };
 
 void onSignal(int) {
@@ -97,6 +103,7 @@ void printUsage(const char* program) {
         << "  --config <path>                Server configuration path\n"
         << "  --log-level <level>            Log level\n"
         << "  --dbbt-keyring <path>          DBBT keyring file\n"
+        << "  --mcp-auth-secret <value>      Manager MCP auth secret (token auth)\n"
         << "  --listener-id <id>             Listener id for DBBT binding\n"
         << "  --dbbt-ttl-ms <ms>             DBBT expiration window\n";
 }
@@ -167,6 +174,12 @@ bool parseArgs(int argc, char* argv[], ManagerOptions& out) {
             out.dbbt_keyring_path = value;
             continue;
         }
+        if (arg == "--mcp-auth-secret") {
+            const char* value = require_value("--mcp-auth-secret");
+            if (!value) return false;
+            out.mcp_auth_secret = value;
+            continue;
+        }
         if (arg == "--listener-id") {
             const char* value = require_value("--listener-id");
             if (!value) return false;
@@ -200,6 +213,18 @@ bool parseArgs(int argc, char* argv[], ManagerOptions& out) {
     }
     if (out.dbbt_ttl_ms == 0) {
         out.dbbt_ttl_ms = 30000;
+    }
+    if (out.mcp_auth_secret.empty()) {
+        const char* env_secret = std::getenv("SCRATCHBIRD_MCP_AUTH_SECRET");
+        if (env_secret != nullptr && env_secret[0] != '\0') {
+            out.mcp_auth_secret = env_secret;
+        }
+    }
+    if (out.mcp_auth_secret.empty()) {
+        std::cerr
+            << "Manager MCP auth secret is required (--mcp-auth-secret or "
+               "SCRATCHBIRD_MCP_AUTH_SECRET)\n";
+        return false;
     }
     return true;
 }
@@ -245,6 +270,17 @@ std::vector<uint8_t> randomBytes(size_t count) {
         bytes[i] = static_cast<uint8_t>(rd() & 0xFF);
     }
     return bytes;
+}
+
+bool timingSafeBytesEqual(const std::vector<uint8_t>& lhs, const std::vector<uint8_t>& rhs) {
+    if (lhs.size() != rhs.size()) {
+        return false;
+    }
+    uint8_t diff = 0;
+    for (size_t i = 0; i < lhs.size(); ++i) {
+        diff |= static_cast<uint8_t>(lhs[i] ^ rhs[i]);
+    }
+    return diff == 0;
 }
 
 std::string listenerManagementSocketPath(const ManagerOptions& options) {
@@ -306,19 +342,169 @@ struct ProxyBuffer {
     }
 };
 
-bool runProxyTransport(Socket& client, const ManagerOptions& options, ErrorContext* ctx) {
+struct ProxyIoReady {
+    bool client_readable = false;
+    bool client_writable = false;
+    bool upstream_readable = false;
+    bool upstream_writable = false;
+
+    bool any() const {
+        return client_readable || client_writable || upstream_readable || upstream_writable;
+    }
+};
+
+bool waitProxyIo(Socket& client,
+                 Socket& upstream,
+                 bool want_client_read,
+                 bool want_client_write,
+                 bool want_upstream_read,
+                 bool want_upstream_write,
+                 int timeout_ms,
+                 ProxyIoReady& ready) {
+    ready = ProxyIoReady{};
+
+#ifdef _WIN32
+    fd_set read_fds;
+    fd_set write_fds;
+    fd_set except_fds;
+    FD_ZERO(&read_fds);
+    FD_ZERO(&write_fds);
+    FD_ZERO(&except_fds);
+
+    socket_t max_fd = 0;
+    auto register_fd = [&](socket_t fd, bool want_read, bool want_write) {
+        if (fd == INVALID_SOCKET_VALUE) {
+            return;
+        }
+        if (want_read) {
+            FD_SET(fd, &read_fds);
+        }
+        if (want_write) {
+            FD_SET(fd, &write_fds);
+        }
+        FD_SET(fd, &except_fds);
+        if (fd > max_fd) {
+            max_fd = fd;
+        }
+    };
+
+    register_fd(client.getFd(), want_client_read, want_client_write);
+    register_fd(upstream.getFd(), want_upstream_read, want_upstream_write);
+
+    timeval tv;
+    timeval* tv_ptr = nullptr;
+    if (timeout_ms >= 0) {
+        tv.tv_sec = timeout_ms / 1000;
+        tv.tv_usec = (timeout_ms % 1000) * 1000;
+        tv_ptr = &tv;
+    }
+
+    const int rc = ::select(static_cast<int>(max_fd + 1),
+                            &read_fds,
+                            &write_fds,
+                            &except_fds,
+                            tv_ptr);
+    if (rc <= 0) {
+        return false;
+    }
+
+    const socket_t client_fd = client.getFd();
+    const socket_t upstream_fd = upstream.getFd();
+
+    if (client_fd != INVALID_SOCKET_VALUE) {
+        const bool has_except = FD_ISSET(client_fd, &except_fds);
+        ready.client_readable = (want_client_read && FD_ISSET(client_fd, &read_fds)) || has_except;
+        ready.client_writable = (want_client_write && FD_ISSET(client_fd, &write_fds)) || has_except;
+    }
+    if (upstream_fd != INVALID_SOCKET_VALUE) {
+        const bool has_except = FD_ISSET(upstream_fd, &except_fds);
+        ready.upstream_readable =
+            (want_upstream_read && FD_ISSET(upstream_fd, &read_fds)) || has_except;
+        ready.upstream_writable =
+            (want_upstream_write && FD_ISSET(upstream_fd, &write_fds)) || has_except;
+    }
+
+    return ready.any();
+#else
+    pollfd pfds[2];
+    int count = 0;
+
+    auto register_fd = [&](Socket& socket, bool want_read, bool want_write) {
+        if (!want_read && !want_write) {
+            return;
+        }
+        pollfd pfd{};
+        pfd.fd = socket.getFd();
+        pfd.events = 0;
+        if (want_read) {
+            pfd.events = static_cast<short>(pfd.events | POLLIN);
+        }
+        if (want_write) {
+            pfd.events = static_cast<short>(pfd.events | POLLOUT);
+        }
+        pfds[count++] = pfd;
+    };
+
+    register_fd(client, want_client_read, want_client_write);
+    register_fd(upstream, want_upstream_read, want_upstream_write);
+
+    if (count == 0) {
+        return false;
+    }
+
+    const int rc = ::poll(pfds, static_cast<nfds_t>(count), timeout_ms);
+    if (rc <= 0) {
+        return false;
+    }
+
+    const socket_t client_fd = client.getFd();
+    const socket_t upstream_fd = upstream.getFd();
+
+    for (int i = 0; i < count; ++i) {
+        const pollfd& pfd = pfds[i];
+        const bool errorish = (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0;
+        const bool readable = (pfd.revents & POLLIN) != 0;
+        const bool writable = (pfd.revents & POLLOUT) != 0;
+
+        if (pfd.fd == client_fd) {
+            ready.client_readable = (want_client_read && readable) || (want_client_read && errorish);
+            ready.client_writable = (want_client_write && writable) || (want_client_write && errorish);
+        } else if (pfd.fd == upstream_fd) {
+            ready.upstream_readable =
+                (want_upstream_read && readable) || (want_upstream_read && errorish);
+            ready.upstream_writable =
+                (want_upstream_write && writable) || (want_upstream_write && errorish);
+        }
+    }
+
+    return ready.any();
+#endif
+}
+
+std::unique_ptr<Socket> connectInternalNative(const ManagerOptions& options,
+                                              ErrorContext* ctx) {
     NetworkAddress upstream_address;
     upstream_address.family = addressFamilyForHost(options.native_bind);
     upstream_address.host = options.native_bind;
     upstream_address.port = options.native_port;
+    return Socket::connect(upstream_address, scratchbird::network::SocketOptions{}, ctx);
+}
 
-    ErrorContext connect_ctx;
-    auto upstream = Socket::connect(upstream_address, scratchbird::network::SocketOptions{}, &connect_ctx);
+bool runProxyTransport(Socket& client,
+                       const ManagerOptions& options,
+                       std::unique_ptr<Socket> prepared_upstream,
+                       ErrorContext* ctx) {
+    auto upstream = std::move(prepared_upstream);
     if (!upstream) {
-        SET_ERROR_CONTEXT(ctx, Status::CONNECTION_FAILURE,
-                          connect_ctx.message.empty() ? "Failed to connect internal native listener"
-                                                      : connect_ctx.message.c_str());
-        return false;
+        ErrorContext connect_ctx;
+        upstream = connectInternalNative(options, &connect_ctx);
+        if (!upstream) {
+            SET_ERROR_CONTEXT(ctx, Status::CONNECTION_FAILURE,
+                              connect_ctx.message.empty()
+                                  ? "Failed to connect internal native listener"
+                                  : connect_ctx.message.c_str());
+            return false;
+        }
     }
 
     client.setNonBlocking(true, nullptr);
@@ -327,8 +513,7 @@ bool runProxyTransport(Socket& client, const ManagerOptions& options, ErrorConte
     upstream->setTcpNoDelay(true, nullptr);
 
     constexpr size_t kMaxBufferedBytes = 256 * 1024;
-    constexpr size_t kReadChunkBytes = 16 * 1024;
-    constexpr auto kSleepOnIdle = std::chrono::microseconds(200);
+    constexpr size_t kReadChunkBytes = 32 * 1024;
     constexpr auto kDrainIdleLimit = std::chrono::milliseconds(50);
 
     ProxyBuffer client_to_upstream;
@@ -346,57 +531,82 @@ bool runProxyTransport(Socket& client, const ManagerOptions& options, ErrorConte
             return true;
         }
 
-        if (!source.waitReadable(0)) {
-            return true;
-        }
-
-        const size_t room = kMaxBufferedBytes - out.size();
-        const size_t to_read = std::min(room, kReadChunkBytes);
-        size_t bytes_read = 0;
-        ErrorContext io_ctx;
-        const Status status = source.read(scratch.data(), to_read, &bytes_read, &io_ctx);
-        if (status == Status::CONNECTION_FAILURE) {
-            eof_flag = true;
-            return true;
-        }
-        if (status != Status::OK) {
-            if (ctx) {
-                SET_ERROR_CONTEXT(ctx, status,
-                                  io_ctx.message.empty() ? "Proxy read failed"
-                                                         : io_ctx.message.c_str());
+        while (out.size() < kMaxBufferedBytes) {
+            const size_t room = kMaxBufferedBytes - out.size();
+            const size_t to_read = std::min(room, kReadChunkBytes);
+            size_t bytes_read = 0;
+            ErrorContext io_ctx;
+            const Status status = source.read(scratch.data(), to_read, &bytes_read, &io_ctx);
+            if (status == Status::CONNECTION_FAILURE) {
+                eof_flag = true;
+                return true;
             }
-            return false;
-        }
-        if (bytes_read > 0) {
+            if (status != Status::OK) {
+                if (ctx) {
+                    SET_ERROR_CONTEXT(ctx, status,
+                                      io_ctx.message.empty() ? "Proxy read failed"
+                                                             : io_ctx.message.c_str());
+                }
+                return false;
+            }
+            if (bytes_read == 0) {
+                break;
+            }
             out.append(scratch.data(), bytes_read);
+            if (bytes_read < to_read) {
+                break;
+            }
         }
         return true;
     };
 
     auto flushOut = [&](Socket& sink, ProxyBuffer& in) -> bool {
-        if (in.empty() || !sink.waitWritable(0)) {
+        if (in.empty()) {
             return true;
         }
 
-        size_t bytes_written = 0;
-        ErrorContext io_ctx;
-        const Status status = sink.write(in.data(), in.size(), &bytes_written, &io_ctx);
-        if (status != Status::OK) {
-            if (ctx) {
-                SET_ERROR_CONTEXT(ctx, status,
-                                  io_ctx.message.empty() ? "Proxy write failed"
-                                                         : io_ctx.message.c_str());
+        while (!in.empty()) {
+            size_t bytes_written = 0;
+            ErrorContext io_ctx;
+            const Status status = sink.write(in.data(), in.size(), &bytes_written, &io_ctx);
+            if (status != Status::OK) {
+                if (ctx) {
+                    SET_ERROR_CONTEXT(ctx, status,
+                                      io_ctx.message.empty() ? "Proxy write failed"
+                                                             : io_ctx.message.c_str());
+                }
+                return false;
             }
-            return false;
+            if (bytes_written == 0) {
+                break;
+            }
+            in.consume(bytes_written);
         }
-        in.consume(bytes_written);
         return true;
     };
 
     while (g_running.load(std::memory_order_acquire)) {
+        const bool want_client_read =
+            !client_read_eof && !upstream_write_closed && client_to_upstream.size() < kMaxBufferedBytes;
+        const bool want_upstream_read =
+            !upstream_read_eof && !client_write_closed && upstream_to_client.size() < kMaxBufferedBytes;
+        const bool want_upstream_write = !upstream_write_closed && !client_to_upstream.empty();
+        const bool want_client_write = !client_write_closed && !upstream_to_client.empty();
+
+        const int io_wait_timeout_ms = (want_upstream_write || want_client_write) ? 0 : 1;
+        ProxyIoReady ready;
+        (void)waitProxyIo(client,
+                          *upstream,
+                          want_client_read,
+                          want_client_write,
+                          want_upstream_read,
+                          want_upstream_write,
+                          io_wait_timeout_ms,
+                          ready);
+
         bool progressed = false;
 
-        if (!client_read_eof && !upstream_write_closed) {
+        if (ready.client_readable && want_client_read) {
             const size_t before = client_to_upstream.size();
             if (!readInto(client, client_to_upstream, client_read_eof)) {
                 return false;
@@ -404,7 +614,7 @@ bool runProxyTransport(Socket& client, const ManagerOptions& options, ErrorConte
             progressed = progressed || (client_to_upstream.size() > before);
         }
 
-        if (!upstream_read_eof && !client_write_closed) {
+        if (ready.upstream_readable && want_upstream_read) {
             const size_t before = upstream_to_client.size();
             if (!readInto(*upstream, upstream_to_client, upstream_read_eof)) {
                 return false;
@@ -413,7 +623,7 @@ bool runProxyTransport(Socket& client, const ManagerOptions& options, ErrorConte
         }
 
         const size_t before_upstream = client_to_upstream.size();
-        if (!upstream_write_closed) {
+        if (ready.upstream_writable && want_upstream_write) {
             if (!flushOut(*upstream, client_to_upstream)) {
                 return false;
             }
@@ -421,7 +631,7 @@ bool runProxyTransport(Socket& client, const ManagerOptions& options, ErrorConte
         progressed = progressed || (client_to_upstream.size() < before_upstream);
 
         const size_t before_client = upstream_to_client.size();
-        if (!client_write_closed) {
+        if (ready.client_writable && want_client_write) {
             if (!flushOut(client, upstream_to_client)) {
                 return false;
             }
@@ -466,10 +676,6 @@ bool runProxyTransport(Socket& client, const ManagerOptions& options, ErrorConte
             upstream_to_client.empty() &&
             (now - last_progress) >= kDrainIdleLimit) {
             break;
-        }
-
-        if (!progressed) {
-            std::this_thread::sleep_for(kSleepOnIdle);
         }
     }
 
@@ -640,7 +846,7 @@ Message buildMcpHelloResponse(const ManagerOptions& options,
     entries.push_back({"mcp_version", std::to_string(scratchbird::protocol::MCP_PROTOCOL_VERSION)});
     entries.push_back({"requested_version", std::to_string(requested_version)});
     entries.push_back({"client_flags", std::to_string(client_flags)});
-    entries.push_back({"auth_flow", "auth_start_auth_continue"});
+    entries.push_back({"auth_flow", "token_auth_start_auth_continue"});
     entries.push_back({"database_owner", options.owner_database});
     entries.push_back({"internal_native_endpoint", internalEndpointString(options)});
     entries.push_back({"ready", isInternalNativeReady(options) ? "true" : "false"});
@@ -656,10 +862,30 @@ Message buildMcpDbListResponse(const ManagerOptions& options) {
     return ProtocolCodec::buildStatusResponse(StatusRequestType::DATABASE_INFO, entries);
 }
 
+Message buildMcpDbInfoResponse(const ManagerOptions& options,
+                               const std::string& database_name) {
+    const bool ready = isInternalNativeReady(options);
+    std::vector<ProtocolCodec::StatusEntry> entries;
+    entries.push_back({"db", database_name});
+    entries.push_back({"available", (database_name == options.owner_database) ? "true" : "false"});
+    entries.push_back({"state", ready ? "OPEN" : "CLOSED"});
+    entries.push_back({"ready", ready ? "true" : "false"});
+    entries.push_back({"internal_native_endpoint", internalEndpointString(options)});
+    return ProtocolCodec::buildStatusResponse(StatusRequestType::DATABASE_INFO, entries);
+}
+
 Message buildMcpResponseForRequest(const Message& request,
                                    const ManagerOptions& options,
                                    const DatabaseBindingKeyRing& dbbt_key_ring,
                                    ManagerSessionContext& session_ctx) {
+    auto buildNotReadyResponse = [&session_ctx]() -> Message {
+        if (!hasSessionId(session_ctx)) {
+            scratchbird::protocol::generateSessionId(session_ctx.session_id);
+        }
+        return ProtocolCodec::buildConnectResponse(
+            false, session_ctx.session_id, "Internal native listener is not ready");
+    };
+
     switch (request.getType()) {
         case MessageType::MCP_HELLO: {
             uint16_t requested_version = 0;
@@ -685,16 +911,30 @@ Message buildMcpResponseForRequest(const Message& request,
                 return ProtocolCodec::buildAuthResponse(
                     AuthStatus::ERROR, 0, "MCP_AUTH_START requires username");
             }
+            if (auth_method != AuthMethod::TOKEN) {
+                return ProtocolCodec::buildAuthResponse(
+                    AuthStatus::ERROR, 0, "MCP_AUTH_START requires auth_method=TOKEN");
+            }
 
             session_ctx.auth_started = true;
             session_ctx.authenticated = false;
+            session_ctx.auth_method = auth_method;
             session_ctx.username = username;
             scratchbird::protocol::generateSessionId(session_ctx.session_id);
 
+            // Fast path: if caller already supplied the manager token as initial payload,
+            // complete authentication in a single round-trip.
+            if (!initial_payload.empty()) {
+                const std::vector<uint8_t> expected_secret(
+                    options.mcp_auth_secret.begin(), options.mcp_auth_secret.end());
+                if (timingSafeBytesEqual(initial_payload, expected_secret)) {
+                    session_ctx.authenticated = true;
+                    return ProtocolCodec::buildAuthResponse(AuthStatus::OK, 0, "");
+                }
+            }
+
             std::vector<AuthMethod> allowed_methods = {
-                AuthMethod::SCRAM_SHA_256,
-                AuthMethod::TOKEN,
-                AuthMethod::PEER
+                AuthMethod::TOKEN
             };
 
             std::vector<uint8_t> nonce(session_ctx.session_id,
@@ -704,8 +944,8 @@ Message buildMcpResponseForRequest(const Message& request,
                 username,
                 allowed_methods,
                 true,
-                AuthMethod::SCRAM_SHA_256,
-                0x01,  // local/IPC trusted transport placeholder for MCP skeleton
+                AuthMethod::TOKEN,
+                0x01,
                 nonce);
         }
 
@@ -724,6 +964,17 @@ Message buildMcpResponseForRequest(const Message& request,
                 return ProtocolCodec::buildAuthResponse(
                     AuthStatus::ERROR, 0, "MCP_AUTH_CONTINUE payload must not be empty");
             }
+            if (session_ctx.auth_method != AuthMethod::TOKEN) {
+                return ProtocolCodec::buildAuthResponse(
+                    AuthStatus::ERROR, 0, "MCP_AUTH_CONTINUE method mismatch");
+            }
+            const std::vector<uint8_t> expected_secret(
+                options.mcp_auth_secret.begin(), options.mcp_auth_secret.end());
+            if (!timingSafeBytesEqual(continuation_payload, expected_secret)) {
+                session_ctx.authenticated = false;
+                return ProtocolCodec::buildAuthResponse(
+                    AuthStatus::ERROR, 0, "MCP authentication failed");
+            }
             session_ctx.authenticated = true;
             return ProtocolCodec::buildAuthResponse(AuthStatus::OK, 0, "");
         }
@@ -736,15 +987,58 @@ Message buildMcpResponseForRequest(const Message& request,
             return buildMcpDbListResponse(options);
         }
 
-        case MessageType::MCP_DB_CONNECT: {
+        case MessageType::MCP_DB_INFO: {
             std::string requested_database;
             ErrorContext parse_ctx;
-            if (ProtocolCodec::parseMcpDbConnect(request, requested_database, &parse_ctx) !=
+            if (ProtocolCodec::parseMcpDbInfo(request, requested_database, &parse_ctx) !=
+                Status::OK) {
+                return ProtocolCodec::buildProtocolError(parse_ctx.message);
+            }
+            if (!session_ctx.authenticated) {
+                return ProtocolCodec::buildAuthResponse(
+                    AuthStatus::ERROR, 0, "Authenticate before MCP_DB_INFO");
+            }
+            if (requested_database.empty()) {
+                requested_database = options.owner_database;
+            }
+            return buildMcpDbInfoResponse(options, requested_database);
+        }
+
+        case MessageType::MCP_DB_CONNECT: {
+            std::string requested_database;
+            std::string requested_profile;
+            std::string client_intent;
+            std::vector<uint8_t> client_nonce;
+            ErrorContext parse_ctx;
+            if (ProtocolCodec::parseMcpDbConnect(
+                    request,
+                    requested_database,
+                    requested_profile,
+                    client_intent,
+                    client_nonce,
+                    &parse_ctx) !=
                 Status::OK) {
                 return ProtocolCodec::buildProtocolError(parse_ctx.message);
             }
             if (requested_database.empty()) {
                 requested_database = options.owner_database;
+            }
+            if (!client_intent.empty() && client_intent != "native_v3") {
+                if (!hasSessionId(session_ctx)) {
+                    scratchbird::protocol::generateSessionId(session_ctx.session_id);
+                }
+                return ProtocolCodec::buildConnectResponse(
+                    false, session_ctx.session_id, "Unsupported MCP client intent: " + client_intent);
+            }
+            if (!client_nonce.empty() &&
+                (client_nonce.size() < 16 || client_nonce.size() > 32)) {
+                if (!hasSessionId(session_ctx)) {
+                    scratchbird::protocol::generateSessionId(session_ctx.session_id);
+                }
+                return ProtocolCodec::buildConnectResponse(
+                    false,
+                    session_ctx.session_id,
+                    "MCP_DB_CONNECT client_nonce must be 16..32 bytes");
             }
             if (!session_ctx.authenticated) {
                 if (!hasSessionId(session_ctx)) {
@@ -761,13 +1055,29 @@ Message buildMcpResponseForRequest(const Message& request,
                     false, session_ctx.session_id,
                     "Database not available in manager_proxy scope: " + requested_database);
             }
-            if (!isInternalNativeReady(options)) {
+
+            session_ctx.prepared_upstream.reset();
+
+            // If no listener management channel is configured, route directly to proxy mode
+            // without DBBT/LPREFACE validation.
+            if (options.control_socket_dir.empty()) {
+                ErrorContext connect_ctx;
+                session_ctx.prepared_upstream = connectInternalNative(options, &connect_ctx);
+                if (!session_ctx.prepared_upstream) {
+                    return buildNotReadyResponse();
+                }
+                session_ctx.last_dbbt.clear();
+                session_ctx.last_dbbt_id.clear();
+                session_ctx.last_dbbt_expires_at_ms = 0;
+                session_ctx.selected_database = requested_database;
                 if (!hasSessionId(session_ctx)) {
                     scratchbird::protocol::generateSessionId(session_ctx.session_id);
                 }
                 return ProtocolCodec::buildConnectResponse(
-                    false, session_ctx.session_id,
-                    "Internal native listener is not ready");
+                    true,
+                    session_ctx.session_id,
+                    "",
+                    static_cast<uint16_t>(scratchbird::protocol::CONNECT_FLAG_BASE_CAPABILITIES));
             }
 
             DatabaseBindingToken dbbt;
@@ -778,7 +1088,7 @@ Message buildMcpResponseForRequest(const Message& request,
             std::memcpy(dbbt.manager_session_id.data(),
                         session_ctx.session_id,
                         dbbt.manager_session_id.size());
-            dbbt.client_nonce = randomBytes(16);
+            dbbt.client_nonce = client_nonce.empty() ? randomBytes(16) : client_nonce;
             dbbt.server_nonce = randomBytes(16);
             dbbt.flags = 0;
 
@@ -800,7 +1110,9 @@ Message buildMcpResponseForRequest(const Message& request,
             preface.listener_id = options.listener_id;
             preface.dbbt = encoded_dbbt;
             preface.db_selector = requested_database;
-            preface.requested_profile = "native_v3";
+            preface.requested_profile = requested_profile.empty()
+                ? "native_v3"
+                : requested_profile;
             preface.flags = 0;
 
             std::vector<uint8_t> encoded_preface;
@@ -837,6 +1149,14 @@ Message buildMcpResponseForRequest(const Message& request,
             session_ctx.last_dbbt_id = scratchbird::network::databaseBindingTokenId(dbbt);
             session_ctx.last_dbbt_expires_at_ms = dbbt.expires_at_ms;
             session_ctx.selected_database = requested_database;
+            ErrorContext connect_ctx;
+            session_ctx.prepared_upstream = connectInternalNative(options, &connect_ctx);
+            if (!session_ctx.prepared_upstream) {
+                session_ctx.last_dbbt.clear();
+                session_ctx.last_dbbt_id.clear();
+                session_ctx.last_dbbt_expires_at_ms = 0;
+                return buildNotReadyResponse();
+            }
             if (!hasSessionId(session_ctx)) {
                 scratchbird::protocol::generateSessionId(session_ctx.session_id);
             }
@@ -897,7 +1217,10 @@ void handleClient(Socket& client,
                     &parse_ctx) == Status::OK &&
                 connect_success) {
                 ErrorContext proxy_ctx;
-                runProxyTransport(client, options, &proxy_ctx);
+                runProxyTransport(client,
+                                  options,
+                                  std::move(session_ctx.prepared_upstream),
+                                  &proxy_ctx);
                 break;
             }
         }
