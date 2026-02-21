@@ -26,6 +26,10 @@ auto_create = false
 # PID file location
 pid_file = /var/run/scratchbird/sb_server.pid
 
+# Service account identity (must exist at install time)
+run_as_user = scratchbird
+run_as_group = scratchbird
+
 # Maximum time to wait for graceful shutdown (seconds)
 shutdown_timeout = 30
 

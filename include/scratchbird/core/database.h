@@ -201,11 +201,13 @@ namespace scratchbird
             // The ConnectionContext is retained to preserve locks and ProcArray visibility.
             Status detachToDormant(std::unique_ptr<class ConnectionContext> &connection,
                                    ID &dormant_id_out,
-                                   ErrorContext *ctx = nullptr);
+                                   ErrorContext *ctx = nullptr,
+                                   ID *reattach_authkey_out = nullptr);
 
             Status reattachDormant(const ID &dormant_id,
                                    std::unique_ptr<class ConnectionContext> &connection_out,
-                                   ErrorContext *ctx = nullptr);
+                                   ErrorContext *ctx = nullptr,
+                                   const ID *reattach_authkey = nullptr);
 
             std::vector<ConnectionSecuritySnapshot> snapshotConnectionSecurityStacks() const;
 
@@ -614,6 +616,7 @@ namespace scratchbird
             struct DormantContextEntry
             {
                 ID dormant_id;
+                ID reattach_authkey_id;
                 uint64_t lease_expires_at = 0;
                 std::unique_ptr<ConnectionContext> connection;
             };

@@ -446,6 +446,7 @@ private:
     uint32_t max_packet_size_ = 16777215;
     uint8_t client_charset_ = mysql::Charset::UTF8MB4_GENERAL_CI;
     std::string auth_response_;
+    std::string remote_password_;
 
     // Server capabilities
     uint32_t server_capabilities_ =

@@ -173,6 +173,79 @@ TEST_F(CatalogSecurityIdentityAccountContractTest, RejectsInvalidCidrAndDuplicat
     EXPECT_EQ(ctx.vnext_code, "SEC_1205");
 }
 
+TEST_F(CatalogSecurityIdentityAccountContractTest, PeerUidGidResolutionAndValidation)
+{
+    ErrorContext ctx;
+
+    CatalogManager::PrincipalAccountCatalogInfo any{};
+    any.account_id = generateUuidV7();
+    any.principal_name = "peer_user";
+    any.principal_kind = CatalogManager::PrincipalKind::USER;
+    any.source_scope_kind = CatalogManager::SourceScopeKind::ANY;
+    any.auth_policy_id = generateUuidV7();
+    ASSERT_EQ(catalog_->upsertPrincipalAccountCatalogEntry(any, &ctx), Status::OK) << ctx.message;
+
+    CatalogManager::PrincipalAccountCatalogInfo peer_gid{};
+    peer_gid.account_id = generateUuidV7();
+    peer_gid.principal_name = "peer_user";
+    peer_gid.principal_kind = CatalogManager::PrincipalKind::USER;
+    peer_gid.source_scope_kind = CatalogManager::SourceScopeKind::PEER_GID;
+    peer_gid.has_source_scope_value = true;
+    peer_gid.source_scope_value = "2001";
+    peer_gid.auth_policy_id = generateUuidV7();
+    ASSERT_EQ(catalog_->upsertPrincipalAccountCatalogEntry(peer_gid, &ctx), Status::OK)
+        << ctx.message;
+
+    CatalogManager::PrincipalAccountCatalogInfo peer_uid{};
+    peer_uid.account_id = generateUuidV7();
+    peer_uid.principal_name = "peer_user";
+    peer_uid.principal_kind = CatalogManager::PrincipalKind::USER;
+    peer_uid.source_scope_kind = CatalogManager::SourceScopeKind::PEER_UID;
+    peer_uid.has_source_scope_value = true;
+    peer_uid.source_scope_value = "1001";
+    peer_uid.auth_policy_id = generateUuidV7();
+    ASSERT_EQ(catalog_->upsertPrincipalAccountCatalogEntry(peer_uid, &ctx), Status::OK)
+        << ctx.message;
+
+    CatalogManager::PrincipalAccountCatalogInfo resolved{};
+    CatalogManager::PrincipalResolutionRequest req_uid_gid{};
+    req_uid_gid.presented_principal_name = "peer_user";
+    req_uid_gid.has_peer_uid = true;
+    req_uid_gid.peer_uid = 1001;
+    req_uid_gid.has_peer_gid = true;
+    req_uid_gid.peer_gid = 2001;
+    ASSERT_EQ(catalog_->resolvePrincipalAccount(req_uid_gid, resolved, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_EQ(resolved.account_id, peer_uid.account_id);
+
+    CatalogManager::PrincipalResolutionRequest req_gid_only{};
+    req_gid_only.presented_principal_name = "peer_user";
+    req_gid_only.has_peer_uid = true;
+    req_gid_only.peer_uid = 7777;
+    req_gid_only.has_peer_gid = true;
+    req_gid_only.peer_gid = 2001;
+    ASSERT_EQ(catalog_->resolvePrincipalAccount(req_gid_only, resolved, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_EQ(resolved.account_id, peer_gid.account_id);
+
+    CatalogManager::PrincipalResolutionRequest req_no_peer{};
+    req_no_peer.presented_principal_name = "peer_user";
+    ASSERT_EQ(catalog_->resolvePrincipalAccount(req_no_peer, resolved, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_EQ(resolved.account_id, any.account_id);
+
+    CatalogManager::PrincipalAccountCatalogInfo invalid_peer{};
+    invalid_peer.account_id = generateUuidV7();
+    invalid_peer.principal_name = "peer_invalid";
+    invalid_peer.principal_kind = CatalogManager::PrincipalKind::USER;
+    invalid_peer.source_scope_kind = CatalogManager::SourceScopeKind::PEER_UID;
+    invalid_peer.has_source_scope_value = true;
+    invalid_peer.source_scope_value = "uid-not-number";
+    invalid_peer.auth_policy_id = generateUuidV7();
+    EXPECT_EQ(catalog_->upsertPrincipalAccountCatalogEntry(invalid_peer, &ctx), Status::INVALID_ARGUMENT);
+    EXPECT_EQ(ctx.vnext_code, "SEC_1203");
+}
+
 TEST_F(CatalogSecurityIdentityAccountContractTest, AmbiguousMatchIsRejected)
 {
     ErrorContext ctx;
@@ -267,4 +340,3 @@ TEST_F(CatalogSecurityIdentityAccountContractTest, CredentialAndProfileBindingCo
               Status::OK) << ctx.message;
     EXPECT_EQ(bindings.size(), 1u);
 }
-

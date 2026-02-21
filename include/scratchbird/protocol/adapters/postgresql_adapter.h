@@ -549,7 +549,7 @@ private:
     // MD5 auth salt
     uint8_t md5_salt_[4] = {0};
     uint8_t scram_step_ = 0;
-    AuthMethod auth_method_ = AuthMethod::PASSWORD;
+    AuthMethod auth_method_ = AuthMethod::SCRAM_SHA_256;
 
     // TLS support for PostgreSQL SSLRequest
     std::unique_ptr<security::TLSContext> tls_context_;

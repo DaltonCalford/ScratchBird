@@ -218,6 +218,46 @@ public:
         error_msg_out = "SCRAM authentication not supported";
         return AuthResult::NOT_IMPLEMENTED;
     }
+
+    /**
+     * Authenticate using AuthKey token proof
+     */
+    virtual AuthResult authenticateToken(
+        const std::string& username,
+        const ID& authkey_id,
+        const std::vector<uint8_t>& proof,
+        const std::vector<uint8_t>& binding,
+        AuthUserInfo& user_info_out,
+        std::string& error_msg_out)
+    {
+        (void)username;
+        (void)authkey_id;
+        (void)proof;
+        (void)binding;
+        (void)user_info_out;
+        error_msg_out = "TOKEN authentication not supported";
+        return AuthResult::NOT_IMPLEMENTED;
+    }
+
+    /**
+     * Authenticate via OS peer identity mapping (local IPC only)
+     */
+    virtual AuthResult authenticatePeer(
+        const std::string& username,
+        uint32_t peer_uid,
+        uint32_t peer_gid,
+        uint32_t peer_pid,
+        AuthUserInfo& user_info_out,
+        std::string& error_msg_out)
+    {
+        (void)username;
+        (void)peer_uid;
+        (void)peer_gid;
+        (void)peer_pid;
+        (void)user_info_out;
+        error_msg_out = "PEER authentication not supported";
+        return AuthResult::NOT_IMPLEMENTED;
+    }
 };
 
 /**
@@ -260,6 +300,22 @@ public:
         const std::string& client_final,
         AuthUserInfo& user_info_out,
         std::string& server_final_out,
+        std::string& error_msg_out) override;
+
+    AuthResult authenticateToken(
+        const std::string& username,
+        const ID& authkey_id,
+        const std::vector<uint8_t>& proof,
+        const std::vector<uint8_t>& binding,
+        AuthUserInfo& user_info_out,
+        std::string& error_msg_out) override;
+
+    AuthResult authenticatePeer(
+        const std::string& username,
+        uint32_t peer_uid,
+        uint32_t peer_gid,
+        uint32_t peer_pid,
+        AuthUserInfo& user_info_out,
         std::string& error_msg_out) override;
 
     bool userExists(

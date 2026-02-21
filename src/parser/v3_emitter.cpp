@@ -3446,11 +3446,27 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitSetShowReset(parser::v3::State
         auto* s = static_cast<parser::v3::ResetStmt*>(stmt);
         payload["action"] = Value(uint64_t(3));
         payload["scope"] = Value(uint64_t(0));
-        inst.opcode = op(Opcode::SBLR3_SET_VARIABLE);
         if (s->reset_all) {
+            inst.opcode = op(Opcode::SBLR3_SET_VARIABLE);
             payload["key"] = Value(std::string("ALL"));
         } else {
-            payload["key"] = normalizeKey(s->name);
+            std::string key;
+            if (s->name != parser::v3::StringPool::INVALID_ID) {
+                key = std::string(pool_.get(s->name));
+            }
+            std::string upper = toUpper(key);
+
+            if (upper == "ROLE") {
+                inst.opcode = op(Opcode::SBLR3_SET_ROLE);
+                payload["key"] = Value(std::string("ROLE"));
+            } else if (upper == "SESSION_AUTHORIZATION" ||
+                       upper == "SESSION AUTHORIZATION") {
+                inst.opcode = op(Opcode::SBLR3_SET_SESSION_AUTH);
+                payload["key"] = Value(std::string("SESSION AUTHORIZATION"));
+            } else {
+                inst.opcode = op(Opcode::SBLR3_SET_VARIABLE);
+                payload["key"] = normalizeKey(s->name);
+            }
         }
         inst.payload = Value(std::move(payload));
         return inst;

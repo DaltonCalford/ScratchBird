@@ -293,9 +293,42 @@ private:
 
     std::string username_;                          // Authenticated username
     std::string client_info_;                       // Client connection info
+    PeerCredentials peer_credentials_{};            // Peer identity for local IPC
+    bool peer_credentials_available_ = false;
     core::ID session_id_uuid_{};                    // Catalog session UUID
     core::ID authkey_id_{};                         // AuthKey UUID
     std::optional<core::ScramAuthState> scram_state_;
+    struct PendingMfaAuthState {
+        bool active = false;
+        std::string username;
+        protocol::AuthMethod auth_method = protocol::AuthMethod::PASSWORD;
+        core::AuthUserInfo user_info;
+        core::ID account_id;
+        core::ID mfa_policy_id;
+        bool allow_recovery_codes = false;
+        bool allow_break_glass = false;
+        uint32_t step_up_ttl_ms = 0;
+        std::string challenge_id;
+        std::string challenge_method_name;
+        uint32_t attempts = 0;
+        uint32_t max_attempts = 0;
+        std::vector<uint8_t> challenge_payload;
+    };
+    PendingMfaAuthState pending_mfa_auth_;
+    bool auth_negotiation_ready_ = false;
+    std::string auth_negotiation_username_;
+    std::vector<protocol::AuthMethod> auth_negotiation_allowed_methods_;
+    bool auth_negotiation_has_required_method_ = false;
+    protocol::AuthMethod auth_negotiation_required_method_ = protocol::AuthMethod::SCRAM_SHA_256;
+    uint8_t auth_negotiation_transport_mask_ = 0;
+    std::vector<uint8_t> auth_negotiation_nonce_;
+    core::CatalogManager::AuthPeerMode auth_negotiation_peer_mode_ =
+        core::CatalogManager::AuthPeerMode::DISABLED;
+    bool session_mfa_verified_ = false;
+    bool session_mfa_used_recovery_ = false;
+    bool session_mfa_used_break_glass_ = false;
+    uint64_t session_mfa_verified_time_ms_ = 0;
+    uint32_t session_mfa_step_up_ttl_ms_ = 0;
 
     // Connection context for security and transactions
     std::unique_ptr<core::ConnectionContext> conn_ctx_;

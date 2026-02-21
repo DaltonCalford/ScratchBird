@@ -22,10 +22,18 @@ After=nss-lookup.target
 Type=notify
 User=scratchbird
 Group=scratchbird
+UMask=0027
 
 # Paths
 Environment=SCRATCHBIRD_CONFIG=/etc/scratchbird/sb_server.conf
+Environment=SCRATCHBIRD_BOOTSTRAP_TOKEN_FILE=/var/lib/scratchbird/bootstrap.token
 WorkingDirectory=/var/lib/scratchbird
+StateDirectory=scratchbird
+StateDirectoryMode=0750
+RuntimeDirectory=scratchbird
+RuntimeDirectoryMode=0750
+LogsDirectory=scratchbird
+LogsDirectoryMode=0750
 
 # Main process
 ExecStart=/usr/bin/sb_server --config ${SCRATCHBIRD_CONFIG}
@@ -77,9 +85,6 @@ CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 ReadWritePaths=/var/lib/scratchbird
 ReadWritePaths=/var/log/scratchbird
 ReadWritePaths=/var/run/scratchbird
-
-# Private /tmp
-PrivateTmp=true
 
 # systemd notification
 NotifyAccess=main

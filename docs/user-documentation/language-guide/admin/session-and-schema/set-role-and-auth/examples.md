@@ -1,5 +1,5 @@
 # Admin SET ROLE AND SESSION AUTHORIZATION: Examples
-Last modified: 2026-02-19
+Last modified: 2026-02-21
 
 Back links:
 - [Language Guide README](../../../README.md)
@@ -14,13 +14,46 @@ Series navigation:
 ## Coverage
 - Status: Supported
 
-## Form
+## Role Switch
+
 ~~~sql
-SET ROLE <role_name>; SET SESSION AUTHORIZATION <user_name>;
+-- assume current user already has role app_readonly
+SET ROLE app_readonly;
+
+-- return to base session role context
+RESET ROLE;
 ~~~
 
-## Notes
-- Details: Role/auth command surfaces are explicit in SET dispatch.
-- Runtime note: Session identity and role context are applied in runtime session state.
-- Error/contract note: Privilege checks apply to identity and role transition operations.
-- Usage rationale: Explicit privilege context management per session.
+## Role Reset Synonyms
+
+~~~sql
+SET ROLE NONE;
+SET ROLE DEFAULT;
+~~~
+
+## Session Authorization (Superuser)
+
+~~~sql
+-- superuser-only operation
+SET SESSION AUTHORIZATION app_user;
+
+-- restore original session user
+RESET SESSION AUTHORIZATION;
+~~~
+
+## Expected Denials
+
+~~~sql
+-- denied if role not granted to current user
+SET ROLE finance_admin;
+
+-- denied if caller is not superuser
+SET SESSION AUTHORIZATION app_user;
+~~~
+
+## MFA Step-Up Boundary
+
+~~~sql
+-- if MFA policy marks role switch as privileged, step-up may be required
+SET ROLE ops_admin;
+~~~

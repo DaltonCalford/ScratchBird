@@ -1151,6 +1151,16 @@ TEST(ParserV3NativeExtensionSurfaceTest, ParsesSecurityLabelAndIdentitySwitchSur
         ASSERT_EQ(result.statement()->kind(), ASTKind::SetStmt);
         auto* stmt = static_cast<SetStmt*>(result.statement());
         EXPECT_EQ(stmt->set_type, SetStmt::SetType::SESSION_AUTHORIZATION);
+        EXPECT_FALSE(stmt->is_default);
+    }
+    {
+        Parser parser("SET SESSION AUTHORIZATION DEFAULT");
+        auto result = parser.parseStatement();
+        ASSERT_TRUE(result.success());
+        ASSERT_EQ(result.statement()->kind(), ASTKind::SetStmt);
+        auto* stmt = static_cast<SetStmt*>(result.statement());
+        EXPECT_EQ(stmt->set_type, SetStmt::SetType::SESSION_AUTHORIZATION);
+        EXPECT_TRUE(stmt->is_default);
     }
     {
         Parser parser("SET ROLE app_readonly");
@@ -1159,6 +1169,16 @@ TEST(ParserV3NativeExtensionSurfaceTest, ParsesSecurityLabelAndIdentitySwitchSur
         ASSERT_EQ(result.statement()->kind(), ASTKind::SetStmt);
         auto* stmt = static_cast<SetStmt*>(result.statement());
         EXPECT_EQ(stmt->set_type, SetStmt::SetType::ROLE);
+        EXPECT_FALSE(stmt->is_default);
+    }
+    {
+        Parser parser("SET ROLE DEFAULT");
+        auto result = parser.parseStatement();
+        ASSERT_TRUE(result.success());
+        ASSERT_EQ(result.statement()->kind(), ASTKind::SetStmt);
+        auto* stmt = static_cast<SetStmt*>(result.statement());
+        EXPECT_EQ(stmt->set_type, SetStmt::SetType::ROLE);
+        EXPECT_TRUE(stmt->is_default);
     }
 }
 

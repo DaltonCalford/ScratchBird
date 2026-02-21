@@ -66,6 +66,11 @@ struct ConnectionConfig {
     std::string database_name;              // Database name (required)
     std::string username;                   // Username for authentication
     std::string password;                   // Password for authentication
+    std::string mfa_code;                   // Optional MFA challenge response code
+    std::vector<uint8_t> auth_token_authkey_id; // Optional TOKEN authkey id (must be 16 bytes)
+    std::string auth_token_secret;          // Optional TOKEN proof secret
+    std::vector<uint8_t> auth_token_binding; // Optional TOKEN binding payload
+    std::vector<protocol::AuthMethod> preferred_auth_methods; // Optional auth preference order
 
     // Connection settings
     uint32_t connect_timeout_ms = 5000;     // Connection timeout

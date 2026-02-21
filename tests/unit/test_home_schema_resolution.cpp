@@ -299,9 +299,73 @@ TEST_F(HomeSchemaResolutionTest, SetRoleSwitchesSchemaToRoleHome)
     ASSERT_TRUE(exec_result.success()) << exec_result.error();
     EXPECT_EQ(conn_ctx_->getCurrentSchemaId(), role_schema_id);
 
-    auto reset_role_result = compiler_->compile("SET ROLE NONE");
+    auto reset_role_result = compiler_->compile("RESET ROLE");
     ASSERT_TRUE(reset_role_result.success());
     exec_result = executor_->execute(reset_role_result.bytecode());
     ASSERT_TRUE(exec_result.success()) << exec_result.error();
     EXPECT_EQ(conn_ctx_->getCurrentSchemaId(), user_schema_id);
+
+    auto set_role_none_result = compiler_->compile("SET ROLE NONE");
+    ASSERT_TRUE(set_role_none_result.success());
+    exec_result = executor_->execute(set_role_none_result.bytecode());
+    ASSERT_TRUE(exec_result.success()) << exec_result.error();
+    EXPECT_EQ(conn_ctx_->getCurrentSchemaId(), user_schema_id);
+}
+
+TEST_F(HomeSchemaResolutionTest, SetSessionAuthorizationSwitchesAndResetsUserContext)
+{
+    ErrorContext ctx;
+    const std::string switch_user_name = "v3_sa_switch_user";
+
+    ID app_schema_id;
+    ASSERT_EQ(catalog_->createSchemaPath("users.app_user",
+                                         CatalogManager::SchemaType::USER_HOME,
+                                         app_schema_id, &ctx),
+              Status::OK) << ctx.message;
+
+    ID app_user_id;
+    auto create_status =
+        catalog_->createUser(switch_user_name, "", app_schema_id, true, app_user_id, &ctx);
+    if (create_status == Status::FILE_EXISTS)
+    {
+        CatalogManager::UserInfo existing_user;
+        ASSERT_EQ(catalog_->getUserByName(switch_user_name, existing_user, &ctx),
+                  Status::OK) << ctx.message;
+        app_user_id = existing_user.user_id;
+    }
+    else
+    {
+        ASSERT_EQ(create_status, Status::OK) << ctx.message;
+    }
+
+    CatalogManager::UserInfo resolved_user;
+    ASSERT_EQ(catalog_->getUserByName(switch_user_name, resolved_user, &ctx),
+              Status::OK) << ctx.message;
+    if (!resolved_user.is_superuser)
+    {
+        ASSERT_EQ(catalog_->updateUser(resolved_user.user_id, "", resolved_user.default_schema_id,
+                                       resolved_user.is_active, true, &ctx),
+                  Status::OK) << ctx.message;
+        ASSERT_EQ(catalog_->getUserByName(switch_user_name, resolved_user, &ctx),
+                  Status::OK) << ctx.message;
+        ASSERT_TRUE(resolved_user.is_superuser);
+    }
+
+    auto set_session_auth = compiler_->compile("SET SESSION AUTHORIZATION v3_sa_switch_user");
+    ASSERT_TRUE(set_session_auth.success());
+    auto exec_result = executor_->execute(set_session_auth.bytecode());
+    ASSERT_TRUE(exec_result.success()) << exec_result.error();
+    EXPECT_EQ(conn_ctx_->getCurrentUserId(), resolved_user.user_id);
+
+    auto reset_session_auth = compiler_->compile("RESET SESSION AUTHORIZATION");
+    ASSERT_TRUE(reset_session_auth.success());
+    exec_result = executor_->execute(reset_session_auth.bytecode());
+    ASSERT_TRUE(exec_result.success()) << exec_result.error();
+    EXPECT_EQ(conn_ctx_->getCurrentUserId(), system_user_id_);
+
+    auto set_session_auth_default = compiler_->compile("SET SESSION AUTHORIZATION DEFAULT");
+    ASSERT_TRUE(set_session_auth_default.success());
+    exec_result = executor_->execute(set_session_auth_default.bytecode());
+    ASSERT_TRUE(exec_result.success()) << exec_result.error();
+    EXPECT_EQ(conn_ctx_->getCurrentUserId(), system_user_id_);
 }

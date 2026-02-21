@@ -490,6 +490,14 @@ std::string AuditLogger::getEventTypeName(AuditEventType type)
         case AuditEventType::PASSWORD_RESET:       return "PASSWORD_RESET";
         case AuditEventType::ACCOUNT_LOCKED:       return "ACCOUNT_LOCKED";
         case AuditEventType::ACCOUNT_UNLOCKED:     return "ACCOUNT_UNLOCKED";
+        case AuditEventType::BOOTSTRAP_ATTEMPT:    return "BOOTSTRAP_ATTEMPT";
+        case AuditEventType::BOOTSTRAP_SUCCESS:    return "BOOTSTRAP_SUCCESS";
+        case AuditEventType::BOOTSTRAP_FAILURE:    return "BOOTSTRAP_FAILURE";
+        case AuditEventType::BOOTSTRAP_REVOKED:    return "BOOTSTRAP_REVOKED";
+        case AuditEventType::REATTACH_TOKEN_ISSUED:return "REATTACH_TOKEN_ISSUED";
+        case AuditEventType::REATTACH_SUCCESS:     return "REATTACH_SUCCESS";
+        case AuditEventType::REATTACH_FAILURE:     return "REATTACH_FAILURE";
+        case AuditEventType::REATTACH_TOKEN_REVOKED:return "REATTACH_TOKEN_REVOKED";
 
         // Authorization
         case AuditEventType::PERMISSION_GRANTED:   return "PERMISSION_GRANTED";

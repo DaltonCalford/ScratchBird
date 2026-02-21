@@ -19,6 +19,7 @@
 #include "scratchbird/protocol/wire_protocol.h"
 #include "scratchbird/core/firebird_datetime.h"
 #include "scratchbird/parser/v3_compiler.h"
+#include "scratchbird/security/scram_auth.h"
 
 #include <algorithm>
 #include <atomic>
@@ -34,10 +35,14 @@
 #include <iomanip>
 #include <thread>
 #include <iostream>
+#include <limits>
 #include <condition_variable>
 #include <unordered_map>
 #include <csignal>
 #include <fcntl.h>
+#include <openssl/crypto.h>
+#include <openssl/hmac.h>
+#include <openssl/sha.h>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -201,6 +206,449 @@ std::string formatUuidBytes(const std::vector<uint8_t>& data) {
                   data[8], data[9], data[10], data[11],
                   data[12], data[13], data[14], data[15]);
     return std::string(buf);
+}
+
+bool supportsNegotiatedAuthMethod(protocol::AuthMethod method) {
+    return method == protocol::AuthMethod::SCRAM_SHA_256 ||
+           method == protocol::AuthMethod::SCRAM_SHA_512 ||
+           method == protocol::AuthMethod::TOKEN ||
+           method == protocol::AuthMethod::PEER ||
+           method == protocol::AuthMethod::PASSWORD;
+}
+
+std::vector<protocol::AuthMethod> defaultPreferredAuthMethods() {
+    return {
+        protocol::AuthMethod::SCRAM_SHA_256,
+        protocol::AuthMethod::SCRAM_SHA_512,
+        protocol::AuthMethod::PEER,
+        protocol::AuthMethod::PASSWORD,
+        protocol::AuthMethod::MD5
+    };
+}
+
+std::vector<protocol::AuthMethod> resolvePreferredAuthMethods(
+    const std::vector<protocol::AuthMethod>& configured) {
+    if (configured.empty()) {
+        return defaultPreferredAuthMethods();
+    }
+    std::vector<protocol::AuthMethod> ordered = configured;
+    const auto defaults = defaultPreferredAuthMethods();
+    for (auto method : defaults) {
+        if (std::find(ordered.begin(), ordered.end(), method) == ordered.end()) {
+            ordered.push_back(method);
+        }
+    }
+    return ordered;
+}
+
+bool hasConfiguredAuthToken(const ConnectionConfig& config) {
+    return config.auth_token_authkey_id.size() == 16 &&
+           !config.auth_token_secret.empty();
+}
+
+std::vector<protocol::AuthMethod> preferredMethodsForConfig(const ConnectionConfig& config) {
+    std::vector<protocol::AuthMethod> ordered =
+        resolvePreferredAuthMethods(config.preferred_auth_methods);
+
+    if (hasConfiguredAuthToken(config)) {
+        auto token_it = std::find(ordered.begin(),
+                                  ordered.end(),
+                                  protocol::AuthMethod::TOKEN);
+        if (token_it != ordered.end()) {
+            std::rotate(ordered.begin(), token_it, token_it + 1);
+        } else {
+            ordered.insert(ordered.begin(), protocol::AuthMethod::TOKEN);
+        }
+    }
+
+    return ordered;
+}
+
+bool selectNegotiatedAuthMethod(const std::vector<protocol::AuthMethod>& allowed,
+                                bool has_required,
+                                protocol::AuthMethod required,
+                                const std::vector<protocol::AuthMethod>& preferred,
+                                protocol::AuthMethod& selected_out,
+                                std::string& error_out) {
+    error_out.clear();
+    if (allowed.empty()) {
+        error_out = "Server returned empty allowed auth methods";
+        return false;
+    }
+
+    auto in_allowed = [&allowed](protocol::AuthMethod method) {
+        return std::find(allowed.begin(), allowed.end(), method) != allowed.end();
+    };
+
+    if (has_required) {
+        if (!in_allowed(required)) {
+            error_out = "Server required auth method is not in allowed method set";
+            return false;
+        }
+        if (!supportsNegotiatedAuthMethod(required)) {
+            error_out = "Required auth method is not supported by this client";
+            return false;
+        }
+        selected_out = required;
+        return true;
+    }
+
+    for (auto method : preferred) {
+        if (in_allowed(method) && supportsNegotiatedAuthMethod(method)) {
+            selected_out = method;
+            return true;
+        }
+    }
+
+    error_out = "No mutually supported auth method";
+    return false;
+}
+
+bool timingSafeEqual(const std::string& lhs, const std::string& rhs) {
+    if (lhs.size() != rhs.size()) {
+        return false;
+    }
+    if (lhs.empty()) {
+        return true;
+    }
+    return CRYPTO_memcmp(lhs.data(), rhs.data(), lhs.size()) == 0;
+}
+
+bool computeAuthKeyTokenProof(const std::string& token_secret,
+                              const std::string& username,
+                              const uint8_t authkey_id[16],
+                              const std::vector<uint8_t>& binding,
+                              std::vector<uint8_t>& proof_out) {
+    proof_out.clear();
+    if (token_secret.empty()) {
+        return false;
+    }
+
+    static constexpr char kTokenProofPrefix[] = "SB-AUTHKEY-TOKEN-V1";
+
+    std::vector<uint8_t> message;
+    message.reserve(sizeof(kTokenProofPrefix) - 1 + username.size() + 16 + binding.size());
+    message.insert(message.end(),
+                   reinterpret_cast<const uint8_t*>(kTokenProofPrefix),
+                   reinterpret_cast<const uint8_t*>(kTokenProofPrefix) + (sizeof(kTokenProofPrefix) - 1));
+    message.insert(message.end(), username.begin(), username.end());
+    message.insert(message.end(), authkey_id, authkey_id + 16);
+    message.insert(message.end(), binding.begin(), binding.end());
+
+    unsigned char digest[EVP_MAX_MD_SIZE];
+    unsigned int digest_len = 0;
+    if (!HMAC(EVP_sha256(),
+              token_secret.data(),
+              static_cast<int>(token_secret.size()),
+              message.data(),
+              message.size(),
+              digest,
+              &digest_len)) {
+        return false;
+    }
+
+    proof_out.assign(digest, digest + digest_len);
+    return true;
+}
+
+constexpr const char* kMfaPayloadPrefix = "SBMFA1";
+
+struct MfaChallengeData {
+    std::string challenge_id;
+    std::string method_name;
+    bool has_server_final = false;
+    std::string server_final;
+};
+
+std::vector<std::string> splitPipeFields(const std::string& input) {
+    std::vector<std::string> fields;
+    size_t start = 0;
+    while (start <= input.size()) {
+        const size_t delim = input.find('|', start);
+        if (delim == std::string::npos) {
+            fields.push_back(input.substr(start));
+            break;
+        }
+        fields.push_back(input.substr(start, delim - start));
+        start = delim + 1;
+    }
+    return fields;
+}
+
+bool parseMfaChallengePayload(const std::vector<uint8_t>& payload,
+                              MfaChallengeData& challenge_out,
+                              std::string& error_out) {
+    challenge_out = MfaChallengeData{};
+    error_out.clear();
+    if (payload.empty()) {
+        error_out = "MFA challenge payload is empty";
+        return false;
+    }
+
+    const std::string raw(payload.begin(), payload.end());
+    const std::vector<std::string> parts = splitPipeFields(raw);
+    if (parts.size() < 3 || parts[0] != kMfaPayloadPrefix) {
+        error_out = "Invalid MFA challenge payload format";
+        return false;
+    }
+    if (parts[1].empty() || parts[2].empty()) {
+        error_out = "MFA challenge payload is incomplete";
+        return false;
+    }
+
+    challenge_out.challenge_id = parts[1];
+    challenge_out.method_name = parts[2];
+    if (parts.size() >= 4 && !parts[3].empty()) {
+        std::vector<uint8_t> decoded = security::base64Decode(parts[3]);
+        challenge_out.server_final.assign(decoded.begin(), decoded.end());
+        challenge_out.has_server_final = true;
+    }
+    return true;
+}
+
+std::vector<uint8_t> buildMfaResponsePayload(const std::string& challenge_id,
+                                             const std::string& code) {
+    const std::string payload =
+        std::string(kMfaPayloadPrefix) + "|" + challenge_id + "|" + code;
+    return std::vector<uint8_t>(payload.begin(), payload.end());
+}
+
+bool parseScramAttributes(const std::string& message,
+                          std::unordered_map<char, std::string>& attrs_out) {
+    attrs_out.clear();
+    if (message.empty()) {
+        return false;
+    }
+
+    size_t start = 0;
+    while (start < message.size()) {
+        size_t end = message.find(',', start);
+        if (end == std::string::npos) {
+            end = message.size();
+        }
+        if (end <= start + 1) {
+            return false;
+        }
+        if (message[start + 1] != '=') {
+            return false;
+        }
+
+        const char key = message[start];
+        if (attrs_out.find(key) != attrs_out.end()) {
+            return false;
+        }
+        attrs_out[key] = message.substr(start + 2, end - (start + 2));
+
+        if (end == message.size()) {
+            break;
+        }
+        start = end + 1;
+    }
+
+    return !attrs_out.empty();
+}
+
+bool parseUint32Strict(const std::string& text, uint32_t& value_out) {
+    if (text.empty()) {
+        return false;
+    }
+
+    try {
+        size_t consumed = 0;
+        unsigned long parsed = std::stoul(text, &consumed, 10);
+        if (consumed != text.size() ||
+            parsed > static_cast<unsigned long>(std::numeric_limits<uint32_t>::max())) {
+            return false;
+        }
+        value_out = static_cast<uint32_t>(parsed);
+        return true;
+    } catch (const std::exception&) {
+        return false;
+    }
+}
+
+struct ScramServerFirstData {
+    std::string nonce;
+    std::vector<uint8_t> salt;
+    uint32_t iterations = 0;
+};
+
+bool parseScramServerFirstMessage(const std::string& server_first,
+                                  const std::string& expected_client_nonce,
+                                  ScramServerFirstData& parsed_out,
+                                  std::string& error_out) {
+    parsed_out = ScramServerFirstData{};
+    error_out.clear();
+
+    std::unordered_map<char, std::string> attrs;
+    if (!parseScramAttributes(server_first, attrs)) {
+        error_out = "Invalid SCRAM server-first message";
+        return false;
+    }
+
+    auto nonce_it = attrs.find('r');
+    auto salt_it = attrs.find('s');
+    auto iteration_it = attrs.find('i');
+    if (nonce_it == attrs.end() || salt_it == attrs.end() || iteration_it == attrs.end()) {
+        error_out = "SCRAM server-first message missing required attributes";
+        return false;
+    }
+    if (nonce_it->second.rfind(expected_client_nonce, 0) != 0) {
+        error_out = "SCRAM server nonce does not include client nonce";
+        return false;
+    }
+
+    uint32_t iterations = 0;
+    if (!parseUint32Strict(iteration_it->second, iterations) || iterations == 0) {
+        error_out = "SCRAM server-first iteration count is invalid";
+        return false;
+    }
+
+    std::vector<uint8_t> salt = security::base64Decode(salt_it->second);
+    if (salt.empty()) {
+        error_out = "SCRAM server-first salt is invalid";
+        return false;
+    }
+
+    parsed_out.nonce = nonce_it->second;
+    parsed_out.iterations = iterations;
+    parsed_out.salt = std::move(salt);
+    return true;
+}
+
+bool parseScramServerFinalMessage(const std::string& server_final,
+                                  std::string& verifier_out,
+                                  std::string& error_out) {
+    verifier_out.clear();
+    error_out.clear();
+
+    std::unordered_map<char, std::string> attrs;
+    if (!parseScramAttributes(server_final, attrs)) {
+        error_out = "Invalid SCRAM server-final message";
+        return false;
+    }
+    auto error_it = attrs.find('e');
+    if (error_it != attrs.end()) {
+        error_out = "SCRAM server-final error: " + error_it->second;
+        return false;
+    }
+    auto verifier_it = attrs.find('v');
+    if (verifier_it == attrs.end() || verifier_it->second.empty()) {
+        error_out = "SCRAM server-final verifier is missing";
+        return false;
+    }
+    verifier_out = verifier_it->second;
+    return true;
+}
+
+const EVP_MD* scramDigest(security::ScramAlgorithm algorithm) {
+    return (algorithm == security::ScramAlgorithm::SHA_256) ? EVP_sha256() : EVP_sha512();
+}
+
+bool scramHmac(const std::vector<uint8_t>& key,
+               const std::string& message,
+               security::ScramAlgorithm algorithm,
+               std::vector<uint8_t>& out) {
+    unsigned int len = 0;
+    unsigned char buf[EVP_MAX_MD_SIZE];
+    if (!HMAC(scramDigest(algorithm),
+              key.data(),
+              static_cast<int>(key.size()),
+              reinterpret_cast<const unsigned char*>(message.data()),
+              message.size(),
+              buf,
+              &len)) {
+        return false;
+    }
+    out.assign(buf, buf + len);
+    return true;
+}
+
+bool scramHash(const std::vector<uint8_t>& input,
+               security::ScramAlgorithm algorithm,
+               std::vector<uint8_t>& out) {
+    unsigned char buf[SHA512_DIGEST_LENGTH];
+    if (algorithm == security::ScramAlgorithm::SHA_256) {
+        SHA256(input.data(), input.size(), buf);
+        out.assign(buf, buf + SHA256_DIGEST_LENGTH);
+        return true;
+    }
+    SHA512(input.data(), input.size(), buf);
+    out.assign(buf, buf + SHA512_DIGEST_LENGTH);
+    return true;
+}
+
+bool buildScramClientFinalMessage(const std::string& password,
+                                  security::ScramAlgorithm algorithm,
+                                  const std::string& client_first_bare,
+                                  const std::string& server_first,
+                                  const ScramServerFirstData& parsed_server_first,
+                                  std::string& client_final_out,
+                                  std::string& expected_server_verifier_out,
+                                  std::string& error_out) {
+    client_final_out.clear();
+    expected_server_verifier_out.clear();
+    error_out.clear();
+
+    std::vector<uint8_t> salted_password;
+    core::Status status = security::calculateSaltedPassword(
+        password,
+        parsed_server_first.salt,
+        parsed_server_first.iterations,
+        algorithm,
+        salted_password);
+    if (status != core::Status::OK) {
+        error_out = "Failed to derive SCRAM salted password";
+        return false;
+    }
+
+    std::vector<uint8_t> client_key;
+    if (!scramHmac(salted_password, "Client Key", algorithm, client_key)) {
+        error_out = "Failed to compute SCRAM client key";
+        return false;
+    }
+
+    std::vector<uint8_t> stored_key;
+    if (!scramHash(client_key, algorithm, stored_key)) {
+        error_out = "Failed to compute SCRAM stored key";
+        return false;
+    }
+
+    std::vector<uint8_t> server_key;
+    if (!scramHmac(salted_password, "Server Key", algorithm, server_key)) {
+        error_out = "Failed to compute SCRAM server key";
+        return false;
+    }
+
+    const std::string client_final_without_proof = "c=biws,r=" + parsed_server_first.nonce;
+    const std::string auth_message = client_first_bare + "," + server_first + "," +
+                                     client_final_without_proof;
+
+    std::vector<uint8_t> client_signature;
+    if (!scramHmac(stored_key, auth_message, algorithm, client_signature)) {
+        error_out = "Failed to compute SCRAM client signature";
+        return false;
+    }
+
+    std::vector<uint8_t> client_proof = client_key;
+    security::xorBytes(client_proof, client_signature);
+    client_final_out = client_final_without_proof + ",p=" + security::base64Encode(client_proof);
+
+    std::vector<uint8_t> server_signature;
+    if (!scramHmac(server_key, auth_message, algorithm, server_signature)) {
+        error_out = "Failed to compute SCRAM server signature";
+        return false;
+    }
+    expected_server_verifier_out = security::base64Encode(server_signature);
+
+    std::fill(salted_password.begin(), salted_password.end(), 0);
+    std::fill(client_key.begin(), client_key.end(), 0);
+    std::fill(stored_key.begin(), stored_key.end(), 0);
+    std::fill(server_key.begin(), server_key.end(), 0);
+    std::fill(client_signature.begin(), client_signature.end(), 0);
+    std::fill(client_proof.begin(), client_proof.end(), 0);
+    std::fill(server_signature.begin(), server_signature.end(), 0);
+    return true;
 }
 
 int64_t microsFromTimestampString(const std::string& text) {
@@ -814,6 +1262,14 @@ public:
     std::istream* copy_input_stream_ = nullptr;
     std::ostream* copy_output_stream_ = nullptr;
     std::function<void(uint64_t, uint64_t)> progress_callback_;
+    bool auth_negotiation_ready_ = false;
+    std::string auth_negotiation_username_;
+    std::vector<protocol::AuthMethod> auth_negotiation_allowed_methods_;
+    bool auth_negotiation_has_required_method_ = false;
+    protocol::AuthMethod auth_negotiation_required_method_ =
+        protocol::AuthMethod::SCRAM_SHA_256;
+    uint8_t auth_negotiation_transport_mask_ = 0;
+    std::vector<uint8_t> auth_negotiation_nonce_;
 
     // ============================
     // Connection helpers
@@ -945,43 +1401,434 @@ public:
         return core::Status::OK;
     }
 
-    core::Status doAuthenticate(core::ErrorContext* ctx) {
-        auto auth_msg = protocol::ProtocolCodec::buildAuthRequest(
+    void clearAuthNegotiationState() {
+        auth_negotiation_ready_ = false;
+        auth_negotiation_username_.clear();
+        auth_negotiation_allowed_methods_.clear();
+        auth_negotiation_has_required_method_ = false;
+        auth_negotiation_required_method_ = protocol::AuthMethod::SCRAM_SHA_256;
+        auth_negotiation_transport_mask_ = 0;
+        auth_negotiation_nonce_.clear();
+    }
+
+    bool validateNegotiatedAuthMethod(protocol::AuthMethod method,
+                                      std::string& error_out) const {
+        error_out.clear();
+        if (!auth_negotiation_ready_) {
+            error_out = "Authentication negotiation state is not initialized";
+            return false;
+        }
+        const bool allowed =
+            std::find(auth_negotiation_allowed_methods_.begin(),
+                      auth_negotiation_allowed_methods_.end(),
+                      method) != auth_negotiation_allowed_methods_.end();
+        if (!allowed) {
+            error_out = "Requested authentication method is not allowed by server policy";
+            return false;
+        }
+        if (auth_negotiation_has_required_method_ &&
+            method != auth_negotiation_required_method_) {
+            error_out = "Server policy requires a different authentication method";
+            return false;
+        }
+        return true;
+    }
+
+    core::Status ensureAuthNegotiation(const std::string& username,
+                                       core::ErrorContext* ctx) {
+        if (!protocol_session_) {
+            last_error_ = "Not connected";
+            return core::Status::CONNECTION_FAILURE;
+        }
+        if (auth_negotiation_ready_ && auth_negotiation_username_ == username) {
+            return core::Status::OK;
+        }
+
+        clearAuthNegotiationState();
+
+        auto negotiate_msg = protocol::ProtocolCodec::buildAuthRequest(
             session_id_,
-            config_.username,
-            config_.password
+            username,
+            protocol::AuthMethod::PASSWORD,
+            {}
         );
 
-        auto status = protocol_session_->sendMessage(auth_msg, ctx);
+        auto status = protocol_session_->sendMessage(negotiate_msg, ctx);
         if (!isOk(status)) {
-            last_error_ = "Failed to send auth request";
+            last_error_ = "Failed to send auth negotiation request";
             return status;
         }
 
-        protocol::Message response;
-        status = protocol_session_->receiveMessage(response, ctx);
+        protocol::Message negotiation_response;
+        status = protocol_session_->receiveMessage(negotiation_response, ctx);
         if (!isOk(status)) {
-            last_error_ = "Failed to receive auth response";
+            last_error_ = "Failed to receive auth negotiation response";
             return status;
         }
 
-        if (response.getType() != protocol::MessageType::AUTH_RESPONSE) {
-            last_error_ = "Unexpected response type";
+        if (negotiation_response.getType() == protocol::MessageType::AUTH_RESPONSE) {
+            protocol::AuthStatus auth_status = protocol::AuthStatus::ERROR;
+            uint32_t user_id = 0;
+            std::string error_msg;
+            std::vector<uint8_t> data;
+            status = protocol::ProtocolCodec::parseAuthResponse(
+                negotiation_response, auth_status, user_id, error_msg, &data, ctx);
+            if (!isOk(status)) {
+                last_error_ = "Failed to parse auth negotiation fallback response";
+                return status;
+            }
+            if (auth_status == protocol::AuthStatus::ERROR) {
+                last_error_ = error_msg.empty()
+                    ? "Authentication negotiation failed"
+                    : error_msg;
+                return core::Status::INVALID_AUTHORIZATION;
+            }
+            last_error_ = "Server did not return an auth negotiation challenge";
             return core::Status::PROTOCOL_VIOLATION;
         }
 
-        bool success;
-        uint32_t user_id;
-        std::string error_msg;
-        status = protocol::ProtocolCodec::parseAuthResponse(
-            response, success, user_id, error_msg, ctx
-        );
-        if (!isOk(status) || !success) {
-            last_error_ = error_msg.empty() ? "Authentication failed" : error_msg;
+        if (negotiation_response.getType() != protocol::MessageType::AUTH_CHALLENGE) {
+            last_error_ = "Unexpected auth negotiation response type";
+            return core::Status::PROTOCOL_VIOLATION;
+        }
+
+        uint8_t challenge_session_id[16];
+        std::string challenge_username;
+        std::vector<protocol::AuthMethod> allowed_methods;
+        bool has_required_method = false;
+        protocol::AuthMethod required_method = protocol::AuthMethod::SCRAM_SHA_256;
+        uint8_t allowed_transport_mask = 0;
+        std::vector<uint8_t> challenge_nonce;
+        status = protocol::ProtocolCodec::parseAuthChallenge(
+            negotiation_response,
+            challenge_session_id,
+            challenge_username,
+            allowed_methods,
+            has_required_method,
+            required_method,
+            allowed_transport_mask,
+            challenge_nonce,
+            ctx);
+        if (!isOk(status)) {
+            last_error_ = "Failed to parse auth negotiation payload";
+            return status;
+        }
+
+        if (std::memcmp(challenge_session_id, session_id_, sizeof(session_id_)) != 0 ||
+            challenge_username != username) {
+            last_error_ = "Auth negotiation payload/session mismatch";
+            return core::Status::PROTOCOL_VIOLATION;
+        }
+
+        auth_negotiation_ready_ = true;
+        auth_negotiation_username_ = challenge_username;
+        auth_negotiation_allowed_methods_ = std::move(allowed_methods);
+        auth_negotiation_has_required_method_ = has_required_method;
+        auth_negotiation_required_method_ = required_method;
+        auth_negotiation_transport_mask_ = allowed_transport_mask;
+        auth_negotiation_nonce_ = std::move(challenge_nonce);
+        return core::Status::OK;
+    }
+
+    core::Status doCompleteMfaChallenge(protocol::AuthMethod method,
+                                        const MfaChallengeData& challenge,
+                                        core::ErrorContext* ctx) {
+        if (config_.mfa_code.empty()) {
+            last_error_ = "Server requires MFA but connection config has no mfa_code";
+            return core::Status::INVALID_AUTHORIZATION;
+        }
+
+        MfaChallengeData current = challenge;
+        constexpr uint32_t kMaxMfaRoundTrips = 3;
+        for (uint32_t attempt = 0; attempt < kMaxMfaRoundTrips; ++attempt) {
+            std::vector<uint8_t> payload = buildMfaResponsePayload(
+                current.challenge_id, config_.mfa_code);
+
+            Connection::AuthResponse auth_response;
+            core::Status status = doSendAuthRequest(method, payload, auth_response, ctx);
+            if (status != core::Status::OK) {
+                return status;
+            }
+
+            if (auth_response.status == protocol::AuthStatus::OK) {
+                return core::Status::OK;
+            }
+            if (auth_response.status == protocol::AuthStatus::CONTINUE) {
+                MfaChallengeData retry;
+                std::string challenge_error;
+                if (!parseMfaChallengePayload(auth_response.data, retry, challenge_error)) {
+                    last_error_ = challenge_error.empty()
+                        ? "Invalid MFA retry challenge payload"
+                        : challenge_error;
+                    return core::Status::PROTOCOL_VIOLATION;
+                }
+                current = std::move(retry);
+                continue;
+            }
+
+            last_error_ = auth_response.error_message.empty()
+                ? "MFA authentication failed"
+                : auth_response.error_message;
             return core::Status::INVALID_PASSWORD;
         }
 
-        return core::Status::OK;
+        last_error_ = "MFA authentication attempts exhausted";
+        return core::Status::INVALID_PASSWORD;
+    }
+
+    core::Status doAuthenticateWithPassword(core::ErrorContext* ctx) {
+        std::vector<uint8_t> payload(config_.password.begin(), config_.password.end());
+        Connection::AuthResponse auth_response;
+        core::Status status = doSendAuthRequest(
+            protocol::AuthMethod::PASSWORD, payload, auth_response, ctx);
+        if (status != core::Status::OK) {
+            return status;
+        }
+        if (auth_response.status == protocol::AuthStatus::OK) {
+            return core::Status::OK;
+        }
+        if (auth_response.status == protocol::AuthStatus::CONTINUE) {
+            MfaChallengeData challenge;
+            std::string challenge_error;
+            if (!parseMfaChallengePayload(auth_response.data, challenge, challenge_error)) {
+                last_error_ = challenge_error.empty()
+                    ? "Unexpected multi-step password authentication response"
+                    : challenge_error;
+                return core::Status::PROTOCOL_VIOLATION;
+            }
+            return doCompleteMfaChallenge(protocol::AuthMethod::PASSWORD, challenge, ctx);
+        }
+        last_error_ = auth_response.error_message.empty()
+            ? "Authentication failed"
+            : auth_response.error_message;
+        return core::Status::INVALID_PASSWORD;
+    }
+
+    core::Status doAuthenticateWithToken(core::ErrorContext* ctx) {
+        if (!hasConfiguredAuthToken(config_)) {
+            last_error_ = "TOKEN authentication requires auth_token_authkey_id (16 bytes) and auth_token_secret";
+            return core::Status::INVALID_ARGUMENT;
+        }
+
+        uint8_t authkey_id[16];
+        std::memcpy(authkey_id, config_.auth_token_authkey_id.data(), sizeof(authkey_id));
+
+        std::vector<uint8_t> proof;
+        if (!computeAuthKeyTokenProof(config_.auth_token_secret,
+                                      config_.username,
+                                      authkey_id,
+                                      config_.auth_token_binding,
+                                      proof)) {
+            last_error_ = "Failed to build TOKEN authentication proof";
+            return core::Status::INTERNAL_ERROR;
+        }
+
+        std::vector<uint8_t> payload = protocol::ProtocolCodec::buildTokenAuthPayload(
+            authkey_id,
+            proof,
+            config_.auth_token_binding);
+
+        Connection::AuthResponse auth_response;
+        core::Status status = doSendAuthRequest(
+            protocol::AuthMethod::TOKEN, payload, auth_response, ctx);
+        if (status != core::Status::OK) {
+            return status;
+        }
+
+        if (auth_response.status == protocol::AuthStatus::OK) {
+            return core::Status::OK;
+        }
+        if (auth_response.status == protocol::AuthStatus::CONTINUE) {
+            MfaChallengeData challenge;
+            std::string challenge_error;
+            if (!parseMfaChallengePayload(auth_response.data, challenge, challenge_error)) {
+                last_error_ = challenge_error.empty()
+                    ? "Unexpected multi-step TOKEN authentication response"
+                    : challenge_error;
+                return core::Status::PROTOCOL_VIOLATION;
+            }
+            return doCompleteMfaChallenge(protocol::AuthMethod::TOKEN, challenge, ctx);
+        }
+        last_error_ = auth_response.error_message.empty()
+            ? "TOKEN authentication failed"
+            : auth_response.error_message;
+        return core::Status::INVALID_PASSWORD;
+    }
+
+    core::Status doAuthenticateWithPeer(core::ErrorContext* ctx) {
+        std::vector<uint8_t> payload;
+        Connection::AuthResponse auth_response;
+        core::Status status = doSendAuthRequest(
+            protocol::AuthMethod::PEER, payload, auth_response, ctx);
+        if (status != core::Status::OK) {
+            return status;
+        }
+        if (auth_response.status == protocol::AuthStatus::OK) {
+            return core::Status::OK;
+        }
+        if (auth_response.status == protocol::AuthStatus::CONTINUE) {
+            MfaChallengeData challenge;
+            std::string challenge_error;
+            if (!parseMfaChallengePayload(auth_response.data, challenge, challenge_error)) {
+                last_error_ = challenge_error.empty()
+                    ? "Unexpected multi-step PEER authentication response"
+                    : challenge_error;
+                return core::Status::PROTOCOL_VIOLATION;
+            }
+            return doCompleteMfaChallenge(protocol::AuthMethod::PEER, challenge, ctx);
+        }
+        last_error_ = auth_response.error_message.empty()
+            ? "PEER authentication failed"
+            : auth_response.error_message;
+        return core::Status::INVALID_PASSWORD;
+    }
+
+    core::Status doAuthenticateWithScram(protocol::AuthMethod method,
+                                         core::ErrorContext* ctx) {
+        const security::ScramAlgorithm algorithm =
+            (method == protocol::AuthMethod::SCRAM_SHA_512)
+                ? security::ScramAlgorithm::SHA_512
+                : security::ScramAlgorithm::SHA_256;
+
+        const std::string client_nonce = security::generateNonce();
+        const std::string client_first_bare =
+            "n=" + security::normalizeUsername(config_.username) + ",r=" + client_nonce;
+        const std::string client_first = "n,," + client_first_bare;
+
+        std::vector<uint8_t> payload(client_first.begin(), client_first.end());
+        Connection::AuthResponse auth_response;
+        core::Status status = doSendAuthRequest(method, payload, auth_response, ctx);
+        if (status != core::Status::OK) {
+            return status;
+        }
+        if (auth_response.status != protocol::AuthStatus::CONTINUE) {
+            last_error_ = auth_response.error_message.empty()
+                ? "SCRAM authentication failed"
+                : auth_response.error_message;
+            return core::Status::INVALID_PASSWORD;
+        }
+
+        const std::string server_first(auth_response.data.begin(), auth_response.data.end());
+        ScramServerFirstData parsed_server_first;
+        std::string scram_error;
+        if (!parseScramServerFirstMessage(server_first,
+                                          client_nonce,
+                                          parsed_server_first,
+                                          scram_error)) {
+            last_error_ = scram_error.empty()
+                ? "Invalid SCRAM server-first message"
+                : scram_error;
+            return core::Status::INVALID_AUTHORIZATION;
+        }
+
+        std::string client_final;
+        std::string expected_server_verifier;
+        if (!buildScramClientFinalMessage(config_.password,
+                                          algorithm,
+                                          client_first_bare,
+                                          server_first,
+                                          parsed_server_first,
+                                          client_final,
+                                          expected_server_verifier,
+                                          scram_error)) {
+            last_error_ = scram_error.empty()
+                ? "Failed to construct SCRAM client-final message"
+                : scram_error;
+            return core::Status::INTERNAL_ERROR;
+        }
+
+        payload.assign(client_final.begin(), client_final.end());
+        status = doSendAuthRequest(method, payload, auth_response, ctx);
+        if (status != core::Status::OK) {
+            return status;
+        }
+        if (auth_response.status == protocol::AuthStatus::ERROR) {
+            last_error_ = auth_response.error_message.empty()
+                ? "SCRAM authentication failed"
+                : auth_response.error_message;
+            return core::Status::INVALID_PASSWORD;
+        }
+
+        if (auth_response.status == protocol::AuthStatus::OK) {
+            const std::string server_final(auth_response.data.begin(), auth_response.data.end());
+            std::string server_verifier;
+            if (!parseScramServerFinalMessage(server_final, server_verifier, scram_error)) {
+                last_error_ = scram_error.empty()
+                    ? "Invalid SCRAM server-final message"
+                    : scram_error;
+                return core::Status::INVALID_AUTHORIZATION;
+            }
+            if (!timingSafeEqual(server_verifier, expected_server_verifier)) {
+                last_error_ = "SCRAM server signature verification failed";
+                return core::Status::INVALID_AUTHORIZATION;
+            }
+            return core::Status::OK;
+        }
+
+        MfaChallengeData challenge;
+        std::string challenge_error;
+        if (!parseMfaChallengePayload(auth_response.data, challenge, challenge_error)) {
+            last_error_ = challenge_error.empty()
+                ? "Unexpected SCRAM continuation payload"
+                : challenge_error;
+            return core::Status::PROTOCOL_VIOLATION;
+        }
+        if (!challenge.has_server_final) {
+            last_error_ = "SCRAM+MFA continuation missing server-final signature";
+            return core::Status::PROTOCOL_VIOLATION;
+        }
+
+        std::string server_verifier;
+        if (!parseScramServerFinalMessage(challenge.server_final, server_verifier, scram_error)) {
+            last_error_ = scram_error.empty()
+                ? "Invalid SCRAM server-final message in MFA continuation"
+                : scram_error;
+            return core::Status::INVALID_AUTHORIZATION;
+        }
+        if (!timingSafeEqual(server_verifier, expected_server_verifier)) {
+            last_error_ = "SCRAM server signature verification failed";
+            return core::Status::INVALID_AUTHORIZATION;
+        }
+
+        return doCompleteMfaChallenge(method, challenge, ctx);
+    }
+
+    core::Status doAuthenticate(core::ErrorContext* ctx) {
+        auto status = ensureAuthNegotiation(config_.username, ctx);
+        if (status != core::Status::OK) {
+            return status;
+        }
+
+        protocol::AuthMethod selected_method = protocol::AuthMethod::SCRAM_SHA_256;
+        std::string selection_error;
+        if (!selectNegotiatedAuthMethod(auth_negotiation_allowed_methods_,
+                                        auth_negotiation_has_required_method_,
+                                        auth_negotiation_required_method_,
+                                        preferredMethodsForConfig(config_),
+                                        selected_method,
+                                        selection_error)) {
+            last_error_ = selection_error.empty()
+                ? "No compatible authentication method negotiated"
+                : selection_error;
+            return core::Status::NOT_SUPPORTED;
+        }
+
+        if (selected_method == protocol::AuthMethod::TOKEN) {
+            return doAuthenticateWithToken(ctx);
+        }
+        if (selected_method == protocol::AuthMethod::PEER) {
+            return doAuthenticateWithPeer(ctx);
+        }
+        if (selected_method == protocol::AuthMethod::PASSWORD) {
+            return doAuthenticateWithPassword(ctx);
+        }
+        if (selected_method == protocol::AuthMethod::SCRAM_SHA_256 ||
+            selected_method == protocol::AuthMethod::SCRAM_SHA_512) {
+            return doAuthenticateWithScram(selected_method, ctx);
+        }
+
+        last_error_ = "Negotiated authentication method is not supported by the client";
+        return core::Status::NOT_SUPPORTED;
     }
 
     core::Status doSendAuthRequest(protocol::AuthMethod method,
@@ -993,6 +1840,19 @@ public:
             return core::Status::CONNECTION_FAILURE;
         }
 
+        auto status = ensureAuthNegotiation(config_.username, ctx);
+        if (status != core::Status::OK) {
+            return status;
+        }
+
+        std::string negotiation_error;
+        if (!validateNegotiatedAuthMethod(method, negotiation_error)) {
+            last_error_ = negotiation_error.empty()
+                ? "Requested authentication method denied by policy"
+                : negotiation_error;
+            return core::Status::INVALID_AUTHORIZATION;
+        }
+
         auto auth_msg = protocol::ProtocolCodec::buildAuthRequest(
             session_id_,
             config_.username,
@@ -1000,7 +1860,7 @@ public:
             payload
         );
 
-        auto status = protocol_session_->sendMessage(auth_msg, ctx);
+        status = protocol_session_->sendMessage(auth_msg, ctx);
         if (!isOk(status)) {
             last_error_ = "Failed to send auth request";
             return status;
@@ -1019,7 +1879,7 @@ public:
         }
 
         protocol::AuthStatus auth_status = protocol::AuthStatus::ERROR;
-        uint32_t user_id;
+        uint32_t user_id = 0;
         std::string error_msg;
         std::vector<uint8_t> data;
         status = protocol::ProtocolCodec::parseAuthResponse(
@@ -1034,6 +1894,13 @@ public:
         response.user_id = user_id;
         response.error_message = error_msg;
         response.data = std::move(data);
+
+        if (auth_status == protocol::AuthStatus::OK) {
+            clearAuthNegotiationState();
+        } else if (auth_status == protocol::AuthStatus::ERROR &&
+                   error_msg == "AUTH_POLICY_NEGOTIATION_REQUIRED") {
+            clearAuthNegotiationState();
+        }
         return core::Status::OK;
     }
 

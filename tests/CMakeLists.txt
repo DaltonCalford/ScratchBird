@@ -686,6 +686,18 @@ set_tests_properties(MultiThreadedStress PROPERTIES
     TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
+add_executable(auth_rate_limit_stress stress/test_auth_rate_limit_stress.cpp)
+target_link_libraries(auth_rate_limit_stress
+    scratchbird_core
+    GTest::gtest
+    GTest::gtest_main
+)
+add_test(NAME AuthRateLimitStress COMMAND auth_rate_limit_stress)
+set_tests_properties(AuthRateLimitStress PROPERTIES
+    LABELS "stress;security"
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
+)
+
 # Wave 1 Tests (Phase 2 Parallel Development)
 # NOTE: Temporarily disabled - test files need API updates for spatial types
 # TODO: Fix test_spatial_types.cpp, test_multi_geometry.cpp TypedValue::makePoint API

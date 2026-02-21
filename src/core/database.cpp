@@ -420,6 +420,46 @@ namespace scratchbird::core
         return core::Status::OK;
     }
 
+    bool isZeroId(const ID& id)
+    {
+        static const ID zero{};
+        return id == zero;
+    }
+
+    void logReattachAuditEvent(AuditLogger* audit_logger,
+                               AuditEventType event_type,
+                               const ID& user_id,
+                               const ID& session_id,
+                               const ID& authkey_id,
+                               const ID& dormant_id,
+                               bool success,
+                               const char* reason)
+    {
+        if (!audit_logger)
+        {
+            return;
+        }
+
+        AuditEvent event;
+        event.event_type = event_type;
+        event.user_id = user_id;
+        event.session_id = session_id;
+        event.authkey_id = authkey_id;
+        event.success = success;
+
+        std::ostringstream details;
+        details << "{\"dormant_id\":\"" << dormant_id.toString() << "\"";
+        if (reason && reason[0] != '\0')
+        {
+            details << ",\"reason\":\"" << reason << "\"";
+        }
+        details << "}";
+        event.details = details.str();
+
+        ErrorContext audit_ctx;
+        audit_logger->logEvent(event, &audit_ctx);
+    }
+
     core::Status ensureSysarchUser(CatalogManager* catalog, ErrorContext* ctx)
     {
         std::string password_hash;
@@ -474,6 +514,24 @@ namespace scratchbird::core
         {
             std::lock_guard<std::mutex> lock(dormant_mutex_);
             // Tear down dormant contexts while lock/txn managers are still available.
+            for (const auto& [dormant_id, entry] : dormant_contexts_)
+            {
+                if (catalog_manager_ && !isZeroId(entry.reattach_authkey_id))
+                {
+                    ErrorContext revoke_ctx;
+                    const Status revoke_status =
+                        catalog_manager_->revokeAuthKey(entry.reattach_authkey_id, &revoke_ctx);
+                    logReattachAuditEvent(audit_logger_.get(),
+                                          AuditEventType::REATTACH_TOKEN_REVOKED,
+                                          entry.connection ? entry.connection->getCurrentUserId() : ID{},
+                                          entry.connection ? entry.connection->protocolSessionId() : ID{},
+                                          entry.reattach_authkey_id,
+                                          dormant_id,
+                                          revoke_status == Status::OK ||
+                                              revoke_status == Status::INVALID_AUTHORIZATION,
+                                          "database_close");
+                }
+            }
             dormant_contexts_.clear();
         }
         {
@@ -832,8 +890,14 @@ namespace scratchbird::core
 
     Status Database::detachToDormant(std::unique_ptr<ConnectionContext> &connection,
                                      ID &dormant_id_out,
-                                     ErrorContext *ctx)
+                                     ErrorContext *ctx,
+                                     ID *reattach_authkey_out)
     {
+        if (reattach_authkey_out)
+        {
+            *reattach_authkey_out = ID{};
+        }
+
         if (!connection)
         {
             SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Connection context is null");
@@ -897,6 +961,28 @@ namespace scratchbird::core
             info.lease_expires_at = now_micros + lease_seconds * 1000000ULL;
         }
 
+        CatalogManager::AuthKeyInfo reattach_authkey;
+        reattach_authkey.issuer = "dormant_reattach";
+        reattach_authkey.status = CatalogManager::AuthKeyStatus::ACTIVE;
+        reattach_authkey.usage_type = CatalogManager::AuthKeyUsage::SINGLE_USE;
+        reattach_authkey.usage_limit = 1;
+        reattach_authkey.scope = CatalogManager::AuthKeyScope::REATTACH;
+        if (lease_seconds != 0)
+        {
+            const auto now_tp = std::chrono::system_clock::now().time_since_epoch();
+            const auto ttl = std::chrono::duration_cast<std::chrono::system_clock::duration>(
+                std::chrono::seconds(lease_seconds));
+            reattach_authkey.valid_to = static_cast<uint64_t>((now_tp + ttl).count());
+        }
+
+        ID reattach_authkey_id;
+        Status key_status = catalog->createAuthKey(reattach_authkey, reattach_authkey_id, ctx);
+        if (key_status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, key_status, "Failed to create dormant reattach AuthKey");
+            return key_status;
+        }
+
         info.last_statement_time = connection->lastStatementTime();
         info.last_rows_affected = connection->lastRowsAffected();
         info.last_error_code = connection->lastErrorCode();
@@ -907,13 +993,28 @@ namespace scratchbird::core
         Status status = catalog->createDormantTransaction(info, ctx);
         if (status != Status::OK)
         {
+            ErrorContext revoke_ctx;
+            catalog->revokeAuthKey(reattach_authkey_id, &revoke_ctx);
+            logReattachAuditEvent(audit_logger_.get(),
+                                  AuditEventType::REATTACH_TOKEN_REVOKED,
+                                  connection->getCurrentUserId(),
+                                  connection->protocolSessionId(),
+                                  reattach_authkey_id,
+                                  info.dormant_id,
+                                  true,
+                                  "detach_failed");
             return status;
         }
 
         dormant_id_out = info.dormant_id;
+        if (reattach_authkey_out)
+        {
+            *reattach_authkey_out = reattach_authkey_id;
+        }
 
         DormantContextEntry entry;
         entry.dormant_id = info.dormant_id;
+        entry.reattach_authkey_id = reattach_authkey_id;
         entry.lease_expires_at = info.lease_expires_at;
         entry.connection = std::move(connection);
 
@@ -923,30 +1024,119 @@ namespace scratchbird::core
             dormant_contexts_.emplace(entry.dormant_id, std::move(entry));
         }
 
+        logReattachAuditEvent(audit_logger_.get(),
+                              AuditEventType::REATTACH_TOKEN_ISSUED,
+                              info.user_id,
+                              info.session_id,
+                              reattach_authkey_id,
+                              info.dormant_id,
+                              true,
+                              "detached");
+
         return Status::OK;
     }
 
     Status Database::reattachDormant(const ID &dormant_id,
                                      std::unique_ptr<ConnectionContext> &connection_out,
-                                     ErrorContext *ctx)
+                                     ErrorContext *ctx,
+                                     const ID *reattach_authkey)
     {
         std::lock_guard<std::mutex> lock(dormant_mutex_);
 
         auto it = dormant_contexts_.find(dormant_id);
         if (it == dormant_contexts_.end())
         {
+            logReattachAuditEvent(audit_logger_.get(),
+                                  AuditEventType::REATTACH_FAILURE,
+                                  ID{},
+                                  ID{},
+                                  reattach_authkey ? *reattach_authkey : ID{},
+                                  dormant_id,
+                                  false,
+                                  "dormant_not_found");
             SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Dormant transaction not found");
             return Status::NOT_FOUND;
         }
 
+        if (!reattach_authkey || isZeroId(*reattach_authkey))
+        {
+            logReattachAuditEvent(audit_logger_.get(),
+                                  AuditEventType::REATTACH_FAILURE,
+                                  it->second.connection ? it->second.connection->getCurrentUserId() : ID{},
+                                  it->second.connection ? it->second.connection->protocolSessionId() : ID{},
+                                  ID{},
+                                  dormant_id,
+                                  false,
+                                  "missing_reattach_authkey");
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_AUTHORIZATION, "Reattach AuthKey is required");
+            return Status::INVALID_AUTHORIZATION;
+        }
+
+        if (*reattach_authkey != it->second.reattach_authkey_id)
+        {
+            logReattachAuditEvent(audit_logger_.get(),
+                                  AuditEventType::REATTACH_FAILURE,
+                                  it->second.connection ? it->second.connection->getCurrentUserId() : ID{},
+                                  it->second.connection ? it->second.connection->protocolSessionId() : ID{},
+                                  *reattach_authkey,
+                                  dormant_id,
+                                  false,
+                                  "reattach_authkey_mismatch");
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_AUTHORIZATION, "Reattach AuthKey mismatch");
+            return Status::INVALID_AUTHORIZATION;
+        }
+
         if (catalog_manager_)
         {
+            CatalogManager::AuthKeyInfo authkey_info;
+            Status authkey_status = catalog_manager_->getAuthKey(*reattach_authkey,
+                                                                 authkey_info,
+                                                                 ctx);
+            if (authkey_status != Status::OK ||
+                authkey_info.status != CatalogManager::AuthKeyStatus::ACTIVE ||
+                authkey_info.scope != CatalogManager::AuthKeyScope::REATTACH)
+            {
+                logReattachAuditEvent(audit_logger_.get(),
+                                      AuditEventType::REATTACH_FAILURE,
+                                      it->second.connection ? it->second.connection->getCurrentUserId() : ID{},
+                                      it->second.connection ? it->second.connection->protocolSessionId() : ID{},
+                                      *reattach_authkey,
+                                      dormant_id,
+                                      false,
+                                      "reattach_authkey_invalid");
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_AUTHORIZATION,
+                                  "Reattach AuthKey is invalid or not active");
+                return Status::INVALID_AUTHORIZATION;
+            }
+
+            Status consume_status = catalog_manager_->consumeAuthKey(*reattach_authkey, 1, ctx);
+            if (consume_status != Status::OK)
+            {
+                logReattachAuditEvent(audit_logger_.get(),
+                                      AuditEventType::REATTACH_FAILURE,
+                                      it->second.connection ? it->second.connection->getCurrentUserId() : ID{},
+                                      it->second.connection ? it->second.connection->protocolSessionId() : ID{},
+                                      *reattach_authkey,
+                                      dormant_id,
+                                      false,
+                                      "reattach_authkey_consume_failed");
+                return consume_status;
+            }
+
             CatalogManager::DormantTransactionInfo info;
             Status status = catalog_manager_->getDormantTransaction(dormant_id, info, ctx);
             if (status == Status::OK)
             {
                 if (info.server_instance_id != server_instance_id_)
                 {
+                    logReattachAuditEvent(audit_logger_.get(),
+                                          AuditEventType::REATTACH_FAILURE,
+                                          it->second.connection ? it->second.connection->getCurrentUserId() : ID{},
+                                          it->second.connection ? it->second.connection->protocolSessionId() : ID{},
+                                          *reattach_authkey,
+                                          dormant_id,
+                                          false,
+                                          "reattach_wrong_server_instance");
                     SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
                                       "Dormant transaction belongs to a different server instance");
                     return Status::INVALID_ARGUMENT;
@@ -961,6 +1151,14 @@ namespace scratchbird::core
         }
 
         connection_out = std::move(it->second.connection);
+        logReattachAuditEvent(audit_logger_.get(),
+                              AuditEventType::REATTACH_SUCCESS,
+                              connection_out ? connection_out->getCurrentUserId() : ID{},
+                              connection_out ? connection_out->protocolSessionId() : ID{},
+                              *reattach_authkey,
+                              dormant_id,
+                              true,
+                              "reattached");
         dormant_contexts_.erase(it);
         return Status::OK;
     }

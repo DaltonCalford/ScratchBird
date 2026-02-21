@@ -50778,6 +50778,89 @@ namespace scratchbird
                         }
                         return ExecutionResult();
                     }
+                    case scratchbird::sblr::v3::Opcode::SBLR3_SET_SESSION_AUTH: {
+                        if (!conn_ctx_)
+                        {
+                            return ExecutionResult(
+                                "SET SESSION AUTHORIZATION requires connection context");
+                        }
+                        if (!conn_ctx_->isSuperuser())
+                        {
+                            return ExecutionResult(
+                                "Permission denied: SET SESSION AUTHORIZATION (superuser only)");
+                        }
+
+                        uint64_t action = 1;
+                        getU64(payload, "action", action);
+                        bool is_reset = (action == 3);
+
+                        std::string username;
+                        auto it_value = payload.find("value");
+                        if (!is_reset && it_value != payload.end() && !it_value->second.isNull())
+                        {
+                            Value v = Value::makeNull();
+                            scratchbird::sblr::v3::Instruction val_inst;
+                            if (getInstrFromValue(it_value->second, val_inst))
+                            {
+                                v = evalExpr(val_inst);
+                            }
+                            else
+                            {
+                                const auto& raw = it_value->second.data;
+                                if (auto s = std::get_if<std::string>(&raw))
+                                {
+                                    v = Value::makeVarchar(*s);
+                                }
+                                else if (auto b = std::get_if<bool>(&raw))
+                                {
+                                    v = Value::makeBool(*b);
+                                }
+                                else if (auto i = std::get_if<int64_t>(&raw))
+                                {
+                                    v = Value::makeInt64(*i);
+                                }
+                                else if (auto u = std::get_if<uint64_t>(&raw))
+                                {
+                                    v = Value::makeUInt64(*u);
+                                }
+                            }
+
+                            if (v.isNull())
+                            {
+                                is_reset = true;
+                            }
+                            else
+                            {
+                                username = v.toString();
+                            }
+                        }
+
+                        if (is_reset || username.empty())
+                        {
+                            const auto session_user_id = conn_ctx_->getSessionUserId();
+                            const bool session_is_superuser = conn_ctx_->isSessionSuperuser();
+                            conn_ctx_->setCurrentUser(session_user_id, session_is_superuser);
+                            conn_ctx_->applyStagedSecurityContext();
+                            return ExecutionResult();
+                        }
+
+                        if (!db_ || !db_->catalog_manager())
+                        {
+                            return ExecutionResult("Catalog manager not available");
+                        }
+
+                        core::CatalogManager::UserInfo user_info;
+                        core::ErrorContext err_ctx;
+                        auto status = db_->catalog_manager()->getUserByName(username, user_info, &err_ctx);
+                        if (status != core::Status::OK)
+                        {
+                            return ExecutionResult("User '" + username + "' does not exist");
+                        }
+
+                        conn_ctx_->setCurrentUser(user_info.user_id, user_info.is_superuser);
+                        conn_ctx_->applyStagedSecurityContext();
+                        return ExecutionResult();
+                    }
                     default:
                         return ExecutionResult("Unsupported session control opcode");
                 }
@@ -61438,6 +61521,7 @@ namespace scratchbird
 	                            payload);
                     case scratchbird::sblr::v3::Opcode::SBLR3_SET_AUTOCOMMIT:
                     case scratchbird::sblr::v3::Opcode::SBLR3_SET_ROLE:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_SET_SESSION_AUTH:
                         return executeSessionControlOpcode(
                             static_cast<scratchbird::sblr::v3::Opcode>(inst.opcode),
                             payload);

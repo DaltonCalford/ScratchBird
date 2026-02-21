@@ -132,6 +132,60 @@ TEST_F(CatalogSecurityAuthProviderRuleChainContractTest, ProviderChainEvaluatesD
     EXPECT_EQ(attempts.back().outcome, CatalogManager::AuthAttemptOutcome::SUCCESS);
 }
 
+TEST_F(CatalogSecurityAuthProviderRuleChainContractTest, ProviderChainRequiresMfaCompletionBeforeSuccess)
+{
+    ErrorContext ctx;
+
+    CatalogManager::AuthProviderCatalogInfo provider{};
+    provider.provider_id = generateUuidV7();
+    provider.provider_name = "mfa_required_provider";
+    provider.provider_kind = CatalogManager::AuthProviderKind::INTERNAL_SCRAM_SHA256;
+    provider.provider_state = CatalogManager::AuthProviderState::ENABLED;
+    provider.priority_rank = 1;
+    provider.fail_mode = CatalogManager::AuthProviderFailMode::TRY_NEXT;
+    ASSERT_EQ(catalog_->upsertAuthProviderCatalogEntry(provider, &ctx), Status::OK) << ctx.message;
+
+    CatalogManager::AuthPolicyCatalogInfo policy{};
+    policy.policy_id = generateUuidV7();
+    policy.policy_name = "mfa_required_policy";
+    policy.provider_chain = {provider.provider_id};
+    policy.mfa_required = true;
+    policy.lockout_threshold = 0;
+    policy.allow_password_fallback = true;
+    ASSERT_EQ(catalog_->upsertAuthPolicyCatalogEntry(policy, &ctx), Status::OK) << ctx.message;
+
+    CatalogManager::PrincipalAccountCatalogInfo account{};
+    account.account_id = generateUuidV7();
+    account.principal_name = "runtime_mfa_alice";
+    account.principal_kind = CatalogManager::PrincipalKind::USER;
+    account.source_scope_kind = CatalogManager::SourceScopeKind::ANY;
+    account.auth_policy_id = policy.policy_id;
+    ASSERT_EQ(catalog_->upsertPrincipalAccountCatalogEntry(account, &ctx), Status::OK)
+        << ctx.message;
+
+    CatalogManager::AuthProviderRuntimeRequest request{};
+    request.account_id = account.account_id;
+    request.connection_id = generateUuidV7();
+    request.credential_kinds = {CatalogManager::CredentialKind::PASSWORD_SCRAM_SHA256};
+    request.client_capabilities = {CatalogManager::AuthProviderKind::INTERNAL_SCRAM_SHA256};
+    request.adapter_results = {
+        {provider.provider_id, CatalogManager::AuthAdapterOutcome::ACCEPT}
+    };
+    request.mfa_completed = false;
+
+    CatalogManager::AuthProviderRuntimeDecision decision{};
+    EXPECT_EQ(catalog_->evaluateAuthProviderRuntime(request, decision, &ctx),
+              Status::INVALID_AUTHORIZATION);
+    EXPECT_EQ(ctx.vnext_code, "SEC_1214");
+
+    request.mfa_completed = true;
+    ASSERT_EQ(catalog_->evaluateAuthProviderRuntime(request, decision, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_TRUE(decision.success);
+    EXPECT_TRUE(decision.policy_requires_mfa);
+    EXPECT_EQ(decision.selected_provider_id, provider.provider_id);
+}
+
 TEST_F(CatalogSecurityAuthProviderRuleChainContractTest, ProviderValidationAndLockoutContracts)
 {
     ErrorContext ctx;
@@ -202,6 +256,73 @@ TEST_F(CatalogSecurityAuthProviderRuleChainContractTest, ProviderValidationAndLo
     EXPECT_EQ(catalog_->evaluateAuthProviderRuntime(request, decision, &ctx),
               Status::INVALID_AUTHORIZATION);
     EXPECT_EQ(ctx.vnext_code, "SEC_1215");
+}
+
+TEST_F(CatalogSecurityAuthProviderRuleChainContractTest, AuthPolicyNegotiationMaskRoundTripAndValidation)
+{
+    ErrorContext ctx;
+
+    CatalogManager::AuthProviderCatalogInfo provider{};
+    provider.provider_id = generateUuidV7();
+    provider.provider_name = "policy_roundtrip_provider";
+    provider.provider_kind = CatalogManager::AuthProviderKind::INTERNAL_SCRAM_SHA256;
+    provider.provider_state = CatalogManager::AuthProviderState::ENABLED;
+    provider.fail_mode = CatalogManager::AuthProviderFailMode::TRY_NEXT;
+    ASSERT_EQ(catalog_->upsertAuthProviderCatalogEntry(provider, &ctx), Status::OK) << ctx.message;
+
+    CatalogManager::AuthPolicyCatalogInfo policy{};
+    policy.policy_id = generateUuidV7();
+    policy.policy_name = "policy_roundtrip";
+    policy.provider_chain = {provider.provider_id};
+    policy.allowed_auth_method_mask =
+        CatalogManager::AUTH_POLICY_METHOD_SCRAM_SHA_256 |
+        CatalogManager::AUTH_POLICY_METHOD_SCRAM_SHA_512;
+    policy.has_required_auth_method = true;
+    policy.required_auth_method = CatalogManager::ConnectionAuthMethod::SCRAM_SHA_256;
+    policy.allowed_transport_mask = CatalogManager::AUTH_POLICY_TRANSPORT_IPC;
+    policy.peer_mode = CatalogManager::AuthPeerMode::REQUIRED_PLUS_SCRAM;
+    ASSERT_EQ(catalog_->upsertAuthPolicyCatalogEntry(policy, &ctx), Status::OK) << ctx.message;
+
+    CatalogManager::AuthPolicyCatalogInfo loaded{};
+    ASSERT_EQ(catalog_->getAuthPolicyCatalogEntry(policy.policy_id, loaded, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_EQ(loaded.allowed_auth_method_mask, policy.allowed_auth_method_mask);
+    EXPECT_TRUE(loaded.has_required_auth_method);
+    EXPECT_EQ(loaded.required_auth_method, CatalogManager::ConnectionAuthMethod::SCRAM_SHA_256);
+    EXPECT_EQ(loaded.allowed_transport_mask, CatalogManager::AUTH_POLICY_TRANSPORT_IPC);
+    EXPECT_EQ(loaded.peer_mode, CatalogManager::AuthPeerMode::REQUIRED_PLUS_SCRAM);
+
+    CatalogManager::AuthPolicyCatalogInfo invalid = policy;
+    invalid.policy_id = generateUuidV7();
+    invalid.policy_name = "policy_invalid_required";
+    invalid.allowed_auth_method_mask = CatalogManager::AUTH_POLICY_METHOD_SCRAM_SHA_512;
+    invalid.required_auth_method = CatalogManager::ConnectionAuthMethod::SCRAM_SHA_256;
+    EXPECT_EQ(catalog_->upsertAuthPolicyCatalogEntry(invalid, &ctx), Status::INVALID_ARGUMENT);
+    EXPECT_EQ(ctx.vnext_code, "SEC_1225");
+
+    CatalogManager::AuthPolicyCatalogInfo strict512 = policy;
+    strict512.policy_id = generateUuidV7();
+    strict512.policy_name = "policy_required_512";
+    strict512.allowed_auth_method_mask = CatalogManager::AUTH_POLICY_METHOD_SCRAM_SHA_512;
+    strict512.required_auth_method = CatalogManager::ConnectionAuthMethod::SCRAM_SHA_512;
+    ASSERT_EQ(catalog_->upsertAuthPolicyCatalogEntry(strict512, &ctx), Status::OK) << ctx.message;
+
+    CatalogManager::AuthPolicyCatalogInfo loaded512{};
+    ASSERT_EQ(catalog_->getAuthPolicyCatalogEntry(strict512.policy_id, loaded512, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_TRUE(loaded512.has_required_auth_method);
+    EXPECT_EQ(loaded512.required_auth_method, CatalogManager::ConnectionAuthMethod::SCRAM_SHA_512);
+    EXPECT_EQ(loaded512.allowed_auth_method_mask, CatalogManager::AUTH_POLICY_METHOD_SCRAM_SHA_512);
+    EXPECT_EQ(loaded512.peer_mode, CatalogManager::AuthPeerMode::REQUIRED_PLUS_SCRAM);
+
+    CatalogManager::AuthPolicyCatalogInfo invalid_peer_mode = policy;
+    invalid_peer_mode.policy_id = generateUuidV7();
+    invalid_peer_mode.policy_name = "policy_invalid_peer_mode";
+    invalid_peer_mode.allowed_auth_method_mask = CatalogManager::AUTH_POLICY_METHOD_TOKEN;
+    invalid_peer_mode.has_required_auth_method = false;
+    invalid_peer_mode.peer_mode = CatalogManager::AuthPeerMode::REQUIRED_PLUS_SCRAM;
+    EXPECT_EQ(catalog_->upsertAuthPolicyCatalogEntry(invalid_peer_mode, &ctx), Status::INVALID_ARGUMENT);
+    EXPECT_EQ(ctx.vnext_code, "SEC_1225");
 }
 
 TEST_F(CatalogSecurityAuthProviderRuleChainContractTest, ConnectionRuleChainDecisionAndIntegrity)

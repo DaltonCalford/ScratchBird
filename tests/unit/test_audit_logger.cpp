@@ -139,6 +139,14 @@ TEST_F(AuditLoggerTest, AllEventTypes) {
 TEST_F(AuditLoggerTest, EventTypeNames) {
     EXPECT_EQ("LOGIN_SUCCESS", AuditLogger::getEventTypeName(AuditEventType::LOGIN_SUCCESS));
     EXPECT_EQ("LOGIN_FAILURE", AuditLogger::getEventTypeName(AuditEventType::LOGIN_FAILURE));
+    EXPECT_EQ("BOOTSTRAP_ATTEMPT", AuditLogger::getEventTypeName(AuditEventType::BOOTSTRAP_ATTEMPT));
+    EXPECT_EQ("BOOTSTRAP_SUCCESS", AuditLogger::getEventTypeName(AuditEventType::BOOTSTRAP_SUCCESS));
+    EXPECT_EQ("BOOTSTRAP_FAILURE", AuditLogger::getEventTypeName(AuditEventType::BOOTSTRAP_FAILURE));
+    EXPECT_EQ("BOOTSTRAP_REVOKED", AuditLogger::getEventTypeName(AuditEventType::BOOTSTRAP_REVOKED));
+    EXPECT_EQ("REATTACH_TOKEN_ISSUED", AuditLogger::getEventTypeName(AuditEventType::REATTACH_TOKEN_ISSUED));
+    EXPECT_EQ("REATTACH_SUCCESS", AuditLogger::getEventTypeName(AuditEventType::REATTACH_SUCCESS));
+    EXPECT_EQ("REATTACH_FAILURE", AuditLogger::getEventTypeName(AuditEventType::REATTACH_FAILURE));
+    EXPECT_EQ("REATTACH_TOKEN_REVOKED", AuditLogger::getEventTypeName(AuditEventType::REATTACH_TOKEN_REVOKED));
     EXPECT_EQ("PERMISSION_DENIED", AuditLogger::getEventTypeName(AuditEventType::PERMISSION_DENIED));
     EXPECT_EQ("USER_CREATED", AuditLogger::getEventTypeName(AuditEventType::USER_CREATED));
 }

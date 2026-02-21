@@ -381,6 +381,120 @@ TEST_F(ProtocolCodecTest, AuthResponse) {
     EXPECT_EQ(user_id, 42u);
 }
 
+TEST_F(ProtocolCodecTest, AuthResponseContinueRoundTripWithPayload) {
+    const std::vector<uint8_t> payload = {
+        'S', 'B', 'M', 'F', 'A', '1', '|', 'c', 'h', 'a', 'l', '|', 't', 'o', 't', 'p'
+    };
+    Message msg = ProtocolCodec::buildAuthResponse(
+        AuthStatus::CONTINUE, 0, "", payload);
+    EXPECT_EQ(msg.getType(), MessageType::AUTH_RESPONSE);
+
+    AuthStatus status = AuthStatus::ERROR;
+    uint32_t user_id = 0;
+    std::string error_message;
+    std::vector<uint8_t> parsed_payload;
+    ErrorContext ctx;
+
+    Status parse_status = ProtocolCodec::parseAuthResponse(
+        msg, status, user_id, error_message, &parsed_payload, &ctx);
+    EXPECT_EQ(parse_status, Status::OK) << ctx.message;
+    EXPECT_EQ(status, AuthStatus::CONTINUE);
+    EXPECT_EQ(user_id, 0u);
+    EXPECT_TRUE(error_message.empty());
+    EXPECT_EQ(parsed_payload, payload);
+}
+
+TEST_F(ProtocolCodecTest, AuthResponseContinueMapsToNonSuccessInLegacyParser) {
+    Message msg = ProtocolCodec::buildAuthResponse(
+        AuthStatus::CONTINUE, 0, "", {});
+
+    bool success = true;
+    uint32_t user_id = 0;
+    std::string error_message;
+    ErrorContext ctx;
+
+    Status parse_status = ProtocolCodec::parseAuthResponse(
+        msg, success, user_id, error_message, &ctx);
+    EXPECT_EQ(parse_status, Status::OK) << ctx.message;
+    EXPECT_FALSE(success);
+}
+
+TEST_F(ProtocolCodecTest, AuthChallengeRoundTrip) {
+    std::vector<AuthMethod> allowed_methods = {
+        AuthMethod::SCRAM_SHA_256,
+        AuthMethod::TOKEN,
+        AuthMethod::PEER
+    };
+    std::vector<uint8_t> nonce = {0x10, 0x20, 0x30, 0x40};
+
+    Message msg = ProtocolCodec::buildAuthChallenge(
+        session_id_,
+        "admin",
+        allowed_methods,
+        true,
+        AuthMethod::SCRAM_SHA_256,
+        0x07,
+        nonce);
+    EXPECT_EQ(msg.getType(), MessageType::AUTH_CHALLENGE);
+
+    uint8_t parsed_session_id[16];
+    std::string username;
+    std::vector<AuthMethod> parsed_methods;
+    bool has_required_method = false;
+    AuthMethod required_method = AuthMethod::PASSWORD;
+    uint8_t transport_mask = 0;
+    std::vector<uint8_t> parsed_nonce;
+    ErrorContext ctx;
+
+    Status status = ProtocolCodec::parseAuthChallenge(
+        msg,
+        parsed_session_id,
+        username,
+        parsed_methods,
+        has_required_method,
+        required_method,
+        transport_mask,
+        parsed_nonce,
+        &ctx);
+    EXPECT_EQ(status, Status::OK) << ctx.message;
+    EXPECT_EQ(std::memcmp(session_id_, parsed_session_id, 16), 0);
+    EXPECT_EQ(username, "admin");
+    ASSERT_EQ(parsed_methods.size(), allowed_methods.size());
+    EXPECT_EQ(parsed_methods[0], AuthMethod::SCRAM_SHA_256);
+    EXPECT_EQ(parsed_methods[1], AuthMethod::TOKEN);
+    EXPECT_EQ(parsed_methods[2], AuthMethod::PEER);
+    EXPECT_TRUE(has_required_method);
+    EXPECT_EQ(required_method, AuthMethod::SCRAM_SHA_256);
+    EXPECT_EQ(transport_mask, 0x07);
+    EXPECT_EQ(parsed_nonce, nonce);
+}
+
+TEST_F(ProtocolCodecTest, TokenAuthPayloadRoundTrip) {
+    uint8_t authkey_id[16];
+    for (uint8_t i = 0; i < 16; ++i) {
+        authkey_id[i] = i;
+    }
+    const std::vector<uint8_t> proof = {0xAA, 0xBB, 0xCC, 0xDD};
+    const std::vector<uint8_t> binding = {0x10, 0x20, 0x30};
+
+    std::vector<uint8_t> payload =
+        ProtocolCodec::buildTokenAuthPayload(authkey_id, proof, binding);
+
+    uint8_t parsed_authkey_id[16];
+    std::vector<uint8_t> parsed_proof;
+    std::vector<uint8_t> parsed_binding;
+    ErrorContext ctx;
+    Status status = ProtocolCodec::parseTokenAuthPayload(payload,
+                                                         parsed_authkey_id,
+                                                         parsed_proof,
+                                                         parsed_binding,
+                                                         &ctx);
+    EXPECT_EQ(status, Status::OK) << ctx.message;
+    EXPECT_EQ(std::memcmp(authkey_id, parsed_authkey_id, sizeof(authkey_id)), 0);
+    EXPECT_EQ(parsed_proof, proof);
+    EXPECT_EQ(parsed_binding, binding);
+}
+
 TEST_F(ProtocolCodecTest, Query) {
     std::string sql = "SELECT id, name FROM users WHERE active = true ORDER BY name";
     Message msg = ProtocolCodec::buildQuery(session_id_, sql, static_cast<uint8_t>(QueryFlags::WANT_ROWCOUNT));

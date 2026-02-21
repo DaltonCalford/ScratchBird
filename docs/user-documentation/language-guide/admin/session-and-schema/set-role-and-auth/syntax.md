@@ -1,5 +1,5 @@
 # Admin SET ROLE AND SESSION AUTHORIZATION: Syntax
-Last modified: 2026-02-19
+Last modified: 2026-02-21
 
 Back links:
 - [Language Guide README](../../../README.md)
@@ -14,13 +14,22 @@ Series navigation:
 ## Coverage
 - Status: Supported
 
-## Form
+## Forms
 ~~~sql
-SET ROLE <role_name>; SET SESSION AUTHORIZATION <user_name>;
+SET ROLE <role_name>;
+SET ROLE NONE;
+SET ROLE DEFAULT;
+RESET ROLE;
+
+SET SESSION AUTHORIZATION <user_name>;
+SET SESSION AUTHORIZATION DEFAULT;
+RESET SESSION AUTHORIZATION;
 ~~~
 
+## Token Rules
+- `<role_name>` and `<user_name>` accept identifier or string literal.
+- `SET SESSION AUTHORIZATION DEFAULT` is equivalent to reset semantics.
+- `SET ROLE NONE` and `SET ROLE DEFAULT` map to reset semantics.
+
 ## Notes
-- Details: Role/auth command surfaces are explicit in SET dispatch.
-- Runtime note: Session identity and role context are applied in runtime session state.
-- Error/contract note: Privilege checks apply to identity and role transition operations.
-- Usage rationale: Explicit privilege context management per session.
+- Parser accepts optional `SESSION`/`LOCAL` scope prefix, but role/auth operations currently execute as session-level context changes.

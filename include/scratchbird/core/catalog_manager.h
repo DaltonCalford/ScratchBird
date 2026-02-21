@@ -2859,12 +2859,37 @@ public:
             SUSPENDED = 3
         };
 
+        // Bootstrap authentication lifecycle state (P4-S1/W1 AUTH-001-002)
+        enum class BootstrapState : uint8_t
+        {
+            UNINITIALIZED = 0,
+            INITIALIZED = 1,
+            LOCKED = 2
+        };
+
         // AuthKey usage mode (Plan 03)
         enum class AuthKeyUsage : uint8_t
         {
             UNLIMITED = 0,
             LIMITED = 1,
             SINGLE_USE = 2
+        };
+
+        // AuthKey token scope (P4-S2/W1 AUTH-004-001)
+        enum class AuthKeyScope : uint8_t
+        {
+            LOGIN_SESSION = 0,
+            API_TOKEN = 1,
+            REATTACH = 2,
+            SERVICE_ACCOUNT = 3
+        };
+
+        // Optional AuthKey binding mode (P4-S2/W1 AUTH-004-001)
+        enum class AuthKeyBindingKind : uint8_t
+        {
+            NONE = 0,
+            PEER_UID = 1,
+            CLIENT_NONCE = 2
         };
 
         struct AuthKeyInfo
@@ -2877,10 +2902,14 @@ public:
             uint32_t usage_count = 0;
             AuthKeyStatus status = AuthKeyStatus::ACTIVE;
             AuthKeyUsage usage_type = AuthKeyUsage::UNLIMITED;
+            AuthKeyScope scope = AuthKeyScope::LOGIN_SESSION;
+            AuthKeyBindingKind binding_kind = AuthKeyBindingKind::NONE;
+            std::string binding_value;
             std::vector<ID> role_scope;
             std::vector<ID> group_scope;
             uint64_t created_time = 0;
             uint64_t last_modified_time = 0;
+            uint64_t last_used_time = 0;
         };
 
         // Session information (Phase 1.4 - Security System)
@@ -3967,7 +3996,8 @@ public:
             PEER = 9,
             IDENT = 10,
             RADIUS = 11,
-            PAM = 12
+            PAM = 12,
+            TOKEN = 13
         };
 
         enum class RuntimeTransactionState : uint8_t
@@ -3991,7 +4021,9 @@ public:
             HOST_WILDCARD = 2,
             CIDR = 3,
             UNIX_SOCKET = 4,
-            NODE_ID = 5
+            NODE_ID = 5,
+            PEER_UID = 6,
+            PEER_GID = 7
         };
 
         enum class CredentialKind : uint8_t
@@ -4038,6 +4070,20 @@ public:
             TIMEOUT = 2,
             UNAVAILABLE = 3,
             POLICY_DENY = 4
+        };
+
+        enum class AuthPeerMode : uint8_t
+        {
+            DISABLED = 0,
+            REQUIRED = 1,
+            REQUIRED_PLUS_SCRAM = 2
+        };
+
+        enum class MfaFactorType : uint8_t
+        {
+            TOTP = 0,
+            BACKUP_CODE = 1,
+            BREAK_GLASS = 2
         };
 
         enum class ConnectionRuleTransportKind : uint8_t
@@ -4697,6 +4743,12 @@ public:
             std::string source_ip;
             std::string source_socket;
             std::string source_node_id;
+            bool has_peer_uid = false;
+            uint32_t peer_uid = 0;
+            bool has_peer_gid = false;
+            uint32_t peer_gid = 0;
+            bool has_peer_pid = false;
+            uint32_t peer_pid = 0;
             std::string auth_database_context;
             bool has_auth_database_context = false;
             std::string tenant_context;
@@ -4720,6 +4772,30 @@ public:
             uint64_t last_modified_time = 0;
         };
 
+        // Auth policy method mask bits for protocol negotiation.
+        static constexpr uint16_t AUTH_POLICY_METHOD_PASSWORD       = 1u << 0;
+        static constexpr uint16_t AUTH_POLICY_METHOD_MD5            = 1u << 1;
+        static constexpr uint16_t AUTH_POLICY_METHOD_SCRAM_SHA_256  = 1u << 2;
+        static constexpr uint16_t AUTH_POLICY_METHOD_SCRAM_SHA_512  = 1u << 3;
+        static constexpr uint16_t AUTH_POLICY_METHOD_TOKEN          = 1u << 4;
+        static constexpr uint16_t AUTH_POLICY_METHOD_PEER           = 1u << 5;
+        static constexpr uint16_t AUTH_POLICY_METHOD_ALL =
+            AUTH_POLICY_METHOD_PASSWORD |
+            AUTH_POLICY_METHOD_MD5 |
+            AUTH_POLICY_METHOD_SCRAM_SHA_256 |
+            AUTH_POLICY_METHOD_SCRAM_SHA_512 |
+            AUTH_POLICY_METHOD_TOKEN |
+            AUTH_POLICY_METHOD_PEER;
+
+        // Auth policy transport mask bits for protocol negotiation.
+        static constexpr uint8_t AUTH_POLICY_TRANSPORT_LOCAL = 1u << 0;
+        static constexpr uint8_t AUTH_POLICY_TRANSPORT_IPC   = 1u << 1;
+        static constexpr uint8_t AUTH_POLICY_TRANSPORT_INET  = 1u << 2;
+        static constexpr uint8_t AUTH_POLICY_TRANSPORT_ALL =
+            AUTH_POLICY_TRANSPORT_LOCAL |
+            AUTH_POLICY_TRANSPORT_IPC |
+            AUTH_POLICY_TRANSPORT_INET;
+
         struct AuthPolicyCatalogInfo
         {
             ID policy_id;
@@ -4732,6 +4808,65 @@ public:
             uint32_t lockout_window_ms = 0;
             uint32_t lockout_duration_ms = 0;
             bool allow_password_fallback = false;
+            uint16_t allowed_auth_method_mask = AUTH_POLICY_METHOD_ALL;
+            bool has_required_auth_method = false;
+            ConnectionAuthMethod required_auth_method = ConnectionAuthMethod::SCRAM_SHA_256;
+            uint8_t allowed_transport_mask = AUTH_POLICY_TRANSPORT_ALL;
+            AuthPeerMode peer_mode = AuthPeerMode::DISABLED;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct MfaPolicyCatalogInfo
+        {
+            ID mfa_policy_id;
+            std::string policy_name;
+            MfaFactorType primary_factor = MfaFactorType::TOTP;
+            bool allow_recovery_codes = true;
+            bool allow_break_glass = false;
+            uint8_t max_challenge_attempts = 3;
+            uint32_t challenge_ttl_ms = 300000;
+            uint32_t step_up_ttl_ms = 900000;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct MfaEnrollmentCatalogInfo
+        {
+            ID enrollment_id;
+            ID account_id;
+            ID mfa_policy_id;
+            MfaFactorType factor_type = MfaFactorType::TOTP;
+            bool is_primary = true;
+            bool is_enrolled = true;
+            bool has_secret = false;
+            std::string secret_base32;
+            uint8_t totp_digits = 6;
+            uint32_t totp_period = 30;
+            uint32_t totp_look_ahead = 1;
+            uint32_t totp_look_behind = 1;
+            uint64_t enrolled_time_utc = 0;
+            bool has_last_verified_time = false;
+            uint64_t last_verified_time_utc = 0;
+            bool is_valid = true;
+            uint64_t created_time = 0;
+            uint64_t last_modified_time = 0;
+        };
+
+        struct MfaRecoveryCodeCatalogInfo
+        {
+            ID recovery_id;
+            ID account_id;
+            ID mfa_policy_id;
+            bool is_break_glass = false;
+            std::array<uint8_t, 32> code_hash{};
+            uint32_t max_uses = 1;
+            uint32_t uses = 0;
+            uint32_t cooldown_ms = 0;
+            bool has_last_used_time = false;
+            uint64_t last_used_time_utc = 0;
             bool is_valid = true;
             uint64_t created_time = 0;
             uint64_t last_modified_time = 0;
@@ -7979,6 +8114,43 @@ public:
         auto deleteAuthPolicyCatalogEntry(const ID& policy_id,
                                           ErrorContext* ctx = nullptr) -> Status;
 
+        auto upsertMfaPolicyCatalogEntry(const MfaPolicyCatalogInfo& info,
+                                         ErrorContext* ctx = nullptr) -> Status;
+        auto getMfaPolicyCatalogEntry(const ID& mfa_policy_id,
+                                      MfaPolicyCatalogInfo& info_out,
+                                      ErrorContext* ctx = nullptr) -> Status;
+        auto listMfaPolicyCatalogEntries(std::vector<MfaPolicyCatalogInfo>& rows_out,
+                                         ErrorContext* ctx = nullptr) -> Status;
+        auto deleteMfaPolicyCatalogEntry(const ID& mfa_policy_id,
+                                         ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertMfaEnrollmentCatalogEntry(const MfaEnrollmentCatalogInfo& info,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto getMfaEnrollmentCatalogEntry(const ID& enrollment_id,
+                                          MfaEnrollmentCatalogInfo& info_out,
+                                          ErrorContext* ctx = nullptr) -> Status;
+        auto listMfaEnrollmentCatalogEntries(const ID& account_id,
+                                             std::vector<MfaEnrollmentCatalogInfo>& rows_out,
+                                             ErrorContext* ctx = nullptr) -> Status;
+        auto deleteMfaEnrollmentCatalogEntry(const ID& enrollment_id,
+                                             ErrorContext* ctx = nullptr) -> Status;
+
+        auto upsertMfaRecoveryCodeCatalogEntry(const MfaRecoveryCodeCatalogInfo& info,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto getMfaRecoveryCodeCatalogEntry(const ID& recovery_id,
+                                            MfaRecoveryCodeCatalogInfo& info_out,
+                                            ErrorContext* ctx = nullptr) -> Status;
+        auto listMfaRecoveryCodeCatalogEntries(const ID& account_id,
+                                               std::vector<MfaRecoveryCodeCatalogInfo>& rows_out,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto deleteMfaRecoveryCodeCatalogEntry(const ID& recovery_id,
+                                               ErrorContext* ctx = nullptr) -> Status;
+        auto consumeMfaRecoveryCode(const ID& account_id,
+                                    const std::array<uint8_t, 32>& code_hash,
+                                    bool allow_break_glass,
+                                    MfaRecoveryCodeCatalogInfo& consumed_out,
+                                    ErrorContext* ctx = nullptr) -> Status;
+
         auto upsertAuthAttemptLogCatalogEntry(const AuthAttemptLogCatalogInfo& info,
                                               ErrorContext* ctx = nullptr) -> Status;
         auto getAuthAttemptLogCatalogEntry(const ID& attempt_id,
@@ -10147,6 +10319,17 @@ public:
         auto listUsers(std::vector<UserInfo>& users_out,
                       ErrorContext* ctx = nullptr) -> Status;
 
+        auto getBootstrapState(BootstrapState& state_out,
+                               ErrorContext* ctx = nullptr) -> Status;
+
+        auto transitionBootstrapState(BootstrapState expected_state,
+                                      BootstrapState new_state,
+                                      ErrorContext* ctx = nullptr) -> Status;
+
+        auto claimBootstrapWindow(ErrorContext* ctx = nullptr) -> Status;
+
+        auto releaseBootstrapWindow(ErrorContext* ctx = nullptr) -> Status;
+
         // Role operations
         auto createRole(const std::string& role_name, const ID& owner_id,
                        const ID& default_schema_id,
@@ -11696,6 +11879,18 @@ public:
         {
             return auth_policy_table_page_;
         }
+        auto mfaPolicyTablePage() const -> uint32_t
+        {
+            return mfa_policy_table_page_;
+        }
+        auto mfaEnrollmentTablePage() const -> uint32_t
+        {
+            return mfa_enrollment_table_page_;
+        }
+        auto mfaRecoveryCodeTablePage() const -> uint32_t
+        {
+            return mfa_recovery_code_table_page_;
+        }
         auto authAttemptLogTablePage() const -> uint32_t
         {
             return auth_attempt_log_table_page_;
@@ -12265,6 +12460,7 @@ public:
                                        ErrorContext* ctx) -> Status;
         auto enforceSystemDomainBindings(ErrorContext* ctx) -> Status;
         auto ensureHomeSearchPathCatalogTables(ErrorContext* ctx) -> Status;
+        auto ensureMfaCatalogTables(ErrorContext* ctx) -> Status;
         auto resolveSessionHomeSchema(const UserInfo& user,
                                       const std::vector<ID>& effective_roles,
                                       const std::vector<ID>& effective_groups,
@@ -12761,6 +12957,9 @@ public:
         uint32_t account_profile_binding_table_page_ = 0; // Account profile binding catalog (CAT-020)
         uint32_t auth_provider_table_page_ = 0; // Auth provider catalog (EN-018)
         uint32_t auth_policy_table_page_ = 0; // Auth policy catalog (EN-018)
+        uint32_t mfa_policy_table_page_ = 0; // MFA policy catalog (EN-018)
+        uint32_t mfa_enrollment_table_page_ = 0; // MFA enrollment catalog (EN-018)
+        uint32_t mfa_recovery_code_table_page_ = 0; // MFA recovery code catalog (EN-018)
         uint32_t auth_attempt_log_table_page_ = 0; // Auth attempt log catalog (EN-018)
         uint32_t connection_rule_table_page_ = 0; // Connection rule catalog (EN-018)
         uint32_t connection_rule_epoch_table_page_ = 0; // Connection rule epoch catalog (EN-018)

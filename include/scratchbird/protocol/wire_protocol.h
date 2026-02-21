@@ -71,7 +71,9 @@ enum class AuthMethod : uint8_t {
     PASSWORD       = 0,
     MD5            = 1,
     SCRAM_SHA_256  = 2,
-    SCRAM_SHA_512  = 3
+    SCRAM_SHA_512  = 3,
+    TOKEN          = 4,
+    PEER           = 5
 };
 
 enum class AuthStatus : uint8_t {
@@ -768,6 +770,36 @@ public:
                                           std::string& error_message,
                                           std::vector<uint8_t>* data = nullptr,
                                           core::ErrorContext* ctx = nullptr);
+
+    static Message buildAuthChallenge(const uint8_t session_id[16],
+                                      const std::string& username,
+                                      const std::vector<AuthMethod>& allowed_methods,
+                                      bool has_required_method,
+                                      AuthMethod required_method,
+                                      uint8_t allowed_transport_mask,
+                                      const std::vector<uint8_t>& challenge_nonce);
+
+    static core::Status parseAuthChallenge(const Message& msg,
+                                           uint8_t session_id[16],
+                                           std::string& username,
+                                           std::vector<AuthMethod>& allowed_methods,
+                                           bool& has_required_method,
+                                           AuthMethod& required_method,
+                                           uint8_t& allowed_transport_mask,
+                                           std::vector<uint8_t>& challenge_nonce,
+                                           core::ErrorContext* ctx = nullptr);
+
+    // TOKEN payload contract:
+    //   authkey_id(16 bytes) + proof_length(uint16 LE) + proof + binding_length(uint16 LE) + binding
+    static std::vector<uint8_t> buildTokenAuthPayload(const uint8_t authkey_id[16],
+                                                      const std::vector<uint8_t>& proof,
+                                                      const std::vector<uint8_t>& binding = {});
+
+    static core::Status parseTokenAuthPayload(const std::vector<uint8_t>& payload,
+                                              uint8_t authkey_id[16],
+                                              std::vector<uint8_t>& proof,
+                                              std::vector<uint8_t>& binding,
+                                              core::ErrorContext* ctx = nullptr);
 
     // ========================================
     // Query Messages

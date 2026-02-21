@@ -121,7 +121,7 @@ protocol::AuthMethod mapAuthMethod(sbwp::AuthMethod method) {
         case sbwp::AuthMethod::ScramSha256:
             return protocol::AuthMethod::SCRAM_SHA_256;
         default:
-            return protocol::AuthMethod::PASSWORD;
+            return protocol::AuthMethod::SCRAM_SHA_256;
     }
 }
 

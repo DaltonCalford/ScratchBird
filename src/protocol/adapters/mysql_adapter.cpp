@@ -469,7 +469,13 @@ core::Status MySqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
     client_config_.write_timeout_ms = config_.write_timeout_ms;
     client_config_.auto_commit = true;
     client_config_.auto_start_server = false;
-    client_config_.username = username_.empty() ? "BOOTSTRAP" : username_;
+    if (username_.empty()) {
+        client_config_.username = "BOOTSTRAP";
+        client_config_.password.clear();
+    } else {
+        client_config_.username = username_;
+        client_config_.password = remote_password_;
+    }
 
     client_ = std::make_unique<client::Connection>();
     auto status = client_->connect(client_config_, ctx);
@@ -1128,9 +1134,19 @@ core::Status MySqlAdapter::handleHandshakeResponse(network::Connection* conn) {
         auth_plugin_name_ = readNullString(current_packet_.data() + offset, plugin_offset, current_packet_.size() - offset);
     }
 
-    // C3: Validate authentication
-    // For now, accept any authentication (engine will validate)
-    // In production, this should validate against stored credentials
+    const char* configured_password = std::getenv("SCRATCHBIRD_MYSQL_AUTH_PASSWORD");
+    remote_password_ = (configured_password && configured_password[0] != '\0')
+        ? std::string(configured_password)
+        : std::string();
+
+    if (!validateAuthResponse(auth_plugin_name_, auth_response_, auth_scramble_, remote_password_)) {
+        sendErrorPacket(conn,
+                        mysql::ErrorCode::ACCESS_DENIED,
+                        "28000",
+                        "Access denied for user '" + username_ + "'");
+        return core::Status::INVALID_PASSWORD;
+    }
+
     return sendAuthResult(conn, true);
 }
 
@@ -2430,7 +2446,7 @@ std::vector<uint8_t> MySqlAdapter::computeNativePasswordAuth(const std::string& 
         result[i] = sha1_pass[i] ^ sha1_combined[i];
     }
 #else
-    // Fallback: return empty (trust auth)
+    // No OpenSSL backend: caller will reject non-empty auth responses.
     (void)password;
     (void)scramble;
 #endif
@@ -2474,7 +2490,7 @@ std::vector<uint8_t> MySqlAdapter::computeCachingSha2PasswordAuth(const std::str
         result[i] = sha256_pass[i] ^ sha256_combined[i];
     }
 #else
-    // Fallback: return empty (trust auth)
+    // No OpenSSL backend: caller will reject non-empty auth responses.
     (void)password;
     (void)scramble;
 #endif
@@ -2503,8 +2519,8 @@ bool MySqlAdapter::validateAuthResponse(const std::string& expected_plugin,
             return false;
         }
     } else {
-        // Unknown plugin: accept for now (trust mode)
-        return true;
+        // Unknown plugin cannot be validated safely.
+        return false;
     }
     
     // Empty password matches empty response
@@ -2519,12 +2535,12 @@ bool MySqlAdapter::validateAuthResponse(const std::string& expected_plugin,
     
     return std::memcmp(expected.data(), auth_response.data(), expected.size()) == 0;
 #else
-    // Without OpenSSL, trust any auth
-    (void)expected_plugin;
-    (void)auth_response;
     (void)scramble;
-    (void)password;
-    return true;
+    if (expected_plugin.empty()) {
+        return false;
+    }
+    // No crypto backend: only allow truly empty credentials.
+    return password.empty() && auth_response.empty();
 #endif
 }
 

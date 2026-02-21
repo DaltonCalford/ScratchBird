@@ -35,6 +35,8 @@
 #ifdef _WIN32
 #include <windows.h>
 #else
+#include <grp.h>
+#include <pwd.h>
 #include <signal.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -173,6 +175,30 @@ bool canBindListenerPort(const std::string& bind_address,
     return true;
 }
 
+bool hasConfiguredGroup(const std::string& group_name) {
+#ifdef _WIN32
+    (void)group_name;
+    return true;
+#else
+    if (group_name.empty()) {
+        return true;
+    }
+    return ::getgrnam(group_name.c_str()) != nullptr;
+#endif
+}
+
+bool hasConfiguredUser(const std::string& user_name) {
+#ifdef _WIN32
+    (void)user_name;
+    return true;
+#else
+    if (user_name.empty()) {
+        return true;
+    }
+    return ::getpwnam(user_name.c_str()) != nullptr;
+#endif
+}
+
 }  // namespace
 
 // ============================================================================
@@ -219,6 +245,12 @@ void ServiceConfig::loadFromParser(const ConfigParser& parser) {
         idle_timeout_sec = static_cast<uint32_t>(server->getDuration("idle_timeout", idle_timeout_sec * 1000) / 1000);
         statement_timeout_ms = static_cast<uint32_t>(server->getDuration("statement_timeout", statement_timeout_ms));
         auto_create_databases = server->getBool("auto_create", auto_create_databases);
+        daemon_options.run_as_user = server->getString(
+            "run_as_user",
+            daemon_options.run_as_user.empty() ? "scratchbird" : daemon_options.run_as_user);
+        daemon_options.run_as_group = server->getString(
+            "run_as_group",
+            daemon_options.run_as_group.empty() ? "scratchbird" : daemon_options.run_as_group);
     }
 
     // Network section
@@ -650,6 +682,24 @@ core::Status ServiceController::applyConfig(core::ErrorContext* ctx) {
     config_.daemon_options.pid_file = config_.pid_file;
     config_.daemon_options.shutdown_timeout_sec = config_.shutdown_timeout_sec;
     config_.daemon_options.daemonize = !config_.foreground;
+
+    // Fail fast on identity configuration errors before daemon startup/listeners.
+    if (!config_.daemon_options.run_as_group.empty() &&
+        !hasConfiguredGroup(config_.daemon_options.run_as_group)) {
+        if (ctx) {
+            std::string msg = "Configured run_as_group does not exist: " + config_.daemon_options.run_as_group;
+            SET_ERROR_CONTEXT(ctx, core::Status::NOT_FOUND, msg.c_str());
+        }
+        return core::Status::NOT_FOUND;
+    }
+    if (!config_.daemon_options.run_as_user.empty() &&
+        !hasConfiguredUser(config_.daemon_options.run_as_user)) {
+        if (ctx) {
+            std::string msg = "Configured run_as_user does not exist: " + config_.daemon_options.run_as_user;
+            SET_ERROR_CONTEXT(ctx, core::Status::NOT_FOUND, msg.c_str());
+        }
+        return core::Status::NOT_FOUND;
+    }
 
     return core::Status::OK;
 }

@@ -1,0 +1,407 @@
+/*
+ * ScratchBird
+ * Copyright (c) 2025-2026 Dalton Calford
+ *
+ * Licensed under the Initial Developer's Public License Version 1.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at:
+ * https://www.firebirdsql.org/en/initial-developer-s-public-license-version-1-0/
+ */
+
+#include <gtest/gtest.h>
+
+#include <atomic>
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
+#include <filesystem>
+#include <memory>
+#include <string>
+#include <thread>
+#include <vector>
+
+#ifndef _WIN32
+#include <unistd.h>
+#endif
+
+#include "scratchbird/client/connection.h"
+#include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/database.h"
+#include "scratchbird/core/error_context.h"
+#include "scratchbird/core/uuidv7.h"
+#include "scratchbird/protocol/wire_protocol.h"
+#include "scratchbird/server/ipc_server.h"
+#include "scratchbird/server/server_session.h"
+#include "test_helpers.h"
+
+using namespace scratchbird;
+using namespace scratchbird::client;
+using namespace scratchbird::core;
+using namespace scratchbird::protocol;
+using namespace scratchbird::server;
+
+namespace {
+
+bool isNetworkRestrictedError(const ErrorContext& ctx) {
+    return ctx.message.find("Operation not permitted") != std::string::npos ||
+           ctx.message.find("Permission denied") != std::string::npos;
+}
+
+std::string toUpperAscii(std::string value) {
+    for (char& ch : value) {
+        if (ch >= 'a' && ch <= 'z') {
+            ch = static_cast<char>(ch - ('a' - 'A'));
+        }
+    }
+    return value;
+}
+
+bool equalsIgnoreCaseAscii(const std::string& lhs, const std::string& rhs) {
+    return toUpperAscii(lhs) == toUpperAscii(rhs);
+}
+
+class ScopedEnvVar {
+public:
+    ScopedEnvVar(const char* key, const std::string& value)
+        : key_(key), had_original_(false) {
+        if (const char* current = std::getenv(key_)) {
+            had_original_ = true;
+            original_value_ = current;
+        }
+        set(value);
+    }
+
+    ~ScopedEnvVar() {
+        if (had_original_) {
+            set(original_value_);
+        } else {
+            unset();
+        }
+    }
+
+private:
+    void set(const std::string& value) {
+#ifdef _WIN32
+        _putenv_s(key_, value.c_str());
+#else
+        setenv(key_, value.c_str(), 1);
+#endif
+    }
+
+    void unset() {
+#ifdef _WIN32
+        _putenv_s(key_, "");
+#else
+        unsetenv(key_);
+#endif
+    }
+
+    const char* key_;
+    bool had_original_;
+    std::string original_value_;
+};
+
+std::string makeUniqueDbPath(const std::string& prefix) {
+    const auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+    return "/tmp/" + prefix + "_" + std::to_string(getpid()) + "_" +
+           std::to_string(now) + ".db";
+}
+
+std::string makeUniqueSocketPath(const std::string& prefix) {
+    static std::atomic<uint32_t> counter{0};
+    return scratchbird::testing::uniqueTestSocketPath(
+        prefix + "_" + std::to_string(getpid()) + "_" + std::to_string(counter.fetch_add(1)));
+}
+
+std::string makeUniquePolicyName(const std::string& prefix) {
+    static std::atomic<uint32_t> counter{0};
+    return prefix + "_" + std::to_string(getpid()) + "_" + std::to_string(counter.fetch_add(1));
+}
+
+core::Status configurePolicyForUser(CatalogManager* catalog,
+                                    const std::string& username,
+                                    const std::string& policy_name,
+                                    uint16_t allowed_method_mask,
+                                    CatalogManager::ConnectionAuthMethod required_method,
+                                    ErrorContext* ctx) {
+    CatalogManager::AuthProviderCatalogInfo provider{};
+    provider.provider_id = generateUuidV7();
+    provider.provider_name = policy_name + "_provider";
+    provider.provider_kind = CatalogManager::AuthProviderKind::INTERNAL_SCRAM_SHA256;
+    provider.provider_state = CatalogManager::AuthProviderState::ENABLED;
+    provider.priority_rank = 1;
+    provider.fail_mode = CatalogManager::AuthProviderFailMode::TRY_NEXT;
+    core::Status status = catalog->upsertAuthProviderCatalogEntry(provider, ctx);
+    if (status != core::Status::OK) {
+        return status;
+    }
+
+    CatalogManager::AuthPolicyCatalogInfo policy{};
+    policy.policy_id = generateUuidV7();
+    policy.policy_name = policy_name;
+    policy.provider_chain = {provider.provider_id};
+    policy.mfa_required = false;
+    policy.allow_password_fallback = false;
+    policy.allowed_auth_method_mask = allowed_method_mask;
+    policy.has_required_auth_method = true;
+    policy.required_auth_method = required_method;
+    policy.allowed_transport_mask = CatalogManager::AUTH_POLICY_TRANSPORT_IPC;
+    policy.peer_mode = CatalogManager::AuthPeerMode::DISABLED;
+    status = catalog->upsertAuthPolicyCatalogEntry(policy, ctx);
+    if (status != core::Status::OK) {
+        return status;
+    }
+
+    std::vector<CatalogManager::PrincipalAccountCatalogInfo> accounts;
+    status = catalog->listPrincipalAccountCatalogEntries(accounts, ctx);
+    if (status != core::Status::OK && status != core::Status::NOT_FOUND) {
+        return status;
+    }
+
+    CatalogManager::PrincipalAccountCatalogInfo account{};
+    bool found_existing = false;
+    for (const auto& row : accounts) {
+        if (!equalsIgnoreCaseAscii(row.principal_name, username)) {
+            continue;
+        }
+        if (row.source_scope_kind != CatalogManager::SourceScopeKind::ANY) {
+            continue;
+        }
+        if (row.has_source_scope_value || !row.source_scope_value.empty()) {
+            continue;
+        }
+        account = row;
+        found_existing = true;
+        break;
+    }
+
+    if (!found_existing) {
+        account.account_id = generateUuidV7();
+        account.principal_name = username;
+        account.principal_kind = CatalogManager::PrincipalKind::USER;
+        account.source_scope_kind = CatalogManager::SourceScopeKind::ANY;
+        account.has_source_scope_value = false;
+    }
+
+    account.auth_policy_id = policy.policy_id;
+    account.is_login_enabled = true;
+    account.is_locked = false;
+    account.has_locked_reason = false;
+
+    return catalog->upsertPrincipalAccountCatalogEntry(account, ctx);
+}
+
+struct SessionThreadResult {
+    core::Status status = core::Status::OK;
+    std::string error_message;
+};
+
+class SessionThreadHarness {
+public:
+    SessionThreadHarness(core::Database* db, std::string socket_path)
+        : db_(db), socket_path_(std::move(socket_path)) {}
+
+    core::Status start(ErrorContext* ctx) {
+        IPCServerConfig server_config("auth_profile_parity", IPCMethod::UNIX_SOCKET);
+        server_config.socket_path = socket_path_;
+        server_config.accept_timeout_ms = 5000;
+        server_config.read_timeout_ms = 1000;
+        server_config.write_timeout_ms = 1000;
+        server_ = IPCServer::create(server_config, ctx);
+        if (!server_) {
+            return core::Status::CONNECTION_FAILURE;
+        }
+
+        core::Status status = server_->listen(ctx);
+        if (status != core::Status::OK) {
+            return status;
+        }
+
+        server_thread_ = std::thread([this]() {
+            ErrorContext accept_ctx;
+            auto conn = server_->accept(&accept_ctx);
+            if (!conn) {
+                result_.status = core::Status::CONNECTION_FAILURE;
+                result_.error_message = accept_ctx.message.empty()
+                    ? "accept failed"
+                    : accept_ctx.message;
+                return;
+            }
+
+            uint8_t server_session_id[16];
+            generateSessionId(server_session_id);
+            ServerSession session(conn.get(), db_, server_session_id);
+            result_.status = session.run();
+        });
+        return core::Status::OK;
+    }
+
+    void stop() {
+        if (server_) {
+            server_->close();
+        }
+        if (server_thread_.joinable()) {
+            server_thread_.join();
+        }
+        server_.reset();
+    }
+
+    ~SessionThreadHarness() {
+        stop();
+    }
+
+private:
+    core::Database* db_ = nullptr;
+    std::string socket_path_;
+    std::unique_ptr<IPCServer> server_;
+    std::thread server_thread_;
+    SessionThreadResult result_{};
+};
+
+struct ProtocolProfile {
+    std::string name;
+    std::vector<AuthMethod> preferred_methods;
+};
+
+class AuthPolicyProtocolParityTest : public ::testing::Test {
+protected:
+    void SetUp() override {
+        db_path_ = makeUniqueDbPath("test_auth_policy_protocol_parity");
+        std::remove(db_path_.c_str());
+
+        ErrorContext ctx;
+        ASSERT_EQ(Database::create(db_path_, 16384, &ctx), core::Status::OK) << ctx.message;
+
+        db_ = std::make_unique<Database>();
+        ASSERT_EQ(db_->open(db_path_, &ctx), core::Status::OK) << ctx.message;
+        catalog_ = db_->catalog_manager();
+        ASSERT_NE(catalog_, nullptr);
+    }
+
+    void TearDown() override {
+        if (db_) {
+            db_->close();
+            db_.reset();
+        }
+        if (!db_path_.empty()) {
+            std::remove(db_path_.c_str());
+        }
+    }
+
+    core::Status connectWithProfile(const ProtocolProfile& profile,
+                                    const std::string& socket_path,
+                                    std::string* last_error_out,
+                                    ErrorContext* ctx) {
+        ConnectionConfig config;
+        config.database_name = "auth_policy_protocol_parity";
+        config.username = "SYSARCH";
+        config.password = "ScratchBirdBeta1!";
+        config.preferred_auth_methods = profile.preferred_methods;
+        config.auto_start_server = false;
+        config.ipc_method = IPCMethod::UNIX_SOCKET;
+        config.socket_path = socket_path;
+
+        Connection conn;
+        core::Status status = conn.connect(config, ctx);
+        if (last_error_out) {
+            *last_error_out = conn.getLastError();
+        }
+        conn.disconnect();
+        return status;
+    }
+
+    std::string db_path_;
+    std::unique_ptr<Database> db_;
+    CatalogManager* catalog_ = nullptr;
+};
+
+TEST_F(AuthPolicyProtocolParityTest, StrictScramPolicyAllowsAllProtocolProfiles) {
+    if (!scratchbird::testing::networkTestsEnabled()) {
+        GTEST_SKIP() << "Network tests disabled; set SCRATCHBIRD_TEST_NETWORK=1 to enable.";
+    }
+
+    const std::string policy_name = makeUniquePolicyName("SCRAM_PARITY_POLICY");
+    ScopedEnvVar policy_env("SCRATCHBIRD_AUTH_POLICY_NAME", policy_name);
+
+    ErrorContext ctx;
+    ASSERT_EQ(configurePolicyForUser(catalog_,
+                                     "SYSARCH",
+                                     policy_name,
+                                     CatalogManager::AUTH_POLICY_METHOD_SCRAM_SHA_256,
+                                     CatalogManager::ConnectionAuthMethod::SCRAM_SHA_256,
+                                     &ctx),
+              core::Status::OK)
+        << ctx.message;
+
+    const std::vector<ProtocolProfile> profiles = {
+        {"native", {AuthMethod::SCRAM_SHA_256}},
+        {"postgresql", {AuthMethod::SCRAM_SHA_256, AuthMethod::PASSWORD, AuthMethod::MD5}},
+        {"mysql", {AuthMethod::SCRAM_SHA_256, AuthMethod::SCRAM_SHA_512, AuthMethod::PASSWORD, AuthMethod::MD5}},
+        {"firebird", {AuthMethod::SCRAM_SHA_256, AuthMethod::SCRAM_SHA_512, AuthMethod::PASSWORD, AuthMethod::MD5}},
+    };
+
+    for (const auto& profile : profiles) {
+        const std::string socket_path = makeUniqueSocketPath("auth_parity_scram_" + profile.name);
+        SessionThreadHarness server_thread(db_.get(), socket_path);
+
+        core::Status start_status = server_thread.start(&ctx);
+        if (start_status != core::Status::OK && isNetworkRestrictedError(ctx)) {
+            GTEST_SKIP() << "Socket setup restricted: " << ctx.message;
+        }
+        ASSERT_EQ(start_status, core::Status::OK) << ctx.message;
+
+        std::string last_error;
+        core::Status connect_status = connectWithProfile(profile, socket_path, &last_error, &ctx);
+        EXPECT_EQ(connect_status, core::Status::OK)
+            << "profile=" << profile.name << " ctx=" << ctx.message << " last_error=" << last_error;
+
+        server_thread.stop();
+    }
+}
+
+TEST_F(AuthPolicyProtocolParityTest, TokenOnlyPolicyDeniesPasswordProfiles) {
+    if (!scratchbird::testing::networkTestsEnabled()) {
+        GTEST_SKIP() << "Network tests disabled; set SCRATCHBIRD_TEST_NETWORK=1 to enable.";
+    }
+
+    const std::string policy_name = makeUniquePolicyName("TOKEN_ONLY_PARITY_POLICY");
+    ScopedEnvVar policy_env("SCRATCHBIRD_AUTH_POLICY_NAME", policy_name);
+
+    ErrorContext ctx;
+    ASSERT_EQ(configurePolicyForUser(catalog_,
+                                     "SYSARCH",
+                                     policy_name,
+                                     CatalogManager::AUTH_POLICY_METHOD_TOKEN,
+                                     CatalogManager::ConnectionAuthMethod::TOKEN,
+                                     &ctx),
+              core::Status::OK)
+        << ctx.message;
+
+    const std::vector<ProtocolProfile> profiles = {
+        {"native", {AuthMethod::SCRAM_SHA_256}},
+        {"postgresql", {AuthMethod::SCRAM_SHA_256, AuthMethod::PASSWORD, AuthMethod::MD5}},
+        {"mysql", {AuthMethod::SCRAM_SHA_256, AuthMethod::SCRAM_SHA_512, AuthMethod::PASSWORD, AuthMethod::MD5}},
+        {"firebird", {AuthMethod::SCRAM_SHA_256, AuthMethod::SCRAM_SHA_512, AuthMethod::PASSWORD, AuthMethod::MD5}},
+    };
+
+    for (const auto& profile : profiles) {
+        const std::string socket_path = makeUniqueSocketPath("auth_parity_token_" + profile.name);
+        SessionThreadHarness server_thread(db_.get(), socket_path);
+
+        core::Status start_status = server_thread.start(&ctx);
+        if (start_status != core::Status::OK && isNetworkRestrictedError(ctx)) {
+            GTEST_SKIP() << "Socket setup restricted: " << ctx.message;
+        }
+        ASSERT_EQ(start_status, core::Status::OK) << ctx.message;
+
+        std::string last_error;
+        core::Status connect_status = connectWithProfile(profile, socket_path, &last_error, &ctx);
+        EXPECT_NE(connect_status, core::Status::OK)
+            << "profile=" << profile.name << " unexpectedly connected";
+        EXPECT_FALSE(last_error.empty()) << "profile=" << profile.name;
+
+        server_thread.stop();
+    }
+}
+
+}  // namespace

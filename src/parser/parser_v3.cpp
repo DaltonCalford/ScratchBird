@@ -13473,7 +13473,7 @@ SetStmt* Parser::parseSet() {
         // Could also be SET SESSION AUTHORIZATION
         if (matchContextual("AUTHORIZATION")) {
             stmt->set_type = SetStmt::SetType::SESSION_AUTHORIZATION;
-            if (matchContextual("DEFAULT")) {
+            if (match(TokenType::KW_DEFAULT) || matchContextual("DEFAULT")) {
                 stmt->is_default = true;
             } else {
                 stmt->name = parseNameOrStringLiteral("Expected authorization user after SET SESSION AUTHORIZATION");
@@ -13930,7 +13930,7 @@ SetStmt* Parser::parseSet() {
 
     if (matchContextual("ROLE")) {
         stmt->set_type = SetStmt::SetType::ROLE;
-        if (matchContextual("NONE") || matchContextual("DEFAULT")) {
+        if (matchContextual("NONE") || match(TokenType::KW_DEFAULT) || matchContextual("DEFAULT")) {
             stmt->is_default = true;
         } else {
             stmt->name = parseNameOrStringLiteral("Expected role name after SET ROLE");

@@ -21,6 +21,7 @@
 #include <random>
 #include <chrono>
 #include <algorithm>
+#include <limits>
 
 namespace scratchbird {
 namespace protocol {
@@ -558,6 +559,211 @@ core::Status ProtocolCodec::parseAuthResponse(const Message& msg,
                 return core::Status::PROTOCOL_VIOLATION;
             }
         }
+    }
+
+    return core::Status::OK;
+}
+
+Message ProtocolCodec::buildAuthChallenge(const uint8_t session_id[16],
+                                          const std::string& username,
+                                          const std::vector<AuthMethod>& allowed_methods,
+                                          bool has_required_method,
+                                          AuthMethod required_method,
+                                          uint8_t allowed_transport_mask,
+                                          const std::vector<uint8_t>& challenge_nonce) {
+    Message msg(MessageType::AUTH_CHALLENGE);
+
+    msg.writeBytes(session_id, 16);
+    msg.writeNullTerminatedString(username, 64);
+    msg.writeUInt8(1);  // payload version
+
+    const uint8_t method_count = static_cast<uint8_t>(
+        std::min<size_t>(allowed_methods.size(), 16));
+    msg.writeUInt8(method_count);
+    for (size_t i = 0; i < method_count; ++i) {
+        msg.writeUInt8(static_cast<uint8_t>(allowed_methods[i]));
+    }
+
+    msg.writeUInt8(has_required_method ? 1 : 0);
+    msg.writeUInt8(static_cast<uint8_t>(required_method));
+    msg.writeUInt8(allowed_transport_mask);
+    msg.writeUInt8(0);  // reserved
+
+    const uint16_t nonce_len = static_cast<uint16_t>(
+        std::min<size_t>(challenge_nonce.size(), std::numeric_limits<uint16_t>::max()));
+    msg.writeUInt16(nonce_len);
+    if (nonce_len > 0) {
+        msg.writeBytes(challenge_nonce.data(), nonce_len);
+    }
+
+    return msg;
+}
+
+core::Status ProtocolCodec::parseAuthChallenge(const Message& msg,
+                                               uint8_t session_id[16],
+                                               std::string& username,
+                                               std::vector<AuthMethod>& allowed_methods,
+                                               bool& has_required_method,
+                                               AuthMethod& required_method,
+                                               uint8_t& allowed_transport_mask,
+                                               std::vector<uint8_t>& challenge_nonce,
+                                               core::ErrorContext* ctx) {
+    Message& m = const_cast<Message&>(msg);
+    m.resetReadOffset();
+
+    auto is_known_auth_method = [](uint8_t value) {
+        return value == static_cast<uint8_t>(AuthMethod::PASSWORD) ||
+               value == static_cast<uint8_t>(AuthMethod::MD5) ||
+               value == static_cast<uint8_t>(AuthMethod::SCRAM_SHA_256) ||
+               value == static_cast<uint8_t>(AuthMethod::SCRAM_SHA_512) ||
+               value == static_cast<uint8_t>(AuthMethod::TOKEN) ||
+               value == static_cast<uint8_t>(AuthMethod::PEER);
+    };
+
+    if (!m.readBytes(session_id, 16)) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "Truncated AUTH_CHALLENGE");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+    if (!m.readNullTerminatedString(username, 64)) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "Invalid AUTH_CHALLENGE username");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+
+    uint8_t version = 0;
+    uint8_t method_count = 0;
+    if (!m.readUInt8(version) || !m.readUInt8(method_count)) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "Truncated AUTH_CHALLENGE header");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+    if (version != 1 || method_count == 0 || method_count > 16) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "Invalid AUTH_CHALLENGE method header");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+
+    allowed_methods.clear();
+    allowed_methods.reserve(method_count);
+    for (uint8_t i = 0; i < method_count; ++i) {
+        uint8_t method_raw = 0;
+        if (!m.readUInt8(method_raw) || !is_known_auth_method(method_raw)) {
+            SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                              "Invalid AUTH_CHALLENGE method value");
+            return core::Status::PROTOCOL_VIOLATION;
+        }
+        allowed_methods.push_back(static_cast<AuthMethod>(method_raw));
+    }
+
+    uint8_t has_required_byte = 0;
+    uint8_t required_raw = 0;
+    uint8_t reserved = 0;
+    if (!m.readUInt8(has_required_byte) ||
+        !m.readUInt8(required_raw) ||
+        !m.readUInt8(allowed_transport_mask) ||
+        !m.readUInt8(reserved)) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "Truncated AUTH_CHALLENGE policy block");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+
+    has_required_method = (has_required_byte != 0);
+    if (has_required_method && !is_known_auth_method(required_raw)) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "Invalid AUTH_CHALLENGE required method");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+    required_method = static_cast<AuthMethod>(required_raw);
+
+    uint16_t nonce_len = 0;
+    if (!m.readUInt16(nonce_len)) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "Truncated AUTH_CHALLENGE nonce length");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+    challenge_nonce.clear();
+    if (nonce_len > 0) {
+        challenge_nonce.resize(nonce_len);
+        if (!m.readBytes(challenge_nonce.data(), nonce_len)) {
+            SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                              "Truncated AUTH_CHALLENGE nonce");
+            return core::Status::PROTOCOL_VIOLATION;
+        }
+    }
+
+    return core::Status::OK;
+}
+
+std::vector<uint8_t> ProtocolCodec::buildTokenAuthPayload(const uint8_t authkey_id[16],
+                                                           const std::vector<uint8_t>& proof,
+                                                           const std::vector<uint8_t>& binding) {
+    std::vector<uint8_t> payload;
+    const uint16_t proof_len = static_cast<uint16_t>(
+        std::min<size_t>(proof.size(), std::numeric_limits<uint16_t>::max()));
+    const uint16_t binding_len = static_cast<uint16_t>(
+        std::min<size_t>(binding.size(), std::numeric_limits<uint16_t>::max()));
+
+    payload.reserve(16 + sizeof(uint16_t) + proof_len + sizeof(uint16_t) + binding_len);
+    payload.insert(payload.end(), authkey_id, authkey_id + 16);
+    payload.push_back(static_cast<uint8_t>(proof_len & 0xFF));
+    payload.push_back(static_cast<uint8_t>((proof_len >> 8) & 0xFF));
+    payload.insert(payload.end(), proof.begin(), proof.begin() + proof_len);
+    payload.push_back(static_cast<uint8_t>(binding_len & 0xFF));
+    payload.push_back(static_cast<uint8_t>((binding_len >> 8) & 0xFF));
+    payload.insert(payload.end(), binding.begin(), binding.begin() + binding_len);
+    return payload;
+}
+
+core::Status ProtocolCodec::parseTokenAuthPayload(const std::vector<uint8_t>& payload,
+                                                  uint8_t authkey_id[16],
+                                                  std::vector<uint8_t>& proof,
+                                                  std::vector<uint8_t>& binding,
+                                                  core::ErrorContext* ctx) {
+    proof.clear();
+    binding.clear();
+
+    if (payload.size() < 16 + sizeof(uint16_t) + sizeof(uint16_t)) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "Truncated TOKEN auth payload");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+
+    size_t offset = 0;
+    std::memcpy(authkey_id, payload.data(), 16);
+    offset += 16;
+
+    const uint16_t proof_len =
+        static_cast<uint16_t>(payload[offset]) |
+        (static_cast<uint16_t>(payload[offset + 1]) << 8);
+    offset += sizeof(uint16_t);
+
+    if (offset + proof_len + sizeof(uint16_t) > payload.size()) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "TOKEN auth proof length exceeds payload");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+
+    if (proof_len > 0) {
+        proof.assign(payload.begin() + static_cast<std::ptrdiff_t>(offset),
+                     payload.begin() + static_cast<std::ptrdiff_t>(offset + proof_len));
+    }
+    offset += proof_len;
+
+    const uint16_t binding_len =
+        static_cast<uint16_t>(payload[offset]) |
+        (static_cast<uint16_t>(payload[offset + 1]) << 8);
+    offset += sizeof(uint16_t);
+
+    if (offset + binding_len != payload.size()) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "TOKEN auth binding length mismatch");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+
+    if (binding_len > 0) {
+        binding.assign(payload.begin() + static_cast<std::ptrdiff_t>(offset),
+                       payload.end());
     }
 
     return core::Status::OK;

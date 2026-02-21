@@ -1619,7 +1619,17 @@ core::Status FirebirdAdapter::handleAttach(network::Connection* conn) {
                                                        client_config_.ipc_method);
     }
     client_config_.username = username_.empty() ? "BOOTSTRAP" : username_;
+    client_config_.password = remote_password_;
     client_config_.auto_start_server = false;
+
+    core::ErrorContext auth_ctx;
+    core::Status auth_status = ensureRemoteClient(&auth_ctx);
+    if (auth_status != core::Status::OK) {
+        sendErrorResponse(conn,
+                          firebird::ErrorCode::isc_login,
+                          auth_ctx.message.empty() ? "Authentication failed" : auth_ctx.message);
+        return sendBuffer(conn);
+    }
 
     // Assign database handle
     db_handle_ = next_db_handle_++;
@@ -2395,8 +2405,20 @@ core::Status FirebirdAdapter::handleContAuth(network::Connection* conn) {
     // Plugin name
     std::string plugin = readString(current_packet_.data(), offset, current_packet_.size());
 
-    // For testing, accept any auth
-    // In a real implementation, we'd validate SRP or other auth
+    const bool supported_plugin =
+        plugin == firebird::AUTH_PLUGIN_SRP ||
+        plugin == firebird::AUTH_PLUGIN_SRP256 ||
+        plugin == firebird::AUTH_PLUGIN_LEGACY;
+    if (!supported_plugin) {
+        sendErrorResponse(conn,
+                          firebird::ErrorCode::isc_login,
+                          "Unsupported auth plugin: " + plugin);
+        return sendBuffer(conn);
+    }
+    if (plugin != firebird::AUTH_PLUGIN_LEGACY && data.empty()) {
+        sendErrorResponse(conn, firebird::ErrorCode::isc_login, "Authentication payload is missing");
+        return sendBuffer(conn);
+    }
 
     auth_complete_ = true;
     fb_state_ = FirebirdProtocolState::AUTHENTICATED;
@@ -2725,6 +2747,10 @@ void FirebirdAdapter::parseDpb(const std::vector<uint8_t>& dpb) {
         switch (item) {
             case firebird::DpbItem::isc_dpb_user_name:
                 username_ = value;
+                break;
+            case firebird::DpbItem::isc_dpb_password:
+            case firebird::DpbItem::isc_dpb_password_enc:
+                remote_password_ = value;
                 break;
             case firebird::DpbItem::isc_dpb_sql_dialect:
                 if (!value.empty()) sql_dialect_ = static_cast<uint8_t>(value[0]);

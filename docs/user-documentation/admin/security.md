@@ -1,456 +1,153 @@
-# Security Best Practices
-
-Secure your ScratchBird installation.
+# Security
+Last modified: 2026-02-21
 
 [Back to Admin Index](index.md) | [Back to Documentation Index](../index.md)
 
 ---
 
-## Security Checklist
+## 0.1.0 Authentication/Security Baseline
 
-### Initial Setup
+ScratchBird 0.1.0 enforces an engine-owned, policy-driven authentication model:
 
-- [ ] Change default admin password
-- [ ] Configure host-based authentication
-- [ ] Enable SSL/TLS
-- [ ] Set up firewall rules
-- [ ] Create application-specific users
-- [ ] Review default privileges
+1. Bootstrap is explicit and one-time (no silent dev fallback).
+2. Server drives auth method negotiation (`AUTH_CHALLENGE`) before credentials are accepted.
+3. SCRAM-SHA-256 is the default auth method.
+4. Legacy `PASSWORD`/`MD5` are policy-gated and transport-gated.
+5. `TOKEN` and `PEER` auth are first-class methods.
+6. MFA challenge/step-up is enforced via `AuthStatus::CONTINUE` and policy.
 
-### Ongoing
+## Service Identity
 
-- [ ] Regular password rotation
-- [ ] Audit user access
-- [ ] Monitor for suspicious activity
-- [ ] Keep software updated
-- [ ] Test backup restoration
-- [ ] Review logs
+ScratchBird server processes are expected to run as:
 
----
+- user: `scratchbird`
+- group: `scratchbird`
 
-## Authentication Security
-
-### Strong Passwords
-
-Configure minimum requirements:
+Config keys:
 
 ```ini
-# sb_server.conf
-[authentication]
-password_min_length = 12
-password_hash = argon2id
-max_failed_attempts = 5
-lockout_duration = 300
+[server]
+run_as_user = scratchbird
+run_as_group = scratchbird
 ```
 
-### Use SCRAM-SHA-256
+Startup fail-fast is enabled if the configured user/group does not exist.
 
-Never use MD5 or trust in production:
+## Bootstrap Security
 
-```ini
-[authentication]
-methods = scram-sha-256
-```
+Bootstrap phase (`UNINITIALIZED`) is detected from catalog bootstrap state + user list.
 
-### Host-Based Authentication
+Bootstrap proof requirements:
 
-Restrict connections by IP:
+1. Bootstrap token file (default: `/var/lib/scratchbird/bootstrap.token`, override: `SCRATCHBIRD_BOOTSTRAP_TOKEN_FILE`).
+2. File must be regular file with mode `0600`.
+3. Presented token must match exactly (timing-safe compare).
+4. Token is consumed/revoked after success (zeroed + removed).
 
-```
-# hba.conf
-# Reject admin from remote
-host    all   admin     0.0.0.0/0        reject
+Bootstrap peer-UID gate (local IPC hardening):
 
-# Localhost only for superuser
-local   all   postgres                   peer
-host    all   postgres  127.0.0.1/32     scram-sha-256
+- `SCRATCHBIRD_BOOTSTRAP_REQUIRE_OWNER_UID` (default enabled)
+- `SCRATCHBIRD_BOOTSTRAP_OWNER_UID` (optional explicit owner uid)
 
-# Application from specific subnet
-host    mydb  appuser   10.0.0.0/8       scram-sha-256
+## Policy-Driven Auth Negotiation
 
-# SSL required from elsewhere
-hostssl all   all       0.0.0.0/0        scram-sha-256
-```
+Handshake contract:
 
-### Disable Remote Superuser
+1. Client sends `AUTH_REQUEST` with empty payload to trigger negotiation.
+2. Server returns `AUTH_CHALLENGE` with:
+   - allowed auth methods
+   - optional required auth method
+   - allowed transport mask
+   - nonce
+3. Client must choose a method allowed by policy.
 
-```ini
-# sb_server.conf
-[authentication]
-allow_superuser_remote = false
-```
+Deterministic policy-deny codes include:
 
----
+- `AUTH_POLICY_NEGOTIATION_REQUIRED`
+- `AUTH_POLICY_METHOD_DENIED`
+- `AUTH_POLICY_REQUIRED_METHOD`
+- `AUTH_POLICY_TRANSPORT_DENIED`
+- `AUTH_POLICY_USER_MISMATCH`
+- `AUTH_POLICY_PEER_REQUIRED`
+- `AUTH_POLICY_PEER_TRANSPORT_UNSUPPORTED`
 
-## Encryption
+## Auth Methods in 0.1.0
 
-### Enable TLS
+| Method | Status | Notes |
+|---|---|---|
+| `SCRAM_SHA_256` | Default | Recommended baseline |
+| `SCRAM_SHA_512` | Supported | High-security policy profile |
+| `TOKEN` | Supported | AuthKey proof payload + policy gating |
+| `PEER` | Supported | Local Unix socket peer UID/GID mapping |
+| `PASSWORD` | Legacy | Deprecated warning + policy fallback + trusted local IPC only |
+| `MD5` | Legacy | Deprecated warning + policy fallback + trusted local IPC only |
 
-```ini
-# sb_server.conf
-[ssl]
-enabled = true
-cert_file = /etc/scratchbird/ssl/server.crt
-key_file = /etc/scratchbird/ssl/server.key
-min_protocol = TLSv1.2
-```
+Legacy usage emits warnings and increments telemetry counter:
 
-### Require SSL for Remote
+- `scratchbird_auth_legacy_method_total`
 
-```
-# hba.conf
-# Non-SSL connections only from localhost
-hostnossl   all   all   127.0.0.1/32   scram-sha-256
+## MFA and Step-Up
 
-# All others require SSL
-hostssl     all   all   0.0.0.0/0      scram-sha-256
-```
+If policy requires MFA:
 
-### Encrypt Backups
+1. Server returns `AuthStatus::CONTINUE` with MFA challenge payload.
+2. Client responds with `SBMFA1|<challenge_id>|<code>`.
+3. Server validates TOTP or policy-allowed recovery/break-glass code.
 
-```bash
-# Encrypt backup
-sb_backup create mydb - | \
-    gpg --encrypt -r admin@example.com > backup.sbdb.gpg
-```
+MFA policy controls include:
 
-### Data at Rest
+- `allow_recovery_codes`
+- `allow_break_glass`
+- `max_challenge_attempts`
+- `step_up_ttl_ms`
 
-Consider full-disk encryption for production:
+Step-up enforcement applies to privileged SQL, including:
 
-```bash
-# Linux LUKS
-cryptsetup luksFormat /dev/sdb
-cryptsetup open /dev/sdb scratchbird_data
-mkfs.ext4 /dev/mapper/scratchbird_data
-mount /dev/mapper/scratchbird_data /var/lib/scratchbird
-```
+- `SET ROLE` / `RESET ROLE`
+- `GRANT` / `REVOKE`
+- `CREATE/ALTER/DROP USER|ROLE|GROUP|POLICY|TOKEN`
+- `CREATE/ALTER/DROP AUTH POLICY`
+- `CREATE/ALTER/DROP CONNECTION RULE`
 
----
+If step-up is missing/expired, privileged commands fail with SQLSTATE `28000`.
 
-## Network Security
+## Token and Peer Controls
 
-### Firewall Configuration
+### AuthKey Token Auth
 
-**Linux (UFW):**
-```bash
-# Allow only specific IPs
-sudo ufw allow from 10.0.0.0/8 to any port 5432
-sudo ufw deny 5432
-```
+Token payload contract:
 
-**Linux (firewalld):**
-```bash
-sudo firewall-cmd --add-rich-rule='rule family="ipv4" source address="10.0.0.0/8" port protocol="tcp" port="5432" accept' --permanent
-sudo firewall-cmd --reload
-```
+- `authkey_id(16)` + `proof_len(u16)` + `proof` + `binding_len(u16)` + `binding`
 
-### Bind to Specific Interface
+Token auth validates:
 
-```ini
-# sb_server.conf
-[network]
-# Only listen on internal interface
-bind_address = 10.0.1.5
-
-# Or localhost only
-bind_address = 127.0.0.1
-```
-
-### Disable Unused Protocols
-
-```ini
-# sb_server.conf
-[network]
-native_port = 3092
-pg_port = 5432
-mysql_port = 0    # Disabled
-fb_port = 0       # Disabled
-```
-
----
-
-## Access Control
-
-### Principle of Least Privilege
-
-Create specific users with minimal permissions:
-
-```sql
--- Read-only user
-CREATE USER reporter WITH PASSWORD 'secure_pass';
-GRANT CONNECT ON DATABASE analytics TO reporter;
-GRANT USAGE ON SCHEMA public TO reporter;
-GRANT SELECT ON ALL TABLES IN SCHEMA public TO reporter;
-
--- Application user (CRUD only)
-CREATE USER webapp WITH PASSWORD 'secure_pass';
-GRANT CONNECT ON DATABASE myapp TO webapp;
-GRANT USAGE ON SCHEMA public TO webapp;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO webapp;
-```
-
-### Row-Level Security
-
-Restrict data access at row level:
-
-```sql
--- Enable RLS
-ALTER TABLE customers ENABLE ROW LEVEL SECURITY;
-
--- Policy: Users see only their own data
-CREATE POLICY customer_isolation ON customers
-    USING (owner_id = current_user_id());
-```
-
-### Column-Level Permissions
-
-Hide sensitive columns:
+1. AuthKey state/scope
+2. binding policy
+3. HMAC proof
+4. usage consumption (`consumeAuthKey`)
 
-```sql
--- Grant access to non-sensitive columns
-GRANT SELECT (id, name, email) ON users TO analyst;
--- Analyst cannot see: password_hash, ssn, etc.
-```
-
----
+### Peer Identity Auth
 
-## Audit Logging
+Peer auth requires:
 
-### Enable Connection Logging
+1. local Unix socket peer credentials
+2. principal-account mapping in catalog
+3. source scope mapped by `PEER_UID` or `PEER_GID`
 
-```ini
-# sb_server.conf
-[logging]
-log_connections = true
-log_disconnections = true
-```
-
-### Enable Statement Logging
+## Audit Coverage
 
-```ini
-[logging]
-log_statement = all  # none, ddl, mod, all
-```
-
-### Audit Sensitive Operations
+Audit/security events include:
 
-```sql
--- Create audit table
-CREATE TABLE audit_log (
-    id SERIAL PRIMARY KEY,
-    event_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    user_name TEXT,
-    operation TEXT,
-    table_name TEXT,
-    old_data JSONB,
-    new_data JSONB
-);
+- bootstrap lifecycle (`attempt`, `failure`, `success`, `revoke`)
+- login success/failure
+- MFA method details (`totp`, `recovery_code`, `break_glass`)
+- step-up denial for privileged commands
 
--- Create audit trigger
-CREATE OR REPLACE FUNCTION audit_trigger()
-RETURNS TRIGGER AS $$
-BEGIN
-    INSERT INTO audit_log (user_name, operation, table_name, old_data, new_data)
-    VALUES (
-        current_user,
-        TG_OP,
-        TG_TABLE_NAME,
-        CASE WHEN TG_OP = 'DELETE' THEN row_to_json(OLD)::jsonb END,
-        CASE WHEN TG_OP IN ('INSERT', 'UPDATE') THEN row_to_json(NEW)::jsonb END
-    );
-    RETURN COALESCE(NEW, OLD);
-END;
-$$ LANGUAGE plpgsql;
+## Operational Checklist (0.1.0)
 
--- Apply to sensitive tables
-CREATE TRIGGER audit_users
-    AFTER INSERT OR UPDATE OR DELETE ON users
-    FOR EACH ROW EXECUTE FUNCTION audit_trigger();
-```
-
----
-
-## SQL Injection Prevention
-
-### Use Parameterized Queries
-
-**Good:**
-```python
-cursor.execute("SELECT * FROM users WHERE id = %s", (user_id,))
-```
-
-**Bad:**
-```python
-cursor.execute(f"SELECT * FROM users WHERE id = {user_id}")
-```
-
-### Validate Input
-
-```python
-# Validate expected format
-if not user_id.isdigit():
-    raise ValueError("Invalid user ID")
-```
-
-### Limit Database Permissions
-
-Application users should not have DDL rights:
-
-```sql
--- No CREATE, DROP, ALTER
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO webapp;
-```
-
----
-
-## Security Monitoring
-
-### Failed Login Monitoring
-
-```bash
-# Check for brute force attempts
-grep "authentication failed" /var/log/scratchbird/sb_server.log | \
-    awk '{print $NF}' | sort | uniq -c | sort -rn
-```
-
-### Long-Running Queries
-
-```sql
--- Potential attack indicator
-SELECT pid, usename, query_start, query
-FROM pg_stat_activity
-WHERE state = 'active'
-  AND NOW() - query_start > INTERVAL '10 minutes';
-```
-
-### Unusual Patterns
-
-Monitor for:
-- Login from new IPs
-- After-hours activity
-- Unusual query patterns
-- Bulk data access
-
----
-
-## Security Hardening
-
-### File Permissions
-
-```bash
-# Config files
-chmod 600 /etc/scratchbird/sb_server.conf
-chmod 600 /etc/scratchbird/hba.conf
-chown scratchbird:scratchbird /etc/scratchbird/*
-
-# SSL keys
-chmod 600 /etc/scratchbird/ssl/server.key
-chmod 644 /etc/scratchbird/ssl/server.crt
-
-# Data directory
-chmod 700 /var/lib/scratchbird
-chown -R scratchbird:scratchbird /var/lib/scratchbird
-```
-
-### Systemd Hardening
-
-The default service file includes:
-
-```ini
-[Service]
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
-ProtectHome=true
-MemoryDenyWriteExecute=true
-```
-
-### Kernel Security
-
-```bash
-# /etc/sysctl.d/99-scratchbird.conf
-# Prevent IP spoofing
-net.ipv4.conf.all.rp_filter = 1
-
-# SYN flood protection
-net.ipv4.tcp_syncookies = 1
-
-# Disable ICMP redirects
-net.ipv4.conf.all.accept_redirects = 0
-```
-
----
-
-## Incident Response
-
-### Suspicious Activity Detected
-
-1. **Capture evidence:**
-   ```bash
-   # Snapshot connections
-   psql -c "SELECT * FROM pg_stat_activity" > incident_$(date +%s).log
-   ```
-
-2. **Isolate if necessary:**
-   ```bash
-   # Block suspicious IP
-   sudo ufw deny from 1.2.3.4
-   ```
-
-3. **Kill suspicious sessions:**
-   ```sql
-   SELECT pg_terminate_backend(pid)
-   FROM pg_stat_activity
-   WHERE client_addr = '1.2.3.4';
-   ```
-
-4. **Review audit logs**
-
-5. **Document and report**
-
-### Data Breach Response
-
-1. Contain the breach
-2. Assess scope
-3. Notify affected parties
-4. Preserve evidence
-5. Remediate vulnerabilities
-6. Review and improve
-
----
-
-## Compliance
-
-### Password Policies
-
-| Requirement | Configuration |
-|-------------|---------------|
-| Minimum length | `password_min_length = 12` |
-| Complexity | Application-enforced |
-| Rotation | Policy + user education |
-| History | Not reusing recent passwords |
-
-### Access Logging
-
-Maintain logs for required retention period:
-
-```bash
-# Log rotation with retention
-/var/log/scratchbird/*.log {
-    daily
-    rotate 365
-    compress
-    delaycompress
-    notifempty
-}
-```
-
----
-
-## Next Steps
-
-- [Configure SSL/TLS](../configuration/ssl-setup.md)
-- [Set up authentication](../configuration/hba.conf.md)
-- [User management](user-management.md)
-- [Monitoring](monitoring.md)
+1. Ensure install flow created `scratchbird:scratchbird` and owned runtime dirs.
+2. Ensure bootstrap token exists before first bootstrap login.
+3. Ensure default auth policy requires SCRAM (`SCRAM_SHA_256` or stronger).
+4. Keep legacy fallback disabled unless explicitly required for trusted local IPC.
+5. Configure peer mapping only when local process identity auth is intended.
+6. Configure MFA policies for privileged operator/admin accounts.

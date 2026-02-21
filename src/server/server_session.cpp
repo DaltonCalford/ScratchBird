@@ -22,10 +22,16 @@
 #include "scratchbird/core/audit_logger.h"
 #include "scratchbird/core/logger.h"
 #include "scratchbird/security/scram_auth.h"
+#include "scratchbird/security/mfa_auth.h"
 
 #include <cstring>
 #include <cctype>
 #include <algorithm>
+#include <cerrno>
+#include <cstdlib>
+#include <limits>
+#include <array>
+#include <map>
 #include <sstream>
 #include <iomanip>
 #include <iostream>
@@ -33,6 +39,11 @@
 #include <functional>
 #include <streambuf>
 #include <stdexcept>
+#include <random>
+#include <openssl/sha.h>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 
 namespace scratchbird {
 namespace server {
@@ -173,6 +184,846 @@ bool parseCopyQuery(const std::string& sql, bool& from_stdin, bool& to_stdout) {
         to_stdout = true;
     }
     return from_stdin || to_stdout;
+}
+
+std::string toUpperAscii(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+        return static_cast<char>(std::toupper(c));
+    });
+    return value;
+}
+
+bool parseUint32Strict(const char* text, uint32_t& value_out) {
+    if (!text || text[0] == '\0') {
+        return false;
+    }
+
+    char* end_ptr = nullptr;
+    errno = 0;
+    unsigned long parsed = std::strtoul(text, &end_ptr, 10);
+    if (errno != 0 || end_ptr == text || *end_ptr != '\0') {
+        return false;
+    }
+    if (parsed > std::numeric_limits<uint32_t>::max()) {
+        return false;
+    }
+
+    value_out = static_cast<uint32_t>(parsed);
+    return true;
+}
+
+bool bootstrapOwnerUidGateEnabled() {
+    const char* configured = std::getenv("SCRATCHBIRD_BOOTSTRAP_REQUIRE_OWNER_UID");
+    if (!configured || configured[0] == '\0') {
+        return true;
+    }
+
+    std::string normalized = toUpperAscii(configured);
+    return normalized != "0" &&
+           normalized != "FALSE" &&
+           normalized != "NO" &&
+           normalized != "OFF";
+}
+
+uint32_t resolveBootstrapOwnerUid() {
+    uint32_t configured_uid = 0;
+    const char* configured = std::getenv("SCRATCHBIRD_BOOTSTRAP_OWNER_UID");
+    if (parseUint32Strict(configured, configured_uid)) {
+        return configured_uid;
+    }
+
+#ifdef _WIN32
+    return 0;
+#else
+    return static_cast<uint32_t>(::geteuid());
+#endif
+}
+
+bool detectBootstrapPhaseA(core::CatalogManager* catalog,
+                           bool& phase_a_out,
+                           std::string& error_out) {
+    phase_a_out = false;
+    error_out.clear();
+
+    if (!catalog) {
+        return true;
+    }
+
+    core::CatalogManager::BootstrapState bootstrap_state =
+        core::CatalogManager::BootstrapState::UNINITIALIZED;
+    core::ErrorContext bootstrap_ctx;
+    core::Status bootstrap_status = catalog->getBootstrapState(bootstrap_state, &bootstrap_ctx);
+    if (bootstrap_status != core::Status::OK) {
+        error_out = bootstrap_ctx.message.empty() ? "bootstrap_state_unavailable"
+                                                  : bootstrap_ctx.message;
+        return false;
+    }
+
+    if (bootstrap_state != core::CatalogManager::BootstrapState::UNINITIALIZED) {
+        return true;
+    }
+
+    std::vector<core::CatalogManager::UserInfo> all_users;
+    core::Status list_status = catalog->listUsers(all_users, &bootstrap_ctx);
+    if (list_status != core::Status::OK) {
+        error_out = bootstrap_ctx.message.empty() ? "bootstrap_user_scan_failed"
+                                                  : bootstrap_ctx.message;
+        return false;
+    }
+
+    if (all_users.empty()) {
+        phase_a_out = true;
+        return true;
+    }
+
+    phase_a_out = all_users.size() == 1 &&
+                  toUpperAscii(all_users.front().username) == "SYSTEM";
+    return true;
+}
+
+bool isBootstrapPeerEligible(const IPCConnection* connection, std::string& denial_reason_out) {
+    denial_reason_out.clear();
+
+    if (!bootstrapOwnerUidGateEnabled()) {
+        return true;
+    }
+
+    if (!connection) {
+        denial_reason_out = "connection_unavailable";
+        return false;
+    }
+
+    if (connection->getMethod() != IPCMethod::UNIX_SOCKET) {
+        denial_reason_out = "bootstrap_requires_local_ipc";
+        return false;
+    }
+
+    PeerCredentials peer = connection->getPeerCredentials();
+    if (!peer.available) {
+        denial_reason_out = "peer_credentials_unavailable";
+        return false;
+    }
+
+    const uint32_t owner_uid = resolveBootstrapOwnerUid();
+    if (peer.uid == owner_uid || peer.uid == 0) {
+        return true;
+    }
+
+    denial_reason_out = "peer_uid_not_eligible";
+    return false;
+}
+
+constexpr const char* kAuthPolicyNegotiationRequiredCode = "AUTH_POLICY_NEGOTIATION_REQUIRED";
+constexpr const char* kAuthPolicyMethodDeniedCode = "AUTH_POLICY_METHOD_DENIED";
+constexpr const char* kAuthPolicyRequiredMethodCode = "AUTH_POLICY_REQUIRED_METHOD";
+constexpr const char* kAuthPolicyTransportDeniedCode = "AUTH_POLICY_TRANSPORT_DENIED";
+constexpr const char* kAuthPolicyUserMismatchCode = "AUTH_POLICY_USER_MISMATCH";
+constexpr const char* kAuthPolicyPeerRequiredCode = "AUTH_POLICY_PEER_REQUIRED";
+constexpr const char* kAuthPolicyPeerTransportCode = "AUTH_POLICY_PEER_TRANSPORT_UNSUPPORTED";
+constexpr const char* kAuthMfaRequiredCode = "AUTH_MFA_REQUIRED";
+constexpr const char* kAuthMfaInvalidCode = "AUTH_MFA_INVALID";
+constexpr const char* kMfaPayloadPrefix = "SBMFA1";
+
+std::vector<std::string> splitPipeFields(const std::string& input) {
+    std::vector<std::string> fields;
+    size_t start = 0;
+    while (start <= input.size()) {
+        const size_t delim = input.find('|', start);
+        if (delim == std::string::npos) {
+            fields.push_back(input.substr(start));
+            break;
+        }
+        fields.push_back(input.substr(start, delim - start));
+        start = delim + 1;
+    }
+    return fields;
+}
+
+std::vector<uint8_t> buildMfaChallengePayload(const std::string& challenge_id,
+                                              const std::string& method_name,
+                                              const std::vector<uint8_t>& server_final_payload) {
+    std::string payload = std::string(kMfaPayloadPrefix) + "|" + challenge_id + "|" + method_name;
+    if (!server_final_payload.empty()) {
+        payload += "|" + security::base64Encode(server_final_payload);
+    }
+    return std::vector<uint8_t>(payload.begin(), payload.end());
+}
+
+bool parseMfaResponsePayload(const std::vector<uint8_t>& payload,
+                             std::string& challenge_id_out,
+                             std::string& code_out) {
+    challenge_id_out.clear();
+    code_out.clear();
+
+    if (payload.empty()) {
+        return false;
+    }
+
+    const std::string raw(payload.begin(), payload.end());
+    const std::vector<std::string> parts = splitPipeFields(raw);
+    if (parts.size() != 3 || parts[0] != kMfaPayloadPrefix) {
+        return false;
+    }
+    if (parts[1].empty() || parts[2].empty()) {
+        return false;
+    }
+
+    challenge_id_out = parts[1];
+    code_out = parts[2];
+    return true;
+}
+
+std::string sanitizeForEnvKey(const std::string& value) {
+    std::string out;
+    out.reserve(value.size());
+    for (const unsigned char ch : value) {
+        if (std::isalnum(ch)) {
+            out.push_back(static_cast<char>(std::toupper(ch)));
+        } else {
+            out.push_back('_');
+        }
+    }
+    return out;
+}
+
+std::string resolveMfaTotpSecretFromEnv(const std::string& username) {
+    const std::string user_key =
+        std::string("SCRATCHBIRD_MFA_TOTP_SECRET_") + sanitizeForEnvKey(username);
+    const char* per_user = std::getenv(user_key.c_str());
+    if (per_user && per_user[0] != '\0') {
+        return std::string(per_user);
+    }
+
+    const char* generic = std::getenv("SCRATCHBIRD_MFA_TOTP_SECRET_BASE32");
+    if (generic && generic[0] != '\0') {
+        return std::string(generic);
+    }
+    return std::string();
+}
+
+struct ResolvedMfaAuthConfig {
+    bool mfa_required = false;
+    core::ID account_id;
+    core::ID mfa_policy_id;
+    bool allow_recovery_codes = true;
+    bool allow_break_glass = false;
+    uint8_t max_challenge_attempts = 3;
+    uint32_t step_up_ttl_ms = 0;
+};
+
+struct MfaVerificationResult {
+    bool success = false;
+    bool recovery_used = false;
+    bool break_glass_used = false;
+};
+
+uint64_t currentTimeMs() {
+    return static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::milliseconds>(
+            std::chrono::system_clock::now().time_since_epoch())
+            .count());
+}
+
+std::array<uint8_t, 32> hashMfaCodeSha256(const std::string& code) {
+    std::array<uint8_t, 32> out{};
+    SHA256(reinterpret_cast<const unsigned char*>(code.data()),
+           static_cast<unsigned long>(code.size()),
+           out.data());
+    return out;
+}
+
+bool loadPrimaryTotpEnrollment(core::CatalogManager* catalog,
+                               const core::ID& account_id,
+                               const core::ID& mfa_policy_id,
+                               core::CatalogManager::MfaEnrollmentCatalogInfo& enrollment_out,
+                               std::string& error_out) {
+    enrollment_out = core::CatalogManager::MfaEnrollmentCatalogInfo{};
+    error_out.clear();
+
+    std::vector<core::CatalogManager::MfaEnrollmentCatalogInfo> enrollments;
+    core::ErrorContext ctx;
+    const core::Status status =
+        catalog->listMfaEnrollmentCatalogEntries(account_id, enrollments, &ctx);
+    if (status != core::Status::OK) {
+        error_out = ctx.message.empty() ? "mfa_enrollment_lookup_failed" : ctx.message;
+        return false;
+    }
+
+    bool found_any = false;
+    for (const auto& enrollment : enrollments) {
+        if (!enrollment.is_enrolled ||
+            enrollment.factor_type != core::CatalogManager::MfaFactorType::TOTP ||
+            !enrollment.has_secret) {
+            continue;
+        }
+        if (mfa_policy_id != core::ID{} &&
+            enrollment.mfa_policy_id != mfa_policy_id &&
+            enrollment.mfa_policy_id != core::ID{}) {
+            continue;
+        }
+        if (enrollment.is_primary) {
+            enrollment_out = enrollment;
+            return true;
+        }
+        if (!found_any) {
+            enrollment_out = enrollment;
+            found_any = true;
+        }
+    }
+    return found_any;
+}
+
+bool ensureCatalogMfaEnrollmentForUser(core::CatalogManager* catalog,
+                                       const core::ID& account_id,
+                                       const core::ID& mfa_policy_id,
+                                       const std::string& username,
+                                       core::CatalogManager::MfaEnrollmentCatalogInfo& enrollment_out,
+                                       std::string& error_out) {
+    error_out.clear();
+    if (loadPrimaryTotpEnrollment(catalog, account_id, mfa_policy_id, enrollment_out, error_out)) {
+        return true;
+    }
+
+    const std::string secret_base32 = resolveMfaTotpSecretFromEnv(username);
+    if (secret_base32.empty()) {
+        error_out = "mfa_not_configured";
+        return false;
+    }
+    if (security::decodeBase32(secret_base32).empty()) {
+        error_out = "mfa_secret_invalid";
+        return false;
+    }
+
+    core::CatalogManager::MfaEnrollmentCatalogInfo enrollment{};
+    enrollment.enrollment_id = core::generateUuidV7();
+    enrollment.account_id = account_id;
+    enrollment.mfa_policy_id = mfa_policy_id;
+    enrollment.factor_type = core::CatalogManager::MfaFactorType::TOTP;
+    enrollment.is_primary = true;
+    enrollment.is_enrolled = true;
+    enrollment.has_secret = true;
+    enrollment.secret_base32 = secret_base32;
+    enrollment.enrolled_time_utc = static_cast<uint64_t>(
+        std::chrono::system_clock::now().time_since_epoch().count());
+
+    uint32_t parsed = 0;
+    if (parseUint32Strict(std::getenv("SCRATCHBIRD_MFA_TOTP_DIGITS"), parsed) &&
+        parsed > 0 && parsed <= 10) {
+        enrollment.totp_digits = static_cast<uint8_t>(parsed);
+    }
+    if (parseUint32Strict(std::getenv("SCRATCHBIRD_MFA_TOTP_PERIOD"), parsed) &&
+        parsed > 0) {
+        enrollment.totp_period = parsed;
+    }
+
+    core::ErrorContext upsert_ctx;
+    const core::Status upsert_status = catalog->upsertMfaEnrollmentCatalogEntry(enrollment, &upsert_ctx);
+    if (upsert_status != core::Status::OK) {
+        error_out = upsert_ctx.message.empty() ? "mfa_enrollment_upsert_failed" : upsert_ctx.message;
+        return false;
+    }
+    return loadPrimaryTotpEnrollment(catalog, account_id, mfa_policy_id, enrollment_out, error_out);
+}
+
+bool resolveMfaConfig(core::CatalogManager* catalog,
+                      const IPCConnection* connection,
+                      const std::string& username,
+                      ResolvedMfaAuthConfig& config_out,
+                      std::string& error_out) {
+    config_out = ResolvedMfaAuthConfig{};
+    error_out.clear();
+    if (!catalog || username.empty()) {
+        return true;
+    }
+
+    core::CatalogManager::PrincipalResolutionRequest request{};
+    request.presented_principal_name = username;
+
+    if (connection) {
+        const PeerCredentials peer = connection->getPeerCredentials();
+        if (peer.available) {
+            request.has_peer_uid = true;
+            request.peer_uid = peer.uid;
+            request.has_peer_gid = true;
+            request.peer_gid = peer.gid;
+            request.has_peer_pid = true;
+            request.peer_pid = peer.pid;
+        }
+        if (connection->getMethod() == IPCMethod::UNIX_SOCKET ||
+            connection->getMethod() == IPCMethod::NAMED_PIPE) {
+            request.source_socket = connection->getRemoteAddress();
+        } else {
+            request.source_ip = connection->getRemoteAddress();
+        }
+    }
+
+    core::CatalogManager::PrincipalAccountCatalogInfo account;
+    core::ErrorContext resolve_ctx;
+    const core::Status resolve_status = catalog->resolvePrincipalAccount(request, account, &resolve_ctx);
+    if (resolve_status == core::Status::INVALID_AUTHORIZATION ||
+        resolve_status == core::Status::NOT_FOUND) {
+        return true;
+    }
+    if (resolve_status != core::Status::OK) {
+        error_out = resolve_ctx.message.empty() ? "mfa_policy_resolution_failed" : resolve_ctx.message;
+        return false;
+    }
+
+    core::CatalogManager::AuthPolicyCatalogInfo policy;
+    const core::Status policy_status =
+        catalog->getAuthPolicyCatalogEntry(account.auth_policy_id, policy, &resolve_ctx);
+    if (policy_status == core::Status::NOT_FOUND) {
+        return true;
+    }
+    if (policy_status != core::Status::OK) {
+        error_out = resolve_ctx.message.empty() ? "mfa_policy_lookup_failed" : resolve_ctx.message;
+        return false;
+    }
+
+    config_out.account_id = account.account_id;
+    config_out.mfa_required = policy.mfa_required;
+    if (!policy.mfa_required) {
+        return true;
+    }
+
+    if (policy.has_mfa_policy && policy.mfa_policy_id != core::ID{}) {
+        core::CatalogManager::MfaPolicyCatalogInfo mfa_policy;
+        const core::Status mfa_policy_status =
+            catalog->getMfaPolicyCatalogEntry(policy.mfa_policy_id, mfa_policy, &resolve_ctx);
+        if (mfa_policy_status != core::Status::OK) {
+            error_out = resolve_ctx.message.empty() ? "mfa_policy_lookup_failed" : resolve_ctx.message;
+            return false;
+        }
+        config_out.mfa_policy_id = mfa_policy.mfa_policy_id;
+        config_out.allow_recovery_codes = mfa_policy.allow_recovery_codes;
+        config_out.allow_break_glass = mfa_policy.allow_break_glass;
+        config_out.max_challenge_attempts = std::max<uint8_t>(1u, mfa_policy.max_challenge_attempts);
+        config_out.step_up_ttl_ms = mfa_policy.step_up_ttl_ms;
+    }
+
+    return true;
+}
+
+bool verifyCatalogMfaCode(core::CatalogManager* catalog,
+                          const ResolvedMfaAuthConfig& config,
+                          const std::string& username,
+                          const std::string& code,
+                          MfaVerificationResult& verify_out,
+                          std::string& error_out) {
+    verify_out = MfaVerificationResult{};
+    error_out.clear();
+    if (!catalog) {
+        error_out = "mfa_catalog_unavailable";
+        return false;
+    }
+
+    core::CatalogManager::MfaEnrollmentCatalogInfo enrollment;
+    if (!ensureCatalogMfaEnrollmentForUser(catalog,
+                                           config.account_id,
+                                           config.mfa_policy_id,
+                                           username,
+                                           enrollment,
+                                           error_out)) {
+        return false;
+    }
+
+    security::OtpConfig otp;
+    otp.digits = enrollment.totp_digits;
+    otp.period = enrollment.totp_period;
+    otp.look_ahead = enrollment.totp_look_ahead;
+    otp.look_behind = enrollment.totp_look_behind;
+
+    const std::vector<uint8_t> secret = security::decodeBase32(enrollment.secret_base32);
+    if (secret.empty()) {
+        error_out = "mfa_secret_invalid";
+        return false;
+    }
+
+    if (security::verifyTotp(secret, code, otp)) {
+        enrollment.has_last_verified_time = true;
+        enrollment.last_verified_time_utc = static_cast<uint64_t>(
+            std::chrono::system_clock::now().time_since_epoch().count());
+        core::ErrorContext update_ctx;
+        const core::Status update_status = catalog->upsertMfaEnrollmentCatalogEntry(enrollment, &update_ctx);
+        if (update_status != core::Status::OK) {
+            error_out = update_ctx.message.empty() ? "mfa_enrollment_update_failed" : update_ctx.message;
+            return false;
+        }
+        verify_out.success = true;
+        return true;
+    }
+
+    if (!config.allow_recovery_codes) {
+        return true;
+    }
+
+    core::CatalogManager::MfaRecoveryCodeCatalogInfo consumed{};
+    core::ErrorContext consume_ctx;
+    const core::Status consume_status = catalog->consumeMfaRecoveryCode(
+        config.account_id,
+        hashMfaCodeSha256(code),
+        config.allow_break_glass,
+        consumed,
+        &consume_ctx);
+    if (consume_status == core::Status::OK) {
+        verify_out.success = true;
+        verify_out.recovery_used = true;
+        verify_out.break_glass_used = consumed.is_break_glass;
+        return true;
+    }
+    if (consume_status == core::Status::INVALID_AUTHORIZATION ||
+        consume_status == core::Status::PERMISSION_DENIED ||
+        consume_status == core::Status::NOT_FOUND) {
+        return true;
+    }
+
+    error_out = consume_ctx.message.empty() ? "mfa_recovery_validation_failed" : consume_ctx.message;
+    return false;
+}
+
+std::vector<std::string> leadingSqlKeywords(const std::string& sql, size_t limit = 4) {
+    std::vector<std::string> out;
+    size_t i = 0;
+    while (i < sql.size() && out.size() < limit) {
+        while (i < sql.size() && std::isspace(static_cast<unsigned char>(sql[i]))) {
+            ++i;
+        }
+        if (i + 1 < sql.size() && sql[i] == '-' && sql[i + 1] == '-') {
+            i += 2;
+            while (i < sql.size() && sql[i] != '\n') {
+                ++i;
+            }
+            continue;
+        }
+        if (i + 1 < sql.size() && sql[i] == '/' && sql[i + 1] == '*') {
+            i += 2;
+            while (i + 1 < sql.size() && !(sql[i] == '*' && sql[i + 1] == '/')) {
+                ++i;
+            }
+            if (i + 1 < sql.size()) {
+                i += 2;
+            }
+            continue;
+        }
+        if (i >= sql.size() || !std::isalpha(static_cast<unsigned char>(sql[i]))) {
+            break;
+        }
+        const size_t start = i;
+        while (i < sql.size()) {
+            const unsigned char c = static_cast<unsigned char>(sql[i]);
+            if (!std::isalnum(c) && c != '_') {
+                break;
+            }
+            ++i;
+        }
+        out.push_back(toUpperAscii(sql.substr(start, i - start)));
+    }
+    return out;
+}
+
+bool requiresMfaStepUpForSql(const std::string& sql) {
+    const std::vector<std::string> tokens = leadingSqlKeywords(sql, 4);
+    if (tokens.empty()) {
+        return false;
+    }
+
+    const std::string first = tokens[0];
+    const std::string second = tokens.size() > 1 ? tokens[1] : std::string();
+    const std::string third = tokens.size() > 2 ? tokens[2] : std::string();
+
+    if ((first == "SET" || first == "RESET") && second == "ROLE") {
+        return true;
+    }
+    if (first == "GRANT" || first == "REVOKE") {
+        return true;
+    }
+    if (first == "CREATE" || first == "ALTER" || first == "DROP") {
+        if (second == "USER" || second == "ROLE" || second == "GROUP" ||
+            second == "POLICY" || second == "TOKEN") {
+            return true;
+        }
+        if (second == "AUTH" && third == "POLICY") {
+            return true;
+        }
+        if (second == "CONNECTION" && third == "RULE") {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool mapConnectionAuthMethodToProtocol(core::CatalogManager::ConnectionAuthMethod method,
+                                       protocol::AuthMethod& out) {
+    using CAM = core::CatalogManager::ConnectionAuthMethod;
+    switch (method) {
+        case CAM::PASSWORD:
+            out = protocol::AuthMethod::PASSWORD;
+            return true;
+        case CAM::MD5:
+            out = protocol::AuthMethod::MD5;
+            return true;
+        case CAM::SCRAM_SHA_256:
+            out = protocol::AuthMethod::SCRAM_SHA_256;
+            return true;
+        case CAM::SCRAM_SHA_512:
+            out = protocol::AuthMethod::SCRAM_SHA_512;
+            return true;
+        case CAM::TOKEN:
+            out = protocol::AuthMethod::TOKEN;
+            return true;
+        case CAM::PEER:
+            out = protocol::AuthMethod::PEER;
+            return true;
+        default:
+            return false;
+    }
+}
+
+uint16_t authMethodMaskBit(protocol::AuthMethod method) {
+    using CM = core::CatalogManager;
+    switch (method) {
+        case protocol::AuthMethod::PASSWORD:
+            return CM::AUTH_POLICY_METHOD_PASSWORD;
+        case protocol::AuthMethod::MD5:
+            return CM::AUTH_POLICY_METHOD_MD5;
+        case protocol::AuthMethod::SCRAM_SHA_256:
+            return CM::AUTH_POLICY_METHOD_SCRAM_SHA_256;
+        case protocol::AuthMethod::SCRAM_SHA_512:
+            return CM::AUTH_POLICY_METHOD_SCRAM_SHA_512;
+        case protocol::AuthMethod::TOKEN:
+            return CM::AUTH_POLICY_METHOD_TOKEN;
+        case protocol::AuthMethod::PEER:
+            return CM::AUTH_POLICY_METHOD_PEER;
+    }
+    return 0;
+}
+
+bool isAuthMethodAllowedByMask(protocol::AuthMethod method, uint16_t mask) {
+    const uint16_t bit = authMethodMaskBit(method);
+    return bit != 0 && (mask & bit) != 0;
+}
+
+core::CatalogManager::ConnectionTransport resolveConnectionTransport(const IPCConnection* connection) {
+    using CT = core::CatalogManager::ConnectionTransport;
+    if (!connection) {
+        return CT::LOCAL;
+    }
+    switch (connection->getMethod()) {
+        case IPCMethod::UNIX_SOCKET:
+        case IPCMethod::NAMED_PIPE:
+            return CT::IPC;
+        case IPCMethod::TCP_LOCALHOST:
+            return CT::INET;
+        case IPCMethod::AUTO:
+        default:
+            return CT::LOCAL;
+    }
+}
+
+bool isTrustedLocalIpc(const IPCConnection* connection) {
+    if (!connection) {
+        return false;
+    }
+    const IPCMethod method = connection->getMethod();
+    return method == IPCMethod::UNIX_SOCKET || method == IPCMethod::NAMED_PIPE;
+}
+
+uint8_t transportMaskBit(core::CatalogManager::ConnectionTransport transport) {
+    using CM = core::CatalogManager;
+    switch (transport) {
+        case CM::ConnectionTransport::LOCAL:
+            return CM::AUTH_POLICY_TRANSPORT_LOCAL;
+        case CM::ConnectionTransport::IPC:
+            return CM::AUTH_POLICY_TRANSPORT_IPC;
+        case CM::ConnectionTransport::INET:
+            return CM::AUTH_POLICY_TRANSPORT_INET;
+    }
+    return 0;
+}
+
+bool isTransportAllowedByMask(core::CatalogManager::ConnectionTransport transport, uint8_t mask) {
+    const uint8_t bit = transportMaskBit(transport);
+    return bit != 0 && (mask & bit) != 0;
+}
+
+std::vector<protocol::AuthMethod> authMethodsFromMask(uint16_t mask) {
+    std::vector<protocol::AuthMethod> methods;
+    if ((mask & core::CatalogManager::AUTH_POLICY_METHOD_PASSWORD) != 0) {
+        methods.push_back(protocol::AuthMethod::PASSWORD);
+    }
+    if ((mask & core::CatalogManager::AUTH_POLICY_METHOD_MD5) != 0) {
+        methods.push_back(protocol::AuthMethod::MD5);
+    }
+    if ((mask & core::CatalogManager::AUTH_POLICY_METHOD_SCRAM_SHA_256) != 0) {
+        methods.push_back(protocol::AuthMethod::SCRAM_SHA_256);
+    }
+    if ((mask & core::CatalogManager::AUTH_POLICY_METHOD_SCRAM_SHA_512) != 0) {
+        methods.push_back(protocol::AuthMethod::SCRAM_SHA_512);
+    }
+    if ((mask & core::CatalogManager::AUTH_POLICY_METHOD_TOKEN) != 0) {
+        methods.push_back(protocol::AuthMethod::TOKEN);
+    }
+    if ((mask & core::CatalogManager::AUTH_POLICY_METHOD_PEER) != 0) {
+        methods.push_back(protocol::AuthMethod::PEER);
+    }
+    return methods;
+}
+
+std::vector<uint8_t> generateNegotiationNonce(size_t bytes = 16) {
+    std::vector<uint8_t> nonce(bytes, 0);
+    std::random_device rd;
+    for (size_t i = 0; i < bytes; ++i) {
+        nonce[i] = static_cast<uint8_t>(rd() & 0xFF);
+    }
+    return nonce;
+}
+
+bool resolveAuthNegotiationPolicy(core::CatalogManager* catalog,
+                                  const IPCConnection* connection,
+                                  std::vector<protocol::AuthMethod>& allowed_methods_out,
+                                  bool& has_required_method_out,
+                                  protocol::AuthMethod& required_method_out,
+                                  uint8_t& allowed_transport_mask_out,
+                                  core::CatalogManager::AuthPeerMode& peer_mode_out,
+                                  std::string& policy_deny_code_out) {
+    using CM = core::CatalogManager;
+    policy_deny_code_out.clear();
+
+    constexpr uint16_t kLegacyMethodMask =
+        CM::AUTH_POLICY_METHOD_PASSWORD | CM::AUTH_POLICY_METHOD_MD5;
+
+    // Safe fallback if auth policy catalog rows are not configured yet.
+    uint16_t allowed_method_mask =
+        CM::AUTH_POLICY_METHOD_SCRAM_SHA_256 |
+        CM::AUTH_POLICY_METHOD_SCRAM_SHA_512 |
+        CM::AUTH_POLICY_METHOD_TOKEN;
+    allowed_transport_mask_out = CM::AUTH_POLICY_TRANSPORT_ALL;
+    has_required_method_out = true;
+    required_method_out = protocol::AuthMethod::SCRAM_SHA_256;
+    peer_mode_out = CM::AuthPeerMode::DISABLED;
+    bool allow_legacy_password_fallback = false;
+
+    if (catalog) {
+        std::vector<CM::AuthPolicyCatalogInfo> policies;
+        core::ErrorContext list_ctx;
+        const core::Status list_status = catalog->listAuthPolicyCatalogEntries(policies, &list_ctx);
+        if (list_status == core::Status::OK && !policies.empty()) {
+            const char* policy_name_env = std::getenv("SCRATCHBIRD_AUTH_POLICY_NAME");
+            const std::string requested_policy =
+                (policy_name_env && policy_name_env[0] != '\0')
+                    ? toUpperAscii(policy_name_env)
+                    : std::string();
+
+            const CM::AuthPolicyCatalogInfo* selected = nullptr;
+            if (!requested_policy.empty()) {
+                for (const auto& policy : policies) {
+                    if (toUpperAscii(policy.policy_name) == requested_policy) {
+                        selected = &policy;
+                        break;
+                    }
+                }
+            }
+            if (!selected) {
+                for (const auto& policy : policies) {
+                    if (toUpperAscii(policy.policy_name) == "DEFAULT") {
+                        selected = &policy;
+                        break;
+                    }
+                }
+            }
+            if (!selected) {
+                selected = &policies.front();
+            }
+
+            allowed_method_mask = selected->allowed_auth_method_mask;
+            allowed_transport_mask_out = selected->allowed_transport_mask;
+            has_required_method_out = selected->has_required_auth_method;
+            peer_mode_out = selected->peer_mode;
+            allow_legacy_password_fallback = selected->allow_password_fallback;
+            if (has_required_method_out &&
+                !mapConnectionAuthMethodToProtocol(selected->required_auth_method, required_method_out)) {
+                policy_deny_code_out = kAuthPolicyMethodDeniedCode;
+                return false;
+            }
+        } else if (list_status != core::Status::NOT_FOUND &&
+                   list_status != core::Status::OK) {
+            policy_deny_code_out = kAuthPolicyNegotiationRequiredCode;
+            return false;
+        }
+    }
+
+    bool bootstrap_phase_a = false;
+    std::string bootstrap_phase_error;
+    if (!detectBootstrapPhaseA(catalog, bootstrap_phase_a, bootstrap_phase_error)) {
+        policy_deny_code_out = kAuthPolicyNegotiationRequiredCode;
+        return false;
+    }
+
+    if (bootstrap_phase_a) {
+        // Bootstrap login relies on one-time token proof in PASSWORD payload.
+        allowed_method_mask = CM::AUTH_POLICY_METHOD_PASSWORD;
+        has_required_method_out = true;
+        required_method_out = protocol::AuthMethod::PASSWORD;
+        peer_mode_out = CM::AuthPeerMode::DISABLED;
+    } else {
+        // Legacy PASSWORD/MD5 are only legal when policy explicitly allows fallback
+        // and the transport is a trusted local IPC channel.
+        if (!allow_legacy_password_fallback || !isTrustedLocalIpc(connection)) {
+            allowed_method_mask &= static_cast<uint16_t>(~kLegacyMethodMask);
+        }
+
+        if (peer_mode_out != CM::AuthPeerMode::DISABLED) {
+            if (!connection || connection->getMethod() != IPCMethod::UNIX_SOCKET) {
+                policy_deny_code_out = kAuthPolicyPeerTransportCode;
+                return false;
+            }
+
+            const PeerCredentials peer = connection->getPeerCredentials();
+            if (!peer.available) {
+                policy_deny_code_out = kAuthPolicyPeerRequiredCode;
+                return false;
+            }
+
+            if (peer_mode_out == CM::AuthPeerMode::REQUIRED_PLUS_SCRAM) {
+                const uint16_t scram_mask =
+                    CM::AUTH_POLICY_METHOD_SCRAM_SHA_256 |
+                    CM::AUTH_POLICY_METHOD_SCRAM_SHA_512;
+                allowed_method_mask &= scram_mask;
+
+                if ((allowed_method_mask & scram_mask) == 0) {
+                    policy_deny_code_out = kAuthPolicyMethodDeniedCode;
+                    return false;
+                }
+
+                has_required_method_out = true;
+                if ((allowed_method_mask & CM::AUTH_POLICY_METHOD_SCRAM_SHA_256) != 0) {
+                    required_method_out = protocol::AuthMethod::SCRAM_SHA_256;
+                } else {
+                    required_method_out = protocol::AuthMethod::SCRAM_SHA_512;
+                }
+            }
+        }
+    }
+
+    allowed_methods_out = authMethodsFromMask(allowed_method_mask);
+    if (allowed_methods_out.empty()) {
+        policy_deny_code_out = kAuthPolicyMethodDeniedCode;
+        return false;
+    }
+
+    if (has_required_method_out &&
+        !isAuthMethodAllowedByMask(required_method_out, allowed_method_mask)) {
+        policy_deny_code_out = kAuthPolicyRequiredMethodCode;
+        return false;
+    }
+
+    const CM::ConnectionTransport transport = resolveConnectionTransport(connection);
+    if (!isTransportAllowedByMask(transport, allowed_transport_mask_out)) {
+        policy_deny_code_out = kAuthPolicyTransportDeniedCode;
+        return false;
+    }
+
+    return true;
 }
 
 core::Status sendCopyInPreamble(protocol::ProtocolSession* session,
@@ -400,10 +1251,13 @@ ServerSession::ServerSession(IPCConnection* connection,
     stats_.last_activity = stats_.created_at;
 
     // Get client info if available
-    auto peer = connection->getPeerCredentials();
-    if (peer.available) {
+    peer_credentials_ = connection->getPeerCredentials();
+    peer_credentials_available_ = peer_credentials_.available;
+    if (peer_credentials_available_) {
         std::ostringstream oss;
-        oss << "pid=" << peer.pid << ",uid=" << peer.uid << ",gid=" << peer.gid;
+        oss << "pid=" << peer_credentials_.pid
+            << ",uid=" << peer_credentials_.uid
+            << ",gid=" << peer_credentials_.gid;
         client_info_ = oss.str();
     } else {
         client_info_ = "unknown";
@@ -553,6 +1407,11 @@ core::Status ServerSession::handleConnect(const protocol::Message& msg, core::Er
     }
 
     client_info_ = client_name + " (pid=" + std::to_string(client_pid) + ")";
+    if (peer_credentials_available_) {
+        client_info_ += " [peer uid=" + std::to_string(peer_credentials_.uid) +
+                        " gid=" + std::to_string(peer_credentials_.gid) +
+                        " pid=" + std::to_string(peer_credentials_.pid) + "]";
+    }
 
     // Check if database is open
     if (!database_->is_open()) {
@@ -595,10 +1454,47 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
         return status;
     }
 
+    auto clear_auth_negotiation = [&]() {
+        auth_negotiation_ready_ = false;
+        auth_negotiation_username_.clear();
+        auth_negotiation_allowed_methods_.clear();
+        auth_negotiation_has_required_method_ = false;
+        auth_negotiation_required_method_ = protocol::AuthMethod::SCRAM_SHA_256;
+        auth_negotiation_transport_mask_ = 0;
+        auth_negotiation_nonce_.clear();
+        auth_negotiation_peer_mode_ = core::CatalogManager::AuthPeerMode::DISABLED;
+    };
+
+    auto clear_pending_mfa = [&]() {
+        pending_mfa_auth_ = PendingMfaAuthState{};
+    };
+
+    auto clear_session_mfa_state = [&]() {
+        session_mfa_verified_ = false;
+        session_mfa_used_recovery_ = false;
+        session_mfa_used_break_glass_ = false;
+        session_mfa_verified_time_ms_ = 0;
+        session_mfa_step_up_ttl_ms_ = 0;
+    };
+
+    auto send_auth_policy_error = [&](const char* code) -> core::Status {
+        protocol::Message response = protocol::ProtocolCodec::buildAuthResponse(
+            protocol::AuthStatus::ERROR, 0, code ? code : kAuthPolicyMethodDeniedCode);
+        protocol_session_->sendMessage(response, ctx);
+        return core::Status::INVALID_AUTHORIZATION;
+    };
+
+    if (!pending_mfa_auth_.active) {
+        clear_session_mfa_state();
+    }
+
     auto finish_auth = [&](const core::AuthUserInfo& user_info,
                            const std::vector<uint8_t>& response_data) -> core::Status {
         username_ = user_info.username.empty() ? username : user_info.username;
         state_ = SessionState::AUTHENTICATED;
+        clear_auth_negotiation();
+        clear_pending_mfa();
+        scram_state_.reset();
 
         // Create connection context
         core::Status connect_status = database_->connect(conn_ctx_, ctx);
@@ -615,6 +1511,11 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
 
         // Set user with ID and superuser flag
         conn_ctx_->setCurrentUser(user_info.user_id, user_info.is_superuser);
+        if (peer_credentials_available_) {
+            conn_ctx_->setSessionVariable("SB$PEER_UID", std::to_string(peer_credentials_.uid));
+            conn_ctx_->setSessionVariable("SB$PEER_GID", std::to_string(peer_credentials_.gid));
+            conn_ctx_->setSessionVariable("SB$PEER_PID", std::to_string(peer_credentials_.pid));
+        }
 
         // Create and bind catalog session
         auto* catalog = database_->catalog_manager();
@@ -693,12 +1594,269 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
         provider = core::AuthProviderFactory::createDefault(catalog, audit_logger);
     }
 
-    if (auth_method == protocol::AuthMethod::PASSWORD) {
-        std::string password(reinterpret_cast<const char*>(auth_payload.data()), auth_payload.size());
-        core::AuthResult auth_result = authenticate(username, password, user_info, auth_error);
+    auto issue_mfa_challenge_if_required =
+        [&](const core::AuthUserInfo& authenticated_user,
+            protocol::AuthMethod completed_method,
+            const std::vector<uint8_t>& completed_method_payload)
+        -> std::optional<core::Status> {
+        ResolvedMfaAuthConfig mfa_config;
+        std::string mfa_policy_error;
+        const std::string effective_username =
+            authenticated_user.username.empty() ? username : authenticated_user.username;
+        if (!resolveMfaConfig(catalog,
+                              connection_,
+                              effective_username,
+                              mfa_config,
+                              mfa_policy_error)) {
+            protocol::Message response = protocol::ProtocolCodec::buildAuthResponse(
+                protocol::AuthStatus::ERROR, 0, kAuthMfaInvalidCode);
+            protocol_session_->sendMessage(response, ctx);
+            return core::Status::INVALID_AUTHORIZATION;
+        }
 
-        if (auth_result == core::AuthResult::SUCCESS) {
-            return finish_auth(user_info, {});
+        if (!mfa_config.mfa_required) {
+            return std::nullopt;
+        }
+
+        core::CatalogManager::MfaEnrollmentCatalogInfo enrollment;
+        std::string enrollment_error;
+        if (!catalog ||
+            !ensureCatalogMfaEnrollmentForUser(catalog,
+                                               mfa_config.account_id,
+                                               mfa_config.mfa_policy_id,
+                                               effective_username,
+                                               enrollment,
+                                               enrollment_error)) {
+            protocol::Message response = protocol::ProtocolCodec::buildAuthResponse(
+                protocol::AuthStatus::ERROR, 0, kAuthMfaRequiredCode);
+            protocol_session_->sendMessage(response, ctx);
+            return core::Status::INVALID_AUTHORIZATION;
+        }
+
+        const std::string challenge_id = security::generateNonce();
+        const std::string challenge_method_name = "totp";
+
+        pending_mfa_auth_.active = true;
+        pending_mfa_auth_.username = effective_username;
+        pending_mfa_auth_.auth_method = completed_method;
+        pending_mfa_auth_.user_info = authenticated_user;
+        pending_mfa_auth_.account_id = mfa_config.account_id;
+        pending_mfa_auth_.mfa_policy_id = mfa_config.mfa_policy_id;
+        pending_mfa_auth_.allow_recovery_codes = mfa_config.allow_recovery_codes;
+        pending_mfa_auth_.allow_break_glass = mfa_config.allow_break_glass;
+        pending_mfa_auth_.step_up_ttl_ms = mfa_config.step_up_ttl_ms;
+        pending_mfa_auth_.challenge_id = challenge_id;
+        pending_mfa_auth_.challenge_method_name = challenge_method_name;
+        pending_mfa_auth_.attempts = 0;
+        pending_mfa_auth_.max_attempts = std::max<uint32_t>(
+            1u, static_cast<uint32_t>(mfa_config.max_challenge_attempts));
+        pending_mfa_auth_.challenge_payload = buildMfaChallengePayload(
+            challenge_id,
+            pending_mfa_auth_.challenge_method_name,
+            completed_method_payload);
+
+        protocol::Message response = protocol::ProtocolCodec::buildAuthResponse(
+            protocol::AuthStatus::CONTINUE, 0, "", pending_mfa_auth_.challenge_payload);
+        return protocol_session_->sendMessage(response, ctx);
+    };
+
+    const bool negotiation_request =
+        auth_method == protocol::AuthMethod::PASSWORD &&
+        auth_payload.empty() &&
+        !scram_state_.has_value() &&
+        !auth_negotiation_ready_;
+    if (negotiation_request) {
+        std::string policy_deny_code;
+        if (!resolveAuthNegotiationPolicy(catalog,
+                                          connection_,
+                                          auth_negotiation_allowed_methods_,
+                                          auth_negotiation_has_required_method_,
+                                          auth_negotiation_required_method_,
+                                          auth_negotiation_transport_mask_,
+                                          auth_negotiation_peer_mode_,
+                                          policy_deny_code)) {
+            clear_auth_negotiation();
+            return send_auth_policy_error(
+                policy_deny_code.empty() ? kAuthPolicyMethodDeniedCode
+                                         : policy_deny_code.c_str());
+        }
+        auth_negotiation_ready_ = true;
+        auth_negotiation_username_ = username;
+        auth_negotiation_nonce_ = generateNegotiationNonce();
+        protocol::Message challenge = protocol::ProtocolCodec::buildAuthChallenge(
+            session_id_,
+            username,
+            auth_negotiation_allowed_methods_,
+            auth_negotiation_has_required_method_,
+            auth_negotiation_required_method_,
+            auth_negotiation_transport_mask_,
+            auth_negotiation_nonce_);
+        return protocol_session_->sendMessage(challenge, ctx);
+    }
+
+    if (!auth_negotiation_ready_) {
+        return send_auth_policy_error(kAuthPolicyNegotiationRequiredCode);
+    }
+    if (auth_negotiation_username_ != username) {
+        return send_auth_policy_error(kAuthPolicyUserMismatchCode);
+    }
+    if (!isTransportAllowedByMask(resolveConnectionTransport(connection_),
+                                  auth_negotiation_transport_mask_)) {
+        return send_auth_policy_error(kAuthPolicyTransportDeniedCode);
+    }
+    if (auth_negotiation_peer_mode_ != core::CatalogManager::AuthPeerMode::DISABLED) {
+        if (!connection_ || connection_->getMethod() != IPCMethod::UNIX_SOCKET) {
+            return send_auth_policy_error(kAuthPolicyPeerTransportCode);
+        }
+        if (!peer_credentials_available_) {
+            return send_auth_policy_error(kAuthPolicyPeerRequiredCode);
+        }
+    }
+
+    const bool method_allowed = std::find(auth_negotiation_allowed_methods_.begin(),
+                                          auth_negotiation_allowed_methods_.end(),
+                                          auth_method) != auth_negotiation_allowed_methods_.end();
+    if (!method_allowed) {
+        return send_auth_policy_error(kAuthPolicyMethodDeniedCode);
+    }
+    if (auth_negotiation_has_required_method_ &&
+        auth_method != auth_negotiation_required_method_) {
+        return send_auth_policy_error(kAuthPolicyRequiredMethodCode);
+    }
+    const bool legacy_method =
+        auth_method == protocol::AuthMethod::PASSWORD ||
+        auth_method == protocol::AuthMethod::MD5;
+    if (legacy_method && !isTrustedLocalIpc(connection_)) {
+        return send_auth_policy_error(kAuthPolicyTransportDeniedCode);
+    }
+
+    if (pending_mfa_auth_.active) {
+        if (username != pending_mfa_auth_.username ||
+            auth_method != pending_mfa_auth_.auth_method) {
+            clear_pending_mfa();
+            protocol::Message response = protocol::ProtocolCodec::buildAuthResponse(
+                protocol::AuthStatus::ERROR, 0, kAuthMfaInvalidCode);
+            protocol_session_->sendMessage(response, ctx);
+            return core::Status::INVALID_AUTHORIZATION;
+        }
+
+        std::string challenge_id;
+        std::string mfa_code;
+        if (!parseMfaResponsePayload(auth_payload, challenge_id, mfa_code) ||
+            challenge_id != pending_mfa_auth_.challenge_id) {
+            clear_pending_mfa();
+            protocol::Message response = protocol::ProtocolCodec::buildAuthResponse(
+                protocol::AuthStatus::ERROR, 0, kAuthMfaInvalidCode);
+            protocol_session_->sendMessage(response, ctx);
+            return core::Status::INVALID_AUTHORIZATION;
+        }
+
+        ResolvedMfaAuthConfig mfa_config;
+        mfa_config.mfa_required = true;
+        mfa_config.account_id = pending_mfa_auth_.account_id;
+        mfa_config.mfa_policy_id = pending_mfa_auth_.mfa_policy_id;
+        mfa_config.allow_recovery_codes = pending_mfa_auth_.allow_recovery_codes;
+        mfa_config.allow_break_glass = pending_mfa_auth_.allow_break_glass;
+
+        MfaVerificationResult verify_result;
+        std::string verify_error;
+        if (!verifyCatalogMfaCode(catalog,
+                                  mfa_config,
+                                  pending_mfa_auth_.username,
+                                  mfa_code,
+                                  verify_result,
+                                  verify_error)) {
+            clear_pending_mfa();
+            protocol::Message response = protocol::ProtocolCodec::buildAuthResponse(
+                protocol::AuthStatus::ERROR, 0, kAuthMfaInvalidCode);
+            protocol_session_->sendMessage(response, ctx);
+            return core::Status::INVALID_AUTHORIZATION;
+        }
+
+        if (verify_result.success) {
+            session_mfa_verified_ = true;
+            session_mfa_used_recovery_ = verify_result.recovery_used;
+            session_mfa_used_break_glass_ = verify_result.break_glass_used;
+            session_mfa_verified_time_ms_ = currentTimeMs();
+            session_mfa_step_up_ttl_ms_ = pending_mfa_auth_.step_up_ttl_ms;
+            core::AuthUserInfo verified_user = pending_mfa_auth_.user_info;
+
+            if (audit_logger) {
+                core::AuditEvent event = core::AuditLogger::createLoginSuccessEvent(
+                    verified_user.user_id, pending_mfa_auth_.username);
+                if (verify_result.recovery_used) {
+                    event.details = verify_result.break_glass_used
+                        ? "{\"mfa\":\"break_glass\"}"
+                        : "{\"mfa\":\"recovery_code\"}";
+                } else {
+                    event.details = "{\"mfa\":\"totp\"}";
+                }
+                core::ErrorContext audit_ctx;
+                audit_logger->logEvent(event, &audit_ctx);
+            }
+
+            clear_pending_mfa();
+            return finish_auth(verified_user, {});
+        }
+
+        pending_mfa_auth_.attempts++;
+        if (pending_mfa_auth_.attempts >= pending_mfa_auth_.max_attempts) {
+            clear_pending_mfa();
+            protocol::Message response = protocol::ProtocolCodec::buildAuthResponse(
+                protocol::AuthStatus::ERROR, 0, kAuthMfaInvalidCode);
+            protocol_session_->sendMessage(response, ctx);
+            return core::Status::INVALID_AUTHORIZATION;
+        }
+
+        protocol::Message response = protocol::ProtocolCodec::buildAuthResponse(
+            protocol::AuthStatus::CONTINUE, 0, "", pending_mfa_auth_.challenge_payload);
+        return protocol_session_->sendMessage(response, ctx);
+    }
+
+    if (auth_method == protocol::AuthMethod::PASSWORD) {
+        bool bootstrap_phase_a = false;
+        std::string bootstrap_phase_error;
+        if (!detectBootstrapPhaseA(catalog, bootstrap_phase_a, bootstrap_phase_error)) {
+            std::fprintf(stderr,
+                         "[auth] failed to resolve bootstrap phase for user %s: %s\n",
+                         username.c_str(),
+                         bootstrap_phase_error.c_str());
+            auth_error = "Authentication failed";
+        } else if (bootstrap_phase_a) {
+            std::string denial_reason;
+            if (!isBootstrapPeerEligible(connection_, denial_reason)) {
+                std::fprintf(stderr,
+                             "[auth] bootstrap auth denied by peer UID gate for user %s (reason=%s)\n",
+                             username.c_str(),
+                             denial_reason.c_str());
+
+                if (audit_logger) {
+                    core::AuditEvent event;
+                    event.event_type = core::AuditEventType::BOOTSTRAP_FAILURE;
+                    event.username = username;
+                    event.success = false;
+                    event.details = std::string("{\"phase\":\"gate\",\"reason\":\"") +
+                                    denial_reason + "\"}";
+                    core::ErrorContext audit_ctx;
+                    audit_logger->logEvent(event, &audit_ctx);
+                }
+
+                auth_error = "Authentication failed";
+            }
+        }
+
+        if (auth_error.empty()) {
+            std::string password(reinterpret_cast<const char*>(auth_payload.data()),
+                                 auth_payload.size());
+            core::AuthResult auth_result = authenticate(username, password, user_info, auth_error);
+
+            if (auth_result == core::AuthResult::SUCCESS) {
+                if (auto mfa_status = issue_mfa_challenge_if_required(
+                        user_info, auth_method, {}); mfa_status.has_value()) {
+                    return *mfa_status;
+                }
+                return finish_auth(user_info, {});
+            }
         }
     } else if (auth_method == protocol::AuthMethod::MD5) {
         if (auth_payload.size() < 4 || !provider) {
@@ -711,6 +1869,10 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
             core::AuthResult auth_result = provider->authenticateMd5(
                 username, salt, response, user_info, auth_error);
             if (auth_result == core::AuthResult::SUCCESS) {
+                if (auto mfa_status = issue_mfa_challenge_if_required(
+                        user_info, auth_method, {}); mfa_status.has_value()) {
+                    return *mfa_status;
+                }
                 return finish_auth(user_info, {});
             }
         }
@@ -744,7 +1906,57 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
             scram_state_.reset();
             if (auth_result == core::AuthResult::SUCCESS) {
                 std::vector<uint8_t> response_data(server_final.begin(), server_final.end());
+                if (auto mfa_status = issue_mfa_challenge_if_required(
+                        user_info, auth_method, response_data); mfa_status.has_value()) {
+                    return *mfa_status;
+                }
                 return finish_auth(user_info, response_data);
+            }
+        }
+    } else if (auth_method == protocol::AuthMethod::TOKEN) {
+        if (!provider) {
+            auth_error = "Authentication failed";
+        } else {
+            uint8_t authkey_id_bytes[16]{};
+            std::vector<uint8_t> proof;
+            std::vector<uint8_t> binding;
+            core::Status parse_status = protocol::ProtocolCodec::parseTokenAuthPayload(
+                auth_payload, authkey_id_bytes, proof, binding, ctx);
+            if (parse_status != core::Status::OK) {
+                auth_error = "Authentication failed";
+            } else {
+                core::ID authkey_id{};
+                std::memcpy(authkey_id.bytes.data(), authkey_id_bytes, sizeof(authkey_id_bytes));
+                core::AuthResult auth_result = provider->authenticateToken(
+                    username, authkey_id, proof, binding, user_info, auth_error);
+                if (auth_result == core::AuthResult::SUCCESS) {
+                    if (auto mfa_status = issue_mfa_challenge_if_required(
+                            user_info, auth_method, {}); mfa_status.has_value()) {
+                        return *mfa_status;
+                    }
+                    return finish_auth(user_info, {});
+                }
+            }
+        }
+    } else if (auth_method == protocol::AuthMethod::PEER) {
+        if (!provider) {
+            auth_error = "Authentication failed";
+        } else if (!peer_credentials_available_) {
+            return send_auth_policy_error(kAuthPolicyPeerRequiredCode);
+        } else {
+            core::AuthResult auth_result = provider->authenticatePeer(
+                username,
+                peer_credentials_.uid,
+                peer_credentials_.gid,
+                peer_credentials_.pid,
+                user_info,
+                auth_error);
+            if (auth_result == core::AuthResult::SUCCESS) {
+                if (auto mfa_status = issue_mfa_challenge_if_required(
+                        user_info, auth_method, {}); mfa_status.has_value()) {
+                    return *mfa_status;
+                }
+                return finish_auth(user_info, {});
             }
         }
     } else {
@@ -764,6 +1976,7 @@ core::Status ServerSession::handleDisconnect(const protocol::Message& msg, core:
                  "[ipc_debug] server session %s received DISCONNECT\n",
                  sessionIdString().c_str());
     state_ = SessionState::CLOSING;
+    pending_mfa_auth_ = PendingMfaAuthState{};
 
     // Fire ON DISCONNECT database triggers (Firebird-style) before closing
     fireDatabaseTriggers(core::CatalogManager::DatabaseTriggerEvent::ON_DISCONNECT);
@@ -807,6 +2020,52 @@ core::Status ServerSession::handleQuery(const protocol::Message& msg, core::Erro
     if (status != core::Status::OK) {
         sendError("Invalid query");
         return status;
+    }
+
+    if (requiresMfaStepUpForSql(sql)) {
+        auto* catalog = database_ ? database_->catalog_manager() : nullptr;
+        ResolvedMfaAuthConfig mfa_config;
+        std::string mfa_error;
+        if (!resolveMfaConfig(catalog, connection_, username_, mfa_config, mfa_error)) {
+            sendError("MFA policy resolution failed", "28000", ctx);
+            return core::Status::INVALID_AUTHORIZATION;
+        }
+
+        if (mfa_config.mfa_required) {
+            const uint64_t now_ms = currentTimeMs();
+            bool step_up_valid = session_mfa_verified_;
+            if (step_up_valid && session_mfa_step_up_ttl_ms_ > 0) {
+                if (session_mfa_verified_time_ms_ == 0 ||
+                    now_ms < session_mfa_verified_time_ms_ ||
+                    (now_ms - session_mfa_verified_time_ms_) > session_mfa_step_up_ttl_ms_) {
+                    step_up_valid = false;
+                }
+            }
+
+            if (!step_up_valid) {
+                session_mfa_verified_ = false;
+                session_mfa_used_recovery_ = false;
+                session_mfa_used_break_glass_ = false;
+                session_mfa_verified_time_ms_ = 0;
+                session_mfa_step_up_ttl_ms_ = 0;
+
+                auto* audit_logger = database_ ? database_->audit_logger() : nullptr;
+                if (audit_logger && conn_ctx_) {
+                    core::AuditEvent event = core::AuditLogger::createPermissionDeniedEvent(
+                        conn_ctx_->getCurrentUserId(),
+                        username_,
+                        "AUTH_MFA_STEP_UP",
+                        "PRIVILEGED_QUERY",
+                        "STEP_UP");
+                    event.details = "{\"reason\":\"mfa_step_up_required\"}";
+                    core::ErrorContext audit_ctx;
+                    audit_logger->logEvent(event, &audit_ctx);
+                }
+
+                sendError("MFA step-up required for privileged command", "28000", ctx);
+                return core::Status::INVALID_AUTHORIZATION;
+            }
+        }
     }
 
     // Execute the query
@@ -1316,13 +2575,8 @@ core::AuthResult ServerSession::authenticate(const std::string& username,
     // Get catalog manager from database
     auto* catalog = database_ ? database_->catalog_manager() : nullptr;
     if (!catalog) {
-        // No catalog manager - allow any authentication (development mode)
-        user_info.user_id = core::generateUuidV7();
-        user_info.username = username;
-        user_info.display_name = username;
-        user_info.is_superuser = true;
-        user_info.authkey_id = core::generateUuidV7();
-        return core::AuthResult::SUCCESS;
+        error_msg_out = "Authentication catalog unavailable";
+        return core::AuthResult::PROVIDER_ERROR;
     }
 
     auto* audit_logger = database_ ? database_->audit_logger() : nullptr;

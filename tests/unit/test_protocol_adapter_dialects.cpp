@@ -71,6 +71,10 @@ public:
     uint64_t getContractFeatureMask() const {
         return T::contractServerFeatureMask();
     }
+
+    AuthMethod configuredAuthMethod() const {
+        return T::getConfig().auth_method;
+    }
 };
 
 void cleanupDb(const std::string& name) {
@@ -123,6 +127,59 @@ TEST(ProtocolAdapterDialects, FirebirdSelectUsesFirebirdParser) {
 
     ASSERT_EQ(status, core::Status::OK) << err;
     EXPECT_FALSE(bytecode.empty());
+}
+
+TEST(ProtocolAdapterDialectsAuthParity, DefaultAuthMethodIsScram256AcrossAdapters) {
+    cleanupDb("test_auth_parity_default_pg.sbdb");
+    cleanupDb("test_auth_parity_default_mysql.sbdb");
+    cleanupDb("test_auth_parity_default_fb.sbdb");
+    cleanupDb("test_auth_parity_default_native.sbdb");
+
+    ProtocolAdapterConfig pg_cfg;
+    pg_cfg.database_path = dbPath("test_auth_parity_default_pg.sbdb").string();
+    AdapterHarness<PostgresqlAdapter> pg_adapter(pg_cfg);
+    EXPECT_EQ(pg_adapter.configuredAuthMethod(), AuthMethod::SCRAM_SHA_256);
+
+    ProtocolAdapterConfig mysql_cfg;
+    mysql_cfg.database_path = dbPath("test_auth_parity_default_mysql.sbdb").string();
+    AdapterHarness<MySqlAdapter> mysql_adapter(mysql_cfg);
+    EXPECT_EQ(mysql_adapter.configuredAuthMethod(), AuthMethod::SCRAM_SHA_256);
+
+    ProtocolAdapterConfig fb_cfg;
+    fb_cfg.database_path = dbPath("test_auth_parity_default_fb.sbdb").string();
+    AdapterHarness<FirebirdAdapter> fb_adapter(fb_cfg);
+    EXPECT_EQ(fb_adapter.configuredAuthMethod(), AuthMethod::SCRAM_SHA_256);
+
+    ProtocolAdapterConfig native_cfg;
+    native_cfg.database_path = dbPath("test_auth_parity_default_native.sbdb").string();
+    AdapterHarness<NativeAdapter> native_adapter(native_cfg);
+    EXPECT_EQ(native_adapter.configuredAuthMethod(), AuthMethod::SCRAM_SHA_256);
+}
+
+TEST(ProtocolAdapterDialectsAuthParity, LegacyAuthMethodsNeedExplicitConfig) {
+    cleanupDb("test_auth_parity_legacy_pg.sbdb");
+    cleanupDb("test_auth_parity_legacy_mysql.sbdb");
+    cleanupDb("test_auth_parity_legacy_fb.sbdb");
+    cleanupDb("test_auth_parity_legacy_native.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.auth_method = AuthMethod::PASSWORD;
+
+    cfg.database_path = dbPath("test_auth_parity_legacy_pg.sbdb").string();
+    AdapterHarness<PostgresqlAdapter> pg_adapter(cfg);
+    EXPECT_EQ(pg_adapter.configuredAuthMethod(), AuthMethod::PASSWORD);
+
+    cfg.database_path = dbPath("test_auth_parity_legacy_mysql.sbdb").string();
+    AdapterHarness<MySqlAdapter> mysql_adapter(cfg);
+    EXPECT_EQ(mysql_adapter.configuredAuthMethod(), AuthMethod::PASSWORD);
+
+    cfg.database_path = dbPath("test_auth_parity_legacy_fb.sbdb").string();
+    AdapterHarness<FirebirdAdapter> fb_adapter(cfg);
+    EXPECT_EQ(fb_adapter.configuredAuthMethod(), AuthMethod::PASSWORD);
+
+    cfg.database_path = dbPath("test_auth_parity_legacy_native.sbdb").string();
+    AdapterHarness<NativeAdapter> native_adapter(cfg);
+    EXPECT_EQ(native_adapter.configuredAuthMethod(), AuthMethod::PASSWORD);
 }
 
 // ============================================================================
