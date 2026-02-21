@@ -644,6 +644,25 @@ set_target_properties(sb_server PROPERTIES
 message(STATUS "Server executable: sb_server")
 
 # ==============================================================================
+# sb_manager Executable (Manager Proxy Front-Door Scaffold)
+# ==============================================================================
+
+add_executable(sb_manager server/sb_manager_main.cpp)
+target_link_libraries(sb_manager PRIVATE
+    scratchbird_network
+    scratchbird_protocol
+    scratchbird_core
+)
+
+set_target_properties(sb_manager PROPERTIES
+    CXX_STANDARD 17
+    CXX_STANDARD_REQUIRED YES
+    CXX_EXTENSIONS NO
+)
+
+message(STATUS "Manager executable: sb_manager")
+
+# ==============================================================================
 # Listener Binaries (Network Listener + Parser Pool)
 # ==============================================================================
 
@@ -775,7 +794,7 @@ set_target_properties(sb_charset_loader PROPERTIES
 )
 
 # Installation (for future use)
-install(TARGETS scratchbird sb_server sb_charset_loader scratchbird_core scratchbird_parser scratchbird_sblr scratchbird_optimizer_runtime scratchbird_server scratchbird_protocol scratchbird_pool scratchbird_fdw scratchbird_testing
+install(TARGETS scratchbird sb_server sb_manager sb_charset_loader scratchbird_core scratchbird_parser scratchbird_sblr scratchbird_optimizer_runtime scratchbird_server scratchbird_protocol scratchbird_pool scratchbird_fdw scratchbird_testing
     RUNTIME DESTINATION bin
     ARCHIVE DESTINATION lib
     LIBRARY DESTINATION lib

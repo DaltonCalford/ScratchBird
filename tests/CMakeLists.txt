@@ -179,6 +179,9 @@ list(FILTER TEST_SOURCES EXCLUDE REGEX ".*/unit/test_udr_connector_factory\.cpp$
 
 # Test executable
 add_executable(scratchbird_tests ${TEST_SOURCES})
+if(TARGET sb_manager)
+    add_dependencies(scratchbird_tests sb_manager)
+endif()
 
 # Include directories (for test_helpers.h)
 target_include_directories(scratchbird_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
