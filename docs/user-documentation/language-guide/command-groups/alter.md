@@ -1,5 +1,5 @@
 # Command Group: ALTER
-Last modified: 2026-02-19
+Last modified: 2026-02-21
 
 Back links:
 - [Language Guide README](../README.md)
@@ -11,8 +11,7 @@ Series navigation:
 
 Parser dispatch in native v3 `parseAlter()` includes:
 
-- `ALTER SEARCH INDEX`
-- `ALTER VECTOR INDEX`
+- `ALTER INDEX`
 - `ALTER MEASUREMENT`
 - `ALTER SCHEDULE`
 - `ALTER CONNECTION RULE`
@@ -38,7 +37,6 @@ Parser dispatch in native v3 `parseAlter()` includes:
 - `ALTER POLICY`
 - `ALTER SYSTEM`
 - `ALTER VIEW`
-- `ALTER INDEX`
 - `ALTER SEQUENCE`
 - `ALTER TRIGGER`
 - `ALTER FUNCTION`

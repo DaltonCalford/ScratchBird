@@ -320,18 +320,18 @@ std::set<std::string> normalizeFeatureKeySet(const std::set<std::string>& input)
 static std::optional<IndexType> indexTypeFromName(std::string_view name) {
     if (caseInsensitiveEquals(name, "BTREE")) return IndexType::BTREE;
     if (caseInsensitiveEquals(name, "HASH")) return IndexType::HASH;
-    if (caseInsensitiveEquals(name, "HNSW") || caseInsensitiveEquals(name, "VECTOR")) return IndexType::HNSW;
+    if (caseInsensitiveEquals(name, "HNSW")) return IndexType::HNSW;
     if (caseInsensitiveEquals(name, "FULLTEXT")) return IndexType::FULLTEXT;
     if (caseInsensitiveEquals(name, "GIN")) return IndexType::GIN;
     if (caseInsensitiveEquals(name, "GIST")) return IndexType::GIST;
     if (caseInsensitiveEquals(name, "BRIN")) return IndexType::BRIN;
-    if (caseInsensitiveEquals(name, "RTREE") || caseInsensitiveEquals(name, "SPATIAL")) return IndexType::RTREE;
-    if (caseInsensitiveEquals(name, "SPGIST") || caseInsensitiveEquals(name, "SP-GIST")) return IndexType::SPGIST;
+    if (caseInsensitiveEquals(name, "RTREE")) return IndexType::RTREE;
+    if (caseInsensitiveEquals(name, "SPGIST")) return IndexType::SPGIST;
     if (caseInsensitiveEquals(name, "BITMAP")) return IndexType::BITMAP;
     if (caseInsensitiveEquals(name, "COLUMNSTORE")) return IndexType::COLUMNSTORE;
     if (caseInsensitiveEquals(name, "LSM")) return IndexType::LSM;
     if (caseInsensitiveEquals(name, "IVF")) return IndexType::IVF;
-    if (caseInsensitiveEquals(name, "ZONEMAP") || caseInsensitiveEquals(name, "ZONE_MAP")) return IndexType::ZONEMAP;
+    if (caseInsensitiveEquals(name, "ZONEMAP")) return IndexType::ZONEMAP;
     if (caseInsensitiveEquals(name, "ART")) return IndexType::ART;
     if (caseInsensitiveEquals(name, "BLOOM")) return IndexType::BLOOM;
     if (caseInsensitiveEquals(name, "VECTOR_FLAT")) return IndexType::VECTOR_FLAT;
@@ -1070,25 +1070,23 @@ Statement* Parser::parseCreate() {
 
     // Dispatch based on object type
     if (matchContextual("SEARCH")) {
-        if (!matchContextual("INDEX")) {
-            errorCode("PRS_0505", "Expected INDEX after CREATE SEARCH");
+        if (matchContextual("INDEX")) {
+            errorCode("PRS_0505",
+                      "CREATE SEARCH INDEX is not supported in v3; use CREATE INDEX ... USING FULLTEXT");
             return nullptr;
         }
-        if (or_alter) {
-            errorCode("PRS_0505", "CREATE OR ALTER is not supported for SEARCH INDEX");
-        }
-        return parseCreateSearchIndex();
+        errorCode("PRS_0505", "Expected INDEX after CREATE SEARCH");
+        return nullptr;
     }
 
     if (matchContextual("VECTOR")) {
-        if (!matchContextual("INDEX")) {
-            errorCode("PRS_0505", "Expected INDEX after CREATE VECTOR");
+        if (matchContextual("INDEX")) {
+            errorCode("PRS_0505",
+                      "CREATE VECTOR INDEX is not supported in v3; use CREATE INDEX ... USING HNSW");
             return nullptr;
         }
-        if (or_alter) {
-            errorCode("PRS_0505", "CREATE OR ALTER is not supported for VECTOR INDEX");
-        }
-        return parseCreateVectorIndex();
+        errorCode("PRS_0505", "Expected INDEX after CREATE VECTOR");
+        return nullptr;
     }
 
     if (matchContextual("MEASUREMENT")) {
@@ -1784,123 +1782,6 @@ CreateJobStmt* Parser::parseCreateJob(bool or_alter, bool recreate) {
         }
     } else {
         error("Expected AS, CALL, or EXEC for job definition");
-    }
-
-    stmt->span = makeSpan(start);
-    return stmt;
-}
-
-CreateIndexStmt* Parser::parseCreateSearchIndex() {
-    SourceLocation start = currentLocation();
-
-    auto* stmt = arena_.create<CreateIndexStmt>();
-    stmt->index_type = IndexType::FULLTEXT;
-    stmt->index_method_name = stringPool().intern("SEARCH");
-
-    stmt->index_name = expectIdentifier("Expected index name");
-    expect(TokenType::KW_ON, "Expected ON after index name");
-    stmt->table_path = parseSchemaPath(state_);
-    if (stmt->table_path.isEmpty()) {
-        error("Expected table name after ON");
-    }
-
-    expect(TokenType::LEFT_PAREN, "Expected '(' after table name");
-    if (check(TokenType::RIGHT_PAREN)) {
-        errorCode("PRS_0504", "CREATE SEARCH INDEX field list must not be empty");
-    }
-
-    while (!check(TokenType::RIGHT_PAREN) &&
-           !check(TokenType::SEMICOLON) &&
-           !check(TokenType::END_OF_FILE)) {
-        if (!isIdentifier()) {
-            errorCode("PRS_0504", "Expected field identifier in CREATE SEARCH INDEX");
-            break;
-        }
-        IndexColumn col;
-        col.column = currentIdentifier();
-        stmt->columns.push_back(col);
-        if (!match(TokenType::COMMA)) {
-            break;
-        }
-    }
-    expect(TokenType::RIGHT_PAREN, "Expected ')' after field list");
-
-    stmt->span = makeSpan(start);
-    return stmt;
-}
-
-CreateIndexStmt* Parser::parseCreateVectorIndex() {
-    SourceLocation start = currentLocation();
-
-    auto* stmt = arena_.create<CreateIndexStmt>();
-    stmt->index_type = IndexType::HNSW;
-    stmt->index_method_name = stringPool().intern("VECTOR");
-
-    stmt->index_name = expectIdentifier("Expected index name");
-    expect(TokenType::KW_ON, "Expected ON after index name");
-    stmt->table_path = parseSchemaPath(state_);
-    if (stmt->table_path.isEmpty()) {
-        error("Expected table name after ON");
-    }
-
-    expect(TokenType::LEFT_PAREN, "Expected '(' after table name");
-    if (!isIdentifier()) {
-        errorCode("PRS_0504", "CREATE VECTOR INDEX requires one vector field");
-    } else {
-        IndexColumn col;
-        col.column = currentIdentifier();
-        stmt->columns.push_back(col);
-    }
-    if (match(TokenType::COMMA)) {
-        errorCode("PRS_0504", "CREATE VECTOR INDEX accepts exactly one field");
-        while (!check(TokenType::RIGHT_PAREN) &&
-               !check(TokenType::SEMICOLON) &&
-               !check(TokenType::END_OF_FILE)) {
-            advance();
-        }
-    }
-    expect(TokenType::RIGHT_PAREN, "Expected ')' after vector field");
-
-    if (!matchContextual("METRIC")) {
-        errorCode("PRS_0505", "CREATE VECTOR INDEX requires METRIC");
-    }
-
-    StringPool::StringId metric_id = StringPool::INVALID_ID;
-    if (!isIdentifier()) {
-        errorCode("PRS_0504", "Expected metric symbol after METRIC");
-    } else {
-        metric_id = currentIdentifier();
-        std::string metric = std::string(stringPool().get(metric_id));
-        for (char& c : metric) {
-            c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-        }
-        if (!(metric == "L2" || metric == "COSINE" || metric == "DOT")) {
-            errorCode("PRS_0504", "Unknown VECTOR METRIC symbol");
-        }
-        metric_id = stringPool().intern(metric);
-    }
-
-    if (!matchContextual("TOPK_DEFAULT")) {
-        errorCode("PRS_0505", "CREATE VECTOR INDEX requires TOPK_DEFAULT");
-    }
-
-    StringPool::StringId topk_id = StringPool::INVALID_ID;
-    if (!check(TokenType::INTEGER_LITERAL)) {
-        errorCode("PRS_0504", "Expected integer literal for TOPK_DEFAULT");
-    } else {
-        int64_t topk = current().value.int_value;
-        advance();
-        if (topk <= 0) {
-            errorCode("PRS_0504", "TOPK_DEFAULT must be > 0");
-        }
-        topk_id = stringPool().intern(std::to_string(topk));
-    }
-
-    if (metric_id != StringPool::INVALID_ID) {
-        stmt->option_assignments.push_back({stringPool().intern("metric"), metric_id});
-    }
-    if (topk_id != StringPool::INVALID_ID) {
-        stmt->option_assignments.push_back({stringPool().intern("topk_default"), topk_id});
     }
 
     stmt->span = makeSpan(start);
@@ -6071,52 +5952,6 @@ CreateTypeStmt* Parser::parseCreateType(bool /*or_replace*/) {
 // ALTER Statements
 // =============================================================================
 
-Statement* Parser::parseAlterSearchIndex() {
-    SourceLocation start = currentLocation();
-
-    auto* stmt = arena_.create<AlterIndexStmt>();
-    stmt->index_path = parseSchemaPath(state_);
-    if (stmt->index_path.isEmpty()) {
-        error("Expected index name");
-    }
-
-    if (!matchContextual("REBUILD")) {
-        errorCode("PRS_0505", "ALTER SEARCH INDEX supports only REBUILD");
-    }
-    stmt->action = AlterIndexAction::REBUILD;
-    if (matchContextual("ONLINE")) {
-        stmt->mode = IndexMaintenanceMode::ONLINE;
-    } else if (matchContextual("OFFLINE")) {
-        stmt->mode = IndexMaintenanceMode::OFFLINE;
-    }
-
-    stmt->span = makeSpan(start);
-    return stmt;
-}
-
-Statement* Parser::parseAlterVectorIndex() {
-    SourceLocation start = currentLocation();
-
-    auto* stmt = arena_.create<AlterIndexStmt>();
-    stmt->index_path = parseSchemaPath(state_);
-    if (stmt->index_path.isEmpty()) {
-        error("Expected index name");
-    }
-
-    if (!matchContextual("REBUILD")) {
-        errorCode("PRS_0505", "ALTER VECTOR INDEX supports only REBUILD");
-    }
-    stmt->action = AlterIndexAction::REBUILD;
-    if (matchContextual("ONLINE")) {
-        stmt->mode = IndexMaintenanceMode::ONLINE;
-    } else if (matchContextual("OFFLINE")) {
-        stmt->mode = IndexMaintenanceMode::OFFLINE;
-    }
-
-    stmt->span = makeSpan(start);
-    return stmt;
-}
-
 Statement* Parser::parseAlterMeasurement() {
     SourceLocation start = currentLocation();
 
@@ -6747,18 +6582,22 @@ Statement* Parser::parseAlter() {
     ParseModeGuard guard(state_, ParseMode::DDL);
 
     if (matchContextual("SEARCH")) {
-        if (!matchContextual("INDEX")) {
-            errorCode("PRS_0505", "Expected INDEX after ALTER SEARCH");
+        if (matchContextual("INDEX")) {
+            errorCode("PRS_0505",
+                      "ALTER SEARCH INDEX is not supported in v3; use ALTER INDEX ... REBUILD");
             return nullptr;
         }
-        return parseAlterSearchIndex();
+        errorCode("PRS_0505", "Expected INDEX after ALTER SEARCH");
+        return nullptr;
     }
     if (matchContextual("VECTOR")) {
-        if (!matchContextual("INDEX")) {
-            errorCode("PRS_0505", "Expected INDEX after ALTER VECTOR");
+        if (matchContextual("INDEX")) {
+            errorCode("PRS_0505",
+                      "ALTER VECTOR INDEX is not supported in v3; use ALTER INDEX ... REBUILD");
             return nullptr;
         }
-        return parseAlterVectorIndex();
+        errorCode("PRS_0505", "Expected INDEX after ALTER VECTOR");
+        return nullptr;
     }
     if (matchContextual("MEASUREMENT")) return parseAlterMeasurement();
     if (matchContextual("SCHEDULE")) {
@@ -8178,18 +8017,22 @@ Statement* Parser::parseDrop() {
     ParseModeGuard guard(state_, ParseMode::DDL);
 
     if (matchContextual("SEARCH")) {
-        if (!matchContextual("INDEX")) {
-            errorCode("PRS_0505", "Expected INDEX after DROP SEARCH");
+        if (matchContextual("INDEX")) {
+            errorCode("PRS_0505",
+                      "DROP SEARCH INDEX is not supported in v3; use DROP INDEX");
             return nullptr;
         }
-        return parseDropSearchIndex();
+        errorCode("PRS_0505", "Expected INDEX after DROP SEARCH");
+        return nullptr;
     }
     if (matchContextual("VECTOR")) {
-        if (!matchContextual("INDEX")) {
-            errorCode("PRS_0505", "Expected INDEX after DROP VECTOR");
+        if (matchContextual("INDEX")) {
+            errorCode("PRS_0505",
+                      "DROP VECTOR INDEX is not supported in v3; use DROP INDEX");
             return nullptr;
         }
-        return parseDropVectorIndex();
+        errorCode("PRS_0505", "Expected INDEX after DROP VECTOR");
+        return nullptr;
     }
     if (matchContextual("SCHEDULE")) {
         if (!requireFeature(kFeatureScheduleRruleSurface)) {
@@ -8304,36 +8147,6 @@ Statement* Parser::parseDrop() {
 
     error("Expected object type after DROP");
     return nullptr;
-}
-
-Statement* Parser::parseDropSearchIndex() {
-    SourceLocation start = currentLocation();
-    auto* stmt = arena_.create<DropIndexStmt>();
-    if (match(TokenType::KW_IF)) {
-        expect(TokenType::KW_EXISTS, "Expected EXISTS after IF");
-        stmt->if_exists = true;
-    }
-    stmt->indexes.push_back(parseSchemaPath(state_));
-    if (stmt->indexes.back().isEmpty()) {
-        error("Expected search index name");
-    }
-    stmt->span = makeSpan(start);
-    return stmt;
-}
-
-Statement* Parser::parseDropVectorIndex() {
-    SourceLocation start = currentLocation();
-    auto* stmt = arena_.create<DropIndexStmt>();
-    if (match(TokenType::KW_IF)) {
-        expect(TokenType::KW_EXISTS, "Expected EXISTS after IF");
-        stmt->if_exists = true;
-    }
-    stmt->indexes.push_back(parseSchemaPath(state_));
-    if (stmt->indexes.back().isEmpty()) {
-        error("Expected vector index name");
-    }
-    stmt->span = makeSpan(start);
-    return stmt;
 }
 
 Statement* Parser::parseDropSchedule() {

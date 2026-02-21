@@ -1,5 +1,5 @@
 # Command Group: DROP
-Last modified: 2026-02-19
+Last modified: 2026-02-21
 
 Back links:
 - [Language Guide README](../README.md)
@@ -11,8 +11,7 @@ Series navigation:
 
 Parser dispatch in native v3 `parseDrop()` includes:
 
-- `DROP SEARCH INDEX`
-- `DROP VECTOR INDEX`
+- `DROP INDEX`
 - `DROP SCHEDULE`
 - `DROP CONNECTION RULE`
 - `DROP TOKEN`
@@ -32,7 +31,6 @@ Parser dispatch in native v3 `parseDrop()` includes:
 - `DROP DATABASE`
 - `DROP TABLESPACE`
 - `DROP TABLE`
-- `DROP INDEX`
 - `DROP VIEW`
 - `DROP JOB`
 - `DROP DOMAIN`

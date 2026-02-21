@@ -35,9 +35,9 @@ ParseResult parseWithDisabledFeatures(std::string_view sql, std::initializer_lis
     return parser.parseStatement();
 }
 
-TEST(ParserV3NativeExtensionSurfaceTest, ParsesCreateSearchAndVectorIndexCanonicalForms) {
+TEST(ParserV3NativeExtensionSurfaceTest, ParsesUnifiedCreateIndexCanonicalFormsForFulltextAndVector) {
     {
-        Parser parser("CREATE SEARCH INDEX idx_search ON docs (title, body)");
+        Parser parser("CREATE INDEX idx_search ON docs USING FULLTEXT (title, body)");
         auto result = parser.parseStatement();
         ASSERT_TRUE(result.success()) << "expected parse success";
         ASSERT_EQ(result.statement()->kind(), ASTKind::CreateIndexStmt);
@@ -47,7 +47,8 @@ TEST(ParserV3NativeExtensionSurfaceTest, ParsesCreateSearchAndVectorIndexCanonic
     }
 
     {
-        Parser parser("CREATE VECTOR INDEX idx_vec ON docs (embedding) METRIC COSINE TOPK_DEFAULT 25");
+        Parser parser(
+            "CREATE INDEX idx_vec ON docs USING HNSW (embedding) WITH (metric='COSINE', topk_default=25)");
         auto result = parser.parseStatement();
         ASSERT_TRUE(result.success()) << "expected parse success";
         ASSERT_EQ(result.statement()->kind(), ASTKind::CreateIndexStmt);
@@ -58,25 +59,53 @@ TEST(ParserV3NativeExtensionSurfaceTest, ParsesCreateSearchAndVectorIndexCanonic
     }
 }
 
-TEST(ParserV3NativeExtensionSurfaceTest, RejectsVectorMetricAndTopkDeterministically) {
+TEST(ParserV3NativeExtensionSurfaceTest, RejectsLegacySearchAndVectorIndexCommands) {
     {
-        Parser parser("CREATE VECTOR INDEX idx_vec ON docs (embedding) METRIC BAD TOPK_DEFAULT 10");
+        Parser parser("CREATE SEARCH INDEX idx_search ON docs (title, body)");
         auto result = parser.parseStatement();
         EXPECT_FALSE(result.success());
-        EXPECT_TRUE(hasErrorCode(result, "PRS_0504"));
+        EXPECT_TRUE(hasErrorCode(result, "PRS_0505"));
     }
 
     {
-        Parser parser("CREATE VECTOR INDEX idx_vec ON docs (embedding) METRIC L2 TOPK_DEFAULT 0");
+        Parser parser("CREATE VECTOR INDEX idx_vec ON docs (embedding) METRIC COSINE TOPK_DEFAULT 25");
         auto result = parser.parseStatement();
         EXPECT_FALSE(result.success());
-        EXPECT_TRUE(hasErrorCode(result, "PRS_0504"));
+        EXPECT_TRUE(hasErrorCode(result, "PRS_0505"));
+    }
+
+    {
+        Parser parser("ALTER SEARCH INDEX idx_search REBUILD ONLINE");
+        auto result = parser.parseStatement();
+        EXPECT_FALSE(result.success());
+        EXPECT_TRUE(hasErrorCode(result, "PRS_0505"));
+    }
+
+    {
+        Parser parser("ALTER VECTOR INDEX idx_vec REBUILD OFFLINE");
+        auto result = parser.parseStatement();
+        EXPECT_FALSE(result.success());
+        EXPECT_TRUE(hasErrorCode(result, "PRS_0505"));
+    }
+
+    {
+        Parser parser("DROP SEARCH INDEX idx_search");
+        auto result = parser.parseStatement();
+        EXPECT_FALSE(result.success());
+        EXPECT_TRUE(hasErrorCode(result, "PRS_0505"));
+    }
+
+    {
+        Parser parser("DROP VECTOR INDEX idx_vec");
+        auto result = parser.parseStatement();
+        EXPECT_FALSE(result.success());
+        EXPECT_TRUE(hasErrorCode(result, "PRS_0505"));
     }
 }
 
-TEST(ParserV3NativeExtensionSurfaceTest, ParsesAlterDropSearchAndVectorIndexCanonicalForms) {
+TEST(ParserV3NativeExtensionSurfaceTest, ParsesUnifiedAlterDropIndexFormsForFulltextAndVector) {
     {
-        Parser parser("ALTER SEARCH INDEX idx_search REBUILD ONLINE");
+        Parser parser("ALTER INDEX idx_search REBUILD ONLINE");
         auto result = parser.parseStatement();
         ASSERT_TRUE(result.success()) << "expected parse success";
         ASSERT_EQ(result.statement()->kind(), ASTKind::AlterIndexStmt);
@@ -86,7 +115,7 @@ TEST(ParserV3NativeExtensionSurfaceTest, ParsesAlterDropSearchAndVectorIndexCano
     }
 
     {
-        Parser parser("ALTER VECTOR INDEX idx_vec REBUILD OFFLINE");
+        Parser parser("ALTER INDEX idx_vec REBUILD OFFLINE");
         auto result = parser.parseStatement();
         ASSERT_TRUE(result.success()) << "expected parse success";
         ASSERT_EQ(result.statement()->kind(), ASTKind::AlterIndexStmt);
@@ -96,14 +125,14 @@ TEST(ParserV3NativeExtensionSurfaceTest, ParsesAlterDropSearchAndVectorIndexCano
     }
 
     {
-        Parser parser("DROP SEARCH INDEX idx_search");
+        Parser parser("DROP INDEX idx_search");
         auto result = parser.parseStatement();
         ASSERT_TRUE(result.success()) << "expected parse success";
         ASSERT_EQ(result.statement()->kind(), ASTKind::DropIndexStmt);
     }
 
     {
-        Parser parser("DROP VECTOR INDEX idx_vec");
+        Parser parser("DROP INDEX idx_vec");
         auto result = parser.parseStatement();
         ASSERT_TRUE(result.success()) << "expected parse success";
         ASSERT_EQ(result.statement()->kind(), ASTKind::DropIndexStmt);
@@ -1068,17 +1097,17 @@ TEST(ParserV3NativeExtensionSurfaceTest, RejectsInvalidCdcAndDatabaseConnectionS
     }
 }
 
-TEST(ParserV3NativeExtensionSurfaceTest, ParsesExtendedIndexTypeAliases) {
+TEST(ParserV3NativeExtensionSurfaceTest, ParsesCanonicalExtendedIndexTypes) {
     struct IndexCase {
         const char* sql;
         IndexType expected_type;
     };
 
     const std::vector<IndexCase> cases = {
-        {"CREATE INDEX idx_spatial ON docs USING SPATIAL (id)", IndexType::RTREE},
-        {"CREATE INDEX idx_spgist ON docs USING SP-GIST (id)", IndexType::SPGIST},
-        {"CREATE INDEX idx_vector_alias ON docs USING VECTOR (id)", IndexType::HNSW},
-        {"CREATE INDEX idx_zone_map ON docs USING ZONE_MAP (id)", IndexType::ZONEMAP},
+        {"CREATE INDEX idx_rtree ON docs USING RTREE (id)", IndexType::RTREE},
+        {"CREATE INDEX idx_spgist ON docs USING SPGIST (id)", IndexType::SPGIST},
+        {"CREATE INDEX idx_hnsw ON docs USING HNSW (id)", IndexType::HNSW},
+        {"CREATE INDEX idx_zone_map ON docs USING ZONEMAP (id)", IndexType::ZONEMAP},
     };
 
     for (const auto& c : cases) {
@@ -1088,6 +1117,21 @@ TEST(ParserV3NativeExtensionSurfaceTest, ParsesExtendedIndexTypeAliases) {
         ASSERT_EQ(result.statement()->kind(), ASTKind::CreateIndexStmt) << c.sql;
         auto* stmt = static_cast<CreateIndexStmt*>(result.statement());
         EXPECT_EQ(stmt->index_type, c.expected_type) << c.sql;
+    }
+}
+
+TEST(ParserV3NativeExtensionSurfaceTest, RejectsRemovedIndexMethodAliases) {
+    const std::vector<const char*> sql_cases = {
+        "CREATE INDEX idx_spatial ON docs USING SPATIAL (id)",
+        "CREATE INDEX idx_spgist_alias ON docs USING SP-GIST (id)",
+        "CREATE INDEX idx_vector_alias ON docs USING VECTOR (id)",
+        "CREATE INDEX idx_zone_map_alias ON docs USING ZONE_MAP (id)",
+    };
+
+    for (const char* sql : sql_cases) {
+        Parser parser(sql);
+        auto result = parser.parseStatement();
+        EXPECT_FALSE(result.success()) << sql;
     }
 }
 

@@ -165,8 +165,6 @@ private:
     Statement* parseTruncate();
 
     // CREATE statements
-    CreateIndexStmt* parseCreateSearchIndex();
-    CreateIndexStmt* parseCreateVectorIndex();
     Statement* parseCreateMeasurement();
     Statement* parseCreateSchedule();
     Statement* parseCreateConnectionRule();
@@ -210,8 +208,6 @@ private:
     CreateJobStmt* parseCreateJob(bool or_alter = false, bool recreate = false);
 
     // ALTER statements
-    Statement* parseAlterSearchIndex();
-    Statement* parseAlterVectorIndex();
     Statement* parseAlterMeasurement();
     Statement* parseAlterSchedule();
     Statement* parseAlterConnectionRule();
@@ -234,8 +230,6 @@ private:
     AlterSystemStmt* parseAlterSystem();
 
     // DROP statements
-    Statement* parseDropSearchIndex();
-    Statement* parseDropVectorIndex();
     Statement* parseDropSchedule();
     Statement* parseDropConnectionRule();
     Statement* parseDropToken();

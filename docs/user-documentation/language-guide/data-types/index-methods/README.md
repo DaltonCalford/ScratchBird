@@ -1,5 +1,5 @@
-# Index Method Variants
-Last modified: 2026-02-19
+# Index Methods
+Last modified: 2026-02-21
 
 Back links:
 - [Language Guide README](../../README.md)
@@ -7,4 +7,4 @@ Back links:
 
 Series navigation:
 - [Parser-Accepted Methods](parser-accepted-methods.md)
-- [Canonical Methods And Aliases](canonical-methods-and-aliases.md)
+- [Canonical Methods](canonical-methods-and-aliases.md)

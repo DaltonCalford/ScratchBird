@@ -1,5 +1,5 @@
-# DDL SEARCH INDEX: SHOW
-Last modified: 2026-02-19
+# DDL SEARCH INDEX: SHOW (Retired)
+Last modified: 2026-02-21
 
 Back links:
 - [Language Guide README](../../../README.md)
@@ -7,26 +7,12 @@ Back links:
 - [Family README](../README.md)
 - [Object README](README.md)
 
-Lifecycle navigation:
-- Previous: [ALTER](alter.md)
-- Next: [DESCRIBE](describe.md)
-
 ## Coverage
-- Status: Not available
-- Command lifecycle note: ALTER supports only REBUILD in 0.1.0; SHOW/DESCRIBE are missing.
-- Runtime note: Lifecycle remains partial pending broader ALTER and observability commands.
+- Status: Not supported
+- Command lifecycle note: no dedicated SEARCH INDEX object family exists in native v3.
 
-## Parser Surface
+## Canonical Replacement
 ```sql
--- No explicit native v3 SHOW command surface for SEARCH INDEX in 0.1.0.
+SHOW INDEX <index_name>;
+SHOW INDEXES FROM <table_name>;
 ```
-
-## Example
-```sql
--- No explicit native v3 SHOW command surface for SEARCH INDEX in 0.1.0.
-```
-
-## Notes
-- This phase is documented from parser/emitter/executor evidence for 0.1.0.
-- Full matrix and opcode-level notes are in [Consolidated Audit Reference](../../../NATIVE_PARSER_LANGUAGE_REFERENCE_BETA_0_1_0.md).
-- This phase has no dedicated command form in 0.1.0; use related object commands or metadata inspection where applicable.

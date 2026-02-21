@@ -71,9 +71,9 @@ struct GoldenSqlVector {
 
 TEST_F(SqlToSblrTraceDeterminismTest, NormalizationMakesEquivalentSqlStable) {
     const std::string canonical =
-        "CREATE VECTOR INDEX idx_vec ON docs (embedding) METRIC COSINE TOPK_DEFAULT 25";
+        "CREATE INDEX idx_vec ON docs USING HNSW (embedding) WITH (metric='COSINE', topk_default=25)";
     const std::string variant =
-        "  CREATE   VECTOR   INDEX idx_vec  ON docs (embedding)  METRIC COSINE   TOPK_DEFAULT 25  ";
+        "  CREATE   INDEX idx_vec   ON docs USING HNSW (embedding) WITH (metric='COSINE', topk_default=25)  ";
 
     auto trace_a = trace(canonical);
     auto trace_b = trace(variant);
@@ -104,7 +104,7 @@ TEST_F(SqlToSblrTraceDeterminismTest, RepeatCompileHasIdenticalDigests) {
 }
 
 TEST_F(SqlToSblrTraceDeterminismTest, DistinctStatementsProduceDistinctSblrDigests) {
-    auto trace_index = trace("CREATE SEARCH INDEX idx_search ON docs (title, body)");
+    auto trace_index = trace("CREATE INDEX idx_search ON docs USING FULLTEXT (title, body)");
     auto trace_token =
         trace("CREATE TOKEN ifx_reader WITH SCOPE (ALLOW BUCKET 'cpu_metrics' ACTION READ)");
     ASSERT_TRUE(trace_index.success());
@@ -208,9 +208,9 @@ TEST_F(SqlToSblrTraceDeterminismTest, InvalidUdrAliasRejectsBeforeSblrEmission) 
 TEST_F(SqlToSblrTraceDeterminismTest, NativeExtensionCorpusCompilesToDeterministicDigests) {
     const bool dump_trace_hashes = std::getenv("SB_TRACE_DUMP") != nullptr;
     const std::vector<std::string> corpus = {
-        "CREATE SEARCH INDEX idx_search ON docs (title, body)",
-        "CREATE VECTOR INDEX idx_vec ON docs (embedding) METRIC COSINE TOPK_DEFAULT 25",
-        "ALTER SEARCH INDEX idx_search REBUILD ONLINE",
+        "CREATE INDEX idx_search ON docs USING FULLTEXT (title, body)",
+        "CREATE INDEX idx_vec ON docs USING HNSW (embedding) WITH (metric='COSINE', topk_default=25)",
+        "ALTER INDEX idx_search REBUILD ONLINE",
         "CREATE MEASUREMENT cpu (host STRING, usage_user DOUBLE)",
         "ALTER MEASUREMENT cpu RETENTION '30d'",
         "CREATE SCHEDULE sch_daily RRULE 'FREQ=DAILY;INTERVAL=1' DTSTART '2026-02-17T00:00:00' TZ 'UTC'",

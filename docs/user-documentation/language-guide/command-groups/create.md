@@ -1,5 +1,5 @@
 # Command Group: CREATE
-Last modified: 2026-02-19
+Last modified: 2026-02-21
 
 Back links:
 - [Language Guide README](../README.md)
@@ -10,8 +10,7 @@ Next in series:
 
 Parser dispatch in native v3 `parseCreate()` includes:
 
-- `CREATE SEARCH INDEX`
-- `CREATE VECTOR INDEX`
+- `CREATE INDEX`
 - `CREATE MEASUREMENT`
 - `CREATE SCHEDULE`
 - `CREATE CONNECTION RULE`
@@ -37,7 +36,6 @@ Parser dispatch in native v3 `parseCreate()` includes:
 - `CREATE TABLESPACE`
 - `CREATE DOMAIN`
 - `CREATE TABLE`
-- `CREATE INDEX`
 - `CREATE VIEW`
 - `CREATE SEQUENCE`
 - `CREATE FUNCTION`

@@ -1,5 +1,5 @@
 # Native Parser V3 Language Reference (Beta 0.1.0)
-Last modified: 2026-02-19
+Last modified: 2026-02-21
 
 ## 1. Scope And Method
 
@@ -41,8 +41,7 @@ The following command families are listed directly from parser dispatch in:
 
 `CREATE` (`parseCreate`) dispatches:
 
-- `CREATE SEARCH INDEX`
-- `CREATE VECTOR INDEX`
+- `CREATE INDEX`
 - `CREATE MEASUREMENT`
 - `CREATE SCHEDULE`
 - `CREATE CONNECTION RULE`
@@ -65,7 +64,6 @@ The following command families are listed directly from parser dispatch in:
 - `CREATE TABLESPACE`
 - `CREATE DOMAIN`
 - `CREATE TABLE`
-- `CREATE INDEX`
 - `CREATE VIEW`
 - `CREATE SEQUENCE`
 - `CREATE FUNCTION`
@@ -89,8 +87,7 @@ The following command families are listed directly from parser dispatch in:
 
 `ALTER` (`parseAlter`) dispatches:
 
-- `ALTER SEARCH INDEX`
-- `ALTER VECTOR INDEX`
+- `ALTER INDEX`
 - `ALTER MEASUREMENT`
 - `ALTER SCHEDULE`
 - `ALTER CONNECTION RULE`
@@ -114,7 +111,6 @@ The following command families are listed directly from parser dispatch in:
 - `ALTER POLICY`
 - `ALTER SYSTEM`
 - `ALTER VIEW`
-- `ALTER INDEX`
 - `ALTER SEQUENCE`
 - `ALTER TRIGGER`
 - `ALTER FUNCTION`
@@ -129,8 +125,7 @@ The following command families are listed directly from parser dispatch in:
 
 `DROP` (`parseDrop`) dispatches:
 
-- `DROP SEARCH INDEX`
-- `DROP VECTOR INDEX`
+- `DROP INDEX`
 - `DROP SCHEDULE`
 - `DROP CONNECTION RULE`
 - `DROP TOKEN`
@@ -148,7 +143,6 @@ The following command families are listed directly from parser dispatch in:
 - `DROP DATABASE`
 - `DROP TABLESPACE`
 - `DROP TABLE`
-- `DROP INDEX`
 - `DROP VIEW`
 - `DROP JOB`
 - `DROP DOMAIN`
@@ -277,7 +271,7 @@ Disabled features fail deterministically with `PRS_0503`.
 - Security/admin: `USER`, `ROLE`, `GROUP`, `POLICY`, `JOB`
 - FDW/federation: `SERVER`, `FOREIGN TABLE`, `FOREIGN DATA WRAPPER`, `USER MAPPING`, `SYNONYM`, `PUBLIC SYNONYM`, `UDR`
 - Extension/replication/admin surfaces: `EXTENSION`, `PUBLICATION`, `SUBSCRIPTION`, `ACCESS METHOD`, `STATISTICS`, `TRANSFORM`, `REPLICATION CHANNEL`, `CDC TABLE`, `DATABASE CONNECTION`, `CLUSTER WORKLOAD CLASS|ROUTE`, `CLUSTER ADMISSION POLICY|BINDING`
-- Native extension objects: `SEARCH INDEX`, `VECTOR INDEX`, `MEASUREMENT`, `SCHEDULE`, `CONNECTION RULE`, `TOKEN`, `QUOTA PROFILE`
+- Native extension objects: `MEASUREMENT`, `SCHEDULE`, `CONNECTION RULE`, `TOKEN`, `QUOTA PROFILE`
 
 `CREATE DATABASE` parser supports both native and emulated forms:
 
@@ -295,7 +289,6 @@ Disabled features fail deterministically with `PRS_0503`.
 - Security/admin: `USER`, `ROLE`, `GROUP`, `POLICY`, `JOB`, `SYSTEM`
 - FDW/federation: `SYNONYM`, `SERVER`, `FOREIGN TABLE`
 - Extension/replication/admin: `EXTENSION`, `MEASUREMENT`, `CONNECTION RULE`, `TOKEN`, `QUOTA PROFILE`, `SCHEDULE`, `REPLICATION CHANNEL`, `CDC TABLE`, `DATABASE CONNECTION`, `CLUSTER WORKLOAD CLASS|ROUTE`, `CLUSTER ADMISSION POLICY|BINDING`, `CLUSTER SET STATE`
-- Native extension indexes: `ALTER SEARCH INDEX`, `ALTER VECTOR INDEX`
 
 `ALTER INDEX` actions include:
 
@@ -316,7 +309,6 @@ Disabled features fail deterministically with `PRS_0503`.
 - Security/admin: `USER`, `ROLE`, `GROUP`, `POLICY`, `JOB`
 - FDW/federation: `SYNONYM`, `UDR`, `SERVER`, `FOREIGN TABLE`, `USER MAPPING`
 - Extension/replication/admin: `EXTENSION`, `PUBLICATION`, `SUBSCRIPTION`, `CONNECTION RULE`, `TOKEN`, `QUOTA PROFILE`, `SCHEDULE`, `REPLICATION CHANNEL`, `CDC TABLE`, `DATABASE CONNECTION`, `CLUSTER WORKLOAD CLASS|ROUTE`, `CLUSTER ADMISSION POLICY|BINDING`
-- Native extension indexes: `DROP SEARCH INDEX`, `DROP VECTOR INDEX`
 - Materialized view form: `DROP MATERIALIZED VIEW ...` (parsed through `DropViewStmt` with materialized flag)
 
 ### 4.4 RECREATE And TRUNCATE
@@ -1027,20 +1019,13 @@ Core lifecycle note for system domains:
 
 Parser-accepted index method tokens (native v3):
 
-- `BTREE`, `HASH`, `HNSW`, `VECTOR`, `FULLTEXT`, `GIN`, `GIST`, `BRIN`, `RTREE`, `SPATIAL`, `SPGIST`, `SP-GIST`, `BITMAP`, `COLUMNSTORE`, `LSM`, `IVF`, `ZONEMAP`, `ZONE_MAP`, `ART`, `BLOOM`
+- `BTREE`, `HASH`, `HNSW`, `FULLTEXT`, `GIN`, `GIST`, `BRIN`, `RTREE`, `SPGIST`, `BITMAP`, `COLUMNSTORE`, `LSM`, `IVF`, `ZONEMAP`, `ART`, `BLOOM`
 - `VECTOR_FLAT`, `VECTOR_BIN_FLAT`, `IVF_FLAT`, `BIN_IVF_FLAT`, `IVF_PQ`, `IVF_SQ8`, `IVF_SQ8_HYBRID`, `RHNSW_PQ`, `RHNSW_SQ`, `ANNOY`, `NSG`, `DISKANN`, `SCANN`, `GPU_CAGRA`
 - `MINHASH_LSH`, `SPARSE_INVERTED`, `SPARSE_WAND`, `TRIE`, `INVERTED`, `STL_SORT`, `NGRAM`
 - `MONGODB_2D`, `MONGODB_2DSPHERE`, `MONGODB_2DSPHERE_BUCKET`, `MONGODB_GEO_HAYSTACK`, `MONGODB_WILDCARD`, `MONGODB_ENCRYPTED_RANGE`
 - `NEO4J_LOOKUP`, `NEO4J_TEXT`, `NEO4J_RANGE`, `NEO4J_POINT`, `NEO4J_VECTOR`
 - `CASSANDRA_SASI`, `CASSANDRA_SAI`
 - `REDIS_STRING`, `REDIS_HASH`, `REDIS_LIST`, `REDIS_SET`, `REDIS_ZSET`, `REDIS_STREAM`, `REDIS_BITMAP`, `REDIS_HLL`, `REDIS_GEO`
-
-Alias spellings normalized by parser before catalog/index runtime:
-
-- `VECTOR` -> `HNSW`
-- `SPATIAL` -> `RTREE`
-- `SP-GIST` -> `SPGIST`
-- `ZONE_MAP` -> `ZONEMAP`
 
 For full source-derived inventories of canonical + legacy system domain names, default-domain maps, index canonical-name validation sets, and context-variable opcode mapping, see:
 
@@ -1323,16 +1308,16 @@ DROP DATABASE erp_pg;
 
 Why: emulated database registration is the bridge for dialect compatibility and remote-source mapping.
 
-`SEARCH INDEX` + `VECTOR INDEX` + `MEASUREMENT` lifecycle:
+`INDEX` + `MEASUREMENT` lifecycle:
 
 ```sql
-CREATE SEARCH INDEX idx_docs_search ON docs.articles(content);
-ALTER SEARCH INDEX idx_docs_search REBUILD ONLINE;
-DROP SEARCH INDEX idx_docs_search;
+CREATE INDEX idx_docs_search ON docs.articles USING FULLTEXT (content);
+ALTER INDEX idx_docs_search REBUILD ONLINE;
+DROP INDEX idx_docs_search;
 
-CREATE VECTOR INDEX idx_vec_docs ON docs.embeddings(embedding) WITH (metric='COSINE');
-ALTER VECTOR INDEX idx_vec_docs REBUILD OFFLINE;
-DROP VECTOR INDEX idx_vec_docs;
+CREATE INDEX idx_vec_docs ON docs.embeddings USING HNSW (embedding) WITH (metric='COSINE', topk_default=25);
+ALTER INDEX idx_vec_docs REBUILD OFFLINE;
+DROP INDEX idx_vec_docs;
 
 CREATE MEASUREMENT ts.cpu_usage ON telemetry.events(timestamp, host, value);
 ALTER MEASUREMENT ts.cpu_usage RETENTION 30d;
@@ -1499,7 +1484,7 @@ Cube materialization/object lifecycle note:
 - `CREATE TYPE` parser is rich, but emitter currently writes minimal placeholder payload for `SBLR3_CREATE_TYPE` (`src/parser/v3_emitter.cpp`), and no `SBLR3_CREATE_TYPE` execution handler is present in `src/sblr/executor.cpp`.
 - `CREATE DATABASE EMULATED` parser is detailed, but `CreateDatabaseStmt` emission currently uses minimal `SBLR3_CREATE_DATABASE` payload fields (`name` + placeholders) and does not carry the full parser-derived emulation contract (`source_spec`, option list, aliases, normalized remote path) in that emitter path.
 - V3 executor opcode routing explicitly handles `SBLR3_CREATE_DATABASE_EMULATED` in vNext-contract dispatch, not `SBLR3_CREATE_DATABASE` in the V3 mutation switch. This means database-create behavior currently spans mixed paths and requires normalization/closure for a single canonical V3 contract.
-- `ALTER SEARCH INDEX` and `ALTER VECTOR INDEX` currently support only `REBUILD` (with optional `ONLINE|OFFLINE`).
+- legacy `SEARCH INDEX`/`VECTOR INDEX` command families were removed from native v3; canonical surface is `INDEX ... USING <method>`.
 - `SET PARSER VERSION` is explicitly parsed then rejected as unsupported.
 - `SET TERM` is parser+emitter accepted as a control statement, but full client-style delimiter-switch script splitting remains external to native v3 `parseStatements()` flow.
 - `REVOKE` privilege token set is narrower than `GRANT` (`TRUNCATE`, `REFERENCES`, `TRIGGER`, `USAGE` are not accepted in current `parseRevoke()`).
