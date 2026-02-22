@@ -83,7 +83,9 @@ public:
     Decimal(int64_t value, uint8_t precision, uint8_t scale);
     Decimal(double value, uint8_t precision, uint8_t scale);
     Decimal(const std::string& str, uint8_t precision = 0, uint8_t scale = 0);
+#if !(defined(_MSC_VER) && !defined(__clang__))
     Decimal(int128_t unscaled_value, uint8_t precision, uint8_t scale);
+#endif
 
     // Copy/move
     Decimal(const Decimal& other) = default;
