@@ -46,7 +46,7 @@ using IndexCaps = IndexFactory::IndexFamilyCapabilities;
 using IndexStorageModel = IndexFactory::IndexStorageModel;
 using IndexRuntimeClass = IndexFactory::IndexRuntimeClass;
 
-constexpr std::array<IndexCaps, 57> kIndexFamilyRegistry = {{
+constexpr std::array<IndexCaps, 59> kIndexFamilyRegistry = {{
     {IndexType::BTREE, "BTREE", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::BTREE,
      true, true, true, false, false, false, false, true},
     {IndexType::HASH, "HASH", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::HASH,
@@ -113,6 +113,10 @@ constexpr std::array<IndexCaps, 57> kIndexFamilyRegistry = {{
      true, true, true, false, false, false, false, false},
     {IndexType::TRIE, "TRIE", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::INVERTED,
      true, true, true, false, false, false, false, false},
+    {IndexType::INVERTED, "INVERTED", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::INVERTED,
+     true, true, true, false, false, false, false, false},
+    {IndexType::STL_SORT, "STL_SORT", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::BTREE,
+     true, true, true, false, false, false, false, true},
     {IndexType::NGRAM, "NGRAM", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::INVERTED,
      true, true, true, false, false, false, false, false},
     {IndexType::MONGODB_2D, "MONGODB_2D", IndexStorageModel::PAGE_BASED, IndexRuntimeClass::RTREE,

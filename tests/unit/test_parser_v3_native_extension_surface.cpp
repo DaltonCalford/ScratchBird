@@ -167,15 +167,12 @@ TEST(ParserV3NativeExtensionSurfaceTest, ParsesAdminClusterAndServiceControlSurf
         {"BACKUP DATABASE '/tmp/scratchbird.sbk'", "admin.backup"},
         {"RESTORE DATABASE '/tmp/scratchbird.sbk'", "admin.restore"},
         {"VALIDATE DATABASE", "admin.validate"},
-        {"VACUUM", "admin.vacuum_alias"},
-        {"VACUUM DATABASE", "admin.vacuum_alias"},
         {"CREATE CLUSTER WORKLOAD CLASS wl_oltp 'MAX_CONCURRENCY=64'",
          "cluster.workload_class.create.wl_oltp"},
         {"ALTER CLUSTER WORKLOAD ROUTE rt_hot 'CLASS=wl_oltp'",
          "cluster.workload_route.alter.rt_hot"},
         {"DROP CLUSTER ADMISSION POLICY ap_main", "cluster.admission_policy.drop.ap_main"},
         {"CLUSTER SET STATE 'READ_WRITE'", "cluster.set_state"},
-        {"CLUSTER SHOW ROUTING PLAN", "cluster.show_routing_plan"},
         {"SHOW CLUSTER ADMISSION STATUS", "cluster.show_admission_status"},
         {"SERVICE CHANNEL EVENTS 'SINCE=0'", "service.channel.events"},
     };
@@ -190,8 +187,29 @@ TEST(ParserV3NativeExtensionSurfaceTest, ParsesAdminClusterAndServiceControlSurf
     }
 }
 
-TEST(ParserV3NativeExtensionSurfaceTest, RejectsVacuumOptionsThatImplyPostgreSqlVacuumSemantics) {
-    Parser parser("VACUUM FULL");
+TEST(ParserV3NativeExtensionSurfaceTest, RejectsRemovedVacuumAndClusterShowAliases) {
+    {
+        Parser parser("VACUUM");
+        auto result = parser.parseStatement();
+        EXPECT_FALSE(result.success());
+        EXPECT_TRUE(hasErrorCode(result, "PRS_0505"));
+    }
+    {
+        Parser parser("VACUUM FULL");
+        auto result = parser.parseStatement();
+        EXPECT_FALSE(result.success());
+        EXPECT_TRUE(hasErrorCode(result, "PRS_0505"));
+    }
+    {
+        Parser parser("CLUSTER SHOW ROUTING PLAN");
+        auto result = parser.parseStatement();
+        EXPECT_FALSE(result.success());
+        EXPECT_TRUE(hasErrorCode(result, "PRS_0505"));
+    }
+}
+
+TEST(ParserV3NativeExtensionSurfaceTest, RejectsDescAliasForDescribe) {
+    Parser parser("DESC orders");
     auto result = parser.parseStatement();
     EXPECT_FALSE(result.success());
     EXPECT_TRUE(hasErrorCode(result, "PRS_0505"));
@@ -1850,7 +1868,7 @@ TEST(ParserV3NativeExtensionSurfaceTest, RejectsInvalidNeo4jQuantifiedPathRange)
     EXPECT_TRUE(hasErrorCode(result, "PRS_0504"));
 }
 
-TEST(ParserV3NativeExtensionSurfaceTest, ParsesRedisLuaEvalStatementAndClauseForms) {
+TEST(ParserV3NativeExtensionSurfaceTest, ParsesCanonicalRedisLuaEvalStatementForm) {
     auto assert_lua_surface = [](const ParseResult& result, StringPool& pool) {
         ASSERT_TRUE(result.success());
         ASSERT_EQ(result.statement()->kind(), ASTKind::AlterSystemStmt);
@@ -1868,14 +1886,9 @@ TEST(ParserV3NativeExtensionSurfaceTest, ParsesRedisLuaEvalStatementAndClauseFor
         auto result = parser.parseStatement();
         assert_lua_surface(result, parser.stringPool());
     }
-    {
-        Parser parser("EVAL LUA return_1 KEYS (k1, k2) ARGS (a1, a2)");
-        auto result = parser.parseStatement();
-        assert_lua_surface(result, parser.stringPool());
-    }
 }
 
-TEST(ParserV3NativeExtensionSurfaceTest, ParsesRedisStreamGroupStatementAndClauseForms) {
+TEST(ParserV3NativeExtensionSurfaceTest, ParsesCanonicalRedisStreamGroupStatementForms) {
     auto assert_stream_create = [](const ParseResult& result, StringPool& pool) {
         ASSERT_TRUE(result.success());
         ASSERT_EQ(result.statement()->kind(), ASTKind::AlterSystemStmt);
@@ -1901,17 +1914,7 @@ TEST(ParserV3NativeExtensionSurfaceTest, ParsesRedisStreamGroupStatementAndClaus
         assert_stream_create(result, parser.stringPool());
     }
     {
-        Parser parser("XGROUP CREATE orders grp_a 0-0");
-        auto result = parser.parseStatement();
-        assert_stream_create(result, parser.stringPool());
-    }
-    {
         Parser parser("REDIS STREAM GROUP READ STREAM orders GROUP grp_a CONSUMER c1 COUNT 32 BLOCK_MS 5000");
-        auto result = parser.parseStatement();
-        assert_stream_read(result, parser.stringPool());
-    }
-    {
-        Parser parser("XREADGROUP STREAM orders GROUP grp_a CONSUMER c1 COUNT 32 BLOCK 5000");
         auto result = parser.parseStatement();
         assert_stream_read(result, parser.stringPool());
     }
@@ -1925,10 +1928,26 @@ TEST(ParserV3NativeExtensionSurfaceTest, RejectsInvalidRedisStreamGroupSurfaces)
         EXPECT_TRUE(hasErrorCode(result, "PRS_0504"));
     }
     {
-        Parser parser("XCLAIM STREAM orders GROUP grp_a CONSUMER c1 MINIDLE -1 IDS (0-1)");
+        Parser parser("REDIS STREAM GROUP CLAIM STREAM orders GROUP grp_a CONSUMER c1 MIN_IDLE_MS -1 IDS (0-1)");
         auto result = parser.parseStatement();
         EXPECT_FALSE(result.success());
         EXPECT_TRUE(hasErrorCode(result, "PRS_0504"));
+    }
+}
+
+TEST(ParserV3NativeExtensionSurfaceTest, RejectsRemovedRedisAliasSurfaces) {
+    const std::vector<const char*> alias_sql = {
+        "EVAL LUA return_1 KEYS (k1, k2) ARGS (a1, a2)",
+        "XGROUP CREATE orders grp_a 0-0",
+        "XREADGROUP STREAM orders GROUP grp_a CONSUMER c1 COUNT 32 BLOCK 5000",
+        "XCLAIM STREAM orders GROUP grp_a CONSUMER c1 MINIDLE 1 IDS (0-1)",
+    };
+
+    for (const char* sql : alias_sql) {
+        Parser parser(sql);
+        auto result = parser.parseStatement();
+        EXPECT_FALSE(result.success()) << sql;
+        EXPECT_TRUE(hasErrorCode(result, "PRS_0505")) << sql;
     }
 }
 

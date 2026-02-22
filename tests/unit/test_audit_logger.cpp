@@ -147,6 +147,12 @@ TEST_F(AuditLoggerTest, EventTypeNames) {
     EXPECT_EQ("REATTACH_SUCCESS", AuditLogger::getEventTypeName(AuditEventType::REATTACH_SUCCESS));
     EXPECT_EQ("REATTACH_FAILURE", AuditLogger::getEventTypeName(AuditEventType::REATTACH_FAILURE));
     EXPECT_EQ("REATTACH_TOKEN_REVOKED", AuditLogger::getEventTypeName(AuditEventType::REATTACH_TOKEN_REVOKED));
+    EXPECT_EQ("AUTH_POLICY_DECISION", AuditLogger::getEventTypeName(AuditEventType::AUTH_POLICY_DECISION));
+    EXPECT_EQ("TOKEN_AUTH_USED", AuditLogger::getEventTypeName(AuditEventType::TOKEN_AUTH_USED));
+    EXPECT_EQ("TOKEN_AUTH_REVOKED", AuditLogger::getEventTypeName(AuditEventType::TOKEN_AUTH_REVOKED));
+    EXPECT_EQ("MANAGED_PREFACE_DECISION",
+              AuditLogger::getEventTypeName(AuditEventType::MANAGED_PREFACE_DECISION));
+    EXPECT_EQ("MANAGED_DBBT_ISSUED", AuditLogger::getEventTypeName(AuditEventType::MANAGED_DBBT_ISSUED));
     EXPECT_EQ("PERMISSION_DENIED", AuditLogger::getEventTypeName(AuditEventType::PERMISSION_DENIED));
     EXPECT_EQ("USER_CREATED", AuditLogger::getEventTypeName(AuditEventType::USER_CREATED));
 }

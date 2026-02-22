@@ -386,10 +386,7 @@ TEST_F(SqlToSblrTraceDeterminismTest, GoldenAliasPairsNormalizeToEquivalentDiges
         {"NP041-ALIAS-001", "SET SEQUENCE seq_docs TO 42", "SET GENERATOR seq_docs TO 42"},
         {"NP043-ALIAS-001", "SEARCH JOIN FIELD MAPPING INDEX 17 FIELD rel_join PARENT parent_doc CHILD child_doc ROUTING REQUIRED", "JOIN FIELD rel_join ON INDEX 17 PARENT parent_doc CHILD child_doc ROUTING REQUIRED"},
         {"NP043-ALIAS-002", "SEARCH PERCOLATOR FIELD INDEX 41 FIELD query_match QUERY_PARSER SIMPLE", "PERCOLATOR FIELD query_match ON INDEX 41 PARSER SIMPLE"},
-        {"NP043-ALIAS-003", "GRAPH PATH MATCH PATTERN rel_path MIN_HOPS 1 MAX_HOPS 4 CYCLE_POLICY NO_REPEAT", "MATCH GRAPH PATH rel_path HOPS 1..4 NO CYCLES"},
-        {"NP043-ALIAS-004", "REDIS LUA EVAL SCRIPT return_1 KEYS (k1,k2) ARGS (a1,a2)", "EVAL LUA return_1 KEYS (k1,k2) ARGS (a1,a2)"},
-        {"NP043-ALIAS-005", "REDIS STREAM GROUP CREATE STREAM orders GROUP grp_a START_ID 0-0", "XGROUP CREATE orders grp_a 0-0"},
-        {"NP043-ALIAS-006", "REDIS STREAM GROUP READ STREAM orders GROUP grp_a CONSUMER c1 COUNT 32 BLOCK_MS 5000", "XREADGROUP STREAM orders GROUP grp_a CONSUMER c1 COUNT 32 BLOCK 5000"}
+        {"NP043-ALIAS-003", "GRAPH PATH MATCH PATTERN rel_path MIN_HOPS 1 MAX_HOPS 4 CYCLE_POLICY NO_REPEAT", "MATCH GRAPH PATH rel_path HOPS 1..4 NO CYCLES"}
     };
 
     for (const auto& pair : pairs) {
@@ -441,7 +438,8 @@ TEST_F(SqlToSblrTraceDeterminismTest, GoldenRejectVectorsRemainDeterministic) {
         {"NP043-REJ-001", "SEARCH JOIN FIELD MAPPING INDEX 17 FIELD rel_join PARENT parent_doc CHILD child_doc ROUTING BAD", "PRS_0504"},
         {"NP043-REJ-002", "MATCH GRAPH PATH rel_path HOPS 9..4 NO CYCLES", "PRS_0504"},
         {"NP043-REJ-003", "REDIS STREAM GROUP READ STREAM orders GROUP grp_a CONSUMER c1 BLOCK_MS 5000", "PRS_0504"},
-        {"NP043-REJ-004", "XCLAIM STREAM orders GROUP grp_a CONSUMER c1 MINIDLE -1 IDS (0-1)", "PRS_0504"}
+        {"NP043-REJ-004", "XCLAIM STREAM orders GROUP grp_a CONSUMER c1 MINIDLE -1 IDS (0-1)", "PRS_0505"},
+        {"NP043-REJ-005", "EVAL LUA return_1 KEYS (k1,k2) ARGS (a1,a2)", "PRS_0505"}
     };
 
     for (const auto& reject : rejects) {

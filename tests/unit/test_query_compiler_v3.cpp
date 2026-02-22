@@ -198,9 +198,14 @@ TEST_F(QueryCompilerV3Test, ExecuteJsonExistsOperatorSpecificity) {
     EXPECT_EQ(query.resultSet()->getValue(0, 4).toString(), "false");
 }
 
-TEST_F(QueryCompilerV3Test, ExecuteVacuumAliasMapsToSweepGc) {
-    auto result = compileAndExecute("VACUUM");
+TEST_F(QueryCompilerV3Test, ExecuteSweepDatabase) {
+    auto result = compileAndExecute("SWEEP DATABASE");
     ASSERT_TRUE(result.success()) << result.error();
+}
+
+TEST_F(QueryCompilerV3Test, RejectsVacuumAlias) {
+    auto result = compileAndExecute("VACUUM");
+    ASSERT_FALSE(result.success());
 }
 
 TEST_F(QueryCompilerV3Test, ExecuteCreateTableWithDomainColumn) {

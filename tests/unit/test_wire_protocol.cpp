@@ -324,17 +324,18 @@ TEST_F(ProtocolCodecTest, ConnectRequest) {
     EXPECT_EQ(client_pid, 12345u);
 }
 
-TEST_F(ProtocolCodecTest, ConnectRequestCarriesManagerBoundDatabaseUuid) {
+TEST_F(ProtocolCodecTest, ConnectRequestCarriesBoundDatabaseUuidFlags) {
     std::array<uint8_t, 16> bound_uuid{};
     for (size_t i = 0; i < bound_uuid.size(); ++i) {
         bound_uuid[i] = static_cast<uint8_t>(i + 1);
     }
 
-    Message msg = ProtocolCodec::buildConnectRequest("main",
-                                                     "proxy_parser",
-                                                     777,
-                                                     CONNECT_FLAG_MANAGER_DBBT,
-                                                     bound_uuid.data());
+    Message msg = ProtocolCodec::buildConnectRequest(
+        "main",
+        "proxy_parser",
+        777,
+        static_cast<uint16_t>(CONNECT_FLAG_MANAGER_DBBT | CONNECT_FLAG_BOUND_DB_UUID),
+        bound_uuid.data());
     EXPECT_EQ(msg.getType(), MessageType::CONNECT_REQUEST);
 
     std::string database;
@@ -358,6 +359,7 @@ TEST_F(ProtocolCodecTest, ConnectRequestCarriesManagerBoundDatabaseUuid) {
     EXPECT_EQ(client_name, "proxy_parser");
     EXPECT_EQ(client_pid, 777u);
     EXPECT_EQ(client_flags & CONNECT_FLAG_MANAGER_DBBT, CONNECT_FLAG_MANAGER_DBBT);
+    EXPECT_EQ(client_flags & CONNECT_FLAG_BOUND_DB_UUID, CONNECT_FLAG_BOUND_DB_UUID);
     EXPECT_TRUE(has_bound_uuid);
     EXPECT_EQ(parsed_bound_uuid, bound_uuid);
 }
@@ -403,6 +405,53 @@ TEST_F(ProtocolCodecTest, AuthRequest) {
     EXPECT_EQ(status, Status::OK) << ctx.message;
     EXPECT_EQ(username, "admin");
     EXPECT_EQ(password, "secret123");
+}
+
+TEST_F(ProtocolCodecTest, AuthRequestTokenRoundTrip) {
+    uint8_t authkey_id[16];
+    for (uint8_t i = 0; i < 16; ++i) {
+        authkey_id[i] = static_cast<uint8_t>(0xA0u + i);
+    }
+    const std::vector<uint8_t> proof = {0x11, 0x22, 0x33};
+    const std::vector<uint8_t> binding = {0x44, 0x55};
+    const std::vector<uint8_t> token_payload =
+        ProtocolCodec::buildTokenAuthPayload(authkey_id, proof, binding);
+
+    Message msg = ProtocolCodec::buildAuthRequest(
+        session_id_, "admin", AuthMethod::TOKEN, token_payload);
+
+    uint8_t parsed_session_id[16];
+    std::string username;
+    AuthMethod parsed_method = AuthMethod::PASSWORD;
+    std::vector<uint8_t> parsed_payload;
+    ErrorContext ctx;
+
+    Status status = ProtocolCodec::parseAuthRequest(
+        msg, parsed_session_id, username, parsed_method, parsed_payload, &ctx);
+    EXPECT_EQ(status, Status::OK) << ctx.message;
+    EXPECT_EQ(std::memcmp(session_id_, parsed_session_id, sizeof(parsed_session_id)), 0);
+    EXPECT_EQ(username, "admin");
+    EXPECT_EQ(parsed_method, AuthMethod::TOKEN);
+    EXPECT_EQ(parsed_payload, token_payload);
+}
+
+TEST_F(ProtocolCodecTest, AuthRequestRejectsUnknownAuthMethodByte) {
+    Message msg = ProtocolCodec::buildAuthRequest(
+        session_id_, "admin", AuthMethod::PASSWORD, {'x'});
+
+    constexpr size_t kAuthMethodOffset = 16u + 64u;
+    ASSERT_GE(msg.getPayloadSize(), kAuthMethodOffset + 1u);
+    msg.getPayloadMutable()[kAuthMethodOffset] = 0xFFu;
+
+    uint8_t parsed_session_id[16];
+    std::string username;
+    AuthMethod parsed_method = AuthMethod::PASSWORD;
+    std::vector<uint8_t> parsed_payload;
+    ErrorContext ctx;
+
+    Status status = ProtocolCodec::parseAuthRequest(
+        msg, parsed_session_id, username, parsed_method, parsed_payload, &ctx);
+    EXPECT_EQ(status, Status::PROTOCOL_VIOLATION);
 }
 
 TEST_F(ProtocolCodecTest, AuthResponse) {

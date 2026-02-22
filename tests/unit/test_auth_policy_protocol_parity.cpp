@@ -587,4 +587,109 @@ TEST_F(AuthPolicyProtocolParityTest, ManagerBoundConnectRejectsDatabaseUuidMisma
     server_thread.stop();
 }
 
+TEST_F(AuthPolicyProtocolParityTest, BoundDatabaseUuidFlagRequiresBoundUuidPayload) {
+    if (!scratchbird::testing::networkTestsEnabled()) {
+        GTEST_SKIP() << "Network tests disabled; set SCRATCHBIRD_TEST_NETWORK=1 to enable.";
+    }
+
+    const std::string policy_name = makeUniquePolicyName("BOUND_UUID_REQUIRED");
+    ScopedEnvVar policy_env("SCRATCHBIRD_AUTH_POLICY_NAME", policy_name);
+    ScopedEnvVar ingress_env("SCRATCHBIRD_CONNECTION_RULE_PROFILE", "native");
+
+    ErrorContext ctx;
+    ASSERT_EQ(configurePolicyForUser(catalog_,
+                                     "SYSARCH",
+                                     policy_name,
+                                     CatalogManager::AUTH_POLICY_METHOD_SCRAM_SHA_256,
+                                     CatalogManager::ConnectionAuthMethod::SCRAM_SHA_256,
+                                     &ctx),
+              core::Status::OK)
+        << ctx.message;
+
+    ASSERT_EQ(configureIngressRuleProfile(
+                  catalog_,
+                  "native",
+                  CatalogManager::ConnectionRuleTransportKind::UNIX_SOCKET,
+                  &ctx),
+              core::Status::OK)
+        << ctx.message;
+
+    const std::string socket_path = makeUniqueSocketPath("auth_bound_uuid_required");
+    SessionThreadHarness server_thread(db_.get(), socket_path);
+
+    core::Status start_status = server_thread.start(&ctx);
+    if (start_status != core::Status::OK && isNetworkRestrictedError(ctx)) {
+        GTEST_SKIP() << "Socket setup restricted: " << ctx.message;
+    }
+    ASSERT_EQ(start_status, core::Status::OK) << ctx.message;
+
+    const ProtocolProfile profile = {"native", {AuthMethod::SCRAM_SHA_256}};
+    std::string last_error;
+    core::Status connect_status = connectWithProfile(profile,
+                                                     socket_path,
+                                                     &last_error,
+                                                     &ctx,
+                                                     CONNECT_FLAG_BOUND_DB_UUID,
+                                                     nullptr);
+    EXPECT_NE(connect_status, core::Status::OK);
+    EXPECT_NE(last_error.find("database UUID"), std::string::npos)
+        << "ctx=" << ctx.message << " last_error=" << last_error;
+
+    server_thread.stop();
+}
+
+TEST_F(AuthPolicyProtocolParityTest, BoundDatabaseUuidFlagRejectsUuidMismatch) {
+    if (!scratchbird::testing::networkTestsEnabled()) {
+        GTEST_SKIP() << "Network tests disabled; set SCRATCHBIRD_TEST_NETWORK=1 to enable.";
+    }
+
+    const std::string policy_name = makeUniquePolicyName("BOUND_UUID_MISMATCH");
+    ScopedEnvVar policy_env("SCRATCHBIRD_AUTH_POLICY_NAME", policy_name);
+    ScopedEnvVar ingress_env("SCRATCHBIRD_CONNECTION_RULE_PROFILE", "native");
+
+    ErrorContext ctx;
+    ASSERT_EQ(configurePolicyForUser(catalog_,
+                                     "SYSARCH",
+                                     policy_name,
+                                     CatalogManager::AUTH_POLICY_METHOD_SCRAM_SHA_256,
+                                     CatalogManager::ConnectionAuthMethod::SCRAM_SHA_256,
+                                     &ctx),
+              core::Status::OK)
+        << ctx.message;
+
+    ASSERT_EQ(configureIngressRuleProfile(
+                  catalog_,
+                  "native",
+                  CatalogManager::ConnectionRuleTransportKind::UNIX_SOCKET,
+                  &ctx),
+              core::Status::OK)
+        << ctx.message;
+
+    const std::string socket_path = makeUniqueSocketPath("auth_bound_uuid_mismatch");
+    SessionThreadHarness server_thread(db_.get(), socket_path);
+
+    core::Status start_status = server_thread.start(&ctx);
+    if (start_status != core::Status::OK && isNetworkRestrictedError(ctx)) {
+        GTEST_SKIP() << "Socket setup restricted: " << ctx.message;
+    }
+    ASSERT_EQ(start_status, core::Status::OK) << ctx.message;
+
+    std::array<uint8_t, 16> wrong_uuid = deriveBindingUuid("auth_policy_protocol_parity");
+    wrong_uuid[0] ^= 0xAA;
+
+    const ProtocolProfile profile = {"native", {AuthMethod::SCRAM_SHA_256}};
+    std::string last_error;
+    core::Status connect_status = connectWithProfile(profile,
+                                                     socket_path,
+                                                     &last_error,
+                                                     &ctx,
+                                                     CONNECT_FLAG_BOUND_DB_UUID,
+                                                     &wrong_uuid);
+    EXPECT_NE(connect_status, core::Status::OK);
+    EXPECT_NE(last_error.find("database UUID mismatch"), std::string::npos)
+        << "ctx=" << ctx.message << " last_error=" << last_error;
+
+    server_thread.stop();
+}
+
 }  // namespace

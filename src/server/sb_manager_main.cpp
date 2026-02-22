@@ -283,6 +283,26 @@ bool timingSafeBytesEqual(const std::vector<uint8_t>& lhs, const std::vector<uin
     return diff == 0;
 }
 
+void logManagedAuditEvent(const char* event_name,
+                          bool success,
+                          const std::string& database_name,
+                          uint32_t listener_id,
+                          const std::string& reason,
+                          const std::vector<uint8_t>& dbbt_id = {}) {
+    std::cerr << "[audit] event="
+              << (event_name ? event_name : "UNKNOWN")
+              << " success=" << (success ? 1 : 0)
+              << " db=" << database_name
+              << " listener_id=" << listener_id;
+    if (!reason.empty()) {
+        std::cerr << " reason=" << reason;
+    }
+    if (!dbbt_id.empty()) {
+        std::cerr << " dbbt_id=" << scratchbird::network::bytesToHex(dbbt_id);
+    }
+    std::cerr << "\n";
+}
+
 std::string listenerManagementSocketPath(const ManagerOptions& options) {
 #ifdef _WIN32
     (void)options;
@@ -1094,6 +1114,12 @@ Message buildMcpResponseForRequest(const Message& request,
 
             ErrorContext dbbt_ctx;
             if (dbbt_key_ring.sign(dbbt, &dbbt_ctx) != Status::OK) {
+                logManagedAuditEvent("MANAGED_DBBT_ISSUED",
+                                     false,
+                                     requested_database,
+                                     options.listener_id,
+                                     dbbt_ctx.message.empty() ? "dbbt_sign_failed"
+                                                              : dbbt_ctx.message);
                 return ProtocolCodec::buildConnectResponse(
                     false, session_ctx.session_id,
                     dbbt_ctx.message.empty() ? "Failed to sign DBBT" : dbbt_ctx.message);
@@ -1101,10 +1127,23 @@ Message buildMcpResponseForRequest(const Message& request,
 
             std::vector<uint8_t> encoded_dbbt;
             if (!scratchbird::network::encodeDatabaseBindingToken(dbbt, encoded_dbbt, &dbbt_ctx)) {
+                logManagedAuditEvent("MANAGED_DBBT_ISSUED",
+                                     false,
+                                     requested_database,
+                                     options.listener_id,
+                                     dbbt_ctx.message.empty() ? "dbbt_encode_failed"
+                                                              : dbbt_ctx.message);
                 return ProtocolCodec::buildConnectResponse(
                     false, session_ctx.session_id,
                     dbbt_ctx.message.empty() ? "Failed to encode DBBT" : dbbt_ctx.message);
             }
+            const std::vector<uint8_t> dbbt_id = scratchbird::network::databaseBindingTokenId(dbbt);
+            logManagedAuditEvent("MANAGED_DBBT_ISSUED",
+                                 true,
+                                 requested_database,
+                                 options.listener_id,
+                                 "issued",
+                                 dbbt_id);
 
             scratchbird::network::ListenerPrefaceV1 preface;
             preface.listener_id = options.listener_id;
@@ -1135,14 +1174,32 @@ Message buildMcpResponseForRequest(const Message& request,
                         ? (dbbt_ctx.message.empty() ? "Listener DBBT validation failed"
                                                     : dbbt_ctx.message)
                         : validate_response;
+                    logManagedAuditEvent("MANAGED_PREFACE_DECISION",
+                                         false,
+                                         requested_database,
+                                         options.listener_id,
+                                         reason,
+                                         dbbt_id);
                     return ProtocolCodec::buildConnectResponse(
                         false, session_ctx.session_id, reason);
                 }
                 if (validate_response.rfind("lpreface_ack", 0) != 0) {
                     const std::string reason = "Listener LPREFACE rejected: " + validate_response;
+                    logManagedAuditEvent("MANAGED_PREFACE_DECISION",
+                                         false,
+                                         requested_database,
+                                         options.listener_id,
+                                         reason,
+                                         dbbt_id);
                     return ProtocolCodec::buildConnectResponse(
                         false, session_ctx.session_id, reason);
                 }
+                logManagedAuditEvent("MANAGED_PREFACE_DECISION",
+                                     true,
+                                     requested_database,
+                                     options.listener_id,
+                                     "accepted",
+                                     dbbt_id);
             }
 
             session_ctx.last_dbbt = std::move(encoded_dbbt);

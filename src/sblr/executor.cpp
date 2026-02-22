@@ -45015,6 +45015,7 @@ namespace scratchbird
                         case core::CatalogManager::IndexType::BLOOM:
                         case core::CatalogManager::IndexType::TRIE:
                         case core::CatalogManager::IndexType::NGRAM:
+                        case core::CatalogManager::IndexType::INVERTED:
                         case core::CatalogManager::IndexType::SPARSE_INVERTED:
                         case core::CatalogManager::IndexType::SPARSE_WAND:
                         case core::CatalogManager::IndexType::MINHASH_LSH:
@@ -45635,6 +45636,9 @@ namespace scratchbird
                         case core::CatalogManager::IndexType::NGRAM:
                             allowed_options = &kAllowedNgramOptions;
                             break;
+                        case core::CatalogManager::IndexType::INVERTED:
+                            allowed_options = &kAllowedSparseInvertedOptions;
+                            break;
                         case core::CatalogManager::IndexType::SPARSE_INVERTED:
                             allowed_options = &kAllowedSparseInvertedOptions;
                             break;
@@ -45705,6 +45709,7 @@ namespace scratchbird
                             }
                             break;
                         }
+                        case core::CatalogManager::IndexType::INVERTED:
                         case core::CatalogManager::IndexType::SPARSE_INVERTED:
                         {
                             int64_t min_df = 0;
@@ -45722,7 +45727,12 @@ namespace scratchbird
                             }
                             if (!norm.empty() && norm != "L1" && norm != "L2" && norm != "NONE")
                             {
-                                return ExecutionResult("CREATE INDEX option NORM invalid for SPARSE_INVERTED");
+                                const char* method_name =
+                                    (index_type == core::CatalogManager::IndexType::INVERTED)
+                                        ? "INVERTED"
+                                        : "SPARSE_INVERTED";
+                                return ExecutionResult(
+                                    std::string("CREATE INDEX option NORM invalid for ") + method_name);
                             }
                             if (auto err = readNumericOption("TOPK_DEFAULT", 1, 65535, false, nullptr)) return ExecutionResult(*err);
                             break;
@@ -61354,6 +61364,9 @@ namespace scratchbird
 		                        const scratchbird::sblr::v3::Value::Object& payload) -> ExecutionResult {
 	                    switch (opcode)
 	                    {
+                                case scratchbird::sblr::v3::Opcode::SBLR3_SWEEP:
+                                    executeSweep();
+                                    return ExecutionResult();
 	                                case scratchbird::sblr::v3::Opcode::SBLR3_ANALYZE:
 	                                    return executeV3AnalyzeOpcode(payload);
 	                                case scratchbird::sblr::v3::Opcode::SBLR3_SHOW_INDEX:

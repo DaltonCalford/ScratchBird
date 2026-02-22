@@ -11,15 +11,20 @@
 #include <atomic>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
+#include <fstream>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
 #include <algorithm>
 #include <cctype>
 #include <openssl/hmac.h>
+#include <nlohmann/json.hpp>
 #ifndef _WIN32
 #include <unistd.h>
+#include <sys/stat.h>
 #endif
 
 #include <gtest/gtest.h>
@@ -29,11 +34,15 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/password_hash.h"
 #include "scratchbird/core/telemetry.h"
+#include "scratchbird/security/scram_auth.h"
 
 using namespace scratchbird::core;
 
 namespace {
+
+using Json = nlohmann::json;
 
 double metricCounterValue(const std::string& metric_name,
                           const std::vector<std::string>& labels) {
@@ -53,6 +62,47 @@ std::string makeBootstrapDbPath() {
     return "/tmp/test_bootstrap_claim_" + std::to_string(getpid()) + "_" +
            std::to_string(now) + ".db";
 }
+
+class ScopedEnvVar {
+public:
+    ScopedEnvVar(const char* key, const std::string& value)
+        : key_(key), had_original_(false) {
+        if (const char* current = std::getenv(key_)) {
+            had_original_ = true;
+            original_value_ = current;
+        }
+        set(value);
+    }
+
+    ~ScopedEnvVar() {
+        if (had_original_) {
+            set(original_value_);
+        } else {
+            unset();
+        }
+    }
+
+private:
+    void set(const std::string& value) {
+#ifdef _WIN32
+        _putenv_s(key_, value.c_str());
+#else
+        setenv(key_, value.c_str(), 1);
+#endif
+    }
+
+    void unset() {
+#ifdef _WIN32
+        _putenv_s(key_, "");
+#else
+        unsetenv(key_);
+#endif
+    }
+
+    const char* key_;
+    bool had_original_;
+    std::string original_value_;
+};
 
 std::string toUpperAscii(std::string value) {
     std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
@@ -90,6 +140,31 @@ std::vector<uint8_t> buildAuthKeyTokenProof(const std::string& token_secret,
     }
 
     return std::vector<uint8_t>(digest, digest + digest_len);
+}
+
+std::string buildScramSha256PasswordHash(const std::string& password,
+                                         uint32_t iterations) {
+    std::vector<uint8_t> salt;
+    std::vector<uint8_t> stored_key;
+    std::vector<uint8_t> server_key;
+    if (scratchbird::security::generateScramCredentials(password,
+                                                        scratchbird::security::ScramAlgorithm::SHA_256,
+                                                        iterations,
+                                                        salt,
+                                                        stored_key,
+                                                        server_key) != Status::OK) {
+        return {};
+    }
+
+    Json doc = Json::object();
+    doc["scram"] = Json::object();
+    doc["scram"]["sha256"] = Json::object({
+        {"iterations", iterations},
+        {"salt", scratchbird::security::base64Encode(salt)},
+        {"stored_key", scratchbird::security::base64Encode(stored_key)},
+        {"server_key", scratchbird::security::base64Encode(server_key)}
+    });
+    return doc.dump();
 }
 
 class AuthBootstrapClaimTest : public ::testing::Test {
@@ -142,6 +217,17 @@ protected:
     CatalogManager* catalog_ = nullptr;
 };
 
+TEST(AuthBootstrapClaimStandaloneTest, LocalProviderRejectsNullCatalog) {
+    auto provider = AuthProviderFactory::create(AuthProviderType::LOCAL, "", nullptr, nullptr);
+    EXPECT_EQ(provider, nullptr);
+    EXPECT_THROW(
+        {
+            auto default_provider = AuthProviderFactory::createDefault(nullptr, nullptr);
+            (void)default_provider;
+        },
+        std::invalid_argument);
+}
+
 TEST_F(AuthBootstrapClaimTest, ConcurrentBootstrapClaimsHaveSingleWinner) {
     constexpr int kThreads = 12;
 
@@ -182,6 +268,40 @@ TEST_F(AuthBootstrapClaimTest, ConcurrentBootstrapClaimsHaveSingleWinner) {
     ASSERT_EQ(catalog_->releaseBootstrapWindow(&ctx), Status::OK) << ctx.message;
     ASSERT_EQ(catalog_->getBootstrapState(state, &ctx), Status::OK) << ctx.message;
     EXPECT_EQ(state, CatalogManager::BootstrapState::UNINITIALIZED);
+}
+
+TEST_F(AuthBootstrapClaimTest, BootstrapTokenSingleUseEnforced) {
+    const std::string token = "bootstrap-token-single-use";
+    const std::string token_path = db_path_ + ".bootstrap.token";
+
+    {
+        std::ofstream out(token_path);
+        ASSERT_TRUE(out.is_open());
+        out << token << "\n";
+    }
+#ifndef _WIN32
+    ASSERT_EQ(::chmod(token_path.c_str(), S_IRUSR | S_IWUSR), 0);
+#endif
+
+    ScopedEnvVar token_env("SCRATCHBIRD_BOOTSTRAP_TOKEN_FILE", token_path);
+    LocalAuthProvider provider(catalog_, nullptr);
+
+    AuthUserInfo first_user{};
+    std::string first_error;
+    const AuthResult first_result = provider.authenticate(
+        "bootstrap_single_use_user", token, first_user, first_error);
+    EXPECT_EQ(first_result, AuthResult::SUCCESS) << first_error;
+    EXPECT_EQ(first_user.username, "SYSTEM");
+
+    // Token file must be consumed/revoked after first successful bootstrap login.
+    std::ifstream consumed(token_path);
+    EXPECT_FALSE(consumed.good());
+
+    AuthUserInfo second_user{};
+    std::string second_error;
+    const AuthResult second_result = provider.authenticate(
+        "bootstrap_single_use_user", token, second_user, second_error);
+    EXPECT_NE(second_result, AuthResult::SUCCESS);
 }
 
 TEST_F(AuthBootstrapClaimTest, ReleasingWithoutClaimIsNoOp) {
@@ -265,6 +385,56 @@ TEST_F(AuthBootstrapClaimTest, AuthKeyBindingValidationRejectsMissingValue) {
 
     ID authkey_id{};
     EXPECT_EQ(catalog_->createAuthKey(invalid, authkey_id, &ctx), Status::INVALID_ARGUMENT);
+}
+
+TEST_F(AuthBootstrapClaimTest, AuthKeyUsageValidationRejectsInvalidSeedCounts) {
+    ErrorContext ctx;
+
+    CatalogManager::AuthKeyInfo over_limit{};
+    over_limit.issuer = "authkey_usage_over_limit";
+    over_limit.usage_type = CatalogManager::AuthKeyUsage::LIMITED;
+    over_limit.usage_limit = 1;
+    over_limit.usage_count = 2;
+
+    ID authkey_id{};
+    EXPECT_EQ(catalog_->createAuthKey(over_limit, authkey_id, &ctx), Status::INVALID_ARGUMENT);
+
+    CatalogManager::AuthKeyInfo invalid_single_use{};
+    invalid_single_use.issuer = "authkey_single_use_invalid_limit";
+    invalid_single_use.usage_type = CatalogManager::AuthKeyUsage::SINGLE_USE;
+    invalid_single_use.usage_limit = 2;
+
+    EXPECT_EQ(catalog_->createAuthKey(invalid_single_use, authkey_id, &ctx),
+              Status::INVALID_ARGUMENT);
+}
+
+TEST_F(AuthBootstrapClaimTest, AuthKeyListNormalizesExpiredStatusAndPersistsIt) {
+    ErrorContext ctx;
+
+    CatalogManager::AuthKeyInfo expired{};
+    expired.issuer = "authkey_expired_on_list";
+    expired.status = CatalogManager::AuthKeyStatus::ACTIVE;
+    expired.scope = CatalogManager::AuthKeyScope::API_TOKEN;
+    expired.binding_kind = CatalogManager::AuthKeyBindingKind::CLIENT_NONCE;
+    expired.binding_value = "expired_secret";
+    const uint64_t now = std::chrono::system_clock::now().time_since_epoch().count();
+    expired.valid_from = (now > 2000) ? (now - 2000) : 1;
+    expired.valid_to = expired.valid_from + 1;
+
+    ID authkey_id{};
+    ASSERT_EQ(catalog_->createAuthKey(expired, authkey_id, &ctx), Status::OK) << ctx.message;
+
+    std::vector<CatalogManager::AuthKeyInfo> authkeys;
+    ASSERT_EQ(catalog_->listAuthKeys(authkeys, &ctx), Status::OK) << ctx.message;
+    auto it = std::find_if(authkeys.begin(), authkeys.end(), [&](const auto& row) {
+        return row.authkey_id == authkey_id;
+    });
+    ASSERT_NE(it, authkeys.end());
+    EXPECT_EQ(it->status, CatalogManager::AuthKeyStatus::EXPIRED);
+
+    CatalogManager::AuthKeyInfo reloaded{};
+    ASSERT_EQ(catalog_->getAuthKey(authkey_id, reloaded, &ctx), Status::OK) << ctx.message;
+    EXPECT_EQ(reloaded.status, CatalogManager::AuthKeyStatus::EXPIRED);
 }
 
 TEST_F(AuthBootstrapClaimTest, AuthTokenSuccessConsumesKey) {
@@ -356,6 +526,10 @@ TEST_F(AuthBootstrapClaimTest, AuthTokenDeniedForRevokedOrExpiredKey) {
                                          error_message),
               AuthResult::INVALID_CREDENTIALS);
 
+    CatalogManager::AuthKeyInfo revoked_loaded{};
+    ASSERT_EQ(catalog_->getAuthKey(revoked_id, revoked_loaded, &ctx), Status::OK) << ctx.message;
+    EXPECT_EQ(revoked_loaded.status, CatalogManager::AuthKeyStatus::REVOKED);
+
     ID expired_id = create_token("authkey_token_expired", true);
     std::vector<uint8_t> expired_proof = buildAuthKeyTokenProof("authkey_token_expired_secret",
                                                                 system_user.username,
@@ -368,6 +542,72 @@ TEST_F(AuthBootstrapClaimTest, AuthTokenDeniedForRevokedOrExpiredKey) {
                                          user_info,
                                          error_message),
               AuthResult::INVALID_CREDENTIALS);
+
+    CatalogManager::AuthKeyInfo expired_loaded{};
+    ASSERT_EQ(catalog_->getAuthKey(expired_id, expired_loaded, &ctx), Status::OK) << ctx.message;
+    EXPECT_EQ(expired_loaded.status, CatalogManager::AuthKeyStatus::EXPIRED);
+}
+
+TEST_F(AuthBootstrapClaimTest, AuthKeyBulkRevocationByIssuerAndScope) {
+    ErrorContext ctx;
+
+    auto create_key = [this](const std::string& issuer,
+                             CatalogManager::AuthKeyScope scope,
+                             ID& out_id) {
+        ErrorContext local_ctx;
+        CatalogManager::AuthKeyInfo key{};
+        key.issuer = issuer;
+        key.status = CatalogManager::AuthKeyStatus::ACTIVE;
+        key.scope = scope;
+        key.binding_kind = CatalogManager::AuthKeyBindingKind::CLIENT_NONCE;
+        key.binding_value = issuer + "_token_secret";
+        return catalog_->createAuthKey(key, out_id, &local_ctx);
+    };
+
+    ID key_a{};
+    ID key_b{};
+    ID key_c{};
+    ASSERT_EQ(create_key("principal_a", CatalogManager::AuthKeyScope::API_TOKEN, key_a), Status::OK);
+    ASSERT_EQ(create_key("principal_a", CatalogManager::AuthKeyScope::LOGIN_SESSION, key_b), Status::OK);
+    ASSERT_EQ(create_key("principal_b", CatalogManager::AuthKeyScope::API_TOKEN, key_c), Status::OK);
+
+    uint32_t revoked_count = 0;
+    ASSERT_EQ(catalog_->revokeAuthKeysByIssuer("principal_a", revoked_count, &ctx), Status::OK)
+        << ctx.message;
+    EXPECT_EQ(revoked_count, 2u);
+
+    CatalogManager::AuthKeyInfo loaded_a{};
+    CatalogManager::AuthKeyInfo loaded_b{};
+    CatalogManager::AuthKeyInfo loaded_c{};
+    ASSERT_EQ(catalog_->getAuthKey(key_a, loaded_a, &ctx), Status::OK) << ctx.message;
+    ASSERT_EQ(catalog_->getAuthKey(key_b, loaded_b, &ctx), Status::OK) << ctx.message;
+    ASSERT_EQ(catalog_->getAuthKey(key_c, loaded_c, &ctx), Status::OK) << ctx.message;
+    EXPECT_EQ(loaded_a.status, CatalogManager::AuthKeyStatus::REVOKED);
+    EXPECT_EQ(loaded_b.status, CatalogManager::AuthKeyStatus::REVOKED);
+    EXPECT_EQ(loaded_c.status, CatalogManager::AuthKeyStatus::ACTIVE);
+
+    ASSERT_EQ(catalog_->revokeAuthKeysByScope(CatalogManager::AuthKeyScope::API_TOKEN,
+                                              revoked_count,
+                                              &ctx),
+              Status::OK)
+        << ctx.message;
+    EXPECT_EQ(revoked_count, 1u);
+
+    ASSERT_EQ(catalog_->getAuthKey(key_c, loaded_c, &ctx), Status::OK) << ctx.message;
+    EXPECT_EQ(loaded_c.status, CatalogManager::AuthKeyStatus::REVOKED);
+
+    ASSERT_EQ(catalog_->revokeAuthKeysByScope(CatalogManager::AuthKeyScope::API_TOKEN,
+                                              revoked_count,
+                                              &ctx),
+              Status::OK)
+        << ctx.message;
+    EXPECT_EQ(revoked_count, 0u);
+
+    EXPECT_EQ(catalog_->revokeAuthKeysByIssuer("", revoked_count, &ctx), Status::INVALID_ARGUMENT);
+    EXPECT_EQ(catalog_->revokeAuthKeysByScope(static_cast<CatalogManager::AuthKeyScope>(0xFF),
+                                              revoked_count,
+                                              &ctx),
+              Status::INVALID_ARGUMENT);
 }
 
 TEST_F(AuthBootstrapClaimTest, PeerAuthRequiresExplicitPeerMapping) {
@@ -394,6 +634,403 @@ TEST_F(AuthBootstrapClaimTest, PeerAuthRequiresExplicitPeerMapping) {
               AuthResult::SUCCESS);
     EXPECT_EQ(user_info.username, "SYSTEM");
     EXPECT_NE(user_info.authkey_id, ID{});
+}
+
+TEST_F(AuthBootstrapClaimTest, LockoutStatePersistsAcrossProviderInstances) {
+    ErrorContext ctx;
+
+    std::vector<CatalogManager::AuthPolicyCatalogInfo> policies;
+    ASSERT_EQ(catalog_->listAuthPolicyCatalogEntries(policies, &ctx), Status::OK) << ctx.message;
+    CatalogManager::AuthPolicyCatalogInfo policy{};
+    if (policies.empty()) {
+        std::vector<CatalogManager::AuthProviderCatalogInfo> providers;
+        ASSERT_EQ(catalog_->listAuthProviderCatalogEntries(providers, &ctx), Status::OK) << ctx.message;
+
+        ID provider_id{};
+        if (providers.empty()) {
+            CatalogManager::AuthProviderCatalogInfo provider{};
+            provider.provider_id = generateUuidV7();
+            provider.provider_name = "lockout_persist_provider";
+            provider.provider_kind = CatalogManager::AuthProviderKind::INTERNAL_SCRAM_SHA256;
+            provider.provider_state = CatalogManager::AuthProviderState::ENABLED;
+            provider.priority_rank = 1;
+            provider.fail_mode = CatalogManager::AuthProviderFailMode::TRY_NEXT;
+            ASSERT_EQ(catalog_->upsertAuthProviderCatalogEntry(provider, &ctx), Status::OK) << ctx.message;
+            provider_id = provider.provider_id;
+        } else {
+            provider_id = providers.front().provider_id;
+        }
+
+        policy.policy_id = generateUuidV7();
+        policy.policy_name = "lockout_persist_policy";
+        policy.provider_chain = {provider_id};
+    } else {
+        policy = policies.front();
+    }
+
+    policy.lockout_threshold = 1;
+    policy.lockout_window_ms = 600000;
+    policy.lockout_duration_ms = 600000;
+    ASSERT_EQ(catalog_->upsertAuthPolicyCatalogEntry(policy, &ctx), Status::OK) << ctx.message;
+
+    CatalogManager::UserInfo system_user{};
+    ASSERT_EQ(catalog_->getUserByName("SYSTEM", system_user, &ctx), Status::OK) << ctx.message;
+
+    const std::string username = "lockout_persist_user";
+    const std::string password_hash = PasswordHash::hashPassword("CorrectPass!1");
+    ASSERT_FALSE(password_hash.empty());
+
+    ID user_id{};
+    ASSERT_EQ(catalog_->createUser(username,
+                                   password_hash,
+                                   system_user.default_schema_id,
+                                   false,
+                                   user_id,
+                                   &ctx),
+              Status::OK)
+        << ctx.message;
+
+    CatalogManager::PrincipalResolutionRequest resolve_req{};
+    resolve_req.presented_principal_name = username;
+    CatalogManager::PrincipalAccountCatalogInfo account{};
+    Status resolve_status = catalog_->resolvePrincipalAccount(resolve_req, account, &ctx);
+    if (resolve_status != Status::OK) {
+        account = CatalogManager::PrincipalAccountCatalogInfo{};
+        account.account_id = generateUuidV7();
+        account.principal_name = username;
+        account.principal_kind = CatalogManager::PrincipalKind::USER;
+        account.source_scope_kind = CatalogManager::SourceScopeKind::ANY;
+        account.auth_policy_id = policy.policy_id;
+        ASSERT_EQ(catalog_->upsertPrincipalAccountCatalogEntry(account, &ctx), Status::OK)
+            << ctx.message;
+    } else {
+        account.auth_policy_id = policy.policy_id;
+        account.is_locked = false;
+        account.has_locked_reason = false;
+        account.locked_reason.clear();
+        ASSERT_EQ(catalog_->upsertPrincipalAccountCatalogEntry(account, &ctx), Status::OK)
+            << ctx.message;
+    }
+
+    LocalAuthProvider provider_a(catalog_, nullptr);
+    LocalAuthProvider provider_b(catalog_, nullptr);
+    AuthUserInfo user_info{};
+    std::string error_message;
+
+    EXPECT_EQ(provider_a.authenticate(username, "wrong-password", user_info, error_message),
+              AuthResult::INVALID_CREDENTIALS);
+
+    error_message.clear();
+    EXPECT_EQ(provider_b.authenticate(username, "wrong-password", user_info, error_message),
+              AuthResult::USER_LOCKED);
+
+    provider_b.clearLoginAttempts(username);
+
+    error_message.clear();
+    EXPECT_EQ(provider_b.authenticate(username, "CorrectPass!1", user_info, error_message),
+              AuthResult::SUCCESS);
+}
+
+TEST_F(AuthBootstrapClaimTest, LockoutScopeIsBoundToPeerIdentityAttributes) {
+    ErrorContext ctx;
+
+    std::vector<CatalogManager::AuthPolicyCatalogInfo> policies;
+    ASSERT_EQ(catalog_->listAuthPolicyCatalogEntries(policies, &ctx), Status::OK) << ctx.message;
+    CatalogManager::AuthPolicyCatalogInfo policy{};
+    if (policies.empty()) {
+        std::vector<CatalogManager::AuthProviderCatalogInfo> providers;
+        ASSERT_EQ(catalog_->listAuthProviderCatalogEntries(providers, &ctx), Status::OK) << ctx.message;
+
+        ID provider_id{};
+        if (providers.empty()) {
+            CatalogManager::AuthProviderCatalogInfo provider{};
+            provider.provider_id = generateUuidV7();
+            provider.provider_name = "lockout_scope_provider";
+            provider.provider_kind = CatalogManager::AuthProviderKind::INTERNAL_SCRAM_SHA256;
+            provider.provider_state = CatalogManager::AuthProviderState::ENABLED;
+            provider.priority_rank = 1;
+            provider.fail_mode = CatalogManager::AuthProviderFailMode::TRY_NEXT;
+            ASSERT_EQ(catalog_->upsertAuthProviderCatalogEntry(provider, &ctx), Status::OK) << ctx.message;
+            provider_id = provider.provider_id;
+        } else {
+            provider_id = providers.front().provider_id;
+        }
+
+        policy.policy_id = generateUuidV7();
+        policy.policy_name = "lockout_scope_policy";
+        policy.provider_chain = {provider_id};
+    } else {
+        policy = policies.front();
+    }
+
+    policy.lockout_threshold = 1;
+    policy.lockout_window_ms = 600000;
+    policy.lockout_duration_ms = 600000;
+    ASSERT_EQ(catalog_->upsertAuthPolicyCatalogEntry(policy, &ctx), Status::OK) << ctx.message;
+
+    CatalogManager::UserInfo system_user{};
+    ASSERT_EQ(catalog_->getUserByName("SYSTEM", system_user, &ctx), Status::OK) << ctx.message;
+
+    const std::string username = "lockout_scope_user";
+    const std::string password_hash = PasswordHash::hashPassword("CorrectPass!1");
+    ASSERT_FALSE(password_hash.empty());
+
+    ID user_id{};
+    ASSERT_EQ(catalog_->createUser(username,
+                                   password_hash,
+                                   system_user.default_schema_id,
+                                   false,
+                                   user_id,
+                                   &ctx),
+              Status::OK)
+        << ctx.message;
+
+    CatalogManager::PrincipalResolutionRequest resolve_req{};
+    resolve_req.presented_principal_name = username;
+    CatalogManager::PrincipalAccountCatalogInfo account{};
+    Status resolve_status = catalog_->resolvePrincipalAccount(resolve_req, account, &ctx);
+    if (resolve_status != Status::OK) {
+        account = CatalogManager::PrincipalAccountCatalogInfo{};
+        account.account_id = generateUuidV7();
+        account.principal_name = username;
+        account.principal_kind = CatalogManager::PrincipalKind::USER;
+        account.source_scope_kind = CatalogManager::SourceScopeKind::ANY;
+        account.auth_policy_id = policy.policy_id;
+        ASSERT_EQ(catalog_->upsertPrincipalAccountCatalogEntry(account, &ctx), Status::OK)
+            << ctx.message;
+    } else {
+        account.auth_policy_id = policy.policy_id;
+        account.is_locked = false;
+        account.has_locked_reason = false;
+        account.locked_reason.clear();
+        ASSERT_EQ(catalog_->upsertPrincipalAccountCatalogEntry(account, &ctx), Status::OK)
+            << ctx.message;
+    }
+
+    LocalAuthProvider provider_peer_a(catalog_, nullptr);
+    LocalAuthProvider provider_peer_b(catalog_, nullptr);
+    provider_peer_a.setPeerIdentityContext(true, 1001, 2001, 3001);
+    provider_peer_b.setPeerIdentityContext(true, 1002, 2002, 3002);
+
+    AuthUserInfo user_info{};
+    std::string error_message;
+
+    EXPECT_EQ(provider_peer_a.authenticate(username, "wrong-password", user_info, error_message),
+              AuthResult::INVALID_CREDENTIALS);
+
+    error_message.clear();
+    EXPECT_EQ(provider_peer_a.authenticate(username, "CorrectPass!1", user_info, error_message),
+              AuthResult::USER_LOCKED);
+
+    error_message.clear();
+    EXPECT_EQ(provider_peer_b.authenticate(username, "CorrectPass!1", user_info, error_message),
+              AuthResult::SUCCESS);
+
+    error_message.clear();
+    EXPECT_EQ(provider_peer_a.authenticate(username, "CorrectPass!1", user_info, error_message),
+              AuthResult::USER_LOCKED);
+}
+
+TEST_F(AuthBootstrapClaimTest, ScramBeginAndFinishRateLimitsAreSeparated) {
+    ErrorContext ctx;
+
+    std::vector<CatalogManager::AuthPolicyCatalogInfo> policies;
+    ASSERT_EQ(catalog_->listAuthPolicyCatalogEntries(policies, &ctx), Status::OK) << ctx.message;
+    CatalogManager::AuthPolicyCatalogInfo policy{};
+    if (policies.empty()) {
+        std::vector<CatalogManager::AuthProviderCatalogInfo> providers;
+        ASSERT_EQ(catalog_->listAuthProviderCatalogEntries(providers, &ctx), Status::OK) << ctx.message;
+
+        ID provider_id{};
+        if (providers.empty()) {
+            CatalogManager::AuthProviderCatalogInfo provider{};
+            provider.provider_id = generateUuidV7();
+            provider.provider_name = "scram_rate_scope_provider";
+            provider.provider_kind = CatalogManager::AuthProviderKind::INTERNAL_SCRAM_SHA256;
+            provider.provider_state = CatalogManager::AuthProviderState::ENABLED;
+            provider.priority_rank = 1;
+            provider.fail_mode = CatalogManager::AuthProviderFailMode::TRY_NEXT;
+            ASSERT_EQ(catalog_->upsertAuthProviderCatalogEntry(provider, &ctx), Status::OK) << ctx.message;
+            provider_id = provider.provider_id;
+        } else {
+            provider_id = providers.front().provider_id;
+        }
+
+        policy.policy_id = generateUuidV7();
+        policy.policy_name = "scram_rate_scope_policy";
+        policy.provider_chain = {provider_id};
+    } else {
+        policy = policies.front();
+    }
+
+    policy.lockout_threshold = 1;
+    policy.lockout_window_ms = 600000;
+    policy.lockout_duration_ms = 600000;
+    ASSERT_EQ(catalog_->upsertAuthPolicyCatalogEntry(policy, &ctx), Status::OK) << ctx.message;
+
+    CatalogManager::UserInfo system_user{};
+    ASSERT_EQ(catalog_->getUserByName("SYSTEM", system_user, &ctx), Status::OK) << ctx.message;
+
+    const std::string username = "scram_rate_scope_user";
+    const std::string password_hash = PasswordHash::hashPassword("CorrectPass!1");
+    ASSERT_FALSE(password_hash.empty());
+
+    ID user_id{};
+    ASSERT_EQ(catalog_->createUser(username,
+                                   password_hash,
+                                   system_user.default_schema_id,
+                                   false,
+                                   user_id,
+                                   &ctx),
+              Status::OK)
+        << ctx.message;
+
+    CatalogManager::PrincipalResolutionRequest resolve_req{};
+    resolve_req.presented_principal_name = username;
+    CatalogManager::PrincipalAccountCatalogInfo account{};
+    Status resolve_status = catalog_->resolvePrincipalAccount(resolve_req, account, &ctx);
+    if (resolve_status != Status::OK) {
+        account = CatalogManager::PrincipalAccountCatalogInfo{};
+        account.account_id = generateUuidV7();
+        account.principal_name = username;
+        account.principal_kind = CatalogManager::PrincipalKind::USER;
+        account.source_scope_kind = CatalogManager::SourceScopeKind::ANY;
+        account.auth_policy_id = policy.policy_id;
+        ASSERT_EQ(catalog_->upsertPrincipalAccountCatalogEntry(account, &ctx), Status::OK)
+            << ctx.message;
+    } else {
+        account.auth_policy_id = policy.policy_id;
+        account.is_locked = false;
+        account.has_locked_reason = false;
+        account.locked_reason.clear();
+        ASSERT_EQ(catalog_->upsertPrincipalAccountCatalogEntry(account, &ctx), Status::OK)
+            << ctx.message;
+    }
+
+    LocalAuthProvider provider(catalog_, nullptr);
+    AuthUserInfo user_info{};
+    std::string error_message;
+    ScramAuthState begin_state{};
+    std::string server_first;
+
+    EXPECT_EQ(provider.beginScramAuth(username,
+                                      "bad-scram-client-first",
+                                      scratchbird::security::ScramAlgorithm::SHA_256,
+                                      begin_state,
+                                      server_first,
+                                      error_message),
+              AuthResult::INVALID_CREDENTIALS);
+
+    error_message.clear();
+    EXPECT_EQ(provider.beginScramAuth(username,
+                                      "n,,n=scram_rate_scope_user,r=nonceA",
+                                      scratchbird::security::ScramAlgorithm::SHA_256,
+                                      begin_state,
+                                      server_first,
+                                      error_message),
+              AuthResult::USER_LOCKED);
+
+    ScramAuthState finish_state{};
+    finish_state.username = username;
+    std::string server_final;
+
+    error_message.clear();
+    EXPECT_EQ(provider.finishScramAuth(finish_state,
+                                       "bad-scram-client-final",
+                                       user_info,
+                                       server_final,
+                                       error_message),
+              AuthResult::INVALID_CREDENTIALS);
+
+    error_message.clear();
+    EXPECT_EQ(provider.finishScramAuth(finish_state,
+                                       "bad-scram-client-final",
+                                       user_info,
+                                       server_final,
+                                       error_message),
+              AuthResult::USER_LOCKED);
+}
+
+TEST_F(AuthBootstrapClaimTest, ScramPolicyRejectsWeakIterationsAndMarksUpgradeMetadata) {
+    ErrorContext ctx;
+
+    CatalogManager::AuthProviderCatalogInfo provider_row{};
+    provider_row.provider_id = generateUuidV7();
+    provider_row.provider_name = "weak_scram_policy_provider";
+    provider_row.provider_kind = CatalogManager::AuthProviderKind::INTERNAL_SCRAM_SHA256;
+    provider_row.provider_state = CatalogManager::AuthProviderState::ENABLED;
+    provider_row.priority_rank = 1;
+    provider_row.fail_mode = CatalogManager::AuthProviderFailMode::TRY_NEXT;
+    ASSERT_EQ(catalog_->upsertAuthProviderCatalogEntry(provider_row, &ctx), Status::OK)
+        << ctx.message;
+
+    CatalogManager::AuthPolicyCatalogInfo policy{};
+    policy.policy_id = generateUuidV7();
+    policy.policy_name = "weak_scram_policy";
+    policy.provider_chain = {provider_row.provider_id};
+    policy.allowed_auth_method_mask = CatalogManager::AUTH_POLICY_METHOD_SCRAM_SHA_256;
+    policy.has_required_auth_method = true;
+    policy.required_auth_method = CatalogManager::ConnectionAuthMethod::SCRAM_SHA_256;
+    policy.allowed_transport_mask = CatalogManager::AUTH_POLICY_TRANSPORT_LOCAL |
+                                    CatalogManager::AUTH_POLICY_TRANSPORT_IPC;
+    policy.min_scram_iterations = 8192;
+    policy.mark_weak_scram_for_upgrade = true;
+    ASSERT_EQ(catalog_->upsertAuthPolicyCatalogEntry(policy, &ctx), Status::OK) << ctx.message;
+
+    CatalogManager::UserInfo system_user{};
+    ASSERT_EQ(catalog_->getUserByName("SYSTEM", system_user, &ctx), Status::OK) << ctx.message;
+
+    const std::string username = "weak_scram_user";
+    const std::string password_hash = buildScramSha256PasswordHash("CorrectPass!1", 4096);
+    ASSERT_FALSE(password_hash.empty());
+
+    ID user_id{};
+    ASSERT_EQ(catalog_->createUser(username,
+                                   password_hash,
+                                   system_user.default_schema_id,
+                                   false,
+                                   user_id,
+                                   &ctx),
+              Status::OK)
+        << ctx.message;
+
+    CatalogManager::PrincipalAccountCatalogInfo account{};
+    account.account_id = generateUuidV7();
+    account.principal_name = username;
+    account.principal_kind = CatalogManager::PrincipalKind::USER;
+    account.source_scope_kind = CatalogManager::SourceScopeKind::ANY;
+    account.auth_policy_id = policy.policy_id;
+    ASSERT_EQ(catalog_->upsertPrincipalAccountCatalogEntry(account, &ctx), Status::OK)
+        << ctx.message;
+
+    LocalAuthProvider provider(catalog_, nullptr);
+    ScramAuthState state{};
+    std::string server_first;
+    std::string error_message;
+
+    EXPECT_EQ(provider.beginScramAuth(username,
+                                      "n,,n=weak_scram_user,r=nonceWeak1",
+                                      scratchbird::security::ScramAlgorithm::SHA_256,
+                                      state,
+                                      server_first,
+                                      error_message),
+              AuthResult::INVALID_CREDENTIALS);
+    EXPECT_TRUE(server_first.empty());
+
+    CatalogManager::UserInfo loaded_user{};
+    ASSERT_EQ(catalog_->getUserByName(username, loaded_user, &ctx), Status::OK) << ctx.message;
+    ASSERT_FALSE(loaded_user.user_metadata.empty());
+
+    Json metadata = Json::parse(loaded_user.user_metadata);
+    ASSERT_TRUE(metadata.contains("auth"));
+    ASSERT_TRUE(metadata["auth"].is_object());
+
+    const Json& auth = metadata["auth"];
+    EXPECT_TRUE(auth.value("scram_upgrade_required", false));
+    EXPECT_EQ(auth.value("scram_algorithm", std::string{}), "sha256");
+    EXPECT_EQ(auth.value("scram_observed_iterations", 0u), 4096u);
+    EXPECT_EQ(auth.value("scram_min_required_iterations", 0u), 8192u);
+    EXPECT_GT(auth.value("scram_marked_at", 0ull), 0ull);
 }
 
 TEST_F(AuthBootstrapClaimTest, DormantDetachIssuesReattachAuthKeyAndRequiresToken) {

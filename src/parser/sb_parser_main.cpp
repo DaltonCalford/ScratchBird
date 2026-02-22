@@ -558,14 +558,20 @@ uint32_t runSession(const ParserConfig& config,
     scratchbird::protocol::ProtocolAdapterConfig adapter_config;
     adapter_config.engine_endpoint = config.engine_endpoint;
     adapter_config.default_database = config.default_database;
+    const bool has_db_uuid_binding =
+        info.has_binding_context && hasNonZeroBytes(info.db_uuid);
     const bool manager_bound =
         info.has_binding_context &&
         (hasNonZeroBytes(info.dbbt_id) || hasNonZeroBytes(info.manager_session_id));
-    if (manager_bound) {
+    if (has_db_uuid_binding) {
         adapter_config.enforce_bound_database = true;
-        adapter_config.connect_client_flags |= scratchbird::protocol::CONNECT_FLAG_MANAGER_DBBT;
+        adapter_config.connect_client_flags |=
+            scratchbird::protocol::CONNECT_FLAG_BOUND_DB_UUID;
         adapter_config.has_bound_db_uuid = true;
         adapter_config.bound_db_uuid = info.db_uuid;
+    }
+    if (manager_bound) {
+        adapter_config.connect_client_flags |= scratchbird::protocol::CONNECT_FLAG_MANAGER_DBBT;
     }
     auto adapter = scratchbird::protocol::createProtocolAdapter(protocol_type, adapter_config);
     if (!adapter) {

@@ -228,6 +228,7 @@ const SchemaDef* schemaForOpcode(uint16_t opcode) {
         return lookupSchema("SCHEMA_SET_SHOW_RESET");
     }
     if (name == "SBLR3_EXPLAIN_PLAN") return lookupSchema("SCHEMA_EXPLAIN");
+    if (name == "SBLR3_SWEEP") return lookupSchema("SCHEMA_EMPTY");
 
     if (name == "SBLR3_CREATE_FUNCTION_STMT") return lookupSchema("SCHEMA_DDL_CREATE_FUNCTION");
     if (name == "SBLR3_CREATE_PROCEDURE_STMT") return lookupSchema("SCHEMA_DDL_CREATE_PROCEDURE");

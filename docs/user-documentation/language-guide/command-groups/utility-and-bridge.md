@@ -1,5 +1,5 @@
 # Command Group: UTILITY + BRIDGE
-Last modified: 2026-02-19
+Last modified: 2026-02-21
 
 Back links:
 - [Language Guide README](../README.md)
@@ -33,11 +33,7 @@ Native v3 `parseStatementInternal()` also dispatches non-CRUD command surfaces t
 - `HYBRID BRIDGE EXCHANGE ...;`
 - `GRAPH PATH MATCH ...;`
 - `MATCH GRAPH PATH ...;`
-- `EVAL LUA ...;`
 - `REDIS LUA EVAL ...;`
-- `XGROUP CREATE ...;`
-- `XREADGROUP STREAM ...;`
-- `XCLAIM STREAM ...;`
 
 ## Admin/Operations Surfaces
 
@@ -45,7 +41,6 @@ Native v3 `parseStatementInternal()` also dispatches non-CRUD command surfaces t
 - `RESTORE ...;`
 - `VALIDATE DATABASE;`
 - `SWEEP DATABASE;`
-- `VACUUM;` / `VACUUM DATABASE;`
 - `RESYNC REPLICATION CHANNEL <channel_name>;`
 - `CLUSTER ...;`
 - `CUBE ...;`

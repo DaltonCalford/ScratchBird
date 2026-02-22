@@ -1,5 +1,5 @@
 # Admin SWEEP AND VACUUM: Examples
-Last modified: 2026-02-19
+Last modified: 2026-02-21
 
 Back links:
 - [Language Guide README](../../../README.md)
@@ -14,18 +14,14 @@ Series navigation:
 ## Coverage
 - Status: Partial
 
-## Canonical Forms
+## Canonical Form
 ~~~sql
 -- Native MGA sweep/GC
 SWEEP DATABASE;
-
--- Compatibility alias to the same sweep/GC runtime path
-VACUUM;
-VACUUM DATABASE;
 ~~~
 
 ## Rejected Form
 ~~~sql
 VACUUM FULL;
--- PRS_0505 in V3: options are not supported for the VACUUM alias.
+-- PRS_0505 in v3: VACUUM aliases are retired; use SWEEP DATABASE.
 ~~~

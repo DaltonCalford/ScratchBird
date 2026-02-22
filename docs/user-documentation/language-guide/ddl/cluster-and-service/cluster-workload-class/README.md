@@ -1,5 +1,5 @@
 # DDL Object: CLUSTER WORKLOAD CLASS
-Last modified: 2026-02-19
+Last modified: 2026-02-21
 
 Back links:
 - [Language Guide README](../../../README.md)
@@ -24,7 +24,7 @@ Back links:
 |---|---|---|
 | CREATE | Supported | CREATE CLUSTER WORKLOAD CLASS <name> CONFIG '<json_spec>'; |
 | ALTER | Supported | ALTER CLUSTER WORKLOAD CLASS <name> CONFIG '<json_spec>'; |
-| SHOW | Supported | SHOW CLUSTER ROUTING PLAN; CLUSTER SHOW ROUTING PLAN; |
+| SHOW | Supported | SHOW CLUSTER ROUTING PLAN; |
 | DESCRIBE | Not available | -- No DESCRIBE variant for CLUSTER WORKLOAD CLASS. |
 | DROP | Supported | DROP CLUSTER WORKLOAD CLASS <name>; |
 

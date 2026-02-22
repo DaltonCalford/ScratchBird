@@ -1,5 +1,5 @@
 # DDL Object: CLUSTER ADMISSION BINDING
-Last modified: 2026-02-19
+Last modified: 2026-02-21
 
 Back links:
 - [Language Guide README](../../../README.md)
@@ -24,7 +24,7 @@ Back links:
 |---|---|---|
 | CREATE | Supported | CREATE CLUSTER ADMISSION BINDING <name> CONFIG '<json_spec>'; |
 | ALTER | Supported | ALTER CLUSTER ADMISSION BINDING <name> CONFIG '<json_spec>'; |
-| SHOW | Supported | SHOW CLUSTER ADMISSION STATUS; CLUSTER SHOW ADMISSION STATUS; |
+| SHOW | Supported | SHOW CLUSTER ADMISSION STATUS; |
 | DESCRIBE | Not available | -- No DESCRIBE variant for CLUSTER ADMISSION BINDING. |
 | DROP | Supported | DROP CLUSTER ADMISSION BINDING <name>; |
 

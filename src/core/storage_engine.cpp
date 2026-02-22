@@ -102,6 +102,7 @@ namespace scratchbird::core
             switch (index_type)
             {
                 case CatalogManager::IndexType::BTREE:
+                case CatalogManager::IndexType::STL_SORT:
                 case CatalogManager::IndexType::ART:
                 case CatalogManager::IndexType::MONGODB_GEO_HAYSTACK:
                 case CatalogManager::IndexType::NEO4J_RANGE:
@@ -255,6 +256,7 @@ namespace scratchbird::core
                 }
 
                 case CatalogManager::IndexType::FULLTEXT:
+                case CatalogManager::IndexType::INVERTED:
                 case CatalogManager::IndexType::MONGODB_WILDCARD:
                 case CatalogManager::IndexType::MONGODB_ENCRYPTED_RANGE:
                 case CatalogManager::IndexType::NEO4J_TEXT:
@@ -317,6 +319,7 @@ namespace scratchbird::core
             switch (index_type)
             {
                 case CatalogManager::IndexType::BTREE:
+                case CatalogManager::IndexType::STL_SORT:
                 case CatalogManager::IndexType::ART:
                 case CatalogManager::IndexType::MONGODB_GEO_HAYSTACK:
                 case CatalogManager::IndexType::NEO4J_RANGE:
@@ -450,6 +453,7 @@ namespace scratchbird::core
                 }
 
                 case CatalogManager::IndexType::FULLTEXT:
+                case CatalogManager::IndexType::INVERTED:
                 case CatalogManager::IndexType::MONGODB_WILDCARD:
                 case CatalogManager::IndexType::MONGODB_ENCRYPTED_RANGE:
                 case CatalogManager::IndexType::NEO4J_TEXT:

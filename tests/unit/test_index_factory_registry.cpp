@@ -55,7 +55,7 @@ scratchbird::core::ID makeTestId()
 TEST(IndexFactoryRegistryTest, CapabilityMatrixContainsExplicitFamilies)
 {
     auto matrix = scratchbird::core::IndexFactory::listCapabilities();
-    ASSERT_EQ(matrix.size(), 57U);
+    ASSERT_EQ(matrix.size(), 59U);
 
     std::set<uint8_t> seen;
     for (const auto& caps : matrix)
@@ -119,6 +119,14 @@ TEST(IndexFactoryRegistryTest, ExplicitBackendSharingIsDeclaredInRegistry)
     const Cap* trie = findCaps(matrix, IndexType::TRIE);
     ASSERT_NE(trie, nullptr);
     EXPECT_EQ(trie->runtime_class, Runtime::INVERTED);
+
+    const Cap* inverted = findCaps(matrix, IndexType::INVERTED);
+    ASSERT_NE(inverted, nullptr);
+    EXPECT_EQ(inverted->runtime_class, Runtime::INVERTED);
+
+    const Cap* stl_sort = findCaps(matrix, IndexType::STL_SORT);
+    ASSERT_NE(stl_sort, nullptr);
+    EXPECT_EQ(stl_sort->runtime_class, Runtime::BTREE);
 
     const Cap* sparse_wand = findCaps(matrix, IndexType::SPARSE_WAND);
     ASSERT_NE(sparse_wand, nullptr);

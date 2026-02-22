@@ -71,6 +71,7 @@ std::atomic<bool> g_force_shutdown{false};
 
 struct ListenerConfig {
     std::string protocol = SB_LISTENER_PROTOCOL;
+    std::string listener_mode = "direct";  // direct | managed
     std::string database_owner = "main";
     std::string bind_address = "0.0.0.0";
     uint16_t port = 0;
@@ -94,6 +95,79 @@ struct ListenerConfig {
     uint32_t dbbt_replay_cache_size = 4096;
     bool require_proxy_binding = false;
 };
+
+std::string toUpperAscii(std::string value) {
+    std::transform(value.begin(), value.end(), value.begin(), [](unsigned char c) {
+        return static_cast<char>(std::toupper(c));
+    });
+    return value;
+}
+
+std::string normalizeListenerModeToken(std::string mode) {
+    auto is_space = [](unsigned char c) {
+        return c == ' ' || c == '\t' || c == '\n' || c == '\r';
+    };
+    while (!mode.empty() && is_space(static_cast<unsigned char>(mode.front()))) {
+        mode.erase(mode.begin());
+    }
+    while (!mode.empty() && is_space(static_cast<unsigned char>(mode.back()))) {
+        mode.pop_back();
+    }
+    mode = toUpperAscii(std::move(mode));
+    if (mode == "MANAGER_PROXY") {
+        return "MANAGED";
+    }
+    return mode;
+}
+
+bool isLoopbackBindAddress(std::string bind_address) {
+    auto is_space = [](unsigned char c) {
+        return c == ' ' || c == '\t' || c == '\n' || c == '\r';
+    };
+    while (!bind_address.empty() && is_space(static_cast<unsigned char>(bind_address.front()))) {
+        bind_address.erase(bind_address.begin());
+    }
+    while (!bind_address.empty() && is_space(static_cast<unsigned char>(bind_address.back()))) {
+        bind_address.pop_back();
+    }
+    bind_address = toUpperAscii(std::move(bind_address));
+    return bind_address == "127.0.0.1" ||
+           bind_address == "::1" ||
+           bind_address == "[::1]" ||
+           bind_address == "LOCALHOST";
+}
+
+bool normalizeAndValidateListenerMode(ListenerConfig& config, std::string& error_out) {
+    error_out.clear();
+
+    std::string mode = normalizeListenerModeToken(config.listener_mode);
+    if (mode.empty()) {
+        mode = "DIRECT";
+    }
+    if (mode != "DIRECT" && mode != "MANAGED") {
+        error_out = "listener mode must be 'direct' or 'managed'";
+        return false;
+    }
+
+    const bool managed = (mode == "MANAGED");
+    if (managed) {
+        config.require_proxy_binding = true;
+        if (!isLoopbackBindAddress(config.bind_address)) {
+            error_out = "managed mode requires loopback bind address (127.0.0.1/::1/localhost)";
+            return false;
+        }
+        config.listener_mode = "managed";
+        return true;
+    }
+
+    // DIRECT mode must not silently enforce managed-only preface behavior.
+    if (config.require_proxy_binding) {
+        error_out = "direct mode cannot require proxy binding; set listener_mode=managed";
+        return false;
+    }
+    config.listener_mode = "direct";
+    return true;
+}
 
 struct ListenerHandoffBindingContext {
     std::array<uint8_t, 16> db_uuid{};
@@ -1204,6 +1278,7 @@ void printUsage(const char* program) {
               << "  " << program << " [options]\n\n"
               << "Options:\n"
               << "  --config <file>             Config file path\n"
+              << "  --listener-mode <mode>      direct|managed\n"
               << "  --bind <addr>               Bind address\n"
               << "  --port <port>               Listen port\n"
               << "  --control-socket-dir <dir>  Control socket directory\n"
@@ -1219,7 +1294,7 @@ void printUsage(const char* program) {
               << "  --dbbt-keyring <file>       DBBT keyring file\n"
               << "  --dbbt-clock-skew-ms <n>    DBBT clock skew tolerance\n"
               << "  --dbbt-replay-cache-size <n> DBBT replay cache entries\n"
-              << "  --require-proxy-binding     Require LPREFACE binding before handoff\n"
+              << "  --require-proxy-binding     Legacy alias for managed listener mode\n"
               << "  --log-level <level>         info|debug|warn|error\n"
               << "  --help, -h                  Show this help\n"
               << "  --version                   Show version\n";
@@ -1323,6 +1398,10 @@ bool applyConfigFile(ListenerConfig& config) {
 
     const auto* manager = parser.section("manager");
     if (manager) {
+        config.listener_mode = manager->getString("listener_mode", config.listener_mode);
+        if (manager->has("mode")) {
+            config.listener_mode = manager->getString("mode", config.listener_mode);
+        }
         config.listener_id = static_cast<uint32_t>(
             manager->getInt("listener_id", config.listener_id));
         config.dbbt_keyring_path = manager->getString(
@@ -1333,6 +1412,10 @@ bool applyConfigFile(ListenerConfig& config) {
             manager->getInt("dbbt_replay_cache_size", config.dbbt_replay_cache_size));
         config.require_proxy_binding = manager->getBool(
             "require_proxy_binding", config.require_proxy_binding);
+        if (config.require_proxy_binding &&
+            normalizeListenerModeToken(config.listener_mode) == "DIRECT") {
+            config.listener_mode = "managed";
+        }
     }
 
     // Load TLS settings from the already parsed config
@@ -1344,7 +1427,20 @@ bool applyConfigFile(ListenerConfig& config) {
 bool applyArgOverrides(int argc, char* argv[], ListenerConfig& config) {
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
-        if (arg == "--bind" && i + 1 < argc) {
+        if (arg == "--listener-mode" && i + 1 < argc) {
+            config.listener_mode = argv[++i];
+        } else if (arg.rfind("--listener-mode=", 0) == 0) {
+            config.listener_mode = arg.substr(16);
+        } else if (arg == "--mode" && i + 1 < argc) {
+            config.listener_mode = argv[++i];
+        } else if (arg.rfind("--mode=", 0) == 0) {
+            config.listener_mode = arg.substr(7);
+        } else if (arg == "--managed-mode") {
+            config.listener_mode = "managed";
+        } else if (arg == "--direct-mode") {
+            config.listener_mode = "direct";
+            config.require_proxy_binding = false;
+        } else if (arg == "--bind" && i + 1 < argc) {
             config.bind_address = argv[++i];
         } else if (arg.rfind("--bind=", 0) == 0) {
             config.bind_address = arg.substr(7);
@@ -1500,6 +1596,9 @@ bool applyArgOverrides(int argc, char* argv[], ListenerConfig& config) {
             }
         } else if (arg == "--require-proxy-binding") {
             config.require_proxy_binding = true;
+            if (normalizeListenerModeToken(config.listener_mode) == "DIRECT") {
+                config.listener_mode = "managed";
+            }
         }
     }
     return true;
@@ -1524,6 +1623,22 @@ static std::string trimAscii(std::string value) {
         value.pop_back();
     }
     return value;
+}
+
+static void logManagedAuditEvent(const char* event_name,
+                                 bool success,
+                                 const std::string& reason,
+                                 const std::vector<uint8_t>& dbbt_id = {}) {
+    std::cerr << "[audit] event="
+              << (event_name ? event_name : "UNKNOWN")
+              << " success=" << (success ? 1 : 0);
+    if (!reason.empty()) {
+        std::cerr << " reason=" << reason;
+    }
+    if (!dbbt_id.empty()) {
+        std::cerr << " dbbt_id=" << scratchbird::network::bytesToHex(dbbt_id);
+    }
+    std::cerr << "\n";
 }
 
 static bool loadListenerDbbtKeyRing(const ListenerConfig& config,
@@ -1737,6 +1852,7 @@ static void handleManagementConnection(std::unique_ptr<scratchbird::network::Soc
         std::vector<uint8_t> encoded_preface;
         if (!scratchbird::network::hexToBytes(hex_preface, encoded_preface)) {
             ok = false;
+            logManagedAuditEvent("MANAGED_PREFACE_DECISION", false, "invalid_hex");
             scratchbird::network::ListenerPrefaceAck nack;
             nack.accepted = false;
             nack.nack_code = scratchbird::network::ListenerPrefaceNackCode::INVALID_FORMAT;
@@ -1786,6 +1902,7 @@ static void handleManagementConnection(std::unique_ptr<scratchbird::network::Soc
                 std::vector<uint8_t> ack_payload;
                 scratchbird::network::encodeListenerPrefaceAck(ack, ack_payload, nullptr);
                 message = std::string("lpreface_ack:") + scratchbird::network::bytesToHex(ack_payload);
+                logManagedAuditEvent("MANAGED_PREFACE_DECISION", true, "accepted", token_id);
             } else {
                 ok = false;
                 scratchbird::network::ListenerPrefaceNackCode nack_code =
@@ -1803,6 +1920,10 @@ static void handleManagementConnection(std::unique_ptr<scratchbird::network::Soc
                 scratchbird::network::encodeListenerPrefaceAck(nack, ack_payload, nullptr);
                 message = std::string("lpreface_nack:") +
                           scratchbird::network::bytesToHex(ack_payload);
+                logManagedAuditEvent("MANAGED_PREFACE_DECISION",
+                                     false,
+                                     validate_ctx.message.empty() ? "invalid_lpreface"
+                                                                  : validate_ctx.message);
             }
         }
     } else {
@@ -2054,6 +2175,9 @@ int runListener(ListenerConfig config) {
 
     std::cout << SB_LISTENER_NAME << " listening on "
               << config.bind_address << ":" << config.port << "\n";
+    std::cout << "Listener mode: " << config.listener_mode
+              << " (proxy_binding=" << (config.require_proxy_binding ? "required" : "off")
+              << ")\n";
     std::cout << "Owner database: " << config.database_owner << "\n";
     std::cout << "Parser pool: min=" << config.pool_min
               << " max=" << config.pool_max
@@ -2178,6 +2302,11 @@ int main(int argc, char* argv[]) {
     }
     if (config.dbbt_replay_cache_size == 0) {
         config.dbbt_replay_cache_size = 4096;
+    }
+    std::string mode_error;
+    if (!normalizeAndValidateListenerMode(config, mode_error)) {
+        std::cerr << "Invalid listener mode configuration: " << mode_error << "\n";
+        return 1;
     }
 
     std::signal(SIGINT, handleSignal);

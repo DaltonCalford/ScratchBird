@@ -346,6 +346,88 @@ constexpr const char* kAuthPolicyPeerTransportCode = "AUTH_POLICY_PEER_TRANSPORT
 constexpr const char* kAuthMfaRequiredCode = "AUTH_MFA_REQUIRED";
 constexpr const char* kAuthMfaInvalidCode = "AUTH_MFA_INVALID";
 constexpr const char* kMfaPayloadPrefix = "SBMFA1";
+constexpr const char* kAuthPolicyNegotiatedCode = "AUTH_POLICY_NEGOTIATED";
+
+const char* authMethodToString(protocol::AuthMethod method) {
+    switch (method) {
+        case protocol::AuthMethod::PASSWORD:
+            return "PASSWORD";
+        case protocol::AuthMethod::MD5:
+            return "MD5";
+        case protocol::AuthMethod::SCRAM_SHA_256:
+            return "SCRAM_SHA_256";
+        case protocol::AuthMethod::SCRAM_SHA_512:
+            return "SCRAM_SHA_512";
+        case protocol::AuthMethod::TOKEN:
+            return "TOKEN";
+        case protocol::AuthMethod::PEER:
+            return "PEER";
+    }
+    return "UNKNOWN";
+}
+
+const char* authPeerModeToString(core::CatalogManager::AuthPeerMode mode) {
+    using PM = core::CatalogManager::AuthPeerMode;
+    switch (mode) {
+        case PM::DISABLED:
+            return "DISABLED";
+        case PM::REQUIRED:
+            return "REQUIRED";
+        case PM::REQUIRED_PLUS_SCRAM:
+            return "REQUIRED_PLUS_SCRAM";
+    }
+    return "UNKNOWN";
+}
+
+std::string authMethodsToJsonArray(const std::vector<protocol::AuthMethod>& methods) {
+    std::ostringstream out;
+    out << "[";
+    for (size_t i = 0; i < methods.size(); ++i) {
+        if (i != 0) {
+            out << ",";
+        }
+        out << "\"" << authMethodToString(methods[i]) << "\"";
+    }
+    out << "]";
+    return out.str();
+}
+
+void logAuthPolicyDecision(core::AuditLogger* audit_logger,
+                           const std::string& username,
+                           bool success,
+                           const std::string& decision_code,
+                           protocol::AuthMethod requested_method,
+                           const std::vector<protocol::AuthMethod>& allowed_methods,
+                           bool has_required_method,
+                           protocol::AuthMethod required_method,
+                           uint8_t transport_mask,
+                           core::CatalogManager::AuthPeerMode peer_mode) {
+    if (!audit_logger) {
+        return;
+    }
+
+    core::AuditEvent event;
+    event.event_type = core::AuditEventType::AUTH_POLICY_DECISION;
+    event.username = username;
+    event.success = success;
+
+    std::ostringstream details;
+    details << "{"
+            << "\"decision\":\"" << (success ? "allow" : "deny") << "\""
+            << ",\"code\":\"" << decision_code << "\""
+            << ",\"requested_method\":\"" << authMethodToString(requested_method) << "\""
+            << ",\"allowed_methods\":" << authMethodsToJsonArray(allowed_methods)
+            << ",\"has_required_method\":" << (has_required_method ? "true" : "false")
+            << ",\"required_method\":\""
+            << (has_required_method ? authMethodToString(required_method) : "NONE") << "\""
+            << ",\"transport_mask\":" << static_cast<unsigned>(transport_mask)
+            << ",\"peer_mode\":\"" << authPeerModeToString(peer_mode) << "\""
+            << "}";
+    event.details = details.str();
+
+    core::ErrorContext audit_ctx;
+    (void)audit_logger->logEvent(event, &audit_ctx);
+}
 
 std::vector<std::string> splitPipeFields(const std::string& input) {
     std::vector<std::string> fields;
@@ -1530,22 +1612,34 @@ core::Status ServerSession::handleConnect(const protocol::Message& msg, core::Er
         return status;
     }
 
-    if ((client_flags & protocol::CONNECT_FLAG_MANAGER_DBBT) != 0) {
-        if (!has_bound_db_uuid) {
-            protocol::Message response = protocol::ProtocolCodec::buildConnectResponse(
-                false, session_id_, "Manager-bound connect missing database UUID");
-            protocol_session_->sendMessage(response, ctx);
-            return core::Status::INVALID_AUTHORIZATION;
-        }
+    const bool manager_bound_connect =
+        (client_flags & protocol::CONNECT_FLAG_MANAGER_DBBT) != 0;
+    const bool requires_bound_uuid =
+        manager_bound_connect ||
+        (client_flags & protocol::CONNECT_FLAG_BOUND_DB_UUID) != 0;
 
+    if (requires_bound_uuid && !has_bound_db_uuid) {
+        const char* message = manager_bound_connect
+            ? "Manager-bound connect missing database UUID"
+            : "Connection missing required database UUID binding";
+        protocol::Message response = protocol::ProtocolCodec::buildConnectResponse(
+            false, session_id_, message);
+        protocol_session_->sendMessage(response, ctx);
+        return core::Status::INVALID_AUTHORIZATION;
+    }
+
+    if (requires_bound_uuid) {
         const std::array<uint8_t, 16> resolved_db_uuid =
             deriveBindingDatabaseUuid(database);
         const bool matches_engine_uuid =
             database_ && (bound_db_uuid == database_->uuid().bytes);
         const bool matches_resolved_uuid = bound_db_uuid == resolved_db_uuid;
         if (!matches_engine_uuid && !matches_resolved_uuid) {
+            const char* message = manager_bound_connect
+                ? "Manager-bound connect database UUID mismatch"
+                : "Connection database UUID mismatch";
             protocol::Message response = protocol::ProtocolCodec::buildConnectResponse(
-                false, session_id_, "Manager-bound connect database UUID mismatch");
+                false, session_id_, message);
             protocol_session_->sendMessage(response, ctx);
             return core::Status::INVALID_AUTHORIZATION;
         }
@@ -1554,8 +1648,7 @@ core::Status ServerSession::handleConnect(const protocol::Message& msg, core::Er
     {
         std::string reject_code;
         std::string reject_reason;
-        const bool trusted_proxy_channel =
-            (client_flags & protocol::CONNECT_FLAG_MANAGER_DBBT) != 0;
+        const bool trusted_proxy_channel = manager_bound_connect;
         if (!evaluateIngressConnectionRules(
                 database_ ? database_->catalog_manager() : nullptr,
                 connection_,
@@ -1624,6 +1717,9 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
         return status;
     }
 
+    auto* catalog = database_ ? database_->catalog_manager() : nullptr;
+    auto* audit_logger = database_ ? database_->audit_logger() : nullptr;
+
     auto clear_auth_negotiation = [&]() {
         auth_negotiation_ready_ = false;
         auth_negotiation_username_.clear();
@@ -1647,7 +1743,23 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
         session_mfa_step_up_ttl_ms_ = 0;
     };
 
+    auto log_auth_policy_decision = [&](bool success, const char* code) {
+        const std::string decision_code =
+            (code && code[0] != '\0') ? code : kAuthPolicyMethodDeniedCode;
+        logAuthPolicyDecision(audit_logger,
+                              username,
+                              success,
+                              decision_code,
+                              auth_method,
+                              auth_negotiation_allowed_methods_,
+                              auth_negotiation_has_required_method_,
+                              auth_negotiation_required_method_,
+                              auth_negotiation_transport_mask_,
+                              auth_negotiation_peer_mode_);
+    };
+
     auto send_auth_policy_error = [&](const char* code) -> core::Status {
+        log_auth_policy_decision(false, code);
         protocol::Message response = protocol::ProtocolCodec::buildAuthResponse(
             protocol::AuthStatus::ERROR, 0, code ? code : kAuthPolicyMethodDeniedCode);
         protocol_session_->sendMessage(response, ctx);
@@ -1757,11 +1869,17 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
     core::AuthUserInfo user_info;
     std::string auth_error;
 
-    auto* catalog = database_ ? database_->catalog_manager() : nullptr;
-    auto* audit_logger = database_ ? database_->audit_logger() : nullptr;
     std::unique_ptr<core::AuthProvider> provider;
     if (catalog) {
         provider = core::AuthProviderFactory::createDefault(catalog, audit_logger);
+        if (provider) {
+            if (auto* local_provider = dynamic_cast<core::LocalAuthProvider*>(provider.get())) {
+                local_provider->setPeerIdentityContext(peer_credentials_available_,
+                                                       peer_credentials_.uid,
+                                                       peer_credentials_.gid,
+                                                       peer_credentials_.pid);
+            }
+        }
     }
 
     auto issue_mfa_challenge_if_required =
@@ -1861,6 +1979,7 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
             auth_negotiation_required_method_,
             auth_negotiation_transport_mask_,
             auth_negotiation_nonce_);
+        log_auth_policy_decision(true, kAuthPolicyNegotiatedCode);
         return protocol_session_->sendMessage(challenge, ctx);
     }
 
@@ -2739,9 +2858,9 @@ core::Status ServerSession::sendError(const std::string& message,
 }
 
 core::AuthResult ServerSession::authenticate(const std::string& username,
-                                            const std::string& password,
-                                            core::AuthUserInfo& user_info,
-                                            std::string& error_msg_out) {
+                                             const std::string& password,
+                                             core::AuthUserInfo& user_info,
+                                             std::string& error_msg_out) {
     // Get catalog manager from database
     auto* catalog = database_ ? database_->catalog_manager() : nullptr;
     if (!catalog) {
@@ -2754,6 +2873,12 @@ core::AuthResult ServerSession::authenticate(const std::string& username,
     if (!provider) {
         error_msg_out = "Authentication provider unavailable";
         return core::AuthResult::PROVIDER_ERROR;
+    }
+    if (auto* local_provider = dynamic_cast<core::LocalAuthProvider*>(provider.get())) {
+        local_provider->setPeerIdentityContext(peer_credentials_available_,
+                                               peer_credentials_.uid,
+                                               peer_credentials_.gid,
+                                               peer_credentials_.pid);
     }
 
     return provider->authenticate(username, password, user_info, error_msg_out);

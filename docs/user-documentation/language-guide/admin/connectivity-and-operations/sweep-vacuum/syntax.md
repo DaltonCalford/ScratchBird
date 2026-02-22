@@ -1,5 +1,5 @@
 # Admin SWEEP AND VACUUM: Syntax
-Last modified: 2026-02-19
+Last modified: 2026-02-21
 
 Back links:
 - [Language Guide README](../../../README.md)
@@ -19,19 +19,15 @@ Series navigation:
 SWEEP DATABASE;
 ~~~
 
-## Compatibility Alias Form
+## Rejected Alias Forms
 ~~~sql
 VACUUM;
 VACUUM DATABASE;
-~~~
-
-## Not Supported In V3
-~~~sql
 VACUUM FULL;
 VACUUM (ANALYZE);
 VACUUM my_table;
 ~~~
 
 ## Notes
-- `SWEEP DATABASE` is the native MGA garbage-collection command.
-- `VACUUM` is accepted only as a compatibility alias to the same sweep/GC behavior.
+- `SWEEP DATABASE` is the canonical MGA garbage-collection command in native v3.
+- `VACUUM` and all variants are rejected in native v3 (`PRS_0505`).

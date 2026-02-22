@@ -75,6 +75,10 @@ TEST(IndexTypeTaxonomyTest, ParserAndCatalogEnumsAreAligned)
               static_cast<uint8_t>(CatalogIndexType::SPARSE_WAND));
     EXPECT_EQ(static_cast<uint8_t>(ParserIndexType::TRIE),
               static_cast<uint8_t>(CatalogIndexType::TRIE));
+    EXPECT_EQ(static_cast<uint8_t>(ParserIndexType::INVERTED),
+              static_cast<uint8_t>(CatalogIndexType::INVERTED));
+    EXPECT_EQ(static_cast<uint8_t>(ParserIndexType::STL_SORT),
+              static_cast<uint8_t>(CatalogIndexType::STL_SORT));
     EXPECT_EQ(static_cast<uint8_t>(ParserIndexType::NGRAM),
               static_cast<uint8_t>(CatalogIndexType::NGRAM));
     EXPECT_EQ(static_cast<uint8_t>(ParserIndexType::MONGODB_2D),
@@ -174,6 +178,10 @@ TEST(IndexTypeTaxonomyTest, SblrAndCatalogEnumsAreAligned)
               static_cast<uint8_t>(CatalogIndexType::SPARSE_WAND));
     EXPECT_EQ(static_cast<uint8_t>(SblrIndexType::TRIE),
               static_cast<uint8_t>(CatalogIndexType::TRIE));
+    EXPECT_EQ(static_cast<uint8_t>(SblrIndexType::INVERTED),
+              static_cast<uint8_t>(CatalogIndexType::INVERTED));
+    EXPECT_EQ(static_cast<uint8_t>(SblrIndexType::STL_SORT),
+              static_cast<uint8_t>(CatalogIndexType::STL_SORT));
     EXPECT_EQ(static_cast<uint8_t>(SblrIndexType::NGRAM),
               static_cast<uint8_t>(CatalogIndexType::NGRAM));
     EXPECT_EQ(static_cast<uint8_t>(SblrIndexType::MONGODB_2D),
@@ -267,6 +275,14 @@ TEST(IndexTypeTaxonomyTest, CanonicalMappingRejectsUnknownTypes)
     auto sparse_wand = scratchbird::sblr::Executor::mapCanonicalIndexType("sparse_wand");
     ASSERT_TRUE(sparse_wand.has_value());
     EXPECT_EQ(*sparse_wand, CatalogIndexType::SPARSE_WAND);
+
+    auto inverted = scratchbird::sblr::Executor::mapCanonicalIndexType("inverted");
+    ASSERT_TRUE(inverted.has_value());
+    EXPECT_EQ(*inverted, CatalogIndexType::INVERTED);
+
+    auto stl_sort = scratchbird::sblr::Executor::mapCanonicalIndexType("stl_sort");
+    ASSERT_TRUE(stl_sort.has_value());
+    EXPECT_EQ(*stl_sort, CatalogIndexType::STL_SORT);
 
     auto mongo_2d = scratchbird::sblr::Executor::mapCanonicalIndexType("mongodb_2d");
     ASSERT_TRUE(mongo_2d.has_value());

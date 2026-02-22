@@ -27,6 +27,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <cctype>
+#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <filesystem>
@@ -34,6 +35,7 @@
 #include <iomanip>
 #include <mutex>
 #include <sstream>
+#include <string_view>
 #ifndef _WIN32
 #include <sys/stat.h>
 #include <unistd.h>
@@ -60,6 +62,466 @@ struct ParsedPasswordHashes {
     ScramRecord scram256;
     ScramRecord scram512;
 };
+
+struct CatalogAuthContext {
+    bool resolved = false;
+    bool has_policy = false;
+    CatalogManager::PrincipalAccountCatalogInfo account;
+    CatalogManager::AuthPolicyCatalogInfo policy;
+};
+
+enum class AuthRateBucket : uint8_t {
+    GENERAL = 0,
+    SCRAM_BEGIN = 1,
+    SCRAM_FINISH = 2
+};
+
+struct AuthAttemptScope {
+    bool has_peer_identity = false;
+    uint32_t peer_uid = 0;
+    uint32_t peer_gid = 0;
+    uint32_t peer_pid = 0;
+    AuthRateBucket rate_bucket = AuthRateBucket::GENERAL;
+};
+
+struct ParsedLockoutReason {
+    bool valid = false;
+    uint64_t deadline = 0;
+    bool has_scope = false;
+    std::string scope;
+    bool has_bucket = false;
+    AuthRateBucket bucket = AuthRateBucket::GENERAL;
+};
+
+bool isZeroUuidLocal(const ID& id);
+
+bool equalsIgnoreCaseAscii(std::string_view lhs, std::string_view rhs) {
+    if (lhs.size() != rhs.size()) {
+        return false;
+    }
+    for (size_t i = 0; i < lhs.size(); ++i) {
+        const unsigned char a = static_cast<unsigned char>(lhs[i]);
+        const unsigned char b = static_cast<unsigned char>(rhs[i]);
+        if (std::tolower(a) != std::tolower(b)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+uint64_t catalogNowTicks() {
+    return static_cast<uint64_t>(
+        std::chrono::system_clock::now().time_since_epoch().count());
+}
+
+uint64_t millisecondsToCatalogTicks(uint32_t ms) {
+    return static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::system_clock::duration>(
+            std::chrono::milliseconds(ms))
+            .count());
+}
+
+std::string rateBucketToken(AuthRateBucket bucket) {
+    switch (bucket) {
+        case AuthRateBucket::GENERAL:
+            return "general";
+        case AuthRateBucket::SCRAM_BEGIN:
+            return "scram_begin";
+        case AuthRateBucket::SCRAM_FINISH:
+            return "scram_finish";
+    }
+    return "general";
+}
+
+bool parseRateBucketToken(std::string_view token, AuthRateBucket& bucket_out) {
+    if (token == "general") {
+        bucket_out = AuthRateBucket::GENERAL;
+        return true;
+    }
+    if (token == "scram_begin") {
+        bucket_out = AuthRateBucket::SCRAM_BEGIN;
+        return true;
+    }
+    if (token == "scram_finish") {
+        bucket_out = AuthRateBucket::SCRAM_FINISH;
+        return true;
+    }
+    return false;
+}
+
+std::string scopeTokenForAttempt(const AuthAttemptScope& scope) {
+    if (!scope.has_peer_identity) {
+        return "none";
+    }
+    return "uid=" + std::to_string(scope.peer_uid) +
+           ",gid=" + std::to_string(scope.peer_gid) +
+           ",pid=" + std::to_string(scope.peer_pid);
+}
+
+std::string encodeFailureCodeWithScope(const std::string& failure_code,
+                                       const AuthAttemptScope& scope) {
+    if (failure_code.empty()) {
+        return {};
+    }
+    return failure_code + "|SB_SCOPE=" + scopeTokenForAttempt(scope) +
+           "|SB_BUCKET=" + rateBucketToken(scope.rate_bucket);
+}
+
+bool parseFailureScopeMetadata(const std::string& failure_code,
+                               std::string& scope_out,
+                               AuthRateBucket& bucket_out) {
+    scope_out.clear();
+    constexpr std::string_view kScopeMarker = "|SB_SCOPE=";
+    constexpr std::string_view kBucketMarker = "|SB_BUCKET=";
+
+    const size_t scope_pos = failure_code.rfind(kScopeMarker.data());
+    const size_t bucket_pos = failure_code.rfind(kBucketMarker.data());
+    if (scope_pos == std::string::npos ||
+        bucket_pos == std::string::npos ||
+        bucket_pos <= scope_pos) {
+        return false;
+    }
+
+    const size_t scope_value_start = scope_pos + kScopeMarker.size();
+    if (scope_value_start >= bucket_pos) {
+        return false;
+    }
+    scope_out = failure_code.substr(scope_value_start, bucket_pos - scope_value_start);
+    if (scope_out.empty()) {
+        return false;
+    }
+
+    const size_t bucket_value_start = bucket_pos + kBucketMarker.size();
+    if (bucket_value_start >= failure_code.size()) {
+        return false;
+    }
+    const std::string bucket_token = failure_code.substr(bucket_value_start);
+    return parseRateBucketToken(bucket_token, bucket_out);
+}
+
+bool parseLockoutReason(const std::string& reason, ParsedLockoutReason& parsed_out) {
+    parsed_out = ParsedLockoutReason{};
+    constexpr const char* kPrefix = "LOCKOUT_UNTIL=";
+    const size_t pos = reason.find(kPrefix);
+    if (pos == std::string::npos) {
+        return false;
+    }
+
+    const char* value_ptr = reason.c_str() + pos + std::strlen(kPrefix);
+    if (*value_ptr == '\0') {
+        return false;
+    }
+
+    char* end_ptr = nullptr;
+    errno = 0;
+    const unsigned long long parsed = std::strtoull(value_ptr, &end_ptr, 10);
+    if (errno != 0 || end_ptr == value_ptr) {
+        return false;
+    }
+    parsed_out.valid = true;
+    parsed_out.deadline = static_cast<uint64_t>(parsed);
+
+    const size_t scope_pos = reason.find(";SCOPE=");
+    if (scope_pos != std::string::npos) {
+        const size_t scope_start = scope_pos + std::strlen(";SCOPE=");
+        size_t scope_end = reason.find(';', scope_start);
+        if (scope_end == std::string::npos) {
+            scope_end = reason.size();
+        }
+        if (scope_end > scope_start) {
+            parsed_out.scope = reason.substr(scope_start, scope_end - scope_start);
+            parsed_out.has_scope = !parsed_out.scope.empty();
+        }
+    }
+
+    const size_t bucket_pos = reason.find(";BUCKET=");
+    if (bucket_pos != std::string::npos) {
+        const size_t bucket_start = bucket_pos + std::strlen(";BUCKET=");
+        size_t bucket_end = reason.find(';', bucket_start);
+        if (bucket_end == std::string::npos) {
+            bucket_end = reason.size();
+        }
+        if (bucket_end > bucket_start) {
+            AuthRateBucket parsed_bucket = AuthRateBucket::GENERAL;
+            const std::string bucket_token = reason.substr(bucket_start, bucket_end - bucket_start);
+            if (parseRateBucketToken(bucket_token, parsed_bucket)) {
+                parsed_out.has_bucket = true;
+                parsed_out.bucket = parsed_bucket;
+            }
+        }
+    }
+
+    return parsed_out.valid;
+}
+
+bool lockoutReasonMatchesScope(const ParsedLockoutReason& reason,
+                               const AuthAttemptScope& scope) {
+    if (reason.has_scope && reason.scope != scopeTokenForAttempt(scope)) {
+        return false;
+    }
+    if (reason.has_bucket && reason.bucket != scope.rate_bucket) {
+        return false;
+    }
+    return true;
+}
+
+bool attemptMatchesScopeAndBucket(const CatalogManager::AuthAttemptLogCatalogInfo& attempt,
+                                  const AuthAttemptScope& expected_scope) {
+    std::string attempt_scope;
+    AuthRateBucket attempt_bucket = AuthRateBucket::GENERAL;
+    if (parseFailureScopeMetadata(attempt.failure_code, attempt_scope, attempt_bucket)) {
+        return attempt_scope == scopeTokenForAttempt(expected_scope) &&
+               attempt_bucket == expected_scope.rate_bucket;
+    }
+
+    // Legacy failures without metadata are treated as account-global general bucket.
+    return !expected_scope.has_peer_identity &&
+           expected_scope.rate_bucket == AuthRateBucket::GENERAL;
+}
+
+bool resolveCatalogAuthContext(CatalogManager* catalog,
+                               const std::string& username,
+                               CatalogAuthContext& out) {
+    out = CatalogAuthContext{};
+    if (!catalog || username.empty()) {
+        return false;
+    }
+
+    CatalogManager::PrincipalResolutionRequest request{};
+    request.presented_principal_name = username;
+
+    ErrorContext ctx;
+    CatalogManager::PrincipalAccountCatalogInfo account;
+    Status resolve_status = catalog->resolvePrincipalAccount(request, account, &ctx);
+    if (resolve_status != Status::OK) {
+        // resolvePrincipalAccount filters out locked identities. For lockout enforcement
+        // we still need to read the backing account row so lock state can be checked.
+        std::vector<CatalogManager::PrincipalAccountCatalogInfo> accounts;
+        if (catalog->listPrincipalAccountCatalogEntries(accounts, &ctx) != Status::OK) {
+            return false;
+        }
+
+        const CatalogManager::PrincipalAccountCatalogInfo* fallback = nullptr;
+        for (const auto& row : accounts) {
+            if (!equalsIgnoreCaseAscii(row.principal_name, username)) {
+                continue;
+            }
+            if (row.source_scope_kind != CatalogManager::SourceScopeKind::ANY) {
+                if (fallback == nullptr) {
+                    fallback = &row;
+                }
+                continue;
+            }
+            if (row.has_source_scope_value || !row.source_scope_value.empty()) {
+                if (fallback == nullptr) {
+                    fallback = &row;
+                }
+                continue;
+            }
+            fallback = &row;
+            break;
+        }
+        if (fallback == nullptr) {
+            return false;
+        }
+        account = *fallback;
+    }
+
+    out.resolved = true;
+    out.account = account;
+
+    if (!isZeroUuidLocal(account.auth_policy_id)) {
+        CatalogManager::AuthPolicyCatalogInfo policy;
+        if (catalog->getAuthPolicyCatalogEntry(account.auth_policy_id, policy, &ctx) == Status::OK) {
+            out.policy = policy;
+            out.has_policy = true;
+        }
+    }
+
+    return true;
+}
+
+bool persistPrincipalAccount(CatalogManager* catalog,
+                             const CatalogManager::PrincipalAccountCatalogInfo& account) {
+    if (!catalog) {
+        return false;
+    }
+    ErrorContext ctx;
+    return catalog->upsertPrincipalAccountCatalogEntry(account, &ctx) == Status::OK;
+}
+
+bool isCatalogAccountLocked(CatalogManager* catalog,
+                            CatalogAuthContext& context,
+                            const AuthAttemptScope& scope,
+                            uint32_t& remaining_minutes_out) {
+    remaining_minutes_out = 0;
+    if (!catalog || !context.resolved || !context.account.is_locked) {
+        return false;
+    }
+
+    ParsedLockoutReason parsed_reason;
+    const bool parsed_ok = parseLockoutReason(context.account.locked_reason, parsed_reason);
+    const uint64_t now_ticks = catalogNowTicks();
+
+    if (parsed_ok) {
+        if (now_ticks >= parsed_reason.deadline) {
+            context.account.is_locked = false;
+            context.account.has_locked_reason = false;
+            context.account.locked_reason.clear();
+            context.account.last_modified_time = now_ticks;
+            (void)persistPrincipalAccount(catalog, context.account);
+            return false;
+        }
+
+        if (!lockoutReasonMatchesScope(parsed_reason, scope)) {
+            return false;
+        }
+
+        const auto remaining_duration =
+            std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::system_clock::duration(parsed_reason.deadline - now_ticks));
+        const uint64_t remaining_ms = remaining_duration.count() > 0
+            ? static_cast<uint64_t>(remaining_duration.count())
+            : 0;
+        remaining_minutes_out = static_cast<uint32_t>((remaining_ms + 59999) / 60000);
+        return true;
+    }
+
+    // Legacy lock reasons are account-global.
+    return context.account.is_locked;
+}
+
+void appendCatalogAuthAttempt(CatalogManager* catalog,
+                              const CatalogAuthContext& context,
+                              CatalogManager::AuthAttemptOutcome outcome,
+                              const std::string& failure_code,
+                              const AuthAttemptScope& scope) {
+    if (!catalog || !context.resolved) {
+        return;
+    }
+
+    CatalogManager::AuthAttemptLogCatalogInfo attempt{};
+    attempt.attempt_id = generateUuidV7();
+    attempt.connection_id = generateUuidV7();
+    attempt.has_account_id = true;
+    attempt.account_id = context.account.account_id;
+    attempt.has_provider_id = false;
+    attempt.provider_id = ID{};
+    attempt.outcome = outcome;
+    attempt.failure_code = encodeFailureCodeWithScope(failure_code, scope);
+    attempt.has_failure_code = !attempt.failure_code.empty();
+    attempt.attempt_time_utc = catalogNowTicks();
+    attempt.latency_us = 0;
+    attempt.is_valid = true;
+    attempt.created_time = 0;
+    attempt.last_modified_time = 0;
+
+    ErrorContext ctx;
+    (void)catalog->upsertAuthAttemptLogCatalogEntry(attempt, &ctx);
+}
+
+size_t countRecentCatalogFailures(CatalogManager* catalog,
+                                  const CatalogAuthContext& context,
+                                  uint64_t now_ticks,
+                                  const AuthAttemptScope& scope) {
+    if (!catalog || !context.resolved) {
+        return 0;
+    }
+
+    std::vector<CatalogManager::AuthAttemptLogCatalogInfo> attempts;
+    ErrorContext ctx;
+    if (catalog->listAuthAttemptLogCatalogEntries(context.account.account_id, attempts, &ctx) != Status::OK) {
+        return 0;
+    }
+
+    const uint64_t window_ticks = millisecondsToCatalogTicks(context.policy.lockout_window_ms);
+    const uint64_t window_start =
+        (window_ticks == 0 || now_ticks < window_ticks) ? 0 : (now_ticks - window_ticks);
+
+    size_t failures = 0;
+    for (const auto& attempt : attempts) {
+        if (attempt.outcome == CatalogManager::AuthAttemptOutcome::SUCCESS) {
+            continue;
+        }
+        if (context.policy.lockout_window_ms > 0 && attempt.attempt_time_utc < window_start) {
+            continue;
+        }
+        if (!attemptMatchesScopeAndBucket(attempt, scope)) {
+            continue;
+        }
+        ++failures;
+    }
+    return failures;
+}
+
+void applyCatalogLockoutOnFailure(CatalogManager* catalog,
+                                  CatalogAuthContext& context,
+                                  const std::string& failure_code,
+                                  const AuthAttemptScope& scope) {
+    if (!catalog || !context.resolved) {
+        return;
+    }
+
+    appendCatalogAuthAttempt(
+        catalog,
+        context,
+        CatalogManager::AuthAttemptOutcome::FAIL,
+        failure_code,
+        scope);
+
+    if (context.policy.lockout_threshold == 0) {
+        return;
+    }
+
+    const uint64_t now_ticks = catalogNowTicks();
+    const size_t failures = countRecentCatalogFailures(catalog, context, now_ticks, scope);
+    if (failures < static_cast<size_t>(context.policy.lockout_threshold)) {
+        return;
+    }
+
+    const uint64_t lockout_duration_ticks =
+        millisecondsToCatalogTicks(context.policy.lockout_duration_ms);
+    const uint64_t lockout_until = now_ticks + lockout_duration_ticks;
+
+    context.account.is_locked = true;
+    context.account.has_locked_reason = true;
+    context.account.locked_reason = "LOCKOUT_UNTIL=" + std::to_string(lockout_until) +
+                                    ";SCOPE=" + scopeTokenForAttempt(scope) +
+                                    ";BUCKET=" + rateBucketToken(scope.rate_bucket);
+    context.account.last_modified_time = now_ticks;
+    (void)persistPrincipalAccount(catalog, context.account);
+}
+
+void clearCatalogLockoutOnSuccess(CatalogManager* catalog,
+                                  CatalogAuthContext& context,
+                                  const AuthAttemptScope& scope) {
+    if (!catalog || !context.resolved) {
+        return;
+    }
+
+    appendCatalogAuthAttempt(
+        catalog,
+        context,
+        CatalogManager::AuthAttemptOutcome::SUCCESS,
+        "",
+        scope);
+
+    if (!context.account.is_locked && !context.account.has_locked_reason) {
+        return;
+    }
+
+    ParsedLockoutReason parsed_reason;
+    if (parseLockoutReason(context.account.locked_reason, parsed_reason) &&
+        !lockoutReasonMatchesScope(parsed_reason, scope)) {
+        return;
+    }
+
+    context.account.is_locked = false;
+    context.account.has_locked_reason = false;
+    context.account.locked_reason.clear();
+    context.account.last_modified_time = catalogNowTicks();
+    (void)persistPrincipalAccount(catalog, context.account);
+}
 
 std::string toHexLower(const unsigned char* data, size_t len) {
     std::ostringstream oss;
@@ -157,6 +619,74 @@ ParsedPasswordHashes parsePasswordHashes(const std::string& password_hash) {
     }
 
     return out;
+}
+
+const char* scramAlgorithmToken(security::ScramAlgorithm algorithm) {
+    return (algorithm == security::ScramAlgorithm::SHA_256) ? "sha256" : "sha512";
+}
+
+uint32_t effectiveMinScramIterations(const CatalogAuthContext* context) {
+    uint32_t min_iterations = CatalogManager::AUTH_POLICY_MIN_SCRAM_ITERATIONS_DEFAULT;
+    if (context && context->has_policy) {
+        min_iterations = context->policy.min_scram_iterations;
+    }
+    if (min_iterations < CatalogManager::AUTH_POLICY_MIN_SCRAM_ITERATIONS_DEFAULT) {
+        min_iterations = CatalogManager::AUTH_POLICY_MIN_SCRAM_ITERATIONS_DEFAULT;
+    }
+    return min_iterations;
+}
+
+bool policyMarksWeakScramForUpgrade(const CatalogAuthContext* context) {
+    if (!context || !context->has_policy) {
+        return false;
+    }
+    return context->policy.mark_weak_scram_for_upgrade;
+}
+
+bool markWeakScramCredentialForUpgrade(CatalogManager* catalog,
+                                       const CatalogManager::UserInfo& user,
+                                       security::ScramAlgorithm algorithm,
+                                       uint32_t observed_iterations,
+                                       uint32_t required_iterations) {
+    if (!catalog || isZeroUuidLocal(user.user_id)) {
+        return false;
+    }
+
+    Json metadata = Json::object();
+    if (!user.user_metadata.empty()) {
+        try {
+            metadata = Json::parse(user.user_metadata);
+        } catch (const Json::exception&) {
+            return false;
+        }
+        if (!metadata.is_object()) {
+            return false;
+        }
+    }
+
+    Json auth = Json::object();
+    if (metadata.contains("auth") && metadata["auth"].is_object()) {
+        auth = metadata["auth"];
+    }
+
+    const bool already_marked =
+        auth.value("scram_upgrade_required", false) &&
+        auth.value("scram_observed_iterations", 0u) == observed_iterations &&
+        auth.value("scram_min_required_iterations", 0u) == required_iterations &&
+        auth.value("scram_algorithm", std::string{}) == scramAlgorithmToken(algorithm);
+    if (already_marked) {
+        return true;
+    }
+
+    auth["scram_upgrade_required"] = true;
+    auth["scram_algorithm"] = scramAlgorithmToken(algorithm);
+    auth["scram_observed_iterations"] = observed_iterations;
+    auth["scram_min_required_iterations"] = required_iterations;
+    auth["scram_marked_at"] = catalogNowTicks();
+    metadata["auth"] = auth;
+
+    ErrorContext ctx;
+    return catalog->updateUserMetadata(user.user_id, metadata.dump(), &ctx) == Status::OK;
 }
 
 Counter* legacyAuthUsageCounter() {
@@ -483,6 +1013,18 @@ ScramRecord makeDummyScramRecord(security::ScramAlgorithm algorithm) {
     return rec;
 }
 
+AuthAttemptScope makeAuthAttemptScope(
+    const LocalAuthProvider::PeerIdentityContext& peer,
+    AuthRateBucket bucket) {
+    AuthAttemptScope scope{};
+    scope.rate_bucket = bucket;
+    scope.has_peer_identity = peer.available;
+    scope.peer_uid = peer.peer_uid;
+    scope.peer_gid = peer.peer_gid;
+    scope.peer_pid = peer.peer_pid;
+    return scope;
+}
+
 }  // namespace
 
 // ============================================================================
@@ -510,6 +1052,22 @@ LocalAuthProvider::~LocalAuthProvider()
     delete login_tracker_;
 }
 
+void LocalAuthProvider::setPeerIdentityContext(bool available,
+                                               uint32_t peer_uid,
+                                               uint32_t peer_gid,
+                                               uint32_t peer_pid)
+{
+    peer_identity_context_.available = available;
+    peer_identity_context_.peer_uid = available ? peer_uid : 0;
+    peer_identity_context_.peer_gid = available ? peer_gid : 0;
+    peer_identity_context_.peer_pid = available ? peer_pid : 0;
+}
+
+void LocalAuthProvider::clearPeerIdentityContext()
+{
+    peer_identity_context_ = PeerIdentityContext{};
+}
+
 AuthResult LocalAuthProvider::authenticate(
     const std::string& username,
     const std::string& password,
@@ -519,10 +1077,35 @@ AuthResult LocalAuthProvider::authenticate(
     warnLegacyPasswordDeprecated();
     recordLegacyAuthUsage("password");
 
-    // P0-2: Check if account is locked FIRST (before any DB lookups)
-    if (login_tracker_->isAccountLocked(username)) {
+    CatalogAuthContext catalog_auth_ctx;
+    const bool has_catalog_auth_ctx =
+        resolveCatalogAuthContext(catalog_, username, catalog_auth_ctx);
+    const AuthAttemptScope auth_scope =
+        makeAuthAttemptScope(peer_identity_context_, AuthRateBucket::GENERAL);
+
+    // Prefer catalog-backed lockout for cross-process consistency.
+    if (has_catalog_auth_ctx) {
+        uint32_t remaining_minutes = 0;
+        if (isCatalogAccountLocked(catalog_, catalog_auth_ctx, auth_scope, remaining_minutes)) {
+            LOG_WARNING(GENERAL, "Login attempt for locked account: %s", username.c_str());
+
+            if (audit_logger_) {
+                AuditEvent event = AuditLogger::createLoginFailureEvent(username, "account_locked");
+                ErrorContext audit_ctx;
+                audit_logger_->logEvent(event, &audit_ctx);
+            }
+
+            if (remaining_minutes == 0) {
+                error_msg_out = "Account locked due to too many failed attempts.";
+            } else {
+                error_msg_out = "Account locked due to too many failed attempts. Try again in " +
+                               std::to_string(remaining_minutes) + " minute(s)";
+            }
+            return AuthResult::USER_LOCKED;
+        }
+    } else if (login_tracker_->isAccountLocked(username)) {
         uint64_t remaining_ms = login_tracker_->getLockoutTimeRemaining(username);
-        uint32_t remaining_minutes = static_cast<uint32_t>((remaining_ms + 59999) / 60000);  // Round up
+        uint32_t remaining_minutes = static_cast<uint32_t>((remaining_ms + 59999) / 60000);
 
         LOG_WARNING(GENERAL, "Login attempt for locked account: %s (locked for %u more minutes)",
                    username.c_str(), remaining_minutes);
@@ -594,7 +1177,11 @@ AuthResult LocalAuthProvider::authenticate(
         ErrorContext claim_ctx;
         Status claim_status = catalog_->claimBootstrapWindow(&claim_ctx);
         if (claim_status != Status::OK) {
-            login_tracker_->recordFailedAttempt(username);
+            if (has_catalog_auth_ctx) {
+                applyCatalogLockoutOnFailure(catalog_, catalog_auth_ctx, "SEC_1213", auth_scope);
+            } else {
+                login_tracker_->recordFailedAttempt(username);
+            }
             const std::string reason = (claim_status == Status::CONSTRAINT_VIOLATION)
                 ? "bootstrap_claim_conflict"
                 : "bootstrap_claim_failed";
@@ -633,7 +1220,11 @@ AuthResult LocalAuthProvider::authenticate(
         std::string bootstrap_error;
         if (!verifyAndConsumeBootstrapProof(password, bootstrap_error)) {
             (void)release_bootstrap_window();
-            login_tracker_->recordFailedAttempt(username);
+            if (has_catalog_auth_ctx) {
+                applyCatalogLockoutOnFailure(catalog_, catalog_auth_ctx, "SEC_1213", auth_scope);
+            } else {
+                login_tracker_->recordFailedAttempt(username);
+            }
             logBootstrapAuditEvent(audit_logger_,
                                    AuditEventType::BOOTSTRAP_FAILURE,
                                    username,
@@ -696,7 +1287,11 @@ AuthResult LocalAuthProvider::authenticate(
             return AuthResult::PROVIDER_ERROR;
         }
 
-        login_tracker_->recordSuccessfulLogin(username);
+        if (has_catalog_auth_ctx) {
+            clearCatalogLockoutOnSuccess(catalog_, catalog_auth_ctx, auth_scope);
+        } else {
+            login_tracker_->recordSuccessfulLogin(username);
+        }
 
         user_info_out.user_id = system_user_id;
         user_info_out.username = "SYSTEM";
@@ -740,14 +1335,22 @@ AuthResult LocalAuthProvider::authenticate(
     // Check authentication result
     if (!user_exists || !password_valid) {
         // P0-2: Record failed attempt BEFORE returning error
-        login_tracker_->recordFailedAttempt(username);
+        if (has_catalog_auth_ctx) {
+            applyCatalogLockoutOnFailure(catalog_, catalog_auth_ctx, "SEC_1213", auth_scope);
+        } else {
+            login_tracker_->recordFailedAttempt(username);
+        }
 
         // Log detailed error internally (for administrators)
         if (!user_exists) {
             LOG_WARNING(GENERAL, "Login attempt for non-existent user: %s", username.c_str());
         } else {
-            LOG_WARNING(GENERAL, "Invalid password for user: %s (failed attempts: %u)",
-                       username.c_str(), login_tracker_->getFailedAttemptCount(username));
+            if (has_catalog_auth_ctx) {
+                LOG_WARNING(GENERAL, "Invalid password for user: %s", username.c_str());
+            } else {
+                LOG_WARNING(GENERAL, "Invalid password for user: %s (failed attempts: %u)",
+                           username.c_str(), login_tracker_->getFailedAttemptCount(username));
+            }
         }
 
         // P0-3: Audit log - login failure
@@ -767,7 +1370,11 @@ AuthResult LocalAuthProvider::authenticate(
     // Check if user is active
     if (!db_user.is_active) {
         // P0-2: Record failed attempt for disabled accounts too
-        login_tracker_->recordFailedAttempt(username);
+        if (has_catalog_auth_ctx) {
+            applyCatalogLockoutOnFailure(catalog_, catalog_auth_ctx, "SEC_1213", auth_scope);
+        } else {
+            login_tracker_->recordFailedAttempt(username);
+        }
 
         LOG_WARNING(GENERAL, "Login attempt for disabled user: %s", username.c_str());
         // Return generic error (don't reveal user status)
@@ -778,7 +1385,11 @@ AuthResult LocalAuthProvider::authenticate(
     // Check if user has password hash set
     if (db_user.password_hash.empty()) {
         // P0-2: Record failed attempt
-        login_tracker_->recordFailedAttempt(username);
+        if (has_catalog_auth_ctx) {
+            applyCatalogLockoutOnFailure(catalog_, catalog_auth_ctx, "SEC_1213", auth_scope);
+        } else {
+            login_tracker_->recordFailedAttempt(username);
+        }
 
         LOG_WARNING(GENERAL, "Login attempt for user with no password: %s", username.c_str());
         // Return generic error (don't reveal password status)
@@ -787,7 +1398,11 @@ AuthResult LocalAuthProvider::authenticate(
     }
 
     // P0-2: Successful authentication - clear failed attempts
-    login_tracker_->recordSuccessfulLogin(username);
+    if (has_catalog_auth_ctx) {
+        clearCatalogLockoutOnSuccess(catalog_, catalog_auth_ctx, auth_scope);
+    } else {
+        login_tracker_->recordSuccessfulLogin(username);
+    }
 
     // Create AuthKey for this authentication
     ID authkey_id{};
@@ -828,7 +1443,32 @@ AuthResult LocalAuthProvider::authenticateMd5(
     warnLegacyMd5Deprecated();
     recordLegacyAuthUsage("md5");
 
-    if (login_tracker_->isAccountLocked(username)) {
+    CatalogAuthContext catalog_auth_ctx;
+    const bool has_catalog_auth_ctx =
+        resolveCatalogAuthContext(catalog_, username, catalog_auth_ctx);
+    const AuthAttemptScope auth_scope =
+        makeAuthAttemptScope(peer_identity_context_, AuthRateBucket::GENERAL);
+
+    if (has_catalog_auth_ctx) {
+        uint32_t remaining_minutes = 0;
+        if (isCatalogAccountLocked(catalog_, catalog_auth_ctx, auth_scope, remaining_minutes)) {
+            LOG_WARNING(GENERAL, "Login attempt for locked account: %s", username.c_str());
+
+            if (audit_logger_) {
+                AuditEvent event = AuditLogger::createLoginFailureEvent(username, "account_locked");
+                ErrorContext audit_ctx;
+                audit_logger_->logEvent(event, &audit_ctx);
+            }
+
+            if (remaining_minutes == 0) {
+                error_msg_out = "Account locked due to too many failed attempts.";
+            } else {
+                error_msg_out = "Account locked due to too many failed attempts. Try again in " +
+                               std::to_string(remaining_minutes) + " minute(s)";
+            }
+            return AuthResult::USER_LOCKED;
+        }
+    } else if (login_tracker_->isAccountLocked(username)) {
         uint64_t remaining_ms = login_tracker_->getLockoutTimeRemaining(username);
         uint32_t remaining_minutes = static_cast<uint32_t>((remaining_ms + 59999) / 60000);
 
@@ -866,13 +1506,21 @@ AuthResult LocalAuthProvider::authenticateMd5(
     bool md5_valid = !expected.empty() && timingSafeEqual(expected, client_response);
 
     if (!user_exists || !md5_valid) {
-        login_tracker_->recordFailedAttempt(username);
+        if (has_catalog_auth_ctx) {
+            applyCatalogLockoutOnFailure(catalog_, catalog_auth_ctx, "SEC_1213", auth_scope);
+        } else {
+            login_tracker_->recordFailedAttempt(username);
+        }
 
         if (!user_exists) {
             LOG_WARNING(GENERAL, "Login attempt for non-existent user: %s", username.c_str());
         } else {
-            LOG_WARNING(GENERAL, "Invalid MD5 response for user: %s (failed attempts: %u)",
-                       username.c_str(), login_tracker_->getFailedAttemptCount(username));
+            if (has_catalog_auth_ctx) {
+                LOG_WARNING(GENERAL, "Invalid MD5 response for user: %s", username.c_str());
+            } else {
+                LOG_WARNING(GENERAL, "Invalid MD5 response for user: %s (failed attempts: %u)",
+                           username.c_str(), login_tracker_->getFailedAttemptCount(username));
+            }
         }
 
         if (audit_logger_) {
@@ -887,20 +1535,32 @@ AuthResult LocalAuthProvider::authenticateMd5(
     }
 
     if (!db_user.is_active) {
-        login_tracker_->recordFailedAttempt(username);
+        if (has_catalog_auth_ctx) {
+            applyCatalogLockoutOnFailure(catalog_, catalog_auth_ctx, "SEC_1213", auth_scope);
+        } else {
+            login_tracker_->recordFailedAttempt(username);
+        }
         LOG_WARNING(GENERAL, "Login attempt for disabled user: %s", username.c_str());
         error_msg_out = "Invalid username or password";
         return AuthResult::USER_DISABLED;
     }
 
     if (!md5_available) {
-        login_tracker_->recordFailedAttempt(username);
+        if (has_catalog_auth_ctx) {
+            applyCatalogLockoutOnFailure(catalog_, catalog_auth_ctx, "SEC_1213", auth_scope);
+        } else {
+            login_tracker_->recordFailedAttempt(username);
+        }
         LOG_WARNING(GENERAL, "Login attempt for user without MD5 credential: %s", username.c_str());
         error_msg_out = "Invalid username or password";
         return AuthResult::INVALID_CREDENTIALS;
     }
 
-    login_tracker_->recordSuccessfulLogin(username);
+    if (has_catalog_auth_ctx) {
+        clearCatalogLockoutOnSuccess(catalog_, catalog_auth_ctx, auth_scope);
+    } else {
+        login_tracker_->recordSuccessfulLogin(username);
+    }
 
     ID authkey_id{};
     CatalogManager::AuthKeyInfo authkey_info;
@@ -937,7 +1597,31 @@ AuthResult LocalAuthProvider::beginScramAuth(
     std::string& server_first_out,
     std::string& error_msg_out)
 {
-    if (login_tracker_->isAccountLocked(username)) {
+    CatalogAuthContext catalog_auth_ctx;
+    const bool has_catalog_auth_ctx =
+        resolveCatalogAuthContext(catalog_, username, catalog_auth_ctx);
+    const AuthAttemptScope auth_scope =
+        makeAuthAttemptScope(peer_identity_context_, AuthRateBucket::SCRAM_BEGIN);
+    if (has_catalog_auth_ctx) {
+        uint32_t remaining_minutes = 0;
+        if (isCatalogAccountLocked(catalog_, catalog_auth_ctx, auth_scope, remaining_minutes)) {
+            LOG_WARNING(GENERAL, "Login attempt for locked account: %s", username.c_str());
+
+            if (audit_logger_) {
+                AuditEvent event = AuditLogger::createLoginFailureEvent(username, "account_locked");
+                ErrorContext audit_ctx;
+                audit_logger_->logEvent(event, &audit_ctx);
+            }
+
+            if (remaining_minutes == 0) {
+                error_msg_out = "Account locked due to too many failed attempts.";
+            } else {
+                error_msg_out = "Account locked due to too many failed attempts. Try again in " +
+                               std::to_string(remaining_minutes) + " minute(s)";
+            }
+            return AuthResult::USER_LOCKED;
+        }
+    } else if (login_tracker_->isAccountLocked(username)) {
         uint64_t remaining_ms = login_tracker_->getLockoutTimeRemaining(username);
         uint32_t remaining_minutes = static_cast<uint32_t>((remaining_ms + 59999) / 60000);
 
@@ -957,11 +1641,21 @@ AuthResult LocalAuthProvider::beginScramAuth(
 
     security::ScramClientFirst parsed;
     if (!security::parseClientFirst(client_first, parsed)) {
+        if (has_catalog_auth_ctx) {
+            applyCatalogLockoutOnFailure(catalog_, catalog_auth_ctx, "SEC_1213", auth_scope);
+        } else {
+            login_tracker_->recordFailedAttempt(username);
+        }
         error_msg_out = "Invalid SCRAM message";
         return AuthResult::INVALID_CREDENTIALS;
     }
 
     if (!username.empty() && parsed.username != username) {
+        if (has_catalog_auth_ctx) {
+            applyCatalogLockoutOnFailure(catalog_, catalog_auth_ctx, "SEC_1213", auth_scope);
+        } else {
+            login_tracker_->recordFailedAttempt(username);
+        }
         error_msg_out = "Invalid username or password";
         return AuthResult::INVALID_CREDENTIALS;
     }
@@ -986,6 +1680,37 @@ AuthResult LocalAuthProvider::beginScramAuth(
     if (!record.valid) {
         record = makeDummyScramRecord(algorithm);
         user_exists = false;
+    }
+
+    const uint32_t min_scram_iterations =
+        effectiveMinScramIterations(has_catalog_auth_ctx ? &catalog_auth_ctx : nullptr);
+    if (user_exists && record.valid && record.iterations < min_scram_iterations) {
+        if (policyMarksWeakScramForUpgrade(has_catalog_auth_ctx ? &catalog_auth_ctx : nullptr)) {
+            if (!markWeakScramCredentialForUpgrade(catalog_,
+                                                   db_user,
+                                                   algorithm,
+                                                   record.iterations,
+                                                   min_scram_iterations)) {
+                LOG_WARNING(GENERAL,
+                            "Unable to persist weak SCRAM upgrade marker for user: %s",
+                            parsed.username.c_str());
+            }
+        }
+
+        if (audit_logger_) {
+            AuditEvent event = AuditLogger::createLoginFailureEvent(parsed.username,
+                                                                    "weak_scram_iterations");
+            ErrorContext audit_ctx;
+            audit_logger_->logEvent(event, &audit_ctx);
+        }
+
+        LOG_WARNING(GENERAL,
+                    "SCRAM credential below policy minimum for user %s: stored=%u required=%u",
+                    parsed.username.c_str(),
+                    record.iterations,
+                    min_scram_iterations);
+        error_msg_out = "Invalid username or password";
+        return AuthResult::INVALID_CREDENTIALS;
     }
 
     std::string server_nonce = security::generateNonce();
@@ -1021,8 +1746,49 @@ AuthResult LocalAuthProvider::finishScramAuth(
     std::string& server_final_out,
     std::string& error_msg_out)
 {
+    CatalogAuthContext catalog_auth_ctx;
+    const bool has_catalog_auth_ctx =
+        resolveCatalogAuthContext(catalog_, state.username, catalog_auth_ctx);
+    const AuthAttemptScope auth_scope =
+        makeAuthAttemptScope(peer_identity_context_, AuthRateBucket::SCRAM_FINISH);
+
+    if (has_catalog_auth_ctx) {
+        uint32_t remaining_minutes = 0;
+        if (isCatalogAccountLocked(catalog_, catalog_auth_ctx, auth_scope, remaining_minutes)) {
+            LOG_WARNING(GENERAL, "Login attempt for locked account: %s", state.username.c_str());
+
+            if (audit_logger_) {
+                AuditEvent event = AuditLogger::createLoginFailureEvent(state.username, "account_locked");
+                ErrorContext audit_ctx;
+                audit_logger_->logEvent(event, &audit_ctx);
+            }
+
+            if (remaining_minutes == 0) {
+                error_msg_out = "Account locked due to too many failed attempts.";
+            } else {
+                error_msg_out = "Account locked due to too many failed attempts. Try again in " +
+                                std::to_string(remaining_minutes) + " minute(s)";
+            }
+            return AuthResult::USER_LOCKED;
+        }
+    } else if (login_tracker_->isAccountLocked(state.username)) {
+        uint64_t remaining_ms = login_tracker_->getLockoutTimeRemaining(state.username);
+        uint32_t remaining_minutes = static_cast<uint32_t>((remaining_ms + 59999) / 60000);
+
+        LOG_WARNING(GENERAL, "Login attempt for locked account: %s (locked for %u more minutes)",
+                    state.username.c_str(), remaining_minutes);
+        error_msg_out = "Account locked due to too many failed attempts. Try again in " +
+                        std::to_string(remaining_minutes) + " minute(s)";
+        return AuthResult::USER_LOCKED;
+    }
+
     security::ScramClientFinal parsed;
     if (!security::parseClientFinal(client_final, parsed)) {
+        if (has_catalog_auth_ctx) {
+            applyCatalogLockoutOnFailure(catalog_, catalog_auth_ctx, "SEC_1213", auth_scope);
+        } else {
+            login_tracker_->recordFailedAttempt(state.username);
+        }
         error_msg_out = "Invalid SCRAM message";
         return AuthResult::INVALID_CREDENTIALS;
     }
@@ -1054,14 +1820,23 @@ AuthResult LocalAuthProvider::finishScramAuth(
     server_final_out = "v=" + security::base64Encode(server_signature);
 
     if (!auth_ok) {
-        login_tracker_->recordFailedAttempt(state.username);
+        if (has_catalog_auth_ctx) {
+            applyCatalogLockoutOnFailure(catalog_, catalog_auth_ctx, "SEC_1213", auth_scope);
+        } else {
+            login_tracker_->recordFailedAttempt(state.username);
+        }
         if (!state.user_exists) {
             LOG_WARNING(GENERAL, "SCRAM login attempt for non-existent user: %s",
                        state.username.c_str());
         } else {
-            LOG_WARNING(GENERAL, "Invalid SCRAM proof for user: %s (failed attempts: %u)",
-                       state.username.c_str(),
-                       login_tracker_->getFailedAttemptCount(state.username));
+            if (has_catalog_auth_ctx) {
+                LOG_WARNING(GENERAL, "Invalid SCRAM proof for user: %s",
+                           state.username.c_str());
+            } else {
+                LOG_WARNING(GENERAL, "Invalid SCRAM proof for user: %s (failed attempts: %u)",
+                           state.username.c_str(),
+                           login_tracker_->getFailedAttemptCount(state.username));
+            }
         }
         if (audit_logger_) {
             std::string reason = state.user_exists ? "invalid_password" : "invalid_username";
@@ -1074,13 +1849,21 @@ AuthResult LocalAuthProvider::finishScramAuth(
     }
 
     if (!state.is_active) {
-        login_tracker_->recordFailedAttempt(state.username);
+        if (has_catalog_auth_ctx) {
+            applyCatalogLockoutOnFailure(catalog_, catalog_auth_ctx, "SEC_1213", auth_scope);
+        } else {
+            login_tracker_->recordFailedAttempt(state.username);
+        }
         LOG_WARNING(GENERAL, "SCRAM login attempt for disabled user: %s", state.username.c_str());
         error_msg_out = "Invalid username or password";
         return AuthResult::USER_DISABLED;
     }
 
-    login_tracker_->recordSuccessfulLogin(state.username);
+    if (has_catalog_auth_ctx) {
+        clearCatalogLockoutOnSuccess(catalog_, catalog_auth_ctx, auth_scope);
+    } else {
+        login_tracker_->recordSuccessfulLogin(state.username);
+    }
 
     ErrorContext ctx;
     ID authkey_id{};
@@ -1118,7 +1901,24 @@ AuthResult LocalAuthProvider::authenticateToken(
     AuthUserInfo& user_info_out,
     std::string& error_msg_out)
 {
-    if (login_tracker_->isAccountLocked(username)) {
+    CatalogAuthContext catalog_auth_ctx;
+    const bool has_catalog_auth_ctx =
+        resolveCatalogAuthContext(catalog_, username, catalog_auth_ctx);
+    const AuthAttemptScope auth_scope =
+        makeAuthAttemptScope(peer_identity_context_, AuthRateBucket::GENERAL);
+    if (has_catalog_auth_ctx) {
+        uint32_t remaining_minutes = 0;
+        if (isCatalogAccountLocked(catalog_, catalog_auth_ctx, auth_scope, remaining_minutes)) {
+            LOG_WARNING(GENERAL, "Token login attempt for locked account: %s", username.c_str());
+            if (remaining_minutes == 0) {
+                error_msg_out = "Account locked due to too many failed attempts.";
+            } else {
+                error_msg_out = "Account locked due to too many failed attempts. Try again in " +
+                                std::to_string(remaining_minutes) + " minute(s)";
+            }
+            return AuthResult::USER_LOCKED;
+        }
+    } else if (login_tracker_->isAccountLocked(username)) {
         uint64_t remaining_ms = login_tracker_->getLockoutTimeRemaining(username);
         uint32_t remaining_minutes = static_cast<uint32_t>((remaining_ms + 59999) / 60000);
 
@@ -1135,7 +1935,22 @@ AuthResult LocalAuthProvider::authenticateToken(
     if (authkey_status != Status::OK ||
         authkey.status != CatalogManager::AuthKeyStatus::ACTIVE ||
         !authKeyScopeAllowsToken(authkey.scope)) {
-        login_tracker_->recordFailedAttempt(username);
+        if (audit_logger_ && authkey_status == Status::OK &&
+            authkey.status == CatalogManager::AuthKeyStatus::REVOKED) {
+            AuditEvent event;
+            event.event_type = AuditEventType::TOKEN_AUTH_REVOKED;
+            event.username = username;
+            event.authkey_id = authkey_id;
+            event.success = false;
+            event.details = "{\"reason\":\"token_revoked\"}";
+            ErrorContext audit_ctx;
+            audit_logger_->logEvent(event, &audit_ctx);
+        }
+        if (has_catalog_auth_ctx) {
+            applyCatalogLockoutOnFailure(catalog_, catalog_auth_ctx, "SEC_1213", auth_scope);
+        } else {
+            login_tracker_->recordFailedAttempt(username);
+        }
         LOG_WARNING(GENERAL, "Invalid token auth attempt for user: %s", username.c_str());
         error_msg_out = "Invalid username or password";
         return AuthResult::INVALID_CREDENTIALS;
@@ -1143,7 +1958,11 @@ AuthResult LocalAuthProvider::authenticateToken(
 
     if (authkey.binding_kind != CatalogManager::AuthKeyBindingKind::CLIENT_NONCE ||
         authkey.binding_value.empty()) {
-        login_tracker_->recordFailedAttempt(username);
+        if (has_catalog_auth_ctx) {
+            applyCatalogLockoutOnFailure(catalog_, catalog_auth_ctx, "SEC_1213", auth_scope);
+        } else {
+            login_tracker_->recordFailedAttempt(username);
+        }
         LOG_WARNING(GENERAL,
                     "Token auth denied for user %s due to unsupported key binding policy",
                     username.c_str());
@@ -1169,7 +1988,11 @@ AuthResult LocalAuthProvider::authenticateToken(
     if (!user_loaded ||
         toUpperAscii(db_user.username) != toUpperAscii(username) ||
         !db_user.is_active) {
-        login_tracker_->recordFailedAttempt(username);
+        if (has_catalog_auth_ctx) {
+            applyCatalogLockoutOnFailure(catalog_, catalog_auth_ctx, "SEC_1213", auth_scope);
+        } else {
+            login_tracker_->recordFailedAttempt(username);
+        }
         LOG_WARNING(GENERAL, "Token auth failed user resolution for %s", username.c_str());
         error_msg_out = "Invalid username or password";
         return AuthResult::INVALID_CREDENTIALS;
@@ -1182,7 +2005,11 @@ AuthResult LocalAuthProvider::authenticateToken(
                                   binding,
                                   expected_proof) ||
         !timingSafeEqual(expected_proof, proof)) {
-        login_tracker_->recordFailedAttempt(username);
+        if (has_catalog_auth_ctx) {
+            applyCatalogLockoutOnFailure(catalog_, catalog_auth_ctx, "SEC_1213", auth_scope);
+        } else {
+            login_tracker_->recordFailedAttempt(username);
+        }
         LOG_WARNING(GENERAL, "Token proof mismatch for user: %s", username.c_str());
         error_msg_out = "Invalid username or password";
         return AuthResult::INVALID_CREDENTIALS;
@@ -1190,14 +2017,22 @@ AuthResult LocalAuthProvider::authenticateToken(
 
     Status consume_status = catalog_->consumeAuthKey(authkey_id, 1, &ctx);
     if (consume_status != Status::OK) {
-        login_tracker_->recordFailedAttempt(username);
+        if (has_catalog_auth_ctx) {
+            applyCatalogLockoutOnFailure(catalog_, catalog_auth_ctx, "SEC_1213", auth_scope);
+        } else {
+            login_tracker_->recordFailedAttempt(username);
+        }
         LOG_WARNING(GENERAL, "Token consume denied for user %s: %s",
                     username.c_str(), ctx.message.c_str());
         error_msg_out = "Invalid username or password";
         return AuthResult::INVALID_CREDENTIALS;
     }
 
-    login_tracker_->recordSuccessfulLogin(username);
+    if (has_catalog_auth_ctx) {
+        clearCatalogLockoutOnSuccess(catalog_, catalog_auth_ctx, auth_scope);
+    } else {
+        login_tracker_->recordSuccessfulLogin(username);
+    }
 
     user_info_out.user_id = db_user.user_id;
     user_info_out.username = db_user.username;
@@ -1209,6 +2044,21 @@ AuthResult LocalAuthProvider::authenticateToken(
     user_info_out.is_locked = false;
     user_info_out.is_superuser = db_user.is_superuser;
     user_info_out.authkey_id = authkey_id;
+
+    if (audit_logger_) {
+        AuditEvent event;
+        event.event_type = AuditEventType::TOKEN_AUTH_USED;
+        event.username = db_user.username;
+        event.user_id = db_user.user_id;
+        event.authkey_id = authkey_id;
+        event.success = true;
+        std::ostringstream details;
+        details << "{\"scope\":\"" << static_cast<int>(authkey.scope)
+                << "\",\"usage_count\":" << authkey.usage_count + 1 << "}";
+        event.details = details.str();
+        ErrorContext audit_ctx;
+        audit_logger_->logEvent(event, &audit_ctx);
+    }
 
     LOG_INFO(GENERAL, "Successful token authentication for user: %s", username.c_str());
     return AuthResult::SUCCESS;
@@ -1222,8 +2072,31 @@ AuthResult LocalAuthProvider::authenticatePeer(
     AuthUserInfo& user_info_out,
     std::string& error_msg_out)
 {
-    (void)peer_pid;
-    if (login_tracker_->isAccountLocked(username)) {
+    AuthAttemptScope auth_scope{};
+    auth_scope.has_peer_identity = true;
+    auth_scope.peer_uid = peer_uid;
+    auth_scope.peer_gid = peer_gid;
+    auth_scope.peer_pid = peer_pid;
+    auth_scope.rate_bucket = AuthRateBucket::GENERAL;
+
+    CatalogAuthContext catalog_auth_ctx;
+    const bool has_catalog_auth_ctx =
+        resolveCatalogAuthContext(catalog_, username, catalog_auth_ctx);
+    if (has_catalog_auth_ctx) {
+        uint32_t remaining_minutes = 0;
+        if (isCatalogAccountLocked(catalog_, catalog_auth_ctx, auth_scope, remaining_minutes)) {
+            LOG_WARNING(GENERAL,
+                        "Peer login attempt for locked account: %s",
+                        username.c_str());
+            if (remaining_minutes == 0) {
+                error_msg_out = "Account locked due to too many failed attempts.";
+            } else {
+                error_msg_out = "Account locked due to too many failed attempts. Try again in " +
+                                std::to_string(remaining_minutes) + " minute(s)";
+            }
+            return AuthResult::USER_LOCKED;
+        }
+    } else if (login_tracker_->isAccountLocked(username)) {
         uint64_t remaining_ms = login_tracker_->getLockoutTimeRemaining(username);
         uint32_t remaining_minutes = static_cast<uint32_t>((remaining_ms + 59999) / 60000);
 
@@ -1238,7 +2111,11 @@ AuthResult LocalAuthProvider::authenticatePeer(
     ErrorContext ctx;
     CatalogManager::UserInfo db_user{};
     if (catalog_->getUserByName(username, db_user, &ctx) != Status::OK || !db_user.is_active) {
-        login_tracker_->recordFailedAttempt(username);
+        if (has_catalog_auth_ctx) {
+            applyCatalogLockoutOnFailure(catalog_, catalog_auth_ctx, "SEC_1213", auth_scope);
+        } else {
+            login_tracker_->recordFailedAttempt(username);
+        }
         LOG_WARNING(GENERAL, "Peer auth denied for unknown/disabled user: %s", username.c_str());
         error_msg_out = "Invalid username or password";
         return AuthResult::INVALID_CREDENTIALS;
@@ -1256,7 +2133,11 @@ AuthResult LocalAuthProvider::authenticatePeer(
     if (resolve_status != Status::OK ||
         (account.source_scope_kind != CatalogManager::SourceScopeKind::PEER_UID &&
          account.source_scope_kind != CatalogManager::SourceScopeKind::PEER_GID)) {
-        login_tracker_->recordFailedAttempt(username);
+        if (has_catalog_auth_ctx) {
+            applyCatalogLockoutOnFailure(catalog_, catalog_auth_ctx, "SEC_1213", auth_scope);
+        } else {
+            login_tracker_->recordFailedAttempt(username);
+        }
         LOG_WARNING(GENERAL,
                     "Peer auth mapping denied for user %s (uid=%u gid=%u)",
                     username.c_str(),
@@ -1278,7 +2159,11 @@ AuthResult LocalAuthProvider::authenticatePeer(
         return AuthResult::PROVIDER_ERROR;
     }
 
-    login_tracker_->recordSuccessfulLogin(username);
+    if (has_catalog_auth_ctx) {
+        clearCatalogLockoutOnSuccess(catalog_, catalog_auth_ctx, auth_scope);
+    } else {
+        login_tracker_->recordSuccessfulLogin(username);
+    }
 
     user_info_out.user_id = db_user.user_id;
     user_info_out.username = db_user.username;
@@ -1363,6 +2248,27 @@ bool LocalAuthProvider::getUserGroups(
 // P0-2: Admin functions for login attempt management
 void LocalAuthProvider::clearLoginAttempts(const std::string& username)
 {
+    CatalogAuthContext catalog_auth_ctx;
+    if (resolveCatalogAuthContext(catalog_, username, catalog_auth_ctx)) {
+        std::vector<CatalogManager::AuthAttemptLogCatalogInfo> attempts;
+        ErrorContext ctx;
+        if (catalog_->listAuthAttemptLogCatalogEntries(
+                catalog_auth_ctx.account.account_id, attempts, &ctx) == Status::OK) {
+            for (const auto& attempt : attempts) {
+                ErrorContext delete_ctx;
+                (void)catalog_->deleteAuthAttemptLogCatalogEntry(attempt.attempt_id, &delete_ctx);
+            }
+        }
+
+        if (catalog_auth_ctx.account.is_locked || catalog_auth_ctx.account.has_locked_reason) {
+            catalog_auth_ctx.account.is_locked = false;
+            catalog_auth_ctx.account.has_locked_reason = false;
+            catalog_auth_ctx.account.locked_reason.clear();
+            catalog_auth_ctx.account.last_modified_time = catalogNowTicks();
+            (void)persistPrincipalAccount(catalog_, catalog_auth_ctx.account);
+        }
+    }
+
     if (login_tracker_) {
         login_tracker_->clearAttempts(username);
         LOG_INFO(GENERAL, "Cleared login attempts for user: %s", username.c_str());
@@ -1371,6 +2277,22 @@ void LocalAuthProvider::clearLoginAttempts(const std::string& username)
 
 uint32_t LocalAuthProvider::getFailedAttemptCount(const std::string& username)
 {
+    CatalogAuthContext catalog_auth_ctx;
+    if (resolveCatalogAuthContext(catalog_, username, catalog_auth_ctx)) {
+        std::vector<CatalogManager::AuthAttemptLogCatalogInfo> attempts;
+        ErrorContext ctx;
+        if (catalog_->listAuthAttemptLogCatalogEntries(
+                catalog_auth_ctx.account.account_id, attempts, &ctx) == Status::OK) {
+            uint32_t failures = 0;
+            for (const auto& attempt : attempts) {
+                if (attempt.outcome != CatalogManager::AuthAttemptOutcome::SUCCESS) {
+                    ++failures;
+                }
+            }
+            return failures;
+        }
+    }
+
     if (login_tracker_) {
         return login_tracker_->getFailedAttemptCount(username);
     }

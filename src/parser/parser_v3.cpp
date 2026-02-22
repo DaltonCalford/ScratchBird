@@ -695,11 +695,15 @@ Statement* Parser::parseStatementInternal() {
         }
         return parseNoSqlSurface();
     }
-    if (checkContextual("EVAL")) {
-        return parseRedisLuaEvalSurface();
+    if (matchContextual("EVAL")) {
+        errorCode("PRS_0505",
+                  "EVAL LUA alias is not supported in v3; use REDIS LUA EVAL ...");
+        return nullptr;
     }
-    if (checkContextual("XGROUP") || checkContextual("XREADGROUP") || checkContextual("XCLAIM")) {
-        return parseRedisStreamGroupSurface();
+    if (matchContextual("XGROUP") || matchContextual("XREADGROUP") || matchContextual("XCLAIM")) {
+        errorCode("PRS_0505",
+                  "Redis X* aliases are not supported in v3; use REDIS STREAM GROUP ...");
+        return nullptr;
     }
     if (checkContextual("HYBRID") || checkContextual("BRIDGE")) {
         if (!requireFeature(kFeatureHybridBridgeHint)) return nullptr;
@@ -742,7 +746,8 @@ Statement* Parser::parseStatementInternal() {
         return parseAdminControlSurface("RESTORE");
     }
     if (matchContextual("VACUUM")) {
-        return parseAdminControlSurface("VACUUM");
+        errorCode("PRS_0505", "VACUUM is not supported in v3; use SWEEP DATABASE");
+        return nullptr;
     }
     if (matchContextual("REFRESH")) {
         return parseRefreshCubeControl();
@@ -806,7 +811,11 @@ Statement* Parser::parseStatementInternal() {
         return parseShow();
     }
     if (matchContextual("RESET"))       return parseReset();
-    if (matchContextual("DESCRIBE") || matchContextual("DESC")) return parseDescribe();
+    if (matchContextual("DESCRIBE")) return parseDescribe();
+    if (matchContextual("DESC")) {
+        errorCode("PRS_0505", "DESC alias is not supported in v3; use DESCRIBE");
+        return nullptr;
+    }
     if (checkContextual("SECURITY")) {
         matchContextual("SECURITY");
         if (matchContextual("LABEL")) {
@@ -15112,7 +15121,6 @@ Statement* Parser::parseAdminControlSurface(const char* command_keyword) {
     };
 
     std::string key;
-    bool enforce_empty_payload = false;
     std::string keyword = command_keyword ? command_keyword : "";
     if (keyword == "BACKUP") {
         matchContextual("DATABASE");
@@ -15123,10 +15131,6 @@ Statement* Parser::parseAdminControlSurface(const char* command_keyword) {
     } else if (keyword == "VALIDATE") {
         matchContextual("DATABASE");
         key = "admin.validate";
-    } else if (keyword == "VACUUM") {
-        matchContextual("DATABASE");
-        key = "admin.vacuum_alias";
-        enforce_empty_payload = true;
     } else {
         errorCode("PRS_0505", "Unsupported admin control command");
         stmt->span = makeSpan(start);
@@ -15134,21 +15138,7 @@ Statement* Parser::parseAdminControlSurface(const char* command_keyword) {
     }
 
     stmt->name = stringPool().intern(key);
-    Expression* payload = parse_payload_literal();
-    if (enforce_empty_payload && payload != nullptr) {
-        auto* literal = static_cast<LiteralExpr*>(payload);
-        std::string_view raw = stringPool().get(literal->string_value);
-        const bool has_non_whitespace =
-            std::any_of(raw.begin(), raw.end(), [](char ch) {
-                return std::isspace(static_cast<unsigned char>(ch)) == 0;
-            });
-        if (has_non_whitespace) {
-            errorCode("PRS_0505",
-                      "VACUUM options are not supported in V3; VACUUM maps to SWEEP/GC");
-        }
-        payload = nullptr;
-    }
-    stmt->value = payload;
+    stmt->value = parse_payload_literal();
     stmt->span = makeSpan(start);
     return stmt;
 }
@@ -15324,23 +15314,8 @@ Statement* Parser::parseClusterControlSurface() {
     }
 
     if (match(TokenType::KW_SHOW) || matchContextual("SHOW")) {
-        if (matchContextual("STATE")) {
-            stmt->name = stringPool().intern("cluster.show_state");
-        } else if (matchContextual("ROUTING")) {
-            expectContextual("PLAN", "Expected PLAN after CLUSTER SHOW ROUTING");
-            stmt->name = stringPool().intern("cluster.show_routing_plan");
-        } else if (matchContextual("ADMISSION")) {
-            expectContextual("STATUS", "Expected STATUS after CLUSTER SHOW ADMISSION");
-            stmt->name = stringPool().intern("cluster.show_admission_status");
-        } else {
-            errorCode("PRS_0505",
-                      "Expected STATE, ROUTING PLAN, or ADMISSION STATUS after CLUSTER SHOW");
-        }
-
-        std::string payload = captureStatementBody();
-        if (!payload.empty()) {
-            stmt->value = make_payload_literal(payload);
-        }
+        errorCode("PRS_0505",
+                  "CLUSTER SHOW is not supported in v3; use SHOW CLUSTER ...");
         stmt->span = makeSpan(start);
         return stmt;
     }
@@ -16153,17 +16128,6 @@ Statement* Parser::parseRedisLuaEvalSurface() {
                 has_timeout = true;
             }
         }
-    } else if (matchContextual("EVAL")) {
-        expectContextual("LUA", "Expected LUA after EVAL");
-        script_body = parse_scalar_text("script body");
-        if (!matchContextual("KEYS")) {
-            errorCode("PRS_0504", "Expected KEYS in EVAL LUA clause form");
-        }
-        keys = parse_list("KEYS");
-        if (!matchContextual("ARGS")) {
-            errorCode("PRS_0504", "Expected ARGS in EVAL LUA clause form");
-        }
-        args = parse_list("ARGS");
     } else {
         errorCode("PRS_0505", "Unsupported REDIS LUA EVAL surface");
     }
@@ -16383,71 +16347,6 @@ Statement* Parser::parseRedisStreamGroupSurface() {
         auto* fallback = arena_.create<AlterSystemStmt>();
         fallback->span = makeSpan(start);
         return fallback;
-    }
-
-    if (matchContextual("XGROUP")) {
-        if (!(match(TokenType::KW_CREATE) || matchContextual("CREATE"))) {
-            errorCode("PRS_0504", "Expected CREATE after XGROUP");
-        }
-        std::string stream_name = parse_scalar_text("stream");
-        std::string group_name = parse_scalar_text("group");
-        std::string start_id = parse_stream_id("start id");
-        return make_alter_system(
-            "redis.stream.group.create",
-            "REDIS STREAM GROUP CREATE STREAM " + stream_name +
-                " GROUP " + group_name +
-                " START_ID " + start_id);
-    }
-
-    if (matchContextual("XREADGROUP")) {
-        expectContextual("STREAM", "Expected STREAM after XREADGROUP");
-        std::string stream_name = parse_scalar_text("STREAM");
-        expect_group_keyword("Expected GROUP in XREADGROUP");
-        std::string group_name = parse_scalar_text("GROUP");
-        expectContextual("CONSUMER", "Expected CONSUMER in XREADGROUP");
-        std::string consumer_name = parse_scalar_text("CONSUMER");
-        if (!matchContextual("COUNT")) {
-            errorCode("PRS_0504", "Expected COUNT in XREADGROUP");
-        }
-        uint64_t count = 0;
-        parse_u64("COUNT", count);
-        if (!matchContextual("BLOCK")) {
-            errorCode("PRS_0504", "Expected BLOCK in XREADGROUP");
-        }
-        uint64_t block_ms = 0;
-        parse_u64("BLOCK", block_ms);
-        return make_alter_system(
-            "redis.stream.group.read",
-            "REDIS STREAM GROUP READ STREAM " + stream_name +
-                " GROUP " + group_name +
-                " CONSUMER " + consumer_name +
-                " COUNT " + std::to_string(count) +
-                " BLOCK_MS " + std::to_string(block_ms));
-    }
-
-    if (matchContextual("XCLAIM")) {
-        expectContextual("STREAM", "Expected STREAM after XCLAIM");
-        std::string stream_name = parse_scalar_text("STREAM");
-        expect_group_keyword("Expected GROUP in XCLAIM");
-        std::string group_name = parse_scalar_text("GROUP");
-        expectContextual("CONSUMER", "Expected CONSUMER in XCLAIM");
-        std::string consumer_name = parse_scalar_text("CONSUMER");
-        if (!matchContextual("MINIDLE")) {
-            errorCode("PRS_0504", "Expected MINIDLE in XCLAIM");
-        }
-        uint64_t min_idle_ms = 0;
-        parse_u64("MINIDLE", min_idle_ms);
-        if (!matchContextual("IDS")) {
-            errorCode("PRS_0504", "Expected IDS in XCLAIM");
-        }
-        std::vector<std::string> ids = parse_ids();
-        return make_alter_system(
-            "redis.stream.group.claim",
-            "REDIS STREAM GROUP CLAIM STREAM " + stream_name +
-                " GROUP " + group_name +
-                " CONSUMER " + consumer_name +
-                " MIN_IDLE_MS " + std::to_string(min_idle_ms) +
-                " IDS (" + join_csv(ids) + ")");
     }
 
     errorCode("PRS_0505", "Unsupported REDIS stream group surface");

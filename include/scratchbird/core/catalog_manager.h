@@ -659,6 +659,8 @@ public:
             SPARSE_INVERTED = 0x1F,   // Sparse inverted index
             SPARSE_WAND = 0x20,       // Sparse WAND index
             TRIE = 0x21,              // Radix trie index
+            INVERTED = 0x22,          // Generic inverted index profile
+            STL_SORT = 0x23,          // Sorted-list profile (B-tree runtime)
             NGRAM = 0x24,             // N-gram index
             MONGODB_2D = 0x25,                // MongoDB planar 2d geospatial index
             MONGODB_2DSPHERE = 0x26,          // MongoDB spherical 2dsphere index
@@ -4779,6 +4781,7 @@ public:
         static constexpr uint16_t AUTH_POLICY_METHOD_SCRAM_SHA_512  = 1u << 3;
         static constexpr uint16_t AUTH_POLICY_METHOD_TOKEN          = 1u << 4;
         static constexpr uint16_t AUTH_POLICY_METHOD_PEER           = 1u << 5;
+        static constexpr uint32_t AUTH_POLICY_MIN_SCRAM_ITERATIONS_DEFAULT = 4096;
         static constexpr uint16_t AUTH_POLICY_METHOD_ALL =
             AUTH_POLICY_METHOD_PASSWORD |
             AUTH_POLICY_METHOD_MD5 |
@@ -4813,6 +4816,8 @@ public:
             ConnectionAuthMethod required_auth_method = ConnectionAuthMethod::SCRAM_SHA_256;
             uint8_t allowed_transport_mask = AUTH_POLICY_TRANSPORT_ALL;
             AuthPeerMode peer_mode = AuthPeerMode::DISABLED;
+            uint32_t min_scram_iterations = AUTH_POLICY_MIN_SCRAM_ITERATIONS_DEFAULT;
+            bool mark_weak_scram_for_upgrade = true;
             bool is_valid = true;
             uint64_t created_time = 0;
             uint64_t last_modified_time = 0;
@@ -10313,6 +10318,8 @@ public:
         auto updateUser(const ID& user_id, const std::string& password_hash,
                        const ID& default_schema_id, bool is_active, bool is_superuser,
                        ErrorContext* ctx = nullptr) -> Status;
+        auto updateUserMetadata(const ID& user_id, const std::string& user_metadata,
+                               ErrorContext* ctx = nullptr) -> Status;
 
         auto deleteUser(const ID& user_id, bool cascade = false, ErrorContext* ctx = nullptr) -> Status;
 
@@ -10446,6 +10453,12 @@ public:
         auto getAuthKey(const ID& authkey_id, AuthKeyInfo& authkey_out,
                        ErrorContext* ctx = nullptr) -> Status;
         auto revokeAuthKey(const ID& authkey_id, ErrorContext* ctx = nullptr) -> Status;
+        auto revokeAuthKeysByIssuer(const std::string& issuer,
+                                    uint32_t& revoked_count_out,
+                                    ErrorContext* ctx = nullptr) -> Status;
+        auto revokeAuthKeysByScope(AuthKeyScope scope,
+                                   uint32_t& revoked_count_out,
+                                   ErrorContext* ctx = nullptr) -> Status;
         auto consumeAuthKey(const ID& authkey_id, uint32_t uses = 1,
                            ErrorContext* ctx = nullptr) -> Status;
         auto listAuthKeys(std::vector<AuthKeyInfo>& authkeys_out,

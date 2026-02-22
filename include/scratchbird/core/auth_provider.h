@@ -270,6 +270,13 @@ public:
  */
 class LocalAuthProvider : public AuthProvider {
 public:
+    struct PeerIdentityContext {
+        bool available = false;
+        uint32_t peer_uid = 0;
+        uint32_t peer_gid = 0;
+        uint32_t peer_pid = 0;
+    };
+
     explicit LocalAuthProvider(class CatalogManager* catalog,
                                class AuditLogger* audit_logger = nullptr);
     ~LocalAuthProvider() override;
@@ -345,10 +352,27 @@ public:
      */
     uint32_t getFailedAttemptCount(const std::string& username);
 
+    /**
+     * Set peer identity context for the active authentication request.
+     *
+     * ServerSession sets this for local IPC requests so lockout scope can be
+     * bound to uid/gid/pid instead of account-only global scope.
+     */
+    void setPeerIdentityContext(bool available,
+                                uint32_t peer_uid,
+                                uint32_t peer_gid,
+                                uint32_t peer_pid);
+
+    /**
+     * Clear per-request peer identity context.
+     */
+    void clearPeerIdentityContext();
+
 private:
     class CatalogManager* catalog_;
     class LoginAttemptTracker* login_tracker_;  // P0-2: Brute-force protection
     class AuditLogger* audit_logger_;           // P0-3: Security audit logging (non-owning)
+    PeerIdentityContext peer_identity_context_{};
 };
 
 /**

@@ -1578,6 +1578,8 @@ namespace scratchbird
             SPARSE_INVERTED = 0x1F,// Sparse inverted index
             SPARSE_WAND = 0x20,    // Sparse WAND index
             TRIE = 0x21,           // Trie index
+            INVERTED = 0x22,       // Generic inverted index profile
+            STL_SORT = 0x23,       // Sorted-list profile (B-tree runtime)
             NGRAM = 0x24,          // N-gram index
             MONGODB_2D = 0x25,              // MongoDB planar 2d geospatial index
             MONGODB_2DSPHERE = 0x26,        // MongoDB spherical 2dsphere index

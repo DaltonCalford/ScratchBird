@@ -40,6 +40,11 @@ static FieldType literalFieldType(std::string_view suffix) {
 }
 
 const SchemaDef* lookupSchema(std::string_view name) {
+    if (name == "SCHEMA_EMPTY") {
+        static const SchemaDef empty_schema{"SCHEMA_EMPTY", {}};
+        return &empty_schema;
+    }
+
     if (name.rfind("SCHEMA_LITERAL_", 0) == 0) {
         static SchemaDef literal_schema;
         static std::string last_name;

@@ -698,6 +698,22 @@ TEST_F(IndexExecutorDispatchContractsTest, V3CreateIndexAcceptsArtTypeWithoutUns
         << result.error();
 }
 
+TEST_F(IndexExecutorDispatchContractsTest, V3CreateIndexAcceptsInvertedTypeWithoutUnsupportedTypeError)
+{
+    ExecutionResult result = executeSql(
+        "CREATE INDEX idx_users_name_inverted ON users USING INVERTED (name)");
+    EXPECT_EQ(result.error().find("CREATE INDEX unsupported index_type"), std::string::npos)
+        << result.error();
+}
+
+TEST_F(IndexExecutorDispatchContractsTest, V3CreateIndexAcceptsStlSortTypeWithoutUnsupportedTypeError)
+{
+    ExecutionResult result = executeSql(
+        "CREATE INDEX idx_users_id_stlsort ON users USING STL_SORT (id)");
+    EXPECT_EQ(result.error().find("CREATE INDEX unsupported index_type"), std::string::npos)
+        << result.error();
+}
+
 TEST_F(IndexExecutorDispatchContractsTest, V3CreateIndexRejectsNgramInvalidAnalyzer)
 {
     ExecutionResult result = executeSql(

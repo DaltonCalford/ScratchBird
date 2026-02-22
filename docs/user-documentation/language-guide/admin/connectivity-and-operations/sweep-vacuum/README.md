@@ -1,5 +1,5 @@
 # Admin Topic: SWEEP AND VACUUM
-Last modified: 2026-02-19
+Last modified: 2026-02-21
 
 Back links:
 - [Language Guide README](../../../README.md)
@@ -10,7 +10,7 @@ Back links:
 - Topic family: Connectivity And Operations
 - Status in 0.1.0: Partial
 - Native command: `SWEEP DATABASE`
-- Compatibility alias: `VACUUM` (mapped to sweep/GC semantics)
+- Alias status: `VACUUM` is retired in native v3 and rejected.
 
 ## Documentation Series
 - [Syntax](syntax.md)

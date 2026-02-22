@@ -1321,13 +1321,76 @@ bool isValidAuthKeyUsage(CatalogManager::AuthKeyUsage usage)
            usage == Usage::SINGLE_USE;
 }
 
+constexpr uint16_t kAuthPolicyMethodStorageMask = CatalogManager::AUTH_POLICY_METHOD_ALL;
+constexpr uint16_t kAuthPolicyMarkWeakScramBit = static_cast<uint16_t>(1u << 15);
+constexpr uint32_t kAuthPolicyScramIterationGranularity = 64;
+constexpr uint32_t kAuthPolicyScramIterationUnitsMask = 0x1FFFu; // 13 bits
+
 uint16_t normalizeAuthPolicyMethodMask(uint16_t mask)
 {
+    mask &= CatalogManager::AUTH_POLICY_METHOD_ALL;
     if (mask == 0)
     {
         return CatalogManager::AUTH_POLICY_METHOD_ALL;
     }
     return mask;
+}
+
+uint32_t normalizeAuthPolicyMinScramIterations(uint32_t iterations)
+{
+    if (iterations == 0)
+    {
+        return CatalogManager::AUTH_POLICY_MIN_SCRAM_ITERATIONS_DEFAULT;
+    }
+    return iterations;
+}
+
+uint32_t maxAuthPolicyMinScramIterations()
+{
+    return kAuthPolicyScramIterationUnitsMask * kAuthPolicyScramIterationGranularity;
+}
+
+uint32_t encodeAuthPolicyMinScramIterationUnits(uint32_t iterations)
+{
+    const uint32_t normalized = normalizeAuthPolicyMinScramIterations(iterations);
+    uint32_t units = (normalized + kAuthPolicyScramIterationGranularity - 1) /
+                     kAuthPolicyScramIterationGranularity;
+    if (units > kAuthPolicyScramIterationUnitsMask)
+    {
+        units = kAuthPolicyScramIterationUnitsMask;
+    }
+    return units;
+}
+
+uint32_t decodeAuthPolicyMinScramIterationsFromUnits(uint32_t units)
+{
+    if (units == 0)
+    {
+        return CatalogManager::AUTH_POLICY_MIN_SCRAM_ITERATIONS_DEFAULT;
+    }
+    return units * kAuthPolicyScramIterationGranularity;
+}
+
+uint16_t packAuthPolicyMethodStorage(uint16_t allowed_method_mask,
+                                     bool mark_weak_scram_for_upgrade)
+{
+    uint16_t packed = normalizeAuthPolicyMethodMask(allowed_method_mask) & kAuthPolicyMethodStorageMask;
+    if (mark_weak_scram_for_upgrade)
+    {
+        packed = static_cast<uint16_t>(packed | kAuthPolicyMarkWeakScramBit);
+    }
+    return packed;
+}
+
+uint16_t unpackAuthPolicyAllowedMethodMask(uint16_t storage)
+{
+    return normalizeAuthPolicyMethodMask(
+        static_cast<uint16_t>(storage & kAuthPolicyMethodStorageMask));
+}
+
+bool unpackAuthPolicyMarkWeakScramFlag(uint16_t storage)
+{
+    return (storage & kAuthPolicyMarkWeakScramBit) != 0;
 }
 
 uint8_t normalizeAuthPolicyTransportMask(uint8_t mask)
@@ -1364,15 +1427,19 @@ bool authPolicyMethodAllowed(uint16_t mask, CatalogManager::ConnectionAuthMethod
 uint32_t packAuthPolicyNegotiationFlags(uint8_t transport_mask,
                                         bool has_required_auth_method,
                                         CatalogManager::ConnectionAuthMethod required_auth_method,
-                                        CatalogManager::AuthPeerMode peer_mode)
+                                        CatalogManager::AuthPeerMode peer_mode,
+                                        uint32_t min_scram_iterations)
 {
     uint32_t packed = static_cast<uint32_t>(transport_mask);
     if (has_required_auth_method)
     {
         packed |= (1u << 8);
     }
+    const uint32_t scram_units = encodeAuthPolicyMinScramIterationUnits(min_scram_iterations);
+    packed |= (scram_units & 0x1Fu) << 11;
     packed |= (static_cast<uint32_t>(peer_mode) & 0x3u) << 9;
     packed |= (static_cast<uint32_t>(required_auth_method) & 0xFFu) << 16;
+    packed |= ((scram_units >> 5) & 0xFFu) << 24;
     return packed;
 }
 
@@ -1380,13 +1447,18 @@ void unpackAuthPolicyNegotiationFlags(uint32_t packed,
                                       uint8_t& transport_mask_out,
                                       bool& has_required_auth_method_out,
                                       CatalogManager::ConnectionAuthMethod& required_auth_method_out,
-                                      CatalogManager::AuthPeerMode& peer_mode_out)
+                                      CatalogManager::AuthPeerMode& peer_mode_out,
+                                      uint32_t& min_scram_iterations_out)
 {
     transport_mask_out = static_cast<uint8_t>(packed & 0xFFu);
     has_required_auth_method_out = (packed & (1u << 8)) != 0;
     peer_mode_out = static_cast<CatalogManager::AuthPeerMode>((packed >> 9) & 0x3u);
     required_auth_method_out =
         static_cast<CatalogManager::ConnectionAuthMethod>((packed >> 16) & 0xFFu);
+    const uint32_t low_bits = (packed >> 11) & 0x1Fu;
+    const uint32_t high_bits = (packed >> 24) & 0xFFu;
+    const uint32_t scram_units = low_bits | (high_bits << 5);
+    min_scram_iterations_out = decodeAuthPolicyMinScramIterationsFromUnits(scram_units);
 }
 
 bool isSupportedRuntimeProtocolTag(const std::string& protocol)
@@ -9659,6 +9731,8 @@ bool hasTriggerNameConflictInTable(
             {"SPARSE_INVERTED", CatalogManager::IndexType::SPARSE_INVERTED},
             {"SPARSE_WAND", CatalogManager::IndexType::SPARSE_WAND},
             {"TRIE", CatalogManager::IndexType::TRIE},
+            {"INVERTED", CatalogManager::IndexType::INVERTED},
+            {"STL_SORT", CatalogManager::IndexType::STL_SORT},
             {"NGRAM", CatalogManager::IndexType::NGRAM},
             {"MONGODB_2D", CatalogManager::IndexType::MONGODB_2D},
             {"MONGODB_2DSPHERE", CatalogManager::IndexType::MONGODB_2DSPHERE},
@@ -9752,6 +9826,8 @@ bool hasTriggerNameConflictInTable(
             case CatalogManager::IndexType::SPARSE_INVERTED: return "SPARSE_INVERTED";
             case CatalogManager::IndexType::SPARSE_WAND: return "SPARSE_WAND";
             case CatalogManager::IndexType::TRIE: return "TRIE";
+            case CatalogManager::IndexType::INVERTED: return "INVERTED";
+            case CatalogManager::IndexType::STL_SORT: return "STL_SORT";
             case CatalogManager::IndexType::NGRAM: return "NGRAM";
             case CatalogManager::IndexType::MONGODB_2D: return "MONGODB_2D";
             case CatalogManager::IndexType::MONGODB_2DSPHERE: return "MONGODB_2DSPHERE";
@@ -25799,6 +25875,7 @@ bool hasTriggerNameConflictInTable(
             switch (index_info.index_type)
             {
             case IndexType::BTREE:
+            case IndexType::STL_SORT:
             case IndexType::ART:
             case IndexType::MONGODB_GEO_HAYSTACK:
             case IndexType::NEO4J_RANGE:
@@ -26000,6 +26077,7 @@ bool hasTriggerNameConflictInTable(
                 break;
 
             case IndexType::FULLTEXT:
+            case IndexType::INVERTED:
             case IndexType::MONGODB_WILDCARD:
             case IndexType::MONGODB_ENCRYPTED_RANGE:
             case IndexType::NEO4J_TEXT:
@@ -41683,6 +41761,49 @@ auto CatalogManager::updateUser(const ID& user_id, const std::string& password_h
     return Status::OK;
 }
 
+auto CatalogManager::updateUserMetadata(const ID& user_id, const std::string& user_metadata,
+                                        ErrorContext* ctx) -> Status
+{
+    std::lock_guard<CatalogMutex> lock(mutex_);
+
+    auto predicate = [&user_id](const UserRecord& rec) {
+        return rec.is_valid && rec.user_id == user_id;
+    };
+
+    auto result = findRecordInHeapPage<UserRecord>(users_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, result.status, "User not found");
+        return result.status;
+    }
+
+    UserRecord updated_rec = result.record;
+    if (user_metadata.empty())
+    {
+        updated_rec.user_metadata_oid = ID{};
+    }
+    else
+    {
+        uint64_t xmin = 0;
+        Status toast_status = storeStringInToast(user_metadata, xmin, updated_rec.user_metadata_oid, ctx);
+        if (toast_status != Status::OK)
+        {
+            SET_ERROR_CONTEXT(ctx, toast_status, "Failed to store user metadata in TOAST");
+            return toast_status;
+        }
+    }
+
+    Status status = updateRecordInHeapPage(users_table_page_, result.slot_index,
+                                           updated_rec, ctx);
+    if (status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, status, "Failed to update user metadata");
+        return status;
+    }
+
+    return Status::OK;
+}
+
 auto CatalogManager::deleteUser(const ID& user_id, bool cascade, ErrorContext* ctx) -> Status
 {
     std::lock_guard<CatalogMutex> lock(mutex_);
@@ -43626,9 +43747,25 @@ auto CatalogManager::createAuthKey(const AuthKeyInfo& authkey_in, ID& authkey_id
     {
         usage_type = AuthKeyUsage::UNLIMITED;
     }
+    else if (usage_type == AuthKeyUsage::UNLIMITED)
+    {
+        usage_type = AuthKeyUsage::LIMITED;
+    }
     if (usage_type == AuthKeyUsage::SINGLE_USE && record.usage_limit == 0)
     {
         record.usage_limit = 1;
+    }
+    if (usage_type == AuthKeyUsage::SINGLE_USE && record.usage_limit != 1)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "AuthKey SINGLE_USE requires usage_limit=1");
+        return Status::INVALID_ARGUMENT;
+    }
+    if (record.usage_limit != 0 && record.usage_count > record.usage_limit)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT,
+                          "AuthKey usage_count exceeds usage_limit");
+        return Status::INVALID_ARGUMENT;
     }
 
     if (!isValidAuthKeyStatus(authkey_in.status))
@@ -43664,7 +43801,20 @@ auto CatalogManager::createAuthKey(const AuthKeyInfo& authkey_in, ID& authkey_id
         return Status::INVALID_ARGUMENT;
     }
 
-    record.status = static_cast<uint8_t>(authkey_in.status);
+    AuthKeyStatus initial_status = authkey_in.status;
+    if (initial_status == AuthKeyStatus::ACTIVE)
+    {
+        if (record.valid_to != 0 && now > record.valid_to)
+        {
+            initial_status = AuthKeyStatus::EXPIRED;
+        }
+        else if (record.usage_limit != 0 && record.usage_count >= record.usage_limit)
+        {
+            initial_status = AuthKeyStatus::EXPIRED;
+        }
+    }
+
+    record.status = static_cast<uint8_t>(initial_status);
     record.usage_type = static_cast<uint8_t>(usage_type);
     record.scope = static_cast<uint8_t>(scope);
     record.binding_kind = static_cast<uint8_t>(binding_kind);
@@ -43867,6 +44017,104 @@ auto CatalogManager::revokeAuthKey(const ID& authkey_id, ErrorContext* ctx) -> S
     return Status::OK;
 }
 
+auto CatalogManager::revokeAuthKeysByIssuer(const std::string& issuer,
+                                            uint32_t& revoked_count_out,
+                                            ErrorContext* ctx) -> Status
+{
+    revoked_count_out = 0;
+    if (issuer.empty())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "AuthKey issuer must not be empty");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    std::vector<AuthKeyInfo> authkeys;
+    Status status = listAuthKeys(authkeys, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    for (const auto& authkey : authkeys)
+    {
+        if (authkey.issuer != issuer ||
+            authkey.status == AuthKeyStatus::REVOKED)
+        {
+            continue;
+        }
+
+        ErrorContext revoke_ctx;
+        Status revoke_status = revokeAuthKey(authkey.authkey_id, &revoke_ctx);
+        if (revoke_status == Status::OK)
+        {
+            ++revoked_count_out;
+            continue;
+        }
+        if (revoke_status == Status::NOT_FOUND)
+        {
+            continue;
+        }
+
+        SET_ERROR_CONTEXT(ctx,
+                          revoke_status,
+                          revoke_ctx.message.empty()
+                              ? "Failed to revoke AuthKey by issuer"
+                              : revoke_ctx.message.c_str());
+        return revoke_status;
+    }
+
+    return Status::OK;
+}
+
+auto CatalogManager::revokeAuthKeysByScope(AuthKeyScope scope,
+                                           uint32_t& revoked_count_out,
+                                           ErrorContext* ctx) -> Status
+{
+    revoked_count_out = 0;
+    if (!isValidAuthKeyScope(scope))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "AuthKey scope is invalid");
+        return Status::INVALID_ARGUMENT;
+    }
+
+    std::vector<AuthKeyInfo> authkeys;
+    Status status = listAuthKeys(authkeys, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    for (const auto& authkey : authkeys)
+    {
+        if (authkey.scope != scope ||
+            authkey.status == AuthKeyStatus::REVOKED)
+        {
+            continue;
+        }
+
+        ErrorContext revoke_ctx;
+        Status revoke_status = revokeAuthKey(authkey.authkey_id, &revoke_ctx);
+        if (revoke_status == Status::OK)
+        {
+            ++revoked_count_out;
+            continue;
+        }
+        if (revoke_status == Status::NOT_FOUND)
+        {
+            continue;
+        }
+
+        SET_ERROR_CONTEXT(ctx,
+                          revoke_status,
+                          revoke_ctx.message.empty()
+                              ? "Failed to revoke AuthKey by scope"
+                              : revoke_ctx.message.c_str());
+        return revoke_status;
+    }
+
+    return Status::OK;
+}
+
 auto CatalogManager::consumeAuthKey(const ID& authkey_id, uint32_t uses,
                                     ErrorContext* ctx) -> Status
 {
@@ -43913,16 +44161,24 @@ auto CatalogManager::consumeAuthKey(const ID& authkey_id, uint32_t uses,
         return Status::INVALID_AUTHORIZATION;
     }
 
+    const uint64_t projected_usage =
+        static_cast<uint64_t>(updated.usage_count) + static_cast<uint64_t>(uses);
+    if (projected_usage > std::numeric_limits<uint32_t>::max())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::PERMISSION_DENIED, "AuthKey usage counter overflow");
+        return Status::PERMISSION_DENIED;
+    }
+
     if (updated.usage_limit != 0 && uses > 0)
     {
-        if (updated.usage_count + uses > updated.usage_limit)
+        if (projected_usage > updated.usage_limit)
         {
             SET_ERROR_CONTEXT(ctx, Status::PERMISSION_DENIED, "AuthKey usage limit exceeded");
             return Status::PERMISSION_DENIED;
         }
     }
 
-    updated.usage_count += uses;
+    updated.usage_count = static_cast<uint32_t>(projected_usage);
     if (updated.usage_limit != 0 && updated.usage_count >= updated.usage_limit)
     {
         updated.status = static_cast<uint8_t>(AuthKeyStatus::EXPIRED);
@@ -44030,7 +44286,8 @@ auto CatalogManager::listAuthKeys(std::vector<AuthKeyInfo>& authkeys_out,
         return status;
     }
 
-    for (const auto& info : authkeys_out)
+    const uint64_t now = std::chrono::system_clock::now().time_since_epoch().count();
+    for (auto& info : authkeys_out)
     {
         if (!isValidAuthKeyStatus(info.status) ||
             !isValidAuthKeyUsage(info.usage_type) ||
@@ -44049,6 +44306,34 @@ auto CatalogManager::listAuthKeys(std::vector<AuthKeyInfo>& authkeys_out,
         {
             SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "AuthKey binding value missing on disk");
             return Status::PAGE_CORRUPT;
+        }
+
+        if (info.status == AuthKeyStatus::ACTIVE &&
+            info.valid_to != 0 &&
+            now > info.valid_to)
+        {
+            auto predicate = [&info](const AuthKeyRecord& rec) {
+                return rec.is_valid && rec.authkey_id == info.authkey_id;
+            };
+            auto row = findRecordInHeapPage<AuthKeyRecord>(authkeys_table_page_, predicate, ctx);
+            if (row.status == Status::OK &&
+                row.record.status == static_cast<uint8_t>(AuthKeyStatus::ACTIVE))
+            {
+                AuthKeyRecord updated = row.record;
+                updated.status = static_cast<uint8_t>(AuthKeyStatus::EXPIRED);
+                updated.last_modified_time = now;
+                Status update_status = updateRecordInHeapPage(authkeys_table_page_,
+                                                              row.slot_index,
+                                                              updated,
+                                                              ctx);
+                if (update_status != Status::OK)
+                {
+                    SET_ERROR_CONTEXT(ctx, update_status, "Failed to update AuthKey expiry status");
+                    return update_status;
+                }
+            }
+            info.status = AuthKeyStatus::EXPIRED;
+            info.last_modified_time = now;
         }
     }
 
@@ -62181,6 +62466,15 @@ auto CatalogManager::upsertAuthPolicyCatalogEntry(const AuthPolicyCatalogInfo& i
                                 "auth_policy.peer_mode is invalid");
         return Status::INVALID_ARGUMENT;
     }
+    const uint32_t min_scram_iterations =
+        normalizeAuthPolicyMinScramIterations(info.min_scram_iterations);
+    if (min_scram_iterations < AUTH_POLICY_MIN_SCRAM_ITERATIONS_DEFAULT ||
+        min_scram_iterations > maxAuthPolicyMinScramIterations())
+    {
+        SET_ERROR_CONTEXT_VNEXT(ctx, Status::INVALID_ARGUMENT, "SEC_1225",
+                                "auth_policy.min_scram_iterations is out of range");
+        return Status::INVALID_ARGUMENT;
+    }
     if (info.peer_mode == AuthPeerMode::REQUIRED_PLUS_SCRAM)
     {
         const uint16_t scram_mask =
@@ -62230,14 +62524,16 @@ auto CatalogManager::upsertAuthPolicyCatalogEntry(const AuthPolicyCatalogInfo& i
     rec.allow_password_fallback = info.allow_password_fallback ? 1 : 0;
     rec.is_valid = info.is_valid ? 1 : 0;
     rec.lockout_threshold = info.lockout_threshold;
-    rec.reserved0 = allowed_method_mask;
+    rec.reserved0 = packAuthPolicyMethodStorage(allowed_method_mask,
+                                                info.mark_weak_scram_for_upgrade);
     rec.lockout_window_ms = info.lockout_window_ms;
     rec.lockout_duration_ms = info.lockout_duration_ms;
     rec.mfa_policy_id = info.has_mfa_policy ? info.mfa_policy_id : ID{};
     rec.padding = packAuthPolicyNegotiationFlags(allowed_transport_mask,
                                                  info.has_required_auth_method,
                                                  info.required_auth_method,
-                                                 info.peer_mode);
+                                                 info.peer_mode,
+                                                 min_scram_iterations);
     rec.created_time = (info.created_time == 0) ? catalogNowTicks() : info.created_time;
     rec.last_modified_time = (info.last_modified_time == 0) ? catalogNowTicks() : info.last_modified_time;
     std::strncpy(rec.policy_name,
@@ -62295,20 +62591,25 @@ auto CatalogManager::getAuthPolicyCatalogEntry(const ID& policy_id,
     info_out.lockout_window_ms = result.record.lockout_window_ms;
     info_out.lockout_duration_ms = result.record.lockout_duration_ms;
     info_out.allow_password_fallback = result.record.allow_password_fallback != 0;
-    info_out.allowed_auth_method_mask = normalizeAuthPolicyMethodMask(result.record.reserved0);
+    info_out.allowed_auth_method_mask = unpackAuthPolicyAllowedMethodMask(result.record.reserved0);
+    info_out.mark_weak_scram_for_upgrade =
+        unpackAuthPolicyMarkWeakScramFlag(result.record.reserved0);
     uint8_t transport_mask = 0;
     bool has_required_auth_method = false;
     ConnectionAuthMethod required_auth_method = ConnectionAuthMethod::SCRAM_SHA_256;
     AuthPeerMode peer_mode = AuthPeerMode::DISABLED;
+    uint32_t min_scram_iterations = AUTH_POLICY_MIN_SCRAM_ITERATIONS_DEFAULT;
     unpackAuthPolicyNegotiationFlags(result.record.padding,
                                      transport_mask,
                                      has_required_auth_method,
                                      required_auth_method,
-                                     peer_mode);
+                                     peer_mode,
+                                     min_scram_iterations);
     info_out.allowed_transport_mask = normalizeAuthPolicyTransportMask(transport_mask);
     info_out.has_required_auth_method = has_required_auth_method;
     info_out.required_auth_method = required_auth_method;
     info_out.peer_mode = peer_mode;
+    info_out.min_scram_iterations = normalizeAuthPolicyMinScramIterations(min_scram_iterations);
     info_out.is_valid = result.record.is_valid == 1;
     info_out.created_time = result.record.created_time;
     info_out.last_modified_time = result.record.last_modified_time;
@@ -62337,6 +62638,12 @@ auto CatalogManager::getAuthPolicyCatalogEntry(const ID& policy_id,
     if (!isValidAuthPeerMode(info_out.peer_mode))
     {
         SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "auth_policy.peer_mode is invalid on disk");
+        return Status::PAGE_CORRUPT;
+    }
+    if (info_out.min_scram_iterations < AUTH_POLICY_MIN_SCRAM_ITERATIONS_DEFAULT ||
+        info_out.min_scram_iterations > maxAuthPolicyMinScramIterations())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "auth_policy.min_scram_iterations is invalid on disk");
         return Status::PAGE_CORRUPT;
     }
 
@@ -62376,20 +62683,24 @@ auto CatalogManager::listAuthPolicyCatalogEntries(std::vector<AuthPolicyCatalogI
         info.lockout_window_ms = row.lockout_window_ms;
         info.lockout_duration_ms = row.lockout_duration_ms;
         info.allow_password_fallback = row.allow_password_fallback != 0;
-        info.allowed_auth_method_mask = normalizeAuthPolicyMethodMask(row.reserved0);
+        info.allowed_auth_method_mask = unpackAuthPolicyAllowedMethodMask(row.reserved0);
+        info.mark_weak_scram_for_upgrade = unpackAuthPolicyMarkWeakScramFlag(row.reserved0);
         uint8_t transport_mask = 0;
         bool has_required_auth_method = false;
         ConnectionAuthMethod required_auth_method = ConnectionAuthMethod::SCRAM_SHA_256;
         AuthPeerMode peer_mode = AuthPeerMode::DISABLED;
+        uint32_t min_scram_iterations = AUTH_POLICY_MIN_SCRAM_ITERATIONS_DEFAULT;
         unpackAuthPolicyNegotiationFlags(row.padding,
                                          transport_mask,
                                          has_required_auth_method,
                                          required_auth_method,
-                                         peer_mode);
+                                         peer_mode,
+                                         min_scram_iterations);
         info.allowed_transport_mask = normalizeAuthPolicyTransportMask(transport_mask);
         info.has_required_auth_method = has_required_auth_method;
         info.required_auth_method = required_auth_method;
         info.peer_mode = peer_mode;
+        info.min_scram_iterations = normalizeAuthPolicyMinScramIterations(min_scram_iterations);
         info.is_valid = row.is_valid == 1;
         info.created_time = row.created_time;
         info.last_modified_time = row.last_modified_time;
@@ -62411,20 +62722,25 @@ auto CatalogManager::listAuthPolicyCatalogEntries(std::vector<AuthPolicyCatalogI
             return found.status;
         }
 
-        row.allowed_auth_method_mask = normalizeAuthPolicyMethodMask(found.record.reserved0);
+        row.allowed_auth_method_mask = unpackAuthPolicyAllowedMethodMask(found.record.reserved0);
+        row.mark_weak_scram_for_upgrade =
+            unpackAuthPolicyMarkWeakScramFlag(found.record.reserved0);
         uint8_t transport_mask = 0;
         bool has_required_auth_method = false;
         ConnectionAuthMethod required_auth_method = ConnectionAuthMethod::SCRAM_SHA_256;
         AuthPeerMode peer_mode = AuthPeerMode::DISABLED;
+        uint32_t min_scram_iterations = AUTH_POLICY_MIN_SCRAM_ITERATIONS_DEFAULT;
         unpackAuthPolicyNegotiationFlags(found.record.padding,
                                          transport_mask,
                                          has_required_auth_method,
                                          required_auth_method,
-                                         peer_mode);
+                                         peer_mode,
+                                         min_scram_iterations);
         row.allowed_transport_mask = normalizeAuthPolicyTransportMask(transport_mask);
         row.has_required_auth_method = has_required_auth_method;
         row.required_auth_method = required_auth_method;
         row.peer_mode = peer_mode;
+        row.min_scram_iterations = normalizeAuthPolicyMinScramIterations(min_scram_iterations);
 
         if ((row.allowed_auth_method_mask & ~AUTH_POLICY_METHOD_ALL) != 0 ||
             row.allowed_auth_method_mask == 0)
@@ -62450,6 +62766,12 @@ auto CatalogManager::listAuthPolicyCatalogEntries(std::vector<AuthPolicyCatalogI
         if (!isValidAuthPeerMode(row.peer_mode))
         {
             SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "auth_policy.peer_mode is invalid on disk");
+            return Status::PAGE_CORRUPT;
+        }
+        if (row.min_scram_iterations < AUTH_POLICY_MIN_SCRAM_ITERATIONS_DEFAULT ||
+            row.min_scram_iterations > maxAuthPolicyMinScramIterations())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "auth_policy.min_scram_iterations is invalid on disk");
             return Status::PAGE_CORRUPT;
         }
 

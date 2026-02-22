@@ -1,5 +1,5 @@
 # DDL CLUSTER WORKLOAD ROUTE: SHOW
-Last modified: 2026-02-19
+Last modified: 2026-02-21
 
 Back links:
 - [Language Guide README](../../../README.md)
@@ -18,12 +18,12 @@ Lifecycle navigation:
 
 ## Parser Surface
 ```sql
-SHOW CLUSTER ROUTING PLAN; CLUSTER SHOW ROUTING PLAN;
+SHOW CLUSTER ROUTING PLAN;
 ```
 
 ## Example
 ```sql
-SHOW CLUSTER ROUTING PLAN; CLUSTER SHOW ROUTING PLAN;
+SHOW CLUSTER ROUTING PLAN;
 ```
 
 ## Notes

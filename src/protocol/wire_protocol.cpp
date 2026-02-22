@@ -504,6 +504,15 @@ core::Status ProtocolCodec::parseAuthRequest(const Message& msg,
                                              AuthMethod& auth_method,
                                              std::vector<uint8_t>& payload,
                                              core::ErrorContext* ctx) {
+    auto is_known_auth_method = [](uint8_t value) {
+        return value == static_cast<uint8_t>(AuthMethod::PASSWORD) ||
+               value == static_cast<uint8_t>(AuthMethod::MD5) ||
+               value == static_cast<uint8_t>(AuthMethod::SCRAM_SHA_256) ||
+               value == static_cast<uint8_t>(AuthMethod::SCRAM_SHA_512) ||
+               value == static_cast<uint8_t>(AuthMethod::TOKEN) ||
+               value == static_cast<uint8_t>(AuthMethod::PEER);
+    };
+
     Message& m = const_cast<Message&>(msg);
     m.resetReadOffset();
 
@@ -531,6 +540,11 @@ core::Status ProtocolCodec::parseAuthRequest(const Message& msg,
     if (cred_length > 0 && !m.readBytes(payload.data(), cred_length)) {
         SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
                           "Invalid AUTH_REQUEST password");
+        return core::Status::PROTOCOL_VIOLATION;
+    }
+    if (!is_known_auth_method(auth_method_byte)) {
+        SET_ERROR_CONTEXT(ctx, core::Status::PROTOCOL_VIOLATION,
+                          "Invalid AUTH_REQUEST auth method");
         return core::Status::PROTOCOL_VIOLATION;
     }
 

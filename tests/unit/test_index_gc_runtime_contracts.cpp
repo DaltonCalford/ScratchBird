@@ -98,6 +98,7 @@ TEST(IndexGcRuntimeContractsTest, InvertedFamilyMembershipIsDeterministic)
         IndexType::SPARSE_INVERTED,
         IndexType::SPARSE_WAND,
         IndexType::TRIE,
+        IndexType::INVERTED,
         IndexType::NGRAM,
         IndexType::MONGODB_WILDCARD,
         IndexType::MONGODB_ENCRYPTED_RANGE,

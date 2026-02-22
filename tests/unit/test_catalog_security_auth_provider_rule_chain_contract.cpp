@@ -281,6 +281,8 @@ TEST_F(CatalogSecurityAuthProviderRuleChainContractTest, AuthPolicyNegotiationMa
     policy.required_auth_method = CatalogManager::ConnectionAuthMethod::SCRAM_SHA_256;
     policy.allowed_transport_mask = CatalogManager::AUTH_POLICY_TRANSPORT_IPC;
     policy.peer_mode = CatalogManager::AuthPeerMode::REQUIRED_PLUS_SCRAM;
+    policy.min_scram_iterations = 32768;
+    policy.mark_weak_scram_for_upgrade = false;
     ASSERT_EQ(catalog_->upsertAuthPolicyCatalogEntry(policy, &ctx), Status::OK) << ctx.message;
 
     CatalogManager::AuthPolicyCatalogInfo loaded{};
@@ -291,6 +293,8 @@ TEST_F(CatalogSecurityAuthProviderRuleChainContractTest, AuthPolicyNegotiationMa
     EXPECT_EQ(loaded.required_auth_method, CatalogManager::ConnectionAuthMethod::SCRAM_SHA_256);
     EXPECT_EQ(loaded.allowed_transport_mask, CatalogManager::AUTH_POLICY_TRANSPORT_IPC);
     EXPECT_EQ(loaded.peer_mode, CatalogManager::AuthPeerMode::REQUIRED_PLUS_SCRAM);
+    EXPECT_EQ(loaded.min_scram_iterations, 32768u);
+    EXPECT_FALSE(loaded.mark_weak_scram_for_upgrade);
 
     CatalogManager::AuthPolicyCatalogInfo invalid = policy;
     invalid.policy_id = generateUuidV7();
@@ -314,6 +318,8 @@ TEST_F(CatalogSecurityAuthProviderRuleChainContractTest, AuthPolicyNegotiationMa
     EXPECT_EQ(loaded512.required_auth_method, CatalogManager::ConnectionAuthMethod::SCRAM_SHA_512);
     EXPECT_EQ(loaded512.allowed_auth_method_mask, CatalogManager::AUTH_POLICY_METHOD_SCRAM_SHA_512);
     EXPECT_EQ(loaded512.peer_mode, CatalogManager::AuthPeerMode::REQUIRED_PLUS_SCRAM);
+    EXPECT_EQ(loaded512.min_scram_iterations, 32768u);
+    EXPECT_FALSE(loaded512.mark_weak_scram_for_upgrade);
 
     CatalogManager::AuthPolicyCatalogInfo invalid_peer_mode = policy;
     invalid_peer_mode.policy_id = generateUuidV7();
@@ -322,6 +328,14 @@ TEST_F(CatalogSecurityAuthProviderRuleChainContractTest, AuthPolicyNegotiationMa
     invalid_peer_mode.has_required_auth_method = false;
     invalid_peer_mode.peer_mode = CatalogManager::AuthPeerMode::REQUIRED_PLUS_SCRAM;
     EXPECT_EQ(catalog_->upsertAuthPolicyCatalogEntry(invalid_peer_mode, &ctx), Status::INVALID_ARGUMENT);
+    EXPECT_EQ(ctx.vnext_code, "SEC_1225");
+
+    CatalogManager::AuthPolicyCatalogInfo invalid_iterations = policy;
+    invalid_iterations.policy_id = generateUuidV7();
+    invalid_iterations.policy_name = "policy_invalid_iterations";
+    invalid_iterations.min_scram_iterations =
+        CatalogManager::AUTH_POLICY_MIN_SCRAM_ITERATIONS_DEFAULT - 1;
+    EXPECT_EQ(catalog_->upsertAuthPolicyCatalogEntry(invalid_iterations, &ctx), Status::INVALID_ARGUMENT);
     EXPECT_EQ(ctx.vnext_code, "SEC_1225");
 }
 

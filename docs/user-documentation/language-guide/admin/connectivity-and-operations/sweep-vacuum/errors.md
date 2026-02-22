@@ -1,5 +1,5 @@
 # Admin SWEEP AND VACUUM: Error Contracts
-Last modified: 2026-02-19
+Last modified: 2026-02-21
 
 Back links:
 - [Language Guide README](../../../README.md)
@@ -17,15 +17,11 @@ Series navigation:
 ## Form
 ~~~sql
 SWEEP DATABASE;
-VACUUM [DATABASE];
 ~~~
 
 ## Parser/Compilation Errors
-- `PRS_0505`: `VACUUM` supplied with unsupported options (for example `VACUUM FULL`).
+- `PRS_0505`: `VACUUM` alias forms are rejected in native v3.
 
 ## Runtime Errors
 - `Sweep manager not available`: runtime cannot route command to GC manager.
 - `Sweep failed: ...`: sweep manager returned an execution error.
-
-## Notes
-- `SBLR3_ADMIN_VACUUM_ALIAS` is no longer rejected by vNext bridge fallback (`BRG_0406`); it is mapped to sweep/GC execution.

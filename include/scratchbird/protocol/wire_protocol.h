@@ -215,6 +215,7 @@ constexpr uint16_t CONNECT_FLAG_PORTAL_PAGING    = 0x0008;
 constexpr uint16_t CONNECT_FLAG_NOTIFICATIONS    = 0x0010;
 constexpr uint16_t CONNECT_FLAG_PROGRESS         = 0x0020;
 constexpr uint16_t CONNECT_FLAG_MANAGER_DBBT     = 0x0040;
+constexpr uint16_t CONNECT_FLAG_BOUND_DB_UUID    = 0x0080;
 
 constexpr uint16_t CONNECT_FLAG_BASE_CAPABILITIES =
     CONNECT_FLAG_COPY |

@@ -1,5 +1,5 @@
 # Admin CLUSTER CONTROL COMMANDS: Error Contracts
-Last modified: 2026-02-19
+Last modified: 2026-02-21
 
 Back links:
 - [Language Guide README](../../../README.md)
@@ -16,7 +16,7 @@ Series navigation:
 
 ## Form
 ~~~sql
-CREATE/ALTER/DROP CLUSTER WORKLOAD ...; CLUSTER SET STATE ...; SHOW CLUSTER ...; CLUSTER SHOW ...;
+CREATE/ALTER/DROP CLUSTER WORKLOAD ...; CLUSTER SET STATE ...; SHOW CLUSTER ...;
 ~~~
 
 ## Notes

@@ -205,7 +205,6 @@ TEST(ParserV3NoSqlEmitterContractTest, MapsAdminClusterAndServiceCommandsToBridg
         {"BACKUP DATABASE '/tmp/scratchbird.sbk'", Opcode::SBLR3_ADMIN_BACKUP, 28},
         {"RESTORE DATABASE '/tmp/scratchbird.sbk'", Opcode::SBLR3_ADMIN_RESTORE, 29},
         {"VALIDATE DATABASE", Opcode::SBLR3_ADMIN_VALIDATE, 30},
-        {"VACUUM", Opcode::SBLR3_ADMIN_VACUUM_ALIAS, 31},
 
         {"CREATE CLUSTER WORKLOAD CLASS wl_oltp 'MAX=64'",
          Opcode::SBLR3_CLUSTER_WORKLOAD_CLASS, 32},
@@ -236,7 +235,6 @@ TEST(ParserV3NoSqlEmitterContractTest, MapsAdminClusterAndServiceCommandsToBridg
          Opcode::SBLR3_CLUSTER_ADMISSION_BINDING, 43},
 
         {"CLUSTER SET STATE 'READ_WRITE'", Opcode::SBLR3_CLUSTER_SET_STATE, 44},
-        {"CLUSTER SHOW STATE", Opcode::SBLR3_CLUSTER_SHOW_STATE, 45},
         {"SHOW CLUSTER ROUTING PLAN", Opcode::SBLR3_CLUSTER_SHOW_ROUTING_PLAN, 46},
         {"SHOW CLUSTER ADMISSION STATUS", Opcode::SBLR3_CLUSTER_SHOW_ADMISSION_STATUS, 47},
 

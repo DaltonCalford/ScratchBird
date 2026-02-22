@@ -498,6 +498,12 @@ std::string AuditLogger::getEventTypeName(AuditEventType type)
         case AuditEventType::REATTACH_SUCCESS:     return "REATTACH_SUCCESS";
         case AuditEventType::REATTACH_FAILURE:     return "REATTACH_FAILURE";
         case AuditEventType::REATTACH_TOKEN_REVOKED:return "REATTACH_TOKEN_REVOKED";
+        case AuditEventType::AUTH_POLICY_DECISION: return "AUTH_POLICY_DECISION";
+        case AuditEventType::TOKEN_AUTH_USED:      return "TOKEN_AUTH_USED";
+        case AuditEventType::TOKEN_AUTH_REVOKED:   return "TOKEN_AUTH_REVOKED";
+        case AuditEventType::MANAGED_PREFACE_DECISION:
+            return "MANAGED_PREFACE_DECISION";
+        case AuditEventType::MANAGED_DBBT_ISSUED:  return "MANAGED_DBBT_ISSUED";
 
         // Authorization
         case AuditEventType::PERMISSION_GRANTED:   return "PERMISSION_GRANTED";

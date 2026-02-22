@@ -1,5 +1,5 @@
 # DDL CLUSTER ADMISSION BINDING: SHOW
-Last modified: 2026-02-19
+Last modified: 2026-02-21
 
 Back links:
 - [Language Guide README](../../../README.md)
@@ -18,12 +18,12 @@ Lifecycle navigation:
 
 ## Parser Surface
 ```sql
-SHOW CLUSTER ADMISSION STATUS; CLUSTER SHOW ADMISSION STATUS;
+SHOW CLUSTER ADMISSION STATUS;
 ```
 
 ## Example
 ```sql
-SHOW CLUSTER ADMISSION STATUS; CLUSTER SHOW ADMISSION STATUS;
+SHOW CLUSTER ADMISSION STATUS;
 ```
 
 ## Notes

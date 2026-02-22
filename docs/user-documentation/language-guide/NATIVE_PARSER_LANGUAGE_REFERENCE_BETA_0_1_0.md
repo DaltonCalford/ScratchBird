@@ -25,13 +25,13 @@ Status words used below:
 - DML: `SELECT`, `INSERT`, `UPDATE`, `UPDATE OR INSERT`, `DELETE`, `COPY`, `MERGE`
 - Transaction: `BEGIN`, `START`, `PREPARE`, `COMMIT`, `ROLLBACK`, `SAVEPOINT`, `RELEASE SAVEPOINT`
 - Session/control: `SET`, `SHOW`, `RESET`, `DESCRIBE`, `SECURITY LABEL`
-- Utility/admin: `EXPLAIN`, `ANALYZE`, `VALIDATE INDEX`, `VALIDATE [DATABASE]`, `SWEEP DATABASE`, `BACKUP [DATABASE]`, `RESTORE [DATABASE]`, `VACUUM`, `EXECUTE`, `CALL`, `CANCEL JOB`, `RESYNC REPLICATION CHANNEL`
+- Utility/admin: `EXPLAIN`, `ANALYZE`, `VALIDATE INDEX`, `VALIDATE [DATABASE]`, `SWEEP DATABASE`, `BACKUP [DATABASE]`, `RESTORE [DATABASE]`, `EXECUTE`, `CALL`, `CANCEL JOB`, `RESYNC REPLICATION CHANNEL`
 - DCL/security: `GRANT`, `REVOKE` (plus feature-gated `REVOKE TOKEN`)
 - Connection: `CONNECT`, `DISCONNECT`
 - Metadata: `COMMENT`
 - PSQL/UDR entry points: `DECLARE EXTERNAL FUNCTION`, UDR compile surfaces
 - Cluster/cube/service control: `CLUSTER ...`, `SHOW CLUSTER ...`, `CUBE ...`, `SHOW CUBE ...`, `REFRESH CUBE ...`, `SERVICE CHANNEL ...`
-- NoSQL bridge: `CQL ...`, `MONGO ...`, `CYPHER ...`, `REDIS ...`, `MILVUS ...`, Redis aliases (`EVAL`, `XGROUP`, `XREADGROUP`, `XCLAIM`)
+- NoSQL bridge: `CQL ...`, `MONGO ...`, `CYPHER ...`, `REDIS ...`, `MILVUS ...`
 - vNext extension surfaces: doc-path filter, TS bucket aggregation, search DSL, vector ANN, hybrid bridge, graph path, Redis Lua/stream group
 
 ### 2.1 Context-Sensitive Command Family Blocks (Code-Derived)
@@ -238,7 +238,6 @@ Additional top-level show/control families (outside `parseShow()` proper):
 
 - `SHOW CLUSTER STATE|ROUTING PLAN|ADMISSION STATUS`
 - `SHOW CUBE STATS [<cube_name>]` and `CUBE SHOW STATS [<cube_name>]`
-- `CLUSTER SHOW STATE|ROUTING PLAN|ADMISSION STATUS`
 
 ## 3. Feature Gates (Parser Capability Keys)
 
@@ -360,15 +359,13 @@ Legend:
 | `SUBSCRIPTION` | Y | N | N | Y | P |
 | `CDC TABLE` | Y | Y | N | Y | P |
 | `DATABASE CONNECTION` | Y | Y | N | Y | P |
-| `CLUSTER WORKLOAD/ADMISSION` | Y | Y | Y (`CLUSTER SHOW ...`, `SHOW CLUSTER ...`) | Y | Y |
+| `CLUSTER WORKLOAD/ADMISSION` | Y | Y | Y (`SHOW CLUSTER ...`) | Y | Y |
 | `SERVER` (`FOREIGN SERVER`) | Y | Y (generic object alter path) | N | Y | P |
 | `FOREIGN TABLE` | Y | Y (generic object alter path) | N | Y | P |
 | `FOREIGN DATA WRAPPER` | Y | N | N | N | P |
 | `USER MAPPING` | Y | N | N | Y | P |
 | `SYNONYM` | Y | Y (generic object alter path) | N | Y | P |
 | `UDR` | Y | N | N | Y | P |
-| `SEARCH INDEX` | Y | Y (`REBUILD` only in `0.1.0`) | N | Y | P |
-| `VECTOR INDEX` | Y | Y (`REBUILD` only in `0.1.0`) | N | Y | P |
 | `MEASUREMENT` | Y | Y | N | N | P |
 | `ACCESS METHOD` | Y | N | N | N | P |
 | `STATISTICS` | Y | N | N | N | P |
@@ -622,7 +619,7 @@ Grouped command families from direct parser dispatch:
 - `SHOW SQL DIALECT`, `TIME ZONE`, `VERSION`, `DATABASE`, `SYSTEM`, `METRICS`, `PARSER VERSION`
 - Generic variable query: `SHOW <name>[.<name>...]`
 
-`DESCRIBE`/`DESC` maps to column-show behavior.
+`DESCRIBE` maps to column-show behavior.
 
 ### 8.3 Schema Paths And Schema Session Controls
 
@@ -671,9 +668,7 @@ Direct parser coverage in v3 includes:
 - `RESTORE [DATABASE] ...`
 - `VALIDATE INDEX ...`
 - `VALIDATE [DATABASE] ...` (admin bridge surface)
-- `VACUUM [DATABASE] ...` (admin bridge surface)
 - `CLUSTER SET STATE ...`
-- `CLUSTER SHOW STATE|ROUTING PLAN|ADMISSION STATUS`
 - `SHOW CLUSTER STATE|ROUTING PLAN|ADMISSION STATUS`
 - `SERVICE CHANNEL BACKUP|EVENTS|PROGRESS ...`
 - `ANALYZE [VERBOSE] <table> [(<column>)] [COLUMN <column>] [SAMPLE <rate>]`
@@ -708,7 +703,7 @@ Required gap (for beta hardening / 0.2.0 planning):
 
 Top-level parser dispatch now includes explicit handlers for:
 
-- `BACKUP`, `RESTORE`, `VACUUM`, `CLUSTER`, `SERVICE CHANNEL`, and `SHOW CLUSTER ...`
+- `BACKUP`, `RESTORE`, `CLUSTER`, `SERVICE CHANNEL`, and `SHOW CLUSTER ...`
 
 Runtime closure note:
 
@@ -733,11 +728,10 @@ The v3 parser currently applies NoSQL-family commands in two distinct ways:
     - `GRAPH PATH MATCH ...` / `MATCH GRAPH PATH ...`
     - normalized to key `graph.path.quantified` with canonical SQL payload text.
   - Redis Lua compatibility surface:
-    - `REDIS LUA EVAL ...` / `EVAL LUA ...`
+    - `REDIS LUA EVAL ...`
     - normalized to key `redis.lua.eval`.
   - Redis stream-group compatibility surface:
     - `REDIS STREAM GROUP CREATE|READ|CLAIM ...`
-    - `XGROUP CREATE ...`, `XREADGROUP ...`, `XCLAIM ...`
     - normalized to keys `redis.stream.group.create|read|claim`.
   - Search compatibility admin surface:
     - `SEARCH JOIN FIELD MAPPING ...`
@@ -1335,7 +1329,6 @@ CREATE CLUSTER ADMISSION BINDING bind_oltp CONFIG '{"route":"route_oltp","policy
 
 ALTER CLUSTER WORKLOAD CLASS oltp_high CONFIG '{"priority":"critical"}';
 CLUSTER SET STATE '{"mode":"active"}';
-CLUSTER SHOW STATE;
 SHOW CLUSTER ROUTING PLAN;
 
 DROP CLUSTER ADMISSION BINDING bind_oltp;
