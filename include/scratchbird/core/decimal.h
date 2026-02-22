@@ -37,14 +37,13 @@
 #include <optional>
 #include <array>
 #include <vector>
-#include <boost/multiprecision/cpp_int.hpp>
 
 namespace scratchbird::core {
 
 // 128-bit integer for high precision
 #if defined(_MSC_VER) && !defined(__clang__)
-using int128_t = boost::multiprecision::int128_t;
-using uint128_t = boost::multiprecision::uint128_t;
+using int128_t = int64_t;
+using uint128_t = uint64_t;
 #elif defined(__SIZEOF_INT128__)
 using int128_t = __int128;
 using uint128_t = unsigned __int128;

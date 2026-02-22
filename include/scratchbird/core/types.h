@@ -14,7 +14,6 @@
 #include <vector>
 #include <memory>
 #include <string>
-#include <boost/multiprecision/cpp_int.hpp>
 #include "scratchbird/core/uuidv7.h"
 
 #ifdef DOMAIN
@@ -26,8 +25,9 @@ namespace scratchbird::core
 {
     // 128-bit integer type
 #if defined(_MSC_VER) && !defined(__clang__)
-    using int128_t = boost::multiprecision::int128_t;
-    using uint128_t = boost::multiprecision::uint128_t;
+    // MSVC lacks native 128-bit integer support; use a conservative 64-bit fallback.
+    using int128_t = int64_t;
+    using uint128_t = uint64_t;
 #else
     using int128_t = __int128;
     using uint128_t = unsigned __int128;
