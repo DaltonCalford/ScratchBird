@@ -176,16 +176,36 @@ if(SCRATCHBIRD_WITH_COMPILER)
 endif()
 
 add_library(scratchbird_link_group INTERFACE)
+set(SCRATCHBIRD_LINK_GROUP_LIBS
+    scratchbird_core
+    scratchbird_sblr
+    scratchbird_parser
+    scratchbird_optimizer_runtime
+    scratchbird_security
+    scratchbird_ipc
+)
 if(SCRATCHBIRD_WITH_COMPILER)
+    list(APPEND SCRATCHBIRD_LINK_GROUP_LIBS
+        scratchbird_compiler
+        scratchbird_optimizer_compiler
+    )
+endif()
+
+# RESCAN link groups are not supported on all linkers (for example MSVC).
+if(CMAKE_CXX_LINK_GROUP_USING_RESCAN_SUPPORTED)
+    string(JOIN "," SCRATCHBIRD_LINK_GROUP_LIBS_CSV ${SCRATCHBIRD_LINK_GROUP_LIBS})
     target_link_libraries(scratchbird_link_group INTERFACE
-        $<LINK_GROUP:RESCAN,scratchbird_core,scratchbird_sblr,scratchbird_compiler,scratchbird_parser,scratchbird_optimizer_runtime,scratchbird_optimizer_compiler,scratchbird_security,scratchbird_ipc>
+        $<LINK_GROUP:RESCAN,${SCRATCHBIRD_LINK_GROUP_LIBS_CSV}>
     )
 else()
     target_link_libraries(scratchbird_link_group INTERFACE
-        $<LINK_GROUP:RESCAN,scratchbird_core,scratchbird_sblr,scratchbird_parser,scratchbird_optimizer_runtime,scratchbird_security,scratchbird_ipc>
+        ${SCRATCHBIRD_LINK_GROUP_LIBS}
     )
 endif()
-target_link_options(scratchbird_link_group INTERFACE -Wl,--no-as-needed)
+
+if(UNIX AND NOT APPLE)
+    target_link_options(scratchbird_link_group INTERFACE -Wl,--no-as-needed)
+endif()
 if(PROJ_FOUND)
     target_link_libraries(scratchbird_link_group INTERFACE ${PROJ_LIBRARIES})
 endif()
