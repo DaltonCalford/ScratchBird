@@ -15,7 +15,21 @@
 #include <vector>
 #include <atomic>
 #include <string>
-#include <pthread.h>
+#ifdef _WIN32
+using pid_t = int32_t;
+struct pthread_rwlock_t
+{
+    int32_t opaque;
+};
+struct pthread_mutex_t
+{
+    int32_t opaque;
+};
+using pthread_rwlockattr_t = int;
+using pthread_mutexattr_t = int;
+#else
+    #include <pthread.h>
+#endif
 
 namespace scratchbird::core
 {

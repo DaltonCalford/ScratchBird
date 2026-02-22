@@ -13,11 +13,11 @@
 #include "scratchbird/core/logger.h"
 #include "scratchbird/core/tablespace.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/posix_compat.h"
 #include <cstring>
 #include <algorithm>
 #include <chrono>
 #include <fcntl.h>
-#include <unistd.h>
 #include <sys/stat.h>
 
 namespace scratchbird::core

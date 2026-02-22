@@ -763,7 +763,12 @@ namespace scratchbird::core
         timeinfo.tm_sec = second;
         timeinfo.tm_isdst = -1;
 
-        time_t epoch_seconds = timegm(&timeinfo);
+        time_t epoch_seconds = 0;
+#ifdef _WIN32
+        epoch_seconds = _mkgmtime(&timeinfo);
+#else
+        epoch_seconds = timegm(&timeinfo);
+#endif
         if (epoch_seconds == -1)
         {
             if (ctx)
@@ -826,7 +831,14 @@ namespace scratchbird::core
 
         time_t epoch_seconds = static_cast<time_t>(total_seconds);
         struct tm timeinfo;
+#ifdef _WIN32
+        if (gmtime_s(&timeinfo, &epoch_seconds) != 0)
+        {
+            return "INVALID_TIMESTAMP";
+        }
+#else
         gmtime_r(&epoch_seconds, &timeinfo);
+#endif
 
         // Format: YYYY-MM-DD HH:MM:SS.ffffff
         std::ostringstream oss;

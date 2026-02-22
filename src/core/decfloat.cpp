@@ -8,6 +8,7 @@
  * https://www.firebirdsql.org/en/initial-developer-s-public-license-version-1-0/
  */
 #include "scratchbird/core/decfloat.h"
+#include "scratchbird/core/types.h"
 #include <algorithm>
 #include <cctype>
 #include <cmath>

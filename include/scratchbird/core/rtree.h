@@ -23,6 +23,10 @@
 #include <shared_mutex>
 #include <unordered_map>
 
+#ifdef OVERFLOW
+    #undef OVERFLOW
+#endif
+
 namespace scratchbird::core
 {
 

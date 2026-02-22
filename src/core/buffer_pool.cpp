@@ -21,7 +21,9 @@
 #include <chrono>
 #include <functional>
 #include <cstdlib>
-#include <unistd.h>
+#ifndef _WIN32
+    #include <unistd.h>
+#endif
 
 namespace scratchbird::core
 {

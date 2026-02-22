@@ -26,8 +26,8 @@
 #include "scratchbird/core/lsm_compression.h"
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/logger.h"
+#include "scratchbird/core/posix_compat.h"
 #include <fcntl.h>
-#include <unistd.h>
 #include <cstring>
 #include <algorithm>
 

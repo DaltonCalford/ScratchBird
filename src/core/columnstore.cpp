@@ -16,6 +16,9 @@
 #include <algorithm>
 #include <cstring>
 #include <unordered_set>
+#ifdef _MSC_VER
+    #include <intrin.h>
+#endif
 
 namespace scratchbird::core
 {
@@ -64,6 +67,21 @@ static inline TID delinearizeTID(uint128_t value)
     GPID gpid = static_cast<GPID>(value >> 16);
     uint16_t slot = static_cast<uint16_t>(value & 0xFFFF);
     return TID{gpid, slot};
+}
+
+static inline auto bitWidth64(uint64_t value) -> uint8_t
+{
+    if (value == 0)
+    {
+        return 0;
+    }
+#ifdef _MSC_VER
+    unsigned long index = 0;
+    _BitScanReverse64(&index, value);
+    return static_cast<uint8_t>(index + 1);
+#else
+    return static_cast<uint8_t>(64 - __builtin_clzll(value));
+#endif
 }
 
 // ============================================================================
@@ -1664,7 +1682,7 @@ Status ColumnstoreIndex::compressBitpack(const ColumnSegment &segment,
     else
     {
         // Calculate ceil(log2(value_range + 1))
-        bits_per_value = 64 - __builtin_clzll(value_range);  // Count leading zeros
+        bits_per_value = bitWidth64(value_range);
     }
 
     // Step 3: Write header (min_value, bits_per_value)

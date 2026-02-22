@@ -10,10 +10,8 @@
 #include "scratchbird/core/tzfile_parser.h"
 #include <cstdio>
 #include <cstring>
-#include <sys/types.h>
-#include <sys/stat.h>
-#include <dirent.h>
 #include <algorithm>
+#include <filesystem>
 
 namespace scratchbird::core
 {
@@ -556,18 +554,37 @@ namespace scratchbird::core
                                       std::vector<std::string> &files,
                                       ErrorContext *ctx) -> Status
     {
-        DIR *dir = opendir(dir_path.c_str());
-        if (!dir)
+        std::error_code path_error;
+        if (!std::filesystem::exists(dir_path, path_error) ||
+            !std::filesystem::is_directory(dir_path, path_error))
         {
             std::string error_msg = "Cannot open directory: " + dir_path;
             SET_ERROR_CONTEXT(ctx, Status::FILE_NOT_FOUND, error_msg.c_str());
             return Status::FILE_NOT_FOUND;
         }
-
-        struct dirent *entry;
-        while ((entry = readdir(dir)) != nullptr)
+        if (path_error)
         {
-            std::string name = entry->d_name;
+            std::string error_msg = "Failed to inspect directory: " + dir_path;
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, error_msg.c_str());
+            return Status::IO_ERROR;
+        }
+
+        std::error_code iter_error;
+        auto iterator = std::filesystem::recursive_directory_iterator(
+            dir_path,
+            std::filesystem::directory_options::skip_permission_denied,
+            iter_error);
+
+        for (const auto &entry : iterator)
+        {
+            if (iter_error)
+            {
+                std::string error_msg = "Failed to enumerate directory: " + dir_path;
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, error_msg.c_str());
+                return Status::IO_ERROR;
+            }
+
+            std::string name = entry.path().filename().string();
 
             // Skip "." and ".."
             if (name == "." || name == "..")
@@ -585,27 +602,18 @@ namespace scratchbird::core
                 continue;
             }
 
-            std::string full_path = dir_path + "/" + name;
-
-            struct stat st;
-            if (stat(full_path.c_str(), &st) != 0)
+            std::error_code type_error;
+            if (!entry.is_regular_file(type_error))
             {
-                continue; // Skip if stat fails
+                continue;
             }
-
-            if (S_ISDIR(st.st_mode))
+            if (type_error)
             {
-                // Recursively scan subdirectory
-                scanDirectory(full_path, files, ctx);
+                continue;
             }
-            else if (S_ISREG(st.st_mode))
-            {
-                // Regular file - add to list
-                files.push_back(full_path);
-            }
+            files.push_back(entry.path().string());
         }
 
-        closedir(dir);
         return Status::OK;
     }
 

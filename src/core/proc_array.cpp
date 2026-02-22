@@ -12,9 +12,71 @@
 #include "scratchbird/core/error_context.h"
 #include <cstring>
 #include <chrono>
-#include <unistd.h>
-#include <sys/mman.h>
 #include <mutex>
+#ifdef _WIN32
+    #include <cstdlib>
+    #include <process.h>
+#else
+    #include <unistd.h>
+    #include <sys/mman.h>
+#endif
+
+namespace
+{
+#ifdef _WIN32
+    constexpr int PTHREAD_PROCESS_SHARED = 0;
+
+    inline auto pthread_rwlockattr_init(pthread_rwlockattr_t*) -> int { return 0; }
+    inline auto pthread_rwlockattr_setpshared(pthread_rwlockattr_t*, int) -> int { return 0; }
+    inline auto pthread_rwlockattr_destroy(pthread_rwlockattr_t*) -> int { return 0; }
+
+    inline auto pthread_rwlock_init(pthread_rwlock_t*, const pthread_rwlockattr_t*) -> int { return 0; }
+    inline auto pthread_rwlock_destroy(pthread_rwlock_t*) -> int { return 0; }
+    inline auto pthread_rwlock_rdlock(pthread_rwlock_t*) -> int { return 0; }
+    inline auto pthread_rwlock_wrlock(pthread_rwlock_t*) -> int { return 0; }
+    inline auto pthread_rwlock_unlock(pthread_rwlock_t*) -> int { return 0; }
+
+    inline auto pthread_mutexattr_init(pthread_mutexattr_t*) -> int { return 0; }
+    inline auto pthread_mutexattr_setpshared(pthread_mutexattr_t*, int) -> int { return 0; }
+    inline auto pthread_mutexattr_destroy(pthread_mutexattr_t*) -> int { return 0; }
+
+    inline auto pthread_mutex_init(pthread_mutex_t*, const pthread_mutexattr_t*) -> int { return 0; }
+    inline auto pthread_mutex_destroy(pthread_mutex_t*) -> int { return 0; }
+    inline auto pthread_mutex_lock(pthread_mutex_t*) -> int { return 0; }
+    inline auto pthread_mutex_unlock(pthread_mutex_t*) -> int { return 0; }
+
+    inline auto allocateProcArrayMemory(size_t total_size) -> void*
+    {
+        return std::malloc(total_size);
+    }
+
+    inline auto freeProcArrayMemory(void* memory, size_t) -> int
+    {
+        std::free(memory);
+        return 0;
+    }
+
+    inline auto currentProcessId() -> pid_t
+    {
+        return static_cast<pid_t>(_getpid());
+    }
+#else
+    inline auto allocateProcArrayMemory(size_t total_size) -> void*
+    {
+        return mmap(nullptr, total_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    }
+
+    inline auto freeProcArrayMemory(void* memory, size_t total_size) -> int
+    {
+        return munmap(memory, total_size);
+    }
+
+    inline auto currentProcessId() -> pid_t
+    {
+        return getpid();
+    }
+#endif
+} // namespace
 
 namespace scratchbird::core
 {
@@ -52,11 +114,14 @@ namespace scratchbird::core
         size_t pcb_array_size = sizeof(ProcessControlBlock) * max_backends;
         size_t total_size = header_size + pcb_array_size;
 
-        // Allocate shared memory (mmap with MAP_SHARED)
-        void *shared_mem =
-            mmap(nullptr, total_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+        // Allocate shared memory region for process array state.
+        void *shared_mem = allocateProcArrayMemory(total_size);
 
+#ifdef _WIN32
+        if (shared_mem == nullptr)
+#else
         if (shared_mem == MAP_FAILED)
+#endif
         {
             SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate shared memory for ProcArray");
             return Status::OOM;
@@ -135,8 +200,8 @@ namespace scratchbird::core
         pthread_rwlock_destroy(&array->array_lock);
         pthread_mutex_destroy(&array->alloc_lock);
 
-        // Unmap shared memory
-        if (munmap(array, total_size) != 0)
+        // Release shared memory region
+        if (freeProcArrayMemory(array, total_size) != 0)
         {
             SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to unmap ProcArray");
             return Status::IO_ERROR;
@@ -194,7 +259,7 @@ namespace scratchbird::core
         // Initialize PCB
         ProcessControlBlock *pcb = &pcbs[proc_id];
         pcb->is_active = true;
-        pcb->backend_pid = getpid();
+        pcb->backend_pid = currentProcessId();
         pcb->xid = 0;
         pcb->backend_xmin = 0;
         pcb->xmin = 0;

@@ -30,7 +30,7 @@
 #include <cstring>
 #include <cctype>
 #include <fcntl.h>
-#include <unistd.h>
+#include "scratchbird/core/posix_compat.h"
 #include <sys/stat.h>
 #include <zlib.h>
 
