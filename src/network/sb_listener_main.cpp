@@ -51,7 +51,7 @@
 #else
 #include <signal.h>
 #include <sys/wait.h>
-#include <unistd.h>
+#include "scratchbird/core/posix_compat.h"
 #endif
 
 #ifndef SB_LISTENER_PROTOCOL

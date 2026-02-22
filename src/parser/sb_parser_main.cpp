@@ -43,7 +43,7 @@
 #include <windows.h>
 #include <winsock2.h>
 #else
-#include <unistd.h>
+#include "scratchbird/core/posix_compat.h"
 #endif
 
 #ifndef SB_PARSER_PROTOCOL

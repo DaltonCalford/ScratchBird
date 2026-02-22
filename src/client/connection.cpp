@@ -48,7 +48,7 @@
 #include <windows.h>
 #include <process.h>
 #else
-#include <unistd.h>
+#include "scratchbird/core/posix_compat.h"
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <signal.h>

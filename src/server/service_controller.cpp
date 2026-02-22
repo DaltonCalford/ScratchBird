@@ -39,7 +39,7 @@
 #include <pwd.h>
 #include <signal.h>
 #include <sys/wait.h>
-#include <unistd.h>
+#include "scratchbird/core/posix_compat.h"
 #endif
 
 namespace scratchbird {

@@ -18,7 +18,7 @@
 // Use bcrypt from crypt.h (Linux/Unix standard)
 // Note: On some systems, may need to link with -lcrypt
 #ifdef __unix__
-#include <unistd.h>
+#include "scratchbird/core/posix_compat.h"
 #if defined(_GNU_SOURCE) || defined(__linux__)
 #include <crypt.h>
 #define HAVE_CRYPT_R 1

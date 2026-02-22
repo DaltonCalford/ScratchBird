@@ -13,7 +13,7 @@
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <netdb.h>
-#include <unistd.h>
+#include "scratchbird/core/posix_compat.h"
 #include <fcntl.h>
 
 namespace scratchbird {

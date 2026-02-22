@@ -22,7 +22,7 @@
 #include <functional>
 #include <cstdlib>
 #ifndef _WIN32
-    #include <unistd.h>
+    #include "scratchbird/core/posix_compat.h"
 #endif
 
 namespace scratchbird::core

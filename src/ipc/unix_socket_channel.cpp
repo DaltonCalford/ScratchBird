@@ -22,7 +22,7 @@
 #include "scratchbird/ipc/unix_socket_channel.h"
 #include <sys/socket.h>
 #include <sys/un.h>
-#include <unistd.h>
+#include "scratchbird/core/posix_compat.h"
 #include <fcntl.h>
 #include <poll.h>
 #include <cstring>

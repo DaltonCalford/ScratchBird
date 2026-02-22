@@ -27,7 +27,7 @@
 #include <process.h>
 #define getpid _getpid
 #else
-#include <unistd.h>
+#include "scratchbird/core/posix_compat.h"
 #include <sys/stat.h>
 #include <signal.h>
 #endif

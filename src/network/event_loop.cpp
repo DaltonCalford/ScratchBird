@@ -32,7 +32,7 @@
 #endif
 
 #ifndef _WIN32
-    #include <unistd.h>
+    #include "scratchbird/core/posix_compat.h"
     #include <poll.h>
     #include <fcntl.h>
 #endif

@@ -20,7 +20,7 @@
 #include <sys/un.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
-#include <unistd.h>
+#include "scratchbird/core/posix_compat.h"
 #include <fcntl.h>
 #include <errno.h>
 #include <poll.h>

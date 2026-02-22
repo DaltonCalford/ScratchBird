@@ -17,7 +17,7 @@
     #include <cstdlib>
     #include <process.h>
 #else
-    #include <unistd.h>
+    #include "scratchbird/core/posix_compat.h"
     #include <sys/mman.h>
 #endif
 

@@ -31,7 +31,7 @@
 #include <sys/un.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <unistd.h>
+#include "scratchbird/core/posix_compat.h"
 #include <fcntl.h>
 #include <poll.h>
 #include <errno.h>
