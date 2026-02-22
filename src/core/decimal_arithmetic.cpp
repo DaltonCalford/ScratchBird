@@ -13,8 +13,8 @@
 #include <algorithm>
 #include <cmath>
 
-// Define HAS_INT128 for GCC/Clang with __int128 support
-#if defined(__GNUC__) && (defined(__x86_64__) || defined(__aarch64__))
+// Define HAS_INT128 for toolchains where core::int128_t supports arithmetic operators.
+#if (defined(__GNUC__) && (defined(__x86_64__) || defined(__aarch64__))) || defined(_MSC_VER)
 #define HAS_INT128 1
 #else
 #define HAS_INT128 0

@@ -26,7 +26,7 @@
 #include <windows.h>
 #include <shlobj.h>
 #else
-#include <unistd.h>
+#include "scratchbird/core/posix_compat.h"
 #include <pwd.h>
 #include <sys/types.h>
 #endif

@@ -33,6 +33,7 @@
 #include "scratchbird/core/index_factory.h"  // LSM Integration Phase 3: Index factory
 #include "scratchbird/core/config.h"
 #include "scratchbird/core/vnext_metrics_event_model.h"
+#include "scratchbird/core/posix_compat.h"
 #include <cstring>
 #include "scratchbird/core/toast.h"       // Phase 5 Task 5.1.3: TOAST migration
 #include <algorithm>
@@ -50,8 +51,16 @@
 // MV refresh is now performed at the executor layer using getMVRefreshSQL()
 #include "scratchbird/core/tid_resolver.h"  // Sprint 5: ONLINE migration
 #include <fcntl.h>   // Phase 6: For open(), O_RDWR
-#include <unistd.h>  // Phase 6: For pread(), close()
-#include <arpa/inet.h> // EN-017: CIDR and IP scope matching
+#ifdef _WIN32
+    #ifndef NOMINMAX
+        #define NOMINMAX
+    #endif
+    #pragma comment(lib, "ws2_32.lib")
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+#else
+    #include <arpa/inet.h> // EN-017: CIDR and IP scope matching
+#endif
 #include "scratchbird/core/utf8_utils.h"  // Phase 3: SQL Identifier UTF-8 Fix
 #include <queue>  // Phase 1.4: BFS for group transitive closure
 #include <unordered_set>  // Phase 1.4: Visited set for group transitive closure

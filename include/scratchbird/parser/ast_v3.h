@@ -1201,6 +1201,10 @@ public:
  * DDL object types for rename/move statements.
  * Values align with core::CatalogManager::ObjectType.
  */
+#ifdef DOMAIN
+// Windows headers may define DOMAIN as a macro; keep enum value stable.
+#undef DOMAIN
+#endif
 enum class DdlObjectType : uint8_t {
     SCHEMA = 0,
     TABLE = 1,

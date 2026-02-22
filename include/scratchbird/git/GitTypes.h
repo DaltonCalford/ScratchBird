@@ -22,6 +22,13 @@
 #include <chrono>
 #include <functional>
 
+#ifdef DOMAIN
+    #undef DOMAIN
+#endif
+#ifdef ERROR
+    #undef ERROR
+#endif
+
 namespace scratchbird {
 namespace git {
 

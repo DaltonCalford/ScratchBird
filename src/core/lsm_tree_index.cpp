@@ -23,9 +23,9 @@
 #include "scratchbird/core/lsm_tree_index.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/logger.h"
+#include "scratchbird/core/posix_compat.h"
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <dirent.h>
 #include <algorithm>
 #include <chrono>
 #include <sstream>
@@ -867,26 +867,35 @@ Status LSMTreeIndex::loadExistingSSTables(ErrorContext *ctx)
     {
         std::string level_path = index_path_ + "/level" + std::to_string(level);
 
-        // Open directory
-        DIR *dir = opendir(level_path.c_str());
-        if (!dir)
+        std::error_code dir_error;
+        if (!std::filesystem::exists(level_path, dir_error) ||
+            !std::filesystem::is_directory(level_path, dir_error))
         {
             // Level directory doesn't exist (OK for new index)
             continue;
         }
+        if (dir_error)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
+                             ("Failed to inspect level directory: " + level_path).c_str());
+            return Status::IO_ERROR;
+        }
 
         // Read all .sst files
         std::vector<std::string> sstable_paths;
-        struct dirent *entry;
-        while ((entry = readdir(dir)) != nullptr)
+        for (const auto& entry : std::filesystem::directory_iterator(level_path, dir_error))
         {
-            std::string filename(entry->d_name);
-            if (filename.size() > 4 && filename.substr(filename.size() - 4) == ".sst")
+            if (dir_error)
             {
-                sstable_paths.push_back(level_path + "/" + filename);
+                SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
+                                 ("Failed to enumerate level directory: " + level_path).c_str());
+                return Status::IO_ERROR;
+            }
+            if (entry.is_regular_file() && entry.path().extension() == ".sst")
+            {
+                sstable_paths.push_back(entry.path().string());
             }
         }
-        closedir(dir);
 
         // Sort paths (oldest first)
         std::sort(sstable_paths.begin(), sstable_paths.end());
@@ -905,11 +914,12 @@ Status LSMTreeIndex::loadExistingSSTables(ErrorContext *ctx)
             }
 
             // Get file size
-            struct stat st;
-            uint64_t file_size = 0;
-            if (stat(path.c_str(), &st) == 0)
+            std::error_code file_size_error;
+            uint64_t file_size =
+                static_cast<uint64_t>(std::filesystem::file_size(path, file_size_error));
+            if (file_size_error)
             {
-                file_size = st.st_size;
+                file_size = 0;
             }
 
             // Add to compaction manager

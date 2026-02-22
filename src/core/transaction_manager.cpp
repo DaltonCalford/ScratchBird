@@ -19,12 +19,12 @@
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/logger.h"
 #include "scratchbird/core/config.h"
+#include "scratchbird/core/posix_compat.h"
 #include <algorithm>
 #include <chrono>
 #include <cstring>
 #include <new>
 #include <thread>
-#include <unistd.h>
 #include <unordered_set>
 
 namespace {

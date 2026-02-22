@@ -24,7 +24,7 @@
 #include <cctype>
 #include <unordered_set>
 #include <unordered_map>
-#include <unistd.h>
+#include "scratchbird/core/posix_compat.h"
 
 namespace scratchbird::catalog {
 

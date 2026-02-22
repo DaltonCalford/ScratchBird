@@ -24,6 +24,8 @@ namespace geo {
  */
 class Geodetic {
 public:
+    static constexpr double PI = 3.14159265358979323846;
+
     // WGS84 ellipsoid parameters
     static constexpr double SEMI_MAJOR_AXIS = 6378137.0;        // a (meters)
     static constexpr double SEMI_MINOR_AXIS = 6356752.314245;   // b (meters)
@@ -74,14 +76,14 @@ public:
      * @brief Convert degrees to radians
      */
     static double toRadians(double degrees) {
-        return degrees * M_PI / 180.0;
+        return degrees * PI / 180.0;
     }
 
     /**
      * @brief Convert radians to degrees
      */
     static double toDegrees(double radians) {
-        return radians * 180.0 / M_PI;
+        return radians * 180.0 / PI;
     }
 };
 

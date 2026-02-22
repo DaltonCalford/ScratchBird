@@ -32,6 +32,7 @@
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/permission_cache.h" // Security Phase 3.2.3
 #include "scratchbird/core/password_hash.h"
+#include "scratchbird/core/posix_compat.h"
 #include "scratchbird/core/debug.h"
 #include "scratchbird/core/logger.h"
 #include "scratchbird/catalog/virtual_catalog.h"
@@ -40,9 +41,10 @@
 #include <nlohmann/json.hpp>
 #include <openssl/md5.h>
 #include <fcntl.h>
-#include <unistd.h>
 #include <sys/stat.h>
-#include <sys/file.h>
+#ifndef _WIN32
+    #include <sys/file.h>
+#endif
 #include <cstring>
 #include <cctype>
 #include <algorithm>
@@ -55,6 +57,14 @@
 #include <vector>
 #include <iomanip>
 #include <sstream>
+
+#ifdef _WIN32
+namespace {
+constexpr int LOCK_EX = 0x2;
+constexpr int LOCK_NB = 0x4;
+inline int flock(int, int) { return 0; }
+} // namespace
+#endif
 
 namespace scratchbird::core
 {

@@ -25,7 +25,7 @@
 #include "scratchbird/ipc/ipc_server.h"
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <unistd.h>
+#include "scratchbird/core/posix_compat.h"
 #include <array>
 #include <cctype>
 #include <cstring>

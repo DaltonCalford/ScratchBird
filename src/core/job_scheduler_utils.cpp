@@ -20,6 +20,14 @@ namespace scratchbird::core::detail {
 
 namespace {
 
+bool utcTimeFromEpoch(time_t value, std::tm& tm_out) {
+#ifdef _WIN32
+    return gmtime_s(&tm_out, &value) == 0;
+#else
+    return gmtime_r(&value, &tm_out) != nullptr;
+#endif
+}
+
 std::vector<std::string> split(const std::string& input, char delim) {
     std::vector<std::string> out;
     std::stringstream ss(input);
@@ -181,7 +189,9 @@ uint64_t computeNextCronRunMs(const std::string& expr, uint64_t after_ms) {
     for (int64_t minute = 0; minute < kMaxMinutes; ++minute) {
         time_t candidate = static_cast<time_t>(candidate_seconds + minute * 60);
         std::tm tm{};
-        gmtime_r(&candidate, &tm);
+        if (!utcTimeFromEpoch(candidate, tm)) {
+            continue;
+        }
         if (cronMatches(parsed, tm)) {
             return static_cast<uint64_t>(candidate) * 1000;
         }
@@ -236,7 +246,9 @@ uint64_t computeNextCronRunMsWithTimezone(const std::string& expr,
         }
         time_t local_seconds = static_cast<time_t>(*local_micro / 1000000);
         std::tm tm{};
-        gmtime_r(&local_seconds, &tm);
+        if (!utcTimeFromEpoch(local_seconds, tm)) {
+            continue;
+        }
         if (cronMatches(parsed, tm)) {
             return static_cast<uint64_t>(candidate) * 1000;
         }
@@ -278,7 +290,9 @@ uint64_t computePreviousCronRunMsWithTimezone(const std::string& expr,
         }
         time_t local_seconds = static_cast<time_t>(*local_micro / 1000000);
         std::tm tm{};
-        gmtime_r(&local_seconds, &tm);
+        if (!utcTimeFromEpoch(local_seconds, tm)) {
+            continue;
+        }
         if (cronMatches(parsed, tm)) {
             return static_cast<uint64_t>(candidate) * 1000;
         }

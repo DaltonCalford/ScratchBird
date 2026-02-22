@@ -38,7 +38,7 @@
 #include <string_view>
 #ifndef _WIN32
 #include <sys/stat.h>
-#include <unistd.h>
+#include "scratchbird/core/posix_compat.h"
 #endif
 
 namespace scratchbird {

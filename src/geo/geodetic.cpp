@@ -38,7 +38,7 @@ double Geodetic::vincentyDistance(double lon1, double lat1, double lon2, double 
     double cosU2 = std::cos(U2);
 
     double lambda = L;
-    double lambdaP = 2 * M_PI;
+    double lambdaP = 2 * PI;
     int iterLimit = 100;
     double cosSqAlpha, sinSigma, cos2SigmaM, cosSigma, sigma;
 

@@ -22,6 +22,13 @@
 #include <memory>
 #include <functional>
 
+#ifdef _MSC_VER
+    #define SB_PACKED
+    #pragma pack(push, 1)
+#else
+    #define SB_PACKED __attribute__((packed))
+#endif
+
 namespace scratchbird
 {
     namespace core
@@ -51,7 +58,7 @@ namespace scratchbird
             uint64_t gin_num_keys;           // Total number of unique keys (8 bytes)
             uint64_t gin_num_tuples;         // Total number of indexed tuples (8 bytes)
             uint8_t gin_reserved[];          // Reserved for future use (page_size - 128)
-        } __attribute__((packed));
+        } SB_PACKED;
 
         // Pending Entry - Single entry in pending list
         struct GinPendingEntry
@@ -66,7 +73,7 @@ namespace scratchbird
             // Helper methods for TID access
             TID getTID() const { return TID(gpid, slot); }
             void setTID(const TID &tid) { gpid = tid.gpid; slot = tid.slot; }
-        } __attribute__((packed));
+        } SB_PACKED;
 
         static_assert(sizeof(GinPendingEntry) == 72, "GinPendingEntry must be 72 bytes (8+2+2+8+2+50)");
 
@@ -78,7 +85,7 @@ namespace scratchbird
             uint16_t gpp_entry_count;                    // Number of entries (2 bytes)
             uint8_t gpp_reserved[54];                    // Reserved for alignment (54 bytes)
             GinPendingEntry gpp_entries[];               // Pending entries (flexible array, capacity depends on page size)
-        } __attribute__((packed));
+        } SB_PACKED;
 
         // Posting List Entry - Single TID in a posting list
         // FIREBIRD MGA: Now includes xmin/xmax for logical deletion (MGA compliance)
@@ -101,7 +108,7 @@ namespace scratchbird
             bool operator==(const GinPostingEntry &other) const {
                 return gpid == other.gpid && slot == other.slot;
             }
-        } __attribute__((packed));
+        } SB_PACKED;
 
         static_assert(sizeof(GinPostingEntry) == 26, "GinPostingEntry must be 26 bytes (GPID + slot + xmin + xmax)");
 
@@ -126,7 +133,7 @@ namespace scratchbird
             const uint8_t* getCompressedData() const { return gpl_data.gpl_data_start; }
             GinPostingEntry* getEntries() { return reinterpret_cast<GinPostingEntry*>(gpl_data.gpl_data_start); }
             const GinPostingEntry* getEntries() const { return reinterpret_cast<const GinPostingEntry*>(gpl_data.gpl_data_start); }
-        } __attribute__((packed));
+        } SB_PACKED;
 
         // ===== Posting Tree Structures =====
         // When a posting list exceeds GIN_POSTING_LIST_THRESHOLD (64 TIDs),
@@ -142,7 +149,7 @@ namespace scratchbird
             // Helper to get separator TID
             TID getSeparatorTID() const { return TID(separator_gpid, separator_slot); }
             void setSeparatorTID(const TID &tid) { separator_gpid = tid.gpid; separator_slot = tid.slot; }
-        } __attribute__((packed));
+        } SB_PACKED;
 
         static_assert(sizeof(GinPostingTreeInternalEntry) == 14, "Internal entry must be 14 bytes (GPID + slot + page)");
 
@@ -154,7 +161,7 @@ namespace scratchbird
             uint16_t gpt_is_leaf;                               // 0 for internal nodes (2 bytes)
             uint8_t gpt_reserved[24];                           // Reserved for alignment (24 bytes)
             GinPostingTreeInternalEntry gpt_entries[];      // Internal entries (flexible array, capacity depends on page size)
-        } __attribute__((packed));
+        } SB_PACKED;
 
         // Posting Tree Leaf Node
         struct SBGinPostingTreeLeaf
@@ -165,7 +172,7 @@ namespace scratchbird
             uint64_t gpt_next_leaf;                     // Next leaf page for range scans (8 bytes)
             uint8_t gpt_reserved[12];                   // Reserved for alignment (12 bytes)
             GinPostingEntry gpt_tids[];                 // Sorted TID array (flexible array, capacity depends on page size)
-        } __attribute__((packed));
+        } SB_PACKED;
 
         /**
          * Page-Size-Based GIN Settings
@@ -307,7 +314,7 @@ namespace scratchbird
         {
             uint64_t posting_list_page; // Page number of posting list/tree
             uint32_t num_tids;          // Number of TIDs for this key
-        } __attribute__((packed));
+        } SB_PACKED;
 
         static_assert(sizeof(GinEntryTreeValue) == 12, "GinEntryTreeValue must be 12 bytes");
 
@@ -321,7 +328,7 @@ namespace scratchbird
             uint16_t key_len;                // Key length
             GinEntryTreeValue value;         // Posting page + TID count
             uint8_t key_data[1];             // Variable-length key (flexible array)
-        } __attribute__((packed));
+        } SB_PACKED;
 
         // Entry Tree Leaf Page
         struct SBGinEntryTreeLeaf
@@ -335,7 +342,7 @@ namespace scratchbird
             uint16_t get_offsets[500];       // Offset array (1000 bytes, max 500 entries)
             // Data area starts at sizeof(SBGinEntryTreeLeaf), grows upward
             // Keys and values stored here
-        } __attribute__((packed));
+        } SB_PACKED;
 
         static_assert(sizeof(SBGinEntryTreeLeaf) <= 8192,
                       "Entry tree leaf must fit in minimum page size (8KB)");
@@ -350,7 +357,7 @@ namespace scratchbird
             uint16_t key_len;                // Separator key length
             uint32_t child_page;             // Child page pointer
             uint8_t key_data[1];             // Variable-length separator key
-        } __attribute__((packed));
+        } SB_PACKED;
 
         // Entry Tree Internal Page
         struct SBGinEntryTreeInternal
@@ -364,7 +371,7 @@ namespace scratchbird
             uint8_t get_reserved[8];         // Reserved (8 bytes)
             uint16_t get_offsets[500];       // Offset array (1000 bytes)
             // Data area starts at sizeof(SBGinEntryTreeInternal), grows upward
-        } __attribute__((packed));
+        } SB_PACKED;
 
         static_assert(sizeof(SBGinEntryTreeInternal) <= 8192,
                       "Entry tree internal must fit in minimum page size (8KB)");
@@ -861,6 +868,11 @@ namespace scratchbird
             GinIndex(GinIndex &&) = delete;
             GinIndex &operator=(GinIndex &&) = delete;
         };
+
+#ifdef _MSC_VER
+    #pragma pack(pop)
+#endif
+#undef SB_PACKED
 
     } // namespace core
 } // namespace scratchbird

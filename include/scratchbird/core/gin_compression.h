@@ -12,6 +12,7 @@
 #include <cstdint>
 #include <cstddef>
 #include "scratchbird/core/tid.h"
+#include "scratchbird/core/types.h"
 
 namespace scratchbird
 {

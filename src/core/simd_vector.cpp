@@ -19,8 +19,58 @@
 #include "scratchbird/core/simd_vector.h"
 #include <algorithm>
 
-#if defined(__x86_64__) || defined(_M_X64)
-#include <cpuid.h>
+#if defined(_MSC_VER) && (defined(_M_X64) || defined(_M_IX86))
+    #include <intrin.h>
+static inline bool sb_get_cpuid(unsigned int leaf,
+                                unsigned int *eax,
+                                unsigned int *ebx,
+                                unsigned int *ecx,
+                                unsigned int *edx)
+{
+    int regs[4] = {0, 0, 0, 0};
+    __cpuid(regs, static_cast<int>(leaf));
+    *eax = static_cast<unsigned int>(regs[0]);
+    *ebx = static_cast<unsigned int>(regs[1]);
+    *ecx = static_cast<unsigned int>(regs[2]);
+    *edx = static_cast<unsigned int>(regs[3]);
+    return true;
+}
+
+static inline bool sb_get_cpuid_count(unsigned int leaf,
+                                      unsigned int subleaf,
+                                      unsigned int *eax,
+                                      unsigned int *ebx,
+                                      unsigned int *ecx,
+                                      unsigned int *edx)
+{
+    int regs[4] = {0, 0, 0, 0};
+    __cpuidex(regs, static_cast<int>(leaf), static_cast<int>(subleaf));
+    *eax = static_cast<unsigned int>(regs[0]);
+    *ebx = static_cast<unsigned int>(regs[1]);
+    *ecx = static_cast<unsigned int>(regs[2]);
+    *edx = static_cast<unsigned int>(regs[3]);
+    return true;
+}
+#elif defined(__x86_64__) || defined(_M_X64)
+    #include <cpuid.h>
+static inline bool sb_get_cpuid(unsigned int leaf,
+                                unsigned int *eax,
+                                unsigned int *ebx,
+                                unsigned int *ecx,
+                                unsigned int *edx)
+{
+    return __get_cpuid(leaf, eax, ebx, ecx, edx) != 0;
+}
+
+static inline bool sb_get_cpuid_count(unsigned int leaf,
+                                      unsigned int subleaf,
+                                      unsigned int *eax,
+                                      unsigned int *ebx,
+                                      unsigned int *ecx,
+                                      unsigned int *edx)
+{
+    return __get_cpuid_count(leaf, subleaf, eax, ebx, ecx, edx) != 0;
+}
 #endif
 
 namespace scratchbird::core {
@@ -36,7 +86,7 @@ SimdCapability detectSimdCapabilities() {
     unsigned int eax, ebx, ecx, edx;
 
     // Check for SSE4.1
-    if (__get_cpuid(1, &eax, &ebx, &ecx, &edx)) {
+    if (sb_get_cpuid(1, &eax, &ebx, &ecx, &edx)) {
         if (ecx & (1 << 19)) {  // SSE4.1
             result |= static_cast<uint32_t>(SimdCapability::SSE4);
         }
@@ -46,7 +96,7 @@ SimdCapability detectSimdCapabilities() {
     }
 
     // Check for AVX2 and AVX-512
-    if (__get_cpuid_count(7, 0, &eax, &ebx, &ecx, &edx)) {
+    if (sb_get_cpuid_count(7, 0, &eax, &ebx, &ecx, &edx)) {
         if (ebx & (1 << 5)) {  // AVX2
             result |= static_cast<uint32_t>(SimdCapability::AVX2);
         }

@@ -32,8 +32,19 @@
 #include <iomanip>
 
 // Network includes for IP address handling
-#include <arpa/inet.h>
-#include <netinet/in.h>
+#ifdef _WIN32
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+    #ifdef OPTIONAL
+        #undef OPTIONAL
+    #endif
+    #ifdef ERROR
+        #undef ERROR
+    #endif
+#else
+    #include <arpa/inet.h>
+    #include <netinet/in.h>
+#endif
 
 namespace scratchbird {
 namespace security {
@@ -308,7 +319,11 @@ static std::chrono::system_clock::time_point asnTimeToTimePoint(const ASN1_TIME*
         return {};
     }
 
+#ifdef _WIN32
+    time_t t = _mkgmtime(&tm);
+#else
     time_t t = timegm(&tm);
+#endif
     return std::chrono::system_clock::from_time_t(t);
 }
 

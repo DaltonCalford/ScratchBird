@@ -137,8 +137,8 @@ struct ConnectionInfo {
     std::string sni_hostname;       // SNI hostname
 
     // Unix socket info (if is_unix_socket)
-    uid_t peer_uid = 0;             // Peer UID
-    gid_t peer_gid = 0;             // Peer GID
+    uint32_t peer_uid = 0;          // Peer UID (platform-neutral)
+    uint32_t peer_gid = 0;          // Peer GID (platform-neutral)
     std::string peer_username;      // Peer username (from UID lookup)
 };
 

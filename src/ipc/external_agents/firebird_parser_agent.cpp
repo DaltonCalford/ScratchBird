@@ -23,7 +23,7 @@
 #include "scratchbird/ipc/firebird_parser_agent.h"
 #include <sys/socket.h>
 #include <netinet/in.h>
-#include <unistd.h>
+#include "scratchbird/core/posix_compat.h"
 #include <cstring>
 #include <sstream>
 
