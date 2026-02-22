@@ -2,9 +2,10 @@ name: Tests
 
 on:
   push:
-    branches: [ main, develop ]
+    branches: [ main, develop, ci/windows-native-evidence-20260222 ]
   pull_request:
     branches: [ main, develop ]
+  workflow_dispatch:
 
 env:
   CTEST_OUTPUT_ON_FAILURE: 1
@@ -89,3 +90,160 @@ jobs:
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo
       - name: Run Integration Tests
         run: bash tests/run_tests.sh integration
+
+  windows_native_evidence:
+    name: Windows Portable Suite + Benchmark Evidence
+    runs-on: windows-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup vcpkg
+        shell: pwsh
+        run: |
+          $vcpkgRoot = "$env:GITHUB_WORKSPACE\\vcpkg"
+          if (-not (Test-Path $vcpkgRoot)) {
+            git clone https://github.com/microsoft/vcpkg $vcpkgRoot
+          }
+          & "$vcpkgRoot\\bootstrap-vcpkg.bat"
+          "VCPKG_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Configure
+        shell: pwsh
+        run: cmake --preset windows-msvc-debug
+
+      - name: Build
+        shell: pwsh
+        run: cmake --build --preset windows-msvc-debug-build --config Debug --parallel
+
+      - name: Run Windows Portable Suite (XOS-058)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "artifacts/cross_os/p6s3w1" | Out-Null
+          $logPath = "artifacts/cross_os/p6s3w1/xos-058-windows-portable-suite.log"
+          ctest --preset windows-msvc-debug-test -L "smoke|unit|integration" -E "quarantine|UnixSocketTest\\.|TSAN_" -LE "linux_only|disabled|stress|performance|tsan" --output-on-failure 2>&1 | Tee-Object -FilePath $logPath
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+          $summary = @()
+          $summary += "# XOS-058 Windows Portable Suite"
+          $summary += "Last-Modified: $(Get-Date -Format yyyy-MM-dd)"
+          $summary += ""
+          $summary += "## Status"
+          $summary += "- PASS"
+          $summary += ""
+          $summary += "## Evidence"
+          $summary += "- artifacts/cross_os/p6s3w1/xos-058-windows-portable-suite.log"
+          Set-Content -Path "artifacts/cross_os/p6s3w1/xos-058-windows-portable-suite.md" -Value ($summary -join "`n") -Encoding UTF8
+
+      - name: Run Windows Benchmark Sample (XOS-061)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path "artifacts/cross_os/p6s3w2" | Out-Null
+
+          $candidateNames = @(
+            "BTreePageTest.Initialization",
+            "BTreePageTest.AddNode",
+            "ScramConfigTest.SHA256DefaultConfig",
+            "SQLStateTest.BasicStatusCodes",
+            "DomainManagerTest.Comprehensive",
+            "LexerV3Test.SimpleIdentifier"
+          )
+
+          $ctestList = ctest --preset windows-msvc-debug-test -N
+          $available = @{}
+          foreach ($line in $ctestList) {
+            if ($line -match "Test\\s+#\\d+:\\s+(.+)$") {
+              $available[$Matches[1].Trim()] = $true
+            }
+          }
+
+          $selected = New-Object System.Collections.Generic.List[string]
+          foreach ($name in $candidateNames) {
+            if ($available.ContainsKey($name)) {
+              $selected.Add($name)
+            }
+            if ($selected.Count -ge 4) {
+              break
+            }
+          }
+
+          if ($selected.Count -eq 0) {
+            foreach ($line in $ctestList) {
+              if ($line -match "Test\\s+#\\d+:\\s+(.+)$") {
+                $selected.Add($Matches[1].Trim())
+              }
+              if ($selected.Count -ge 4) {
+                break
+              }
+            }
+          }
+
+          if ($selected.Count -eq 0) {
+            throw "No tests discovered for benchmark sample"
+          }
+
+          $escaped = $selected | ForEach-Object { [regex]::Escape($_) }
+          $regex = ($escaped -join "|")
+
+          $runs = 9
+          $samples = New-Object System.Collections.Generic.List[int]
+          for ($i = 0; $i -lt $runs; $i++) {
+            $sw = [System.Diagnostics.Stopwatch]::StartNew()
+            ctest --preset windows-msvc-debug-test -R "$regex" --output-on-failure | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+              exit $LASTEXITCODE
+            }
+            $sw.Stop()
+            $samples.Add([int][Math]::Round($sw.Elapsed.TotalMilliseconds))
+          }
+
+          $sorted = $samples | Sort-Object
+          $median = [int]$sorted[[int][Math]::Floor($sorted.Count / 2)]
+          $mean = [double]::Parse((($samples | Measure-Object -Average).Average).ToString("F2"))
+
+          $payload = [ordered]@{
+            schema = "scratchbird.cross_os.benchmark.v1"
+            platform = "windows"
+            runs = $runs
+            selected_tests = @($selected)
+            test_regex = $regex
+            samples_ms = @($samples)
+            mean_ms = $mean
+            median_ms = $median
+          }
+
+          $json = $payload | ConvertTo-Json -Depth 8
+          Set-Content -Path "artifacts/cross_os/p6s3w2/xos-061-windows-benchmark.json" -Value $json -Encoding UTF8
+
+          $md = @()
+          $md += "# XOS-061 Windows Runtime Benchmark Baseline"
+          $md += "Last-Modified: $(Get-Date -Format yyyy-MM-dd)"
+          $md += ""
+          $md += "## Status"
+          $md += "- PASS"
+          $md += ""
+          $md += "## Selected Tests"
+          foreach ($name in $selected) { $md += "- $name" }
+          $md += ""
+          $md += "## Result"
+          $md += "- runs: $runs"
+          $md += "- median_ms: $median"
+          $md += "- mean_ms: $mean"
+          $md += ""
+          $md += "## Evidence"
+          $md += "- artifacts/cross_os/p6s3w2/xos-061-windows-benchmark.json"
+          Set-Content -Path "artifacts/cross_os/p6s3w2/xos-061-windows-benchmark.md" -Value ($md -join "`n") -Encoding UTF8
+
+      - name: Upload XOS-058/XOS-061 Evidence Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-native-evidence
+          path: |
+            artifacts/cross_os/p6s3w1/xos-058-windows-portable-suite.log
+            artifacts/cross_os/p6s3w1/xos-058-windows-portable-suite.md
+            artifacts/cross_os/p6s3w2/xos-061-windows-benchmark.json
+            artifacts/cross_os/p6s3w2/xos-061-windows-benchmark.md
+          if-no-files-found: error
