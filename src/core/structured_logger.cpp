@@ -25,6 +25,16 @@
 
 namespace scratchbird::core {
 
+namespace {
+bool utcTimeFromEpoch(time_t value, std::tm& tm_out) {
+#ifdef _WIN32
+    return gmtime_s(&tm_out, &value) == 0;
+#else
+    return gmtime_r(&value, &tm_out) != nullptr;
+#endif
+}
+} // namespace
+
 // ============================================================================
 // StructuredLogEntry Implementation
 // ============================================================================
@@ -119,8 +129,8 @@ std::string StructuredLogEntry::toJson() const {
     auto time_t = std::chrono::system_clock::to_time_t(timestamp_);
     auto us = std::chrono::duration_cast<std::chrono::microseconds>(
         timestamp_.time_since_epoch()).count() % 1000000;
-    std::tm tm_buf;
-    gmtime_r(&time_t, &tm_buf);
+    std::tm tm_buf{};
+    (void)utcTimeFromEpoch(time_t, tm_buf);
     ss << "\"timestamp\":\"" << std::put_time(&tm_buf, "%Y-%m-%dT%H:%M:%S")
        << "." << std::setw(6) << std::setfill('0') << us << "Z\"";
     first = false;
