@@ -7,8 +7,6 @@
     "openssl",
     "libxml2",
     "lz4",
-    "zstd",
-    "geos",
-    "proj"
+    "zstd"
   ]
 }
