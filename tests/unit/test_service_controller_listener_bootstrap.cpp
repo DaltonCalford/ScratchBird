@@ -69,6 +69,8 @@ private:
     std::string old_value_;
 };
 
+std::string readTextFile(const std::filesystem::path& path);
+
 bool waitForFile(const std::filesystem::path& path, std::chrono::milliseconds timeout) {
     const auto deadline = std::chrono::steady_clock::now() + timeout;
     while (std::chrono::steady_clock::now() < deadline) {
@@ -78,6 +80,40 @@ bool waitForFile(const std::filesystem::path& path, std::chrono::milliseconds ti
         std::this_thread::sleep_for(std::chrono::milliseconds(20));
     }
     return std::filesystem::exists(path);
+}
+
+bool waitForFileContains(const std::filesystem::path& path,
+                         const std::vector<std::string>& tokens,
+                         std::chrono::milliseconds timeout) {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (std::filesystem::exists(path)) {
+            const std::string contents = readTextFile(path);
+            bool all_present = true;
+            for (const std::string& token : tokens) {
+                if (contents.find(token) == std::string::npos) {
+                    all_present = false;
+                    break;
+                }
+            }
+            if (all_present) {
+                return true;
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+
+    if (!std::filesystem::exists(path)) {
+        return false;
+    }
+
+    const std::string contents = readTextFile(path);
+    for (const std::string& token : tokens) {
+        if (contents.find(token) == std::string::npos) {
+            return false;
+        }
+    }
+    return true;
 }
 
 uint16_t reserveEphemeralPort() {
@@ -464,7 +500,19 @@ TEST(ServiceControllerListenerBootstrapTest,
     ErrorContext ctx;
     ASSERT_EQ(controller.startListeners(&ctx), Status::OK) << ctx.message;
     ASSERT_EQ(controller.listeners_.size(), 4U);
-    ASSERT_TRUE(waitForFile(args_path, std::chrono::milliseconds(1000)));
+    ASSERT_TRUE(waitForFileContains(
+        args_path,
+        {
+            "__binary__:" + (temp_dir / "sb_listener_native").string(),
+            "__binary__:" + (temp_dir / "sb_listener_pg").string(),
+            "__binary__:" + (temp_dir / "sb_listener_mysql").string(),
+            "__binary__:" + (temp_dir / "sb_listener_fb").string(),
+            std::to_string(matrix_ports[0]),
+            std::to_string(matrix_ports[1]),
+            std::to_string(matrix_ports[2]),
+            std::to_string(matrix_ports[3]),
+        },
+        std::chrono::milliseconds(2000)));
 
     const std::string args = readTextFile(args_path);
     EXPECT_NE(args.find("__binary__:" + (temp_dir / "sb_listener_native").string()),

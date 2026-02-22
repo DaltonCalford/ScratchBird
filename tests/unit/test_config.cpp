@@ -19,6 +19,8 @@
 #include <cstdlib>
 #include <filesystem>
 #include <algorithm>
+#include <cctype>
+#include <unistd.h>
 
 using namespace scratchbird::core;
 
@@ -27,6 +29,11 @@ class ConfigTest : public ::testing::Test
 protected:
     void SetUp() override
     {
+        original_working_dir_ = std::filesystem::current_path();
+        test_working_dir_ = buildIsolatedWorkingDir();
+        std::filesystem::create_directories(test_working_dir_);
+        std::filesystem::current_path(test_working_dir_);
+
         // Clear singleton state before each test
         Config::getInstance().clear();
 
@@ -46,6 +53,12 @@ protected:
         unsetenv("SCRATCHBIRD_DATABASE_MAX_CONNECTIONS");
         unsetenv("SCRATCHBIRD_LOGGING_LOG_LEVEL");
         unsetenv("SCRATCHBIRD_MEMORY_BUFFER_POOL_SIZE");
+
+        std::filesystem::current_path(original_working_dir_);
+        if (!test_working_dir_.empty()) {
+            std::error_code remove_ec;
+            std::filesystem::remove_all(test_working_dir_, remove_ec);
+        }
     }
 
     void cleanupTestFiles()
@@ -61,6 +74,31 @@ protected:
         file << content;
         file.close();
     }
+
+private:
+    auto buildIsolatedWorkingDir() -> std::filesystem::path
+    {
+        std::string dir_name = "sb_config_test_" + std::to_string(static_cast<long long>(getpid()));
+        const ::testing::TestInfo* test_info = ::testing::UnitTest::GetInstance()->current_test_info();
+        if (test_info != nullptr) {
+            dir_name += "_";
+            dir_name += test_info->test_suite_name();
+            dir_name += "_";
+            dir_name += test_info->name();
+        }
+
+        for (char& ch : dir_name) {
+            unsigned char uch = static_cast<unsigned char>(ch);
+            if (!std::isalnum(uch) && ch != '_' && ch != '-') {
+                ch = '_';
+            }
+        }
+
+        return std::filesystem::temp_directory_path() / dir_name;
+    }
+
+    std::filesystem::path original_working_dir_;
+    std::filesystem::path test_working_dir_;
 };
 
 // Test 1: Basic INI File Parsing
