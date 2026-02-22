@@ -2,6 +2,9 @@ name: Windows Native Evidence
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - ci/windows-native-evidence-20260222
 
 env:
   CTEST_OUTPUT_ON_FAILURE: 1
