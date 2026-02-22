@@ -16,7 +16,7 @@ namespace scratchbird
     {
         namespace
         {
-            using U128 = unsigned __int128;
+            using U128 = uint128_t;
 
             inline U128 tidToU128(const TID &tid)
             {

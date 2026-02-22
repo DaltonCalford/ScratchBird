@@ -53,13 +53,13 @@ static inline size_t getDataTypeSize(DataType type)
     }
 }
 
-static inline unsigned __int128 linearizeTID(const TID &tid)
+static inline uint128_t linearizeTID(const TID &tid)
 {
-    return (static_cast<unsigned __int128>(tid.gpid) << 16) |
-           static_cast<unsigned __int128>(tid.slot);
+    return (static_cast<uint128_t>(tid.gpid) << 16) |
+           static_cast<uint128_t>(tid.slot);
 }
 
-static inline TID delinearizeTID(unsigned __int128 value)
+static inline TID delinearizeTID(uint128_t value)
 {
     GPID gpid = static_cast<GPID>(value >> 16);
     uint16_t slot = static_cast<uint16_t>(value & 0xFFFF);
@@ -449,7 +449,7 @@ Status ColumnstoreIndex::scan(const ID &column_uuid,
                 }
 
                 // Add to batch (TID is derived from segment range)
-                unsigned __int128 first_val = linearizeTID(segment.first_tid);
+                uint128_t first_val = linearizeTID(segment.first_tid);
                 TID tid = delinearizeTID(first_val + i);
                 batch_out->tids.push_back(tid);
 
@@ -991,9 +991,9 @@ Status ColumnstoreIndex::removeDeadEntries(const std::vector<TID> &dead_tids,
         if (!used_tid_map && segment_row_count > 0 && first_tid.isValid() && last_tid.isValid() &&
             !(last_tid < first_tid))
         {
-            unsigned __int128 first_val = linearizeTID(first_tid);
-            unsigned __int128 last_val = linearizeTID(last_tid);
-            unsigned __int128 expected_count = (last_val - first_val + 1);
+            uint128_t first_val = linearizeTID(first_tid);
+            uint128_t last_val = linearizeTID(last_tid);
+            uint128_t expected_count = (last_val - first_val + 1);
             if (expected_count == segment_row_count)
             {
                 uint64_t dead_count = 0;
@@ -2710,9 +2710,9 @@ Status ColumnstoreIndex::findSegment(const ID &column_uuid,
         TID last_tid = fromOnDiskTID(page->cs_last_tid);
         if (first_tid.isValid() && last_tid.isValid())
         {
-            unsigned __int128 tid_val = linearizeTID(tid);
-            unsigned __int128 first_val = linearizeTID(first_tid);
-            unsigned __int128 last_val = linearizeTID(last_tid);
+            uint128_t tid_val = linearizeTID(tid);
+            uint128_t first_val = linearizeTID(first_tid);
+            uint128_t last_val = linearizeTID(last_tid);
             if (tid_val >= first_val && tid_val <= last_val)
             {
                 // Found the segment!

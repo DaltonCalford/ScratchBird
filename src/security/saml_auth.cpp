@@ -681,7 +681,11 @@ std::string formatSamlTimestamp(std::chrono::system_clock::time_point time) {
         time.time_since_epoch()) % 1000;
 
     std::tm tm;
+#ifdef _WIN32
+    gmtime_s(&tm, &tt);
+#else
     gmtime_r(&tt, &tm);
+#endif
 
     std::ostringstream oss;
     oss << std::put_time(&tm, "%Y-%m-%dT%H:%M:%S")
@@ -701,7 +705,11 @@ bool parseSamlTimestamp(const std::string& timestamp,
         return false;
     }
 
+#ifdef _WIN32
+    time = std::chrono::system_clock::from_time_t(_mkgmtime(&tm));
+#else
     time = std::chrono::system_clock::from_time_t(timegm(&tm));
+#endif
 
     // Parse milliseconds if present
     if (iss.peek() == '.') {
