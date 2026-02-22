@@ -15,6 +15,7 @@
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/audit_logger.h"
 #include "scratchbird/core/job_scheduler_utils.h"
+#include "scratchbird/core/posix_compat.h"
 #include "scratchbird/core/telemetry.h"
 #include "scratchbird/sblr/executor.h"
 
@@ -26,14 +27,15 @@
 #include <cstdlib>
 #include <cctype>
 #include <system_error>
-#include <poll.h>
-#include <sys/resource.h>
-#include <sys/stat.h>
-#include <sys/types.h>
-#include <sys/wait.h>
-#include <unistd.h>
 #include <fcntl.h>
-#include <signal.h>
+#ifndef _WIN32
+    #include <poll.h>
+    #include <sys/resource.h>
+    #include <sys/stat.h>
+    #include <sys/types.h>
+    #include <sys/wait.h>
+    #include <signal.h>
+#endif
 
 namespace scratchbird::core {
 
@@ -289,6 +291,19 @@ ExternalRunResult runExternalCommand(const std::vector<std::string>& args,
         return result;
     }
 
+#ifdef _WIN32
+    (void)working_dir;
+    (void)env_entries;
+    (void)output_cap;
+    (void)timeout_seconds;
+    (void)kill_grace_ms;
+    (void)cpu_limit_seconds;
+    (void)memory_max_bytes;
+    (void)cancel_flag;
+    result.exit_code = 127;
+    result.output = "External command jobs are not supported on Windows";
+    return result;
+#else
     int pipefd[2];
     if (pipe(pipefd) != 0) {
         result.output = "Failed to create output pipe";
@@ -422,6 +437,7 @@ ExternalRunResult runExternalCommand(const std::vector<std::string>& args,
 
     close(pipefd[0]);
     return result;
+#endif
 }
 
 }  // namespace
