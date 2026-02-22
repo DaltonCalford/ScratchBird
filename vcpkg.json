@@ -9,6 +9,6 @@
     "lz4",
     "zstd",
     "geos",
-    "proj4"
+    "proj"
   ]
 }
