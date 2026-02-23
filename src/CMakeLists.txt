@@ -30,6 +30,12 @@ target_include_directories(scratchbird_core PUBLIC
     ${PROJECT_SOURCE_DIR}/include
 )
 
+if(MSVC)
+    # catalog_manager.cpp and other generated-heavy units can exceed the
+    # default COFF section limit on Windows builds.
+    target_compile_options(scratchbird_core PRIVATE /bigobj)
+endif()
+
 if(LZ4_FOUND)
     target_include_directories(scratchbird_core PUBLIC ${LZ4_INCLUDE_DIRS})
     target_link_libraries(scratchbird_core PUBLIC ${LZ4_LIBRARIES})
