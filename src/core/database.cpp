@@ -1588,7 +1588,7 @@ namespace scratchbird::core
         }
 
         // Create and open file with exclusive create
-        int fd = ::open(canonical_path.c_str(), O_RDWR | O_CREAT | O_EXCL, 0644);
+        int fd = sb_open(canonical_path.c_str(), O_RDWR | O_CREAT | O_EXCL, 0644);
         if (fd < 0)
         {
             SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to create database file");
@@ -1738,7 +1738,7 @@ namespace scratchbird::core
         close();
 
         // Open file
-        fd_ = ::open(canonical_path.c_str(), O_RDWR);
+        fd_ = sb_open(canonical_path.c_str(), O_RDWR);
         if (fd_ < 0)
         {
             SET_ERROR_CONTEXT(ctx, Status::FILE_NOT_FOUND, "Database file not found");
@@ -2255,7 +2255,7 @@ namespace scratchbird::core
         std::string cwd;
         try
         {
-            char *real_path_buf = realpath(path.c_str(), nullptr);
+            char *real_path_buf = sb_realpath(path.c_str(), nullptr);
             if (real_path_buf == nullptr)
             {
                 // If realpath fails, it might be because the file doesn't exist yet (for create).
@@ -2266,7 +2266,7 @@ namespace scratchbird::core
                 {
                     parent_path_str = ".";
                 }
-                char *real_parent_path_buf = realpath(parent_path_str.c_str(), nullptr);
+                char *real_parent_path_buf = sb_realpath(parent_path_str.c_str(), nullptr);
                 if (real_parent_path_buf == nullptr)
                 {
                     SET_ERROR_CONTEXT(ctx, Status::INVALID_PATH,

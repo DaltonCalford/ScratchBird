@@ -1069,7 +1069,7 @@ namespace scratchbird::core
         }
 
         // Step 3: Create .sbts file with exclusive create
-        int fd = ::open(path.c_str(), O_RDWR | O_CREAT | O_EXCL, 0644);
+        int fd = sb_open(path.c_str(), O_RDWR | O_CREAT | O_EXCL, 0644);
         if (fd < 0)
         {
             SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
@@ -1314,7 +1314,7 @@ namespace scratchbird::core
         }
 
         // Step 2: Open .sbts file
-        int fd = ::open(path.c_str(), O_RDWR);
+        int fd = sb_open(path.c_str(), O_RDWR);
         if (fd < 0)
         {
             SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,

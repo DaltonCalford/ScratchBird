@@ -16,6 +16,7 @@
     #include <direct.h>
     #include <fcntl.h>
     #include <io.h>
+    #include <stdlib.h>
     #include <sys/types.h>
     #include <sys/stat.h>
 
@@ -99,46 +100,55 @@ static inline auto sb_ftruncate(int fd, int64_t size) -> int
     return _chsize_s(fd, size) == 0 ? 0 : -1;
 }
 
-static inline auto open(const char* path, int flags) -> int
+static inline auto sb_open(const char* path, int flags) -> int
 {
     return _open(path, flags);
 }
 
-static inline auto open(const char* path, int flags, int mode) -> int
+static inline auto sb_open(const char* path, int flags, int mode) -> int
 {
     return _open(path, flags, mode);
 }
 
-static inline auto close(int fd) -> int
+static inline auto sb_close(int fd) -> int
 {
     return _close(fd);
 }
 
-static inline auto read(int fd, void* buffer, size_t count) -> ssize_t
+static inline auto sb_read(int fd, void* buffer, size_t count) -> ssize_t
 {
     const int bytes = _read(fd, buffer, static_cast<unsigned int>(count));
     return bytes < 0 ? static_cast<ssize_t>(-1) : static_cast<ssize_t>(bytes);
 }
 
-static inline auto write(int fd, const void* buffer, size_t count) -> ssize_t
+static inline auto sb_write(int fd, const void* buffer, size_t count) -> ssize_t
 {
     const int bytes = _write(fd, buffer, static_cast<unsigned int>(count));
     return bytes < 0 ? static_cast<ssize_t>(-1) : static_cast<ssize_t>(bytes);
 }
 
-static inline auto lseek(int fd, std::int64_t offset, int origin) -> std::int64_t
+static inline auto sb_lseek(int fd, std::int64_t offset, int origin) -> std::int64_t
 {
     return _lseeki64(fd, offset, origin);
 }
 
-static inline auto mkdir(const char* path, int) -> int
+static inline auto sb_mkdir(const char* path, int) -> int
 {
     return _mkdir(path);
 }
 
-static inline auto access(const char* path, int mode) -> int
+static inline auto sb_access(const char* path, int mode) -> int
 {
     return _access(path, mode);
+}
+
+static inline auto sb_realpath(const char* path, char* resolved_path) -> char*
+{
+    if (resolved_path == nullptr)
+    {
+        return _fullpath(nullptr, path, _MAX_PATH);
+    }
+    return _fullpath(resolved_path, path, _MAX_PATH);
 }
 
     #define pread sb_pread
@@ -147,5 +157,52 @@ static inline auto access(const char* path, int mode) -> int
     #define ftruncate sb_ftruncate
 
 #else
+    #include <fcntl.h>
+    #include <sys/stat.h>
     #include <unistd.h>
+
+static inline auto sb_open(const char* path, int flags) -> int
+{
+    return ::open(path, flags);
+}
+
+static inline auto sb_open(const char* path, int flags, int mode) -> int
+{
+    return ::open(path, flags, mode);
+}
+
+static inline auto sb_close(int fd) -> int
+{
+    return ::close(fd);
+}
+
+static inline auto sb_read(int fd, void* buffer, size_t count) -> ssize_t
+{
+    return ::read(fd, buffer, count);
+}
+
+static inline auto sb_write(int fd, const void* buffer, size_t count) -> ssize_t
+{
+    return ::write(fd, buffer, count);
+}
+
+static inline auto sb_lseek(int fd, std::int64_t offset, int origin) -> std::int64_t
+{
+    return ::lseek(fd, offset, origin);
+}
+
+static inline auto sb_mkdir(const char* path, int mode) -> int
+{
+    return ::mkdir(path, static_cast<mode_t>(mode));
+}
+
+static inline auto sb_access(const char* path, int mode) -> int
+{
+    return ::access(path, mode);
+}
+
+static inline auto sb_realpath(const char* path, char* resolved_path) -> char*
+{
+    return ::realpath(path, resolved_path);
+}
 #endif

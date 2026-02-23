@@ -58,6 +58,15 @@
     #pragma comment(lib, "ws2_32.lib")
     #include <winsock2.h>
     #include <ws2tcpip.h>
+    #ifdef ERROR
+        #undef ERROR
+    #endif
+    #ifdef DELETE
+        #undef DELETE
+    #endif
+    #ifdef ABSOLUTE
+        #undef ABSOLUTE
+    #endif
 #else
     #include <arpa/inet.h> // EN-017: CIDR and IP scope matching
 #endif
@@ -25002,7 +25011,7 @@ bool hasTriggerNameConflictInTable(
 
         // ===== STEP 1: Validate file path exists and is readable =====
 
-        int fd = ::open(file_path.c_str(), O_RDWR);
+        int fd = sb_open(file_path.c_str(), O_RDWR);
         if (fd < 0)
         {
             SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
