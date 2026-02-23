@@ -55,6 +55,21 @@
 #ifdef DELETE
 #undef DELETE
 #endif
+#ifdef CONNECT
+#undef CONNECT
+#endif
+#ifdef DISCONNECT
+#undef DISCONNECT
+#endif
+#ifdef TRANSACTION_START
+#undef TRANSACTION_START
+#endif
+#ifdef TRANSACTION_COMMIT
+#undef TRANSACTION_COMMIT
+#endif
+#ifdef TRANSACTION_ROLLBACK
+#undef TRANSACTION_ROLLBACK
+#endif
 #endif
 
 namespace scratchbird::parser::v3 {
