@@ -15,7 +15,11 @@
 #include <cstring>
 #include <chrono>
 
-#if defined(__linux__) || defined(__APPLE__)
+#ifdef _WIN32
+#include <winsock2.h>
+#include <ws2tcpip.h>
+#include "scratchbird/core/posix_compat.h"
+#else
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <netinet/in.h>
@@ -24,6 +28,20 @@
 #include <fcntl.h>
 #include <errno.h>
 #include <poll.h>
+#endif
+
+#ifdef _WIN32
+#ifndef MSG_WAITALL
+#define MSG_WAITALL 0
+#endif
+#define SB_SOCKET_RECV_BUF(buf) reinterpret_cast<char*>(buf)
+#define SB_SOCKET_SEND_BUF(buf) reinterpret_cast<const char*>(buf)
+#define recv(fd, buf, len, flags) ::recv((fd), SB_SOCKET_RECV_BUF(buf), static_cast<int>(len), (flags))
+#define send(fd, buf, len, flags) ::send((fd), SB_SOCKET_SEND_BUF(buf), static_cast<int>(len), (flags))
+#define setsockopt(fd, level, optname, optval, optlen) \
+    ::setsockopt((fd), (level), (optname), SB_SOCKET_SEND_BUF(optval), static_cast<int>(optlen))
+#define getsockopt(fd, level, optname, optval, optlen) \
+    ::getsockopt((fd), (level), (optname), SB_SOCKET_RECV_BUF(optval), (optlen))
 #endif
 
 namespace scratchbird {

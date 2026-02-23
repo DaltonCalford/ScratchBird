@@ -21,6 +21,7 @@
 #include "scratchbird/network/socket.h"
 #include "scratchbird/network/event_loop.h"
 #include "scratchbird/network/thread_pool.h"
+#include "scratchbird/core/posix_compat.h"
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"
 
