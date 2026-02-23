@@ -974,9 +974,11 @@ private:
                 } else {
                     markWorkerFault(worker, "error");
                 }
+#ifndef _WIN32
                 int exit_status = 0;
                 pid_t exited = waitpid(worker->worker_pid, &exit_status, WNOHANG);
                 (void)exited;
+#endif
                 break;
             }
             auto type = static_cast<scratchbird::network::ControlPlaneMessageType>(

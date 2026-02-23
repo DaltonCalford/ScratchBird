@@ -50,6 +50,15 @@
 #ifdef DELETE
 #undef DELETE
 #endif
+#ifdef PASS
+#undef PASS
+#endif
+#ifdef FAIL
+#undef FAIL
+#endif
+#ifdef NO_DATA
+#undef NO_DATA
+#endif
 #endif
 
 namespace scratchbird::core

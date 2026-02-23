@@ -44,6 +44,9 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path "artifacts/cross_os/p6s3w1" | Out-Null
           $logPath = "artifacts/cross_os/p6s3w1/xos-058-windows-portable-suite.log"
+          $vcpkgBin = (Resolve-Path "build/windows-msvc/vcpkg_installed/x64-windows/bin").Path
+          $vcpkgDebugBin = (Resolve-Path "build/windows-msvc/vcpkg_installed/x64-windows/debug/bin").Path
+          $env:PATH = "$vcpkgBin;$vcpkgDebugBin;$env:PATH"
           ctest --test-dir build/windows-msvc -C Debug -L "smoke|unit|integration" -E "quarantine|UnixSocketTest\\.|TSAN_" -LE "linux_only|disabled|stress|performance|tsan" --output-on-failure 2>&1 | Tee-Object -FilePath $logPath
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
@@ -63,51 +66,28 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path "artifacts/cross_os/p6s3w2" | Out-Null
+          $vcpkgBin = (Resolve-Path "build/windows-msvc/vcpkg_installed/x64-windows/bin").Path
+          $vcpkgDebugBin = (Resolve-Path "build/windows-msvc/vcpkg_installed/x64-windows/debug/bin").Path
+          $env:PATH = "$vcpkgBin;$vcpkgDebugBin;$env:PATH"
 
-          $candidateNames = @(
+          # Keep the benchmark sample stable and independent from PRE_TEST
+          # gtest discovery behavior (ctest -N returns no tests in that mode).
+          $selected = @(
             "BTreePageTest.Initialization",
             "BTreePageTest.AddNode",
             "ScramConfigTest.SHA256DefaultConfig",
             "SQLStateTest.BasicStatusCodes",
-            "DomainManagerTest.Comprehensive",
             "LexerV3Test.SimpleIdentifier"
           )
 
-          $ctestList = ctest --test-dir build/windows-msvc -C Debug -N
-          $available = @{}
-          foreach ($line in $ctestList) {
-            if ($line -match "Test\\s+#\\d+:\\s+(.+)$") {
-              $available[$Matches[1].Trim()] = $true
-            }
-          }
-
-          $selected = New-Object System.Collections.Generic.List[string]
-          foreach ($name in $candidateNames) {
-            if ($available.ContainsKey($name)) {
-              $selected.Add($name)
-            }
-            if ($selected.Count -ge 4) {
-              break
-            }
-          }
-
-          if ($selected.Count -eq 0) {
-            foreach ($line in $ctestList) {
-              if ($line -match "Test\\s+#\\d+:\\s+(.+)$") {
-                $selected.Add($Matches[1].Trim())
-              }
-              if ($selected.Count -ge 4) {
-                break
-              }
-            }
-          }
-
-          if ($selected.Count -eq 0) {
-            throw "No tests discovered for benchmark sample"
-          }
-
           $escaped = $selected | ForEach-Object { [regex]::Escape($_) }
           $regex = ($escaped -join "|")
+
+          # Validate selected tests once before timing loop.
+          ctest --test-dir build/windows-msvc -C Debug -R "$regex" --output-on-failure | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            throw "XOS-061 sample selection failed"
+          }
 
           $runs = 9
           $samples = New-Object System.Collections.Generic.List[int]

@@ -22,6 +22,25 @@
 
 using ssize_t = SSIZE_T;
 
+    // MSVC does not expose several POSIX scalar types used by shared headers.
+    // Provide fallback aliases when the corresponding CRT typedef macros are absent.
+    #if !defined(_MODE_T_DEFINED) && !defined(_MODE_T_) && !defined(__mode_t_defined)
+using mode_t = unsigned short;
+    #define _MODE_T_DEFINED
+    #endif
+    #if !defined(_PID_T_DEFINED) && !defined(_PID_T_) && !defined(__pid_t_defined)
+using pid_t = int;
+    #define _PID_T_DEFINED
+    #endif
+    #if !defined(_UID_T_DEFINED) && !defined(_UID_T_) && !defined(__uid_t_defined)
+using uid_t = unsigned int;
+    #define _UID_T_DEFINED
+    #endif
+    #if !defined(_GID_T_DEFINED) && !defined(_GID_T_) && !defined(__gid_t_defined)
+using gid_t = unsigned int;
+    #define _GID_T_DEFINED
+    #endif
+
     // Windows headers and CRT compatibility headers may define these as macros,
     // which breaks member function names like Database::open/close/read/write.
     #ifdef open

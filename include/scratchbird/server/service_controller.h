@@ -38,6 +38,7 @@
 #include <sys/types.h>
 #endif
 
+#include "scratchbird/core/posix_compat.h"
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/database.h"
@@ -47,6 +48,12 @@
 #include "scratchbird/server/config_parser.h"
 #include "scratchbird/server/daemon.h"
 #include "scratchbird/network/socket_types.h"
+
+#ifdef _WIN32
+#ifdef ERROR
+#undef ERROR
+#endif
+#endif
 
 namespace scratchbird {
 namespace server {
