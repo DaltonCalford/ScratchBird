@@ -16,10 +16,10 @@
     #include <direct.h>
     #include <fcntl.h>
     #include <io.h>
+    #include <sys/types.h>
     #include <sys/stat.h>
 
 using ssize_t = SSIZE_T;
-using off_t = int64_t;
 
     #ifndef O_BINARY
         #define O_BINARY 0
@@ -33,7 +33,7 @@ using off_t = int64_t;
         #define S_ISREG(mode) (((mode) & _S_IFMT) == _S_IFREG)
     #endif
 
-static inline auto sb_pread(int fd, void* buffer, size_t count, off_t offset) -> ssize_t
+static inline auto sb_pread(int fd, void* buffer, size_t count, std::int64_t offset) -> ssize_t
 {
     const auto current = _lseeki64(fd, 0, SEEK_CUR);
     if (current < 0)
@@ -49,7 +49,7 @@ static inline auto sb_pread(int fd, void* buffer, size_t count, off_t offset) ->
     return bytes < 0 ? static_cast<ssize_t>(-1) : static_cast<ssize_t>(bytes);
 }
 
-static inline auto sb_pwrite(int fd, const void* buffer, size_t count, off_t offset) -> ssize_t
+static inline auto sb_pwrite(int fd, const void* buffer, size_t count, std::int64_t offset) -> ssize_t
 {
     const auto current = _lseeki64(fd, 0, SEEK_CUR);
     if (current < 0)
