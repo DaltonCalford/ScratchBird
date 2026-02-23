@@ -21,10 +21,15 @@
 
 #include "scratchbird/fdw/mysql_adapter.h"
 
-#include <arpa/inet.h>
-#include <netdb.h>
-#include <netinet/tcp.h>
-#include <sys/socket.h>
+#ifdef _WIN32
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+#else
+    #include <arpa/inet.h>
+    #include <netdb.h>
+    #include <netinet/tcp.h>
+    #include <sys/socket.h>
+#endif
 #include "scratchbird/core/posix_compat.h"
 
 #include <algorithm>

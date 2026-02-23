@@ -33,6 +33,14 @@
 #include <chrono>
 #include <string>
 
+#ifdef _WIN32
+#ifdef ERROR
+#pragma push_macro("ERROR")
+#undef ERROR
+#define SCRATCHBIRD_RESTORE_CONN_HANDLER_ERROR_MACRO
+#endif
+#endif
+
 namespace scratchbird {
 namespace network {
 
@@ -99,7 +107,7 @@ enum class ConnectionEventType : uint8_t {
     AUTHENTICATED = 3,      // Authentication completed
     QUERY_STARTED = 4,      // Query execution started
     QUERY_COMPLETED = 5,    // Query execution completed
-    ERROR = 6,              // Error occurred
+    ERROR_EVENT = 6,        // Error occurred
     TIMEOUT = 7,            // Timeout occurred
     CLOSING = 8,            // Connection closing
     DISCONNECTED = 9        // Connection disconnected
@@ -555,3 +563,8 @@ public:
 
 } // namespace network
 } // namespace scratchbird
+
+#ifdef SCRATCHBIRD_RESTORE_CONN_HANDLER_ERROR_MACRO
+#pragma pop_macro("ERROR")
+#undef SCRATCHBIRD_RESTORE_CONN_HANDLER_ERROR_MACRO
+#endif

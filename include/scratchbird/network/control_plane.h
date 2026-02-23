@@ -31,6 +31,14 @@
 #include "scratchbird/network/socket.h"
 #include "scratchbird/network/socket_types.h"
 
+#ifdef _WIN32
+#ifdef ERROR
+#pragma push_macro("ERROR")
+#undef ERROR
+#define SCRATCHBIRD_RESTORE_CONTROL_PLANE_ERROR_MACRO
+#endif
+#endif
+
 namespace scratchbird::network {
 
 constexpr uint32_t CONTROL_PLANE_MAGIC = 0x54434253; // "SBCT" little-endian
@@ -66,7 +74,7 @@ enum class ControlPlaneMessageType : uint16_t {
     SHUTDOWN = 0x0051,
     MANAGEMENT_COMMAND = 0x0060,
     MANAGEMENT_RESPONSE = 0x0061,
-    ERROR = 0x00FF
+    ERROR_MESSAGE = 0x00FF
 };
 
 struct ControlPlaneHeader {
@@ -277,3 +285,8 @@ private:
 };
 
 }  // namespace scratchbird::network
+
+#ifdef SCRATCHBIRD_RESTORE_CONTROL_PLANE_ERROR_MACRO
+#pragma pop_macro("ERROR")
+#undef SCRATCHBIRD_RESTORE_CONTROL_PLANE_ERROR_MACRO
+#endif

@@ -178,7 +178,7 @@ enum class EventType : uint32_t {
     NONE = 0x00,
     READ = 0x01,        // Socket ready for read
     WRITE = 0x02,       // Socket ready for write
-    ERROR = 0x04,       // Socket error
+    ERROR_EVENT = 0x04, // Socket error
     HANGUP = 0x08,      // Connection closed
     TIMEOUT = 0x10,     // Operation timeout
     ACCEPT = 0x20       // New connection available
