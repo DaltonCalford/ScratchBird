@@ -47,6 +47,14 @@
     constexpr int SOCKET_ERROR_VALUE = -1;
 #endif
 
+#ifdef _WIN32
+#ifdef ERROR
+#pragma push_macro("ERROR")
+#undef ERROR
+#define SCRATCHBIRD_RESTORE_ERROR_MACRO
+#endif
+#endif
+
 namespace scratchbird {
 namespace network {
 
@@ -462,3 +470,8 @@ std::string getSocketErrorString(int error_code);
 
 } // namespace network
 } // namespace scratchbird
+
+#ifdef SCRATCHBIRD_RESTORE_ERROR_MACRO
+#pragma pop_macro("ERROR")
+#undef SCRATCHBIRD_RESTORE_ERROR_MACRO
+#endif
