@@ -610,7 +610,7 @@ namespace scratchbird
             // Security components (Phase 3.2.3)
             std::unique_ptr<PermissionCache> permission_cache_; // Permission cache (owned)
             ConnectionContext::RoleSwitchPolicy role_switch_policy_ =
-                ConnectionContext::RoleSwitchPolicy::ERROR;
+                ConnectionContext::RoleSwitchPolicy::REJECT;
 
             // Dormant connection registry (reattach support)
             struct DormantContextEntry

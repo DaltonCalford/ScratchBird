@@ -257,7 +257,7 @@ Status runNativeConnectAuthQueryFlow(Socket& socket) {
         return status == Status::OK ? Status::INVALID_ARGUMENT : status;
     }
 
-    AuthStatus auth_status = AuthStatus::ERROR;
+    AuthStatus auth_status = AuthStatus::FAILURE;
     uint32_t user_id = 0;
     std::string auth_error;
     std::vector<uint8_t> auth_data;
@@ -291,7 +291,7 @@ void runMcpAuthHandshake(Socket& manager_socket,
     Message response;
     ASSERT_EQ(receiveWireMessage(manager_socket, response, &ctx), Status::OK) << ctx.message;
     ASSERT_EQ(response.getType(), MessageType::AUTH_RESPONSE);
-    AuthStatus auth_status = AuthStatus::ERROR;
+    AuthStatus auth_status = AuthStatus::FAILURE;
     uint32_t user_id = 0;
     std::string error_message;
     std::vector<uint8_t> auth_data;

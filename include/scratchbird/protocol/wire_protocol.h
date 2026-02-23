@@ -79,7 +79,7 @@ enum class AuthMethod : uint8_t {
 
 enum class AuthStatus : uint8_t {
     OK        = 0,
-    ERROR     = 1,
+    FAILURE   = 1,
     CONTINUE  = 2
 };
 

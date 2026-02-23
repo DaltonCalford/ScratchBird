@@ -49683,7 +49683,7 @@ namespace scratchbird
                                     conn_ctx_->setAutocommitSuspended(false);
                                     break;
                                 }
-                                case core::ConnectionContext::RoleSwitchPolicy::ERROR:
+                                case core::ConnectionContext::RoleSwitchPolicy::REJECT:
                                     return ExecutionResult("SET ROLE requires COMMIT or ROLLBACK before switching roles");
                                 case core::ConnectionContext::RoleSwitchPolicy::DEFER:
                                 default:
@@ -67266,7 +67266,7 @@ namespace scratchbird
                         conn_ctx_->setAutocommitSuspended(false);
                         break;
                     }
-                    case core::ConnectionContext::RoleSwitchPolicy::ERROR:
+                    case core::ConnectionContext::RoleSwitchPolicy::REJECT:
                         error("SET ROLE requires COMMIT or ROLLBACK before switching roles");
                         break;
                     case core::ConnectionContext::RoleSwitchPolicy::DEFER:

@@ -1742,8 +1742,9 @@ target_link_libraries(test_postgresql_parser
 # Use gtest_discover_tests for proper test enumeration (like other parser tests)
 gtest_discover_tests(test_postgresql_parser
     TEST_PREFIX "PostgreSQL."
-    PROPERTIES LABELS "unit;parser;postgresql;emulation"
-    PROPERTIES TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
+    PROPERTIES
+        LABELS "unit;parser;postgresql;emulation"
+        TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # ============================================================================

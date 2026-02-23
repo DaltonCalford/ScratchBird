@@ -194,7 +194,7 @@ struct ServiceConfig {
     // Security
     core::SecurityQuorumConfig security_quorum;
     core::ConnectionContext::RoleSwitchPolicy role_switch_policy =
-        core::ConnectionContext::RoleSwitchPolicy::ERROR;
+        core::ConnectionContext::RoleSwitchPolicy::REJECT;
 
     // Behavior
     bool foreground = false;        // Run in foreground (don't daemonize)

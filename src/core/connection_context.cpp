@@ -504,7 +504,7 @@ namespace scratchbird::core
         other.statement_io_active_ = false;
         other.statement_id_ = 0;
         other.pending_table_deltas_.clear();
-        other.role_switch_policy_ = RoleSwitchPolicy::ERROR;
+        other.role_switch_policy_ = RoleSwitchPolicy::REJECT;
     }
 
     ConnectionContext &ConnectionContext::operator=(ConnectionContext &&other) noexcept
@@ -665,7 +665,7 @@ namespace scratchbird::core
             other.statement_io_active_ = false;
             other.statement_id_ = 0;
             other.pending_table_deltas_.clear();
-            other.role_switch_policy_ = RoleSwitchPolicy::ERROR;
+            other.role_switch_policy_ = RoleSwitchPolicy::REJECT;
         }
         return *this;
     }

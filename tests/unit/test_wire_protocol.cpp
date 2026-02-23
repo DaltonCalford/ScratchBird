@@ -477,7 +477,7 @@ TEST_F(ProtocolCodecTest, AuthResponseContinueRoundTripWithPayload) {
         AuthStatus::CONTINUE, 0, "", payload);
     EXPECT_EQ(msg.getType(), MessageType::AUTH_RESPONSE);
 
-    AuthStatus status = AuthStatus::ERROR;
+    AuthStatus status = AuthStatus::FAILURE;
     uint32_t user_id = 0;
     std::string error_message;
     std::vector<uint8_t> parsed_payload;

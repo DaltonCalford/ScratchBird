@@ -1761,7 +1761,7 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
     auto send_auth_policy_error = [&](const char* code) -> core::Status {
         log_auth_policy_decision(false, code);
         protocol::Message response = protocol::ProtocolCodec::buildAuthResponse(
-            protocol::AuthStatus::ERROR, 0, code ? code : kAuthPolicyMethodDeniedCode);
+            protocol::AuthStatus::FAILURE, 0, code ? code : kAuthPolicyMethodDeniedCode);
         protocol_session_->sendMessage(response, ctx);
         return core::Status::INVALID_AUTHORIZATION;
     };
@@ -1897,7 +1897,7 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
                               mfa_config,
                               mfa_policy_error)) {
             protocol::Message response = protocol::ProtocolCodec::buildAuthResponse(
-                protocol::AuthStatus::ERROR, 0, kAuthMfaInvalidCode);
+                protocol::AuthStatus::FAILURE, 0, kAuthMfaInvalidCode);
             protocol_session_->sendMessage(response, ctx);
             return core::Status::INVALID_AUTHORIZATION;
         }
@@ -1916,7 +1916,7 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
                                                enrollment,
                                                enrollment_error)) {
             protocol::Message response = protocol::ProtocolCodec::buildAuthResponse(
-                protocol::AuthStatus::ERROR, 0, kAuthMfaRequiredCode);
+                protocol::AuthStatus::FAILURE, 0, kAuthMfaRequiredCode);
             protocol_session_->sendMessage(response, ctx);
             return core::Status::INVALID_AUTHORIZATION;
         }
@@ -2024,7 +2024,7 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
             auth_method != pending_mfa_auth_.auth_method) {
             clear_pending_mfa();
             protocol::Message response = protocol::ProtocolCodec::buildAuthResponse(
-                protocol::AuthStatus::ERROR, 0, kAuthMfaInvalidCode);
+                protocol::AuthStatus::FAILURE, 0, kAuthMfaInvalidCode);
             protocol_session_->sendMessage(response, ctx);
             return core::Status::INVALID_AUTHORIZATION;
         }
@@ -2035,7 +2035,7 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
             challenge_id != pending_mfa_auth_.challenge_id) {
             clear_pending_mfa();
             protocol::Message response = protocol::ProtocolCodec::buildAuthResponse(
-                protocol::AuthStatus::ERROR, 0, kAuthMfaInvalidCode);
+                protocol::AuthStatus::FAILURE, 0, kAuthMfaInvalidCode);
             protocol_session_->sendMessage(response, ctx);
             return core::Status::INVALID_AUTHORIZATION;
         }
@@ -2057,7 +2057,7 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
                                   verify_error)) {
             clear_pending_mfa();
             protocol::Message response = protocol::ProtocolCodec::buildAuthResponse(
-                protocol::AuthStatus::ERROR, 0, kAuthMfaInvalidCode);
+                protocol::AuthStatus::FAILURE, 0, kAuthMfaInvalidCode);
             protocol_session_->sendMessage(response, ctx);
             return core::Status::INVALID_AUTHORIZATION;
         }
@@ -2092,7 +2092,7 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
         if (pending_mfa_auth_.attempts >= pending_mfa_auth_.max_attempts) {
             clear_pending_mfa();
             protocol::Message response = protocol::ProtocolCodec::buildAuthResponse(
-                protocol::AuthStatus::ERROR, 0, kAuthMfaInvalidCode);
+                protocol::AuthStatus::FAILURE, 0, kAuthMfaInvalidCode);
             protocol_session_->sendMessage(response, ctx);
             return core::Status::INVALID_AUTHORIZATION;
         }
@@ -2255,7 +2255,7 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
     stats_.queries_failed++;
 
     protocol::Message response = protocol::ProtocolCodec::buildAuthResponse(
-        protocol::AuthStatus::ERROR, 0, "Authentication failed");
+        protocol::AuthStatus::FAILURE, 0, "Authentication failed");
     protocol_session_->sendMessage(response, ctx);
     return core::Status::INVALID_PASSWORD;
 }
