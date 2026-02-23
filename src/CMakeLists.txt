@@ -531,6 +531,11 @@ endif()
 find_package(Threads REQUIRED)
 target_link_libraries(scratchbird_fdw PUBLIC Threads::Threads scratchbird_core)
 
+# FDW adapters use native socket APIs directly on Windows.
+if(WIN32)
+    target_link_libraries(scratchbird_fdw PUBLIC ws2_32)
+endif()
+
 set_target_properties(scratchbird_fdw PROPERTIES
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED YES
@@ -567,6 +572,9 @@ target_include_directories(scratchbird_udr PUBLIC
 # Thread support for connection pool
 find_package(Threads REQUIRED)
 target_link_libraries(scratchbird_udr PUBLIC Threads::Threads scratchbird_core)
+if(WIN32)
+    target_link_libraries(scratchbird_udr PUBLIC ws2_32)
+endif()
 
 set_target_properties(scratchbird_udr PROPERTIES
     CXX_STANDARD 17
@@ -587,6 +595,10 @@ file(GLOB SCRATCHBIRD_IPC_SOURCES CONFIGURE_DEPENDS
     ipc/*.cpp
     ipc/external_agents/*.cpp
 )
+if(WIN32)
+    # unix_socket_channel.cpp is POSIX-only; use the Windows stub implementation.
+    list(FILTER SCRATCHBIRD_IPC_SOURCES EXCLUDE REGEX ".*/unix_socket_channel\\.cpp$")
+endif()
 
 add_library(scratchbird_ipc STATIC
     ${SCRATCHBIRD_IPC_SOURCES}

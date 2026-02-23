@@ -500,7 +500,7 @@ void ServiceConfig::loadFromParser(const ConfigParser& parser) {
         } else if (role_action == "defer") {
             role_switch_policy = core::ConnectionContext::RoleSwitchPolicy::DEFER;
         } else {
-            role_switch_policy = core::ConnectionContext::RoleSwitchPolicy::ERROR;
+            role_switch_policy = core::ConnectionContext::RoleSwitchPolicy::REJECT;
         }
     }
 

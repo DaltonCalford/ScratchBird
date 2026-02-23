@@ -41,6 +41,15 @@
 #include <string>
 #include <string_view>
 
+#if defined(_WIN32)
+#ifdef ABSOLUTE
+#undef ABSOLUTE
+#endif
+#ifdef RELATIVE
+#undef RELATIVE
+#endif
+#endif
+
 namespace scratchbird::parser::v3 {
 
 // Forward declarations

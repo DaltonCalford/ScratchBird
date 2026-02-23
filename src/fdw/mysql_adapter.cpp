@@ -31,6 +31,7 @@
     #include <sys/socket.h>
 #endif
 #include "scratchbird/core/posix_compat.h"
+#include "scratchbird/core/socket_call_compat.h"
 
 #include <algorithm>
 #include <cstring>
@@ -40,19 +41,6 @@
 // For SHA1
 #include <openssl/sha.h>
 
-#ifdef _WIN32
-#ifndef MSG_WAITALL
-#define MSG_WAITALL 0
-#endif
-#define SB_SOCKET_RECV_BUF(buf) reinterpret_cast<char*>(buf)
-#define SB_SOCKET_SEND_BUF(buf) reinterpret_cast<const char*>(buf)
-#define recv(fd, buf, len, flags) ::recv((fd), SB_SOCKET_RECV_BUF(buf), static_cast<int>(len), (flags))
-#define send(fd, buf, len, flags) ::send((fd), SB_SOCKET_SEND_BUF(buf), static_cast<int>(len), (flags))
-#define setsockopt(fd, level, optname, optval, optlen) \
-    ::setsockopt((fd), (level), (optname), SB_SOCKET_SEND_BUF(optval), static_cast<int>(optlen))
-#define getsockopt(fd, level, optname, optval, optlen) \
-    ::getsockopt((fd), (level), (optname), SB_SOCKET_RECV_BUF(optval), (optlen))
-#endif
 
 namespace scratchbird {
 namespace fdw {
@@ -186,14 +174,14 @@ Result<void> MySQLAdapter::connect(const ServerDefinition& server,
 
     // Set TCP_NODELAY
     int flag = 1;
-    setsockopt(impl_->socket_fd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
+    sb_socket_setsockopt(impl_->socket_fd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
 
     // Set timeout
     struct timeval timeout;
     timeout.tv_sec = server.connection_timeout_ms / 1000;
     timeout.tv_usec = (server.connection_timeout_ms % 1000) * 1000;
-    setsockopt(impl_->socket_fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
-    setsockopt(impl_->socket_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    sb_socket_setsockopt(impl_->socket_fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+    sb_socket_setsockopt(impl_->socket_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
 
     // Connect
     if (::connect(impl_->socket_fd, result->ai_addr, result->ai_addrlen) < 0) {
@@ -1104,7 +1092,7 @@ Result<RemoteQueryResult> MySQLAdapter::readQueryResult() {
 Result<std::vector<uint8_t>> MySQLAdapter::readPacket() {
     // Read 4-byte header
     uint8_t header[4];
-    ssize_t received = recv(impl_->socket_fd, header, 4, MSG_WAITALL);
+    ssize_t received = sb_socket_recv(impl_->socket_fd, header, 4, MSG_WAITALL);
     if (received != 4) {
         return makeError<std::vector<uint8_t>>(core::Status::IO_ERROR,
                                                 "Failed to read packet header");
@@ -1122,7 +1110,7 @@ Result<std::vector<uint8_t>> MySQLAdapter::readPacket() {
     // Read payload
     std::vector<uint8_t> data(length);
     if (length > 0) {
-        received = recv(impl_->socket_fd, data.data(), length, MSG_WAITALL);
+        received = sb_socket_recv(impl_->socket_fd, data.data(), length, MSG_WAITALL);
         if (received != static_cast<ssize_t>(length)) {
             return makeError<std::vector<uint8_t>>(core::Status::IO_ERROR,
                                                     "Failed to read packet payload");
@@ -1149,7 +1137,7 @@ Result<void> MySQLAdapter::writePacket(const std::vector<uint8_t>& data) {
     // Payload
     packet.insert(packet.end(), data.begin(), data.end());
 
-    ssize_t sent = send(impl_->socket_fd, packet.data(), packet.size(), 0);
+    ssize_t sent = sb_socket_send(impl_->socket_fd, packet.data(), packet.size(), 0);
     if (sent != static_cast<ssize_t>(packet.size())) {
         return makeError(core::Status::IO_ERROR, "Failed to send packet");
     }

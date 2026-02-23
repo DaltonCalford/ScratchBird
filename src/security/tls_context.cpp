@@ -1031,7 +1031,7 @@ core::Status TLSConnection::accept() {
         return core::Status::LOCK_TIMEOUT;
     }
 
-    state_ = TLSState::ERROR;
+    state_ = TLSState::ERROR_STATE;
     return core::Status::IO_ERROR;
 }
 
@@ -1056,7 +1056,7 @@ core::Status TLSConnection::connect() {
         return core::Status::LOCK_TIMEOUT;
     }
 
-    state_ = TLSState::ERROR;
+    state_ = TLSState::ERROR_STATE;
     return core::Status::IO_ERROR;
 }
 
@@ -1122,7 +1122,7 @@ core::Status TLSConnection::shutdown() {
         return core::Status::LOCK_TIMEOUT;
     }
 
-    state_ = TLSState::ERROR;
+    state_ = TLSState::ERROR_STATE;
     return core::Status::IO_ERROR;
 }
 

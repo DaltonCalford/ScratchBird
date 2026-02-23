@@ -929,11 +929,11 @@ Message buildMcpResponseForRequest(const Message& request,
             }
             if (username.empty()) {
                 return ProtocolCodec::buildAuthResponse(
-                    AuthStatus::ERROR, 0, "MCP_AUTH_START requires username");
+                    AuthStatus::FAILURE, 0, "MCP_AUTH_START requires username");
             }
             if (auth_method != AuthMethod::TOKEN) {
                 return ProtocolCodec::buildAuthResponse(
-                    AuthStatus::ERROR, 0, "MCP_AUTH_START requires auth_method=TOKEN");
+                    AuthStatus::FAILURE, 0, "MCP_AUTH_START requires auth_method=TOKEN");
             }
 
             session_ctx.auth_started = true;
@@ -978,22 +978,22 @@ Message buildMcpResponseForRequest(const Message& request,
             }
             if (!session_ctx.auth_started) {
                 return ProtocolCodec::buildAuthResponse(
-                    AuthStatus::ERROR, 0, "MCP_AUTH_START is required before MCP_AUTH_CONTINUE");
+                    AuthStatus::FAILURE, 0, "MCP_AUTH_START is required before MCP_AUTH_CONTINUE");
             }
             if (continuation_payload.empty()) {
                 return ProtocolCodec::buildAuthResponse(
-                    AuthStatus::ERROR, 0, "MCP_AUTH_CONTINUE payload must not be empty");
+                    AuthStatus::FAILURE, 0, "MCP_AUTH_CONTINUE payload must not be empty");
             }
             if (session_ctx.auth_method != AuthMethod::TOKEN) {
                 return ProtocolCodec::buildAuthResponse(
-                    AuthStatus::ERROR, 0, "MCP_AUTH_CONTINUE method mismatch");
+                    AuthStatus::FAILURE, 0, "MCP_AUTH_CONTINUE method mismatch");
             }
             const std::vector<uint8_t> expected_secret(
                 options.mcp_auth_secret.begin(), options.mcp_auth_secret.end());
             if (!timingSafeBytesEqual(continuation_payload, expected_secret)) {
                 session_ctx.authenticated = false;
                 return ProtocolCodec::buildAuthResponse(
-                    AuthStatus::ERROR, 0, "MCP authentication failed");
+                    AuthStatus::FAILURE, 0, "MCP authentication failed");
             }
             session_ctx.authenticated = true;
             return ProtocolCodec::buildAuthResponse(AuthStatus::OK, 0, "");
@@ -1016,7 +1016,7 @@ Message buildMcpResponseForRequest(const Message& request,
             }
             if (!session_ctx.authenticated) {
                 return ProtocolCodec::buildAuthResponse(
-                    AuthStatus::ERROR, 0, "Authenticate before MCP_DB_INFO");
+                    AuthStatus::FAILURE, 0, "Authenticate before MCP_DB_INFO");
             }
             if (requested_database.empty()) {
                 requested_database = options.owner_database;

@@ -29,20 +29,8 @@
 #include <errno.h>
 #include <poll.h>
 #endif
+#include "scratchbird/core/socket_call_compat.h"
 
-#ifdef _WIN32
-#ifndef MSG_WAITALL
-#define MSG_WAITALL 0
-#endif
-#define SB_SOCKET_RECV_BUF(buf) reinterpret_cast<char*>(buf)
-#define SB_SOCKET_SEND_BUF(buf) reinterpret_cast<const char*>(buf)
-#define recv(fd, buf, len, flags) ::recv((fd), SB_SOCKET_RECV_BUF(buf), static_cast<int>(len), (flags))
-#define send(fd, buf, len, flags) ::send((fd), SB_SOCKET_SEND_BUF(buf), static_cast<int>(len), (flags))
-#define setsockopt(fd, level, optname, optval, optlen) \
-    ::setsockopt((fd), (level), (optname), SB_SOCKET_SEND_BUF(optval), static_cast<int>(optlen))
-#define getsockopt(fd, level, optname, optval, optlen) \
-    ::getsockopt((fd), (level), (optname), SB_SOCKET_RECV_BUF(optval), (optlen))
-#endif
 
 namespace scratchbird {
 namespace ipc {
@@ -196,7 +184,7 @@ core::Status ParserAgent::setupListener(core::ErrorContext* ctx) {
         }
         
         int opt = 1;
-        setsockopt(listen_fd_, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+        sb_socket_setsockopt(listen_fd_, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
         
         struct sockaddr_in addr;
         std::memset(&addr, 0, sizeof(addr));
@@ -461,7 +449,7 @@ core::Status NativeSBParserAgent::handleClient(int client_fd, core::ErrorContext
         while (running_ && client.socket_fd >= 0) {
             // Read SBWP message header
             uint8_t header[5];
-            ssize_t n = recv(client.socket_fd, header, 5, MSG_WAITALL);
+            ssize_t n = sb_socket_recv(client.socket_fd, header, 5, MSG_WAITALL);
             if (n <= 0) break;
             
             uint8_t msg_type = header[0];
@@ -471,7 +459,7 @@ core::Status NativeSBParserAgent::handleClient(int client_fd, core::ErrorContext
             std::vector<uint8_t> payload;
             if (msg_len > 0) {
                 payload.resize(msg_len);
-                n = recv(client.socket_fd, payload.data(), msg_len, MSG_WAITALL);
+                n = sb_socket_recv(client.socket_fd, payload.data(), msg_len, MSG_WAITALL);
                 if (n <= 0) break;
             }
             
@@ -540,7 +528,7 @@ core::Status NativeSBParserAgent::handleStartup(ClientConnection& client, core::
     (void)ctx;
     // Read startup message
     uint8_t version[2];
-    ssize_t n = recv(client.socket_fd, version, 2, MSG_WAITALL);
+    ssize_t n = sb_socket_recv(client.socket_fd, version, 2, MSG_WAITALL);
     if (n != 2) {
         return core::Status::CONNECTION_FAILURE;
     }
@@ -550,7 +538,7 @@ core::Status NativeSBParserAgent::handleStartup(ClientConnection& client, core::
     
     // Read SSL mode
     uint8_t ssl_mode;
-    n = recv(client.socket_fd, &ssl_mode, 1, MSG_WAITALL);
+    n = sb_socket_recv(client.socket_fd, &ssl_mode, 1, MSG_WAITALL);
     if (n != 1) {
         return core::Status::CONNECTION_FAILURE;
     }
@@ -559,7 +547,7 @@ core::Status NativeSBParserAgent::handleStartup(ClientConnection& client, core::
     char param_buf[1024];
     size_t pos = 0;
     while (pos < sizeof(param_buf) - 1) {
-        n = recv(client.socket_fd, &param_buf[pos], 1, MSG_WAITALL);
+        n = sb_socket_recv(client.socket_fd, &param_buf[pos], 1, MSG_WAITALL);
         if (n != 1) break;
         if (param_buf[pos] == 0 && pos > 0 && param_buf[pos-1] == 0) {
             // Two consecutive nulls = end of parameters
@@ -615,7 +603,7 @@ core::Status NativeSBParserAgent::sendReady(ClientConnection& client, uint32_t f
     response.push_back(0);
     response.push_back(0);
     
-    ssize_t n = send(client.socket_fd, response.data(), response.size(), 0);
+    ssize_t n = sb_socket_send(client.socket_fd, response.data(), response.size(), 0);
     if (n < 0) {
         return core::Status::IO_ERROR;
     }
@@ -849,7 +837,7 @@ core::Status NativeSBParserAgent::sendCommandComplete(ClientConnection& client,
     response.insert(response.end(), tag.begin(), tag.end());
     response.push_back(0);
     
-    ssize_t n = send(client.socket_fd, response.data(), response.size(), 0);
+    ssize_t n = sb_socket_send(client.socket_fd, response.data(), response.size(), 0);
     if (n < 0) {
         return core::Status::IO_ERROR;
     }
@@ -876,7 +864,7 @@ core::Status NativeSBParserAgent::sendError(ClientConnection& client,
     response.insert(response.end(), message.begin(), message.end());
     response.push_back(0);
     
-    ssize_t n = send(client.socket_fd, response.data(), response.size(), 0);
+    ssize_t n = sb_socket_send(client.socket_fd, response.data(), response.size(), 0);
     if (n < 0) {
         return core::Status::IO_ERROR;
     }
@@ -921,7 +909,7 @@ core::Status NativeSBParserAgent::sendRowDescription(ClientConnection& client,
         response.push_back(field.type_oid & 0xFF);
     }
     
-    ssize_t n = send(client.socket_fd, response.data(), response.size(), 0);
+    ssize_t n = sb_socket_send(client.socket_fd, response.data(), response.size(), 0);
     if (n < 0) {
         return core::Status::IO_ERROR;
     }
@@ -971,7 +959,7 @@ core::Status NativeSBParserAgent::sendDataRow(ClientConnection& client,
         }
     }
     
-    ssize_t n = send(client.socket_fd, response.data(), response.size(), 0);
+    ssize_t n = sb_socket_send(client.socket_fd, response.data(), response.size(), 0);
     if (n < 0) {
         return core::Status::IO_ERROR;
     }
@@ -993,7 +981,7 @@ core::Status NativeSBParserAgent::sendNotice(ClientConnection& client,
     response.insert(response.end(), message.begin(), message.end());
     response.push_back(0);
     
-    ssize_t n = send(client.socket_fd, response.data(), response.size(), 0);
+    ssize_t n = sb_socket_send(client.socket_fd, response.data(), response.size(), 0);
     if (n < 0) {
         return core::Status::IO_ERROR;
     }
@@ -1006,7 +994,7 @@ core::Status NativeSBParserAgent::handleSSLRequest(ClientConnection& client,
     // SBWP SSL negotiation: Send 'N' for "SSL not supported" (or 'S' for supported)
     // For now, we don't support SSL in the native parser
     char response = 'N';
-    ssize_t n = send(client.socket_fd, &response, 1, 0);
+    ssize_t n = sb_socket_send(client.socket_fd, &response, 1, 0);
     if (n < 0) {
         return core::Status::IO_ERROR;
     }
@@ -1040,7 +1028,7 @@ core::Status NativeSBParserAgent::sendParseComplete(ClientConnection& client) {
     response.push_back(0x31); // PARSE_COMPLETE
     response.push_back(0); response.push_back(0); response.push_back(0); response.push_back(4);
     
-    ssize_t n = send(client.socket_fd, response.data(), response.size(), 0);
+    ssize_t n = sb_socket_send(client.socket_fd, response.data(), response.size(), 0);
     if (n < 0) {
         return core::Status::IO_ERROR;
     }
@@ -1052,7 +1040,7 @@ core::Status NativeSBParserAgent::sendBindComplete(ClientConnection& client) {
     response.push_back(0x32); // BIND_COMPLETE
     response.push_back(0); response.push_back(0); response.push_back(0); response.push_back(4);
     
-    ssize_t n = send(client.socket_fd, response.data(), response.size(), 0);
+    ssize_t n = sb_socket_send(client.socket_fd, response.data(), response.size(), 0);
     if (n < 0) {
         return core::Status::IO_ERROR;
     }
@@ -1064,7 +1052,7 @@ core::Status NativeSBParserAgent::sendCloseComplete(ClientConnection& client) {
     response.push_back(0x33); // CLOSE_COMPLETE
     response.push_back(0); response.push_back(0); response.push_back(0); response.push_back(4);
     
-    ssize_t n = send(client.socket_fd, response.data(), response.size(), 0);
+    ssize_t n = sb_socket_send(client.socket_fd, response.data(), response.size(), 0);
     if (n < 0) {
         return core::Status::IO_ERROR;
     }

@@ -31,23 +31,11 @@
     #include <netinet/in.h>
 #endif
 #include "scratchbird/core/posix_compat.h"
+#include "scratchbird/core/socket_call_compat.h"
 #include <cstring>
 #include <sstream>
 #include <iomanip>
 
-#ifdef _WIN32
-#ifndef MSG_WAITALL
-#define MSG_WAITALL 0
-#endif
-#define SB_SOCKET_RECV_BUF(buf) reinterpret_cast<char*>(buf)
-#define SB_SOCKET_SEND_BUF(buf) reinterpret_cast<const char*>(buf)
-#define recv(fd, buf, len, flags) ::recv((fd), SB_SOCKET_RECV_BUF(buf), static_cast<int>(len), (flags))
-#define send(fd, buf, len, flags) ::send((fd), SB_SOCKET_SEND_BUF(buf), static_cast<int>(len), (flags))
-#define setsockopt(fd, level, optname, optval, optlen) \
-    ::setsockopt((fd), (level), (optname), SB_SOCKET_SEND_BUF(optval), static_cast<int>(optlen))
-#define getsockopt(fd, level, optname, optval, optlen) \
-    ::getsockopt((fd), (level), (optname), SB_SOCKET_RECV_BUF(optval), (optlen))
-#endif
 
 namespace scratchbird {
 namespace ipc {
@@ -927,7 +915,7 @@ core::Status MySQLParserAgent::readPacket(MySQLClientState& state,
                                          core::ErrorContext* ctx) {
     // Read packet header (3 bytes length + 1 byte sequence)
     uint8_t header[4];
-    ssize_t n = recv(state.client_fd, header, 4, MSG_WAITALL);
+    ssize_t n = sb_socket_recv(state.client_fd, header, 4, MSG_WAITALL);
     if (n == 0) {
         return core::Status::CONNECTION_CLOSED;
     }
@@ -948,7 +936,7 @@ core::Status MySQLParserAgent::readPacket(MySQLClientState& state,
     // Read payload
     if (payload_len > 0) {
         packet.resize(payload_len);
-        n = recv(state.client_fd, packet.data(), payload_len, MSG_WAITALL);
+        n = sb_socket_recv(state.client_fd, packet.data(), payload_len, MSG_WAITALL);
         if (n != static_cast<ssize_t>(payload_len)) {
             if (ctx) {
                 ctx->set(core::Status::IO_ERROR, "Failed to read packet payload",
@@ -974,7 +962,7 @@ core::Status MySQLParserAgent::sendPacket(MySQLClientState& state,
         writeUint24LE(header, chunk_size);
         header[3] = seq++;
         
-        if (send(state.client_fd, header, 4, 0) != 4) {
+        if (sb_socket_send(state.client_fd, header, 4, 0) != 4) {
             if (ctx) {
                 ctx->set(core::Status::IO_ERROR, "Failed to send packet header",
                         __FILE__, __LINE__, __func__);
@@ -983,7 +971,7 @@ core::Status MySQLParserAgent::sendPacket(MySQLClientState& state,
         }
         
         if (chunk_size > 0) {
-            if (send(state.client_fd, payload.data() + offset, chunk_size, 0) != 
+            if (sb_socket_send(state.client_fd, payload.data() + offset, chunk_size, 0) != 
                 static_cast<ssize_t>(chunk_size)) {
                 if (ctx) {
                     ctx->set(core::Status::IO_ERROR, "Failed to send packet payload",

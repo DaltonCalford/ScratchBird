@@ -23,6 +23,12 @@
 #include <cstdint>
 #include <string_view>
 
+#if defined(_WIN32)
+#ifdef ERROR
+#undef ERROR
+#endif
+#endif
+
 namespace scratchbird::parser::mysql {
 
 /**

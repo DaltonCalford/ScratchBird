@@ -33,6 +33,18 @@
 #include <unordered_map>
 #include <optional>
 
+#ifdef _WIN32
+    #ifdef ERROR
+        #undef ERROR
+    #endif
+    #ifdef IN
+        #undef IN
+    #endif
+    #ifdef OUT
+        #undef OUT
+    #endif
+#endif
+
 namespace scratchbird::parser::v3 {
 
 // Forward declarations

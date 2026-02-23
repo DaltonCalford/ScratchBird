@@ -567,7 +567,7 @@ public:
     void setCopyOutputStream(std::ostream* out);
 
     struct AuthResponse {
-        protocol::AuthStatus status = protocol::AuthStatus::ERROR;
+        protocol::AuthStatus status = protocol::AuthStatus::FAILURE;
         uint32_t user_id = 0;
         std::string error_message;
         std::vector<uint8_t> data;

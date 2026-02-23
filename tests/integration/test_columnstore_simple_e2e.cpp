@@ -18,12 +18,42 @@
 #include "scratchbird/core/transaction_manager.h"
 #include "scratchbird/core/uuidv7.h"
 #include <cassert>
+#include <cstdlib>
 #include <cstdio>
 #include <iostream>
 #include <string>
+#if defined(_WIN32)
+#include <process.h>
+#else
 #include <unistd.h>
+#endif
 
 using namespace scratchbird::core;
+
+namespace {
+int testProcessId()
+{
+#if defined(_WIN32)
+    return _getpid();
+#else
+    return getpid();
+#endif
+}
+
+std::string tempDir()
+{
+#if defined(_WIN32)
+    const char *temp = std::getenv("TEMP");
+    if (temp != nullptr && *temp != '\0')
+    {
+        return temp;
+    }
+    return ".";
+#else
+    return "/tmp";
+#endif
+}
+} // namespace
 
 int main()
 {
@@ -31,7 +61,7 @@ int main()
 
     // Create database
     std::string db_path =
-        "/tmp/columnstore_simple_e2e_" + std::to_string(getpid()) + ".db";
+        tempDir() + "/columnstore_simple_e2e_" + std::to_string(testProcessId()) + ".db";
     std::remove(db_path.c_str());
 
     ErrorContext ctx;

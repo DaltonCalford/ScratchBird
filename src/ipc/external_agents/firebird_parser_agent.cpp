@@ -29,22 +29,10 @@
     #include <netinet/in.h>
 #endif
 #include "scratchbird/core/posix_compat.h"
+#include "scratchbird/core/socket_call_compat.h"
 #include <cstring>
 #include <sstream>
 
-#ifdef _WIN32
-#ifndef MSG_WAITALL
-#define MSG_WAITALL 0
-#endif
-#define SB_SOCKET_RECV_BUF(buf) reinterpret_cast<char*>(buf)
-#define SB_SOCKET_SEND_BUF(buf) reinterpret_cast<const char*>(buf)
-#define recv(fd, buf, len, flags) ::recv((fd), SB_SOCKET_RECV_BUF(buf), static_cast<int>(len), (flags))
-#define send(fd, buf, len, flags) ::send((fd), SB_SOCKET_SEND_BUF(buf), static_cast<int>(len), (flags))
-#define setsockopt(fd, level, optname, optval, optlen) \
-    ::setsockopt((fd), (level), (optname), SB_SOCKET_SEND_BUF(optval), static_cast<int>(optlen))
-#define getsockopt(fd, level, optname, optval, optlen) \
-    ::getsockopt((fd), (level), (optname), SB_SOCKET_RECV_BUF(optval), (optlen))
-#endif
 
 namespace scratchbird {
 namespace ipc {
@@ -704,7 +692,7 @@ core::Status FirebirdParserAgent::readPacket(FBClientState& state,
                                             core::ErrorContext* ctx) {
     // Read first 4 bytes (XDR length)
     uint8_t len_buf[4];
-    ssize_t n = recv(state.client_fd, len_buf, 4, MSG_WAITALL);
+    ssize_t n = sb_socket_recv(state.client_fd, len_buf, 4, MSG_WAITALL);
     if (n == 0) {
         return core::Status::CONNECTION_CLOSED;
     }
@@ -729,7 +717,7 @@ core::Status FirebirdParserAgent::readPacket(FBClientState& state,
         }
         
         packet.resize(len);
-        n = recv(state.client_fd, packet.data(), len, MSG_WAITALL);
+        n = sb_socket_recv(state.client_fd, packet.data(), len, MSG_WAITALL);
         if (n != static_cast<ssize_t>(len)) {
             if (ctx) {
                 ctx->set(core::Status::IO_ERROR, "Failed to read packet data",
@@ -754,7 +742,7 @@ core::Status FirebirdParserAgent::sendPacket(FBClientState& state,
     uint8_t len_buf[4];
     xdrWriteUint32(len_buf, packet.size());
     
-    if (send(state.client_fd, len_buf, 4, 0) != 4) {
+    if (sb_socket_send(state.client_fd, len_buf, 4, 0) != 4) {
         if (ctx) {
             ctx->set(core::Status::IO_ERROR, "Failed to send packet length",
                     __FILE__, __LINE__, __func__);
@@ -763,7 +751,7 @@ core::Status FirebirdParserAgent::sendPacket(FBClientState& state,
     }
     
     if (!packet.empty()) {
-        if (send(state.client_fd, packet.data(), packet.size(), 0) != 
+        if (sb_socket_send(state.client_fd, packet.data(), packet.size(), 0) != 
             static_cast<ssize_t>(packet.size())) {
             if (ctx) {
                 ctx->set(core::Status::IO_ERROR, "Failed to send packet data",
@@ -781,7 +769,7 @@ core::Status FirebirdParserAgent::readFullMessage(int fd,
                                                  core::ErrorContext* ctx) {
     // For Firebird, the first 4 bytes are the XDR length
     uint8_t len_buf[4];
-    ssize_t n = recv(fd, len_buf, 4, MSG_WAITALL);
+    ssize_t n = sb_socket_recv(fd, len_buf, 4, MSG_WAITALL);
     if (n == 0) {
         return core::Status::CONNECTION_CLOSED;
     }
@@ -798,7 +786,7 @@ core::Status FirebirdParserAgent::readFullMessage(int fd,
     
     if (len > 0) {
         std::vector<uint8_t> payload(len);
-        n = recv(fd, payload.data(), len, MSG_WAITALL);
+        n = sb_socket_recv(fd, payload.data(), len, MSG_WAITALL);
         if (n != static_cast<ssize_t>(len)) {
             if (ctx) {
                 ctx->set(core::Status::IO_ERROR, "Failed to read message payload",
@@ -815,7 +803,7 @@ core::Status FirebirdParserAgent::readFullMessage(int fd,
 core::Status FirebirdParserAgent::writeMessage(int fd,
                                               const std::vector<uint8_t>& message,
                                               core::ErrorContext* ctx) {
-    ssize_t n = send(fd, message.data(), message.size(), 0);
+    ssize_t n = sb_socket_send(fd, message.data(), message.size(), 0);
     if (n != static_cast<ssize_t>(message.size())) {
         if (ctx) {
             ctx->set(core::Status::IO_ERROR, "Failed to write message",

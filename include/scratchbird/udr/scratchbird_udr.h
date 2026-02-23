@@ -46,7 +46,7 @@ enum class MessageType : uint8_t {
     SSL_REQUEST = 0x02,
     AUTHENTICATE = 0x03,
     READY = 0x04,
-    ERROR = 0x05,
+    ERROR_MESSAGE = 0x05,
     
     // Query
     SIMPLE_QUERY = 0x10,
@@ -126,7 +126,7 @@ struct SBWPMessage {
     uint32_t length;
     std::vector<uint8_t> payload;
     
-    SBWPMessage() : type(sbwp::MessageType::ERROR), length(0) {}
+    SBWPMessage() : type(sbwp::MessageType::ERROR_MESSAGE), length(0) {}
     SBWPMessage(sbwp::MessageType t, const std::vector<uint8_t>& p)
         : type(t), length(static_cast<uint32_t>(p.size())), payload(p) {}
 };

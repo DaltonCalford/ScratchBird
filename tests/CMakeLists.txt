@@ -9,6 +9,12 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(googletest)
 
+# Avoid running test binaries at build time on Windows (missing runtime DLLs
+# can break post-build discovery before ctest runs).
+if(WIN32)
+    set(CMAKE_GTEST_DISCOVER_TESTS_DISCOVERY_MODE PRE_TEST)
+endif()
+
 # Test timeout configuration (in seconds)
 # Can be overridden via cmake -DSCRATCHBIRD_TEST_TIMEOUT_DEFAULT=<seconds>
 set(SCRATCHBIRD_TEST_TIMEOUT_DEFAULT "3600" CACHE STRING "Default test timeout in seconds (default=3600=1h)")
@@ -1742,8 +1748,8 @@ target_link_libraries(test_postgresql_parser
 # Use gtest_discover_tests for proper test enumeration (like other parser tests)
 gtest_discover_tests(test_postgresql_parser
     TEST_PREFIX "PostgreSQL."
-    PROPERTIES LABELS "unit;parser;postgresql;emulation"
-    PROPERTIES TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
+    PROPERTIES
+        TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # ============================================================================
@@ -1931,8 +1937,8 @@ target_link_libraries(test_git_config_parser
 
 gtest_discover_tests(test_git_config_parser
     TEST_PREFIX "GitConfig."
-    PROPERTIES LABELS "unit;git;config;parser"
-    PROPERTIES TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
+    PROPERTIES
+        TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # ============================================================================
@@ -1955,8 +1961,8 @@ target_link_libraries(test_sblr_type_opcodes
 
 gtest_discover_tests(test_sblr_type_opcodes
     TEST_PREFIX "SBLR."
-    PROPERTIES LABELS "unit;sblr;type;opcode;bytecode"
-    PROPERTIES TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
+    PROPERTIES
+        TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # ============================================================================
@@ -1979,8 +1985,8 @@ target_link_libraries(test_fdw_protocol_adapter_factory
 
 gtest_discover_tests(test_fdw_protocol_adapter_factory
     TEST_PREFIX "FDW."
-    PROPERTIES LABELS "unit;fdw;factory"
-    PROPERTIES TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
+    PROPERTIES
+        TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # ============================================================================
@@ -2003,8 +2009,8 @@ target_link_libraries(test_udr_connector_factory
 
 gtest_discover_tests(test_udr_connector_factory
     TEST_PREFIX "UDRFactory."
-    PROPERTIES LABELS "unit;udr;factory"
-    PROPERTIES TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
+    PROPERTIES
+        TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
 # ============================================================================
