@@ -33,6 +33,18 @@
 #include <chrono>
 #include <functional>
 
+#if defined(_WIN32)
+#ifdef NO_DATA
+#undef NO_DATA
+#endif
+#ifdef PASS
+#undef PASS
+#endif
+#ifdef FAIL
+#undef FAIL
+#endif
+#endif
+
 namespace scratchbird::core {
 
 // Forward declarations
