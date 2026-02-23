@@ -61,7 +61,7 @@ static Status readTablespaceFilePageCount(const std::string& path,
     }
     *pages_out = 0;
 
-    int fd = ::open(path.c_str(), O_RDONLY);
+    int fd = sb_open(path.c_str(), O_RDONLY);
     if (fd < 0)
     {
         SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, ("Failed to open tablespace file: " + path).c_str());
@@ -124,7 +124,7 @@ Status writeTablespaceManifest(int fd,
         return Status::OK;
     }
 
-    off_t offset = ::lseek(fd, 0, SEEK_CUR);
+    off_t offset = sb_lseek(fd, 0, SEEK_CUR);
     if (offset < 0)
     {
         SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to seek for tablespace manifest");
@@ -201,7 +201,7 @@ Status writeTablespaceManifest(int fd,
         }
     }
 
-    off_t end_offset = ::lseek(fd, 0, SEEK_CUR);
+    off_t end_offset = sb_lseek(fd, 0, SEEK_CUR);
     if (end_offset < 0)
     {
         SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to finalize tablespace manifest offset");
@@ -240,7 +240,7 @@ Status readTablespaceManifest(int fd,
         return Status::OK;
     }
 
-    if (::lseek(fd, static_cast<off_t>(offset), SEEK_SET) != static_cast<off_t>(offset))
+    if (sb_lseek(fd, static_cast<off_t>(offset), SEEK_SET) != static_cast<off_t>(offset))
     {
         SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to seek to tablespace manifest");
         return Status::IO_ERROR;
@@ -353,7 +353,7 @@ Status BackupManager::createBackup(const std::string& backup_path,
     }
 
     // Create backup file
-    int backup_fd = ::open(backup_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    int backup_fd = sb_open(backup_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (backup_fd < 0) {
         SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to create backup file");
         return Status::IO_ERROR;
@@ -518,7 +518,7 @@ Status BackupManager::createBackup(const std::string& backup_path,
     }
 
     // Write page index placeholder
-    size_t index_offset = ::lseek(backup_fd, 0, SEEK_CUR);
+    size_t index_offset = sb_lseek(backup_fd, 0, SEEK_CUR);
     std::vector<BackupPageEntry> page_entries;
     page_entries.reserve(pages_to_backup.size());
 
@@ -529,7 +529,7 @@ Status BackupManager::createBackup(const std::string& backup_path,
     }
 
     // Backup pages (parallel)
-    size_t data_offset = ::lseek(backup_fd, 0, SEEK_CUR);
+    size_t data_offset = sb_lseek(backup_fd, 0, SEEK_CUR);
     uint32_t num_workers = std::min(config.parallel_workers,
                                      static_cast<uint32_t>(pages_to_backup.size()));
     if (num_workers == 0) num_workers = 1;
@@ -580,7 +580,7 @@ Status BackupManager::createBackup(const std::string& backup_path,
         }
 
         // Write page data
-        uint64_t file_offset = ::lseek(backup_fd, 0, SEEK_CUR);
+        uint64_t file_offset = sb_lseek(backup_fd, 0, SEEK_CUR);
         ssize_t written = ::write(backup_fd, write_data, write_size);
         if (written != static_cast<ssize_t>(write_size)) {
             ::close(backup_fd);
@@ -604,7 +604,7 @@ Status BackupManager::createBackup(const std::string& backup_path,
     }
 
     // Update page index
-    ::lseek(backup_fd, static_cast<off_t>(index_offset), SEEK_SET);
+    sb_lseek(backup_fd, static_cast<off_t>(index_offset), SEEK_SET);
     for (const auto& entry : page_entries) {
         ::write(backup_fd, &entry, sizeof(BackupPageEntry));
     }
@@ -617,7 +617,7 @@ Status BackupManager::createBackup(const std::string& backup_path,
     header.checksum = calculateChecksum(reinterpret_cast<const uint8_t*>(&header),
                                         sizeof(header) - sizeof(header.checksum));
 
-    ::lseek(backup_fd, 0, SEEK_SET);
+    sb_lseek(backup_fd, 0, SEEK_SET);
     writeBackupHeader(backup_fd, header, ctx);
 
     ::fsync(backup_fd);
@@ -676,7 +676,7 @@ Status BackupManager::restoreBackup(const std::string& backup_path,
                                      ErrorContext* ctx)
 {
     // Open backup file
-    int backup_fd = ::open(backup_path.c_str(), O_RDONLY);
+    int backup_fd = sb_open(backup_path.c_str(), O_RDONLY);
     if (backup_fd < 0) {
         SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open backup file");
         return Status::IO_ERROR;
@@ -714,7 +714,7 @@ Status BackupManager::restoreBackup(const std::string& backup_path,
     }
 
     // Create target database file
-    int target_fd = ::open(target_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    int target_fd = sb_open(target_path.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (target_fd < 0) {
         ::close(backup_fd);
         SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to create target database");
@@ -796,7 +796,7 @@ Status BackupManager::restoreBackup(const std::string& backup_path,
                             path.c_str());
             }
 
-            int ts_fd = ::open(path.c_str(), O_RDWR | O_CREAT, 0644);
+            int ts_fd = sb_open(path.c_str(), O_RDWR | O_CREAT, 0644);
             if (ts_fd < 0)
             {
                 ::close(backup_fd);
@@ -852,7 +852,7 @@ Status BackupManager::restoreBackup(const std::string& backup_path,
     {
         index_offset = sizeof(BackupManifestHeader);
     }
-    ::lseek(backup_fd, static_cast<off_t>(index_offset), SEEK_SET);
+    sb_lseek(backup_fd, static_cast<off_t>(index_offset), SEEK_SET);
     ssize_t read_bytes = ::read(backup_fd, page_entries.data(),
                                 header.total_pages * sizeof(BackupPageEntry));
     if (read_bytes != static_cast<ssize_t>(header.total_pages * sizeof(BackupPageEntry))) {
@@ -875,7 +875,7 @@ Status BackupManager::restoreBackup(const std::string& backup_path,
         }
 
         // Seek to page data in backup
-        ::lseek(backup_fd, static_cast<off_t>(entry.file_offset), SEEK_SET);
+        sb_lseek(backup_fd, static_cast<off_t>(entry.file_offset), SEEK_SET);
 
         // Determine read size
         uint32_t read_size = entry.compressed_size > 0 ? entry.compressed_size : entry.original_size;
@@ -986,7 +986,7 @@ Status BackupManager::restoreBackup(const std::string& backup_path,
         }
 
         off_t offset = static_cast<off_t>(local_page) * header.page_size;
-        ::lseek(fd, offset, SEEK_SET);
+        sb_lseek(fd, offset, SEEK_SET);
         ssize_t written = ::write(fd, page_data, entry.original_size);
         if (written != static_cast<ssize_t>(entry.original_size)) {
             if (!config.partial_restore) {
@@ -1127,7 +1127,7 @@ Status BackupManager::verifyBackup(const std::string& backup_path,
                                     BackupProgress* progress,
                                     ErrorContext* ctx)
 {
-    int backup_fd = ::open(backup_path.c_str(), O_RDONLY);
+    int backup_fd = sb_open(backup_path.c_str(), O_RDONLY);
     if (backup_fd < 0) {
         SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open backup file");
         return Status::IO_ERROR;
@@ -1156,7 +1156,7 @@ Status BackupManager::verifyBackup(const std::string& backup_path,
     {
         index_offset = sizeof(BackupManifestHeader);
     }
-    ::lseek(backup_fd, static_cast<off_t>(index_offset), SEEK_SET);
+    sb_lseek(backup_fd, static_cast<off_t>(index_offset), SEEK_SET);
     ::read(backup_fd, page_entries.data(), header.total_pages * sizeof(BackupPageEntry));
 
     // Verify each page
@@ -1165,7 +1165,7 @@ Status BackupManager::verifyBackup(const std::string& backup_path,
     uint64_t errors = 0;
 
     for (const auto& entry : page_entries) {
-        ::lseek(backup_fd, static_cast<off_t>(entry.file_offset), SEEK_SET);
+        sb_lseek(backup_fd, static_cast<off_t>(entry.file_offset), SEEK_SET);
 
         uint32_t read_size = entry.compressed_size > 0 ? entry.compressed_size : entry.original_size;
         ::read(backup_fd, read_buffer.data(), read_size);
@@ -1217,7 +1217,7 @@ Status BackupManager::getBackupMetadata(const std::string& backup_path,
         return Status::INVALID_ARGUMENT;
     }
 
-    int backup_fd = ::open(backup_path.c_str(), O_RDONLY);
+    int backup_fd = sb_open(backup_path.c_str(), O_RDONLY);
     if (backup_fd < 0) {
         SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to open backup file");
         return Status::IO_ERROR;

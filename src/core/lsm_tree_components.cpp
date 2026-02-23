@@ -364,7 +364,7 @@ SSTableWriter::~SSTableWriter()
 Status SSTableWriter::open(ErrorContext *ctx)
 {
     // Open file for writing (create if not exists, truncate if exists)
-    fd_ = ::open(file_path_.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    fd_ = sb_open(file_path_.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
     if (fd_ < 0)
     {
         SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
@@ -657,7 +657,7 @@ SSTableReader::~SSTableReader()
 Status SSTableReader::open(ErrorContext *ctx)
 {
     // Open file for reading
-    fd_ = ::open(file_path_.c_str(), O_RDONLY);
+    fd_ = sb_open(file_path_.c_str(), O_RDONLY);
     if (fd_ < 0)
     {
         SET_ERROR_CONTEXT(ctx, Status::FILE_NOT_FOUND,
@@ -666,7 +666,7 @@ Status SSTableReader::open(ErrorContext *ctx)
     }
 
     // Get file size
-    off_t size = ::lseek(fd_, 0, SEEK_END);
+    off_t size = sb_lseek(fd_, 0, SEEK_END);
     if (size < 0)
     {
         ::close(fd_);
@@ -691,7 +691,7 @@ Status SSTableReader::open(ErrorContext *ctx)
     if (file_size_ >= static_cast<uint64_t>(sizeof(uint32_t) * 2))
     {
         uint8_t trailer[sizeof(uint32_t) * 2];
-        if (::lseek(fd_, static_cast<off_t>(file_size_ - sizeof(trailer)), SEEK_SET) ==
+        if (sb_lseek(fd_, static_cast<off_t>(file_size_ - sizeof(trailer)), SEEK_SET) ==
             static_cast<off_t>(file_size_ - sizeof(trailer)))
         {
             ssize_t nread = ::read(fd_, trailer, sizeof(trailer));
@@ -707,7 +707,7 @@ Status SSTableReader::open(ErrorContext *ctx)
                 {
                     footer_offset = static_cast<off_t>(file_size_ - sizeof(trailer) - footer_size);
                     footer.resize(footer_size);
-                    if (::lseek(fd_, footer_offset, SEEK_SET) == footer_offset)
+                    if (sb_lseek(fd_, footer_offset, SEEK_SET) == footer_offset)
                     {
                         nread = ::read(fd_, footer.data(), footer.size());
                         if (nread == static_cast<ssize_t>(footer.size()))
@@ -734,7 +734,7 @@ Status SSTableReader::open(ErrorContext *ctx)
         }
 
         footer_offset = file_size_ - footer_size;
-        if (::lseek(fd_, footer_offset, SEEK_SET) != footer_offset)
+        if (sb_lseek(fd_, footer_offset, SEEK_SET) != footer_offset)
         {
             ::close(fd_);
             fd_ = -1;
@@ -975,7 +975,7 @@ Status SSTableReader::get(const std::vector<uint8_t> &key,
     }
 
     // Sequential scan from search_offset
-    if (::lseek(fd_, search_offset, SEEK_SET) != (off_t)search_offset)
+    if (sb_lseek(fd_, search_offset, SEEK_SET) != (off_t)search_offset)
     {
         SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to seek in SSTable");
         return Status::IO_ERROR;
@@ -1073,7 +1073,7 @@ Status SSTableReader::scan(const std::vector<uint8_t> &start_key,
     entries_out->clear();
 
     // Seek to beginning
-    if (::lseek(fd_, 0, SEEK_SET) != 0)
+    if (sb_lseek(fd_, 0, SEEK_SET) != 0)
     {
         SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to seek in SSTable");
         return Status::IO_ERROR;
@@ -1102,7 +1102,7 @@ Status SSTableReader::scan(const std::vector<uint8_t> &start_key,
             // Skip this entry (read and discard value + metadata)
             uint32_t value_len;
             ::read(fd_, &value_len, sizeof(value_len));
-            ::lseek(fd_, value_len + sizeof(uint64_t) + sizeof(uint8_t) + sizeof(uint64_t) * 2, SEEK_CUR);
+            sb_lseek(fd_, value_len + sizeof(uint64_t) + sizeof(uint8_t) + sizeof(uint64_t) * 2, SEEK_CUR);
             continue;
         }
         if (!end_key.empty() && entry_key >= end_key)
@@ -1202,7 +1202,7 @@ public:
         }
 
         // Seek to current offset
-        if (::lseek(fd_, current_offset_, SEEK_SET) != (off_t)current_offset_)
+        if (sb_lseek(fd_, current_offset_, SEEK_SET) != (off_t)current_offset_)
         {
             valid_ = false;
             return;

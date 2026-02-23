@@ -1813,7 +1813,7 @@ namespace scratchbird::core
 
         // Write the page to disk at the correct offset
         off_t offset = static_cast<off_t>(page_id_out) * db_->page_size();
-        if (lseek(db_->fd(), offset, SEEK_SET) < 0 ||
+        if (sb_lseek(db_->fd(), offset, SEEK_SET) < 0 ||
             write(db_->fd(), new_page.get(), db_->page_size()) !=
                 static_cast<ssize_t>(db_->page_size()))
         {
