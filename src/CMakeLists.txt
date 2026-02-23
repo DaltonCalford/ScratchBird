@@ -531,6 +531,11 @@ endif()
 find_package(Threads REQUIRED)
 target_link_libraries(scratchbird_fdw PUBLIC Threads::Threads scratchbird_core)
 
+# FDW adapters use native socket APIs directly on Windows.
+if(WIN32)
+    target_link_libraries(scratchbird_fdw PUBLIC ws2_32)
+endif()
+
 set_target_properties(scratchbird_fdw PROPERTIES
     CXX_STANDARD 17
     CXX_STANDARD_REQUIRED YES
