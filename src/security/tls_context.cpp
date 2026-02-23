@@ -633,13 +633,13 @@ core::Status TLSContext::initServer(const TLSConfig& config, core::ErrorContext*
         case VerifyMode::NONE:
             verify_flags = SSL_VERIFY_NONE;
             break;
-        case VerifyMode::OPTIONAL:
+        case VerifyMode::OPTIONAL_MODE:
             verify_flags = SSL_VERIFY_PEER;
             break;
-        case VerifyMode::REQUIRE:
+        case VerifyMode::REQUIRE_MODE:
             verify_flags = SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT;
             break;
-        case VerifyMode::REQUIRE_ONCE:
+        case VerifyMode::REQUIRE_ONCE_MODE:
             verify_flags = SSL_VERIFY_PEER | SSL_VERIFY_FAIL_IF_NO_PEER_CERT |
                           SSL_VERIFY_CLIENT_ONCE;
             break;

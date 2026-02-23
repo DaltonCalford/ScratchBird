@@ -346,7 +346,7 @@ void ConnectionManager::handleEvent(ConnectionId id, EventType events) {
         return;
     }
 
-    if (hasEvent(events, EventType::ERROR) || hasEvent(events, EventType::HANGUP)) {
+    if (hasEvent(events, EventType::ERROR_EVENT) || hasEvent(events, EventType::HANGUP)) {
         closeConnection(id, CloseReason::IO_ERROR);
         return;
     }
@@ -497,7 +497,7 @@ void ConnectionManager::handleAuthentication(Connection* conn) {
     auto status = handler->handleAuthentication(conn);
     if (status != core::Status::OK) {
         stats_.auth_failures.fetch_add(1);
-        fireEvent(ConnectionEvent(conn->getId(), ConnectionEventType::ERROR,
+        fireEvent(ConnectionEvent(conn->getId(), ConnectionEventType::ERROR_EVENT,
                                   "Authentication failed"));
         conn->close(CloseReason::AUTH_FAILURE);
         return;

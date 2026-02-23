@@ -8,13 +8,29 @@
 #include "scratchbird/udr/firebird_udr.h"
 
 #include <cstring>
-#include <arpa/inet.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-#include <netdb.h>
+#ifdef _WIN32
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+#else
+    #include <arpa/inet.h>
+    #include <sys/socket.h>
+    #include <netinet/in.h>
+    #include <netinet/tcp.h>
+    #include <netdb.h>
+#endif
 #include "scratchbird/core/posix_compat.h"
 #include <fcntl.h>
+
+#ifdef _WIN32
+#define SB_SOCKET_RECV_BUF(buf) reinterpret_cast<char*>(buf)
+#define SB_SOCKET_SEND_BUF(buf) reinterpret_cast<const char*>(buf)
+#define recv(fd, buf, len, flags) ::recv((fd), SB_SOCKET_RECV_BUF(buf), static_cast<int>(len), (flags))
+#define send(fd, buf, len, flags) ::send((fd), SB_SOCKET_SEND_BUF(buf), static_cast<int>(len), (flags))
+#define setsockopt(fd, level, optname, optval, optlen) \
+    ::setsockopt((fd), (level), (optname), SB_SOCKET_SEND_BUF(optval), static_cast<int>(optlen))
+#define getsockopt(fd, level, optname, optval, optlen) \
+    ::getsockopt((fd), (level), (optname), SB_SOCKET_RECV_BUF(optval), (optlen))
+#endif
 
 namespace scratchbird {
 namespace udr {
