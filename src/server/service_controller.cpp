@@ -30,7 +30,9 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#ifndef _WIN32
 #include <getopt.h>
+#endif
 
 #ifdef _WIN32
 #include <windows.h>
@@ -2095,6 +2097,269 @@ void ServiceController::log(ServiceConfig::LogLevel level, const std::string& me
 // ============================================================================
 
 bool parseCommandLineArgs(int argc, char* argv[], CommandLineArgs& args, std::string& error) {
+#ifdef _WIN32
+    auto consumeValue = [&](int& index,
+                            const std::string& arg,
+                            const std::string& long_name,
+                            std::string& value) -> bool {
+        const std::string with_equals = long_name + "=";
+        if (arg.rfind(with_equals, 0) == 0) {
+            value = arg.substr(with_equals.size());
+            return true;
+        }
+        if (index + 1 >= argc) {
+            error = "Missing value for " + long_name;
+            return false;
+        }
+        value = argv[++index];
+        return true;
+    };
+
+    auto parseUInt16 = [&](const std::string& option, const std::string& value, uint16_t& out) -> bool {
+        try {
+            const unsigned long parsed = std::stoul(value);
+            if (parsed > 65535UL) {
+                error = "Value out of range for " + option + ": " + value;
+                return false;
+            }
+            out = static_cast<uint16_t>(parsed);
+            return true;
+        } catch (...) {
+            error = "Invalid value for " + option + ": " + value;
+            return false;
+        }
+    };
+
+    auto parseUInt32 = [&](const std::string& option, const std::string& value, uint32_t& out) -> bool {
+        try {
+            out = static_cast<uint32_t>(std::stoul(value));
+            return true;
+        } catch (...) {
+            error = "Invalid value for " + option + ": " + value;
+            return false;
+        }
+    };
+
+    for (int i = 1; i < argc; ++i) {
+        const std::string arg = argv[i];
+        std::string value;
+
+        if (arg == "-c" || arg == "--config" || arg.rfind("--config=", 0) == 0) {
+            if (!consumeValue(i, arg, "--config", value)) return false;
+            args.config_file = value;
+            continue;
+        }
+        if (arg == "-D" || arg == "--data-dir" || arg.rfind("--data-dir=", 0) == 0) {
+            if (!consumeValue(i, arg, "--data-dir", value)) return false;
+            args.data_dir = value;
+            continue;
+        }
+        if (arg == "-d" || arg == "--database" || arg.rfind("--database=", 0) == 0) {
+            if (!consumeValue(i, arg, "--database", value)) return false;
+            args.database_path = value;
+            continue;
+        }
+        if (arg == "-C" || arg == "--create") {
+            args.auto_create = true;
+            continue;
+        }
+        if (arg == "-h" || arg == "--host" || arg.rfind("--host=", 0) == 0) {
+            if (!consumeValue(i, arg, "--host", value)) return false;
+            args.host = value;
+            continue;
+        }
+        if (arg == "-p" || arg == "--port" || arg.rfind("--port=", 0) == 0) {
+            if (!consumeValue(i, arg, "--port", value) ||
+                !parseUInt16("--port", value, args.native_port)) {
+                return false;
+            }
+            continue;
+        }
+        if (arg == "--pg-port" || arg.rfind("--pg-port=", 0) == 0) {
+            if (!consumeValue(i, arg, "--pg-port", value) ||
+                !parseUInt16("--pg-port", value, args.pg_port)) {
+                return false;
+            }
+            continue;
+        }
+        if (arg == "--mysql-port" || arg.rfind("--mysql-port=", 0) == 0) {
+            if (!consumeValue(i, arg, "--mysql-port", value) ||
+                !parseUInt16("--mysql-port", value, args.mysql_port)) {
+                return false;
+            }
+            continue;
+        }
+        if (arg == "--fb-port" || arg.rfind("--fb-port=", 0) == 0) {
+            if (!consumeValue(i, arg, "--fb-port", value) ||
+                !parseUInt16("--fb-port", value, args.fb_port)) {
+                return false;
+            }
+            continue;
+        }
+        if (arg == "--control-socket-dir" || arg.rfind("--control-socket-dir=", 0) == 0) {
+            if (!consumeValue(i, arg, "--control-socket-dir", value)) return false;
+            args.control_socket_dir = value;
+            continue;
+        }
+        if (arg == "--enable-native") {
+            args.enable_native = true;
+            continue;
+        }
+        if (arg == "--enable-postgres") {
+            args.enable_pg = true;
+            continue;
+        }
+        if (arg == "--enable-mysql") {
+            args.enable_mysql = true;
+            continue;
+        }
+        if (arg == "--enable-firebird") {
+            args.enable_fb = true;
+            continue;
+        }
+        if (arg == "--disable-native") {
+            args.disable_native = true;
+            continue;
+        }
+        if (arg == "--disable-postgres") {
+            args.disable_pg = true;
+            continue;
+        }
+        if (arg == "--disable-mysql") {
+            args.disable_mysql = true;
+            continue;
+        }
+        if (arg == "--disable-firebird") {
+            args.disable_fb = true;
+            continue;
+        }
+        if (arg == "--native-bind" || arg.rfind("--native-bind=", 0) == 0) {
+            if (!consumeValue(i, arg, "--native-bind", value)) return false;
+            args.native_bind = value;
+            continue;
+        }
+        if (arg == "--postgres-bind" || arg.rfind("--postgres-bind=", 0) == 0) {
+            if (!consumeValue(i, arg, "--postgres-bind", value)) return false;
+            args.pg_bind = value;
+            continue;
+        }
+        if (arg == "--mysql-bind" || arg.rfind("--mysql-bind=", 0) == 0) {
+            if (!consumeValue(i, arg, "--mysql-bind", value)) return false;
+            args.mysql_bind = value;
+            continue;
+        }
+        if (arg == "--firebird-bind" || arg.rfind("--firebird-bind=", 0) == 0) {
+            if (!consumeValue(i, arg, "--firebird-bind", value)) return false;
+            args.fb_bind = value;
+            continue;
+        }
+        if (arg == "--native-pool-min" || arg.rfind("--native-pool-min=", 0) == 0) {
+            if (!consumeValue(i, arg, "--native-pool-min", value) ||
+                !parseUInt32("--native-pool-min", value, args.native_pool_min)) {
+                return false;
+            }
+            continue;
+        }
+        if (arg == "--native-pool-max" || arg.rfind("--native-pool-max=", 0) == 0) {
+            if (!consumeValue(i, arg, "--native-pool-max", value) ||
+                !parseUInt32("--native-pool-max", value, args.native_pool_max)) {
+                return false;
+            }
+            continue;
+        }
+        if (arg == "--postgres-pool-min" || arg.rfind("--postgres-pool-min=", 0) == 0) {
+            if (!consumeValue(i, arg, "--postgres-pool-min", value) ||
+                !parseUInt32("--postgres-pool-min", value, args.pg_pool_min)) {
+                return false;
+            }
+            continue;
+        }
+        if (arg == "--postgres-pool-max" || arg.rfind("--postgres-pool-max=", 0) == 0) {
+            if (!consumeValue(i, arg, "--postgres-pool-max", value) ||
+                !parseUInt32("--postgres-pool-max", value, args.pg_pool_max)) {
+                return false;
+            }
+            continue;
+        }
+        if (arg == "--mysql-pool-min" || arg.rfind("--mysql-pool-min=", 0) == 0) {
+            if (!consumeValue(i, arg, "--mysql-pool-min", value) ||
+                !parseUInt32("--mysql-pool-min", value, args.mysql_pool_min)) {
+                return false;
+            }
+            continue;
+        }
+        if (arg == "--mysql-pool-max" || arg.rfind("--mysql-pool-max=", 0) == 0) {
+            if (!consumeValue(i, arg, "--mysql-pool-max", value) ||
+                !parseUInt32("--mysql-pool-max", value, args.mysql_pool_max)) {
+                return false;
+            }
+            continue;
+        }
+        if (arg == "--firebird-pool-min" || arg.rfind("--firebird-pool-min=", 0) == 0) {
+            if (!consumeValue(i, arg, "--firebird-pool-min", value) ||
+                !parseUInt32("--firebird-pool-min", value, args.fb_pool_min)) {
+                return false;
+            }
+            continue;
+        }
+        if (arg == "--firebird-pool-max" || arg.rfind("--firebird-pool-max=", 0) == 0) {
+            if (!consumeValue(i, arg, "--firebird-pool-max", value) ||
+                !parseUInt32("--firebird-pool-max", value, args.fb_pool_max)) {
+                return false;
+            }
+            continue;
+        }
+        if (arg == "-k" || arg == "--unix-socket" || arg.rfind("--unix-socket=", 0) == 0) {
+            if (!consumeValue(i, arg, "--unix-socket", value)) return false;
+            args.unix_socket = value;
+            continue;
+        }
+        if (arg == "-N" || arg == "--max-connections" || arg.rfind("--max-connections=", 0) == 0) {
+            if (!consumeValue(i, arg, "--max-connections", value) ||
+                !parseUInt32("--max-connections", value, args.max_connections)) {
+                return false;
+            }
+            continue;
+        }
+        if (arg == "-B" || arg == "--shared-buffers" || arg.rfind("--shared-buffers=", 0) == 0) {
+            if (!consumeValue(i, arg, "--shared-buffers", value)) return false;
+            if (!parseSize(value, args.shared_buffers)) {
+                error = "Invalid size value: " + value;
+                return false;
+            }
+            continue;
+        }
+        if (arg == "-F" || arg == "--foreground") {
+            args.foreground = true;
+            continue;
+        }
+        if (arg == "-s" || arg == "--single-user") {
+            args.single_user = true;
+            continue;
+        }
+        if (arg == "-v" || arg == "--verbose") {
+            args.verbose = true;
+            continue;
+        }
+        if (arg == "--check") {
+            args.check_config = true;
+            continue;
+        }
+        if (arg == "-V" || arg == "--version") {
+            args.version = true;
+            continue;
+        }
+        if (arg == "-?" || arg == "--help") {
+            args.help = true;
+            continue;
+        }
+
+        error = "Unknown option: " + arg;
+        return false;
+    }
+
+    return true;
+#else
     static const struct option long_options[] = {
         {"config", required_argument, nullptr, 'c'},
         {"data-dir", required_argument, nullptr, 'D'},
@@ -2275,6 +2540,7 @@ bool parseCommandLineArgs(int argc, char* argv[], CommandLineArgs& args, std::st
     }
 
     return true;
+#endif
 }
 
 void printHelp(const char* program_name) {

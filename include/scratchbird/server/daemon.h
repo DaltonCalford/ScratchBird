@@ -29,6 +29,7 @@
 #include <atomic>
 #include <memory>
 
+#include "scratchbird/core/posix_compat.h"
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"
 
