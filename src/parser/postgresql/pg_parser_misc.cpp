@@ -1495,10 +1495,12 @@ parser::v3::Statement* Parser::parseGrantStmtV3() {
                 stmt->privileges.push_back(parser::v3::PrivilegeType::EXECUTE);
             } else if (matchKeyword(TokenType::KW_USAGE)) {
                 stmt->privileges.push_back(parser::v3::PrivilegeType::USAGE);
-            } else if (matchKeyword(TokenType::KW_CREATE) || matchKeyword(TokenType::KW_CONNECT) ||
-                       matchKeyword(TokenType::KW_TEMPORARY)) {
-                error("Unsupported GRANT privilege in V3 AST");
-                break;
+            } else if (matchKeyword(TokenType::KW_CREATE)) {
+                stmt->privileges.push_back(parser::v3::PrivilegeType::CREATE);
+            } else if (matchKeyword(TokenType::KW_CONNECT) || matchIdentifierKeyword("CONNECT")) {
+                stmt->privileges.push_back(parser::v3::PrivilegeType::CONNECT);
+            } else if (matchKeyword(TokenType::KW_TEMPORARY) || matchIdentifierKeyword("TEMPORARY")) {
+                stmt->privileges.push_back(parser::v3::PrivilegeType::TEMPORARY);
             } else if (matchKeyword(TokenType::KW_COPY)) {
                 stmt->privileges.push_back(parser::v3::PrivilegeType::COPY);
             } else {
@@ -1637,10 +1639,12 @@ parser::v3::Statement* Parser::parseRevokeStmtV3() {
                 stmt->privileges.push_back(parser::v3::PrivilegeType::EXECUTE);
             } else if (matchKeyword(TokenType::KW_USAGE)) {
                 stmt->privileges.push_back(parser::v3::PrivilegeType::USAGE);
-            } else if (matchKeyword(TokenType::KW_CREATE) || matchKeyword(TokenType::KW_CONNECT) ||
-                       matchKeyword(TokenType::KW_TEMPORARY)) {
-                error("Unsupported REVOKE privilege in V3 AST");
-                break;
+            } else if (matchKeyword(TokenType::KW_CREATE)) {
+                stmt->privileges.push_back(parser::v3::PrivilegeType::CREATE);
+            } else if (matchKeyword(TokenType::KW_CONNECT) || matchIdentifierKeyword("CONNECT")) {
+                stmt->privileges.push_back(parser::v3::PrivilegeType::CONNECT);
+            } else if (matchKeyword(TokenType::KW_TEMPORARY) || matchIdentifierKeyword("TEMPORARY")) {
+                stmt->privileges.push_back(parser::v3::PrivilegeType::TEMPORARY);
             } else if (matchKeyword(TokenType::KW_COPY)) {
                 stmt->privileges.push_back(parser::v3::PrivilegeType::COPY);
             } else {

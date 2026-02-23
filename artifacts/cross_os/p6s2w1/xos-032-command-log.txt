@@ -1,0 +1,4 @@
+# XOS-032 command log
+
+cmake --build /home/dcalford/CliWork/ScratchBird/build -j4
+ctest --test-dir build -R 'PortableRuntimeGuard|SignalControlTest|ServiceControllerListenerBootstrapTest' --output-on-failure

@@ -1,0 +1,25 @@
+Internal ctest changing into directory: /home/dcalford/CliWork/ScratchBird/build
+Test project /home/dcalford/CliWork/ScratchBird/build
+    Start 1894: ServiceControllerListenerBootstrapTest.StartListenersPassesConfigFileToListenerProcess
+1/8 Test #1894: ServiceControllerListenerBootstrapTest.StartListenersPassesConfigFileToListenerProcess ........................   Passed    0.06 sec
+    Start 1895: ServiceControllerListenerBootstrapTest.PortCollisionSkipsListenerLaunchAndParserBootstrap
+2/8 Test #1895: ServiceControllerListenerBootstrapTest.PortCollisionSkipsListenerLaunchAndParserBootstrap .....................   Passed    0.02 sec
+    Start 1896: ServiceControllerListenerBootstrapTest.MultipleNativeListenersCanRunWithDistinctOwnersAndPorts
+3/8 Test #1896: ServiceControllerListenerBootstrapTest.MultipleNativeListenersCanRunWithDistinctOwnersAndPorts ................   Passed    0.06 sec
+    Start 1897: ServiceControllerListenerBootstrapTest.DirectModeLaunchesNativePgMysqlFirebirdListenerMatrix
+4/8 Test #1897: ServiceControllerListenerBootstrapTest.DirectModeLaunchesNativePgMysqlFirebirdListenerMatrix ..................   Passed    0.05 sec
+    Start 1898: ServiceControllerListenerBootstrapTest.ManagerProxyModeForcesSingleInternalNativeListener
+5/8 Test #1898: ServiceControllerListenerBootstrapTest.ManagerProxyModeForcesSingleInternalNativeListener .....................   Passed    0.05 sec
+    Start 1899: ServiceControllerListenerBootstrapTest.ManagerProxyStartManagerLaunchesConfiguredBinaryWithInternalEndpoint
+6/8 Test #1899: ServiceControllerListenerBootstrapTest.ManagerProxyStartManagerLaunchesConfiguredBinaryWithInternalEndpoint ...   Passed    1.03 sec
+    Start 1900: ServiceControllerListenerBootstrapTest.ManagerProxyRejectsPortCollisionWithInternalNativeListener
+7/8 Test #1900: ServiceControllerListenerBootstrapTest.ManagerProxyRejectsPortCollisionWithInternalNativeListener .............   Passed    0.04 sec
+    Start 1901: ServiceControllerListenerBootstrapTest.ManagerProxyStartManagerRejectsMissingMcpAuthSecret
+8/8 Test #1901: ServiceControllerListenerBootstrapTest.ManagerProxyStartManagerRejectsMissingMcpAuthSecret ....................   Passed    0.02 sec
+
+100% tests passed, 0 tests failed out of 8
+
+Label Time Summary:
+unit    =   1.33 sec*proc (8 tests)
+
+Total Test time (real) =   1.42 sec

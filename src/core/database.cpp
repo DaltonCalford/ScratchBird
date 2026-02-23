@@ -32,6 +32,7 @@
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/permission_cache.h" // Security Phase 3.2.3
 #include "scratchbird/core/password_hash.h"
+#include "scratchbird/core/portable_file_io.h"
 #include "scratchbird/core/debug.h"
 #include "scratchbird/core/logger.h"
 #include "scratchbird/catalog/virtual_catalog.h"
@@ -42,7 +43,9 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
-#include <sys/file.h>
+#if !defined(_WIN32)
+    #include <sys/file.h>
+#endif
 #include <cstring>
 #include <cctype>
 #include <algorithm>
@@ -55,6 +58,11 @@
 #include <vector>
 #include <iomanip>
 #include <sstream>
+#include <climits>
+#if defined(_WIN32)
+    #include <io.h>
+    #include <sys/locking.h>
+#endif
 
 namespace scratchbird::core
 {
@@ -69,6 +77,39 @@ namespace scratchbird::core
             return value;
         }
 
+        bool lockFileExclusiveNonBlocking(int fd, int* lock_errno = nullptr)
+        {
+#if defined(_WIN32)
+            if (_lseeki64(fd, 0, SEEK_SET) < 0)
+            {
+                if (lock_errno != nullptr)
+                {
+                    *lock_errno = errno;
+                }
+                return false;
+            }
+            if (_locking(fd, _LK_NBLCK, LONG_MAX) != 0)
+            {
+                if (lock_errno != nullptr)
+                {
+                    *lock_errno = errno;
+                }
+                return false;
+            }
+            return true;
+#else
+            if (flock(fd, LOCK_EX | LOCK_NB) != 0)
+            {
+                if (lock_errno != nullptr)
+                {
+                    *lock_errno = errno;
+                }
+                return false;
+            }
+            return true;
+#endif
+        }
+
         bool preadFully(int fd, void* buffer, size_t size, off_t offset,
                         size_t* transferred_out = nullptr)
         {
@@ -76,7 +117,7 @@ namespace scratchbird::core
             size_t transferred = 0;
             while (transferred < size)
             {
-                ssize_t rc = ::pread(fd,
+                ssize_t rc = platform::readAt(fd,
                                      dst + transferred,
                                      size - transferred,
                                      offset + static_cast<off_t>(transferred));
@@ -116,7 +157,7 @@ namespace scratchbird::core
             size_t transferred = 0;
             while (transferred < size)
             {
-                ssize_t rc = ::pwrite(fd,
+                ssize_t rc = platform::writeAt(fd,
                                       src + transferred,
                                       size - transferred,
                                       offset + static_cast<off_t>(transferred));
@@ -1578,7 +1619,7 @@ namespace scratchbird::core
         }
 
         // Create and open file with exclusive create
-        int fd = ::open(canonical_path.c_str(), O_RDWR | O_CREAT | O_EXCL, 0644);
+        int fd = platform::openFd(canonical_path.c_str(), O_RDWR | O_CREAT | O_EXCL, 0644);
         if (fd < 0)
         {
             SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to create database file");
@@ -1586,10 +1627,11 @@ namespace scratchbird::core
         }
 
         // Lock file for exclusive access
-        if (flock(fd, LOCK_EX | LOCK_NB) != 0)
+        int lock_errno = 0;
+        if (!lockFileExclusiveNonBlocking(fd, &lock_errno))
         {
             ::close(fd);
-            if (errno == EWOULDBLOCK || errno == EAGAIN) {
+            if (lock_errno == EWOULDBLOCK || lock_errno == EAGAIN || lock_errno == EACCES) {
                 SET_ERROR_CONTEXT(ctx, Status::LOCK_CONFLICT,
                     "Database file is already in use by another process");
             } else {
@@ -1708,7 +1750,7 @@ namespace scratchbird::core
         }
 
         // Sync to disk
-        fsync(fd);
+        platform::syncFd(fd);
 
         ::close(fd);
 
@@ -1728,7 +1770,7 @@ namespace scratchbird::core
         close();
 
         // Open file
-        fd_ = ::open(canonical_path.c_str(), O_RDWR);
+        fd_ = platform::openFd(canonical_path.c_str(), O_RDWR);
         if (fd_ < 0)
         {
             SET_ERROR_CONTEXT(ctx, Status::FILE_NOT_FOUND, "Database file not found");
@@ -1736,11 +1778,12 @@ namespace scratchbird::core
         }
 
         // Lock file for exclusive access
-        if (flock(fd_, LOCK_EX | LOCK_NB) != 0)
+        int lock_errno = 0;
+        if (!lockFileExclusiveNonBlocking(fd_, &lock_errno))
         {
             ::close(fd_);
             fd_ = -1;
-            if (errno == EWOULDBLOCK || errno == EAGAIN) {
+            if (lock_errno == EWOULDBLOCK || lock_errno == EAGAIN || lock_errno == EACCES) {
                 SET_ERROR_CONTEXT(ctx, Status::LOCK_CONFLICT,
                     "Database file is already in use by another process");
             } else {
@@ -2242,35 +2285,56 @@ namespace scratchbird::core
         }
 
         // EXCEPTION SAFETY (ERROR-CRITICAL-2 Priority 3): Protect path string operations
-        std::string cwd;
         try
         {
-            char *real_path_buf = realpath(path.c_str(), nullptr);
-            if (real_path_buf == nullptr)
+            std::filesystem::path requested(path);
+
+            // Reject raw traversal segments before canonicalization. Canonicalization can
+            // normalize ".." away, but the input still represents a traversal attempt.
+            for (const std::filesystem::path& component : requested)
             {
-                // If realpath fails, it might be because the file doesn't exist yet (for create).
-                // In that case, we'll resolve the directory path and append the filename.
-                std::filesystem::path p(path);
-                std::string parent_path_str = p.parent_path().string();
-                if (parent_path_str.empty())
+                if (component == "..")
                 {
-                    parent_path_str = ".";
+                    SET_ERROR_CONTEXT(ctx, Status::INVALID_PATH,
+                                      "Database path cannot contain parent traversal segments.");
+                    return Status::INVALID_PATH;
                 }
-                char *real_parent_path_buf = realpath(parent_path_str.c_str(), nullptr);
-                if (real_parent_path_buf == nullptr)
+            }
+
+            std::error_code ec;
+            std::filesystem::path resolved;
+
+            if (std::filesystem::exists(requested, ec) && !ec)
+            {
+                resolved = std::filesystem::weakly_canonical(requested, ec);
+            }
+            else
+            {
+                // File may not exist yet (create flow): resolve the parent and append filename.
+                std::filesystem::path parent = requested.parent_path();
+                if (parent.empty())
+                {
+                    parent = ".";
+                }
+                std::filesystem::path canonical_parent =
+                    std::filesystem::weakly_canonical(parent, ec);
+                if (ec)
                 {
                     SET_ERROR_CONTEXT(ctx, Status::INVALID_PATH,
                                       "Could not resolve database path directory.");
                     return Status::INVALID_PATH;
                 }
-                canonical_path = std::string(real_parent_path_buf) + "/" + p.filename().string();
-                free(real_parent_path_buf);
+                resolved = canonical_parent / requested.filename();
             }
-            else
+
+            if (ec)
             {
-                canonical_path = std::string(real_path_buf);
-                free(real_path_buf);
+                SET_ERROR_CONTEXT(ctx, Status::INVALID_PATH,
+                                  "Could not canonicalize database path.");
+                return Status::INVALID_PATH;
             }
+
+            canonical_path = resolved.lexically_normal().string();
 
             // Note: We no longer restrict paths to current working directory
             // The server process needs to open databases in any location specified by the user
@@ -2565,7 +2629,7 @@ namespace scratchbird::core
             return Status::INVALID_ARGUMENT;
         }
 
-        if (fsync(fd_) != 0)
+        if (platform::syncFd(fd_) != 0)
         {
             SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to sync database file");
             return Status::IO_ERROR;

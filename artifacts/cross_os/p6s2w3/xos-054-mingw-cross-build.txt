@@ -1,0 +1,166 @@
+== 2026-02-22T19:30:34Z ==
+Preset CMake variables:
+
+  BUILD_TESTING="OFF"
+  CMAKE_BUILD_TYPE="Debug"
+  CMAKE_EXPORT_COMPILE_COMMANDS="ON"
+  CMAKE_TOOLCHAIN_FILE:FILEPATH="/home/dcalford/CliWork/ScratchBird/cmake/toolchains/mingw-w64-x86_64.cmake"
+  CMAKE_TRY_COMPILE_TARGET_TYPE="STATIC_LIBRARY"
+  SCRATCHBIRD_CTEST_TIMEOUT="3600"
+  SCRATCHBIRD_WINDOWS_REQUIRE_VCPKG="OFF"
+
+Preset environment variables:
+
+  SCRATCHBIRD_MINGW_OPENSSL_ROOT="/home/dcalford/CliWork/ScratchBird/build/deps/mingw-openssl"
+  SCRATCHBIRD_MINGW_ZLIB_ROOT="/home/dcalford/CliWork/ScratchBird/build/deps/mingw-zlib"
+
+-- ScratchBird Database Engine - Planning Phase
+-- See ProjectPlan/ directory for specifications
+-- Runtime feature gates: systemd=OFF, fork=OFF
+-- Using the multi-header code from /home/dcalford/CliWork/ScratchBird/build/linux-mingw-windows-x64/_deps/json-src/include/
+-- nlohmann/json library: ENABLED (FetchContent)
+-- CTest maximum test time: 3600s (1 hour)
+-- CTest parallel level: 14
+-- Cross-compiling to Windows: optional host dependency autodiscovery (LZ4/ZSTD/GEOS/PROJ/LIBXML2) is disabled.
+-- LZ4 compression support: DISABLED (install liblz4-dev to enable)
+-- ZSTD compression support: DISABLED (install libzstd-dev to enable)
+-- GEOS spatial library: DISABLED (install libgeos-dev to enable)
+-- PROJ coordinate system library: DISABLED (install libproj-dev to enable)
+CMake Warning at CMakeLists.txt:247 (message):
+  clang-format not found.  'make format' target will not be available.
+
+
+CMake Warning at src/CMakeLists.txt:72 (message):
+  libcrypt not found: Password hashing will use fallback (insecure)
+
+
+-- OpenSSL found: Using secure random for password salts
+CMake Warning at src/CMakeLists.txt:178 (message):
+  libxml2 not found: XML functions will use basic string-based implementation
+
+
+-- Security library: OpenSSL found, full TLS/SSL support enabled
+-- Security library: scratchbird_security (TLS, auth, HBA, audit)
+-- Network library: scratchbird_network (socket, event loop, thread pool, connections)
+-- Server library: scratchbird_server (IPC + session management)
+-- Protocol library: scratchbird_protocol (wire protocol)
+-- Pool library: scratchbird_pool (connection pooling, statement/result caching)
+-- FDW library disabled on Windows toolchains pending portability closure.
+-- UDR library disabled on Windows toolchains pending portability closure.
+-- IPC runtime library disabled on Windows toolchains pending AF_UNIX portability closure.
+-- Testing library disabled on Windows toolchains pending socket portability closure.
+-- IPC library: scratchbird_ipc disabled (interface stub target)
+-- Testing library: scratchbird_testing disabled (interface stub target)
+-- Server executable: sb_server
+-- Manager executable: sb_manager
+-- Listener executables: sb_listener_native/pg/mysql/fb
+-- Parser agent executables: sb_parser_native/pg/mysql/fb
+-- Configuring done (0.1s)
+CMake Warning (dev) at src/CMakeLists.txt:718 (add_executable):
+  The feature 'RESCAN', specified as part of a generator-expression
+  '$<LINK_GROUP:RESCAN>', will not be applied to the INTERFACE library
+  'scratchbird_ipc'.
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+CMake Warning (dev) at src/CMakeLists.txt:818 (add_executable):
+  The feature 'RESCAN', specified as part of a generator-expression
+  '$<LINK_GROUP:RESCAN>', will not be applied to the INTERFACE library
+  'scratchbird_ipc'.
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+CMake Warning (dev) at src/CMakeLists.txt:830 (add_executable):
+  The feature 'RESCAN', specified as part of a generator-expression
+  '$<LINK_GROUP:RESCAN>', will not be applied to the INTERFACE library
+  'scratchbird_ipc'.
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+CMake Warning (dev) at src/CMakeLists.txt:842 (add_executable):
+  The feature 'RESCAN', specified as part of a generator-expression
+  '$<LINK_GROUP:RESCAN>', will not be applied to the INTERFACE library
+  'scratchbird_ipc'.
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+CMake Warning (dev) at src/CMakeLists.txt:854 (add_executable):
+  The feature 'RESCAN', specified as part of a generator-expression
+  '$<LINK_GROUP:RESCAN>', will not be applied to the INTERFACE library
+  'scratchbird_ipc'.
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+CMake Warning (dev) at src/CMakeLists.txt:870 (add_executable):
+  The feature 'RESCAN', specified as part of a generator-expression
+  '$<LINK_GROUP:RESCAN>', will not be applied to the INTERFACE library
+  'scratchbird_ipc'.
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+CMake Warning (dev) at src/CMakeLists.txt:881 (add_executable):
+  The feature 'RESCAN', specified as part of a generator-expression
+  '$<LINK_GROUP:RESCAN>', will not be applied to the INTERFACE library
+  'scratchbird_ipc'.
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+CMake Warning (dev) at tools/CMakeLists.txt:4 (add_executable):
+  The feature 'RESCAN', specified as part of a generator-expression
+  '$<LINK_GROUP:RESCAN>', will not be applied to the INTERFACE library
+  'scratchbird_ipc'.
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+-- Generating done (0.0s)
+-- Build files have been written to: /home/dcalford/CliWork/ScratchBird/build/linux-mingw-windows-x64
+[0/2] Re-checking globbed directories...
+[1/17] Building CXX object src/CMakeFiles/scratchbird_core.dir/core/domain_manager.cpp.obj
+/home/dcalford/CliWork/ScratchBird/src/core/domain_manager.cpp: In function ‘scratchbird::core::ID scratchbird::core::{anonymous}::uuidV5(const scratchbird::core::ID&, const std::string&)’:
+/home/dcalford/CliWork/ScratchBird/src/core/domain_manager.cpp:302:22: warning: ‘int SHA1_Init(SHA_CTX*)’ is deprecated: Since OpenSSL 3.0 [-Wdeprecated-declarations]
+  302 |             SHA1_Init(&sha_ctx);
+      |             ~~~~~~~~~^~~~~~~~~~
+In file included from /home/dcalford/CliWork/ScratchBird/src/core/domain_manager.cpp:31:
+/home/dcalford/CliWork/ScratchBird/build/deps/mingw-openssl/include/openssl/sha.h:49:27: note: declared here
+   49 | OSSL_DEPRECATEDIN_3_0 int SHA1_Init(SHA_CTX *c);
+      |                           ^~~~~~~~~
+/home/dcalford/CliWork/ScratchBird/src/core/domain_manager.cpp:303:24: warning: ‘int SHA1_Update(SHA_CTX*, const void*, size_t)’ is deprecated: Since OpenSSL 3.0 [-Wdeprecated-declarations]
+  303 |             SHA1_Update(&sha_ctx, ns_uuid.bytes.data(), ns_uuid.bytes.size());
+      |             ~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/dcalford/CliWork/ScratchBird/build/deps/mingw-openssl/include/openssl/sha.h:50:27: note: declared here
+   50 | OSSL_DEPRECATEDIN_3_0 int SHA1_Update(SHA_CTX *c, const void *data, size_t len);
+      |                           ^~~~~~~~~~~
+/home/dcalford/CliWork/ScratchBird/src/core/domain_manager.cpp:304:24: warning: ‘int SHA1_Update(SHA_CTX*, const void*, size_t)’ is deprecated: Since OpenSSL 3.0 [-Wdeprecated-declarations]
+  304 |             SHA1_Update(&sha_ctx, reinterpret_cast<const unsigned char*>(name.data()), name.size());
+      |             ~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/dcalford/CliWork/ScratchBird/build/deps/mingw-openssl/include/openssl/sha.h:50:27: note: declared here
+   50 | OSSL_DEPRECATEDIN_3_0 int SHA1_Update(SHA_CTX *c, const void *data, size_t len);
+      |                           ^~~~~~~~~~~
+/home/dcalford/CliWork/ScratchBird/src/core/domain_manager.cpp:305:23: warning: ‘int SHA1_Final(unsigned char*, SHA_CTX*)’ is deprecated: Since OpenSSL 3.0 [-Wdeprecated-declarations]
+  305 |             SHA1_Final(hash, &sha_ctx);
+      |             ~~~~~~~~~~^~~~~~~~~~~~~~~~
+/home/dcalford/CliWork/ScratchBird/build/deps/mingw-openssl/include/openssl/sha.h:51:27: note: declared here
+   51 | OSSL_DEPRECATEDIN_3_0 int SHA1_Final(unsigned char *md, SHA_CTX *c);
+      |                           ^~~~~~~~~~
+[2/17] Building CXX object src/CMakeFiles/scratchbird_protocol.dir/protocol/adapters/native_adapter.cpp.obj
+[3/17] Linking CXX static library src/libscratchbird_core.a
+[4/17] Linking CXX static library src/libscratchbird_protocol.a
+[5/17] Linking CXX executable src/sb_manager.exe
+[6/17] Linking CXX executable src/sb_listener_pg.exe
+[7/17] Linking CXX executable src/sb_listener_native.exe
+[8/17] Linking CXX executable src/sb_listener_mysql.exe
+[9/17] Linking CXX executable src/sb_listener_fb.exe
+[10/17] Linking CXX executable src/sb_charset_loader.exe
+[11/17] Linking CXX executable src/scratchbird.exe
+[12/17] Linking CXX executable tools/sb_timezone_loader.exe
+[13/17] Linking CXX executable src/sb_server.exe
+[14/17] Linking CXX executable src/sb_parser_mysql.exe
+[15/17] Linking CXX executable src/sb_parser_pg.exe
+[16/17] Linking CXX executable src/sb_parser_native.exe
+[17/17] Linking CXX executable src/sb_parser_fb.exe
+build/linux-mingw-windows-x64/CMakeFiles/3.30.5/CompilerIdCXX/a.exe
+build/linux-mingw-windows-x64/src/sb_charset_loader.exe
+build/linux-mingw-windows-x64/src/sb_listener_fb.exe
+build/linux-mingw-windows-x64/src/sb_listener_mysql.exe
+build/linux-mingw-windows-x64/src/sb_listener_native.exe
+build/linux-mingw-windows-x64/src/sb_listener_pg.exe
+build/linux-mingw-windows-x64/src/sb_manager.exe
+build/linux-mingw-windows-x64/src/sb_parser_fb.exe
+build/linux-mingw-windows-x64/src/sb_parser_mysql.exe
+build/linux-mingw-windows-x64/src/sb_parser_native.exe
+build/linux-mingw-windows-x64/src/sb_parser_pg.exe
+build/linux-mingw-windows-x64/src/sb_server.exe
+build/linux-mingw-windows-x64/src/scratchbird.exe
+build/linux-mingw-windows-x64/tools/sb_timezone_loader.exe

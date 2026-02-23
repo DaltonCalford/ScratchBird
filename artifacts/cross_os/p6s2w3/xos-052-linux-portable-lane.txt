@@ -1,0 +1,1700 @@
+== 2026-02-22T19:31:16Z ==
+Test project /home/dcalford/CliWork/ScratchBird/build/linux-gcc-debug
+          Start    1: BTreePageTest.Initialization
+   1/3448 Test    #1: BTreePageTest.Initialization ........................................................................................   Passed    0.02 sec
+          Start    2: BTreePageTest.AddNode
+   2/3448 Test    #2: BTreePageTest.AddNode ...............................................................................................   Passed    0.02 sec
+          Start    3: AdvancedDomainTest.Comprehensive
+   3/3448 Test    #3: AdvancedDomainTest.Comprehensive ....................................................................................   Passed    0.60 sec
+          Start    4: DomainManagerTest.Comprehensive
+   4/3448 Test    #4: DomainManagerTest.Comprehensive .....................................................................................   Passed    0.44 sec
+          Start    5: DomainPersistenceTest.ReloadsDomainMetadata
+   5/3448 Test    #5: DomainPersistenceTest.ReloadsDomainMetadata .........................................................................   Passed    0.75 sec
+          Start    6: DomainValidationFrozenTest.AllowsWholeValueReplacement
+   6/3448 Test    #6: DomainValidationFrozenTest.AllowsWholeValueReplacement ..............................................................   Passed    0.02 sec
+          Start    7: DomainValidationFrozenTest.RejectsElementMutation
+   7/3448 Test    #7: DomainValidationFrozenTest.RejectsElementMutation ...................................................................   Passed    0.02 sec
+          Start    8: DomainValidationFrozenTest.NonFrozenCollectionsAllowElementMutation
+   8/3448 Test    #8: DomainValidationFrozenTest.NonFrozenCollectionsAllowElementMutation .................................................   Passed    0.02 sec
+          Start    9: EnumDomainTest.Comprehensive
+   9/3448 Test    #9: EnumDomainTest.Comprehensive ........................................................................................   Passed    0.44 sec
+          Start   10: RecordDomainTest.Comprehensive
+  10/3448 Test   #10: RecordDomainTest.Comprehensive ......................................................................................   Passed    0.33 sec
+          Start   11: SetDomainTest.Comprehensive
+  11/3448 Test   #11: SetDomainTest.Comprehensive .........................................................................................   Passed    0.46 sec
+          Start   12: SystemDomainRegistryTest.DeterministicIdsAcrossFreshDatabases
+  12/3448 Test   #12: SystemDomainRegistryTest.DeterministicIdsAcrossFreshDatabases .......................................................   Passed    0.74 sec
+          Start   13: SystemDomainRegistryTest.NoLegacySbdbPrefixInSystemDomains
+  13/3448 Test   #13: SystemDomainRegistryTest.NoLegacySbdbPrefixInSystemDomains ..........................................................   Passed    0.39 sec
+          Start   14: SystemDomainRegistryTest.CanonicalFixedRegistrySampleParity
+  14/3448 Test   #14: SystemDomainRegistryTest.CanonicalFixedRegistrySampleParity .........................................................   Passed    0.40 sec
+          Start   15: SystemDomainRegistryTest.ReservedSystemDomainNamesRequireSystemBypass
+  15/3448 Test   #15: SystemDomainRegistryTest.ReservedSystemDomainNamesRequireSystemBypass ...............................................   Passed    0.38 sec
+          Start   16: SystemDomainRegistryTest.VisibilityGatesSystemDomainsByDialectAndProfile
+  16/3448 Test   #16: SystemDomainRegistryTest.VisibilityGatesSystemDomainsByDialectAndProfile ............................................   Passed    0.40 sec
+          Start   17: VariantDomainTest.Comprehensive
+  17/3448 Test   #17: VariantDomainTest.Comprehensive .....................................................................................   Passed    0.44 sec
+          Start   18: GinIndexTest.CreateGinIndex
+  18/3448 Test   #18: GinIndexTest.CreateGinIndex .........................................................................................   Passed    0.39 sec
+          Start   19: GinIndexTest.OpenGinIndex
+  19/3448 Test   #19: GinIndexTest.OpenGinIndex ...........................................................................................   Passed    0.39 sec
+          Start   20: GinIndexTest.InsertPendingList
+  20/3448 Test   #20: GinIndexTest.InsertPendingList ......................................................................................   Passed    0.37 sec
+          Start   21: GinIndexTest.PendingListMultiplePages
+  21/3448 Test   #21: GinIndexTest.PendingListMultiplePages ...............................................................................   Passed    0.39 sec
+          Start   22: GinIndexTest.Statistics
+  22/3448 Test   #22: GinIndexTest.Statistics .............................................................................................   Passed    0.38 sec
+          Start   23: GinPhase3Test.EntryTreeBasicInsertion
+  23/3448 Test   #23: GinPhase3Test.EntryTreeBasicInsertion ...............................................................................   Passed    0.40 sec
+          Start   24: GinPhase3Test.PendingListMerge
+  24/3448 Test   #24: GinPhase3Test.PendingListMerge ......................................................................................   Passed    0.39 sec
+          Start   25: GinPhase3Test.MultipleKeysMerge
+  25/3448 Test   #25: GinPhase3Test.MultipleKeysMerge .....................................................................................   Passed    0.40 sec
+          Start   26: GinPhase3Test.EntryTreeSplits
+  26/3448 Test   #26: GinPhase3Test.EntryTreeSplits .......................................................................................   Passed    0.42 sec
+          Start   27: GinPhase3Test.LexicographicKeyOrdering
+  27/3448 Test   #27: GinPhase3Test.LexicographicKeyOrdering ..............................................................................   Passed    0.39 sec
+          Start   28: GinPhase3Test.DuplicateKeysInPendingList
+  28/3448 Test   #28: GinPhase3Test.DuplicateKeysInPendingList ............................................................................   Passed    0.39 sec
+          Start   29: GinPhase3Test.EmptyPendingListMerge
+  29/3448 Test   #29: GinPhase3Test.EmptyPendingListMerge .................................................................................   Passed    0.38 sec
+          Start   30: GinPhase4Test.Comprehensive
+  30/3448 Test   #30: GinPhase4Test.Comprehensive .........................................................................................   Passed    1.23 sec
+          Start   31: GinPhase5Test.Comprehensive
+  31/3448 Test   #31: GinPhase5Test.Comprehensive .........................................................................................   Passed    2.13 sec
+          Start   32: GinPhase6Test.Comprehensive
+  32/3448 Test   #32: GinPhase6Test.Comprehensive .........................................................................................   Passed    1.85 sec
+          Start   33: GinPostingTreeTest.PostingListToTreeConversion
+  33/3448 Test   #33: GinPostingTreeTest.PostingListToTreeConversion ......................................................................   Passed    0.39 sec
+          Start   34: GinPostingTreeTest.PostingTreeInsertionAndGrowth
+  34/3448 Test   #34: GinPostingTreeTest.PostingTreeInsertionAndGrowth ....................................................................   Passed    0.42 sec
+          Start   35: GinPostingTreeTest.PostingTreeSortedOrder
+  35/3448 Test   #35: GinPostingTreeTest.PostingTreeSortedOrder ...........................................................................   Passed    0.39 sec
+          Start   36: GinPostingTreeTest.PostingTreeDuplicateHandling
+  36/3448 Test   #36: GinPostingTreeTest.PostingTreeDuplicateHandling .....................................................................   Passed    0.39 sec
+          Start   37: GinPostingTreeTest.PostingTreeMultipleKeys
+  37/3448 Test   #37: GinPostingTreeTest.PostingTreeMultipleKeys ..........................................................................   Passed    0.39 sec
+          Start   38: GinPostingTreeTest.PostingTreeStatistics
+  38/3448 Test   #38: GinPostingTreeTest.PostingTreeStatistics ............................................................................   Passed    0.40 sec
+          Start   39: GinPostingTreeTest.PostingListStaysListUnderThreshold
+  39/3448 Test   #39: GinPostingTreeTest.PostingListStaysListUnderThreshold ...............................................................   Passed    0.38 sec
+          Start   40: JobSchedulerCronParsing.RejectsInvalidFields
+  40/3448 Test   #40: JobSchedulerCronParsing.RejectsInvalidFields ........................................................................   Passed    0.03 sec
+          Start   41: JobSchedulerCronParsing.ComputesNextRunFromEpoch
+  41/3448 Test   #41: JobSchedulerCronParsing.ComputesNextRunFromEpoch ....................................................................   Passed    0.02 sec
+          Start   42: JobSchedulerCronParsing.ComputesNextRunWithStep
+  42/3448 Test   #42: JobSchedulerCronParsing.ComputesNextRunWithStep .....................................................................   Passed    0.03 sec
+          Start   43: JobSchedulerDependencyGating.RequiresCompletedLatestRun
+  43/3448 Test   #43: JobSchedulerDependencyGating.RequiresCompletedLatestRun .............................................................   Passed    0.02 sec
+          Start   44: JobSchedulerMaintenanceSeed.JobsPresentAndEnabled
+  44/3448 Test   #44: JobSchedulerMaintenanceSeed.JobsPresentAndEnabled ...................................................................   Passed    0.38 sec
+          Start   45: JobSchedulerCancellation.CancelledRunSkippedBeforeExecution
+  45/3448 Test   #45: JobSchedulerCancellation.CancelledRunSkippedBeforeExecution .........................................................   Passed    1.41 sec
+          Start   46: JobSchedulerCancellation.RequestCancelInterruptsRun
+  46/3448 Test   #46: JobSchedulerCancellation.RequestCancelInterruptsRun .................................................................   Passed    0.92 sec
+          Start   47: JobSchedulerExecuteNow.ManualExecutionCreatesRun
+  47/3448 Test   #47: JobSchedulerExecuteNow.ManualExecutionCreatesRun ....................................................................   Passed    0.41 sec
+          Start   48: JobSchedulerPendingState.RunTransitionsFromPendingToRunning
+  48/3448 Test   #48: JobSchedulerPendingState.RunTransitionsFromPendingToRunning .........................................................   Passed    0.91 sec
+          Start   49: JobSchedulerResultData.PersistsResultPayloads
+  49/3448 Test   #49: JobSchedulerResultData.PersistsResultPayloads .......................................................................   Passed    0.40 sec
+          Start   50: JobSchedulerDependencies.DependentJobWaitsForCompletion
+  50/3448 Test   #50: JobSchedulerDependencies.DependentJobWaitsForCompletion .............................................................   Passed    2.93 sec
+          Start   51: JobSchedulerRuntimeToggle.DisableStopsAndEnableResumesRuns
+  51/3448 Test   #51: JobSchedulerRuntimeToggle.DisableStopsAndEnableResumesRuns ..........................................................   Passed    3.42 sec
+          Start   52: JobSchedulerTimeout.MarksRunFailedAfterTimeout
+  52/3448 Test   #52: JobSchedulerTimeout.MarksRunFailedAfterTimeout ......................................................................   Passed    3.91 sec
+          Start   53: JobSchedulerRuntimeSql.AlterSystemAppliesSchedulerConfig
+  53/3448 Test   #53: JobSchedulerRuntimeSql.AlterSystemAppliesSchedulerConfig ............................................................   Passed    0.41 sec
+          Start   54: Alpha101Test.CreateDatabase_8K
+  54/3448 Test   #54: Alpha101Test.CreateDatabase_8K ......................................................................................   Passed    0.03 sec
+          Start   55: Alpha101Test.CreateDatabase_16K
+  55/3448 Test   #55: Alpha101Test.CreateDatabase_16K .....................................................................................   Passed    0.03 sec
+          Start   56: Alpha101Test.CreateDatabase_32K
+  56/3448 Test   #56: Alpha101Test.CreateDatabase_32K .....................................................................................   Passed    0.03 sec
+          Start   57: Alpha101Test.ValidateHeader_8K
+  57/3448 Test   #57: Alpha101Test.ValidateHeader_8K ......................................................................................   Passed    0.03 sec
+          Start   58: Alpha101Test.ValidateHeader_16K
+  58/3448 Test   #58: Alpha101Test.ValidateHeader_16K .....................................................................................   Passed    0.03 sec
+          Start   59: Alpha101Test.ValidateHeader_32K
+  59/3448 Test   #59: Alpha101Test.ValidateHeader_32K .....................................................................................   Passed    0.03 sec
+          Start   60: Alpha101Test.SystemCatalogInitialization
+  60/3448 Test   #60: Alpha101Test.SystemCatalogInitialization ............................................................................   Passed    0.03 sec
+          Start   61: Alpha101Test.UUIDv7Generation
+  61/3448 Test   #61: Alpha101Test.UUIDv7Generation .......................................................................................   Passed    0.03 sec
+          Start   62: Alpha101Test.CreateDatabase_FileExists
+  62/3448 Test   #62: Alpha101Test.CreateDatabase_FileExists ..............................................................................   Passed    0.03 sec
+          Start   63: Alpha101Test.CreateDatabase_InvalidPageSize
+  63/3448 Test   #63: Alpha101Test.CreateDatabase_InvalidPageSize .........................................................................   Passed    0.02 sec
+          Start   64: Alpha101Test.OpenDatabase_FileNotFound
+  64/3448 Test   #64: Alpha101Test.OpenDatabase_FileNotFound ..............................................................................   Passed    0.02 sec
+          Start   65: Alpha101Test.OpenDatabase_Success
+  65/3448 Test   #65: Alpha101Test.OpenDatabase_Success ...................................................................................   Passed    0.38 sec
+          Start   66: Alpha101Test.ChecksumValidation
+  66/3448 Test   #66: Alpha101Test.ChecksumValidation .....................................................................................   Passed    0.04 sec
+          Start   67: Alpha101Test.PageReadWrite
+  67/3448 Test   #67: Alpha101Test.PageReadWrite ..........................................................................................   Passed    0.38 sec
+          Start   68: Alpha101Test.CRC32CComputation
+  68/3448 Test   #68: Alpha101Test.CRC32CComputation ......................................................................................   Passed    0.02 sec
+          Start   69: AtomicXIDTest.SerialAllocation
+  69/3448 Test   #69: AtomicXIDTest.SerialAllocation ......................................................................................   Passed    0.80 sec
+          Start   70: AtomicXIDTest.ConcurrentAllocation_10Threads
+  70/3448 Test   #70: AtomicXIDTest.ConcurrentAllocation_10Threads ........................................................................   Passed    0.89 sec
+          Start   71: AtomicXIDTest.HighConcurrency_100Threads
+  71/3448 Test   #71: AtomicXIDTest.HighConcurrency_100Threads ............................................................................   Passed    1.64 sec
+          Start   72: AtomicXIDTest.ConcurrentWithDelays
+  72/3448 Test   #72: AtomicXIDTest.ConcurrentWithDelays ..................................................................................   Passed    0.55 sec
+          Start   73: AtomicXIDTest.SequentialConsistency
+  73/3448 Test   #73: AtomicXIDTest.SequentialConsistency .................................................................................   Passed    4.42 sec
+          Start   74: AtomicXIDTest.AtomicIsolation
+  74/3448 Test   #74: AtomicXIDTest.AtomicIsolation .......................................................................................   Passed    2.79 sec
+          Start   75: AuditLoggerTest.InitialState
+  75/3448 Test   #75: AuditLoggerTest.InitialState ........................................................................................   Passed    0.02 sec
+          Start   76: AuditLoggerTest.LogSingleEvent
+  76/3448 Test   #76: AuditLoggerTest.LogSingleEvent ......................................................................................   Passed    0.02 sec
+          Start   77: AuditLoggerTest.EventIDSequential
+  77/3448 Test   #77: AuditLoggerTest.EventIDSequential ...................................................................................   Passed    0.02 sec
+          Start   78: AuditLoggerTest.TimestampAutoFilled
+  78/3448 Test   #78: AuditLoggerTest.TimestampAutoFilled .................................................................................   Passed    0.02 sec
+          Start   79: AuditLoggerTest.AllEventTypes
+  79/3448 Test   #79: AuditLoggerTest.AllEventTypes .......................................................................................   Passed    0.02 sec
+          Start   80: AuditLoggerTest.EventTypeNames
+  80/3448 Test   #80: AuditLoggerTest.EventTypeNames ......................................................................................   Passed    0.02 sec
+          Start   81: AuditLoggerTest.QueryAllEvents
+  81/3448 Test   #81: AuditLoggerTest.QueryAllEvents ......................................................................................   Passed    0.02 sec
+          Start   82: AuditLoggerTest.QueryByUsername
+  82/3448 Test   #82: AuditLoggerTest.QueryByUsername .....................................................................................   Passed    0.02 sec
+          Start   83: AuditLoggerTest.QueryByEventType
+  83/3448 Test   #83: AuditLoggerTest.QueryByEventType ....................................................................................   Passed    0.02 sec
+          Start   84: AuditLoggerTest.QueryBySuccess
+  84/3448 Test   #84: AuditLoggerTest.QueryBySuccess ......................................................................................   Passed    0.02 sec
+          Start   85: AuditLoggerTest.QueryPagination
+  85/3448 Test   #85: AuditLoggerTest.QueryPagination .....................................................................................   Passed    0.02 sec
+          Start   86: AuditLoggerTest.QuerySortingDescending
+  86/3448 Test   #86: AuditLoggerTest.QuerySortingDescending ..............................................................................   Passed    0.05 sec
+          Start   87: AuditLoggerTest.CreateLoginSuccessEvent
+  87/3448 Test   #87: AuditLoggerTest.CreateLoginSuccessEvent .............................................................................   Passed    0.02 sec
+          Start   88: AuditLoggerTest.CreateLoginFailureEvent
+  88/3448 Test   #88: AuditLoggerTest.CreateLoginFailureEvent .............................................................................   Passed    0.02 sec
+          Start   89: AuditLoggerTest.CreatePermissionDeniedEvent
+  89/3448 Test   #89: AuditLoggerTest.CreatePermissionDeniedEvent .........................................................................   Passed    0.02 sec
+          Start   90: AuditLoggerTest.CreateUserCreatedEvent
+  90/3448 Test   #90: AuditLoggerTest.CreateUserCreatedEvent ..............................................................................   Passed    0.02 sec
+          Start   91: AuditLoggerTest.ConcurrentLogging
+  91/3448 Test   #91: AuditLoggerTest.ConcurrentLogging ...................................................................................   Passed    0.02 sec
+          Start   92: AuditLoggerTest.ConcurrentQueryAndLog
+  92/3448 Test   #92: AuditLoggerTest.ConcurrentQueryAndLog ...............................................................................   Passed    0.02 sec
+          Start   93: AuditLoggerTest.EmptyUsername
+  93/3448 Test   #93: AuditLoggerTest.EmptyUsername .......................................................................................   Passed    0.02 sec
+          Start   94: AuditLoggerTest.VeryLongDetails
+  94/3448 Test   #94: AuditLoggerTest.VeryLongDetails .....................................................................................   Passed    0.02 sec
+          Start   95: AuditLoggerTest.QueryNoResults
+  95/3448 Test   #95: AuditLoggerTest.QueryNoResults ......................................................................................   Passed    0.02 sec
+          Start   96: AuditLoggerTest.ComplianceAuditTrail
+  96/3448 Test   #96: AuditLoggerTest.ComplianceAuditTrail ................................................................................   Passed    0.03 sec
+          Start   97: AuthBootstrapClaimStandaloneTest.LocalProviderRejectsNullCatalog
+  97/3448 Test   #97: AuthBootstrapClaimStandaloneTest.LocalProviderRejectsNullCatalog ....................................................   Passed    0.02 sec
+          Start   98: AuthBootstrapClaimTest.ConcurrentBootstrapClaimsHaveSingleWinner
+  98/3448 Test   #98: AuthBootstrapClaimTest.ConcurrentBootstrapClaimsHaveSingleWinner ....................................................   Passed    0.67 sec
+          Start   99: AuthBootstrapClaimTest.BootstrapTokenSingleUseEnforced
+  99/3448 Test   #99: AuthBootstrapClaimTest.BootstrapTokenSingleUseEnforced ..............................................................   Passed    0.58 sec
+          Start  100: AuthBootstrapClaimTest.ReleasingWithoutClaimIsNoOp
+ 100/3448 Test  #100: AuthBootstrapClaimTest.ReleasingWithoutClaimIsNoOp ..................................................................   Passed    0.35 sec
+          Start  101: AuthBootstrapClaimTest.LegacyAuthMethodUsageUpdatesTelemetryCounters
+ 101/3448 Test  #101: AuthBootstrapClaimTest.LegacyAuthMethodUsageUpdatesTelemetryCounters ................................................   Passed    0.45 sec
+          Start  102: AuthBootstrapClaimTest.AuthKeyScopeBindingAndLastUsedRoundTrip
+ 102/3448 Test  #102: AuthBootstrapClaimTest.AuthKeyScopeBindingAndLastUsedRoundTrip ......................................................   Passed    0.37 sec
+          Start  103: AuthBootstrapClaimTest.AuthKeyBindingValidationRejectsMissingValue
+ 103/3448 Test  #103: AuthBootstrapClaimTest.AuthKeyBindingValidationRejectsMissingValue ..................................................   Passed    0.31 sec
+          Start  104: AuthBootstrapClaimTest.AuthKeyUsageValidationRejectsInvalidSeedCounts
+ 104/3448 Test  #104: AuthBootstrapClaimTest.AuthKeyUsageValidationRejectsInvalidSeedCounts ...............................................   Passed    0.31 sec
+          Start  105: AuthBootstrapClaimTest.AuthKeyListNormalizesExpiredStatusAndPersistsIt
+ 105/3448 Test  #105: AuthBootstrapClaimTest.AuthKeyListNormalizesExpiredStatusAndPersistsIt ..............................................   Passed    0.35 sec
+          Start  106: AuthBootstrapClaimTest.AuthTokenSuccessConsumesKey
+ 106/3448 Test  #106: AuthBootstrapClaimTest.AuthTokenSuccessConsumesKey ..................................................................   Passed    0.35 sec
+          Start  107: AuthBootstrapClaimTest.AuthTokenDeniedForRevokedOrExpiredKey
+ 107/3448 Test  #107: AuthBootstrapClaimTest.AuthTokenDeniedForRevokedOrExpiredKey ........................................................   Passed    0.39 sec
+          Start  108: AuthBootstrapClaimTest.AuthKeyBulkRevocationByIssuerAndScope
+ 108/3448 Test  #108: AuthBootstrapClaimTest.AuthKeyBulkRevocationByIssuerAndScope ........................................................   Passed    0.55 sec
+          Start  109: AuthBootstrapClaimTest.PeerAuthRequiresExplicitPeerMapping
+ 109/3448 Test  #109: AuthBootstrapClaimTest.PeerAuthRequiresExplicitPeerMapping ..........................................................   Passed    0.32 sec
+          Start  110: AuthBootstrapClaimTest.LockoutStatePersistsAcrossProviderInstances
+ 110/3448 Test  #110: AuthBootstrapClaimTest.LockoutStatePersistsAcrossProviderInstances ..................................................   Passed    1.07 sec
+          Start  111: AuthBootstrapClaimTest.LockoutScopeIsBoundToPeerIdentityAttributes
+ 111/3448 Test  #111: AuthBootstrapClaimTest.LockoutScopeIsBoundToPeerIdentityAttributes ..................................................   Passed    1.06 sec
+          Start  112: AuthBootstrapClaimTest.ScramBeginAndFinishRateLimitsAreSeparated
+ 112/3448 Test  #112: AuthBootstrapClaimTest.ScramBeginAndFinishRateLimitsAreSeparated ....................................................   Passed    0.69 sec
+          Start  113: AuthBootstrapClaimTest.ScramPolicyRejectsWeakIterationsAndMarksUpgradeMetadata
+ 113/3448 Test  #113: AuthBootstrapClaimTest.ScramPolicyRejectsWeakIterationsAndMarksUpgradeMetadata ......................................   Passed    0.45 sec
+          Start  114: AuthBootstrapClaimTest.DormantDetachIssuesReattachAuthKeyAndRequiresToken
+ 114/3448 Test  #114: AuthBootstrapClaimTest.DormantDetachIssuesReattachAuthKeyAndRequiresToken ...........................................   Passed    0.34 sec
+          Start  115: AuthBootstrapClaimTest.DormantReattachAuthKeyRevokedOnDatabaseClose
+ 115/3448 Test  #115: AuthBootstrapClaimTest.DormantReattachAuthKeyRevokedOnDatabaseClose .................................................   Passed    0.58 sec
+          Start  116: AuthMfaChallengeFlowTest.TokenAuthWithMfaChallengeSucceeds
+ 116/3448 Test  #116: AuthMfaChallengeFlowTest.TokenAuthWithMfaChallengeSucceeds ..........................................................   Passed    0.49 sec
+          Start  117: AuthMfaChallengeFlowTest.TokenAuthWithMfaPolicyFailsWhenCodeMissing
+ 117/3448 Test  #117: AuthMfaChallengeFlowTest.TokenAuthWithMfaPolicyFailsWhenCodeMissing .................................................   Passed    1.46 sec
+          Start  118: AuthMfaChallengeFlowTest.ScramAuthWithMfaContinuationSucceeds
+ 118/3448 Test  #118: AuthMfaChallengeFlowTest.ScramAuthWithMfaContinuationSucceeds .......................................................   Passed    0.47 sec
+          Start  119: AuthMfaChallengeFlowTest.PrivilegedQueryDeniedWhenStepUpExpired
+ 119/3448 Test  #119: AuthMfaChallengeFlowTest.PrivilegedQueryDeniedWhenStepUpExpired .....................................................   Passed    0.56 sec
+          Start  120: AuthPolicyProtocolParityTest.StrictScramPolicyAllowsAllProtocolProfiles
+ 120/3448 Test  #120: AuthPolicyProtocolParityTest.StrictScramPolicyAllowsAllProtocolProfiles .............................................   Passed    0.88 sec
+          Start  121: AuthPolicyProtocolParityTest.TokenOnlyPolicyDeniesPasswordProfiles
+ 121/3448 Test  #121: AuthPolicyProtocolParityTest.TokenOnlyPolicyDeniesPasswordProfiles ..................................................   Passed    0.43 sec
+          Start  122: AuthPolicyProtocolParityTest.IngressRuleChainAppliesTrustedProxyChecksAtConnect
+ 122/3448 Test  #122: AuthPolicyProtocolParityTest.IngressRuleChainAppliesTrustedProxyChecksAtConnect .....................................   Passed    0.42 sec
+          Start  123: AuthPolicyProtocolParityTest.ManagerBoundConnectRejectsDatabaseUuidMismatch
+ 123/3448 Test  #123: AuthPolicyProtocolParityTest.ManagerBoundConnectRejectsDatabaseUuidMismatch .........................................   Passed    0.29 sec
+          Start  124: AuthPolicyProtocolParityTest.BoundDatabaseUuidFlagRequiresBoundUuidPayload
+ 124/3448 Test  #124: AuthPolicyProtocolParityTest.BoundDatabaseUuidFlagRequiresBoundUuidPayload ..........................................   Passed    0.29 sec
+          Start  125: AuthPolicyProtocolParityTest.BoundDatabaseUuidFlagRejectsUuidMismatch
+ 125/3448 Test  #125: AuthPolicyProtocolParityTest.BoundDatabaseUuidFlagRejectsUuidMismatch ...............................................   Passed    0.28 sec
+          Start  126: BackupTablespaceTest.ManifestIncludesTablespaceEntries
+ 126/3448 Test  #126: BackupTablespaceTest.ManifestIncludesTablespaceEntries ..............................................................   Passed    0.26 sec
+          Start  127: BackupTablespaceTest.RestoreRequiresTablespaceUnlessAllowed
+ 127/3448 Test  #127: BackupTablespaceTest.RestoreRequiresTablespaceUnlessAllowed .........................................................   Passed    0.29 sec
+          Start  128: BitmapIndexGCTest.EmptyDeadTidsVector
+ 128/3448 Test  #128: BitmapIndexGCTest.EmptyDeadTidsVector ...............................................................................   Passed    0.29 sec
+          Start  129: BitmapIndexGCTest.DeadTidNotInIndex
+ 129/3448 Test  #129: BitmapIndexGCTest.DeadTidNotInIndex .................................................................................   Passed    0.29 sec
+          Start  130: BitmapIndexGCTest.SingleDeadTidRemoval
+ 130/3448 Test  #130: BitmapIndexGCTest.SingleDeadTidRemoval ..............................................................................   Passed    0.29 sec
+          Start  131: BitmapIndexGCTest.BulkDeadTidRemoval
+ 131/3448 Test  #131: BitmapIndexGCTest.BulkDeadTidRemoval ................................................................................   Passed    0.29 sec
+          Start  132: BitmapIndexGCTest.IndexTypeName
+ 132/3448 Test  #132: BitmapIndexGCTest.IndexTypeName .....................................................................................   Passed    0.28 sec
+          Start  133: BitmapIndexGCTest.DuplicateDeadTids
+ 133/3448 Test  #133: BitmapIndexGCTest.DuplicateDeadTids .................................................................................   Passed    0.29 sec
+          Start  134: BitmapIndexGCTest.MultipleValuesRemoval
+ 134/3448 Test  #134: BitmapIndexGCTest.MultipleValuesRemoval .............................................................................   Passed    0.28 sec
+          Start  135: BitmapIndexGCTest.EmptyIndexGC
+ 135/3448 Test  #135: BitmapIndexGCTest.EmptyIndexGC ......................................................................................   Passed    0.28 sec
+          Start  136: BrinIndexTest.CreateIndex
+ 136/3448 Test  #136: BrinIndexTest.CreateIndex ...........................................................................................   Passed    0.29 sec
+          Start  137: BrinIndexTest.OpenIndex
+ 137/3448 Test  #137: BrinIndexTest.OpenIndex .............................................................................................   Passed    0.28 sec
+          Start  138: BrinIndexTest.InsertSingleValue
+ 138/3448 Test  #138: BrinIndexTest.InsertSingleValue .....................................................................................   Passed    0.28 sec
+          Start  139: BrinIndexTest.InsertMultipleValuesSameRange
+ 139/3448 Test  #139: BrinIndexTest.InsertMultipleValuesSameRange .........................................................................   Passed    0.29 sec
+          Start  140: BrinIndexTest.InsertMultipleRanges
+ 140/3448 Test  #140: BrinIndexTest.InsertMultipleRanges ..................................................................................   Passed    0.28 sec
+          Start  141: BrinIndexTest.ScanNoMatch
+ 141/3448 Test  #141: BrinIndexTest.ScanNoMatch ...........................................................................................   Passed    0.28 sec
+          Start  142: BrinIndexTest.ScanNullMin
+ 142/3448 Test  #142: BrinIndexTest.ScanNullMin ...........................................................................................   Passed    0.28 sec
+          Start  143: BrinIndexTest.ScanNullMax
+ 143/3448 Test  #143: BrinIndexTest.ScanNullMax ...........................................................................................   Passed    0.28 sec
+          Start  144: BrinIndexTest.RemoveDeadEntriesEmpty
+ 144/3448 Test  #144: BrinIndexTest.RemoveDeadEntriesEmpty ................................................................................   Passed    0.28 sec
+          Start  145: BrinIndexTest.RemoveDeadEntriesPartial
+ 145/3448 Test  #145: BrinIndexTest.RemoveDeadEntriesPartial ..............................................................................   Passed    0.29 sec
+          Start  146: BrinIndexTest.RemoveDeadEntriesComplete
+ 146/3448 Test  #146: BrinIndexTest.RemoveDeadEntriesComplete .............................................................................   Passed    0.28 sec
+          Start  147: BrinIndexTest.RemoveDeadEntriesMultipleRanges
+ 147/3448 Test  #147: BrinIndexTest.RemoveDeadEntriesMultipleRanges .......................................................................   Passed    0.28 sec
+          Start  148: BrinIndexTest.GetStats
+ 148/3448 Test  #148: BrinIndexTest.GetStats ..............................................................................................   Passed    0.28 sec
+          Start  149: BrinIndexTest.CustomRangeSize
+ 149/3448 Test  #149: BrinIndexTest.CustomRangeSize .......................................................................................   Passed    0.28 sec
+          Start  150: BrinIndexTest.TimeSeriesWorkload
+ 150/3448 Test  #150: BrinIndexTest.TimeSeriesWorkload ....................................................................................   Passed    0.29 sec
+          Start  151: BTreeCompressionTest.BasicInsertAndSearch
+ 151/3448 Test  #151: BTreeCompressionTest.BasicInsertAndSearch ...........................................................................   Passed    0.40 sec
+          Start  152: BTreeCompressionTest.ShortKeysNotCompressed
+ 152/3448 Test  #152: BTreeCompressionTest.ShortKeysNotCompressed .........................................................................   Passed    0.40 sec
+          Start  153: BTreeCompressionTest.SmallPrefixNotCompressed
+ 153/3448 Test  #153: BTreeCompressionTest.SmallPrefixNotCompressed .......................................................................   Passed    0.40 sec
+          Start  154: BTreeCompressionTest.LargePrefixShouldCompress
+ 154/3448 Test  #154: BTreeCompressionTest.LargePrefixShouldCompress ......................................................................   Passed    0.39 sec
+          Start  155: BTreeCompressionTest.UUIDv7KeysCompression
+ 155/3448 Test  #155: BTreeCompressionTest.UUIDv7KeysCompression ..........................................................................   Passed    0.40 sec
+          Start  156: BTreeCompressionTest.StringKeysWithCommonPrefix
+ 156/3448 Test  #156: BTreeCompressionTest.StringKeysWithCommonPrefix .....................................................................   Passed    0.40 sec
+          Start  157: BTreeCompressionTest.MixedCompressibleAndNonCompressible
+ 157/3448 Test  #157: BTreeCompressionTest.MixedCompressibleAndNonCompressible ............................................................   Passed    0.40 sec
+          Start  158: BTreeCompressionTest.RangeScanWithCompression
+ 158/3448 Test  #158: BTreeCompressionTest.RangeScanWithCompression .......................................................................   Passed    0.39 sec
+          Start  159: BTreeCompressionTest.RemoveWithCompression
+ 159/3448 Test  #159: BTreeCompressionTest.RemoveWithCompression ..........................................................................   Passed    0.39 sec
+          Start  160: BTreeCompressionTest.EmptyKeyHandling
+ 160/3448 Test  #160: BTreeCompressionTest.EmptyKeyHandling ...............................................................................   Passed    0.38 sec
+          Start  161: BTreeCompressionTest.IdenticalKeys
+ 161/3448 Test  #161: BTreeCompressionTest.IdenticalKeys ..................................................................................   Passed    0.38 sec
+          Start  162: BtreeDeleteParentUpdateTest.Comprehensive
+ 162/3448 Test  #162: BtreeDeleteParentUpdateTest.Comprehensive ...........................................................................   Passed    0.02 sec
+          Start  163: BTreeGCTest.EmptyDeadTidsVector
+ 163/3448 Test  #163: BTreeGCTest.EmptyDeadTidsVector .....................................................................................   Passed    0.29 sec
+          Start  164: BTreeGCTest.DeadTidNotInIndex
+ 164/3448 Test  #164: BTreeGCTest.DeadTidNotInIndex .......................................................................................   Passed    0.28 sec
+          Start  165: BTreeGCTest.SingleDeadTidRemoval
+ 165/3448 Test  #165: BTreeGCTest.SingleDeadTidRemoval ....................................................................................   Passed    0.28 sec
+          Start  166: BTreeGCTest.IndexTypeName
+ 166/3448 Test  #166: BTreeGCTest.IndexTypeName ...........................................................................................   Passed    0.29 sec
+          Start  167: BTreeGCTest.DuplicateDeadTids
+ 167/3448 Test  #167: BTreeGCTest.DuplicateDeadTids .......................................................................................   Passed    0.29 sec
+          Start  168: BTreeGcCompactionTest.GcCompactionEmptyTree
+ 168/3448 Test  #168: BTreeGcCompactionTest.GcCompactionEmptyTree .........................................................................   Passed    0.39 sec
+          Start  169: BTreeGcCompactionTest.GcCompactionWithDeletedNodes
+ 169/3448 Test  #169: BTreeGcCompactionTest.GcCompactionWithDeletedNodes ..................................................................   Passed    0.39 sec
+          Start  170: BTreeGcCompactionTest.CompactionReclaimsSpace
+ 170/3448 Test  #170: BTreeGcCompactionTest.CompactionReclaimsSpace .......................................................................   Passed    0.39 sec
+          Start  171: BTreeGcCompactionTest.GcCompactionMultipleTimes
+ 171/3448 Test  #171: BTreeGcCompactionTest.GcCompactionMultipleTimes .....................................................................   Passed    0.38 sec
+          Start  172: BTreeIteratorTest.FullScanEmpty
+ 172/3448 Test  #172: BTreeIteratorTest.FullScanEmpty .....................................................................................   Passed    0.39 sec
+          Start  173: BTreeIteratorTest.FullScanSinglePage
+ 173/3448 Test  #173: BTreeIteratorTest.FullScanSinglePage ................................................................................   Passed    0.39 sec
+          Start  174: BTreeIteratorTest.FullScanMultiplePages
+ 174/3448 Test  #174: BTreeIteratorTest.FullScanMultiplePages .............................................................................   Passed    0.39 sec
+          Start  175: BTreeIteratorTest.BoundedScanInclusive
+ 175/3448 Test  #175: BTreeIteratorTest.BoundedScanInclusive ..............................................................................   Passed    0.39 sec
+          Start  176: BTreeIteratorTest.BoundedScanExclusive
+ 176/3448 Test  #176: BTreeIteratorTest.BoundedScanExclusive ..............................................................................   Passed    0.39 sec
+          Start  177: BTreeIteratorTest.UnboundedStartScan
+ 177/3448 Test  #177: BTreeIteratorTest.UnboundedStartScan ................................................................................   Passed    0.38 sec
+          Start  178: BTreeIteratorTest.UnboundedEndScan
+ 178/3448 Test  #178: BTreeIteratorTest.UnboundedEndScan ..................................................................................   Passed    0.39 sec
+          Start  179: BTreeIteratorTest.ScanWithDuplicates
+ 179/3448 Test  #179: BTreeIteratorTest.ScanWithDuplicates ................................................................................   Passed    0.39 sec
+          Start  180: BTreeIteratorTest.ScannedCountValidation
+ 180/3448 Test  #180: BTreeIteratorTest.ScannedCountValidation ............................................................................   Passed    0.38 sec
+          Start  181: BTreeIteratorTest.EmptyRangeScan
+ 181/3448 Test  #181: BTreeIteratorTest.EmptyRangeScan ....................................................................................   Passed    0.40 sec
+          Start  182: BTreeIteratorTest.ScanNonExistentRange
+ 182/3448 Test  #182: BTreeIteratorTest.ScanNonExistentRange ..............................................................................   Passed    0.39 sec
+          Start  183: BTreeMGATest.InsertPopulatesXmin
+ 183/3448 Test  #183: BTreeMGATest.InsertPopulatesXmin ....................................................................................   Passed    0.42 sec
+          Start  184: BTreeMGATest.XminZeroForSystemOperations
+ 184/3448 Test  #184: BTreeMGATest.XminZeroForSystemOperations ............................................................................   Passed    0.41 sec
+          Start  185: BTreeMGATest.MarkDeletedSetsXmax
+ 185/3448 Test  #185: BTreeMGATest.MarkDeletedSetsXmax ....................................................................................   Passed    0.42 sec
+          Start  186: BTreeMGATest.SoftDeletedEntryRemainsInIndex
+ 186/3448 Test  #186: BTreeMGATest.SoftDeletedEntryRemainsInIndex .........................................................................   Passed    0.42 sec
+          Start  187: BTreeMGATest.InProgressTransactionInvisibleToOthers
+ 187/3448 Test  #187: BTreeMGATest.InProgressTransactionInvisibleToOthers .................................................................   Passed    0.43 sec
+          Start  188: BTreeMGATest.AbortedTransactionInvisible
+ 188/3448 Test  #188: BTreeMGATest.AbortedTransactionInvisible ............................................................................   Passed    0.41 sec
+          Start  189: BTreeMGATest.VisibilityAfterDelete
+ 189/3448 Test  #189: BTreeMGATest.VisibilityAfterDelete ..................................................................................   Passed    0.40 sec
+          Start  190: BTreeMGATest.RangeScanSkipsInvisibleEntries
+ 190/3448 Test  #190: BTreeMGATest.RangeScanSkipsInvisibleEntries .........................................................................   Passed    0.39 sec
+          Start  191: BTreeMGATest.VisibilityFilteringPerformance
+ 191/3448 Test  #191: BTreeMGATest.VisibilityFilteringPerformance .........................................................................   Passed    0.40 sec
+          Start  192: BTreeMGATest.NullSnapshotSeesAllEntries
+ 192/3448 Test  #192: BTreeMGATest.NullSnapshotSeesAllEntries .............................................................................   Passed    0.40 sec
+          Start  193: BTreeMGATest.MultipleVersionsOfSameKey
+ 193/3448 Test  #193: BTreeMGATest.MultipleVersionsOfSameKey ..............................................................................   Passed    0.42 sec
+          Start  194: BtreeRightmostChildTest.Comprehensive
+ 194/3448 Test  #194: BtreeRightmostChildTest.Comprehensive ...............................................................................   Passed    0.88 sec
+          Start  195: BtreeRightmostSimpleTest.Comprehensive
+ 195/3448 Test  #195: BtreeRightmostSimpleTest.Comprehensive ..............................................................................   Passed    0.76 sec
+          Start  196: BufferPoolConcurrencyTest.ConcurrentPinUnpin
+ 196/3448 Test  #196: BufferPoolConcurrencyTest.ConcurrentPinUnpin ........................................................................   Passed    0.39 sec
+          Start  197: BufferPoolConcurrencyTest.PinCountOverflow
+ 197/3448 Test  #197: BufferPoolConcurrencyTest.PinCountOverflow ..........................................................................   Passed    0.39 sec
+          Start  198: BufferPoolConcurrencyTest.ConcurrentDifferentPages
+ 198/3448 Test  #198: BufferPoolConcurrencyTest.ConcurrentDifferentPages ..................................................................   Passed    0.38 sec
+          Start  199: BufferPoolConcurrencyTest.ConcurrentPinUnpinFlush
+ 199/3448 Test  #199: BufferPoolConcurrencyTest.ConcurrentPinUnpinFlush ...................................................................   Passed    0.38 sec
+          Start  200: BufferPoolConcurrencyTest.LRUIntegrity
+ 200/3448 Test  #200: BufferPoolConcurrencyTest.LRUIntegrity ..............................................................................   Passed    0.39 sec
+          Start  201: BufferPoolConcurrencyTest.StatisticsConsistency
+ 201/3448 Test  #201: BufferPoolConcurrencyTest.StatisticsConsistency .....................................................................   Passed    0.39 sec
+          Start  202: BufferPoolConcurrencyTest.DoubleUnpinDetection
+ 202/3448 Test  #202: BufferPoolConcurrencyTest.DoubleUnpinDetection ......................................................................   Passed    0.38 sec
+          Start  203: BytecodeOpcodesTest.AllIndexOpcodesAreDefined
+ 203/3448 Test  #203: BytecodeOpcodesTest.AllIndexOpcodesAreDefined .......................................................................   Passed    0.03 sec
+          Start  204: BytecodeOpcodesTest.AllIndexTypesAreDefined
+ 204/3448 Test  #204: BytecodeOpcodesTest.AllIndexTypesAreDefined .........................................................................   Passed    0.02 sec
+          Start  205: BytecodeOpcodesTest.EncodeIndexInsert
+ 205/3448 Test  #205: BytecodeOpcodesTest.EncodeIndexInsert ...............................................................................   Passed    0.02 sec
+          Start  206: BytecodeOpcodesTest.EncodeIndexSearch
+ 206/3448 Test  #206: BytecodeOpcodesTest.EncodeIndexSearch ...............................................................................   Passed    0.02 sec
+          Start  207: BytecodeOpcodesTest.EncodeIndexScan
+ 207/3448 Test  #207: BytecodeOpcodesTest.EncodeIndexScan .................................................................................   Passed    0.02 sec
+          Start  208: BytecodeOpcodesTest.EncodeIndexUpdate
+ 208/3448 Test  #208: BytecodeOpcodesTest.EncodeIndexUpdate ...............................................................................   Passed    0.02 sec
+          Start  209: BytecodeOpcodesTest.EncodeIndexDelete
+ 209/3448 Test  #209: BytecodeOpcodesTest.EncodeIndexDelete ...............................................................................   Passed    0.02 sec
+          Start  210: BytecodeOpcodesTest.HelperFunctionsCorrectness
+ 210/3448 Test  #210: BytecodeOpcodesTest.HelperFunctionsCorrectness ......................................................................   Passed    0.02 sec
+          Start  211: BytecodeOpcodesTest.SBLRVersionIsDefined
+ 211/3448 Test  #211: BytecodeOpcodesTest.SBLRVersionIsDefined ............................................................................   Passed    0.02 sec
+          Start  212: BytecodeOpcodesTest.ExtendedOpcodePrefix
+ 212/3448 Test  #212: BytecodeOpcodesTest.ExtendedOpcodePrefix ............................................................................   Passed    0.02 sec
+          Start  213: BytecodeOpcodesTest.MGAComplianceParameters
+ 213/3448 Test  #213: BytecodeOpcodesTest.MGAComplianceParameters .........................................................................   Passed    0.02 sec
+          Start  214: CacheUnitTest.StatementCacheKeyingAndInvalidation
+ 214/3448 Test  #214: CacheUnitTest.StatementCacheKeyingAndInvalidation ...................................................................   Passed    0.02 sec
+          Start  215: CacheUnitTest.ResultCacheKeyingInvalidationAndEviction
+ 215/3448 Test  #215: CacheUnitTest.ResultCacheKeyingInvalidationAndEviction ..............................................................   Passed    0.02 sec
+          Start  216: CacheUnitTest.TranslationCacheKeyingAndEviction
+ 216/3448 Test  #216: CacheUnitTest.TranslationCacheKeyingAndEviction .....................................................................   Passed    0.02 sec
+          Start  217: CatalogCharsetCollationExtensionContractTest.CharsetAliasContracts
+ 217/3448 Test  #217: CatalogCharsetCollationExtensionContractTest.CharsetAliasContracts ..................................................   Passed    0.29 sec
+          Start  218: CatalogCharsetCollationExtensionContractTest.CollationTailoringContracts
+ 218/3448 Test  #218: CatalogCharsetCollationExtensionContractTest.CollationTailoringContracts ............................................   Passed    0.34 sec
+          Start  219: CatalogClusterClockExtensionContractTest.ClockCatalogContracts
+ 219/3448 Test  #219: CatalogClusterClockExtensionContractTest.ClockCatalogContracts ......................................................   Passed    0.30 sec
+          Start  220: CatalogClusterClockExtensionContractTest.NodeCatalogContracts
+ 220/3448 Test  #220: CatalogClusterClockExtensionContractTest.NodeCatalogContracts .......................................................   Passed    0.33 sec
+          Start  221: CatalogClusterFabricExtensionContractTest.ClusterFabricCatalogContracts
+ 221/3448 Test  #221: CatalogClusterFabricExtensionContractTest.ClusterFabricCatalogContracts .............................................   Passed    0.32 sec
+          Start  222: CatalogDatabaseBootstrapTest.PersistsDatabaseIdentityRow
+ 222/3448 Test  #222: CatalogDatabaseBootstrapTest.PersistsDatabaseIdentityRow ............................................................   Passed    0.64 sec
+          Start  223: CatalogDatabaseBootstrapTest.CreatesCanonicalFixedSchemaTree
+ 223/3448 Test  #223: CatalogDatabaseBootstrapTest.CreatesCanonicalFixedSchemaTree ........................................................   Passed    0.38 sec
+          Start  224: CatalogDatabaseBootstrapTest.CreatesTypeCatalogFamilyPages
+ 224/3448 Test  #224: CatalogDatabaseBootstrapTest.CreatesTypeCatalogFamilyPages ..........................................................   Passed    0.64 sec
+          Start  225: CatalogDatabaseBootstrapTest.GroupLifecycleMaterializesDynamicOverlaySchema
+ 225/3448 Test  #225: CatalogDatabaseBootstrapTest.GroupLifecycleMaterializesDynamicOverlaySchema .........................................   Passed    0.40 sec
+          Start  226: CatalogDatabaseBootstrapTest.GroupMemberLifecycleMaterializesDynamicOverlaySchema
+ 226/3448 Test  #226: CatalogDatabaseBootstrapTest.GroupMemberLifecycleMaterializesDynamicOverlaySchema ...................................   Passed    0.40 sec
+          Start  227: CatalogDatabaseBootstrapTest.ClusterLifecycleMaterializesDynamicOverlaySchema
+ 227/3448 Test  #227: CatalogDatabaseBootstrapTest.ClusterLifecycleMaterializesDynamicOverlaySchema .......................................   Passed    0.41 sec
+          Start  228: CatalogDatabaseBootstrapTest.GroupRenameMovesDynamicOverlaySchema
+ 228/3448 Test  #228: CatalogDatabaseBootstrapTest.GroupRenameMovesDynamicOverlaySchema ...................................................   Passed    0.39 sec
+          Start  229: CatalogDatabaseBootstrapTest.ClusterRenameMovesDynamicOverlaySchema
+ 229/3448 Test  #229: CatalogDatabaseBootstrapTest.ClusterRenameMovesDynamicOverlaySchema .................................................   Passed    0.40 sec
+          Start  230: CatalogDatabaseBootstrapTest.ClusterNodeLifecycleMaterializesDynamicOverlaySchema
+ 230/3448 Test  #230: CatalogDatabaseBootstrapTest.ClusterNodeLifecycleMaterializesDynamicOverlaySchema ...................................   Passed    0.41 sec
+          Start  231: CatalogDatabaseBootstrapTest.ClusterNodeRenameMovesDynamicOverlaySchema
+ 231/3448 Test  #231: CatalogDatabaseBootstrapTest.ClusterNodeRenameMovesDynamicOverlaySchema .............................................   Passed    0.41 sec
+          Start  232: CatalogDatabaseBootstrapTest.EmulatedDatabaseLifecycleMaterializesDynamicOverlaySchema
+ 232/3448 Test  #232: CatalogDatabaseBootstrapTest.EmulatedDatabaseLifecycleMaterializesDynamicOverlaySchema ..............................   Passed    0.41 sec
+          Start  233: CatalogDatabaseBootstrapTest.EmulatedDatabaseRenameMovesDynamicOverlaySchema
+ 233/3448 Test  #233: CatalogDatabaseBootstrapTest.EmulatedDatabaseRenameMovesDynamicOverlaySchema ........................................   Passed    0.41 sec
+          Start  234: CatalogDatabaseBootstrapTest.RemoteConnectorLifecycleMaterializesDynamicOverlaySchema
+ 234/3448 Test  #234: CatalogDatabaseBootstrapTest.RemoteConnectorLifecycleMaterializesDynamicOverlaySchema ...............................   Passed    0.40 sec
+          Start  235: CatalogDatabaseBootstrapTest.RemoteConnectorRenameMovesDynamicOverlaySchema
+ 235/3448 Test  #235: CatalogDatabaseBootstrapTest.RemoteConnectorRenameMovesDynamicOverlaySchema .........................................   Passed    0.39 sec
+          Start  236: CatalogDatabaseBootstrapTest.CreatesDomainExtensionCatalogFamilyPages
+ 236/3448 Test  #236: CatalogDatabaseBootstrapTest.CreatesDomainExtensionCatalogFamilyPages ...............................................   Passed    0.63 sec
+          Start  237: CatalogDatabaseBootstrapTest.CreatesCharsetCollationExtensionCatalogFamilyPages
+ 237/3448 Test  #237: CatalogDatabaseBootstrapTest.CreatesCharsetCollationExtensionCatalogFamilyPages .....................................   Passed    0.64 sec
+          Start  238: CatalogDatabaseBootstrapTest.CreatesResourceTimezoneExtensionCatalogFamilyPages
+ 238/3448 Test  #238: CatalogDatabaseBootstrapTest.CreatesResourceTimezoneExtensionCatalogFamilyPages .....................................   Passed    0.62 sec
+          Start  239: CatalogDatabaseBootstrapTest.CreatesParserCapabilityExtensionCatalogFamilyPages
+ 239/3448 Test  #239: CatalogDatabaseBootstrapTest.CreatesParserCapabilityExtensionCatalogFamilyPages .....................................   Passed    0.64 sec
+          Start  240: CatalogDatabaseBootstrapTest.CreatesRelationExtensionCatalogFamilyPages
+ 240/3448 Test  #240: CatalogDatabaseBootstrapTest.CreatesRelationExtensionCatalogFamilyPages .............................................   Passed    0.63 sec
+          Start  241: CatalogDatabaseBootstrapTest.CreatesIndexMetadataExtensionCatalogFamilyPages
+ 241/3448 Test  #241: CatalogDatabaseBootstrapTest.CreatesIndexMetadataExtensionCatalogFamilyPages ........................................   Passed    0.62 sec
+          Start  242: CatalogDatabaseBootstrapTest.CreatesIndexTelemetryExtensionCatalogFamilyPages
+ 242/3448 Test  #242: CatalogDatabaseBootstrapTest.CreatesIndexTelemetryExtensionCatalogFamilyPages .......................................   Passed    0.63 sec
+          Start  243: CatalogDatabaseBootstrapTest.CreatesStorageExtensionCatalogFamilyPages
+ 243/3448 Test  #243: CatalogDatabaseBootstrapTest.CreatesStorageExtensionCatalogFamilyPages ..............................................   Passed    0.63 sec
+          Start  244: CatalogDatabaseBootstrapTest.CreatesRuntimeContextCatalogFamilyPages
+ 244/3448 Test  #244: CatalogDatabaseBootstrapTest.CreatesRuntimeContextCatalogFamilyPages ................................................   Passed    0.63 sec
+          Start  245: CatalogDatabaseBootstrapTest.CreatesSecurityExtensionCatalogFamilyPages
+ 245/3448 Test  #245: CatalogDatabaseBootstrapTest.CreatesSecurityExtensionCatalogFamilyPages .............................................   Passed    0.39 sec
+          Start  246: CatalogDatabaseBootstrapTest.CreatesClusterNodeAndClockCatalogFamilyPages
+ 246/3448 Test  #246: CatalogDatabaseBootstrapTest.CreatesClusterNodeAndClockCatalogFamilyPages ...........................................   Passed    0.39 sec
+          Start  247: CatalogDatabaseBootstrapTest.CreatesShardingCatalogFamilyPages
+ 247/3448 Test  #247: CatalogDatabaseBootstrapTest.CreatesShardingCatalogFamilyPages ......................................................   Passed    0.39 sec
+          Start  248: CatalogDatabaseBootstrapTest.CreatesRoutingAdmissionCatalogFamilyPages
+ 248/3448 Test  #248: CatalogDatabaseBootstrapTest.CreatesRoutingAdmissionCatalogFamilyPages ..............................................   Passed    0.39 sec
+          Start  249: CatalogDatabaseBootstrapTest.CreatesIncidentHealingAlertCatalogFamilyPages
+ 249/3448 Test  #249: CatalogDatabaseBootstrapTest.CreatesIncidentHealingAlertCatalogFamilyPages ..........................................   Passed    0.40 sec
+          Start  250: CatalogDatabaseBootstrapTest.CreatesSchedulerExtensionCatalogFamilyPages
+ 250/3448 Test  #250: CatalogDatabaseBootstrapTest.CreatesSchedulerExtensionCatalogFamilyPages ............................................   Passed    0.41 sec
+          Start  251: CatalogDatabaseBootstrapTest.CreatesRemoteConnectorExtensionCatalogFamilyPages
+ 251/3448 Test  #251: CatalogDatabaseBootstrapTest.CreatesRemoteConnectorExtensionCatalogFamilyPages ......................................   Passed    0.39 sec
+          Start  252: CatalogDatabaseBootstrapTest.CreatesReplicationRuntimeConflictCatalogFamilyPages
+ 252/3448 Test  #252: CatalogDatabaseBootstrapTest.CreatesReplicationRuntimeConflictCatalogFamilyPages ....................................   Passed    0.39 sec
+          Start  253: CatalogDatabaseBootstrapTest.CreatesExtensionPublicationSubscriptionCatalogFamilyPages
+ 253/3448 Test  #253: CatalogDatabaseBootstrapTest.CreatesExtensionPublicationSubscriptionCatalogFamilyPages ..............................   Passed    0.39 sec
+          Start  254: CatalogDatabaseBootstrapTest.CreatesClusterFabricCatalogFamilyPages
+ 254/3448 Test  #254: CatalogDatabaseBootstrapTest.CreatesClusterFabricCatalogFamilyPages .................................................   Passed    0.39 sec
+          Start  255: CatalogDatabaseBootstrapTest.CreatesOlapCubeCatalogFamilyPages
+ 255/3448 Test  #255: CatalogDatabaseBootstrapTest.CreatesOlapCubeCatalogFamilyPages ......................................................   Passed    0.38 sec
+          Start  256: CatalogDatabaseBootstrapTest.CreatesTextSearchCatalogFamilyPages
+ 256/3448 Test  #256: CatalogDatabaseBootstrapTest.CreatesTextSearchCatalogFamilyPages ....................................................   Passed    0.39 sec
+          Start  257: CatalogDatabaseBootstrapTest.CreatesEngineSpecificCompatibilityCatalogFamilyPages
+ 257/3448 Test  #257: CatalogDatabaseBootstrapTest.CreatesEngineSpecificCompatibilityCatalogFamilyPages ...................................   Passed    0.38 sec
+          Start  258: CatalogDatabaseBootstrapTest.CreatesSblrExecutionArtifactCatalogFamilyPages
+ 258/3448 Test  #258: CatalogDatabaseBootstrapTest.CreatesSblrExecutionArtifactCatalogFamilyPages .........................................   Passed    0.38 sec
+          Start  259: CatalogDomainExtensionContractTest.DomainParamKeyAndParameterContracts
+ 259/3448 Test  #259: CatalogDomainExtensionContractTest.DomainParamKeyAndParameterContracts ..............................................   Passed    0.29 sec
+          Start  260: CatalogDomainExtensionContractTest.DomainConstraintCatalogContracts
+ 260/3448 Test  #260: CatalogDomainExtensionContractTest.DomainConstraintCatalogContracts .................................................   Passed    0.33 sec
+          Start  261: CatalogDomainExtensionContractTest.DomainSecurityValidationIntegrityContracts
+ 261/3448 Test  #261: CatalogDomainExtensionContractTest.DomainSecurityValidationIntegrityContracts .......................................   Passed    0.39 sec
+          Start  262: CatalogEmulationEngineCoverageContractTest.CanonicalVnextEngineSetAcceptedByCatalog
+ 262/3448 Test  #262: CatalogEmulationEngineCoverageContractTest.CanonicalVnextEngineSetAcceptedByCatalog .................................   Passed    0.28 sec
+          Start  263: CatalogEmulationEngineCoverageContractTest.InvalidEmulationEngineValueRejected
+ 263/3448 Test  #263: CatalogEmulationEngineCoverageContractTest.InvalidEmulationEngineValueRejected ......................................   Passed    0.29 sec
+          Start  264: CatalogEngineSpecificExtensionContractTest.EngineSpecificCatalogContracts
+ 264/3448 Test  #264: CatalogEngineSpecificExtensionContractTest.EngineSpecificCatalogContracts ...........................................   Passed    0.33 sec
+          Start  265: CatalogExtensionPublicationSubscriptionContractTest.Cat028CatalogContracts
+ 265/3448 Test  #265: CatalogExtensionPublicationSubscriptionContractTest.Cat028CatalogContracts ..........................................   Passed    0.29 sec
+          Start  266: CatalogFamilyMatrixContractTest.CanonicalCatalogFamilyPagesAreMaterialized
+ 266/3448 Test  #266: CatalogFamilyMatrixContractTest.CanonicalCatalogFamilyPagesAreMaterialized ..........................................   Passed    0.28 sec
+          Start  267: CatalogFamilyMatrixContractTest.CanonicalSchemaGraphNodesExistAndHaveCorrectParents
+ 267/3448 Test  #267: CatalogFamilyMatrixContractTest.CanonicalSchemaGraphNodesExistAndHaveCorrectParents .................................   Passed    0.29 sec
+          Start  268: CatalogFamilyMigrationBackfillTest.ReopenBackfillsMissingCatalogFamilyPagePointersAndIsIdempotent
+ 268/3448 Test  #268: CatalogFamilyMigrationBackfillTest.ReopenBackfillsMissingCatalogFamilyPagePointersAndIsIdempotent ...................   Passed    0.91 sec
+          Start  269: CatalogFullExtractAudit.ExportCatalogStructureAndUsage
+ 269/3448 Test  #269: CatalogFullExtractAudit.ExportCatalogStructureAndUsage ..............................................................   Passed    2.13 sec
+          Start  270: CatalogIncidentHealingAlertExtensionContractTest.IncidentHealingAlertCatalogContracts
+ 270/3448 Test  #270: CatalogIncidentHealingAlertExtensionContractTest.IncidentHealingAlertCatalogContracts ...............................   Passed    0.31 sec
+          Start  271: CatalogIndexMetadataExtensionContractTest.AccessMethodOpclassAndColumnContracts
+ 271/3448 Test  #271: CatalogIndexMetadataExtensionContractTest.AccessMethodOpclassAndColumnContracts .....................................   Passed    0.29 sec
+          Start  272: CatalogIndexMetadataExtensionContractTest.OptionAndMaintenanceDeltaContracts
+ 272/3448 Test  #272: CatalogIndexMetadataExtensionContractTest.OptionAndMaintenanceDeltaContracts ........................................   Passed    0.30 sec
+          Start  273: CatalogIndexMetricsExtensionContractTest.StatsUsageAndContentionContracts
+ 273/3448 Test  #273: CatalogIndexMetricsExtensionContractTest.StatsUsageAndContentionContracts ...........................................   Passed    0.29 sec
+          Start  274: CatalogIndexMetricsExtensionContractTest.StorageAndHealthContracts
+ 274/3448 Test  #274: CatalogIndexMetricsExtensionContractTest.StorageAndHealthContracts ..................................................   Passed    0.30 sec
+          Start  275: CatalogIndexMigrationBackfillTest.ReopenBackfillsMissingCanonicalRowsAndRemainsIdempotent
+ 275/3448 Test  #275: CatalogIndexMigrationBackfillTest.ReopenBackfillsMissingCanonicalRowsAndRemainsIdempotent ...........................   Passed    0.92 sec
+          Start  276: CatalogIndexMigrationBackfillTest.ReopenBackfillPreservesExistingTelemetryRows
+ 276/3448 Test  #276: CatalogIndexMigrationBackfillTest.ReopenBackfillPreservesExistingTelemetryRows ......................................   Passed    0.69 sec
+          Start  277: CatalogManagerTest.InitializeCatalog
+ 277/3448 Test  #277: CatalogManagerTest.InitializeCatalog ................................................................................   Passed    0.56 sec
+          Start  278: CatalogManagerTest.CreateAndGetSchema
+ 278/3448 Test  #278: CatalogManagerTest.CreateAndGetSchema ...............................................................................   Passed    0.59 sec
+          Start  279: CatalogManagerTest.ListSchemas
+ 279/3448 Test  #279: CatalogManagerTest.ListSchemas ......................................................................................   Passed    0.62 sec
+          Start  280: CatalogManagerTest.CreateDuplicateSchema
+ 280/3448 Test  #280: CatalogManagerTest.CreateDuplicateSchema ............................................................................   Passed    0.58 sec
+          Start  281: CatalogManagerTest.CreateAndGetTable
+ 281/3448 Test  #281: CatalogManagerTest.CreateAndGetTable ................................................................................   Passed    0.58 sec
+          Start  282: CatalogManagerTest.ListTables
+ 282/3448 Test  #282: CatalogManagerTest.ListTables .......................................................................................   Passed    0.58 sec
+          Start  283: CatalogManagerTest.GetColumns
+ 283/3448 Test  #283: CatalogManagerTest.GetColumns .......................................................................................   Passed    0.58 sec
+          Start  284: CatalogManagerTest.GetColumnByName
+ 284/3448 Test  #284: CatalogManagerTest.GetColumnByName ..................................................................................   Passed    0.59 sec
+          Start  285: CatalogManagerTest.CreateAndGetIndex
+ 285/3448 Test  #285: CatalogManagerTest.CreateAndGetIndex ................................................................................   Passed    0.59 sec
+          Start  286: CatalogManagerTest.InvalidOperations
+ 286/3448 Test  #286: CatalogManagerTest.InvalidOperations ................................................................................   Passed    0.56 sec
+          Start  287: CatalogManagerTest.CatalogPersistence
+ 287/3448 Test  #287: CatalogManagerTest.CatalogPersistence ...............................................................................   Passed    0.78 sec
+          Start  288: CatalogManagerTest.LargeNumberOfTables
+ 288/3448 Test  #288: CatalogManagerTest.LargeNumberOfTables ..............................................................................   Passed    0.60 sec
+          Start  289: CatalogMGAComplianceTest.AlterTablespaceNoCatalogBloat
+ 289/3448 Test  #289: CatalogMGAComplianceTest.AlterTablespaceNoCatalogBloat ..............................................................   Passed    0.28 sec
+          Start  290: CatalogMGAComplianceTest.CatalogRecordCountAccurate
+ 290/3448 Test  #290: CatalogMGAComplianceTest.CatalogRecordCountAccurate .................................................................   Passed    0.29 sec
+          Start  291: CatalogMGAComplianceTest.DropTablespacePersistsDeletion
+ 291/3448 Test  #291: CatalogMGAComplianceTest.DropTablespacePersistsDeletion .............................................................   Passed    0.49 sec
+          Start  292: CatalogMGAComplianceTest.DetachTablespacePersistsDeletion
+ 292/3448 Test  #292: CatalogMGAComplianceTest.DetachTablespacePersistsDeletion ...........................................................   Passed    0.49 sec
+          Start  293: CatalogMGAComplianceTest.MultipleDropCreateCyclesNoBloat
+ 293/3448 Test  #293: CatalogMGAComplianceTest.MultipleDropCreateCyclesNoBloat ............................................................   Passed    0.28 sec
+          Start  294: CatalogMGAComplianceTest.CreateTablespaceStillAppendsCorrectly
+ 294/3448 Test  #294: CatalogMGAComplianceTest.CreateTablespaceStillAppendsCorrectly ......................................................   Passed    0.29 sec
+          Start  295: CatalogOlapCubeExtensionContractTest.OlapCubeCatalogContracts
+ 295/3448 Test  #295: CatalogOlapCubeExtensionContractTest.OlapCubeCatalogContracts .......................................................   Passed    0.33 sec
+          Start  296: CatalogParentageAndNameUniquenessTest.TriggerNameCollisionIsParentScoped
+ 296/3448 Test  #296: CatalogParentageAndNameUniquenessTest.TriggerNameCollisionIsParentScoped ............................................   Passed    0.29 sec
+          Start  297: CatalogParentageAndNameUniquenessTest.SameTriggerNameOnDifferentTablesIsAllowed
+ 297/3448 Test  #297: CatalogParentageAndNameUniquenessTest.SameTriggerNameOnDifferentTablesIsAllowed .....................................   Passed    0.29 sec
+          Start  298: CatalogParentageAndNameUniquenessTest.TriggerListingOrderIsDeterministic
+ 298/3448 Test  #298: CatalogParentageAndNameUniquenessTest.TriggerListingOrderIsDeterministic ............................................   Passed    0.29 sec
+          Start  299: CatalogParentageAndNameUniquenessTest.IndexNameCollisionIsParentScoped
+ 299/3448 Test  #299: CatalogParentageAndNameUniquenessTest.IndexNameCollisionIsParentScoped ..............................................   Passed    0.29 sec
+          Start  300: CatalogParserCapabilityContractTest.ReservedWordAndEmulationProfileContracts
+ 300/3448 Test  #300: CatalogParserCapabilityContractTest.ReservedWordAndEmulationProfileContracts ........................................   Passed    0.29 sec
+          Start  301: CatalogParserCapabilityContractTest.ParserCapabilityContracts
+ 301/3448 Test  #301: CatalogParserCapabilityContractTest.ParserCapabilityContracts .......................................................   Passed    0.33 sec
+          Start  302: CatalogPermissionsPersistenceTest.ColumnObjectPolicyPersistAcrossRestart
+ 302/3448 Test  #302: CatalogPermissionsPersistenceTest.ColumnObjectPolicyPersistAcrossRestart ............................................   Passed    0.66 sec
+          Start  303: CatalogPersistencePhaseBTest.ConstraintsPersistAcrossRestart
+ 303/3448 Test  #303: CatalogPersistencePhaseBTest.ConstraintsPersistAcrossRestart ........................................................   Passed    0.64 sec
+          Start  304: CatalogPersistencePhaseBTest.PhaseBCatalogsPersistAcrossRestart
+ 304/3448 Test  #304: CatalogPersistencePhaseBTest.PhaseBCatalogsPersistAcrossRestart .....................................................   Passed    0.63 sec
+          Start  305: CatalogRelationExtensionContractTest.PartitionAndInheritanceContracts
+ 305/3448 Test  #305: CatalogRelationExtensionContractTest.PartitionAndInheritanceContracts ...............................................   Passed    0.32 sec
+          Start  306: CatalogRelationExtensionContractTest.LanguageEventAndPackageMemberContracts
+ 306/3448 Test  #306: CatalogRelationExtensionContractTest.LanguageEventAndPackageMemberContracts .........................................   Passed    0.32 sec
+          Start  307: CatalogRemoteConnectorExtensionContractTest.RemoteConnectorExtensionCatalogContracts
+ 307/3448 Test  #307: CatalogRemoteConnectorExtensionContractTest.RemoteConnectorExtensionCatalogContracts ................................   Passed    0.98 sec
+          Start  308: CatalogRenameMoveTest.RenameTableUpdatesResolverAndPersists
+ 308/3448 Test  #308: CatalogRenameMoveTest.RenameTableUpdatesResolverAndPersists .........................................................   Passed    0.58 sec
+          Start  309: CatalogRenameMoveTest.MoveTableUpdatesResolverAndColumnPaths
+ 309/3448 Test  #309: CatalogRenameMoveTest.MoveTableUpdatesResolverAndColumnPaths ........................................................   Passed    0.34 sec
+          Start  310: CatalogRenameMoveTest.RenameColumnUpdatesResolver
+ 310/3448 Test  #310: CatalogRenameMoveTest.RenameColumnUpdatesResolver ...................................................................   Passed    0.33 sec
+          Start  311: CatalogRenameMoveTest.RenameIndexUpdatesResolver
+ 311/3448 Test  #311: CatalogRenameMoveTest.RenameIndexUpdatesResolver ....................................................................   Passed    0.35 sec
+          Start  312: CatalogRenameMoveTest.RenameTriggerUpdatesResolver
+ 312/3448 Test  #312: CatalogRenameMoveTest.RenameTriggerUpdatesResolver ..................................................................   Passed    0.34 sec
+          Start  313: CatalogRenameMoveTest.RenameConstraintUpdatesResolverAndPersists
+ 313/3448 Test  #313: CatalogRenameMoveTest.RenameConstraintUpdatesResolverAndPersists ....................................................   Passed    0.57 sec
+          Start  314: CatalogRenameMoveTest.MoveTableScopedObjectsIsRejected
+ 314/3448 Test  #314: CatalogRenameMoveTest.MoveTableScopedObjectsIsRejected ..............................................................   Passed    0.29 sec
+          Start  315: CatalogRenameMoveTest.ResolverRebuildRestoresTableScopedObjects
+ 315/3448 Test  #315: CatalogRenameMoveTest.ResolverRebuildRestoresTableScopedObjects .....................................................   Passed    0.55 sec
+          Start  316: CatalogRenameMoveTest.ResolverRebuildRestoresSchemaScopedObjects
+ 316/3448 Test  #316: CatalogRenameMoveTest.ResolverRebuildRestoresSchemaScopedObjects ....................................................   Passed    1.35 sec
+          Start  317: CatalogRenameMoveTest.RenameSequenceUpdatesResolverAndPersists
+ 317/3448 Test  #317: CatalogRenameMoveTest.RenameSequenceUpdatesResolverAndPersists ......................................................   Passed    0.56 sec
+          Start  318: CatalogRenameMoveTest.MoveSequenceUpdatesResolver
+ 318/3448 Test  #318: CatalogRenameMoveTest.MoveSequenceUpdatesResolver ...................................................................   Passed    0.32 sec
+          Start  319: CatalogRenameMoveTest.RenameViewUpdatesResolverAndPersists
+ 319/3448 Test  #319: CatalogRenameMoveTest.RenameViewUpdatesResolverAndPersists ..........................................................   Passed    0.57 sec
+          Start  320: CatalogRenameMoveTest.MoveViewUpdatesResolver
+ 320/3448 Test  #320: CatalogRenameMoveTest.MoveViewUpdatesResolver .......................................................................   Passed    0.33 sec
+          Start  321: CatalogRenameMoveTest.RenameSynonymUpdatesResolver
+ 321/3448 Test  #321: CatalogRenameMoveTest.RenameSynonymUpdatesResolver ..................................................................   Passed    0.33 sec
+          Start  322: CatalogRenameMoveTest.MoveSynonymUpdatesResolver
+ 322/3448 Test  #322: CatalogRenameMoveTest.MoveSynonymUpdatesResolver ....................................................................   Passed    0.33 sec
+          Start  323: CatalogRenameMoveTest.RenameForeignTableUpdatesResolver
+ 323/3448 Test  #323: CatalogRenameMoveTest.RenameForeignTableUpdatesResolver .............................................................   Passed    0.32 sec
+          Start  324: CatalogRenameMoveTest.MoveForeignTableUpdatesResolver
+ 324/3448 Test  #324: CatalogRenameMoveTest.MoveForeignTableUpdatesResolver ...............................................................   Passed    0.32 sec
+          Start  325: CatalogRenameMoveTest.RenameFunctionUpdatesResolverAndPersists
+ 325/3448 Test  #325: CatalogRenameMoveTest.RenameFunctionUpdatesResolverAndPersists ......................................................   Passed    0.58 sec
+          Start  326: CatalogRenameMoveTest.MoveFunctionUpdatesResolver
+ 326/3448 Test  #326: CatalogRenameMoveTest.MoveFunctionUpdatesResolver ...................................................................   Passed    0.33 sec
+          Start  327: CatalogRenameMoveTest.RenameProcedureUpdatesResolver
+ 327/3448 Test  #327: CatalogRenameMoveTest.RenameProcedureUpdatesResolver ................................................................   Passed    0.33 sec
+          Start  328: CatalogRenameMoveTest.MoveProcedureUpdatesResolver
+ 328/3448 Test  #328: CatalogRenameMoveTest.MoveProcedureUpdatesResolver ..................................................................   Passed    0.31 sec
+          Start  329: CatalogRenameMoveTest.RenamePackageUpdatesResolver
+ 329/3448 Test  #329: CatalogRenameMoveTest.RenamePackageUpdatesResolver ..................................................................   Passed    0.39 sec
+          Start  330: CatalogRenameMoveTest.MovePackageUpdatesResolver
+ 330/3448 Test  #330: CatalogRenameMoveTest.MovePackageUpdatesResolver ....................................................................   Passed    0.34 sec
+          Start  331: CatalogRenameMoveTest.RenameUDRUpdatesResolver
+ 331/3448 Test  #331: CatalogRenameMoveTest.RenameUDRUpdatesResolver ......................................................................   Passed    0.36 sec
+          Start  332: CatalogRenameMoveTest.MoveUDRUpdatesResolver
+ 332/3448 Test  #332: CatalogRenameMoveTest.MoveUDRUpdatesResolver ........................................................................   Passed    0.33 sec
+          Start  333: CatalogRenameMoveTest.RenameExceptionUpdatesResolver
+ 333/3448 Test  #333: CatalogRenameMoveTest.RenameExceptionUpdatesResolver ................................................................   Passed    0.36 sec
+          Start  334: CatalogRenameMoveTest.MoveExceptionUpdatesResolver
+ 334/3448 Test  #334: CatalogRenameMoveTest.MoveExceptionUpdatesResolver ..................................................................   Passed    0.33 sec
+          Start  335: CatalogRenameMoveTest.ColumnNameIsDelimitedPersists
+ 335/3448 Test  #335: CatalogRenameMoveTest.ColumnNameIsDelimitedPersists .................................................................   Passed    0.49 sec
+          Start  336: CatalogRenameMoveTest.ConstraintNameIsDelimitedPersists
+ 336/3448 Test  #336: CatalogRenameMoveTest.ConstraintNameIsDelimitedPersists .............................................................   Passed    0.49 sec
+          Start  337: CatalogReplicationRuntimeConflictExtensionContractTest.ReplicationRuntimeConflictCatalogContracts
+ 337/3448 Test  #337: CatalogReplicationRuntimeConflictExtensionContractTest.ReplicationRuntimeConflictCatalogContracts ...................   Passed    0.38 sec
+          Start  338: CatalogResourceTimezoneExtensionContractTest.ResourceBundleAndArtifactContracts
+ 338/3448 Test  #338: CatalogResourceTimezoneExtensionContractTest.ResourceBundleAndArtifactContracts .....................................   Passed    0.34 sec
+          Start  339: CatalogResourceTimezoneExtensionContractTest.TimezoneTransitionContracts
+ 339/3448 Test  #339: CatalogResourceTimezoneExtensionContractTest.TimezoneTransitionContracts ............................................   Passed    0.29 sec
+          Start  340: CatalogResourceTimezoneExtensionContractTest.TimezoneLeapSecondContracts
+ 340/3448 Test  #340: CatalogResourceTimezoneExtensionContractTest.TimezoneLeapSecondContracts ............................................   Passed    0.29 sec
+          Start  341: CatalogRoutingAdmissionExtensionContractTest.RoutingAndAdmissionCatalogContracts
+ 341/3448 Test  #341: CatalogRoutingAdmissionExtensionContractTest.RoutingAndAdmissionCatalogContracts ....................................   Passed    0.33 sec
+          Start  342: CatalogRoutingAdmissionExtensionContractTest.SloAutoscaleAdmissionTuningCatalogContracts
+ 342/3448 Test  #342: CatalogRoutingAdmissionExtensionContractTest.SloAutoscaleAdmissionTuningCatalogContracts ............................   Passed    0.36 sec
+          Start  343: CatalogRuntimeContextExtensionContractTest.ConnectionContracts
+ 343/3448 Test  #343: CatalogRuntimeContextExtensionContractTest.ConnectionContracts ......................................................   Passed    0.29 sec
+          Start  344: CatalogRuntimeContextExtensionContractTest.TransactionContracts
+ 344/3448 Test  #344: CatalogRuntimeContextExtensionContractTest.TransactionContracts .....................................................   Passed    0.29 sec
+          Start  345: CatalogSblrArtifactExtensionContractTest.SblrArtifactCatalogContracts
+ 345/3448 Test  #345: CatalogSblrArtifactExtensionContractTest.SblrArtifactCatalogContracts ...............................................   Passed    0.29 sec
+          Start  346: CatalogSchedulerExtensionContractTest.SchedulerExtensionCatalogContracts
+ 346/3448 Test  #346: CatalogSchedulerExtensionContractTest.SchedulerExtensionCatalogContracts ............................................   Passed    0.38 sec
+          Start  347: CatalogSecurityAclAbacGraphTokenQuotaSettingsContractTest.AclContractsDenyPrecedenceAndAllow
+ 347/3448 Test  #347: CatalogSecurityAclAbacGraphTokenQuotaSettingsContractTest.AclContractsDenyPrecedenceAndAllow ........................   Passed    0.38 sec
+          Start  348: CatalogSecurityAclAbacGraphTokenQuotaSettingsContractTest.DocumentContractsReadWriteAndMissingModelPolicy
+ 348/3448 Test  #348: CatalogSecurityAclAbacGraphTokenQuotaSettingsContractTest.DocumentContractsReadWriteAndMissingModelPolicy ...........   Passed    0.51 sec
+          Start  349: CatalogSecurityAclAbacGraphTokenQuotaSettingsContractTest.GraphContractsValidateActionBitsAndDenyPrecedence
+ 349/3448 Test  #349: CatalogSecurityAclAbacGraphTokenQuotaSettingsContractTest.GraphContractsValidateActionBitsAndDenyPrecedence .........   Passed    0.35 sec
+          Start  350: CatalogSecurityAclAbacGraphTokenQuotaSettingsContractTest.TokenQuotaAndSettingsContracts
+ 350/3448 Test  #350: CatalogSecurityAclAbacGraphTokenQuotaSettingsContractTest.TokenQuotaAndSettingsContracts ............................   Passed    0.47 sec
+          Start  351: CatalogSecurityAuthProviderRuleChainContractTest.ProviderChainEvaluatesDeterministically
+ 351/3448 Test  #351: CatalogSecurityAuthProviderRuleChainContractTest.ProviderChainEvaluatesDeterministically ............................   Passed    0.31 sec
+          Start  352: CatalogSecurityAuthProviderRuleChainContractTest.ProviderChainRequiresMfaCompletionBeforeSuccess
+ 352/3448 Test  #352: CatalogSecurityAuthProviderRuleChainContractTest.ProviderChainRequiresMfaCompletionBeforeSuccess ....................   Passed    0.32 sec
+          Start  353: CatalogSecurityAuthProviderRuleChainContractTest.ProviderValidationAndLockoutContracts
+ 353/3448 Test  #353: CatalogSecurityAuthProviderRuleChainContractTest.ProviderValidationAndLockoutContracts ..............................   Passed    0.31 sec
+          Start  354: CatalogSecurityAuthProviderRuleChainContractTest.AuthPolicyNegotiationMaskRoundTripAndValidation
+ 354/3448 Test  #354: CatalogSecurityAuthProviderRuleChainContractTest.AuthPolicyNegotiationMaskRoundTripAndValidation ....................   Passed    0.33 sec
+          Start  355: CatalogSecurityAuthProviderRuleChainContractTest.ConnectionRuleChainDecisionAndIntegrity
+ 355/3448 Test  #355: CatalogSecurityAuthProviderRuleChainContractTest.ConnectionRuleChainDecisionAndIntegrity ............................   Passed    0.33 sec
+          Start  356: CatalogSecurityAuthProviderRuleChainContractTest.ConnectionRuleValidationAndEpochGuards
+ 356/3448 Test  #356: CatalogSecurityAuthProviderRuleChainContractTest.ConnectionRuleValidationAndEpochGuards .............................   Passed    0.29 sec
+          Start  357: CatalogSecurityCryptoBaselineKeyLifecycleContractTest.TransportSignatureAndPasswordRejects
+ 357/3448 Test  #357: CatalogSecurityCryptoBaselineKeyLifecycleContractTest.TransportSignatureAndPasswordRejects ..........................   Passed    0.29 sec
+          Start  358: CatalogSecurityCryptoBaselineKeyLifecycleContractTest.AtRestProviderAndRotationRejects
+ 358/3448 Test  #358: CatalogSecurityCryptoBaselineKeyLifecycleContractTest.AtRestProviderAndRotationRejects ..............................   Passed    0.30 sec
+          Start  359: CatalogSecurityCryptoBaselineKeyLifecycleContractTest.LifecycleTransitionAndConformanceGate
+ 359/3448 Test  #359: CatalogSecurityCryptoBaselineKeyLifecycleContractTest.LifecycleTransitionAndConformanceGate .........................   Passed    0.28 sec
+          Start  360: CatalogSecurityCryptoBaselineKeyLifecycleContractTest.Argon2RehashHintIsDeterministic
+ 360/3448 Test  #360: CatalogSecurityCryptoBaselineKeyLifecycleContractTest.Argon2RehashHintIsDeterministic ...............................   Passed    0.29 sec
+          Start  361: CatalogSecurityExtensionContractTest.AuthMappingAndSecurityClassContracts
+ 361/3448 Test  #361: CatalogSecurityExtensionContractTest.AuthMappingAndSecurityClassContracts ...........................................   Passed    0.30 sec
+          Start  362: CatalogSecurityExtensionContractTest.PkiAndCryptoContracts
+ 362/3448 Test  #362: CatalogSecurityExtensionContractTest.PkiAndCryptoContracts ..........................................................   Passed    0.30 sec
+          Start  363: CatalogSecurityIdentityAccountContractTest.PrincipalTupleResolutionDeterministicRanking
+ 363/3448 Test  #363: CatalogSecurityIdentityAccountContractTest.PrincipalTupleResolutionDeterministicRanking .............................   Passed    0.29 sec
+          Start  364: CatalogSecurityIdentityAccountContractTest.RejectsInvalidCidrAndDuplicateTuple
+ 364/3448 Test  #364: CatalogSecurityIdentityAccountContractTest.RejectsInvalidCidrAndDuplicateTuple ......................................   Passed    0.29 sec
+          Start  365: CatalogSecurityIdentityAccountContractTest.PeerUidGidResolutionAndValidation
+ 365/3448 Test  #365: CatalogSecurityIdentityAccountContractTest.PeerUidGidResolutionAndValidation ........................................   Passed    0.29 sec
+          Start  366: CatalogSecurityIdentityAccountContractTest.AmbiguousMatchIsRejected
+ 366/3448 Test  #366: CatalogSecurityIdentityAccountContractTest.AmbiguousMatchIsRejected .................................................   Passed    0.36 sec
+          Start  367: CatalogSecurityIdentityAccountContractTest.CredentialAndProfileBindingContracts
+ 367/3448 Test  #367: CatalogSecurityIdentityAccountContractTest.CredentialAndProfileBindingContracts .....................................   Passed    0.30 sec
+          Start  368: CatalogSecurityMfaPolicyEnrollmentRecoveryContractTest.MfaPolicyEnrollmentCrudAndEncryptedSecretRoundTrip
+ 368/3448 Test  #368: CatalogSecurityMfaPolicyEnrollmentRecoveryContractTest.MfaPolicyEnrollmentCrudAndEncryptedSecretRoundTrip ...........   Passed    0.49 sec
+          Start  369: CatalogSecurityMfaPolicyEnrollmentRecoveryContractTest.RecoveryCodeConsumeEnforcesBreakGlassExhaustionAndCooldown
+ 369/3448 Test  #369: CatalogSecurityMfaPolicyEnrollmentRecoveryContractTest.RecoveryCodeConsumeEnforcesBreakGlassExhaustionAndCooldown ...   Passed    0.29 sec
+          Start  370: CatalogShardingExtensionContractTest.ShardingCatalogContracts
+ 370/3448 Test  #370: CatalogShardingExtensionContractTest.ShardingCatalogContracts .......................................................   Passed    0.29 sec
+          Start  371: CatalogStorageExtensionContractTest.FilespaceStatsAndBackupHistoryContracts
+ 371/3448 Test  #371: CatalogStorageExtensionContractTest.FilespaceStatsAndBackupHistoryContracts .........................................   Passed    0.33 sec
+          Start  372: CatalogStorageExtensionContractTest.LobAndLobPageContracts
+ 372/3448 Test  #372: CatalogStorageExtensionContractTest.LobAndLobPageContracts ..........................................................   Passed    0.30 sec
+          Start  373: CatalogTextSearchExtensionContractTest.TextSearchCatalogContracts
+ 373/3448 Test  #373: CatalogTextSearchExtensionContractTest.TextSearchCatalogContracts ...................................................   Passed    0.34 sec
+          Start  374: CatalogTypeSchemaContractTest.TypeNameUniquenessIsSchemaScoped
+ 374/3448 Test  #374: CatalogTypeSchemaContractTest.TypeNameUniquenessIsSchemaScoped ......................................................   Passed    0.29 sec
+          Start  375: CatalogTypeSchemaContractTest.TypeModifierEnforcesSingleValueAndKindMatch
+ 375/3448 Test  #375: CatalogTypeSchemaContractTest.TypeModifierEnforcesSingleValueAndKindMatch ...........................................   Passed    0.30 sec
+          Start  376: CatalogTypeSchemaContractTest.TypeIoIsUniquePerTypeAndUpsertedInPlace
+ 376/3448 Test  #376: CatalogTypeSchemaContractTest.TypeIoIsUniquePerTypeAndUpsertedInPlace ...............................................   Passed    0.29 sec
+          Start  377: CatalogTypeSchemaContractTest.TypeCastIsUniqueBySourceTargetAndKind
+ 377/3448 Test  #377: CatalogTypeSchemaContractTest.TypeCastIsUniqueBySourceTargetAndKind .................................................   Passed    0.29 sec
+          Start  378: CatalogTypeSchemaContractTest.TypeTransformRequiresProcAndUniqueTypeLanguagePair
+ 378/3448 Test  #378: CatalogTypeSchemaContractTest.TypeTransformRequiresProcAndUniqueTypeLanguagePair ....................................   Passed    0.29 sec
+          Start  379: CatalogTypeSchemaContractTest.EncodingConversionEnforcesUniquenessRules
+ 379/3448 Test  #379: CatalogTypeSchemaContractTest.EncodingConversionEnforcesUniquenessRules .............................................   Passed    0.29 sec
+          Start  380: CatalogVirtualOverlayConformanceContractTest.VirtualOverlayConformance
+ 380/3448 Test  #380: CatalogVirtualOverlayConformanceContractTest.VirtualOverlayConformance ..............................................   Passed    0.50 sec
+          Start  381: CharsetCatalogTest.CreateCharset
+ 381/3448 Test  #381: CharsetCatalogTest.CreateCharset ....................................................................................   Passed    0.28 sec
+          Start  382: CharsetCatalogTest.GetCharsetById
+ 382/3448 Test  #382: CharsetCatalogTest.GetCharsetById ...................................................................................   Passed    0.29 sec
+          Start  383: CharsetCatalogTest.GetCharsetByName
+ 383/3448 Test  #383: CharsetCatalogTest.GetCharsetByName .................................................................................   Passed    0.29 sec
+          Start  384: CharsetCatalogTest.ListCharsets
+ 384/3448 Test  #384: CharsetCatalogTest.ListCharsets .....................................................................................   Passed    0.28 sec
+          Start  385: CharsetCatalogTest.UpdateCharset
+ 385/3448 Test  #385: CharsetCatalogTest.UpdateCharset ....................................................................................   Passed    0.29 sec
+          Start  386: CharsetCatalogTest.DeleteCharset
+ 386/3448 Test  #386: CharsetCatalogTest.DeleteCharset ....................................................................................   Passed    0.28 sec
+          Start  387: CharsetCatalogTest.CreateCollation
+ 387/3448 Test  #387: CharsetCatalogTest.CreateCollation ..................................................................................   Passed    0.29 sec
+          Start  388: CharsetCatalogTest.GetCollationById
+ 388/3448 Test  #388: CharsetCatalogTest.GetCollationById .................................................................................   Passed    0.29 sec
+          Start  389: CharsetCatalogTest.GetCollationByName
+ 389/3448 Test  #389: CharsetCatalogTest.GetCollationByName ...............................................................................   Passed    0.30 sec
+          Start  390: CharsetCatalogTest.ListCollations
+ 390/3448 Test  #390: CharsetCatalogTest.ListCollations ...................................................................................   Passed    0.31 sec
+          Start  391: CharsetCatalogTest.ListCollationsForCharset
+ 391/3448 Test  #391: CharsetCatalogTest.ListCollationsForCharset .........................................................................   Passed    0.31 sec
+          Start  392: CharsetCatalogTest.UpdateCollation
+ 392/3448 Test  #392: CharsetCatalogTest.UpdateCollation ..................................................................................   Passed    0.30 sec
+          Start  393: CharsetCatalogTest.DeleteCollation
+ 393/3448 Test  #393: CharsetCatalogTest.DeleteCollation ..................................................................................   Passed    0.32 sec
+          Start  394: CharsetCatalogTest.CharsetManagerLoadFromCatalog
+ 394/3448 Test  #394: CharsetCatalogTest.CharsetManagerLoadFromCatalog ....................................................................   Passed    0.30 sec
+          Start  395: CharsetCatalogTest.CharsetManagerEmptyCatalogUsesDefaults
+ 395/3448 Test  #395: CharsetCatalogTest.CharsetManagerEmptyCatalogUsesDefaults ...........................................................   Passed    0.31 sec
+          Start  396: CharsetLoaderTest.GenerateBuiltinCharsets
+ 396/3448 Test  #396: CharsetLoaderTest.GenerateBuiltinCharsets ...........................................................................   Passed    0.41 sec
+          Start  397: CharsetLoaderTest.ParseJSONFile
+ 397/3448 Test  #397: CharsetLoaderTest.ParseJSONFile .....................................................................................   Passed    0.42 sec
+          Start  398: CharsetLoaderTest.ParseCollationsFile
+ 398/3448 Test  #398: CharsetLoaderTest.ParseCollationsFile ...............................................................................   Passed    0.41 sec
+          Start  399: CharsetLoaderTest.ParseNonExistentFile
+ 399/3448 Test  #399: CharsetLoaderTest.ParseNonExistentFile ..............................................................................   Passed    0.41 sec
+          Start  400: CharsetLoaderTest.ParseInvalidJSON
+ 400/3448 Test  #400: CharsetLoaderTest.ParseInvalidJSON ..................................................................................   Passed    0.41 sec
+          Start  401: CharsetLoaderTest.LoadBuiltinCharsets
+ 401/3448 Test  #401: CharsetLoaderTest.LoadBuiltinCharsets ...............................................................................   Passed    0.40 sec
+          Start  402: CharsetLoaderTest.LoadFromJSONFile
+ 402/3448 Test  #402: CharsetLoaderTest.LoadFromJSONFile ..................................................................................   Passed    0.41 sec
+          Start  403: CharsetLoaderTest.LoadCollationsFromJSONFile
+ 403/3448 Test  #403: CharsetLoaderTest.LoadCollationsFromJSONFile ........................................................................   Passed    0.41 sec
+          Start  404: CharsetLoaderTest.ASCIICharacterMappings
+ 404/3448 Test  #404: CharsetLoaderTest.ASCIICharacterMappings ............................................................................   Passed    0.41 sec
+          Start  405: CharsetLoaderTest.Latin1CharacterMappings
+ 405/3448 Test  #405: CharsetLoaderTest.Latin1CharacterMappings ...........................................................................   Passed    0.38 sec
+          Start  406: CharsetLoaderTest.LoadFromProjectResources
+ 406/3448 Test  #406: CharsetLoaderTest.LoadFromProjectResources ..........................................................................   Passed    0.39 sec
+          Start  407: CharsetLoaderTest.LoadCollationsFromProjectResources
+ 407/3448 Test  #407: CharsetLoaderTest.LoadCollationsFromProjectResources ................................................................   Passed    0.40 sec
+          Start  408: ClockControlTest.MonotonicNowAndSleepAdvanceTime
+ 408/3448 Test  #408: ClockControlTest.MonotonicNowAndSleepAdvanceTime ....................................................................   Passed    0.03 sec
+          Start  409: ClockControlTest.RealtimeNowMillisecondsIsNonZero
+ 409/3448 Test  #409: ClockControlTest.RealtimeNowMillisecondsIsNonZero ...................................................................   Passed    0.02 sec
+          Start  410: ClockSweepTest.PageAccessIncrementsUsageCount
+ 410/3448 Test  #410: ClockSweepTest.PageAccessIncrementsUsageCount .......................................................................   Passed    0.42 sec
+          Start  411: ClockSweepTest.ClockSweepEviction
+ 411/3448 Test  #411: ClockSweepTest.ClockSweepEviction ...................................................................................   Passed    0.45 sec
+          Start  412: ClockSweepTest.CleanPagePreference
+ 412/3448 Test  #412: ClockSweepTest.CleanPagePreference ..................................................................................   Passed    0.43 sec
+          Start  413: ClockSweepTest.StatisticsTracking
+ 413/3448 Test  #413: ClockSweepTest.StatisticsTracking ...................................................................................   Passed    0.42 sec
+          Start  414: ClockSweepTest.SequentialRingPreservesHotPages
+ 414/3448 Test  #414: ClockSweepTest.SequentialRingPreservesHotPages ......................................................................   Passed    0.40 sec
+          Start  415: ClockSweepTest.BulkWriteModeUsesRing
+ 415/3448 Test  #415: ClockSweepTest.BulkWriteModeUsesRing ................................................................................   Passed    0.41 sec
+          Start  416: StoredCodeDependencyTest.CreateFunctionRegistersDependencies
+ 416/3448 Test  #416: StoredCodeDependencyTest.CreateFunctionRegistersDependencies ........................................................   Passed    0.33 sec
+          Start  417: StoredCodeDependencyTest.CreateProcedureRegistersDependencies
+ 417/3448 Test  #417: StoredCodeDependencyTest.CreateProcedureRegistersDependencies .......................................................   Passed    0.40 sec
+          Start  418: StoredCodeDependencyTest.DropFunctionFailsIfCalledByAnotherFunction
+ 418/3448 Test  #418: StoredCodeDependencyTest.DropFunctionFailsIfCalledByAnotherFunction .................................................   Passed    0.37 sec
+          Start  419: StoredCodeDependencyTest.DropFunctionSucceedsAfterDroppingDependent
+ 419/3448 Test  #419: StoredCodeDependencyTest.DropFunctionSucceedsAfterDroppingDependent .................................................   Passed    0.34 sec
+          Start  420: StoredCodeDependencyTest.DropProcedureFailsIfCalled
+ 420/3448 Test  #420: StoredCodeDependencyTest.DropProcedureFailsIfCalled .................................................................   Passed    0.34 sec
+          Start  421: StoredCodeDependencyTest.DropTableBlockedByFunctionDependency
+ 421/3448 Test  #421: StoredCodeDependencyTest.DropTableBlockedByFunctionDependency .......................................................   Passed    0.31 sec
+          Start  422: StoredCodeDependencyTest.DropFunctionClearsDependencies
+ 422/3448 Test  #422: StoredCodeDependencyTest.DropFunctionClearsDependencies .............................................................   Passed    0.29 sec
+          Start  423: StoredCodeDependencyTest.ComplexFunctionChain
+ 423/3448 Test  #423: StoredCodeDependencyTest.ComplexFunctionChain .......................................................................   Passed    0.31 sec
+          Start  424: StoredCodeDependencyTest.MultipleFunctionsSameTable
+ 424/3448 Test  #424: StoredCodeDependencyTest.MultipleFunctionsSameTable .................................................................   Passed    0.31 sec
+          Start  425: StoredCodeDependencyTest.MixedFunctionProcedureDependencies
+ 425/3448 Test  #425: StoredCodeDependencyTest.MixedFunctionProcedureDependencies .........................................................   Passed    0.31 sec
+          Start  426: StoredCodeDependencyTest.DropPackageFailsIfDependentExists
+ 426/3448 Test  #426: StoredCodeDependencyTest.DropPackageFailsIfDependentExists ..........................................................   Passed    0.35 sec
+          Start  427: StoredCodeDependencyTest.DropUDRFailsIfDependentExists
+ 427/3448 Test  #427: StoredCodeDependencyTest.DropUDRFailsIfDependentExists ..............................................................   Passed    0.36 sec
+          Start  428: CompressionTest.LZ4CodecBasic
+ 428/3448 Test  #428: CompressionTest.LZ4CodecBasic .......................................................................................   Passed    0.02 sec
+          Start  429: CompressionTest.CompressionLevels
+ 429/3448 Test  #429: CompressionTest.CompressionLevels ...................................................................................   Passed    0.02 sec
+          Start  430: CompressionTest.CompressedPageHeader
+ 430/3448 Test  #430: CompressionTest.CompressedPageHeader ................................................................................   Passed    0.02 sec
+          Start  431: CompressionTest.SystemPagesNotCompressed
+ 431/3448 Test  #431: CompressionTest.SystemPagesNotCompressed ............................................................................   Passed    0.30 sec
+          Start  432: CompressionTest.CompressionFactory
+ 432/3448 Test  #432: CompressionTest.CompressionFactory ..................................................................................   Passed    0.02 sec
+          Start  433: CompressionTest.LargePageCompression
+ 433/3448 Test  #433: CompressionTest.LargePageCompression ................................................................................   Passed    0.03 sec
+          Start  434: CompressionInteropTest.AllPageSizesWithCompression
+ 434/3448 Test  #434: CompressionInteropTest.AllPageSizesWithCompression ..................................................................   Passed    2.00 sec
+          Start  435: CompressionInteropTest.MixedCompressedUncompressed
+ 435/3448 Test  #435: CompressionInteropTest.MixedCompressedUncompressed ..................................................................   Passed    0.29 sec
+          Start  436: CompressionInteropTest.CompressionWithBufferPool
+ 436/3448 Test  #436: CompressionInteropTest.CompressionWithBufferPool ....................................................................   Passed    0.34 sec
+          Start  437: CompressionInteropTest.PageSizeMigrationWithCompression
+ 437/3448 Test  #437: CompressionInteropTest.PageSizeMigrationWithCompression .............................................................   Passed    0.70 sec
+          Start  438: CompressionInteropTest.CompressionErrorHandling
+ 438/3448 Test  #438: CompressionInteropTest.CompressionErrorHandling .....................................................................   Passed    0.28 sec
+          Start  439: ConcurrentCounterTest.AtomicIncrement_ManyThreads
+ 439/3448 Test  #439: ConcurrentCounterTest.AtomicIncrement_ManyThreads ...................................................................   Passed    0.03 sec
+          Start  440: ConcurrentCounterTest.CompareExchange_Lost_Updates
+ 440/3448 Test  #440: ConcurrentCounterTest.CompareExchange_Lost_Updates ..................................................................   Passed    0.02 sec
+          Start  441: LockContentionTest.SharedLocks_Compatible
+ 441/3448 Test  #441: LockContentionTest.SharedLocks_Compatible ...........................................................................   Passed    0.02 sec
+          Start  442: LockContentionTest.ExclusiveLock_Blocks_Shared
+ 442/3448 Test  #442: LockContentionTest.ExclusiveLock_Blocks_Shared ......................................................................   Passed    0.02 sec
+          Start  443: LockContentionTest.SharedLock_Blocks_Exclusive
+ 443/3448 Test  #443: LockContentionTest.SharedLock_Blocks_Exclusive ......................................................................   Passed    0.02 sec
+          Start  444: LockContentionTest.MultipleResources_Independent
+ 444/3448 Test  #444: LockContentionTest.MultipleResources_Independent ....................................................................   Passed    0.02 sec
+          Start  445: DeadlockTest.DetectPotentialDeadlock_AB_BA
+ 445/3448 Test  #445: DeadlockTest.DetectPotentialDeadlock_AB_BA ..........................................................................   Passed    0.03 sec
+          Start  446: ReadWriteConflictTest.ConcurrentReadsDuringWrite
+ 446/3448 Test  #446: ReadWriteConflictTest.ConcurrentReadsDuringWrite ....................................................................   Passed    0.03 sec
+          Start  447: WriteWriteConflictTest.LastWriterWins
+ 447/3448 Test  #447: WriteWriteConflictTest.LastWriterWins ...............................................................................   Passed    0.02 sec
+          Start  448: WriteWriteConflictTest.SerializedWrites
+ 448/3448 Test  #448: WriteWriteConflictTest.SerializedWrites .............................................................................   Passed    0.02 sec
+          Start  449: IsolationTest.SnapshotIsolation_ReadConsistency
+ 449/3448 Test  #449: IsolationTest.SnapshotIsolation_ReadConsistency .....................................................................   Passed    0.02 sec
+          Start  450: IsolationTest.RepeatableRead_SameValueTwice
+ 450/3448 Test  #450: IsolationTest.RepeatableRead_SameValueTwice .........................................................................   Passed    0.02 sec
+          Start  451: ConnectionContextTest.CreateConnection
+ 451/3448 Test  #451: ConnectionContextTest.CreateConnection ..............................................................................   Passed    0.44 sec
+          Start  452: ConnectionContextTest.CommitAutoStart
+ 452/3448 Test  #452: ConnectionContextTest.CommitAutoStart ...............................................................................   Passed    0.45 sec
+          Start  453: ConnectionContextTest.RollbackAutoStart
+ 453/3448 Test  #453: ConnectionContextTest.RollbackAutoStart .............................................................................   Passed    0.44 sec
+          Start  454: ConnectionContextTest.DefaultIsolationLevel
+ 454/3448 Test  #454: ConnectionContextTest.DefaultIsolationLevel .........................................................................   Passed    0.42 sec
+          Start  455: ConnectionContextTest.StartTransactionCommitOutstanding
+ 455/3448 Test  #455: ConnectionContextTest.StartTransactionCommitOutstanding .............................................................   Passed    0.44 sec
+          Start  456: ConnectionContextTest.StartTransactionStagedSettings
+ 456/3448 Test  #456: ConnectionContextTest.StartTransactionStagedSettings ................................................................   Passed    0.41 sec
+          Start  457: ConnectionContextTest.ThreadLocalStorage
+ 457/3448 Test  #457: ConnectionContextTest.ThreadLocalStorage ............................................................................   Passed    0.43 sec
+          Start  458: ConnectionContextTest.ThreadLocalStorageNoConnection
+ 458/3448 Test  #458: ConnectionContextTest.ThreadLocalStorageNoConnection ................................................................   Passed    0.42 sec
+          Start  459: ConnectionContextTest.MultipleConnections
+ 459/3448 Test  #459: ConnectionContextTest.MultipleConnections ...........................................................................   Passed    0.44 sec
+          Start  460: ConnectionContextTest.ConnectionCleanup
+ 460/3448 Test  #460: ConnectionContextTest.ConnectionCleanup .............................................................................   Passed    0.42 sec
+          Start  461: ConnectionContextTest.TransactionSettings
+ 461/3448 Test  #461: ConnectionContextTest.TransactionSettings ...........................................................................   Passed    0.42 sec
+          Start  462: ConnectionContextTest.SnapshotCreation
+ 462/3448 Test  #462: ConnectionContextTest.SnapshotCreation ..............................................................................   Passed    0.42 sec
+          Start  463: ConnectionContextTest.TableReservation
+ 463/3448 Test  #463: ConnectionContextTest.TableReservation ..............................................................................   Passed    0.47 sec
+          Start  464: ConnectionContextTest.IsolationLevelTransitions
+ 464/3448 Test  #464: ConnectionContextTest.IsolationLevelTransitions .....................................................................   Passed    0.42 sec
+          Start  465: ConnectionContextTest.ReadOnlyTransaction
+ 465/3448 Test  #465: ConnectionContextTest.ReadOnlyTransaction ...........................................................................   Passed    0.42 sec
+          Start  466: ConnectionContextTest.TransactionStartTime
+ 466/3448 Test  #466: ConnectionContextTest.TransactionStartTime ..........................................................................   Passed    0.43 sec
+          Start  467: ConnectionContextTest.ConcurrentConnections
+ 467/3448 Test  #467: ConnectionContextTest.ConcurrentConnections .........................................................................   Passed    0.43 sec
+          Start  468: ConnectionContextTest.ErrorNoDatabase
+ 468/3448 Test  #468: ConnectionContextTest.ErrorNoDatabase ...............................................................................   Passed    0.40 sec
+          Start  469: ConnectionContextTest.SnapshotIsolationRepeatableReads
+ 469/3448 Test  #469: ConnectionContextTest.SnapshotIsolationRepeatableReads ..............................................................   Passed    0.42 sec
+          Start  470: ConnectionContextTest.SnapshotIsolationComplexVisibility
+ 470/3448 Test  #470: ConnectionContextTest.SnapshotIsolationComplexVisibility ............................................................   Passed    0.43 sec
+          Start  471: ConnectionContextTest.SnapshotIsolationProperties
+ 471/3448 Test  #471: ConnectionContextTest.SnapshotIsolationProperties ...................................................................   Passed    0.44 sec
+          Start  472: ConnectionContextTest.ReadCommittedVsSnapshotIsolation
+ 472/3448 Test  #472: ConnectionContextTest.ReadCommittedVsSnapshotIsolation ..............................................................   Passed    0.43 sec
+          Start  473: ConnectionContextTest.IsolationTransitionSnapshotLifecycle
+ 473/3448 Test  #473: ConnectionContextTest.IsolationTransitionSnapshotLifecycle ..........................................................   Passed    0.41 sec
+          Start  474: ConnectionContextTest.ReadCommittedReadConsistencyStatementSnapshot
+ 474/3448 Test  #474: ConnectionContextTest.ReadCommittedReadConsistencyStatementSnapshot .................................................   Passed    0.40 sec
+          Start  475: ConnectionContextTest.ReadCommittedReadConsistencyStatementConsistency
+ 475/3448 Test  #475: ConnectionContextTest.ReadCommittedReadConsistencyStatementConsistency ..............................................   Passed    0.43 sec
+          Start  476: ConnectionContextTest.ReadCommittedReadConsistencyComparison
+ 476/3448 Test  #476: ConnectionContextTest.ReadCommittedReadConsistencyComparison ........................................................   Passed    0.44 sec
+          Start  477: ConnectionContextTest.ReadCommittedReadConsistencyTransactionEnd
+ 477/3448 Test  #477: ConnectionContextTest.ReadCommittedReadConsistencyTransactionEnd ....................................................   Passed    0.43 sec
+          Start  478: ConnectionContextTest.ReadCommittedReadConsistencyMultipleStatements
+ 478/3448 Test  #478: ConnectionContextTest.ReadCommittedReadConsistencyMultipleStatements ................................................   Passed    0.41 sec
+          Start  479: ConnectionManagerProtocolTest.DefaultConfigBindsNativeProtocol
+ 479/3448 Test  #479: ConnectionManagerProtocolTest.DefaultConfigBindsNativeProtocol ......................................................   Passed    0.02 sec
+          Start  480: ConnectionManagerProtocolTest.FixedProtocolBypassesDetection
+ 480/3448 Test  #480: ConnectionManagerProtocolTest.FixedProtocolBypassesDetection ........................................................   Passed    0.02 sec
+          Start  481: ConnectionManagerProtocolTest.FixedProtocolRespectsAllowList
+ 481/3448 Test  #481: ConnectionManagerProtocolTest.FixedProtocolRespectsAllowList ........................................................   Passed    0.02 sec
+          Start  482: ConnectionManagerProtocolTest.AutoDetectFixedProtocolRejected
+ 482/3448 Test  #482: ConnectionManagerProtocolTest.AutoDetectFixedProtocolRejected .......................................................   Passed    0.02 sec
+          Start  483: ConnectionManagerProtocolTest.InvalidAllowListRejected
+ 483/3448 Test  #483: ConnectionManagerProtocolTest.InvalidAllowListRejected ..............................................................   Passed    0.02 sec
+          Start  484: CheckConstraintTest.PositiveValue_Passes
+ 484/3448 Test  #484: CheckConstraintTest.PositiveValue_Passes ............................................................................   Passed    0.02 sec
+          Start  485: CheckConstraintTest.PositiveValue_Fails
+ 485/3448 Test  #485: CheckConstraintTest.PositiveValue_Fails .............................................................................   Passed    0.02 sec
+          Start  486: CheckConstraintTest.RangeCheck_Passes
+ 486/3448 Test  #486: CheckConstraintTest.RangeCheck_Passes ...............................................................................   Passed    0.02 sec
+          Start  487: CheckConstraintTest.RangeCheck_Fails_Above
+ 487/3448 Test  #487: CheckConstraintTest.RangeCheck_Fails_Above ..........................................................................   Passed    0.02 sec
+          Start  488: CheckConstraintTest.RangeCheck_Fails_Below
+ 488/3448 Test  #488: CheckConstraintTest.RangeCheck_Fails_Below ..........................................................................   Passed    0.02 sec
+          Start  489: CheckConstraintTest.MultipleConstraints_AllMustPass
+ 489/3448 Test  #489: CheckConstraintTest.MultipleConstraints_AllMustPass .................................................................   Passed    0.02 sec
+          Start  490: NotNullConstraintTest.NonNullValue_Passes
+ 490/3448 Test  #490: NotNullConstraintTest.NonNullValue_Passes ...........................................................................   Passed    0.02 sec
+          Start  491: NotNullConstraintTest.NullValue_Fails
+ 491/3448 Test  #491: NotNullConstraintTest.NullValue_Fails ...............................................................................   Passed    0.02 sec
+          Start  492: NotNullConstraintTest.MultipleNotNull_BothRequired
+ 492/3448 Test  #492: NotNullConstraintTest.MultipleNotNull_BothRequired ..................................................................   Passed    0.02 sec
+          Start  493: UniqueConstraintTest.UniqueValues_Pass
+ 493/3448 Test  #493: UniqueConstraintTest.UniqueValues_Pass ..............................................................................   Passed    0.02 sec
+          Start  494: UniqueConstraintTest.DuplicateKey_Fails
+ 494/3448 Test  #494: UniqueConstraintTest.DuplicateKey_Fails .............................................................................   Passed    0.02 sec
+          Start  495: UniqueConstraintTest.UniqueOnNonKeyColumn
+ 495/3448 Test  #495: UniqueConstraintTest.UniqueOnNonKeyColumn ...........................................................................   Passed    0.02 sec
+          Start  496: UniqueConstraintTest.NullsAreUnique
+ 496/3448 Test  #496: UniqueConstraintTest.NullsAreUnique .................................................................................   Passed    0.02 sec
+          Start  497: ForeignKeyConstraintTest.ValidReference_Passes
+ 497/3448 Test  #497: ForeignKeyConstraintTest.ValidReference_Passes ......................................................................   Passed    0.02 sec
+          Start  498: ForeignKeyConstraintTest.InvalidReference_Fails
+ 498/3448 Test  #498: ForeignKeyConstraintTest.InvalidReference_Fails .....................................................................   Passed    0.02 sec
+          Start  499: ForeignKeyConstraintTest.NullForeignKey_Allowed
+ 499/3448 Test  #499: ForeignKeyConstraintTest.NullForeignKey_Allowed .....................................................................   Passed    0.02 sec
+          Start  500: DeferredConstraintTest.ImmediateConstraint_CheckedAtInsert
+ 500/3448 Test  #500: DeferredConstraintTest.ImmediateConstraint_CheckedAtInsert ..........................................................   Passed    0.02 sec
+          Start  501: DeferredConstraintTest.DeferredConstraint_CheckedAtValidate
+ 501/3448 Test  #501: DeferredConstraintTest.DeferredConstraint_CheckedAtValidate .........................................................   Passed    0.02 sec
+          Start  502: DeferredConstraintTest.SetConstraintsAllDeferred
+ 502/3448 Test  #502: DeferredConstraintTest.SetConstraintsAllDeferred ....................................................................   Passed    0.02 sec
+          Start  503: IdentityColumnTest.GeneratedAlways_AutoIncrement
+ 503/3448 Test  #503: IdentityColumnTest.GeneratedAlways_AutoIncrement ....................................................................   Passed    0.02 sec
+          Start  504: IdentityColumnTest.ConcurrentIdentity_NoDuplicates
+ 504/3448 Test  #504: IdentityColumnTest.ConcurrentIdentity_NoDuplicates ..................................................................   Passed    0.03 sec
+          Start  505: ConstraintsCRUDTest.ConstraintTypes
+ 505/3448 Test  #505: ConstraintsCRUDTest.ConstraintTypes .................................................................................   Passed    0.02 sec
+          Start  506: ConstraintsCRUDTest.ConstraintInfoDefaults
+ 506/3448 Test  #506: ConstraintsCRUDTest.ConstraintInfoDefaults ..........................................................................   Passed    0.02 sec
+          Start  507: ConstraintsCRUDTest.PrimaryKeyConstraint
+ 507/3448 Test  #507: ConstraintsCRUDTest.PrimaryKeyConstraint ............................................................................   Passed    0.03 sec
+          Start  508: ConstraintsCRUDTest.UniqueConstraint
+ 508/3448 Test  #508: ConstraintsCRUDTest.UniqueConstraint ................................................................................   Passed    0.02 sec
+          Start  509: ConstraintsCRUDTest.CheckConstraint
+ 509/3448 Test  #509: ConstraintsCRUDTest.CheckConstraint .................................................................................   Passed    0.02 sec
+          Start  510: ConstraintsCRUDTest.ForeignKeyConstraint
+ 510/3448 Test  #510: ConstraintsCRUDTest.ForeignKeyConstraint ............................................................................   Passed    0.02 sec
+          Start  511: ConstraintsCRUDTest.NotNullConstraint
+ 511/3448 Test  #511: ConstraintsCRUDTest.NotNullConstraint ...............................................................................   Passed    0.02 sec
+          Start  512: ConstraintsCRUDTest.CompositePrimaryKey
+ 512/3448 Test  #512: ConstraintsCRUDTest.CompositePrimaryKey .............................................................................   Passed    0.02 sec
+          Start  513: ConstraintsCRUDTest.CompositeForeignKey
+ 513/3448 Test  #513: ConstraintsCRUDTest.CompositeForeignKey .............................................................................   Passed    0.02 sec
+          Start  514: ConstraintsCRUDTest.DeferrableConstraint
+ 514/3448 Test  #514: ConstraintsCRUDTest.DeferrableConstraint ............................................................................   Passed    0.02 sec
+          Start  515: ConstraintsCRUDTest.ConstraintEnabledState
+ 515/3448 Test  #515: ConstraintsCRUDTest.ConstraintEnabledState ..........................................................................   Passed    0.02 sec
+          Start  516: ConstraintsCRUDTest.ConstraintValidationState
+ 516/3448 Test  #516: ConstraintsCRUDTest.ConstraintValidationState .......................................................................   Passed    0.02 sec
+          Start  517: ConstraintsCRUDTest.SystemGeneratedName
+ 517/3448 Test  #517: ConstraintsCRUDTest.SystemGeneratedName .............................................................................   Passed    0.02 sec
+          Start  518: ConstraintsCRUDTest.ExclusionConstraint
+ 518/3448 Test  #518: ConstraintsCRUDTest.ExclusionConstraint .............................................................................   Passed    0.02 sec
+          Start  519: ConstraintsCRUDTest.ForeignKeyActions
+ 519/3448 Test  #519: ConstraintsCRUDTest.ForeignKeyActions ...............................................................................   Passed    0.02 sec
+          Start  520: ConstraintsCRUDTest.ForeignKeyMatchTypes
+ 520/3448 Test  #520: ConstraintsCRUDTest.ForeignKeyMatchTypes ............................................................................   Passed    0.02 sec
+          Start  521: ControlPlaneDbbtTest.EncodeDecodeRoundTripPreservesFields
+ 521/3448 Test  #521: ControlPlaneDbbtTest.EncodeDecodeRoundTripPreservesFields ...........................................................   Passed    0.03 sec
+          Start  522: ControlPlaneDbbtTest.KeyRingSignAndVerifyWorksAcrossCodecBoundary
+ 522/3448 Test  #522: ControlPlaneDbbtTest.KeyRingSignAndVerifyWorksAcrossCodecBoundary ...................................................   Passed    0.02 sec
+          Start  523: ControlPlaneDbbtTest.ValidationRejectsReplayAndExpiry
+ 523/3448 Test  #523: ControlPlaneDbbtTest.ValidationRejectsReplayAndExpiry ...............................................................   Passed    0.02 sec
+          Start  524: ControlPlaneDbbtTest.ValidationRejectsListenerIdMismatch
+ 524/3448 Test  #524: ControlPlaneDbbtTest.ValidationRejectsListenerIdMismatch ............................................................   Passed    0.02 sec
+          Start  525: ControlPlaneDbbtTest.ValidationRejectsForgedTokenPayload
+ 525/3448 Test  #525: ControlPlaneDbbtTest.ValidationRejectsForgedTokenPayload ............................................................   Passed    0.03 sec
+          Start  526: ControlPlaneDbbtTest.KeyRingLoadsFromTextWithActiveKey
+ 526/3448 Test  #526: ControlPlaneDbbtTest.KeyRingLoadsFromTextWithActiveKey ..............................................................   Passed    0.02 sec
+          Start  527: ControlPlaneDbbtTest.ListenerPrefaceRoundTripAndValidation
+ 527/3448 Test  #527: ControlPlaneDbbtTest.ListenerPrefaceRoundTripAndValidation ..........................................................   Passed    0.02 sec
+          Start  528: ControlPlaneDbbtTest.ListenerPrefaceAckRoundTrip
+ 528/3448 Test  #528: ControlPlaneDbbtTest.ListenerPrefaceAckRoundTrip ....................................................................   Passed    0.02 sec
+          Start  529: CopyExecutorTest.CopyCsvWithHeaderAndNulls
+ 529/3448 Test  #529: CopyExecutorTest.CopyCsvWithHeaderAndNulls ..........................................................................   Passed    0.49 sec
+          Start  530: CopyExecutorTest.CopyCsvFromWithHeaderAndDelimiter
+ 530/3448 Test  #530: CopyExecutorTest.CopyCsvFromWithHeaderAndDelimiter ..................................................................   Passed    0.47 sec
+          Start  531: CopyExecutorTest.CopyEncodingUtf8Accepted
+ 531/3448 Test  #531: CopyExecutorTest.CopyEncodingUtf8Accepted ...........................................................................   Passed    0.45 sec
+          Start  532: CopyExecutorTest.CopyEncodingUnsupportedRejected
+ 532/3448 Test  #532: CopyExecutorTest.CopyEncodingUnsupportedRejected ....................................................................   Passed    0.38 sec
+          Start  533: CRC32C_Comprehensive.KnownTestVectors
+ 533/3448 Test  #533: CRC32C_Comprehensive.KnownTestVectors ...............................................................................   Passed    0.02 sec
+          Start  534: CRC32C_Comprehensive.ChecksumFieldExclusion
+ 534/3448 Test  #534: CRC32C_Comprehensive.ChecksumFieldExclusion .........................................................................   Passed    0.02 sec
+          Start  535: CRC32C_Comprehensive.TwoPassCalculation
+ 535/3448 Test  #535: CRC32C_Comprehensive.TwoPassCalculation .............................................................................   Passed    0.02 sec
+          Start  536: CRC32C_Comprehensive.ValidationCorrectness
+ 536/3448 Test  #536: CRC32C_Comprehensive.ValidationCorrectness ..........................................................................   Passed    0.02 sec
+          Start  537: CRC32C_Comprehensive.AllPageSizes
+ 537/3448 Test  #537: CRC32C_Comprehensive.AllPageSizes ...................................................................................   Passed    0.03 sec
+          Start  538: CRC32C_Comprehensive.InitialAndFinalXOR
+ 538/3448 Test  #538: CRC32C_Comprehensive.InitialAndFinalXOR .............................................................................   Passed    0.02 sec
+          Start  539: CRC32C_Comprehensive.IncrementalCalculation
+ 539/3448 Test  #539: CRC32C_Comprehensive.IncrementalCalculation .........................................................................   Passed    0.02 sec
+          Start  540: CRC32C_Comprehensive.MinimumPageWithMaxData
+ 540/3448 Test  #540: CRC32C_Comprehensive.MinimumPageWithMaxData .........................................................................   Passed    0.02 sec
+          Start  541: CRC32C_Comprehensive.MaximumPageSize
+ 541/3448 Test  #541: CRC32C_Comprehensive.MaximumPageSize ................................................................................   Passed    0.03 sec
+          Start  542: DataEncryptionTest.NistVectorAES128GCM
+ 542/3448 Test  #542: DataEncryptionTest.NistVectorAES128GCM ..............................................................................   Passed    0.02 sec
+          Start  543: DataEncryptionTest.NistVectorAES256GCM
+ 543/3448 Test  #543: DataEncryptionTest.NistVectorAES256GCM ..............................................................................   Passed    0.03 sec
+          Start  544: DataEncryptionTest.EncryptDecryptRoundTripAES128
+ 544/3448 Test  #544: DataEncryptionTest.EncryptDecryptRoundTripAES128 ....................................................................   Passed    0.02 sec
+          Start  545: DataEncryptionTest.EncryptDecryptRoundTripAES256
+ 545/3448 Test  #545: DataEncryptionTest.EncryptDecryptRoundTripAES256 ....................................................................   Passed    0.02 sec
+          Start  546: DataEncryptionTest.AuthenticationTagValidation
+ 546/3448 Test  #546: DataEncryptionTest.AuthenticationTagValidation ......................................................................   Passed    0.03 sec
+          Start  547: DataEncryptionTest.GenerateIVLength
+ 547/3448 Test  #547: DataEncryptionTest.GenerateIVLength .................................................................................   Passed    0.02 sec
+          Start  548: DataEncryptionTest.PerformanceSmallValues
+ 548/3448 Test  #548: DataEncryptionTest.PerformanceSmallValues ...........................................................................   Passed    0.06 sec
+          Start  549: DataEncryptionTest.ConcurrentEncryptDecrypt
+ 549/3448 Test  #549: DataEncryptionTest.ConcurrentEncryptDecrypt .........................................................................   Passed    0.03 sec
+          Start  550: DataMaskingTest.NoneMaskingPassthrough
+ 550/3448 Test  #550: DataMaskingTest.NoneMaskingPassthrough ..............................................................................   Passed    0.02 sec
+          Start  551: DataMaskingTest.FullMasking
+ 551/3448 Test  #551: DataMaskingTest.FullMasking .........................................................................................   Passed    0.02 sec
+          Start  552: DataMaskingTest.PartialMaskingPattern
+ 552/3448 Test  #552: DataMaskingTest.PartialMaskingPattern ...............................................................................   Passed    0.02 sec
+          Start  553: DataMaskingTest.PrivilegeBypass
+ 553/3448 Test  #553: DataMaskingTest.PrivilegeBypass .....................................................................................   Passed    0.02 sec
+          Start  554: DataMaskingTest.UnicodeFullMasking
+ 554/3448 Test  #554: DataMaskingTest.UnicodeFullMasking ..................................................................................   Passed    0.02 sec
+          Start  555: DataMaskingTest.ParsePattern
+ 555/3448 Test  #555: DataMaskingTest.ParsePattern ........................................................................................   Passed    0.02 sec
+          Start  556: DataMaskingTest.EmptyPatternRejected
+ 556/3448 Test  #556: DataMaskingTest.EmptyPatternRejected ................................................................................   Passed    0.02 sec
+          Start  557: DeadlockDetectionTest.DetectsAndResolvesDeadlock
+ 557/3448 Test  #557: DeadlockDetectionTest.DetectsAndResolvesDeadlock ....................................................................   Passed    0.47 sec
+          Start  558: DeadlockDetectionTest.SimpleTwoProcessDeadlock
+ 558/3448 Test  #558: DeadlockDetectionTest.SimpleTwoProcessDeadlock ......................................................................   Passed    2.43 sec
+          Start  559: DeadlockDetectionTest.ThreeProcessCycle
+ 559/3448 Test  #559: DeadlockDetectionTest.ThreeProcessCycle .............................................................................   Passed    2.50 sec
+          Start  560: DeadlockDetectionTest.VictimSelectionYoungestTransaction
+ 560/3448 Test  #560: DeadlockDetectionTest.VictimSelectionYoungestTransaction ............................................................   Passed    2.51 sec
+          Start  561: DeadlockDetectionTest.NoDeadlockSimpleLockWait
+ 561/3448 Test  #561: DeadlockDetectionTest.NoDeadlockSimpleLockWait ......................................................................   Passed    0.90 sec
+          Start  562: DeadlockDetectionTest.NoSelfDeadlock
+ 562/3448 Test  #562: DeadlockDetectionTest.NoSelfDeadlock ................................................................................   Passed    0.41 sec
+          Start  563: DeadlockDetectionTest.MultipleIndependentWaits
+ 563/3448 Test  #563: DeadlockDetectionTest.MultipleIndependentWaits ......................................................................   Passed    0.90 sec
+          Start  564: DeadlockDetectionTest.StatisticsTracking
+ 564/3448 Test  #564: DeadlockDetectionTest.StatisticsTracking ............................................................................   Passed    2.40 sec
+          Start  565: DeadlockDetectionTest.MixedLockModes
+ 565/3448 Test  #565: DeadlockDetectionTest.MixedLockModes ................................................................................   Passed    2.40 sec
+          Start  566: DependencyErrorTest.ErrorMessageFormatIncludesDetailAndHint
+ 566/3448 Test  #566: DependencyErrorTest.ErrorMessageFormatIncludesDetailAndHint .........................................................   Passed    0.28 sec
+          Start  567: DependencyTrackingTest.CreateAndGetDependents
+ 567/3448 Test  #567: DependencyTrackingTest.CreateAndGetDependents .......................................................................   Passed    0.28 sec
+          Start  568: DependencyTrackingTest.ClearDependencies
+ 568/3448 Test  #568: DependencyTrackingTest.ClearDependencies ............................................................................   Passed    0.28 sec
+          Start  569: DependencyTrackingTest.ReplaceDependencies
+ 569/3448 Test  #569: DependencyTrackingTest.ReplaceDependencies ..........................................................................   Passed    0.28 sec
+          Start  570: DependencyTrackingTest.CacheConsistency
+ 570/3448 Test  #570: DependencyTrackingTest.CacheConsistency .............................................................................   Passed    0.29 sec
+          Start  571: DependencyTrackingTest.MultipleDependencyTypes
+ 571/3448 Test  #571: DependencyTrackingTest.MultipleDependencyTypes ......................................................................   Passed    0.27 sec
+          Start  572: DependencyTrackingTest.ConcurrentDependencyOperations
+ 572/3448 Test  #572: DependencyTrackingTest.ConcurrentDependencyOperations ...............................................................   Passed    0.29 sec
+          Start  573: DependencyTransactionTest.DropTableFailureDoesNotClearDependencies
+ 573/3448 Test  #573: DependencyTransactionTest.DropTableFailureDoesNotClearDependencies ..................................................   Passed    0.28 sec
+          Start  574: DependencyTransactionTest.DropTableSuccessClearsDependencies
+ 574/3448 Test  #574: DependencyTransactionTest.DropTableSuccessClearsDependencies ........................................................   Passed    0.28 sec
+          Start  575: DomainOpcodeTest.CheckDomainConstraintPasses
+ 575/3448 Test  #575: DomainOpcodeTest.CheckDomainConstraintPasses ........................................................................   Passed    0.53 sec
+          Start  576: DomainOpcodeTest.CheckDomainConstraintFailsOnNull
+ 576/3448 Test  #576: DomainOpcodeTest.CheckDomainConstraintFailsOnNull ...................................................................   Passed    0.54 sec
+          Start  577: DomainOpcodeTest.ApplyDomainMasking
+ 577/3448 Test  #577: DomainOpcodeTest.ApplyDomainMasking .................................................................................   Passed    0.53 sec
+          Start  578: DomainOpcodeTest.CheckDomainPrivilege
+ 578/3448 Test  #578: DomainOpcodeTest.CheckDomainPrivilege ...............................................................................   Passed    0.53 sec
+          Start  579: DomainOpcodeTest.EncryptAndDecryptDomainValue
+ 579/3448 Test  #579: DomainOpcodeTest.EncryptAndDecryptDomainValue .......................................................................   Passed    0.65 sec
+          Start  580: DomainOpcodeTest.NormalizeDomainValue
+ 580/3448 Test  #580: DomainOpcodeTest.NormalizeDomainValue ...............................................................................   Passed    0.54 sec
+          Start  581: DomainOpcodeTest.ValidateDomainValueFalse
+ 581/3448 Test  #581: DomainOpcodeTest.ValidateDomainValueFalse ...........................................................................   Passed    0.54 sec
+          Start  582: DomainOpcodeTest.ValidateDomainValueTrue
+ 582/3448 Test  #582: DomainOpcodeTest.ValidateDomainValueTrue ............................................................................   Passed    0.56 sec
+          Start  583: DomainOpcodeTest.ApplyQualityPipeline
+ 583/3448 Test  #583: DomainOpcodeTest.ApplyQualityPipeline ...............................................................................   Passed    0.55 sec
+          Start  584: DomainOpcodeTest.CheckGlobalUniqueness
+ 584/3448 Test  #584: DomainOpcodeTest.CheckGlobalUniqueness ..............................................................................   Passed    0.54 sec
+          Start  585: DomainOpcodeTest.AuditDomainAccessLogged
+ 585/3448 Test  #585: DomainOpcodeTest.AuditDomainAccessLogged ............................................................................   Passed    0.54 sec
+          Start  586: DomainValidationTest.SkipWhenNoFunction
+ 586/3448 Test  #586: DomainValidationTest.SkipWhenNoFunction .............................................................................   Passed    0.02 sec
+          Start  587: DomainValidationTest.CustomValidationFailure
+ 587/3448 Test  #587: DomainValidationTest.CustomValidationFailure ........................................................................   Passed    0.02 sec
+          Start  588: DomainValidationTest.NullValueSkipsValidation
+ 588/3448 Test  #588: DomainValidationTest.NullValueSkipsValidation .......................................................................   Passed    0.02 sec
+          Start  589: DomainValidationTest.ValidatesFunctionSignatureViaInvoker
+ 589/3448 Test  #589: DomainValidationTest.ValidatesFunctionSignatureViaInvoker ...........................................................   Passed    0.02 sec
+          Start  590: DomainValidationTest.CustomValidationTypeMismatch
+ 590/3448 Test  #590: DomainValidationTest.CustomValidationTypeMismatch ...................................................................   Passed    0.02 sec
+          Start  591: NaNHandlingTest.NaN_Comparisons_AlwaysFalse
+ 591/3448 Test  #591: NaNHandlingTest.NaN_Comparisons_AlwaysFalse .........................................................................   Passed    0.02 sec
+          Start  592: NaNHandlingTest.NaN_Detection
+ 592/3448 Test  #592: NaNHandlingTest.NaN_Detection .......................................................................................   Passed    0.02 sec
+          Start  593: NaNHandlingTest.NaN_Arithmetic_Propagates
+ 593/3448 Test  #593: NaNHandlingTest.NaN_Arithmetic_Propagates ...........................................................................   Passed    0.02 sec
+          Start  594: NaNHandlingTest.NaN_FromInvalidOperations
+ 594/3448 Test  #594: NaNHandlingTest.NaN_FromInvalidOperations ...........................................................................   Passed    0.02 sec
+          Start  595: NaNHandlingTest.Infinity_Detection
+ 595/3448 Test  #595: NaNHandlingTest.Infinity_Detection ..................................................................................   Passed    0.02 sec
+          Start  596: NaNHandlingTest.Infinity_Sign
+ 596/3448 Test  #596: NaNHandlingTest.Infinity_Sign .......................................................................................   Passed    0.02 sec
+          Start  597: NaNHandlingTest.Infinity_Comparisons
+ 597/3448 Test  #597: NaNHandlingTest.Infinity_Comparisons ................................................................................   Passed    0.02 sec
+          Start  598: NaNHandlingTest.Infinity_Arithmetic
+ 598/3448 Test  #598: NaNHandlingTest.Infinity_Arithmetic .................................................................................   Passed    0.02 sec
+          Start  599: NaNHandlingTest.Infinity_ProducesNaN
+ 599/3448 Test  #599: NaNHandlingTest.Infinity_ProducesNaN ................................................................................   Passed    0.02 sec
+          Start  600: IntegerEdgeCaseTest.Addition_NearBoundary
+ 600/3448 Test  #600: IntegerEdgeCaseTest.Addition_NearBoundary ...........................................................................   Passed    0.02 sec
+          Start  601: IntegerEdgeCaseTest.Subtraction_NearBoundary
+ 601/3448 Test  #601: IntegerEdgeCaseTest.Subtraction_NearBoundary ........................................................................   Passed    0.02 sec
+          Start  602: IntegerEdgeCaseTest.Multiplication_Overflow
+ 602/3448 Test  #602: IntegerEdgeCaseTest.Multiplication_Overflow .........................................................................   Passed    0.02 sec
+          Start  603: IntegerEdgeCaseTest.Division_EdgeCases
+ 603/3448 Test  #603: IntegerEdgeCaseTest.Division_EdgeCases ..............................................................................   Passed    0.02 sec
+          Start  604: IntegerEdgeCaseTest.Modulo_EdgeCases
+ 604/3448 Test  #604: IntegerEdgeCaseTest.Modulo_EdgeCases ................................................................................   Passed    0.02 sec
+          Start  605: FloatPrecisionTest.Epsilon_Definition
+ 605/3448 Test  #605: FloatPrecisionTest.Epsilon_Definition ...............................................................................   Passed    0.02 sec
+          Start  606: FloatPrecisionTest.Associativity_LostForLargeNumbers
+ 606/3448 Test  #606: FloatPrecisionTest.Associativity_LostForLargeNumbers ................................................................   Passed    0.02 sec
+          Start  607: FloatPrecisionTest.Subtraction_CatastrophicCancellation
+ 607/3448 Test  #607: FloatPrecisionTest.Subtraction_CatastrophicCancellation .............................................................   Passed    0.02 sec
+          Start  608: FloatPrecisionTest.Denormalized_Numbers
+ 608/3448 Test  #608: FloatPrecisionTest.Denormalized_Numbers .............................................................................   Passed    0.02 sec
+          Start  609: FloatPrecisionTest.LargeNumber_Precision
+ 609/3448 Test  #609: FloatPrecisionTest.LargeNumber_Precision ............................................................................   Passed    0.02 sec
+          Start  610: FloatPrecisionTest.Comparison_WithTolerance
+ 610/3448 Test  #610: FloatPrecisionTest.Comparison_WithTolerance .........................................................................   Passed    0.02 sec
+          Start  611: TypedValueEdgeCaseTest.NullValue_Comparison
+ 611/3448 Test  #611: TypedValueEdgeCaseTest.NullValue_Comparison .........................................................................   Passed    0.03 sec
+          Start  612: TypedValueEdgeCaseTest.IntegerBoundaries
+ 612/3448 Test  #612: TypedValueEdgeCaseTest.IntegerBoundaries ............................................................................   Passed    0.02 sec
+          Start  613: TypedValueEdgeCaseTest.DoubleBoundaries
+ 613/3448 Test  #613: TypedValueEdgeCaseTest.DoubleBoundaries .............................................................................   Passed    0.02 sec
+          Start  614: TypedValueEdgeCaseTest.EmptyString
+ 614/3448 Test  #614: TypedValueEdgeCaseTest.EmptyString ..................................................................................   Passed    0.02 sec
+          Start  615: TypedValueEdgeCaseTest.ZeroValues
+ 615/3448 Test  #615: TypedValueEdgeCaseTest.ZeroValues ...................................................................................   Passed    0.02 sec
+          Start  616: UTF8EncodingTest.ByteLength_Verification
+ 616/3448 Test  #616: UTF8EncodingTest.ByteLength_Verification ............................................................................   Passed    0.02 sec
+          Start  617: UTF8EncodingTest.BoundaryCharacters_ByteLength
+ 617/3448 Test  #617: UTF8EncodingTest.BoundaryCharacters_ByteLength ......................................................................   Passed    0.02 sec
+          Start  618: UTF8EncodingTest.EmptyString_Valid
+ 618/3448 Test  #618: UTF8EncodingTest.EmptyString_Valid ..................................................................................   Passed    0.02 sec
+          Start  619: UTF8EncodingTest.NullByte_InString
+ 619/3448 Test  #619: UTF8EncodingTest.NullByte_InString ..................................................................................   Passed    0.02 sec
+          Start  620: UTF8EncodingTest.InvalidSequences_Detection
+ 620/3448 Test  #620: UTF8EncodingTest.InvalidSequences_Detection .........................................................................   Passed    0.02 sec
+          Start  621: MathEdgeCaseTest.Trigonometric_AtBoundaries
+ 621/3448 Test  #621: MathEdgeCaseTest.Trigonometric_AtBoundaries .........................................................................   Passed    0.02 sec
+          Start  622: MathEdgeCaseTest.Sqrt_EdgeCases
+ 622/3448 Test  #622: MathEdgeCaseTest.Sqrt_EdgeCases .....................................................................................   Passed    0.02 sec
+          Start  623: MathEdgeCaseTest.Log_EdgeCases
+ 623/3448 Test  #623: MathEdgeCaseTest.Log_EdgeCases ......................................................................................   Passed    0.02 sec
+          Start  624: MathEdgeCaseTest.Exp_EdgeCases
+ 624/3448 Test  #624: MathEdgeCaseTest.Exp_EdgeCases ......................................................................................   Passed    0.02 sec
+          Start  625: MathEdgeCaseTest.Power_EdgeCases
+ 625/3448 Test  #625: MathEdgeCaseTest.Power_EdgeCases ....................................................................................   Passed    0.02 sec
+          Start  626: MathEdgeCaseTest.Atan2_EdgeCases
+ 626/3448 Test  #626: MathEdgeCaseTest.Atan2_EdgeCases ....................................................................................   Passed    0.02 sec
+          Start  627: RoundingEdgeCaseTest.HalfwayValues
+ 627/3448 Test  #627: RoundingEdgeCaseTest.HalfwayValues ..................................................................................   Passed    0.02 sec
+          Start  628: RoundingEdgeCaseTest.Truncation
+ 628/3448 Test  #628: RoundingEdgeCaseTest.Truncation .....................................................................................   Passed    0.02 sec
+          Start  629: RoundingEdgeCaseTest.Floor_Ceiling
+ 629/3448 Test  #629: RoundingEdgeCaseTest.Floor_Ceiling ..................................................................................   Passed    0.02 sec
+          Start  630: DateTimeEdgeCaseTest.UnixEpoch_Boundaries
+ 630/3448 Test  #630: DateTimeEdgeCaseTest.UnixEpoch_Boundaries ...........................................................................   Passed    0.02 sec
+          Start  631: DateTimeEdgeCaseTest.LeapYear_Rules
+ 631/3448 Test  #631: DateTimeEdgeCaseTest.LeapYear_Rules .................................................................................   Passed    0.02 sec
+          Start  632: DateTimeEdgeCaseTest.DaysInMonth_February
+ 632/3448 Test  #632: DateTimeEdgeCaseTest.DaysInMonth_February ...........................................................................   Passed    0.02 sec
+          Start  633: StringEdgeCaseTest.MaxLength_Allocation
+ 633/3448 Test  #633: StringEdgeCaseTest.MaxLength_Allocation .............................................................................   Passed    0.02 sec
+          Start  634: StringEdgeCaseTest.Concatenation_Empty
+ 634/3448 Test  #634: StringEdgeCaseTest.Concatenation_Empty ..............................................................................   Passed    0.02 sec
+          Start  635: StringEdgeCaseTest.Substring_Boundaries
+ 635/3448 Test  #635: StringEdgeCaseTest.Substring_Boundaries .............................................................................   Passed    0.02 sec
+          Start  636: BooleanEdgeCaseTest.IntegerToBool
+ 636/3448 Test  #636: BooleanEdgeCaseTest.IntegerToBool ...................................................................................   Passed    0.02 sec
+          Start  637: BooleanEdgeCaseTest.BoolToInteger
+ 637/3448 Test  #637: BooleanEdgeCaseTest.BoolToInteger ...................................................................................   Passed    0.02 sec
+          Start  638: BooleanEdgeCaseTest.PointerToBool
+ 638/3448 Test  #638: BooleanEdgeCaseTest.PointerToBool ...................................................................................   Passed    0.02 sec
+          Start  639: EncryptedStorageTest.ToastedEncryptedValueRoundTrip
+ 639/3448 Test  #639: EncryptedStorageTest.ToastedEncryptedValueRoundTrip .................................................................   Passed    0.44 sec
+          Start  640: EncryptionKeyManagerTest.GenerateRotateDecrypt
+ 640/3448 Test  #640: EncryptionKeyManagerTest.GenerateRotateDecrypt ......................................................................   Passed    0.50 sec
+          Start  641: EncryptionKeyManagerTest.PerDomainIsolation
+ 641/3448 Test  #641: EncryptionKeyManagerTest.PerDomainIsolation .........................................................................   Passed    0.47 sec
+          Start  642: EngineApiCompatibilityContractTest.CanonicalEngineProfilesStayInCrossLayerLockstep
+ 642/3448 Test  #642: EngineApiCompatibilityContractTest.CanonicalEngineProfilesStayInCrossLayerLockstep ..................................   Passed    0.02 sec
+          Start  643: EngineApiCompatibilityContractTest.NativeAdapterAdvertisesCanonicalProfileCapabilityMask
+ 643/3448 Test  #643: EngineApiCompatibilityContractTest.NativeAdapterAdvertisesCanonicalProfileCapabilityMask ............................   Passed    0.02 sec
+          Start  644: EngineApiCompatibilityContractTest.ContractVersionAndRouteProtocolSurfaceAreStable
+ 644/3448 Test  #644: EngineApiCompatibilityContractTest.ContractVersionAndRouteProtocolSurfaceAreStable ..................................   Passed    0.02 sec
+          Start  645: EngineCrossCapabilityAuditContractTest.CanonicalProfileIdsResolveRepresentativeDatatypeCoverage
+ 645/3448 Test  #645: EngineCrossCapabilityAuditContractTest.CanonicalProfileIdsResolveRepresentativeDatatypeCoverage .....................   Passed    0.02 sec
+          Start  646: EngineCrossCapabilityAuditContractTest.CanonicalEmulationEnginesHaveRepresentativeIndexCoverage
+ 646/3448 Test  #646: EngineCrossCapabilityAuditContractTest.CanonicalEmulationEnginesHaveRepresentativeIndexCoverage .....................   Passed    0.02 sec
+          Start  647: EngineCrossCapabilityAuditContractTest.IndexCapabilityRegistryRoundTripsWithCatalogIndexTypeParser
+ 647/3448 Test  #647: EngineCrossCapabilityAuditContractTest.IndexCapabilityRegistryRoundTripsWithCatalogIndexTypeParser ..................   Passed    0.02 sec
+          Start  648: EngineErrorCodeHarmonizationTest.VNextRegistryContainsCanonicalPageAndTransactionCodes
+ 648/3448 Test  #648: EngineErrorCodeHarmonizationTest.VNextRegistryContainsCanonicalPageAndTransactionCodes ..............................   Passed    0.40 sec
+          Start  649: EngineErrorCodeHarmonizationTest.PrepareRejectsNonActiveWithDeterministicVNextCode
+ 649/3448 Test  #649: EngineErrorCodeHarmonizationTest.PrepareRejectsNonActiveWithDeterministicVNextCode ..................................   Passed    0.41 sec
+          Start  650: EngineIPCSessionHandlerTest.onSimpleQuery_SessionNotFound
+ 650/3448 Test  #650: EngineIPCSessionHandlerTest.onSimpleQuery_SessionNotFound ...........................................................   Passed    0.39 sec
+          Start  651: EngineIPCSessionHandlerTest.onSimpleQuery_CreateTable
+ 651/3448 Test  #651: EngineIPCSessionHandlerTest.onSimpleQuery_CreateTable ...............................................................   Passed    0.40 sec
+          Start  652: EngineIPCSessionHandlerTest.onSimpleQuery_InsertAndSelect
+ 652/3448 Test  #652: EngineIPCSessionHandlerTest.onSimpleQuery_InsertAndSelect ...........................................................   Passed    0.39 sec
+          Start  653: EngineIPCSessionHandlerTest.onSimpleQuery_Update
+ 653/3448 Test  #653: EngineIPCSessionHandlerTest.onSimpleQuery_Update ....................................................................   Passed    0.39 sec
+          Start  654: EngineIPCSessionHandlerTest.onSimpleQuery_Delete
+ 654/3448 Test  #654: EngineIPCSessionHandlerTest.onSimpleQuery_Delete ....................................................................   Passed    0.40 sec
+          Start  655: EngineIPCSessionHandlerTest.onSimpleQuery_InvalidSyntax
+ 655/3448 Test  #655: EngineIPCSessionHandlerTest.onSimpleQuery_InvalidSyntax .............................................................   Passed    0.41 sec
+          Start  656: EngineIPCSessionHandlerTest.onSimpleQuery_FirebirdProtocolIsNotRejectedAsUnsupported
+ 656/3448 Test  #656: EngineIPCSessionHandlerTest.onSimpleQuery_FirebirdProtocolIsNotRejectedAsUnsupported ................................   Passed    0.42 sec
+          Start  657: EngineIPCSessionHandlerTest.onSimpleQuery_SelectEmptyResult
+ 657/3448 Test  #657: EngineIPCSessionHandlerTest.onSimpleQuery_SelectEmptyResult .........................................................   Passed    0.41 sec
+          Start  658: EngineIPCSessionHandlerTest.onParse_Basic
+ 658/3448 Test  #658: EngineIPCSessionHandlerTest.onParse_Basic ...........................................................................   Passed    0.41 sec
+          Start  659: EngineIPCSessionHandlerTest.onParse_InvalidSQL
+ 659/3448 Test  #659: EngineIPCSessionHandlerTest.onParse_InvalidSQL ......................................................................   Passed    0.42 sec
+          Start  660: EngineIPCSessionHandlerTest.onParse_NativeProtocolCompilesInsteadOfUnsupported
+ 660/3448 Test  #660: EngineIPCSessionHandlerTest.onParse_NativeProtocolCompilesInsteadOfUnsupported ......................................   Passed    0.40 sec
+          Start  661: EngineIPCSessionHandlerTest.onParse_Bind_Execute_FullLifecycle
+ 661/3448 Test  #661: EngineIPCSessionHandlerTest.onParse_Bind_Execute_FullLifecycle ......................................................   Passed    0.41 sec
+          Start  662: EngineIPCSessionHandlerTest.onBind_StatementNotFound
+ 662/3448 Test  #662: EngineIPCSessionHandlerTest.onBind_StatementNotFound ................................................................   Passed    0.40 sec
+          Start  663: EngineIPCSessionHandlerTest.onExecute_PortalNotFound
+ 663/3448 Test  #663: EngineIPCSessionHandlerTest.onExecute_PortalNotFound ................................................................   Passed    0.40 sec
+          Start  664: EngineIPCSessionHandlerTest.onBegin_Basic
+ 664/3448 Test  #664: EngineIPCSessionHandlerTest.onBegin_Basic ...........................................................................   Passed    0.42 sec
+          Start  665: EngineIPCSessionHandlerTest.onCommit_Basic
+ 665/3448 Test  #665: EngineIPCSessionHandlerTest.onCommit_Basic ..........................................................................   Passed    0.42 sec
+          Start  666: EngineIPCSessionHandlerTest.onRollback_Basic
+ 666/3448 Test  #666: EngineIPCSessionHandlerTest.onRollback_Basic ........................................................................   Passed    0.44 sec
+          Start  667: EngineIPCSessionHandlerTest.onSavepoint_Basic
+ 667/3448 Test  #667: EngineIPCSessionHandlerTest.onSavepoint_Basic .......................................................................   Passed    0.45 sec
+          Start  668: EngineIPCSessionHandlerTest.Transaction_CommitPersistsData
+ 668/3448 Test  #668: EngineIPCSessionHandlerTest.Transaction_CommitPersistsData ..........................................................   Passed    0.45 sec
+          Start  669: EngineIPCSessionHandlerTest.Transaction_RollbackDiscardsData
+ 669/3448 Test  #669: EngineIPCSessionHandlerTest.Transaction_RollbackDiscardsData ........................................................   Passed    0.45 sec
+          Start  670: EngineIPCSessionHandlerTest.onAttach_DuplicateSession
+ 670/3448 Test  #670: EngineIPCSessionHandlerTest.onAttach_DuplicateSession ...............................................................   Passed    0.43 sec
+          Start  671: EngineIPCSessionHandlerTest.onDetach_SessionNotFound
+ 671/3448 Test  #671: EngineIPCSessionHandlerTest.onDetach_SessionNotFound ................................................................   Passed    0.43 sec
+          Start  672: EngineIPCSessionHandlerTest.MultipleSessions
+ 672/3448 Test  #672: EngineIPCSessionHandlerTest.MultipleSessions ........................................................................   Passed    0.42 sec
+          Start  673: EngineIPCSessionHandlerTest.ClearPreparedStatementCache
+ 673/3448 Test  #673: EngineIPCSessionHandlerTest.ClearPreparedStatementCache .............................................................   Passed    0.41 sec
+          Start  674: EngineIPCSessionHandlerTest.GetPreparedStatements
+ 674/3448 Test  #674: EngineIPCSessionHandlerTest.GetPreparedStatements ...................................................................   Passed    0.40 sec
+          Start  675: EngineIPCSessionHandlerTest.GetStats
+ 675/3448 Test  #675: EngineIPCSessionHandlerTest.GetStats ................................................................................   Passed    0.40 sec
+          Start  676: EngineIPCSessionHandlerTest.onCopyInStart_Basic
+ 676/3448 Test  #676: EngineIPCSessionHandlerTest.onCopyInStart_Basic .....................................................................   Passed    0.41 sec
+          Start  677: EngineIPCSessionHandlerTest.onCopyDone_Basic
+ 677/3448 Test  #677: EngineIPCSessionHandlerTest.onCopyDone_Basic ........................................................................   Passed    0.40 sec
+          Start  678: EngineIPCSessionHandlerTest.onCopyFail_Basic
+ 678/3448 Test  #678: EngineIPCSessionHandlerTest.onCopyFail_Basic ........................................................................   Passed    0.40 sec
+          Start  679: EngineIPCSessionHandlerTest.onSimpleQuery_NullDatabase
+ 679/3448 Test  #679: EngineIPCSessionHandlerTest.onSimpleQuery_NullDatabase ..............................................................   Passed    0.39 sec
+          Start  680: EngineIPCSessionHandlerTest.onClose_Statement
+ 680/3448 Test  #680: EngineIPCSessionHandlerTest.onClose_Statement .......................................................................   Passed    0.40 sec
+          Start  681: EngineIPCSessionHandlerTest.onClose_Portal
+ 681/3448 Test  #681: EngineIPCSessionHandlerTest.onClose_Portal ..........................................................................   Passed    0.40 sec
+          Start  682: EngineIPCSessionHandlerTest.onSync_Basic
+ 682/3448 Test  #682: EngineIPCSessionHandlerTest.onSync_Basic ............................................................................   Passed    0.39 sec
+          Start  683: EngineProfileEnumFreezeContractTest.EmulationEngineIdsAreFrozen
+ 683/3448 Test  #683: EngineProfileEnumFreezeContractTest.EmulationEngineIdsAreFrozen .....................................................   Passed    0.02 sec
+          Start  684: EngineProfileEnumFreezeContractTest.RouteProtocolIdsAreFrozen
+ 684/3448 Test  #684: EngineProfileEnumFreezeContractTest.RouteProtocolIdsAreFrozen .......................................................   Passed    0.02 sec
+          Start  685: EngineProfileEnumFreezeContractTest.CanonicalVnextSetMapsToDeterministicProtocols
+ 685/3448 Test  #685: EngineProfileEnumFreezeContractTest.CanonicalVnextSetMapsToDeterministicProtocols ...................................   Passed    0.02 sec
+          Start  686: EngineProfileEnumFreezeContractTest.IpcCapabilityBaselineMaskIsStable
+ 686/3448 Test  #686: EngineProfileEnumFreezeContractTest.IpcCapabilityBaselineMaskIsStable ...............................................   Passed    0.02 sec
+          Start  687: ErrorPaths.InvalidPageSize
+ 687/3448 Test  #687: ErrorPaths.InvalidPageSize ..........................................................................................   Passed    0.03 sec
+          Start  688: ErrorPaths.CorruptedMagic
+ 688/3448 Test  #688: ErrorPaths.CorruptedMagic ...........................................................................................   Passed    0.02 sec
+          Start  689: ErrorPaths.ChecksumMismatch
+ 689/3448 Test  #689: ErrorPaths.ChecksumMismatch .........................................................................................   Passed    0.02 sec
+          Start  690: ErrorPaths.ShortFileRead
+ 690/3448 Test  #690: ErrorPaths.ShortFileRead ............................................................................................   Passed    0.02 sec
+          Start  691: ExecutorTest.CreateTableSimple
+ 691/3448 Test  #691: ExecutorTest.CreateTableSimple ......................................................................................   Passed    0.42 sec
+          Start  692: ExecutorTest.CreateTableMultipleColumns
+ 692/3448 Test  #692: ExecutorTest.CreateTableMultipleColumns .............................................................................   Passed    0.41 sec
+          Start  693: ExecutorTest.CreateTableDuplicate
+ 693/3448 Test  #693: ExecutorTest.CreateTableDuplicate ...................................................................................   Passed    0.42 sec
+          Start  694: ExecutorTest.InsertSimple
+ 694/3448 Test  #694: ExecutorTest.InsertSimple ...........................................................................................   Passed    0.46 sec
+          Start  695: ExecutorTest.InsertAllTypes
+ 695/3448 Test  #695: ExecutorTest.InsertAllTypes .........................................................................................   Passed    0.47 sec
+          Start  696: ExecutorTest.InsertNull
+ 696/3448 Test  #696: ExecutorTest.InsertNull .............................................................................................   Passed    0.45 sec
+          Start  697: ExecutorTest.TriggerBeforeInsertMissingProcedureFailsClosed
+ 697/3448 Test  #697: ExecutorTest.TriggerBeforeInsertMissingProcedureFailsClosed .........................................................   Passed    0.47 sec
+          Start  698: ExecutorTest.TriggerBeforeUpdateVetoStopsFurtherCallbacks
+ 698/3448 Test  #698: ExecutorTest.TriggerBeforeUpdateVetoStopsFurtherCallbacks ...........................................................   Passed    0.53 sec
+          Start  699: ExecutorTest.TriggerBeforeDeleteVetoStopsFurtherCallbacks
+ 699/3448 Test  #699: ExecutorTest.TriggerBeforeDeleteVetoStopsFurtherCallbacks ...........................................................   Passed    0.53 sec
+          Start  700: ExecutorTest.TriggerAfterInsertMissingProcedureFailsClosed
+ 700/3448 Test  #700: ExecutorTest.TriggerAfterInsertMissingProcedureFailsClosed ..........................................................   Passed    0.45 sec
+          Start  701: ExecutorTest.InsertExpressions
+ 701/3448 Test  #701: ExecutorTest.InsertExpressions ......................................................................................   Passed    0.46 sec
+          Start  702: ExecutorTest.InsertTableNotFound
+ 702/3448 Test  #702: ExecutorTest.InsertTableNotFound ....................................................................................   Passed    0.43 sec
+          Start  703: ExecutorTest.SelectEmpty
+ 703/3448 Test  #703: ExecutorTest.SelectEmpty ............................................................................................   Passed    0.45 sec
+          Start  704: ExecutorTest.SelectWithData
+ 704/3448 Test  #704: ExecutorTest.SelectWithData .........................................................................................   Passed    0.51 sec
+          Start  705: ExecutorTest.SelectSpecificColumns
+ 705/3448 Test  #705: ExecutorTest.SelectSpecificColumns ..................................................................................   Passed    0.49 sec
+          Start  706: ExecutorTest.SelectExpressionRequiresTableSelectWhenUsingColumnGrants
+ 706/3448 Test  #706: ExecutorTest.SelectExpressionRequiresTableSelectWhenUsingColumnGrants ...............................................   Passed    0.55 sec
+          Start  707: ExecutorTest.IndexedSelectPathStillAppliesRlsPolicies
+ 707/3448 Test  #707: ExecutorTest.IndexedSelectPathStillAppliesRlsPolicies ...............................................................   Passed    0.60 sec
+          Start  708: ExecutorTest.CompleteWorkflow
+ 708/3448 Test  #708: ExecutorTest.CompleteWorkflow .......................................................................................   Passed    0.54 sec
+          Start  709: ExecutorTest.MixedDataTypes
+ 709/3448 Test  #709: ExecutorTest.MixedDataTypes .........................................................................................   Passed    0.50 sec
+          Start  710: ExecutorTest.ImplicitTextNumericComparisonInWhere
+ 710/3448 Test  #710: ExecutorTest.ImplicitTextNumericComparisonInWhere ...................................................................   Passed    0.53 sec
+          Start  711: ExecutorTest.ImplicitTextNumericComparisonRejectsInvalidText
+ 711/3448 Test  #711: ExecutorTest.ImplicitTextNumericComparisonRejectsInvalidText ........................................................   Passed    0.50 sec
+          Start  712: ExecutorTest.ImplicitTextNumericArithmeticInInsert
+ 712/3448 Test  #712: ExecutorTest.ImplicitTextNumericArithmeticInInsert ..................................................................   Passed    0.47 sec
+          Start  713: ExecutorTest.ThreeValuedBooleanOperatorsFollowSqlSemantics
+ 713/3448 Test  #713: ExecutorTest.ThreeValuedBooleanOperatorsFollowSqlSemantics ..........................................................   Passed    0.40 sec
+          Start  714: ExecutorTest.IsDistinctFromUsesNullSafeEquality
+ 714/3448 Test  #714: ExecutorTest.IsDistinctFromUsesNullSafeEquality .....................................................................   Passed    0.43 sec
+          Start  715: ExecutorTest.IsTrueAndIsFalseTreatNullAsFalseForPositivePredicate
+ 715/3448 Test  #715: ExecutorTest.IsTrueAndIsFalseTreatNullAsFalseForPositivePredicate ...................................................   Passed    0.40 sec
+          Start  716: ExecutorTest.IsUnknownFollowsNullPredicateSemantics
+ 716/3448 Test  #716: ExecutorTest.IsUnknownFollowsNullPredicateSemantics .................................................................   Passed    0.41 sec
+          Start  717: ExecutorTest.BitXorOperatorAndPrecedence
+ 717/3448 Test  #717: ExecutorTest.BitXorOperatorAndPrecedence ............................................................................   Passed    0.42 sec
+          Start  718: ExecutorTest.TemporalArithmeticWithImplicitTextCoercion
+ 718/3448 Test  #718: ExecutorTest.TemporalArithmeticWithImplicitTextCoercion .............................................................   Passed    0.41 sec
+          Start  719: ExecutorTest.OperatorStrictModeDisablesImplicitCasts
+ 719/3448 Test  #719: ExecutorTest.OperatorStrictModeDisablesImplicitCasts ................................................................   Passed    0.41 sec
+          Start  720: ExecutorTest.OperatorStrictModeDisablesImplicitComparisonCasts
+ 720/3448 Test  #720: ExecutorTest.OperatorStrictModeDisablesImplicitComparisonCasts ......................................................   Passed    0.38 sec
+          Start  721: ExecutorTest.FunctionCallRejectsSignatureMismatchDeterministically
+ 721/3448 Test  #721: ExecutorTest.FunctionCallRejectsSignatureMismatchDeterministically ..................................................   Passed    0.38 sec
+          Start  722: ExecutorTest.FunctionCallAllowsDeterministicNumericWidening
+ 722/3448 Test  #722: ExecutorTest.FunctionCallAllowsDeterministicNumericWidening .........................................................   Passed    0.40 sec
+          Start  723: ExecutorTest.FunctionCallUnknownSymbolReturnsUndefinedFunction
+ 723/3448 Test  #723: ExecutorTest.FunctionCallUnknownSymbolReturnsUndefinedFunction ......................................................   Passed    0.41 sec
+          Start  724: ExecutorTest.ProcedureCallRejectsSignatureMismatchDeterministically
+ 724/3448 Test  #724: ExecutorTest.ProcedureCallRejectsSignatureMismatchDeterministically .................................................   Passed    0.41 sec
+          Start  725: ExecutorTest.ProcedureCallAllowsDeterministicNumericWidening
+ 725/3448 Test  #725: ExecutorTest.ProcedureCallAllowsDeterministicNumericWidening ........................................................   Passed    0.40 sec
+          Start  726: ExecutorTest.ProcedureCallRejectsArgumentCountMismatchDeterministically
+ 726/3448 Test  #726: ExecutorTest.ProcedureCallRejectsArgumentCountMismatchDeterministically .............................................   Passed    0.41 sec
+          Start  727: ExecutorTest.UdrBoundaryRejectsMissingExecutePermissionDeterministically
+ 727/3448 Test  #727: ExecutorTest.UdrBoundaryRejectsMissingExecutePermissionDeterministically ............................................   Passed    0.45 sec
+          Start  728: ExecutorTest.UdrBoundaryRejectsSandboxPathDeterministically
+ 728/3448 Test  #728: ExecutorTest.UdrBoundaryRejectsSandboxPathDeterministically .........................................................   Passed    0.40 sec
+          Start  729: ExecutorTest.UdrBoundaryRejectsInvocationQuotaDeterministically
+ 729/3448 Test  #729: ExecutorTest.UdrBoundaryRejectsInvocationQuotaDeterministically .....................................................   Passed    0.40 sec
+          Start  730: ExecutorTest.UdrBoundaryExecutesConfiguredRuntimeModuleDeterministically
+ 730/3448 Test  #730: ExecutorTest.UdrBoundaryExecutesConfiguredRuntimeModuleDeterministically ............................................   Passed    0.41 sec
+          Start  731: ExecutorTest.UdrBoundaryRejectsUnconfiguredRuntimeIncludesScopeAndKeepsTransactionUsable
+ 731/3448 Test  #731: ExecutorTest.UdrBoundaryRejectsUnconfiguredRuntimeIncludesScopeAndKeepsTransactionUsable ............................   Passed    0.40 sec
+          Start  732: ExecutorTransactionPayloadTest.StartTransactionReadConsistencySetsIsolation
+ 732/3448 Test  #732: ExecutorTransactionPayloadTest.StartTransactionReadConsistencySetsIsolation .........................................   Passed    0.40 sec
+          Start  733: ExecutorTransactionPayloadTest.StartTransactionNoRecordVersionKeepsReadCommitted
+ 733/3448 Test  #733: ExecutorTransactionPayloadTest.StartTransactionNoRecordVersionKeepsReadCommitted ....................................   Passed    0.40 sec
+          Start  734: ExecutorTransactionPayloadTest.AutocommitOnCommitsAfterStatement
+ 734/3448 Test  #734: ExecutorTransactionPayloadTest.AutocommitOnCommitsAfterStatement ....................................................   Passed    0.41 sec
+          Start  735: ExecutorTransactionPayloadTest.AutocommitOffKeepsXid
+ 735/3448 Test  #735: ExecutorTransactionPayloadTest.AutocommitOffKeepsXid ................................................................   Passed    0.41 sec
+          Start  736: ExecutorTransactionPayloadTest.PrepareCommitPrepared
+ 736/3448 Test  #736: ExecutorTransactionPayloadTest.PrepareCommitPrepared ................................................................   Passed    0.40 sec
+          Start  737: ExecutorTransactionPayloadTest.PrepareRollbackPrepared
+ 737/3448 Test  #737: ExecutorTransactionPayloadTest.PrepareRollbackPrepared ..............................................................   Passed    0.41 sec
+          Start  738: ExecutorTransactionPayloadTest.BlrSavepointBeginCreatesImplicitSavepoint
+ 738/3448 Test  #738: ExecutorTransactionPayloadTest.BlrSavepointBeginCreatesImplicitSavepoint ............................................   Passed    0.41 sec
+          Start  739: ExecutorTransactionPayloadTest.BlrSavepointBlockReleasesImplicitSavepoint
+ 739/3448 Test  #739: ExecutorTransactionPayloadTest.BlrSavepointBlockReleasesImplicitSavepoint ...........................................   Passed    0.41 sec
+          Start  740: ExpressionSerializationTest.AlterElementRoundTrip
+ 740/3448 Test  #740: ExpressionSerializationTest.AlterElementRoundTrip ...................................................................   Passed    0.02 sec
+          Start  741: ExtendedPageSizesTest.CreateDatabaseAllPageSizes
+ 741/3448 Test  #741: ExtendedPageSizesTest.CreateDatabaseAllPageSizes ....................................................................   Passed    2.30 sec
+          Start  742: ExtendedPageSizesTest.BufferPoolWithLargePages
+ 742/3448 Test  #742: ExtendedPageSizesTest.BufferPoolWithLargePages ......................................................................   Passed    1.17 sec
+          Start  743: ExtendedPageSizesTest.HeapPageOperationsLargePages
+ 743/3448 Test  #743: ExtendedPageSizesTest.HeapPageOperationsLargePages ..................................................................   Passed    0.02 sec
+          Start  744: ExtendedPageSizesTest.StorageEngineWithLargePages
+ 744/3448 Test  #744: ExtendedPageSizesTest.StorageEngineWithLargePages ...................................................................   Passed    1.16 sec
+          Start  745: ExtendedPageSizesTest.MaxTupleSizeForLargePages
+ 745/3448 Test  #745: ExtendedPageSizesTest.MaxTupleSizeForLargePages .....................................................................   Passed    0.02 sec
+          Start  746: ExtendedPageSizesTest.PerformanceComparison
+ 746/3448 Test  #746: ExtendedPageSizesTest.PerformanceComparison .........................................................................   Passed    0.07 sec
+          Start  747: ExtendedPageSizesTest.InvalidPageSizes
+ 747/3448 Test  #747: ExtendedPageSizesTest.InvalidPageSizes ..............................................................................   Passed    0.02 sec
+          Start  748: ExtendedPageSizesTest.FSMWithLargePages
+ 748/3448 Test  #748: ExtendedPageSizesTest.FSMWithLargePages .............................................................................   Passed    1.17 sec
+          Start  749: ExtendedPageSizesAgentCReviewTest.ItemCountBoundary
+ 749/3448 Test  #749: ExtendedPageSizesAgentCReviewTest.ItemCountBoundary .................................................................   Passed    0.05 sec
+          Start  750: ExtendedPageSizesAgentCReviewTest.StructureAlignment
+ 750/3448 Test  #750: ExtendedPageSizesAgentCReviewTest.StructureAlignment ................................................................   Passed    0.02 sec
+          Start  751: ExtendedPageSizesAgentCReviewTest.MixedPageSizeBufferPool
+ 751/3448 Test  #751: ExtendedPageSizesAgentCReviewTest.MixedPageSizeBufferPool ...........................................................   Passed    2.27 sec
+          Start  752: ExtendedPageSizesAgentCReviewTest.OffsetArithmeticSafety
+ 752/3448 Test  #752: ExtendedPageSizesAgentCReviewTest.OffsetArithmeticSafety ............................................................   Passed    0.02 sec
+          Start  753: ExtendedPageSizesAgentCReviewTest.ConcurrentLargePageAccess
+ 753/3448 Test  #753: ExtendedPageSizesAgentCReviewTest.ConcurrentLargePageAccess .........................................................   Passed    0.61 sec
+          Start  754: ExtendedPageSizesAgentCReviewTest.PageSizeValidationEntryPoints
+ 754/3448 Test  #754: ExtendedPageSizesAgentCReviewTest.PageSizeValidationEntryPoints .....................................................   Passed    0.02 sec
+          Start  755: ExtendedPageSizesAgentCReviewTest.RegressionExistingPageSizes
+ 755/3448 Test  #755: ExtendedPageSizesAgentCReviewTest.RegressionExistingPageSizes .......................................................   Passed    1.16 sec
+          Start  756: ExtendedPageSizesAgentCReviewTest.MemoryUsageRegression
+ 756/3448 Test  #756: ExtendedPageSizesAgentCReviewTest.MemoryUsageRegression .............................................................   Passed    0.06 sec
+          Start  757: ExtendedPageSizesAgentCReviewTest.CorruptedPageHeaderDetection
+ 757/3448 Test  #757: ExtendedPageSizesAgentCReviewTest.CorruptedPageHeaderDetection ......................................................   Passed    0.02 sec
+          Start  758: ExtendedPageSizesAgentCReviewTest.OutOfMemoryConditions
+ 758/3448 Test  #758: ExtendedPageSizesAgentCReviewTest.OutOfMemoryConditions .............................................................   Passed    6.64 sec
+          Start  759: ExtractElementTest.DateIsoWeekAndTimezone
+ 759/3448 Test  #759: ExtractElementTest.DateIsoWeekAndTimezone ...........................................................................   Passed    0.03 sec
+          Start  760: ExtractElementTest.TemporalNoOffsetDefaultsToZero
+ 760/3448 Test  #760: ExtractElementTest.TemporalNoOffsetDefaultsToZero ...................................................................   Passed    0.02 sec
+          Start  761: ExtractElementTest.IntervalTotals
+ 761/3448 Test  #761: ExtractElementTest.IntervalTotals ...................................................................................   Passed    0.02 sec
+          Start  762: ExtractElementTest.Int128HiLo
+ 762/3448 Test  #762: ExtractElementTest.Int128HiLo .......................................................................................   Passed    0.02 sec
+          Start  763: ExtractElementTest.UuidTimestampNullForNonTimeVersions
+ 763/3448 Test  #763: ExtractElementTest.UuidTimestampNullForNonTimeVersions ..............................................................   Passed    0.02 sec
+          Start  764: ExtractElementTest.FloatFlags
+ 764/3448 Test  #764: ExtractElementTest.FloatFlags .......................................................................................   Passed    0.03 sec
+          Start  765: ExtractElementTest.DecimalUnscaled
+ 765/3448 Test  #765: ExtractElementTest.DecimalUnscaled ..................................................................................   Passed    0.02 sec
+          Start  766: ExtractElementTest.MoneyMajorMinor
+ 766/3448 Test  #766: ExtractElementTest.MoneyMajorMinor ..................................................................................   Passed    0.02 sec
+          Start  767: ExtractElementTest.StringLengths
+ 767/3448 Test  #767: ExtractElementTest.StringLengths ....................................................................................   Passed    0.02 sec
+          Start  768: ExtractElementTest.XmlPath
+ 768/3448 Test  #768: ExtractElementTest.XmlPath ..........................................................................................   Passed    0.03 sec
+          Start  769: ExtractElementTest.VectorMetrics
+ 769/3448 Test  #769: ExtractElementTest.VectorMetrics ....................................................................................   Passed    0.02 sec
+          Start  770: ExtractElementTest.TSVectorLexemes
+ 770/3448 Test  #770: ExtractElementTest.TSVectorLexemes ..................................................................................   Passed    0.02 sec
+          Start  771: ExtractElementTest.TSQueryRootOp
+ 771/3448 Test  #771: ExtractElementTest.TSQueryRootOp ....................................................................................   Passed    0.02 sec
+          Start  772: ExtractElementTest.MacAddrFlags
+ 772/3448 Test  #772: ExtractElementTest.MacAddrFlags .....................................................................................   Passed    0.02 sec
+          Start  773: AlterElementTest.DateInvalidLeapYearChange
+ 773/3448 Test  #773: AlterElementTest.DateInvalidLeapYearChange ..........................................................................   Passed    0.02 sec
+          Start  774: AlterElementTest.TimestampTimezoneKeepsLocal
+ 774/3448 Test  #774: AlterElementTest.TimestampTimezoneKeepsLocal ........................................................................   Passed    0.02 sec
+          Start  775: AlterElementTest.ArrayElementUpdate
+ 775/3448 Test  #775: AlterElementTest.ArrayElementUpdate .................................................................................   Passed    0.02 sec
+          Start  776: AlterElementTest.CompositeFieldUpdate
+ 776/3448 Test  #776: AlterElementTest.CompositeFieldUpdate ...............................................................................   Passed    0.02 sec
+          Start  777: AlterElementTest.VariantDatatype
+ 777/3448 Test  #777: AlterElementTest.VariantDatatype ....................................................................................   Passed    0.02 sec
+          Start  778: AlterElementTest.RangeUpperUpdate
+ 778/3448 Test  #778: AlterElementTest.RangeUpperUpdate ...................................................................................   Passed    0.02 sec
+          Start  779: AlterElementTest.PointUpdate
+ 779/3448 Test  #779: AlterElementTest.PointUpdate ........................................................................................   Passed    0.02 sec
+          Start  780: ExtractAlterElementTest.JsonPath
+ 780/3448 Test  #780: ExtractAlterElementTest.JsonPath ....................................................................................   Passed    0.03 sec
+          Start  781: ExtractAlterElementTest.BinaryByteAndLength
+ 781/3448 Test  #781: ExtractAlterElementTest.BinaryByteAndLength .........................................................................   Passed    0.02 sec
+          Start  782: ExtractAlterElementTest.InetNetwork
+ 782/3448 Test  #782: ExtractAlterElementTest.InetNetwork .................................................................................   Passed    0.02 sec
+          Start  783: FilePermissionsControlTest.ReadMetadataForExistingFile
+ 783/3448 Test  #783: FilePermissionsControlTest.ReadMetadataForExistingFile ..............................................................   Passed    0.03 sec
+          Start  784: FilePermissionsControlTest.SetModeAndReadBack
+ 784/3448 Test  #784: FilePermissionsControlTest.SetModeAndReadBack .......................................................................   Passed    0.02 sec
+          Start  785: FirebirdDropSemanticsTest.DropSequenceBlocksWhenReferenced
+ 785/3448 Test  #785: FirebirdDropSemanticsTest.DropSequenceBlocksWhenReferenced ..........................................................   Passed    0.29 sec
+          Start  786: FirebirdDropSemanticsTest.DropDomainBlocksWhenReferenced
+ 786/3448 Test  #786: FirebirdDropSemanticsTest.DropDomainBlocksWhenReferenced ............................................................   Passed    0.28 sec
+          Start  787: FirebirdParserWindowTest.ParsesWindowSpecification
+ 787/3448 Test  #787: FirebirdParserWindowTest.ParsesWindowSpecification ..................................................................   Passed    0.02 sec
+          Start  788: FKActionsTest.FKActionEnum
+ 788/3448 Test  #788: FKActionsTest.FKActionEnum ..........................................................................................   Passed    0.02 sec
+          Start  789: FKActionsTest.FKMatchTypeEnum
+ 789/3448 Test  #789: FKActionsTest.FKMatchTypeEnum .......................................................................................   Passed    0.02 sec
+          Start  790: FKActionsTest.ForeignKeyInfoDefaults
+ 790/3448 Test  #790: FKActionsTest.ForeignKeyInfoDefaults ................................................................................   Passed    0.02 sec
+          Start  791: FKActionsTest.CascadeDeleteAction
+ 791/3448 Test  #791: FKActionsTest.CascadeDeleteAction ...................................................................................   Passed    0.02 sec
+          Start  792: FKActionsTest.CascadeUpdateAction
+ 792/3448 Test  #792: FKActionsTest.CascadeUpdateAction ...................................................................................   Passed    0.02 sec
+          Start  793: FKActionsTest.SetNullOnDelete
+ 793/3448 Test  #793: FKActionsTest.SetNullOnDelete .......................................................................................   Passed    0.02 sec
+          Start  794: FKActionsTest.SetNullOnUpdate
+ 794/3448 Test  #794: FKActionsTest.SetNullOnUpdate .......................................................................................   Passed    0.02 sec
+          Start  795: FKActionsTest.SetDefaultOnDelete
+ 795/3448 Test  #795: FKActionsTest.SetDefaultOnDelete ....................................................................................   Passed    0.02 sec
+          Start  796: FKActionsTest.SetDefaultOnUpdate
+ 796/3448 Test  #796: FKActionsTest.SetDefaultOnUpdate ....................................................................................   Passed    0.02 sec
+          Start  797: FKActionsTest.RestrictAction
+ 797/3448 Test  #797: FKActionsTest.RestrictAction ........................................................................................   Passed    0.02 sec
+          Start  798: FKActionsTest.NoActionDefault
+ 798/3448 Test  #798: FKActionsTest.NoActionDefault .......................................................................................   Passed    0.02 sec
+          Start  799: FKActionsTest.CompositeFKCascade
+ 799/3448 Test  #799: FKActionsTest.CompositeFKCascade ....................................................................................   Passed    0.02 sec
+          Start  800: FKActionsTest.MixedActions
+ 800/3448 Test  #800: FKActionsTest.MixedActions ..........................................................................................   Passed    0.02 sec
+          Start  801: FKActionsTest.EnableDisableFK
+ 801/3448 Test  #801: FKActionsTest.EnableDisableFK .......................................................................................   Passed    0.02 sec
+          Start  802: FKActionsTest.DeferrableFK
+ 802/3448 Test  #802: FKActionsTest.DeferrableFK ..........................................................................................   Passed    0.02 sec
+          Start  803: FKActionsTest.MatchSimple
+ 803/3448 Test  #803: FKActionsTest.MatchSimple ...........................................................................................   Passed    0.02 sec
+          Start  804: FKActionsTest.MatchFull
+ 804/3448 Test  #804: FKActionsTest.MatchFull .............................................................................................   Passed    0.02 sec
+          Start  805: FKActionsTest.RealisticScenarios
+ 805/3448 Test  #805: FKActionsTest.RealisticScenarios ....................................................................................   Passed    0.02 sec
+          Start  806: FKActionsTest.ActionCombinationsMatrix
+ 806/3448 Test  #806: FKActionsTest.ActionCombinationsMatrix ..............................................................................   Passed    0.02 sec
+          Start  807: FKActionsTest.ColumnCountValidation
+ 807/3448 Test  #807: FKActionsTest.ColumnCountValidation .................................................................................   Passed    0.02 sec
+          Start  808: FKActionsTest.NamingConventions
+ 808/3448 Test  #808: FKActionsTest.NamingConventions .....................................................................................   Passed    0.02 sec
+          Start  809: GarbageCollectorTest.Initialization
+ 809/3448 Test  #809: GarbageCollectorTest.Initialization .................................................................................   Passed    0.39 sec
+          Start  810: GarbageCollectorTest.EnableDisable
+ 810/3448 Test  #810: GarbageCollectorTest.EnableDisable ..................................................................................   Passed    0.39 sec
+          Start  811: GarbageCollectorTest.PolicyManagement
+ 811/3448 Test  #811: GarbageCollectorTest.PolicyManagement ...............................................................................   Passed    0.38 sec
+          Start  812: GarbageCollectorTest.DirtyPageTracking
+ 812/3448 Test  #812: GarbageCollectorTest.DirtyPageTracking ..............................................................................   Passed    0.39 sec
+          Start  813: GarbageCollectorTest.DirtyPagePriority
+ 813/3448 Test  #813: GarbageCollectorTest.DirtyPagePriority ..............................................................................   Passed    0.38 sec
+          Start  814: GarbageCollectorTest.InitialStatistics
+ 814/3448 Test  #814: GarbageCollectorTest.InitialStatistics ..............................................................................   Passed    0.39 sec
+          Start  815: GarbageCollectorTest.AccumulationTracking
+ 815/3448 Test  #815: GarbageCollectorTest.AccumulationTracking ...........................................................................   Passed    0.39 sec
+          Start  816: GarbageCollectorTest.BackgroundGCStartStop
+ 816/3448 Test  #816: GarbageCollectorTest.BackgroundGCStartStop ..........................................................................   Passed    0.39 sec
+          Start  817: GarbageCollectorTest.BackgroundGCRunsAndUpdatesStatistics
+ 817/3448 Test  #817: GarbageCollectorTest.BackgroundGCRunsAndUpdatesStatistics ...........................................................   Passed    6.38 sec
+          Start  818: GarbageCollectorTest.AdaptiveTuningEnableDisable
+ 818/3448 Test  #818: GarbageCollectorTest.AdaptiveTuningEnableDisable ....................................................................   Passed    0.38 sec
+          Start  819: GarbageCollectorTest.TuningParametersExposed
+ 819/3448 Test  #819: GarbageCollectorTest.TuningParametersExposed ........................................................................   Passed    0.38 sec
+          Start  820: GarbageCollectorTest.PriorityCalculationBasic
+ 820/3448 Test  #820: GarbageCollectorTest.PriorityCalculationBasic .......................................................................   Passed    0.48 sec
+          Start  821: GarbageCollectorTest.ManyDirtyPages
+ 821/3448 Test  #821: GarbageCollectorTest.ManyDirtyPages .................................................................................   Passed    0.38 sec
+          Start  822: GarbageCollectorTest.HighChurnPages
+ 822/3448 Test  #822: GarbageCollectorTest.HighChurnPages .................................................................................   Passed    0.38 sec
+          Start  823: GarbageCollectorTest.CleanPageScanning
+ 823/3448 Test  #823: GarbageCollectorTest.CleanPageScanning ..............................................................................   Passed    6.39 sec
+          Start  824: GarbageCollectorTest.ZeroDirtyPages
+ 824/3448 Test  #824: GarbageCollectorTest.ZeroDirtyPages .................................................................................   Passed    6.37 sec
+          Start  825: GarbageCollectorTest.ConcurrentAccess
+ 825/3448 Test  #825: GarbageCollectorTest.ConcurrentAccess ...............................................................................   Passed    0.37 sec
+          Start  826: GarbageCollectorTest.PriorityQueuePerformance
+ 826/3448 Test  #826: GarbageCollectorTest.PriorityQueuePerformance .......................................................................   Passed    0.38 sec
+          Start  827: GarbageCollectorTest.StatisticsAccessPerformance
+ 827/3448 Test  #827: GarbageCollectorTest.StatisticsAccessPerformance ....................................................................   Passed    0.38 sec
+          Start  828: GinIndexGCTest.EmptyDeadTidsVector
+ 828/3448 Test  #828: GinIndexGCTest.EmptyDeadTidsVector ..................................................................................   Passed    0.28 sec
+          Start  829: GinIndexGCTest.DeadTidNotInIndex
+ 829/3448 Test  #829: GinIndexGCTest.DeadTidNotInIndex ....................................................................................   Passed    0.28 sec
+          Start  830: GinIndexGCTest.SingleDeadTidRemovalFromPendingList
+ 830/3448 Test  #830: GinIndexGCTest.SingleDeadTidRemovalFromPendingList ..................................................................   Passed    0.28 sec
+          Start  831: GinIndexGCTest.BulkDeadTidRemovalFromPendingList
+ 831/3448 Test  #831: GinIndexGCTest.BulkDeadTidRemovalFromPendingList ....................................................................   Passed    0.28 sec
+          Start  832: GinIndexGCTest.IndexTypeName
+ 832/3448 Test  #832: GinIndexGCTest.IndexTypeName ........................................................................................   Passed    0.28 sec
+          Start  833: GinIndexGCTest.DuplicateDeadTids
+ 833/3448 Test  #833: GinIndexGCTest.DuplicateDeadTids ....................................................................................   Passed    0.28 sec
+          Start  834: GinIndexGCTest.MultiKeyRemoval
+ 834/3448 Test  #834: GinIndexGCTest.MultiKeyRemoval ......................................................................................   Passed    0.28 sec
+          Start  835: GlobalUniquenessIndexTest.InsertAndVisibility
+ 835/3448 Test  #835: GlobalUniquenessIndexTest.InsertAndVisibility .......................................................................   Passed    0.29 sec
+          Start  836: GlobalUniquenessIndexTest.UpdateAndDelete
+ 836/3448 Test  #836: GlobalUniquenessIndexTest.UpdateAndDelete ...........................................................................   Passed    0.30 sec
+          Start  837: GlobalUniquenessIndexTest.NullsAndDisable
+ 837/3448 Test  #837: GlobalUniquenessIndexTest.NullsAndDisable ...........................................................................   Passed    0.28 sec
+          Start  838: GlobalUniquenessIndexTest.MultipleDomainsAreIsolated
+ 838/3448 Test  #838: GlobalUniquenessIndexTest.MultipleDomainsAreIsolated ................................................................   Passed    0.28 sec
+          Start  839: GlobalUniquenessIndexTest.HandlesManyEntries
+ 839/3448 Test  #839: GlobalUniquenessIndexTest.HandlesManyEntries ........................................................................   Passed    0.28 sec
+          Start  840: GroupCommitTest.BasicGroupCommit
+ 840/3448 Test  #840: GroupCommitTest.BasicGroupCommit ....................................................................................   Passed    0.40 sec
+          Start  841: GroupCommitTest.LeaderElection
+ 841/3448 Test  #841: GroupCommitTest.LeaderElection ......................................................................................   Passed    0.41 sec
+          Start  842: GroupCommitTest.BatchCollectionTimeout
+ 842/3448 Test  #842: GroupCommitTest.BatchCollectionTimeout ..............................................................................   Passed    0.39 sec
+          Start  843: GroupCommitTest.BatchSizeLimit
+ 843/3448 Test  #843: GroupCommitTest.BatchSizeLimit ......................................................................................   Passed    0.40 sec
+          Start  844: GroupCommitTest.FallbackWhenDisabled
+ 844/3448 Test  #844: GroupCommitTest.FallbackWhenDisabled ................................................................................   Passed    0.40 sec
+          Start  845: GroupCommitTest.MixedReadWrite
+ 845/3448 Test  #845: GroupCommitTest.MixedReadWrite ......................................................................................   Passed    0.41 sec
+          Start  846: GroupCommitTest.ErrorHandling
+ 846/3448 Test  #846: GroupCommitTest.ErrorHandling .......................................................................................   Passed    0.40 sec
+          Start  847: GroupCommitTest.PerformanceComparison
+ 847/3448 Test  #847: GroupCommitTest.PerformanceComparison ...............................................................................   Passed    0.44 sec
+          Start  848: GroupCommitTest.RollbackGroupCommit
+ 848/3448 Test  #848: GroupCommitTest.RollbackGroupCommit .................................................................................   Passed    0.40 sec
+          Start  849: GroupCommitTest.MixedCommitRollback
+Terminated

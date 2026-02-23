@@ -32,6 +32,26 @@
 namespace scratchbird {
 namespace security {
 
+namespace {
+
+bool portableGmtime(const std::time_t& source, std::tm& out) {
+#if defined(_WIN32)
+    return gmtime_s(&out, &source) == 0;
+#else
+    return gmtime_r(&source, &out) != nullptr;
+#endif
+}
+
+std::time_t portableTimegm(std::tm& value) {
+#if defined(_WIN32)
+    return _mkgmtime(&value);
+#else
+    return timegm(&value);
+#endif
+}
+
+} // namespace
+
 // ============================================================================
 // SamlAuthMethod Implementation
 // ============================================================================
@@ -680,8 +700,10 @@ std::string formatSamlTimestamp(std::chrono::system_clock::time_point time) {
     auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
         time.time_since_epoch()) % 1000;
 
-    std::tm tm;
-    gmtime_r(&tt, &tm);
+    std::tm tm{};
+    if (!portableGmtime(tt, tm)) {
+        return "";
+    }
 
     std::ostringstream oss;
     oss << std::put_time(&tm, "%Y-%m-%dT%H:%M:%S")
@@ -701,7 +723,11 @@ bool parseSamlTimestamp(const std::string& timestamp,
         return false;
     }
 
-    time = std::chrono::system_clock::from_time_t(timegm(&tm));
+    const std::time_t utc_time = portableTimegm(tm);
+    if (utc_time == static_cast<std::time_t>(-1)) {
+        return false;
+    }
+    time = std::chrono::system_clock::from_time_t(utc_time);
 
     // Parse milliseconds if present
     if (iss.peek() == '.') {

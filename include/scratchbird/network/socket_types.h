@@ -26,8 +26,71 @@
 #include <atomic>
 
 #ifdef _WIN32
+    #ifndef WIN32_LEAN_AND_MEAN
+        #define WIN32_LEAN_AND_MEAN
+    #endif
+    #ifndef NOMINMAX
+        #define NOMINMAX
+    #endif
     #include <winsock2.h>
     #include <ws2tcpip.h>
+    #ifdef ERROR
+        #undef ERROR
+    #endif
+    #ifdef DELETE
+        #undef DELETE
+    #endif
+    #ifdef OPTIONAL
+        #undef OPTIONAL
+    #endif
+    #ifdef ABSOLUTE
+        #undef ABSOLUTE
+    #endif
+    #ifdef ID
+        #undef ID
+    #endif
+    #ifdef IN
+        #undef IN
+    #endif
+    #ifdef OUT
+        #undef OUT
+    #endif
+    #ifdef INOUT
+        #undef INOUT
+    #endif
+    #ifdef NO_DATA
+        #undef NO_DATA
+    #endif
+    #ifdef CONNECT
+        #undef CONNECT
+    #endif
+    #ifdef DISCONNECT
+        #undef DISCONNECT
+    #endif
+    #ifdef TRANSACTION_START
+        #undef TRANSACTION_START
+    #endif
+    #ifdef TRANSACTION_COMMIT
+        #undef TRANSACTION_COMMIT
+    #endif
+    #ifdef TRANSACTION_ROLLBACK
+        #undef TRANSACTION_ROLLBACK
+    #endif
+    #ifdef RELATIVE
+        #undef RELATIVE
+    #endif
+    #ifdef NEXT
+        #undef NEXT
+    #endif
+    #ifdef PRIOR
+        #undef PRIOR
+    #endif
+    #ifdef FIRST
+        #undef FIRST
+    #endif
+    #ifdef LAST
+        #undef LAST
+    #endif
     #pragma comment(lib, "ws2_32.lib")
     using socket_t = SOCKET;
     constexpr socket_t INVALID_SOCKET_VALUE = INVALID_SOCKET;

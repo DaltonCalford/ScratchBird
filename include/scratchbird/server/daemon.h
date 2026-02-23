@@ -29,11 +29,18 @@
 #include <atomic>
 #include <memory>
 
+#include "scratchbird/core/process_control.h"
+#include "scratchbird/core/signal_control.h"
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"
 
 namespace scratchbird {
 namespace server {
+
+using ProcessId = uint64_t;
+using UserId = uint32_t;
+using GroupId = uint32_t;
+using FileModeBits = uint32_t;
 
 // ============================================================================
 // Signal Definitions
@@ -67,7 +74,7 @@ struct DaemonOptions {
     // Process identity
     std::string pid_file;               // PID file path (e.g., /var/run/scratchbird/sb_server.pid)
     std::string working_dir = "/";      // Working directory after daemonization
-    mode_t umask = 0027;                // File creation mask
+    FileModeBits umask = 0027;          // File creation mask
 
     // User/group switching
     std::string run_as_user;            // User to switch to (empty = don't switch)
@@ -150,12 +157,12 @@ public:
      * @param pid Output: PID from file if valid
      * @return true if file exists and process is running
      */
-    static bool isLocked(const std::string& path, pid_t* pid = nullptr);
+    static bool isLocked(const std::string& path, ProcessId* pid = nullptr);
 
     /**
      * Read PID from file (does not check if running)
      */
-    static pid_t read(const std::string& path);
+    static ProcessId read(const std::string& path);
 
     /**
      * Get our PID file path
@@ -226,7 +233,7 @@ public:
     /**
      * Report main PID (if forked after exec)
      */
-    static void mainPid(pid_t pid);
+    static void mainPid(ProcessId pid);
 
     /**
      * Get watchdog interval from systemd (0 if not set)
@@ -391,11 +398,10 @@ private:
     core::Status dropPrivileges(core::ErrorContext* ctx);
     void setupSignals();
 
-    // Static signal handler (routes to instance)
-    static void staticSignalHandler(int sig);
-
     DaemonOptions options_;
     PIDFile pid_file_;
+    std::unique_ptr<core::ProcessControl> process_control_;
+    std::unique_ptr<core::SignalControl> signal_control_;
 
     std::atomic<DaemonState> state_{DaemonState::INIT};
     std::atomic<bool> shutdown_requested_{false};
@@ -404,9 +410,6 @@ private:
     SignalHandler signal_handler_;
     bool is_parent_ = false;
     bool daemonized_ = false;
-
-    // Global instance for signal routing
-    static Daemon* g_instance_;
 };
 
 // ============================================================================
@@ -416,7 +419,7 @@ private:
 /**
  * Get current process ID
  */
-pid_t getCurrentPid();
+ProcessId getCurrentPid();
 
 /**
  * Check if a process is running
@@ -424,7 +427,7 @@ pid_t getCurrentPid();
  * @param pid Process ID to check
  * @return true if process exists
  */
-bool isProcessRunning(pid_t pid);
+bool isProcessRunning(ProcessId pid);
 
 /**
  * Send signal to a process
@@ -433,7 +436,7 @@ bool isProcessRunning(pid_t pid);
  * @param signal Signal number
  * @return true if signal was sent successfully
  */
-bool sendSignal(pid_t pid, int signal);
+bool sendSignal(ProcessId pid, int signal);
 
 /**
  * Get user ID from username
@@ -442,7 +445,7 @@ bool sendSignal(pid_t pid, int signal);
  * @param uid Output: User ID
  * @return true if user found
  */
-bool getUserId(const std::string& username, uid_t& uid);
+bool getUserId(const std::string& username, UserId& uid);
 
 /**
  * Get group ID from group name
@@ -451,7 +454,7 @@ bool getUserId(const std::string& username, uid_t& uid);
  * @param gid Output: Group ID
  * @return true if group found
  */
-bool getGroupId(const std::string& groupname, gid_t& gid);
+bool getGroupId(const std::string& groupname, GroupId& gid);
 
 /**
  * Create directory recursively
@@ -460,7 +463,7 @@ bool getGroupId(const std::string& groupname, gid_t& gid);
  * @param mode Permissions
  * @return true on success
  */
-bool createDirectory(const std::string& path, mode_t mode = 0755);
+bool createDirectory(const std::string& path, FileModeBits mode = 0755);
 
 /**
  * Get default PID file path

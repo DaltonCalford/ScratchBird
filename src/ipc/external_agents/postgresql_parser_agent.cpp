@@ -53,6 +53,7 @@ namespace pg {
     constexpr uint8_t FE_FLUSH = 'H';        // Flush
     constexpr uint8_t FE_SYNC = 'S';         // Sync
     constexpr uint8_t FE_TERMINATE = 'X';    // Terminate
+    constexpr uint8_t FE_FUNCTION = 'F';     // FunctionCall (legacy)
     constexpr uint8_t FE_COPY_DATA = 'd';    // CopyData
     constexpr uint8_t FE_COPY_DONE = 'c';    // CopyDone
     constexpr uint8_t FE_COPY_FAIL = 'f';    // CopyFail
@@ -83,6 +84,7 @@ namespace pg {
     // Startup message constants
     constexpr int SSL_REQUEST_CODE = 80877103;
     constexpr int CANCEL_REQUEST_CODE = 80877102;
+    constexpr int GSSENC_REQUEST_CODE = 80877104;
     constexpr int PROTOCOL_VERSION = 196608;  // 3.0
     
     // Authentication types
@@ -359,25 +361,22 @@ core::Status PostgreSQLParserAgent::handleStartupPhase(PGClientState& state, cor
     
     uint32_t version = readUint32(startup_msg.data());
     
-    // Check for SSL request
-    if (version == pg::SSL_REQUEST_CODE) {
-        // Send SSL refusal (not supported in this implementation)
-        uint8_t ssl_response = 'N';
-        if (send(state.client_fd, &ssl_response, 1, 0) != 1) {
+    // SSL/GSS encryption negotiation requests return one-byte 'N' refusal and retry startup.
+    while (version == pg::SSL_REQUEST_CODE || version == pg::GSSENC_REQUEST_CODE) {
+        uint8_t refusal = 'N';
+        if (send(state.client_fd, &refusal, 1, 0) != 1) {
             return core::Status::IO_ERROR;
         }
-        
-        // Read actual startup message
+
         startup_msg.clear();
         status = readFullMessage(state.client_fd, startup_msg, ctx);
         if (status != core::Status::OK) {
             return status;
         }
-        
         if (startup_msg.size() < 8) {
             return core::Status::INVALID_ARGUMENT;
         }
-        
+
         version = readUint32(startup_msg.data());
     }
     
@@ -645,6 +644,10 @@ core::Status PostgreSQLParserAgent::handleMessage(PGClientState& state, core::Er
             return handleCloseMessage(state, msg, ctx);
         case pg::FE_DESCRIBE:
             return handleDescribeMessage(state, msg, ctx);
+        case pg::FE_FUNCTION:
+            sendErrorResponse(state, "0A000", "FunctionCall message type is not supported");
+            sendReadyForQuery(state);
+            return core::Status::OK;
         case pg::FE_SYNC:
             return handleSyncMessage(state, ctx);
         case pg::FE_TERMINATE:

@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/clock_control.h"
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/uuidv7.h"
 
@@ -93,6 +94,7 @@ private:
 
     Database* db_;
     Config config_;
+    std::unique_ptr<ClockControl> clock_control_;
 
     std::atomic<bool> running_{false};
     std::mutex mutex_;

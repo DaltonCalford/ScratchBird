@@ -18,7 +18,6 @@
 #include <array>
 #include <chrono>
 #include <condition_variable>
-#include <csignal>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
@@ -33,11 +32,13 @@
 #include <thread>
 #include <vector>
 #include <algorithm>
-#include <fcntl.h>
 
 #include "scratchbird/core/telemetry.h"
 #include "scratchbird/core/error_context.h"
+#include "scratchbird/core/portable_file_io.h"
+#include "scratchbird/core/signal_control.h"
 #include "scratchbird/network/control_plane.h"
+#include "scratchbird/network/listener_ipc_adapter.h"
 #include "scratchbird/network/network.h"
 #include "scratchbird/network/socket.h"
 #include "scratchbird/network/socket_types.h"
@@ -52,6 +53,7 @@
 #include <signal.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#include <fcntl.h>
 #endif
 
 #ifndef SB_LISTENER_PROTOCOL
@@ -68,6 +70,7 @@ std::atomic<bool> g_shutdown{false};
 std::atomic<bool> g_dump_stats{false};
 std::atomic<bool> g_draining{false};
 std::atomic<bool> g_force_shutdown{false};
+std::unique_ptr<scratchbird::core::SignalControl> g_signal_control;
 
 struct ListenerConfig {
     std::string protocol = SB_LISTENER_PROTOCOL;
@@ -176,14 +179,32 @@ struct ListenerHandoffBindingContext {
     uint32_t listener_id = 0;
 };
 
-void handleSignal(int signal) {
-#ifndef _WIN32
-    if (signal == SIGUSR2) {
-        g_dump_stats.store(true, std::memory_order_release);
+void pollRuntimeSignals() {
+    if (!g_signal_control) {
         return;
     }
-#endif
-    g_shutdown.store(true, std::memory_order_release);
+
+    scratchbird::core::ControlSignal signal = scratchbird::core::ControlSignal::NONE;
+    if (g_signal_control->poll(&signal, nullptr) != scratchbird::core::Status::OK) {
+        return;
+    }
+
+    switch (signal) {
+        case scratchbird::core::ControlSignal::SHUTDOWN:
+        case scratchbird::core::ControlSignal::IMMEDIATE_STOP:
+            g_shutdown.store(true, std::memory_order_release);
+            break;
+        case scratchbird::core::ControlSignal::RELOAD:
+            g_draining.store(true, std::memory_order_release);
+            break;
+        case scratchbird::core::ControlSignal::DUMP_STATS:
+            g_dump_stats.store(true, std::memory_order_release);
+            break;
+        case scratchbird::core::ControlSignal::ROTATE_LOGS:
+        case scratchbird::core::ControlSignal::NONE:
+        default:
+            break;
+    }
 }
 
 uint16_t defaultPortForProtocol(const std::string& protocol) {
@@ -880,7 +901,8 @@ private:
                 log_path += "parser_";
                 log_path += std::to_string(getpid());
                 log_path += ".stderr.log";
-                int fd = ::open(log_path.c_str(), O_CREAT | O_WRONLY | O_APPEND, 0644);
+                int fd = scratchbird::core::platform::openFd(
+                    log_path.c_str(), O_CREAT | O_WRONLY | O_APPEND, 0644);
                 if (fd >= 0) {
                     ::dup2(fd, STDERR_FILENO);
                     ::close(fd);
@@ -974,9 +996,11 @@ private:
                 } else {
                     markWorkerFault(worker, "error");
                 }
+#ifndef _WIN32
                 int exit_status = 0;
                 pid_t exited = waitpid(worker->worker_pid, &exit_status, WNOHANG);
                 (void)exited;
+#endif
                 break;
             }
             auto type = static_cast<scratchbird::network::ControlPlaneMessageType>(
@@ -2034,8 +2058,9 @@ int runListener(ListenerConfig config) {
     std::string control_socket = controlSocketPath(config);
     std::string management_socket = managementSocketPath(config);
     scratchbird::core::ErrorContext ctx;
-    scratchbird::network::ControlPlaneServer control_plane;
-    scratchbird::network::ControlPlaneServer management_plane;
+    auto control_plane = scratchbird::network::createDefaultLocalControlChannel();
+    auto management_plane = scratchbird::network::createDefaultLocalControlChannel();
+    auto front_door = scratchbird::network::createDefaultListenerSocketAcceptor();
     std::thread control_thread;
     std::thread management_thread;
     PoolMetrics pool_metrics;
@@ -2053,8 +2078,12 @@ int runListener(ListenerConfig config) {
         std::cerr << "Control socket path not configured\n";
         return 2;
     }
+    if (!control_plane || !management_plane || !front_door) {
+        std::cerr << "Failed to initialize listener IPC adapters\n";
+        return 2;
+    }
 
-    if (control_plane.start(control_socket, &ctx) != scratchbird::core::Status::OK) {
+    if (control_plane->start(control_socket, &ctx) != scratchbird::core::Status::OK) {
         std::cerr << "Failed to start control socket: " << ctx.message << "\n";
         return 2;
     }
@@ -2062,7 +2091,8 @@ int runListener(ListenerConfig config) {
     control_thread = std::thread([&]() {
         scratchbird::core::ErrorContext local_ctx;
         while (!g_shutdown.load(std::memory_order_acquire)) {
-            auto control_conn = control_plane.accept(&local_ctx);
+            pollRuntimeSignals();
+            auto control_conn = control_plane->accept(&local_ctx);
             if (!control_conn) {
                 std::this_thread::sleep_for(std::chrono::milliseconds(50));
                 continue;
@@ -2073,7 +2103,7 @@ int runListener(ListenerConfig config) {
     if (!pool.start()) {
         std::cerr << "Failed to start parser pool\n";
         g_shutdown.store(true, std::memory_order_release);
-        control_plane.stop();
+        control_plane->stop();
         if (control_thread.joinable()) {
             control_thread.join();
         }
@@ -2084,7 +2114,7 @@ int runListener(ListenerConfig config) {
         std::cerr << "Failed to reach warm pool minimum before listener startup\n";
         g_shutdown.store(true, std::memory_order_release);
         pool.stop();
-        control_plane.stop();
+        control_plane->stop();
         if (control_thread.joinable()) {
             control_thread.join();
         }
@@ -2093,12 +2123,13 @@ int runListener(ListenerConfig config) {
     }
 
     if (!management_socket.empty()) {
-        if (management_plane.start(management_socket, &ctx) == scratchbird::core::Status::OK) {
+        if (management_plane->start(management_socket, &ctx) == scratchbird::core::Status::OK) {
             std::cout << "Management socket: " << management_socket << "\n";
             management_thread = std::thread([&]() {
                 scratchbird::core::ErrorContext local_ctx;
                 while (!g_shutdown.load(std::memory_order_acquire)) {
-                    auto mgmt_conn = management_plane.accept(&local_ctx);
+                    pollRuntimeSignals();
+                    auto mgmt_conn = management_plane->accept(&local_ctx);
                     if (!mgmt_conn) {
                         std::this_thread::sleep_for(std::chrono::milliseconds(50));
                         continue;
@@ -2111,7 +2142,7 @@ int runListener(ListenerConfig config) {
             std::cerr << "Failed to start management socket: " << ctx.message << "\n";
             g_shutdown.store(true, std::memory_order_release);
             pool.stop();
-            control_plane.stop();
+            control_plane->stop();
             if (control_thread.joinable()) {
                 control_thread.join();
             }
@@ -2120,50 +2151,19 @@ int runListener(ListenerConfig config) {
         }
     }
 
-    auto server_socket = Socket::create(AddressFamily::IPV4,
-                                        scratchbird::network::SocketType::STREAM,
-                                        &ctx);
-    if (!server_socket) {
-        std::cerr << "Failed to create socket: " << ctx.message << "\n";
-        g_shutdown.store(true, std::memory_order_release);
-        pool.stop();
-        control_plane.stop();
-        management_plane.stop();
-        if (control_thread.joinable()) {
-            control_thread.join();
-        }
-        if (management_thread.joinable()) {
-            management_thread.join();
-        }
-        return 2;
-    }
+    scratchbird::network::ListenerSocketConfig front_door_config;
+    front_door_config.family = AddressFamily::IPV4;
+    front_door_config.bind_address = config.bind_address;
+    front_door_config.port = config.port;
+    front_door_config.backlog = static_cast<int>(scratchbird::network::DEFAULT_LISTEN_BACKLOG);
+    front_door_config.non_blocking = true;
 
-    NetworkAddress addr;
-    addr.family = AddressFamily::IPV4;
-    addr.host = config.bind_address;
-    addr.port = config.port;
-    server_socket->setNonBlocking(true, nullptr);
-    if (server_socket->bind(addr, &ctx) != scratchbird::core::Status::OK) {
-        std::cerr << "Bind failed: " << ctx.message << "\n";
+    if (front_door->start(front_door_config, &ctx) != scratchbird::core::Status::OK) {
+        std::cerr << "Failed to start listener front-door socket: " << ctx.message << "\n";
         g_shutdown.store(true, std::memory_order_release);
         pool.stop();
-        control_plane.stop();
-        management_plane.stop();
-        if (control_thread.joinable()) {
-            control_thread.join();
-        }
-        if (management_thread.joinable()) {
-            management_thread.join();
-        }
-        return 2;
-    }
-    if (server_socket->listen(scratchbird::network::DEFAULT_LISTEN_BACKLOG, &ctx) !=
-        scratchbird::core::Status::OK) {
-        std::cerr << "Listen failed: " << ctx.message << "\n";
-        g_shutdown.store(true, std::memory_order_release);
-        pool.stop();
-        control_plane.stop();
-        management_plane.stop();
+        control_plane->stop();
+        management_plane->stop();
         if (control_thread.joinable()) {
             control_thread.join();
         }
@@ -2207,6 +2207,7 @@ int runListener(ListenerConfig config) {
 
     // Accept loop with parser handoff.
     while (!g_shutdown.load(std::memory_order_acquire)) {
+        pollRuntimeSignals();
         if (g_draining.load(std::memory_order_acquire) &&
             pool.activeSessionCount() == 0) {
             g_shutdown.store(true, std::memory_order_release);
@@ -2216,7 +2217,7 @@ int runListener(ListenerConfig config) {
             dumpMetrics(metrics);
         }
         NetworkAddress client_addr;
-        auto client = server_socket->accept(&client_addr, &ctx);
+        auto client = front_door->accept(&client_addr, &ctx);
         if (!client) {
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
             continue;
@@ -2253,10 +2254,10 @@ int runListener(ListenerConfig config) {
     }
 
     dumpMetrics(metrics);
-    server_socket->close();
+    front_door->close();
     pool.stop();
-    control_plane.stop();
-    management_plane.stop();
+    control_plane->stop();
+    management_plane->stop();
     if (control_thread.joinable()) {
         control_thread.join();
     }
@@ -2309,14 +2310,25 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    std::signal(SIGINT, handleSignal);
-    std::signal(SIGTERM, handleSignal);
-#ifndef _WIN32
-    std::signal(SIGUSR2, handleSignal);
-#endif
+    g_signal_control = scratchbird::core::createDefaultSignalControl();
+    if (g_signal_control) {
+        scratchbird::core::SignalInstallSpec signal_spec;
+        signal_spec.enable_shutdown_signal = true;
+        signal_spec.enable_reload_signal = true;
+        signal_spec.enable_rotate_logs_signal = false;
+        signal_spec.enable_dump_stats_signal = true;
+        signal_spec.enable_immediate_stop_signal = true;
+        signal_spec.ignore_broken_pipe = true;
+        (void)g_signal_control->install(signal_spec, nullptr);
+    }
 
     g_draining.store(false, std::memory_order_release);
     g_force_shutdown.store(false, std::memory_order_release);
     g_shutdown.store(false, std::memory_order_release);
-    return runListener(config);
+    const int exit_code = runListener(config);
+    if (g_signal_control) {
+        (void)g_signal_control->uninstall(nullptr);
+        g_signal_control.reset();
+    }
+    return exit_code;
 }

@@ -1,0 +1,2 @@
+cmake --build build -j4
+ctest --test-dir build -R "^ProcessControlTest\\." --output-on-failure

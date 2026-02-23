@@ -64,7 +64,11 @@ namespace FirebirdDateTime
         tm.tm_mon = month - 1;
         tm.tm_mday = day;
         tm.tm_hour = 0;
+#if defined(_WIN32)
+        std::time_t time = _mkgmtime(&tm);  // Use UTC
+#else
         std::time_t time = timegm(&tm);  // Use UTC
+#endif
 
         // Floor division for negative timestamps (dates before 1970)
         int32_t unix_days = (time >= 0)

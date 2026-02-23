@@ -1,0 +1,46 @@
+Internal ctest changing into directory: /home/dcalford/CliWork/ScratchBird/build
+Test project /home/dcalford/CliWork/ScratchBird/build
+      Start 1094: LocalIPCPolicyTest.DefaultPreferredMethodMatchesPlatformDefault
+ 1/17 Test #1094: LocalIPCPolicyTest.DefaultPreferredMethodMatchesPlatformDefault ...............................................   Passed    0.04 sec
+      Start 1095: LocalIPCPolicyTest.ResolveAutoUsesPolicyPreferredMethod
+ 2/17 Test #1095: LocalIPCPolicyTest.ResolveAutoUsesPolicyPreferredMethod .......................................................   Passed    0.05 sec
+      Start 1096: LocalIPCPolicyTest.ResolveExplicitMethodDisablesFallback
+ 3/17 Test #1096: LocalIPCPolicyTest.ResolveExplicitMethodDisablesFallback ......................................................   Passed    0.05 sec
+      Start 1097: LocalIPCPolicyTest.PeerCredentialExpectationMatchesPlatformContract
+ 4/17 Test #1097: LocalIPCPolicyTest.PeerCredentialExpectationMatchesPlatformContract ...........................................   Passed    0.05 sec
+      Start 1905: ServiceControllerListenerBootstrapTest.StartListenersPassesConfigFileToListenerProcess
+ 5/17 Test #1905: ServiceControllerListenerBootstrapTest.StartListenersPassesConfigFileToListenerProcess ........................   Passed    0.10 sec
+      Start 1906: ServiceControllerListenerBootstrapTest.PortCollisionSkipsListenerLaunchAndParserBootstrap
+ 6/17 Test #1906: ServiceControllerListenerBootstrapTest.PortCollisionSkipsListenerLaunchAndParserBootstrap .....................   Passed    0.05 sec
+      Start 1907: ServiceControllerListenerBootstrapTest.MultipleNativeListenersCanRunWithDistinctOwnersAndPorts
+ 7/17 Test #1907: ServiceControllerListenerBootstrapTest.MultipleNativeListenersCanRunWithDistinctOwnersAndPorts ................   Passed    0.11 sec
+      Start 1908: ServiceControllerListenerBootstrapTest.DirectModeLaunchesNativePgMysqlFirebirdListenerMatrix
+ 8/17 Test #1908: ServiceControllerListenerBootstrapTest.DirectModeLaunchesNativePgMysqlFirebirdListenerMatrix ..................   Passed    0.09 sec
+      Start 1909: ServiceControllerListenerBootstrapTest.ManagerProxyModeForcesSingleInternalNativeListener
+ 9/17 Test #1909: ServiceControllerListenerBootstrapTest.ManagerProxyModeForcesSingleInternalNativeListener .....................   Passed    0.08 sec
+      Start 1910: ServiceControllerListenerBootstrapTest.ManagerProxyStartManagerLaunchesConfiguredBinaryWithInternalEndpoint
+10/17 Test #1910: ServiceControllerListenerBootstrapTest.ManagerProxyStartManagerLaunchesConfiguredBinaryWithInternalEndpoint ...   Passed    1.07 sec
+      Start 1911: ServiceControllerListenerBootstrapTest.ManagerProxyRejectsPortCollisionWithInternalNativeListener
+11/17 Test #1911: ServiceControllerListenerBootstrapTest.ManagerProxyRejectsPortCollisionWithInternalNativeListener .............   Passed    0.07 sec
+      Start 1912: ServiceControllerListenerBootstrapTest.ManagerProxyStartManagerRejectsMissingMcpAuthSecret
+12/17 Test #1912: ServiceControllerListenerBootstrapTest.ManagerProxyStartManagerRejectsMissingMcpAuthSecret ....................   Passed    0.05 sec
+      Start 2506: WindowsServiceHostTest.ConsoleModeExecutesCallback
+13/17 Test #2506: WindowsServiceHostTest.ConsoleModeExecutesCallback ............................................................   Passed    0.05 sec
+      Start 2507: WindowsServiceHostTest.ConsoleModeReportsFailure
+14/17 Test #2507: WindowsServiceHostTest.ConsoleModeReportsFailure ..............................................................   Passed    0.05 sec
+      Start 2508: WindowsServiceHostTest.ServiceModeContractIsPlatformGuarded
+15/17 Test #2508: WindowsServiceHostTest.ServiceModeContractIsPlatformGuarded ...................................................   Passed    0.05 sec
+      Start 3499: VNextScopeScanContract
+16/17 Test #3499: VNextScopeScanContract ........................................................................................   Passed    0.17 sec
+      Start 3500: PortableRuntimeGuard
+17/17 Test #3500: PortableRuntimeGuard ..........................................................................................   Passed    0.06 sec
+
+100% tests passed, 0 tests failed out of 17
+
+Label Time Summary:
+compliance     =   0.23 sec*proc (2 tests)
+governance     =   0.17 sec*proc (1 test)
+portability    =   0.06 sec*proc (1 test)
+unit           =   2.18 sec*proc (17 tests)
+
+Total Test time (real) =   2.39 sec

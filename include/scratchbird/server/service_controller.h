@@ -34,15 +34,12 @@
 #include <functional>
 #include <chrono>
 
-#ifndef _WIN32
-#include <sys/types.h>
-#endif
-
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/audit_logger.h"
+#include "scratchbird/core/process_control.h"
 #include "scratchbird/core/security_quorum.h"
 #include "scratchbird/server/config_parser.h"
 #include "scratchbird/server/daemon.h"
@@ -148,7 +145,7 @@ struct ServiceConfig {
 
     // Unix socket
     std::string unix_socket = "/var/run/scratchbird/sb.sock";
-    mode_t unix_socket_permissions = 0770;
+    uint32_t unix_socket_permissions = 0770;
     std::string unix_socket_group;
 
     // Connections
@@ -295,6 +292,12 @@ struct ServiceStats {
  */
 class ServiceController {
 public:
+    enum class StartupMode : uint8_t {
+        AUTO = 0,
+        FORCE_FOREGROUND,
+        FORCE_DAEMON
+    };
+
     ServiceController();
     ~ServiceController();
 
@@ -375,6 +378,14 @@ public:
      * @return Status::OK on clean shutdown
      */
     core::Status run(core::ErrorContext* ctx = nullptr);
+
+    /**
+     * Run service with explicit startup mode override.
+     *
+     * This allows caller-specific launch surfaces (console, daemon, service)
+     * to share the same internal startup/shutdown pipeline.
+     */
+    core::Status runWithStartupMode(StartupMode mode, core::ErrorContext* ctx = nullptr);
 
     /**
      * Request graceful shutdown
@@ -544,6 +555,7 @@ private:
     bool waitForManagerExit(ManagerProcess& manager, uint32_t timeout_ms);
     void forceTerminateListener(ListenerProcess& listener);
     void forceTerminateManager(ManagerProcess& manager);
+    core::Status normalizeConfigPathsAndValidateUtf8(core::ErrorContext* ctx);
 
     // Log helper
     void log(ServiceConfig::LogLevel level, const std::string& message);
@@ -589,6 +601,7 @@ private:
     // Watchdog
     std::thread watchdog_thread_;
     std::atomic<bool> watchdog_running_{false};
+    std::unique_ptr<core::ProcessControl> process_control_;
 
     struct ListenerProcess {
         ProtocolConfig config;
@@ -598,12 +611,7 @@ private:
         std::string engine_endpoint;
         uint64_t start_count = 0;
         uint64_t restart_count = 0;
-#ifdef _WIN32
-        void* process_handle = nullptr;
-        uint32_t process_id = 0;
-#else
-        pid_t pid = 0;
-#endif
+        core::SpawnedProcess process;
         bool running = false;
     };
 
@@ -622,12 +630,7 @@ private:
         uint32_t dbbt_replay_cache_size = 4096;
         uint64_t start_count = 0;
         uint64_t restart_count = 0;
-#ifdef _WIN32
-        void* process_handle = nullptr;
-        uint32_t process_id = 0;
-#else
-        pid_t pid = 0;
-#endif
+        core::SpawnedProcess process;
         bool running = false;
     };
 

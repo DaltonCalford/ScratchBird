@@ -1,0 +1,30 @@
+
+###############
+The Firebird QA
+###############
+
+The `firebird-qa`_ package contains official QA suite of the Firebird Project.
+
+.. seealso:: Documentation for `firebird-driver`_.
+
+Content
+*******
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Contents:
+
+   usage-guide
+   reference
+   changelog
+   license
+
+
+Indices and tables
+******************
+
+* :ref:`genindex`
+* :ref:`modindex`
+
+.. _firebird-driver: https://firebird-driver.rtfd.io/en/latest
+.. _firebird-qa: https://github.com/FirebirdSQL/firebird-qa

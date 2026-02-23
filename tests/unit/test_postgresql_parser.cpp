@@ -1164,11 +1164,17 @@ TEST_F(PostgreSQLParserTest, CopyBytecodeShape) {
 
 TEST_F(PostgreSQLParserTest, GrantStatements) {
     expectSuccess("GRANT SELECT ON users TO reader");
+    expectSuccess("GRANT CREATE ON SCHEMA app_schema TO reader");
+    expectSuccess("GRANT CONNECT ON DATABASE scratchdb TO reader");
+    expectSuccess("GRANT TEMPORARY ON DATABASE scratchdb TO reader");
 }
 
 TEST_F(PostgreSQLParserTest, RevokeStatements) {
     expectSuccess("REVOKE SELECT ON users FROM reader");
     expectSuccess("REVOKE ALL ON users FROM PUBLIC");
+    expectSuccess("REVOKE CREATE ON SCHEMA app_schema FROM reader");
+    expectSuccess("REVOKE CONNECT ON DATABASE scratchdb FROM reader");
+    expectSuccess("REVOKE TEMPORARY ON DATABASE scratchdb FROM reader");
 }
 
 // ============================================================================

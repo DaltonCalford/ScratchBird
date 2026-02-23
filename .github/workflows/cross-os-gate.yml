@@ -1,0 +1,134 @@
+name: Cross OS Gate
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+env:
+  CTEST_OUTPUT_ON_FAILURE: 1
+
+jobs:
+  linux_gcc:
+    name: Linux GCC Portable Lane
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake ninja-build gcc g++ clang pkg-config \
+            libssl-dev libxml2-dev liblz4-dev libgeos-dev libproj-dev
+      - name: Configure
+        run: cmake --preset linux-gcc-debug
+      - name: Build
+        run: cmake --build --preset linux-gcc-debug-build --parallel
+      - name: Test Portable Lane
+        run: scripts/cross_os/run_portable_lane.sh --lane portable --test-preset linux-gcc-debug-test
+
+  linux_clang:
+    name: Linux Clang Portable Lane
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake ninja-build gcc g++ clang pkg-config \
+            libssl-dev libxml2-dev liblz4-dev libgeos-dev libproj-dev
+      - name: Configure
+        run: cmake --preset linux-clang-debug
+      - name: Build
+        run: cmake --build --preset linux-clang-debug-build --parallel
+      - name: Test Portable Lane
+        run: scripts/cross_os/run_portable_lane.sh --lane portable --test-preset linux-clang-debug-test
+
+  windows_msvc:
+    name: Windows MSVC Portable Lane
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Setup vcpkg
+        shell: pwsh
+        run: |
+          $vcpkgRoot = "$env:GITHUB_WORKSPACE\vcpkg"
+          if (-not (Test-Path $vcpkgRoot)) {
+            git clone https://github.com/microsoft/vcpkg $vcpkgRoot
+          }
+          & "$vcpkgRoot\bootstrap-vcpkg.bat"
+          "VCPKG_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Configure
+        shell: pwsh
+        run: cmake --preset windows-msvc-debug
+      - name: Build
+        shell: pwsh
+        run: cmake --build --preset windows-msvc-debug-build --config Debug --parallel
+      - name: Test Windows Portable Lane
+        shell: pwsh
+        run: bash scripts/cross_os/run_portable_lane.sh --lane windows_portable --test-preset windows-msvc-debug-test
+
+  linux_mingw_cross:
+    name: Linux MinGW Windows Cross Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install MinGW Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake ninja-build make perl pkg-config \
+            mingw-w64 gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64
+      - name: Bootstrap MinGW zlib and OpenSSL
+        run: |
+          scripts/cross_os/bootstrap_mingw_zlib.sh
+          scripts/cross_os/bootstrap_mingw_openssl.sh
+      - name: Configure Cross Build
+        run: cmake --preset linux-mingw-windows-x64
+      - name: Build Cross Artifacts
+        run: cmake --build --preset linux-mingw-windows-x64-build --parallel
+      - name: Upload Windows Cross Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: scratchbird-linux-mingw-windows-x64
+          path: |
+            build/linux-mingw-windows-x64/**/*.exe
+            build/linux-mingw-windows-x64/**/*.dll
+          if-no-files-found: warn
+
+  cross_os_required_checks:
+    name: Cross OS Required Checks
+    runs-on: ubuntu-latest
+    if: always()
+    needs:
+      - linux_gcc
+      - linux_clang
+      - windows_msvc
+      - linux_mingw_cross
+    env:
+      LINUX_GCC: ${{ needs.linux_gcc.result }}
+      LINUX_CLANG: ${{ needs.linux_clang.result }}
+      WINDOWS_MSVC: ${{ needs.windows_msvc.result }}
+      LINUX_MINGW_CROSS: ${{ needs.linux_mingw_cross.result }}
+    steps:
+      - name: Evaluate Required Checks
+        run: |
+          fail=0
+          for item in LINUX_GCC LINUX_CLANG WINDOWS_MSVC LINUX_MINGW_CROSS; do
+            value="$(eval "echo \$$item")"
+            echo "$item=$value"
+            if [[ "$value" != "success" ]]; then
+              fail=1
+            fi
+          done
+          exit "$fail"

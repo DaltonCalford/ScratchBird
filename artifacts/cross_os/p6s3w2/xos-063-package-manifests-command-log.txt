@@ -1,0 +1,1 @@
+Wrote manifests in artifacts/cross_os/p6s3w2/package_manifests

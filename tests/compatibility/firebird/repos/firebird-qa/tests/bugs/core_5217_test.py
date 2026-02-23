@@ -1,0 +1,56 @@
+#coding:utf-8
+
+"""
+ID:          issue-5497
+ISSUE:       5497
+TITLE:       ISQL -x may crash while exporting an exception with message text length > 127 bytes
+DESCRIPTION:
+JIRA:        CORE-5217
+FBTEST:      bugs.core_5217
+"""
+
+import pytest
+from firebird.qa import *
+
+db = db_factory()
+
+test_script = """
+    recreate exception exc_test_a
+    '1234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123';
+
+    recreate exception exc_test_b
+    '12345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234';
+
+    recreate exception exc_test_c
+    '123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345';
+
+    commit;
+
+    set list on;
+    set count on;
+    select rdb$exception_name, rdb$message
+    from rdb$exceptions
+    order by rdb$exception_name;
+"""
+
+act = isql_act('db', test_script)
+
+expected_stdout = """
+    RDB$EXCEPTION_NAME              EXC_TEST_A
+    RDB$MESSAGE                     1234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123
+
+    RDB$EXCEPTION_NAME              EXC_TEST_B
+    RDB$MESSAGE                     12345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234
+
+    RDB$EXCEPTION_NAME              EXC_TEST_C
+    RDB$MESSAGE                     123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345
+
+    Records affected: 3
+"""
+
+@pytest.mark.version('>=3')
+def test_1(act: Action):
+    act.expected_stdout = expected_stdout
+    act.execute()
+    assert act.clean_stdout == act.clean_expected_stdout
+

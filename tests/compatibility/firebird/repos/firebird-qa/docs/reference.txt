@@ -1,0 +1,147 @@
+.. module:: firebird.qa.plugin
+    :synopsis: Main Firebird driver code
+
+############################
+Firebird-QA plugin Reference
+############################
+
+Objects for use in tests
+========================
+
+QA_GLOBALS
+----------
+.. autodata:: QA_GLOBALS
+
+Functions and classes for use in tests
+======================================
+
+db_factory
+----------
+.. autofunction:: db_factory
+
+existing_db_factory
+-------------------
+.. autofunction:: existing_db_factory
+
+user_factory
+------------
+.. autofunction:: user_factory
+
+role_factory
+------------
+.. autofunction:: role_factory
+
+envar_factory
+-------------
+.. autofunction:: envar_factory
+
+mapping_factory
+---------------
+.. autofunction:: mapping_factory
+
+temp_file
+---------
+.. autofunction:: temp_file
+
+temp_files
+----------
+.. autofunction:: temp_files
+
+isql_act
+--------
+.. autofunction:: isql_act
+
+python_act
+----------
+.. autofunction:: python_act
+
+Database
+--------
+.. autoclass:: Database
+
+User
+----
+.. autoclass:: User
+
+Role
+----
+.. autoclass:: Role
+
+Envar
+-----
+.. autoclass:: Envar
+
+Mapping
+-------
+.. autoclass:: Mapping
+
+ServerKeeper
+------------
+.. autoclass:: ServerKeeper
+
+Action
+------
+.. autoclass:: Action
+
+ExecutionError
+--------------
+.. autoclass:: ExecutionError
+
+pytest hooks
+============
+
+pytest_addoption
+----------------
+.. autofunction:: pytest_addoption
+
+pytest_report_header
+--------------------
+.. autofunction:: pytest_report_header
+
+pytest_configure
+----------------
+.. autofunction:: pytest_configure
+
+pytest_collection_modifyitems
+-----------------------------
+.. autofunction:: pytest_collection_modifyitems
+
+pytest_runtest_makereport
+-------------------------
+.. autofunction:: pytest_runtest_makereport
+
+Internal functions
+==================
+
+log_session_context
+-------------------
+.. autofunction:: log_session_context
+
+set_tool
+--------
+.. autofunction:: set_tool
+
+substitute_macros
+-----------------
+.. autofunction:: substitute_macros
+
+db_path
+-------
+.. autofunction:: db_path
+
+trace_thread
+------------
+.. autofunction:: trace_thread
+
+Internal classes
+================
+
+TraceSession
+------------
+.. autoclass:: TraceSession
+
+QATerminalReporter
+------------------
+.. autoclass:: QATerminalReporter
+
+.. _firebird-driver: https://firebird-driver.rtfd.io/en/latest

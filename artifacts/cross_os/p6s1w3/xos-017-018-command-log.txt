@@ -1,0 +1,12 @@
+# XOS-017/018 Command Log
+
+Last-Modified: 2026-02-22
+
+## Commands Executed
+1. `cmake --build build -j4`
+2. `ctest --test-dir build -R 'SignalControlTest|ServiceControllerListenerBootstrapTest|ProcessControlTest|FilePermissionsControlTest|AuthBootstrapClaimTest|AuthBootstrapClaimStandaloneTest' --output-on-failure`
+3. `rg -n "signal\\(|sigaction|SIGTERM|SIGHUP|SIGINT|SIGUSR1|SIGUSR2|SIGQUIT|SIGPIPE|ControlSignal|SignalInstallSpec" include/scratchbird/core/signal_control.h src/core/signal_control.cpp include/scratchbird/server/daemon.h src/server/daemon.cpp include/scratchbird/server/scratchbird_server.h src/server/scratchbird_server.cpp`
+
+## Outputs
+- Test execution output: `artifacts/cross_os/p6s1w3/xos-017-018-runtime-ctest.txt`
+- Signal migration surface output: `artifacts/cross_os/p6s1w3/xos-017-018-signal-surface.txt`

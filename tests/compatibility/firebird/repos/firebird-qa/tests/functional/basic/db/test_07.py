@@ -1,0 +1,14848 @@
+#coding:utf-8
+
+"""
+ID:          new-database-07
+TITLE:       New DB - RDB$FIELDS
+DESCRIPTION: Check for correct content of RDB$FIELDS in new database.
+FBTEST:      functional.basic.db.07
+NOTES:
+[17.01.2023] pzotov
+    DISABLED after discussion with dimitr, letters 17-sep-2022 11:23.
+    Reasons:
+        * There is no much sense to keep such tests because they fails extremely often during new major FB developing.
+        * There is no chanse to get successful outcome for the whole test suite is some of system table became invalid,
+          i.e. lot of other tests will be failed in such case.
+    Single test for check DDL (type of columns, their order and total number) will be implemented for all RDB-tables.
+"""
+
+import pytest
+from firebird.qa import *
+
+db = db_factory()
+
+test_script = """
+    set list on;
+    set blob all;
+    set count on;
+    select * from rdb$fields order by rdb$field_name;
+"""
+
+act = isql_act('db', test_script, substitutions=[('RDB\\$DEFAULT_VALUE.*', ''),
+                                                 ('RDB\\$SECURITY_CLASS[ ]+SQL\\$.*', '')])
+
+# version: 3.0
+
+expected_stdout_1 = """
+RDB$FIELD_NAME                  MON$SEC_DATABASE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                7
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              2
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   1
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            2
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$142
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$ACL
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  261
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              80
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$31
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$ARGUMENT_MECHANISM
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$128
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$ARGUMENT_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                31
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            31
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            3
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$127
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$ATTACHMENT_ID
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  16
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$99
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$AUTH_METHOD
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                255
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  37
+RDB$FIELD_SUB_TYPE              2
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            2
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$140
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$BACKUP_ID
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                4
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  8
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$91
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$BACKUP_LEVEL
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                4
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  8
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$92
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$BACKUP_STATE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$116
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$BOOLEAN
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                1
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  23
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$130
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$BOUND
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                4
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  8
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$65
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$CALL_ID
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  16
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$101
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$CHARACTER_SET_ID
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$83
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$CHARACTER_SET_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                31
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            31
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            3
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$82
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$CLIENT_VERSION
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                255
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  37
+RDB$FIELD_SUB_TYPE              2
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            2
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$135
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$COLLATION_ID
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$85
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$COLLATION_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                31
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            31
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            3
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$84
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$CONSTRAINT_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                31
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            31
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            3
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$69
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$CONSTRAINT_TYPE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                11
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            0
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$70
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$CONTEXT_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                255
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            255
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            3
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$2
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$CONTEXT_VAR_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                80
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  37
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            0
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$121
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$CONTEXT_VAR_VALUE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                32765
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  37
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            0
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$122
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$COUNTER
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  16
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$111
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$DBKEY_LENGTH
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$16
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$DEBUG_INFO
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  261
+RDB$FIELD_SUB_TYPE              9
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              80
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$118
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$DEFERRABLE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               2:1e0
+        	blr_version5,
+        	blr_literal, blr_text2, 2,0, 2,0, 'N','O',
+        	blr_eoc
+
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                3
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            0
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$71
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$DESCRIPTION
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  261
+RDB$FIELD_SUB_TYPE              1
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              80
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            3
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$3
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$DESCRIPTOR
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  261
+RDB$FIELD_SUB_TYPE              6
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              80
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$51
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$DIMENSION
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$66
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$DIMENSIONS
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$44
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$EDIT_STRING
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                127
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  37
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            0
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$4
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$ENGINE_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                31
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            31
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            3
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$123
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$EXCEPTION_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                31
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            31
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            3
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$87
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$EXCEPTION_NUMBER
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                4
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  8
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$88
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$EXTERNAL_DESCRIPTION
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  261
+RDB$FIELD_SUB_TYPE              8
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              80
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$61
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$EXTERNAL_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                255
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            0
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$42
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$FIELD_ID
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$5
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$FIELD_LENGTH
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$11
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$FIELD_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                31
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            31
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            3
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$6
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$FIELD_POSITION
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$12
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$FIELD_PRECISION
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$90
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$FIELD_SCALE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$13
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$FIELD_SUB_TYPE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$26
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$FIELD_TYPE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$14
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$FILE_FLAGS
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$37
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$FILE_LENGTH
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                4
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  8
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$36
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$FILE_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                255
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  37
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            0
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$32
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$FILE_NAME2
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                255
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  37
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            255
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            3
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$33
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$FILE_PARTITIONS
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$74
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$FILE_P_OFFSET
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                4
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  8
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$89
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$FILE_SEQUENCE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$34
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$FILE_START
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                4
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  8
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$35
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$FORMAT
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$15
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$FUNCTION_BLR
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  261
+RDB$FIELD_SUB_TYPE              2
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              80
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$126
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$FUNCTION_ID
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$125
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$FUNCTION_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                31
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            31
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            3
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$41
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$FUNCTION_TYPE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$52
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$GENERATOR_ID
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$64
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$GENERATOR_INCREMENT
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                4
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  8
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   1
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$149
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$GENERATOR_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                31
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            31
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            3
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$63
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$GENERATOR_VALUE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  16
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$139
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$GENERIC_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                31
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            31
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            3
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$40
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$GENERIC_TYPE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$47
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$GUID
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                38
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            0
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$93
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$HOST_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                255
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  37
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            255
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            3
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$137
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$IDENTITY_TYPE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$129
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$INDEX_ID
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$9
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$INDEX_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                31
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            31
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            3
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$10
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$ISOLATION_MODE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$114
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$LINGER
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                4
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  8
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$141
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$LOCK_TIMEOUT
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$115
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$MAP_DB
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                31
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            31
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            3
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$145
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$MAP_FROM
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                255
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            255
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            3
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$147
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$MAP_FROM_TYPE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                31
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   1
+RDB$CHARACTER_LENGTH            31
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            3
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$146
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$MAP_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                31
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   1
+RDB$CHARACTER_LENGTH            31
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            3
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$143
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$MAP_TO
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                31
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            31
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            3
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$148
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$MAP_USING
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                1
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   1
+RDB$CHARACTER_LENGTH            1
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            3
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$144
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$MATCH_OPTION
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               2:1e1
+        	blr_version5,
+        	blr_literal, blr_text2, 2,0, 4,0, 'F','U','L','L',
+        	blr_eoc
+
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                7
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            0
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$72
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$MECHANISM
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$50
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$MESSAGE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                1023
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  37
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            0
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$57
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$MESSAGE_NUMBER
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$58
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$NULL_FLAG
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$68
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$NUMBER_OF_CHARACTERS
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                4
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  8
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$86
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$OBJECT_TYPE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$49
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$ODS_NUMBER
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$105
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$OS_USER
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                255
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  37
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            255
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            3
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$138
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$PACKAGE_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                31
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            31
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            3
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$124
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$PAGE_BUFFERS
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                4
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  8
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$107
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$PAGE_NUMBER
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                4
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  8
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$17
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$PAGE_SEQUENCE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                4
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  8
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$18
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$PAGE_SIZE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$106
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$PAGE_TYPE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$19
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$PARAMETER_MECHANISM
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$119
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$PARAMETER_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                31
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            31
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            3
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$79
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$PARAMETER_NUMBER
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$80
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$PARAMETER_TYPE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$81
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$PID
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                4
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  8
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$103
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$PLAN
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  261
+RDB$FIELD_SUB_TYPE              1
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              80
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            3
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$150
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$PLUGIN
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                31
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            31
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            3
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$96
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$PRIVILEGE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                6
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            0
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$60
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$PROCEDURE_BLR
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  261
+RDB$FIELD_SUB_TYPE              2
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              80
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$75
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$PROCEDURE_ID
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$76
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$PROCEDURE_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                31
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            31
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            3
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$78
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$PROCEDURE_PARAMETERS
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$77
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$PROCEDURE_TYPE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$98
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$QUERY_HEADER
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  261
+RDB$FIELD_SUB_TYPE              1
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              80
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            3
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$20
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$RELATION_ID
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$21
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$RELATION_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                31
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            31
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            3
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$22
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$RELATION_TYPE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$97
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$REMOTE_ADDRESS
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                255
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  37
+RDB$FIELD_SUB_TYPE              2
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            2
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$113
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$REMOTE_PROTOCOL
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                10
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  37
+RDB$FIELD_SUB_TYPE              2
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            2
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$112
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$REMOTE_VERSION
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                255
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  37
+RDB$FIELD_SUB_TYPE              2
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            2
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$136
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$RULE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               2:1e2
+        	blr_version5,
+        	blr_literal, blr_text2, 2,0, 8,0, 'R','E','S','T','R','I','C','T',
+        	blr_eoc
+
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                11
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            0
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$73
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$RUNTIME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  261
+RDB$FIELD_SUB_TYPE              5
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              80
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$45
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$SCN
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                4
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  8
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$94
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$SECURITY_CLASS
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                31
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            31
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            3
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$30
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$SEGMENT_COUNT
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$23
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$SEGMENT_LENGTH
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$24
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$SHADOW_NUMBER
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$62
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$SHUTDOWN_MODE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$108
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$SOURCE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  261
+RDB$FIELD_SUB_TYPE              1
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              80
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            3
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$25
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$SOURCE_INFO
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                4
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  8
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$120
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$SPECIFIC_ATTRIBUTES
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  261
+RDB$FIELD_SUB_TYPE              1
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              80
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            3
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$95
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$SQL_DIALECT
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$109
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$STATE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$104
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$STATEMENT_ID
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  16
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$100
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$STATISTICS
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  27
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$67
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$STAT_GROUP
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$117
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$STAT_ID
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                4
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  8
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$102
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$SWEEP_INTERVAL
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                4
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  8
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$110
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$SYSTEM_FLAG
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   1
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$7
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$SYSTEM_NULLFLAG
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$8
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$TIMESTAMP
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  35
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$55
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$TRANSACTION_DESCRIPTION
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  261
+RDB$FIELD_SUB_TYPE              7
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              80
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$56
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$TRANSACTION_ID
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  16
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$53
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$TRANSACTION_STATE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$54
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$TRIGGER_BLR
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  261
+RDB$FIELD_SUB_TYPE              2
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              80
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$38
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$TRIGGER_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                31
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            31
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            3
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$39
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$TRIGGER_SEQUENCE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$46
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$TRIGGER_TYPE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  16
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$48
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$TYPE_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                31
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            31
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            3
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$43
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$USER
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                31
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            31
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            3
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$59
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$VALIDATION_BLR
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  261
+RDB$FIELD_SUB_TYPE              2
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              80
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$28
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$VALUE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  261
+RDB$FIELD_SUB_TYPE              2
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              80
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$29
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$VIEW_BLR
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  261
+RDB$FIELD_SUB_TYPE              2
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              80
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$27
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$VIEW_CONTEXT
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$1
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  SEC$KEY
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                31
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  37
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            31
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            3
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$132
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  SEC$NAME_PART
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                32
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  37
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            32
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            3
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$134
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  SEC$USER_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                31
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  37
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            31
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            3
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$131
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  SEC$VALUE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                255
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  37
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            255
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            3
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$133
+RDB$OWNER_NAME                  SYSDBA
+
+Records affected: 150
+"""
+
+@pytest.mark.version('>=3.0,<4.0')
+@pytest.mark.skip("DISABLED: see notes")
+def test_1(act: Action):
+    act.expected_stdout = expected_stdout_1
+    act.execute()
+    assert act.clean_stdout == act.clean_expected_stdout
+
+# version: 4.0
+
+expected_stdout_2 = """
+RDB$FIELD_NAME                  MON$IDLE_TIMEOUT
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                4
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  8
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   1
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$153
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  MON$IDLE_TIMER
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                12
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  29
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$154
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  MON$SEC_DATABASE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                7
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              2
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   1
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            2
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$142
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  MON$STATEMENT_TIMEOUT
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                4
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  8
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   1
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$155
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  MON$STATEMENT_TIMER
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                12
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  29
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$156
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  MON$WIRE_CRYPT_PLUGIN
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                252
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  37
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            63
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            4
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$163
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$ACL
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  261
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              80
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$31
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$ARGUMENT_MECHANISM
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$128
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$ARGUMENT_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                252
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            63
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            4
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$127
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$ATTACHMENT_ID
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  16
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$99
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$AUTH_METHOD
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                255
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  37
+RDB$FIELD_SUB_TYPE              2
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            2
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$140
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$BACKUP_ID
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                4
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  8
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$91
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$BACKUP_LEVEL
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                4
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  8
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$92
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$BACKUP_STATE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$116
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$BOOLEAN
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                1
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  23
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$130
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$BOUND
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                4
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  8
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$65
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$CALL_ID
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  16
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$101
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$CHARACTER_SET_ID
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$83
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$CHARACTER_SET_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                252
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            63
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            4
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$82
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$CLIENT_VERSION
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                255
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  37
+RDB$FIELD_SUB_TYPE              2
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            2
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$135
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$COLLATION_ID
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$85
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$COLLATION_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                252
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            63
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            4
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$84
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$CONFIG_ID
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                4
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  8
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   1
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$166
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$CONFIG_IS_SET
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                1
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  23
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   1
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$169
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$CONFIG_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                63
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  37
+RDB$FIELD_SUB_TYPE              2
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   1
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            2
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$167
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$CONFIG_VALUE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                1020
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  37
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            255
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            4
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$168
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$CONSTRAINT_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                252
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            63
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            4
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$69
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$CONSTRAINT_TYPE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                11
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            0
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$70
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$CONTEXT_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                1020
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            255
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            4
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$2
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$CONTEXT_VAR_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                80
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  37
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            0
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$121
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$CONTEXT_VAR_VALUE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                32765
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  37
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            0
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$122
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$COUNTER
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  16
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$111
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$CRYPT_STATE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$162
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$DBKEY_LENGTH
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$16
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$DBTZ_VERSION
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                10
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  37
+RDB$FIELD_SUB_TYPE              2
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            2
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$161
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$DEBUG_INFO
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  261
+RDB$FIELD_SUB_TYPE              9
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              80
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$118
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$DEFERRABLE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               2:1e0
+        	blr_version5,
+        	blr_literal, blr_text2, 2,0, 2,0, 'N','O',
+        	blr_eoc
+
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                3
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            0
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$71
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$DESCRIPTION
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  261
+RDB$FIELD_SUB_TYPE              1
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              80
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            4
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$3
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$DESCRIPTOR
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  261
+RDB$FIELD_SUB_TYPE              6
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              80
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$51
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$DIMENSION
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$66
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$DIMENSIONS
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$44
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$EDIT_STRING
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                127
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  37
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            0
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$4
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$ENGINE_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                252
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            63
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            4
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$123
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$EXCEPTION_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                252
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            63
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            4
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$87
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$EXCEPTION_NUMBER
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                4
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  8
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$88
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$EXTERNAL_DESCRIPTION
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  261
+RDB$FIELD_SUB_TYPE              8
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              80
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$61
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$EXTERNAL_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                255
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            0
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$42
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$FIELD_ID
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$5
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$FIELD_LENGTH
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$11
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$FIELD_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                252
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            63
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            4
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$6
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$FIELD_POSITION
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$12
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$FIELD_PRECISION
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$90
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$FIELD_SCALE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$13
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$FIELD_SUB_TYPE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$26
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$FIELD_TYPE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$14
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$FILE_FLAGS
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$37
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$FILE_ID
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                255
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  37
+RDB$FIELD_SUB_TYPE              2
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   1
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            2
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$165
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$FILE_LENGTH
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                4
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  8
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$36
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$FILE_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                255
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  37
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            0
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$32
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$FILE_NAME2
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                1020
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  37
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            255
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            4
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$33
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$FILE_PARTITIONS
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$74
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$FILE_P_OFFSET
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                4
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  8
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$89
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$FILE_SEQUENCE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$34
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$FILE_START
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                4
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  8
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$35
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$FORMAT
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$15
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$FUNCTION_BLR
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  261
+RDB$FIELD_SUB_TYPE              2
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              80
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$126
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$FUNCTION_ID
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$125
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$FUNCTION_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                252
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            63
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            4
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$41
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$FUNCTION_TYPE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$52
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$GENERATOR_ID
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$64
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$GENERATOR_INCREMENT
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                4
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  8
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   1
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$149
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$GENERATOR_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                252
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            63
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            4
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$63
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$GENERATOR_VALUE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  16
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$139
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$GENERIC_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                252
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            63
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            4
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$40
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$GENERIC_TYPE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$47
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$GUID
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                38
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            0
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$93
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$HOST_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                1020
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  37
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            255
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            4
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$137
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$IDENTITY_TYPE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$129
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$INDEX_ID
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$9
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$INDEX_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                252
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            63
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            4
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$10
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$ISOLATION_MODE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$114
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$LINGER
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                4
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  8
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$141
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$LOCK_TIMEOUT
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$115
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$MAP_DB
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                252
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            63
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            4
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$145
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$MAP_FROM
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                1020
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            255
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            4
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$147
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$MAP_FROM_TYPE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                252
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   1
+RDB$CHARACTER_LENGTH            63
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            4
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$146
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$MAP_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                252
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   1
+RDB$CHARACTER_LENGTH            63
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            4
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$143
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$MAP_TO
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                252
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            63
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            4
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$148
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$MAP_USING
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                4
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   1
+RDB$CHARACTER_LENGTH            1
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            4
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$144
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$MATCH_OPTION
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               2:1e1
+        	blr_version5,
+        	blr_literal, blr_text2, 2,0, 4,0, 'F','U','L','L',
+        	blr_eoc
+
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                7
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            0
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$72
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$MECHANISM
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$50
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$MESSAGE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                1023
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  37
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            0
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$57
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$MESSAGE_NUMBER
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$58
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$NULL_FLAG
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$68
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$NUMBER_OF_CHARACTERS
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                4
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  8
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$86
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$OBJECT_TYPE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$49
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$ODS_NUMBER
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$105
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$OS_USER
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                1020
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  37
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            255
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            4
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$138
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$PACKAGE_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                252
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            63
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            4
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$124
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$PAGE_BUFFERS
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                4
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  8
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$107
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$PAGE_NUMBER
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                4
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  8
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$17
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$PAGE_SEQUENCE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                4
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  8
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$18
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$PAGE_SIZE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                4
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  8
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$106
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$PAGE_TYPE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$19
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$PARAMETER_MECHANISM
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$119
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$PARAMETER_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                252
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            63
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            4
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$79
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$PARAMETER_NUMBER
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$80
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$PARAMETER_TYPE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$81
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$PID
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                4
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  8
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$103
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$PLAN
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  261
+RDB$FIELD_SUB_TYPE              1
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              80
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            4
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$150
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$PLUGIN
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                252
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            63
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            4
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$96
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$PRIVILEGE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                6
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            0
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$60
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$PROCEDURE_BLR
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  261
+RDB$FIELD_SUB_TYPE              2
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              80
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$75
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$PROCEDURE_ID
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$76
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$PROCEDURE_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                252
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            63
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            4
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$78
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$PROCEDURE_PARAMETERS
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$77
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$PROCEDURE_TYPE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$98
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$PUBLICATION_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                252
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   1
+RDB$CHARACTER_LENGTH            63
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            4
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$164
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$QUERY_HEADER
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  261
+RDB$FIELD_SUB_TYPE              1
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              80
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            4
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$20
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$RELATION_ID
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$21
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$RELATION_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                252
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            63
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            4
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$22
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$RELATION_TYPE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$97
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$REMOTE_ADDRESS
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                255
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  37
+RDB$FIELD_SUB_TYPE              2
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            2
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$113
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$REMOTE_PROTOCOL
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                10
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  37
+RDB$FIELD_SUB_TYPE              2
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            2
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$112
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$REMOTE_VERSION
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                255
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  37
+RDB$FIELD_SUB_TYPE              2
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            2
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$136
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$REPLICA_MODE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$170
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$RULE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               2:1e2
+        	blr_version5,
+        	blr_literal, blr_text2, 2,0, 8,0, 'R','E','S','T','R','I','C','T',
+        	blr_eoc
+
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                11
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            0
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$73
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$RUNTIME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  261
+RDB$FIELD_SUB_TYPE              5
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              80
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$45
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$SCN
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                4
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  8
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$94
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$SECURITY_CLASS
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                252
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            63
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            4
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$30
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$SEGMENT_COUNT
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$23
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$SEGMENT_LENGTH
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$24
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$SHADOW_NUMBER
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$62
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$SHUTDOWN_MODE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$108
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$SOURCE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  261
+RDB$FIELD_SUB_TYPE              1
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              80
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            4
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$25
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$SOURCE_INFO
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                4
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  8
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$120
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$SPECIFIC_ATTRIBUTES
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  261
+RDB$FIELD_SUB_TYPE              1
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              80
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            4
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$95
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$SQL_DIALECT
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$109
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$SQL_SECURITY
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                1
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  23
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$152
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$STATE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$104
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$STATEMENT_ID
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  16
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$100
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$STATISTICS
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  27
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$67
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$STAT_GROUP
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$117
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$STAT_ID
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                4
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  8
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$102
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$SWEEP_INTERVAL
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                4
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  8
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$110
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$SYSTEM_FLAG
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   1
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$7
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$SYSTEM_NULLFLAG
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$8
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$SYSTEM_PRIVILEGES
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               2:1e3
+        	blr_version5,
+        	blr_literal, blr_text2, 1,0, 8,0, 0,0,0,0,0,0,0,0,
+        	blr_eoc
+
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              1
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            1
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$151
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$TIMESTAMP
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  35
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$55
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$TIMESTAMP_TZ
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                12
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  29
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$160
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$TIME_ZONE_ID
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                4
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  8
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$157
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$TIME_ZONE_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                252
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            63
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            4
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$158
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$TIME_ZONE_OFFSET
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$159
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$TRANSACTION_DESCRIPTION
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  261
+RDB$FIELD_SUB_TYPE              7
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              80
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$56
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$TRANSACTION_ID
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  16
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$53
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$TRANSACTION_STATE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$54
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$TRIGGER_BLR
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  261
+RDB$FIELD_SUB_TYPE              2
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              80
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$38
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$TRIGGER_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                252
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            63
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            4
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$39
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$TRIGGER_SEQUENCE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$46
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$TRIGGER_TYPE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  16
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$48
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$TYPE_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                252
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            63
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            4
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$43
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$USER
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                252
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  14
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            63
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            4
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$59
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$VALIDATION_BLR
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  261
+RDB$FIELD_SUB_TYPE              2
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              80
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$28
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$VALUE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  261
+RDB$FIELD_SUB_TYPE              2
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              80
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$29
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$VIEW_BLR
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                8
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  261
+RDB$FIELD_SUB_TYPE              2
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              80
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$27
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  RDB$VIEW_CONTEXT
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                2
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  7
+RDB$FIELD_SUB_TYPE              <null>
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            <null>
+RDB$COLLATION_ID                <null>
+RDB$CHARACTER_SET_ID            <null>
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$1
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  SEC$KEY
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                252
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  37
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            63
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            4
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$132
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  SEC$NAME_PART
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                128
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  37
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            32
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            4
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$134
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  SEC$USER_NAME
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                252
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  37
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            63
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            4
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$131
+RDB$OWNER_NAME                  SYSDBA
+
+RDB$FIELD_NAME                  SEC$VALUE
+RDB$QUERY_NAME                  <null>
+RDB$VALIDATION_BLR              <null>
+RDB$VALIDATION_SOURCE           <null>
+RDB$COMPUTED_BLR                <null>
+RDB$COMPUTED_SOURCE             <null>
+RDB$DEFAULT_VALUE               <null>
+RDB$DEFAULT_SOURCE              <null>
+RDB$FIELD_LENGTH                1020
+RDB$FIELD_SCALE                 0
+RDB$FIELD_TYPE                  37
+RDB$FIELD_SUB_TYPE              3
+RDB$MISSING_VALUE               <null>
+RDB$MISSING_SOURCE              <null>
+RDB$DESCRIPTION                 <null>
+RDB$SYSTEM_FLAG                 1
+RDB$QUERY_HEADER                <null>
+RDB$SEGMENT_LENGTH              <null>
+RDB$EDIT_STRING                 <null>
+RDB$EXTERNAL_LENGTH             <null>
+RDB$EXTERNAL_SCALE              <null>
+RDB$EXTERNAL_TYPE               <null>
+RDB$DIMENSIONS                  <null>
+RDB$NULL_FLAG                   0
+RDB$CHARACTER_LENGTH            255
+RDB$COLLATION_ID                0
+RDB$CHARACTER_SET_ID            4
+RDB$FIELD_PRECISION             <null>
+RDB$SECURITY_CLASS              SQL$133
+RDB$OWNER_NAME                  SYSDBA
+
+
+Records affected: 170
+"""
+
+@pytest.mark.skip("DISABLED: see notes")
+@pytest.mark.version('>=4.0,<5.0')
+def test_2(act: Action):
+    act.expected_stdout = expected_stdout_2
+    act.execute()
+    assert act.clean_stdout == act.clean_expected_stdout
+
+# version: 5.0
+
+expected_stdout_3 = """
+    RDB$FIELD_NAME                  MON$IDLE_TIMEOUT
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                4
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  8
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   1
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  MON$IDLE_TIMER
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                12
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  29
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  MON$SEC_DATABASE
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                7
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  14
+    RDB$FIELD_SUB_TYPE              2
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   1
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            2
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  MON$STATEMENT_TIMEOUT
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                4
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  8
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   1
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  MON$STATEMENT_TIMER
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                12
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  29
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  MON$WIRE_CRYPT_PLUGIN
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                252
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  37
+    RDB$FIELD_SUB_TYPE              3
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            63
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            4
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$ACL
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                8
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  261
+    RDB$FIELD_SUB_TYPE              3
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              80
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$ARGUMENT_MECHANISM
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$ARGUMENT_NAME
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                252
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  14
+    RDB$FIELD_SUB_TYPE              3
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            63
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            4
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$ATTACHMENT_ID
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                8
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  16
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$AUTH_METHOD
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                255
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  37
+    RDB$FIELD_SUB_TYPE              2
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            2
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$BACKUP_ID
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                4
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  8
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$BACKUP_LEVEL
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                4
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  8
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$BACKUP_STATE
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$BOOLEAN
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                1
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  23
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$BOUND
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                4
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  8
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$CALL_ID
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                8
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  16
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$CHARACTER_SET_ID
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$CHARACTER_SET_NAME
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                252
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  14
+    RDB$FIELD_SUB_TYPE              3
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            63
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            4
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$CLIENT_VERSION
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                255
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  37
+    RDB$FIELD_SUB_TYPE              2
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            2
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$COLLATION_ID
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$COLLATION_NAME
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                252
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  14
+    RDB$FIELD_SUB_TYPE              3
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            63
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            4
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$CONFIG_ID
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                4
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  8
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   1
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$CONFIG_IS_SET
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                1
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  23
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   1
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$CONFIG_NAME
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                63
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  37
+    RDB$FIELD_SUB_TYPE              2
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   1
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            2
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$CONFIG_VALUE
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                1020
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  37
+    RDB$FIELD_SUB_TYPE              3
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            255
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            4
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$CONSTRAINT_NAME
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                252
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  14
+    RDB$FIELD_SUB_TYPE              3
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            63
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            4
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$CONSTRAINT_TYPE
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                11
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  14
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            0
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$CONTEXT_NAME
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                1020
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  14
+    RDB$FIELD_SUB_TYPE              3
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            255
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            4
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$CONTEXT_VAR_NAME
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                80
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  37
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            0
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$CONTEXT_VAR_VALUE
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                32765
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  37
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            0
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$COUNTER
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                8
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  16
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$CRYPT_STATE
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$DBKEY_LENGTH
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$DBTZ_VERSION
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                10
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  37
+    RDB$FIELD_SUB_TYPE              2
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            2
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$DEBUG_INFO
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                8
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  261
+    RDB$FIELD_SUB_TYPE              9
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              80
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$DEFERRABLE
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    blr_version5,
+    blr_literal, blr_text2, 2,0, 2,0, 'N','O',
+    blr_eoc
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                3
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  14
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            0
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$DESCRIPTION
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                8
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  261
+    RDB$FIELD_SUB_TYPE              1
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              80
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            4
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$DESCRIPTOR
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                8
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  261
+    RDB$FIELD_SUB_TYPE              6
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              80
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$DIMENSION
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$DIMENSIONS
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$EDIT_STRING
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                127
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  37
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            0
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$ENGINE_NAME
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                252
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  14
+    RDB$FIELD_SUB_TYPE              3
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            63
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            4
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$EXCEPTION_NAME
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                252
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  14
+    RDB$FIELD_SUB_TYPE              3
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            63
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            4
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$EXCEPTION_NUMBER
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                4
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  8
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$EXTERNAL_DESCRIPTION
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                8
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  261
+    RDB$FIELD_SUB_TYPE              8
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              80
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$EXTERNAL_NAME
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                255
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  14
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            0
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$FIELD_ID
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$FIELD_LENGTH
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$FIELD_NAME
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                252
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  14
+    RDB$FIELD_SUB_TYPE              3
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            63
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            4
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$FIELD_POSITION
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$FIELD_PRECISION
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$FIELD_SCALE
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$FIELD_SUB_TYPE
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$FIELD_TYPE
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$FILE_FLAGS
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$FILE_ID
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                255
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  37
+    RDB$FIELD_SUB_TYPE              2
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   1
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            2
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$FILE_LENGTH
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                4
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  8
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$FILE_NAME
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                255
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  37
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            0
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$FILE_NAME2
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                1020
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  37
+    RDB$FIELD_SUB_TYPE              3
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            255
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            4
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$FILE_PARTITIONS
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$FILE_P_OFFSET
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                4
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  8
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$FILE_SEQUENCE
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$FILE_START
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                4
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  8
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$FORMAT
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$FUNCTION_BLR
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                8
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  261
+    RDB$FIELD_SUB_TYPE              2
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              80
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$FUNCTION_ID
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$FUNCTION_NAME
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                252
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  14
+    RDB$FIELD_SUB_TYPE              3
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            63
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            4
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$FUNCTION_TYPE
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$GENERATOR_ID
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$GENERATOR_INCREMENT
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                4
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  8
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   1
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$GENERATOR_NAME
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                252
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  14
+    RDB$FIELD_SUB_TYPE              3
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            63
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            4
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$GENERATOR_VALUE
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                8
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  16
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$GENERIC_NAME
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                252
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  14
+    RDB$FIELD_SUB_TYPE              3
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            63
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            4
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$GENERIC_TYPE
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$GUID
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                38
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  14
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            0
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$HOST_NAME
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                1020
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  37
+    RDB$FIELD_SUB_TYPE              3
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            255
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            4
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$IDENTITY_TYPE
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$INDEX_ID
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$INDEX_NAME
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                252
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  14
+    RDB$FIELD_SUB_TYPE              3
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            63
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            4
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$ISOLATION_MODE
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$KEYWORD_NAME
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                63
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  37
+    RDB$FIELD_SUB_TYPE              2
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   1
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            2
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$KEYWORD_RESERVED
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                1
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  23
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   1
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$LINGER
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                4
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  8
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$LOCK_TIMEOUT
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$MAP_DB
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                252
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  14
+    RDB$FIELD_SUB_TYPE              3
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            63
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            4
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$MAP_FROM
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                1020
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  14
+    RDB$FIELD_SUB_TYPE              3
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            255
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            4
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$MAP_FROM_TYPE
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                252
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  14
+    RDB$FIELD_SUB_TYPE              3
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   1
+    RDB$CHARACTER_LENGTH            63
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            4
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$MAP_NAME
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                252
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  14
+    RDB$FIELD_SUB_TYPE              3
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   1
+    RDB$CHARACTER_LENGTH            63
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            4
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$MAP_TO
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                252
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  14
+    RDB$FIELD_SUB_TYPE              3
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            63
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            4
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$MAP_USING
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                4
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  14
+    RDB$FIELD_SUB_TYPE              3
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   1
+    RDB$CHARACTER_LENGTH            1
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            4
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$MATCH_OPTION
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    blr_version5,
+    blr_literal, blr_text2, 2,0, 4,0, 'F','U','L','L',
+    blr_eoc
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                7
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  14
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            0
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$MECHANISM
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$MESSAGE
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                1023
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  37
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            0
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$MESSAGE_NUMBER
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$NULL_FLAG
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$NUMBER_OF_CHARACTERS
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                4
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  8
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$OBJECT_TYPE
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$ODS_NUMBER
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$OS_USER
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                1020
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  37
+    RDB$FIELD_SUB_TYPE              3
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            255
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            4
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$PACKAGE_NAME
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                252
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  14
+    RDB$FIELD_SUB_TYPE              3
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            63
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            4
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$PAGE_BUFFERS
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                4
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  8
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$PAGE_NUMBER
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                4
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  8
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$PAGE_SEQUENCE
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                4
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  8
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$PAGE_SIZE
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                4
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  8
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$PAGE_TYPE
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$PARAMETER_MECHANISM
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$PARAMETER_NAME
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                252
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  14
+    RDB$FIELD_SUB_TYPE              3
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            63
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            4
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$PARAMETER_NUMBER
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$PARAMETER_TYPE
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$PID
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                4
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  8
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$PLAN
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                8
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  261
+    RDB$FIELD_SUB_TYPE              1
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              80
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            4
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$PLUGIN
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                252
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  14
+    RDB$FIELD_SUB_TYPE              3
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            63
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            4
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$PRIVILEGE
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                6
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  14
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            0
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$PROCEDURE_BLR
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                8
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  261
+    RDB$FIELD_SUB_TYPE              2
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              80
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$PROCEDURE_ID
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$PROCEDURE_NAME
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                252
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  14
+    RDB$FIELD_SUB_TYPE              3
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            63
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            4
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$PROCEDURE_PARAMETERS
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$PROCEDURE_TYPE
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$PUBLICATION_NAME
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                252
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  14
+    RDB$FIELD_SUB_TYPE              3
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   1
+    RDB$CHARACTER_LENGTH            63
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            4
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$QUERY_HEADER
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                8
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  261
+    RDB$FIELD_SUB_TYPE              1
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              80
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            4
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$RELATION_ID
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$RELATION_NAME
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                252
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  14
+    RDB$FIELD_SUB_TYPE              3
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            63
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            4
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$RELATION_TYPE
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$REMOTE_ADDRESS
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                255
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  37
+    RDB$FIELD_SUB_TYPE              2
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            2
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$REMOTE_PROTOCOL
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                10
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  37
+    RDB$FIELD_SUB_TYPE              2
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            2
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$REMOTE_VERSION
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                255
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  37
+    RDB$FIELD_SUB_TYPE              2
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            2
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$REPLICA_MODE
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$RULE
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    blr_version5,
+    blr_literal, blr_text2, 2,0, 8,0, 'R','E','S','T','R','I','C','T',
+    blr_eoc
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                11
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  14
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            0
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$RUNTIME
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                8
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  261
+    RDB$FIELD_SUB_TYPE              5
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              80
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$SCN
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                4
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  8
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$SECURITY_CLASS
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                252
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  14
+    RDB$FIELD_SUB_TYPE              3
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            63
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            4
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$SEGMENT_COUNT
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$SEGMENT_LENGTH
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$SHADOW_NUMBER
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$SHUTDOWN_MODE
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$SOURCE
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                8
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  261
+    RDB$FIELD_SUB_TYPE              1
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              80
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            4
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$SOURCE_INFO
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                4
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  8
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$SPECIFIC_ATTRIBUTES
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                8
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  261
+    RDB$FIELD_SUB_TYPE              1
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              80
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            4
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$SQL_DIALECT
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$SQL_SECURITY
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                1
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  23
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$STATE
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$STATEMENT_ID
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                8
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  16
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$STATISTICS
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                8
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  27
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$STAT_GROUP
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$STAT_ID
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                4
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  8
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$SWEEP_INTERVAL
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                4
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  8
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$SYSTEM_FLAG
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   1
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$SYSTEM_NULLFLAG
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$SYSTEM_PRIVILEGES
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    blr_version5,
+    blr_literal, blr_text2, 1,0, 8,0, 0,0,0,0,0,0,0,0,
+    blr_eoc
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                8
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  14
+    RDB$FIELD_SUB_TYPE              1
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            1
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$TIMESTAMP
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                8
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  35
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$TIMESTAMP_TZ
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                12
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  29
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$TIME_ZONE_ID
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                4
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  8
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$TIME_ZONE_NAME
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                252
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  14
+    RDB$FIELD_SUB_TYPE              3
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            63
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            4
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$TIME_ZONE_OFFSET
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$TRANSACTION_DESCRIPTION
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                8
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  261
+    RDB$FIELD_SUB_TYPE              7
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              80
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$TRANSACTION_ID
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                8
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  16
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$TRANSACTION_STATE
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$TRIGGER_BLR
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                8
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  261
+    RDB$FIELD_SUB_TYPE              2
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              80
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$TRIGGER_NAME
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                252
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  14
+    RDB$FIELD_SUB_TYPE              3
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            63
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            4
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$TRIGGER_SEQUENCE
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$TRIGGER_TYPE
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                8
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  16
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$TYPE_NAME
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                252
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  14
+    RDB$FIELD_SUB_TYPE              3
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            63
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            4
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$USER
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                252
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  14
+    RDB$FIELD_SUB_TYPE              3
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            63
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            4
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$VALIDATION_BLR
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                8
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  261
+    RDB$FIELD_SUB_TYPE              2
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              80
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$VALUE
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                8
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  261
+    RDB$FIELD_SUB_TYPE              2
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              80
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$VIEW_BLR
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                8
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  261
+    RDB$FIELD_SUB_TYPE              2
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              80
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  RDB$VIEW_CONTEXT
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                2
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  7
+    RDB$FIELD_SUB_TYPE              <null>
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            <null>
+    RDB$COLLATION_ID                <null>
+    RDB$CHARACTER_SET_ID            <null>
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  SEC$KEY
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                252
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  37
+    RDB$FIELD_SUB_TYPE              3
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            63
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            4
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  SEC$NAME_PART
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                128
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  37
+    RDB$FIELD_SUB_TYPE              3
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            32
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            4
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  SEC$USER_NAME
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                252
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  37
+    RDB$FIELD_SUB_TYPE              3
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            63
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            4
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+    RDB$FIELD_NAME                  SEC$VALUE
+    RDB$QUERY_NAME                  <null>
+    RDB$VALIDATION_BLR              <null>
+    RDB$VALIDATION_SOURCE           <null>
+    RDB$COMPUTED_BLR                <null>
+    RDB$COMPUTED_SOURCE             <null>
+    RDB$DEFAULT_SOURCE              <null>
+    RDB$FIELD_LENGTH                1020
+    RDB$FIELD_SCALE                 0
+    RDB$FIELD_TYPE                  37
+    RDB$FIELD_SUB_TYPE              3
+    RDB$MISSING_VALUE               <null>
+    RDB$MISSING_SOURCE              <null>
+    RDB$DESCRIPTION                 <null>
+    RDB$SYSTEM_FLAG                 1
+    RDB$QUERY_HEADER                <null>
+    RDB$SEGMENT_LENGTH              <null>
+    RDB$EDIT_STRING                 <null>
+    RDB$EXTERNAL_LENGTH             <null>
+    RDB$EXTERNAL_SCALE              <null>
+    RDB$EXTERNAL_TYPE               <null>
+    RDB$DIMENSIONS                  <null>
+    RDB$NULL_FLAG                   0
+    RDB$CHARACTER_LENGTH            255
+    RDB$COLLATION_ID                0
+    RDB$CHARACTER_SET_ID            4
+    RDB$FIELD_PRECISION             <null>
+    RDB$OWNER_NAME                  SYSDBA
+
+    Records affected: 172
+"""
+
+@pytest.mark.version('>=5.0')
+@pytest.mark.skip("DISABLED: see notes")
+def test_3(act: Action):
+    act.expected_stdout = expected_stdout_3
+    act.execute()
+    assert act.clean_stdout == act.clean_expected_stdout

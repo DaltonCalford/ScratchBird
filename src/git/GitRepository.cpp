@@ -20,6 +20,9 @@
 #include <iomanip>
 #include <ctime>
 #include <openssl/sha.h>
+#if !defined(_WIN32)
+    #include <sys/wait.h>
+#endif
 
 // Note: In production, this would use libgit2
 // For now, we implement using git CLI commands as a fallback
@@ -62,7 +65,12 @@ struct GitRepository::Impl {
         }
 
         int status = pclose(pipe);
-        bool success = (WIFEXITED(status) && WEXITSTATUS(status) == 0);
+        bool success = false;
+#if defined(_WIN32)
+        success = (status == 0);
+#else
+        success = (WIFEXITED(status) && WEXITSTATUS(status) == 0);
+#endif
 
         return {success, result};
     }
@@ -1029,7 +1037,11 @@ bool GitRepository::setupCredentials() {
         if (!config_.ssh_passphrase.empty()) {
             // Note: passphrase handling is more complex in practice
         }
+#if defined(_WIN32)
+        _putenv_s("GIT_SSH_COMMAND", ssh_cmd.c_str());
+#else
         setenv("GIT_SSH_COMMAND", ssh_cmd.c_str(), 1);
+#endif
     }
 
     // For username/password

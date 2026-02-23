@@ -1,0 +1,13 @@
+Internal ctest changing into directory: /home/dcalford/CliWork/ScratchBird/build
+Test project /home/dcalford/CliWork/ScratchBird/build
+    Start 1627: ProcessControlTest.SpawnsAndWaitsForExit
+1/2 Test #1627: ProcessControlTest.SpawnsAndWaitsForExit ...   Passed    0.04 sec
+    Start 1628: ProcessControlTest.TerminatesProcess
+2/2 Test #1628: ProcessControlTest.TerminatesProcess .......   Passed    0.04 sec
+
+100% tests passed, 0 tests failed out of 2
+
+Label Time Summary:
+unit    =   0.08 sec*proc (2 tests)
+
+Total Test time (real) =   0.16 sec

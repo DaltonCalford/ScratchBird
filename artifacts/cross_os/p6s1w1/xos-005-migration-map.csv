@@ -1,0 +1,29 @@
+row_id,file_path,subsystem,current_surface,target_adapter,priority,cycle,notes
+1,src/server/daemon.cpp,server_runtime,fork waitpid signal sigaction dlopen,d_process+d_signal,critical,P6-S1,largest POSIX concentration and startup path
+2,src/server/service_controller.cpp,service_orchestration,fork waitpid signal process supervision,d_process+d_signal,critical,P6-S1,controls manager/listener lifecycle
+3,src/network/sb_listener_main.cpp,listener_runtime,signal getpid socket lifecycle,d_signal+d_ipc,critical,P6-S1,front-door entrypoint
+4,src/server/ipc_unix.cpp,ipc_local,unix socket path and permissions,d_ipc+d_fs,critical,P6-S1,needs Windows local transport equivalent
+5,src/server/ipc_tcp.cpp,ipc_network,socket bind listen accept,d_ipc,high,P6-S1,shared transport parity
+6,src/ipc/parser_agent.cpp,parser_bridge,local socket/process integration,d_ipc+d_process,high,P6-S1,agent attachment path
+7,src/ipc/ipc_server.cpp,ipc_server,local endpoint management,d_ipc,high,P6-S1,server-side endpoint loop
+8,src/ipc/unix_socket_channel.cpp,ipc_channel,unix socket channel,d_ipc,high,P6-S1,replace with platform endpoint abstraction
+9,src/core/job_scheduler.cpp,core_jobs,fork waitpid pipe poll,d_process+d_clock+d_signal,critical,P6-S1,background work runner portability risk
+10,src/core/database.cpp,core_storage,chmod mkdir unlink getpid,d_fs+d_process,high,P6-S1,bootstrap and file lifecycle policy
+11,src/core/auth_provider.cpp,auth_core,bootstrap file ownership checks,d_fs,high,P6-S1,security-sensitive file policy
+12,src/server/config_parser.cpp,server_config,filesystem path and mode assumptions,d_fs,medium,P6-S1,path normalization for Windows
+13,src/core/page_manager.cpp,storage_runtime,mkdir unlink stat,d_fs,medium,P6-S1,file lifecycle portability
+14,src/core/lsm_tree_index.cpp,storage_runtime,stat dir operations,d_fs,medium,P6-S1,index file scanning behavior
+15,src/core/inverted_index.cpp,storage_runtime,filesystem scan operations,d_fs,medium,P6-S1,keep semantics while removing POSIX direct calls
+16,src/network/socket.cpp,network_core,socket options and connect paths,d_ipc,high,P6-S1,shared networking core
+17,src/network/event_loop.cpp,network_core,poll/select style loops,d_ipc+d_clock,high,P6-S1,event loop needs platform backend
+18,src/network/control_plane.cpp,network_control,socket and control traffic handling,d_ipc,medium,P6-S1,management plane parity
+19,src/server/server_session.cpp,session_runtime,peer/session runtime dependencies,d_ipc,medium,P6-S1,auth context integration
+20,src/client/connection.cpp,client_runtime,socket connect and peer behavior,d_ipc,medium,P6-S1,client test portability
+21,src/server/scratchbird_server.cpp,server_entry,service startup assumptions,d_process+d_signal,medium,P6-S1,top-level lifecycle alignment
+22,src/server/sb_manager_main.cpp,manager_entry,signal and process control,d_signal+d_process,medium,P6-S1,manager optional mode
+23,tests/unit/test_service_controller_listener_bootstrap.cpp,test_portability,fork waitpid assertions,test_lane_linux_only,high,P6-S1,split Linux-only lane
+24,tests/unit/test_manager_proxy_mcp.cpp,test_portability,process lifecycle assumptions,test_lane_linux_only,high,P6-S1,depends on daemon process model
+25,tests/unit/test_ipc_server.cpp,test_portability,unix socket assumptions,test_lane_split,high,P6-S1,create Windows equivalent lane
+26,tests/unit/test_unix_socket_channel.cpp,test_portability,unix socket contract,test_lane_linux_only,high,P6-S1,explicit Linux-only tagging required
+27,tests/benchmark/test_front_door_mode_benchmark.cpp,test_portability,fork waitpid signal usage,test_lane_linux_only,medium,P6-S1,benchmark lane remains Linux-gated
+28,tests/integration/test_ipc_integration_harness.cpp,test_portability,local socket assumptions,test_lane_split,medium,P6-S1,portable endpoint harness required

@@ -1,0 +1,16 @@
+[bootstrap_mingw_zlib] configuring cross build
+-- Configuring done (0.0s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/dcalford/CliWork/ScratchBird/build/deps/zlib-mingw-build
+[bootstrap_mingw_zlib] building and installing
+ninja: no work to do.
+-- Install configuration: "Release"
+-- Up-to-date: /home/dcalford/CliWork/ScratchBird/build/deps/mingw-zlib/lib/libzlib.dll.a
+-- Up-to-date: /home/dcalford/CliWork/ScratchBird/build/deps/mingw-zlib/bin/libzlib.dll
+-- Up-to-date: /home/dcalford/CliWork/ScratchBird/build/deps/mingw-zlib/lib/libzlibstatic.a
+-- Up-to-date: /home/dcalford/CliWork/ScratchBird/build/deps/mingw-zlib/include/zconf.h
+-- Up-to-date: /home/dcalford/CliWork/ScratchBird/build/deps/mingw-zlib/include/zlib.h
+-- Up-to-date: /home/dcalford/CliWork/ScratchBird/build/deps/mingw-zlib/share/man/man3/zlib.3
+-- Up-to-date: /home/dcalford/CliWork/ScratchBird/build/deps/mingw-zlib/share/pkgconfig/zlib.pc
+[bootstrap_mingw_zlib] installed to /home/dcalford/CliWork/ScratchBird/build/deps/mingw-zlib
+[bootstrap_mingw_zlib] export SCRATCHBIRD_MINGW_ZLIB_ROOT=/home/dcalford/CliWork/ScratchBird/build/deps/mingw-zlib

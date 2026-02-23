@@ -71,6 +71,23 @@ private:
 
 std::string readTextFile(const std::filesystem::path& path);
 
+size_t countOccurrences(const std::string& value, const std::string& token) {
+    if (token.empty()) {
+        return 0;
+    }
+    size_t count = 0;
+    size_t offset = 0;
+    while (true) {
+        size_t pos = value.find(token, offset);
+        if (pos == std::string::npos) {
+            break;
+        }
+        ++count;
+        offset = pos + token.size();
+    }
+    return count;
+}
+
 bool waitForFile(const std::filesystem::path& path, std::chrono::milliseconds timeout) {
     const auto deadline = std::chrono::steady_clock::now() + timeout;
     while (std::chrono::steady_clock::now() < deadline) {
@@ -114,6 +131,27 @@ bool waitForFileContains(const std::filesystem::path& path,
         }
     }
     return true;
+}
+
+bool waitForFileTokenCount(const std::filesystem::path& path,
+                           const std::string& token,
+                           size_t min_count,
+                           std::chrono::milliseconds timeout) {
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (std::filesystem::exists(path)) {
+            const std::string contents = readTextFile(path);
+            if (countOccurrences(contents, token) >= min_count) {
+                return true;
+            }
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+
+    if (!std::filesystem::exists(path)) {
+        return false;
+    }
+    return countOccurrences(readTextFile(path), token) >= min_count;
 }
 
 uint16_t reserveEphemeralPort() {
@@ -224,6 +262,44 @@ struct ScopedListenerCleanup {
 
 }  // namespace
 
+TEST(ServiceControllerListenerBootstrapTest,
+     NormalizeConfigPathsAndValidateUtf8NormalizesKeyRuntimePaths) {
+    ServiceController controller;
+
+    controller.config_.config_file = "config/../config/sb_server.conf";
+    controller.config_.log_file = "logs/./runtime/../sb_server.log";
+    controller.config_.control_socket_dir = "run/../run/scratchbird";
+    controller.config_.audit_sinks.file_path = "audit/../audit/events.log";
+
+    const std::string expected_config =
+        std::filesystem::path("config/../config/sb_server.conf").lexically_normal().string();
+    const std::string expected_log =
+        std::filesystem::path("logs/./runtime/../sb_server.log").lexically_normal().string();
+    const std::string expected_control =
+        std::filesystem::path("run/../run/scratchbird").lexically_normal().string();
+    const std::string expected_audit =
+        std::filesystem::path("audit/../audit/events.log").lexically_normal().string();
+
+    ErrorContext ctx;
+    ASSERT_EQ(controller.normalizeConfigPathsAndValidateUtf8(&ctx), Status::OK) << ctx.message;
+
+    EXPECT_EQ(controller.config_.config_file, expected_config);
+    EXPECT_EQ(controller.config_.log_file, expected_log);
+    EXPECT_EQ(controller.config_.control_socket_dir, expected_control);
+    EXPECT_EQ(controller.config_.audit_sinks.file_path, expected_audit);
+}
+
+TEST(ServiceControllerListenerBootstrapTest,
+     NormalizeConfigPathsAndValidateUtf8RejectsInvalidUtf8Fields) {
+    ServiceController controller;
+    controller.config_.log_file = std::string("invalid\xC3\x28");
+
+    ErrorContext ctx;
+    EXPECT_EQ(controller.normalizeConfigPathsAndValidateUtf8(&ctx),
+              Status::INVALID_ARGUMENT);
+    EXPECT_NE(std::string(ctx.message).find("Invalid UTF-8"), std::string::npos);
+}
+
 TEST(ServiceControllerListenerBootstrapTest, StartListenersPassesConfigFileToListenerProcess) {
 #ifdef _WIN32
     GTEST_SKIP() << "Test relies on POSIX fork/exec behavior.";
@@ -291,6 +367,63 @@ TEST(ServiceControllerListenerBootstrapTest, StartListenersPassesConfigFileToLis
     EXPECT_NE(args.find(scratchbird::server::getIPCPath(main_db_path.string(),
                                                         scratchbird::server::IPCMethod::AUTO)),
               std::string::npos) << args;
+#endif
+}
+
+TEST(ServiceControllerListenerBootstrapTest,
+     ListenerCrashRecoveryRestartsExitedListenerProcess) {
+#ifdef _WIN32
+    GTEST_SKIP() << "Test relies on POSIX fork/exec behavior.";
+#else
+    const std::filesystem::path temp_dir =
+        scratchbird::testing::uniqueTestDbPath("listener_crash_recovery", "");
+    std::error_code ec;
+    std::filesystem::create_directories(temp_dir, ec);
+    ASSERT_FALSE(ec) << ec.message();
+
+    ServiceController controller;
+    ScopedListenerCleanup cleanup{controller, temp_dir};
+
+    const std::filesystem::path args_path = temp_dir / "listener_args.txt";
+    ASSERT_TRUE(writeStubListener(temp_dir / "sb_listener_native", args_path));
+
+    const char* current_path = std::getenv("PATH");
+    const std::string path_prefix =
+        temp_dir.string() + ":" + (current_path ? std::string(current_path) : std::string());
+    ScopedEnvVar scoped_path("PATH", path_prefix);
+
+    ServiceController::DatabaseInstance db;
+    db.name = "main";
+    db.path = (temp_dir / "main.sbdb").string();
+    controller.databases_.push_back(std::move(db));
+
+    controller.config_.protocols.clear();
+    ProtocolConfig proto;
+    proto.type = scratchbird::network::ProtocolType::NATIVE;
+    proto.bind_address = "127.0.0.1";
+    proto.port = reserveEphemeralPort();
+    ASSERT_GT(proto.port, 0);
+    proto.enabled = true;
+    proto.pool_min = 1;
+    proto.pool_max = 2;
+    controller.config_.protocols.push_back(proto);
+    controller.config_.control_socket_dir = temp_dir.string();
+
+    ErrorContext ctx;
+    ASSERT_EQ(controller.startListeners(&ctx), Status::OK) << ctx.message;
+    ASSERT_EQ(controller.listeners_.size(), 1U);
+
+    // Stub listener exits immediately. Health check should detect exit and restart.
+    std::this_thread::sleep_for(std::chrono::milliseconds(120));
+    controller.checkListeners();
+
+    ASSERT_TRUE(waitForFileTokenCount(args_path,
+                                      "__invocation__",
+                                      2,
+                                      std::chrono::milliseconds(2000)));
+
+    EXPECT_GE(controller.listeners_[0].restart_count, 1U);
+    EXPECT_GE(controller.listeners_[0].start_count, 2U);
 #endif
 }
 
@@ -666,6 +799,58 @@ TEST(ServiceControllerListenerBootstrapTest,
     EXPECT_NE(args.find("main"), std::string::npos) << args;
     EXPECT_NE(args.find("--mcp-auth-secret"), std::string::npos) << args;
     EXPECT_NE(args.find("test-manager-secret"), std::string::npos) << args;
+#endif
+}
+
+TEST(ServiceControllerListenerBootstrapTest,
+     ManagerProxyCrashRecoveryRestartsExitedManagerProcess) {
+#ifdef _WIN32
+    GTEST_SKIP() << "Test relies on POSIX fork/exec behavior.";
+#else
+    const std::filesystem::path temp_dir =
+        scratchbird::testing::uniqueTestDbPath("manager_proxy_crash_recovery", "");
+    std::error_code ec;
+    std::filesystem::create_directories(temp_dir, ec);
+    ASSERT_FALSE(ec) << ec.message();
+
+    ServiceController controller;
+    ScopedListenerCleanup cleanup{controller, temp_dir};
+
+    const std::filesystem::path args_path = temp_dir / "manager_args.txt";
+    ASSERT_TRUE(writeStubManager(temp_dir / "sb_manager", args_path));
+
+    const char* current_path = std::getenv("PATH");
+    const std::string path_prefix =
+        temp_dir.string() + ":" + (current_path ? std::string(current_path) : std::string());
+    ScopedEnvVar scoped_path("PATH", path_prefix);
+
+    const auto manager_ports = reserveEphemeralPorts(2);
+    ASSERT_EQ(manager_ports.size(), 2U);
+
+    controller.config_.front_door_mode = ServiceConfig::FrontDoorMode::MANAGER_PROXY;
+    controller.config_.manager_proxy.binary = "sb_manager";
+    controller.config_.manager_proxy.bind_address = "127.0.0.1";
+    controller.config_.manager_proxy.port = manager_ports[0];
+    controller.config_.manager_proxy.internal_native_bind = "127.0.0.1";
+    controller.config_.manager_proxy.internal_native_port = manager_ports[1];
+    controller.config_.manager_proxy.owner_database = "main";
+    controller.config_.manager_proxy.mcp_auth_secret = "test-manager-secret";
+    controller.config_.control_socket_dir = temp_dir.string();
+
+    ErrorContext ctx;
+    ASSERT_EQ(controller.startManager(&ctx), Status::OK) << ctx.message;
+    ASSERT_TRUE(waitForFile(args_path, std::chrono::milliseconds(1000)));
+
+    // Stub exits after a short sleep. Health check should trigger restart.
+    std::this_thread::sleep_for(std::chrono::milliseconds(1300));
+    controller.checkManager();
+
+    ASSERT_TRUE(waitForFileTokenCount(args_path,
+                                      "__manager__",
+                                      2,
+                                      std::chrono::milliseconds(2000)));
+    EXPECT_GE(controller.manager_.restart_count, 1U);
+    EXPECT_GE(controller.manager_.start_count, 2U);
 #endif
 }
 

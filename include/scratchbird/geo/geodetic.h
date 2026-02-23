@@ -29,6 +29,7 @@ public:
     static constexpr double SEMI_MINOR_AXIS = 6356752.314245;   // b (meters)
     static constexpr double FLATTENING = 1.0 / 298.257223563;   // f
     static constexpr double ECCENTRICITY_SQ = 0.00669437999014; // e^2
+    static constexpr double PI = 3.141592653589793238462643383279502884;
 
     /**
      * @brief Calculate geodetic distance between two points using Vincenty formula
@@ -74,14 +75,14 @@ public:
      * @brief Convert degrees to radians
      */
     static double toRadians(double degrees) {
-        return degrees * M_PI / 180.0;
+        return degrees * PI / 180.0;
     }
 
     /**
      * @brief Convert radians to degrees
      */
     static double toDegrees(double radians) {
-        return radians * 180.0 / M_PI;
+        return radians * 180.0 / PI;
     }
 };
 

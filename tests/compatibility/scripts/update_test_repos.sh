@@ -15,7 +15,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 COMPAT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 WORK_DIR="$(mktemp -d)"
 
-FETCH_MYSQL=0
+FETCH_MYSQL=1
 for arg in "$@"; do
   case "$arg" in
     --with-mysql)
@@ -31,8 +31,8 @@ for arg in "$@"; do
   esac
 done
 
-if [[ "${SCRATCHBIRD_FETCH_MYSQL_TESTS:-}" == "1" ]]; then
-  FETCH_MYSQL=1
+if [[ "${SCRATCHBIRD_FETCH_MYSQL_TESTS:-}" == "0" ]]; then
+  FETCH_MYSQL=0
 fi
 
 cleanup() {
@@ -50,6 +50,14 @@ rsync -a --delete --exclude='.git' \
   "$WORK_DIR/fbt-repository/" \
   "$COMPAT_DIR/firebird/repos/fbt-repository/"
 
+echo "  - Firebird: firebird-qa"
+git clone --depth 1 https://github.com/FirebirdSQL/firebird-qa.git \
+  "$WORK_DIR/firebird-qa"
+mkdir -p "$COMPAT_DIR/firebird/repos/firebird-qa"
+rsync -a --delete --exclude='.git' \
+  "$WORK_DIR/firebird-qa/" \
+  "$COMPAT_DIR/firebird/repos/firebird-qa/"
+
 if [[ "$FETCH_MYSQL" -eq 1 ]]; then
   echo "  - MySQL: mysql-test (sparse checkout)"
   git clone --depth 1 --filter=blob:none --no-checkout \
@@ -63,7 +71,7 @@ if [[ "$FETCH_MYSQL" -eq 1 ]]; then
     "$WORK_DIR/mysql-server/mysql-test/" \
     "$COMPAT_DIR/mysql/repos/mysql-server/mysql-test/"
 else
-  echo "  - MySQL: skipped (set SCRATCHBIRD_FETCH_MYSQL_TESTS=1 or --with-mysql to enable)"
+  echo "  - MySQL: skipped (--skip-mysql or SCRATCHBIRD_FETCH_MYSQL_TESTS=0)"
 fi
 
 echo "  - PostgreSQL: regress tests (sparse checkout)"

@@ -1,0 +1,12 @@
+build/linux-gcc-debug/src/sb_charset_loader
+build/linux-gcc-debug/src/sb_listener_fb
+build/linux-gcc-debug/src/sb_listener_mysql
+build/linux-gcc-debug/src/sb_listener_native
+build/linux-gcc-debug/src/sb_listener_pg
+build/linux-gcc-debug/src/sb_manager
+build/linux-gcc-debug/src/sb_parser_fb
+build/linux-gcc-debug/src/sb_parser_mysql
+build/linux-gcc-debug/src/sb_parser_native
+build/linux-gcc-debug/src/sb_parser_pg
+build/linux-gcc-debug/src/sb_server
+build/linux-gcc-debug/src/scratchbird

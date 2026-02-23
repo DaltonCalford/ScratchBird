@@ -1,0 +1,83 @@
+Internal ctest changing into directory: /home/dcalford/CliWork/ScratchBird/build
+Test project /home/dcalford/CliWork/ScratchBird/build
+      Start 1208: ListenerIpcAdapterTest.FrontDoorSocketLifecycle
+ 1/37 Test #1208: ListenerIpcAdapterTest.FrontDoorSocketLifecycle ................................................   Passed    0.03 sec
+      Start 1913: ServiceControllerListenerBootstrapTest.DirectModeLaunchesNativePgMysqlFirebirdListenerMatrix
+ 2/37 Test #1913: ServiceControllerListenerBootstrapTest.DirectModeLaunchesNativePgMysqlFirebirdListenerMatrix ...   Passed    0.05 sec
+      Start 2904: FirebirdParserTest.CreateTableSimple
+ 3/37 Test #2904: FirebirdParserTest.CreateTableSimple ...........................................................   Passed    0.02 sec
+      Start 2905: FirebirdParserTest.SelectSimple
+ 4/37 Test #2905: FirebirdParserTest.SelectSimple ................................................................   Passed    0.02 sec
+      Start 2906: FirebirdParserTest.InsertSimple
+ 5/37 Test #2906: FirebirdParserTest.InsertSimple ................................................................   Passed    0.02 sec
+      Start 2907: FirebirdParserTest.SetSqlDialect
+ 6/37 Test #2907: FirebirdParserTest.SetSqlDialect ...............................................................   Passed    0.02 sec
+      Start 2908: ListenerIpcAdapterTest.FrontDoorSocketLifecycle
+ 7/37 Test #2908: ListenerIpcAdapterTest.FrontDoorSocketLifecycle ................................................   Passed    0.02 sec
+      Start 2909: MySQLParserTest.SelectWithFrom
+ 8/37 Test #2909: MySQLParserTest.SelectWithFrom .................................................................   Passed    0.02 sec
+      Start 2910: MySQLParserTest.InsertBasic
+ 9/37 Test #2910: MySQLParserTest.InsertBasic ....................................................................   Passed    0.02 sec
+      Start 2911: MySQLParserTest.UpdateBasic
+10/37 Test #2911: MySQLParserTest.UpdateBasic ....................................................................   Passed    0.02 sec
+      Start 2912: MySQLParserTest.CreateTableBasic
+11/37 Test #2912: MySQLParserTest.CreateTableBasic ...............................................................   Passed    0.02 sec
+      Start 2913: MySQLParserTest.UseStatement
+12/37 Test #2913: MySQLParserTest.UseStatement ...................................................................   Passed    0.02 sec
+      Start 2914: PostgreSQLParserTest.SimpleSelect
+13/37 Test #2914: PostgreSQLParserTest.SimpleSelect ..............................................................   Passed    0.02 sec
+      Start 2915: PostgreSQLParserTest.InsertBasic
+14/37 Test #2915: PostgreSQLParserTest.InsertBasic ...............................................................   Passed    0.02 sec
+      Start 2916: PostgreSQLParserTest.UpdateBasic
+15/37 Test #2916: PostgreSQLParserTest.UpdateBasic ...............................................................   Passed    0.02 sec
+      Start 2917: PostgreSQLParserTest.CreateTableBasic
+16/37 Test #2917: PostgreSQLParserTest.CreateTableBasic ..........................................................   Passed    0.02 sec
+      Start 2918: PostgreSQLParserTest.SetAndShowStatements
+17/37 Test #2918: PostgreSQLParserTest.SetAndShowStatements ......................................................   Passed    0.02 sec
+      Start 2921: ServiceControllerListenerBootstrapTest.DirectModeLaunchesNativePgMysqlFirebirdListenerMatrix
+18/37 Test #2921: ServiceControllerListenerBootstrapTest.DirectModeLaunchesNativePgMysqlFirebirdListenerMatrix ...   Passed    0.05 sec
+      Start 2935: FirebirdParserTest.CreateTableSimple
+19/37 Test #2935: FirebirdParserTest.CreateTableSimple ...........................................................   Passed    0.02 sec
+      Start 2966: FirebirdParserTest.SelectSimple
+20/37 Test #2966: FirebirdParserTest.SelectSimple ................................................................   Passed    0.02 sec
+      Start 2975: FirebirdParserTest.InsertSimple
+21/37 Test #2975: FirebirdParserTest.InsertSimple ................................................................   Passed    0.02 sec
+      Start 2985: FirebirdParserTest.SetSqlDialect
+22/37 Test #2985: FirebirdParserTest.SetSqlDialect ...............................................................   Passed    0.02 sec
+      Start 3007: PostgreSQLParserTest.SimpleSelect
+23/37 Test #3007: PostgreSQLParserTest.SimpleSelect ..............................................................   Passed    0.02 sec
+      Start 3023: PostgreSQLParserTest.InsertBasic
+24/37 Test #3023: PostgreSQLParserTest.InsertBasic ...............................................................   Passed    0.02 sec
+      Start 3028: PostgreSQLParserTest.UpdateBasic
+25/37 Test #3028: PostgreSQLParserTest.UpdateBasic ...............................................................   Passed    0.02 sec
+      Start 3041: PostgreSQLParserTest.CreateTableBasic
+26/37 Test #3041: PostgreSQLParserTest.CreateTableBasic ..........................................................   Passed    0.02 sec
+      Start 3069: PostgreSQLParserTest.SetAndShowStatements
+27/37 Test #3069: PostgreSQLParserTest.SetAndShowStatements ......................................................   Passed    0.02 sec
+      Start 3081: MySQLParserTest.SelectWithFrom
+28/37 Test #3081: MySQLParserTest.SelectWithFrom .................................................................   Passed    0.03 sec
+      Start 3093: MySQLParserTest.InsertBasic
+29/37 Test #3093: MySQLParserTest.InsertBasic ....................................................................   Passed    0.02 sec
+      Start 3095: MySQLParserTest.UpdateBasic
+30/37 Test #3095: MySQLParserTest.UpdateBasic ....................................................................   Passed    0.02 sec
+      Start 3098: MySQLParserTest.CreateTableBasic
+31/37 Test #3098: MySQLParserTest.CreateTableBasic ...............................................................   Passed    0.02 sec
+      Start 3116: MySQLParserTest.UseStatement
+32/37 Test #3116: MySQLParserTest.UseStatement ...................................................................   Passed    0.02 sec
+      Start 3330: PostgreSQL.PostgreSQLParserTest.SimpleSelect
+33/37 Test #3330: PostgreSQL.PostgreSQLParserTest.SimpleSelect ...................................................   Passed    0.04 sec
+      Start 3346: PostgreSQL.PostgreSQLParserTest.InsertBasic
+34/37 Test #3346: PostgreSQL.PostgreSQLParserTest.InsertBasic ....................................................   Passed    0.01 sec
+      Start 3351: PostgreSQL.PostgreSQLParserTest.UpdateBasic
+35/37 Test #3351: PostgreSQL.PostgreSQLParserTest.UpdateBasic ....................................................   Passed    0.01 sec
+      Start 3364: PostgreSQL.PostgreSQLParserTest.CreateTableBasic
+36/37 Test #3364: PostgreSQL.PostgreSQLParserTest.CreateTableBasic ...............................................   Passed    0.01 sec
+      Start 3392: PostgreSQL.PostgreSQLParserTest.SetAndShowStatements
+37/37 Test #3392: PostgreSQL.PostgreSQLParserTest.SetAndShowStatements ...........................................   Passed    0.01 sec
+
+100% tests passed, 0 tests failed out of 37
+
+Label Time Summary:
+unit    =   0.78 sec*proc (37 tests)
+
+Total Test time (real) =   0.87 sec

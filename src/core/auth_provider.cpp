@@ -9,6 +9,7 @@
  */
 #include "scratchbird/core/auth_provider.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/file_permissions.h"
 #include "scratchbird/core/password_hash.h"
 #include "scratchbird/core/login_attempt_tracker.h"  // P0-2: Account lockout
 #include "scratchbird/core/audit_logger.h"           // P0-3: Security audit logging
@@ -37,7 +38,6 @@
 #include <sstream>
 #include <string_view>
 #ifndef _WIN32
-#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
@@ -854,6 +854,11 @@ std::mutex& bootstrapTokenMutex() {
     return mutex;
 }
 
+FilePermissionsControl& bootstrapFilePermissionsControl() {
+    static std::unique_ptr<FilePermissionsControl> control = createDefaultFilePermissionsControl();
+    return *control;
+}
+
 std::string bootstrapFailureReasonCode(const std::string& error_text) {
     const std::string lowered = [&]() {
         std::string value = error_text;
@@ -921,25 +926,28 @@ void logBootstrapAuditEvent(AuditLogger* audit_logger,
 }
 
 bool validateBootstrapTokenPermissions(const std::string& token_path, std::string& error_out) {
-#ifdef _WIN32
-    (void)token_path;
-    return true;
-#else
-    struct stat st{};
-    if (::stat(token_path.c_str(), &st) != 0) {
-        error_out = "Bootstrap token file stat failed: " + std::string(std::strerror(errno));
+    ErrorContext ctx;
+    FileMetadata metadata;
+    Status status = bootstrapFilePermissionsControl().readMetadata(token_path, &metadata, &ctx);
+    if (status != Status::OK || !metadata.exists) {
+        if (!ctx.message.empty()) {
+            error_out = "Bootstrap token file stat failed: " + ctx.message;
+        } else {
+            error_out = "Bootstrap token file stat failed";
+        }
         return false;
     }
-    if (!S_ISREG(st.st_mode)) {
+    if (!metadata.is_regular) {
         error_out = "Bootstrap token path is not a regular file";
         return false;
     }
-    if ((st.st_mode & (S_IRWXG | S_IRWXO)) != 0) {
+
+    // Windows mode bits are ACL-based and not represented through chmod-style values.
+    if (metadata.mode_supported && metadata.mode_bits != 0600u) {
         error_out = "Bootstrap token file permissions must be 0600";
         return false;
     }
     return true;
-#endif
 }
 
 bool consumeBootstrapTokenFile(const std::string& token_path, std::string& error_out) {

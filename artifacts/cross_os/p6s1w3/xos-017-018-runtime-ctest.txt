@@ -1,0 +1,79 @@
+Internal ctest changing into directory: /home/dcalford/CliWork/ScratchBird/build
+Test project /home/dcalford/CliWork/ScratchBird/build
+      Start   97: AuthBootstrapClaimStandaloneTest.LocalProviderRejectsNullCatalog
+ 1/35 Test   #97: AuthBootstrapClaimStandaloneTest.LocalProviderRejectsNullCatalog ..............................................   Passed    0.02 sec
+      Start   98: AuthBootstrapClaimTest.ConcurrentBootstrapClaimsHaveSingleWinner
+ 2/35 Test   #98: AuthBootstrapClaimTest.ConcurrentBootstrapClaimsHaveSingleWinner ..............................................   Passed    0.68 sec
+      Start   99: AuthBootstrapClaimTest.BootstrapTokenSingleUseEnforced
+ 3/35 Test   #99: AuthBootstrapClaimTest.BootstrapTokenSingleUseEnforced ........................................................   Passed    0.56 sec
+      Start  100: AuthBootstrapClaimTest.ReleasingWithoutClaimIsNoOp
+ 4/35 Test  #100: AuthBootstrapClaimTest.ReleasingWithoutClaimIsNoOp ............................................................   Passed    0.35 sec
+      Start  101: AuthBootstrapClaimTest.LegacyAuthMethodUsageUpdatesTelemetryCounters
+ 5/35 Test  #101: AuthBootstrapClaimTest.LegacyAuthMethodUsageUpdatesTelemetryCounters ..........................................   Passed    0.42 sec
+      Start  102: AuthBootstrapClaimTest.AuthKeyScopeBindingAndLastUsedRoundTrip
+ 6/35 Test  #102: AuthBootstrapClaimTest.AuthKeyScopeBindingAndLastUsedRoundTrip ................................................   Passed    0.37 sec
+      Start  103: AuthBootstrapClaimTest.AuthKeyBindingValidationRejectsMissingValue
+ 7/35 Test  #103: AuthBootstrapClaimTest.AuthKeyBindingValidationRejectsMissingValue ............................................   Passed    0.31 sec
+      Start  104: AuthBootstrapClaimTest.AuthKeyUsageValidationRejectsInvalidSeedCounts
+ 8/35 Test  #104: AuthBootstrapClaimTest.AuthKeyUsageValidationRejectsInvalidSeedCounts .........................................   Passed    0.31 sec
+      Start  105: AuthBootstrapClaimTest.AuthKeyListNormalizesExpiredStatusAndPersistsIt
+ 9/35 Test  #105: AuthBootstrapClaimTest.AuthKeyListNormalizesExpiredStatusAndPersistsIt ........................................   Passed    0.35 sec
+      Start  106: AuthBootstrapClaimTest.AuthTokenSuccessConsumesKey
+10/35 Test  #106: AuthBootstrapClaimTest.AuthTokenSuccessConsumesKey ............................................................   Passed    0.35 sec
+      Start  107: AuthBootstrapClaimTest.AuthTokenDeniedForRevokedOrExpiredKey
+11/35 Test  #107: AuthBootstrapClaimTest.AuthTokenDeniedForRevokedOrExpiredKey ..................................................   Passed    0.37 sec
+      Start  108: AuthBootstrapClaimTest.AuthKeyBulkRevocationByIssuerAndScope
+12/35 Test  #108: AuthBootstrapClaimTest.AuthKeyBulkRevocationByIssuerAndScope ..................................................   Passed    0.54 sec
+      Start  109: AuthBootstrapClaimTest.PeerAuthRequiresExplicitPeerMapping
+13/35 Test  #109: AuthBootstrapClaimTest.PeerAuthRequiresExplicitPeerMapping ....................................................   Passed    0.31 sec
+      Start  110: AuthBootstrapClaimTest.LockoutStatePersistsAcrossProviderInstances
+14/35 Test  #110: AuthBootstrapClaimTest.LockoutStatePersistsAcrossProviderInstances ............................................   Passed    1.05 sec
+      Start  111: AuthBootstrapClaimTest.LockoutScopeIsBoundToPeerIdentityAttributes
+15/35 Test  #111: AuthBootstrapClaimTest.LockoutScopeIsBoundToPeerIdentityAttributes ............................................   Passed    1.04 sec
+      Start  112: AuthBootstrapClaimTest.ScramBeginAndFinishRateLimitsAreSeparated
+16/35 Test  #112: AuthBootstrapClaimTest.ScramBeginAndFinishRateLimitsAreSeparated ..............................................   Passed    0.67 sec
+      Start  113: AuthBootstrapClaimTest.ScramPolicyRejectsWeakIterationsAndMarksUpgradeMetadata
+17/35 Test  #113: AuthBootstrapClaimTest.ScramPolicyRejectsWeakIterationsAndMarksUpgradeMetadata ................................   Passed    0.43 sec
+      Start  114: AuthBootstrapClaimTest.DormantDetachIssuesReattachAuthKeyAndRequiresToken
+18/35 Test  #114: AuthBootstrapClaimTest.DormantDetachIssuesReattachAuthKeyAndRequiresToken .....................................   Passed    0.34 sec
+      Start  115: AuthBootstrapClaimTest.DormantReattachAuthKeyRevokedOnDatabaseClose
+19/35 Test  #115: AuthBootstrapClaimTest.DormantReattachAuthKeyRevokedOnDatabaseClose ...........................................   Passed    0.58 sec
+      Start  781: FilePermissionsControlTest.ReadMetadataForExistingFile
+20/35 Test  #781: FilePermissionsControlTest.ReadMetadataForExistingFile ........................................................   Passed    0.02 sec
+      Start  782: FilePermissionsControlTest.SetModeAndReadBack
+21/35 Test  #782: FilePermissionsControlTest.SetModeAndReadBack .................................................................   Passed    0.02 sec
+      Start 1629: ProcessControlTest.SpawnsAndWaitsForExit
+22/35 Test #1629: ProcessControlTest.SpawnsAndWaitsForExit ......................................................................   Passed    0.04 sec
+      Start 1630: ProcessControlTest.TerminatesProcess
+23/35 Test #1630: ProcessControlTest.TerminatesProcess ..........................................................................   Passed    0.04 sec
+      Start 1631: ProcessControlTest.ForkSelfCreatesChildProcess
+24/35 Test #1631: ProcessControlTest.ForkSelfCreatesChildProcess ................................................................   Passed    0.02 sec
+      Start 1897: ServiceControllerListenerBootstrapTest.StartListenersPassesConfigFileToListenerProcess
+25/35 Test #1897: ServiceControllerListenerBootstrapTest.StartListenersPassesConfigFileToListenerProcess ........................   Passed    0.06 sec
+      Start 1898: ServiceControllerListenerBootstrapTest.PortCollisionSkipsListenerLaunchAndParserBootstrap
+26/35 Test #1898: ServiceControllerListenerBootstrapTest.PortCollisionSkipsListenerLaunchAndParserBootstrap .....................   Passed    0.02 sec
+      Start 1899: ServiceControllerListenerBootstrapTest.MultipleNativeListenersCanRunWithDistinctOwnersAndPorts
+27/35 Test #1899: ServiceControllerListenerBootstrapTest.MultipleNativeListenersCanRunWithDistinctOwnersAndPorts ................   Passed    0.06 sec
+      Start 1900: ServiceControllerListenerBootstrapTest.DirectModeLaunchesNativePgMysqlFirebirdListenerMatrix
+28/35 Test #1900: ServiceControllerListenerBootstrapTest.DirectModeLaunchesNativePgMysqlFirebirdListenerMatrix ..................   Passed    0.05 sec
+      Start 1901: ServiceControllerListenerBootstrapTest.ManagerProxyModeForcesSingleInternalNativeListener
+29/35 Test #1901: ServiceControllerListenerBootstrapTest.ManagerProxyModeForcesSingleInternalNativeListener .....................   Passed    0.05 sec
+      Start 1902: ServiceControllerListenerBootstrapTest.ManagerProxyStartManagerLaunchesConfiguredBinaryWithInternalEndpoint
+30/35 Test #1902: ServiceControllerListenerBootstrapTest.ManagerProxyStartManagerLaunchesConfiguredBinaryWithInternalEndpoint ...   Passed    1.04 sec
+      Start 1903: ServiceControllerListenerBootstrapTest.ManagerProxyRejectsPortCollisionWithInternalNativeListener
+31/35 Test #1903: ServiceControllerListenerBootstrapTest.ManagerProxyRejectsPortCollisionWithInternalNativeListener .............   Passed    0.04 sec
+      Start 1904: ServiceControllerListenerBootstrapTest.ManagerProxyStartManagerRejectsMissingMcpAuthSecret
+32/35 Test #1904: ServiceControllerListenerBootstrapTest.ManagerProxyStartManagerRejectsMissingMcpAuthSecret ....................   Passed    0.02 sec
+      Start 1912: SignalControlTest.InjectAndPollReturnsSignalThenClears
+33/35 Test #1912: SignalControlTest.InjectAndPollReturnsSignalThenClears ........................................................   Passed    0.02 sec
+      Start 1913: SignalControlTest.RejectsNoneInjection
+34/35 Test #1913: SignalControlTest.RejectsNoneInjection ........................................................................   Passed    0.02 sec
+      Start 1914: SignalControlTest.PollRejectsNullOutput
+35/35 Test #1914: SignalControlTest.PollRejectsNullOutput .......................................................................   Passed    0.02 sec
+
+100% tests passed, 0 tests failed out of 35
+
+Label Time Summary:
+unit    =  10.56 sec*proc (35 tests)
+
+Total Test time (real) =  10.66 sec

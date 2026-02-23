@@ -1,0 +1,154 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "firebird-qa"
+dynamic = ["version"]
+description = "pytest plugin for Firebird QA"
+readme = "PLUGIN-README.md"
+requires-python = ">=3.8, <4"
+license = { file = "LICENSE" }
+authors = [
+    { name = "Pavel Cisar", email = "pcisar@users.sourceforge.net"},
+]
+keywords = ["Firebird", "Logging", "Trace", "Configuration", "Signals", "Protobuf", "Hooks",
+    "Collections"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: MacOS",
+    "Topic :: Database :: Database Engines/Servers",
+    "Topic :: Software Development :: Testing",
+    "Framework :: Pytest",
+    ]
+dependencies = [
+    "firebird-base~=2.0",
+    "firebird-driver~=2.0",
+    "pytest>=7.4",
+    "psutil~=5.9",
+    ]
+
+[project.urls]
+Home = "https://github.com/FirebirdSQL/firebird-qa"
+Documentation = "https://firebird-qa.rtfd.io"
+Issues = "https://github.com/FirebirdSQL/firebird-qa/issues"
+Funding = "https://github.com/sponsors/pcisar"
+Source = "https://github.com/FirebirdSQL/firebird-qa"
+
+[project.scripts]
+fbt-conv = "firebird.qa.fbtconv:main"
+
+[project.entry-points.pytest11]
+firebird = "firebird.qa.plugin"
+
+[tool.hatch.version]
+path = "src/firebird/qa/__about__.py"
+
+[tool.hatch.build.targets.sdist]
+include = ["src"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/firebird"]
+
+[tool.hatch.envs.default]
+dependencies = [
+]
+
+[tool.hatch.envs.hatch-test]
+extra-args = ["-vv", "--server", "local"]
+dependencies = [
+  "coverage[toml]>=6.5",
+  "pytest",
+]
+
+[[tool.hatch.envs.test.matrix]]
+python = ["3.8", "3.9", "3.10", "3.11", "3.12", "3.13"]
+
+[tool.hatch.envs.doc]
+detached = false
+platforms = ["linux"]
+dependencies = [
+  "Sphinx==7.2.6",
+  "sphinx-bootstrap-theme>=0.8.1",
+  "sphinx-autodoc-typehints>=1.24.0",
+  "doc2dash>=3.0.0"
+]
+[tool.hatch.envs.doc.scripts]
+build = "cd docs ; make html"
+docset = [
+  "cd docs ; doc2dash -u https://firebird-qa.readthedocs.io/en/latest/ -f -i ./_static/fb-favicon.png -n firebird-qa ./_build/html/",
+  "cd docs; VERSION=`hatch version` ; tar --exclude='.DS_Store' -cvzf ../dist/firebird-qa-$VERSION-docset.tgz firebird-qa.docset",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["A", "ARG", "B", "C", "DTZ", "E", "EM", "F", "FBT", "I", "ICN", "ISC", "N",
+  "PLC", "PLE", "PLR", "PLW", "Q", "RUF", "S", "T", "TID", "UP", "W", "YTT",
+]
+ignore = [
+  # Allow non-abstract empty methods in abstract base classes
+  "B027",
+  # Allow boolean positional values in function calls, like `dict.get(... True)`
+  "FBT003",
+  # Ignore checks for possible passwords
+  "S105", "S106", "S107",
+  # Ignore complexity
+  "C901", "PLR0911", "PLR0912", "PLR0913", "PLR0915",
+  #
+  "E741",
+  # Allow relative imports
+  "TID252",
+  # Allow literals in exceptions
+  "EM101", "EM102",
+  # Single quotes instead double
+  "Q000"
+]
+unfixable = [
+  # Don't touch unused imports
+  "F401",
+  # Don't change single quotes to double
+  "Q000"
+]
+exclude = ["*_pb2.py", "*.pyi", "tests/*", "docs/*", "personal/*"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["firebird.base"]
+
+[tool.ruff.lint.flake8-tidy-imports]
+ban-relative-imports = "all"
+
+[tool.ruff.lint.extend-per-file-ignores]
+# Tests can use magic values, assertions, and relative imports
+"tests/**/*" = ["PLR2004", "S101", "TID252"]
+
+[tool.coverage.run]
+source_pkgs = ["firebird.qa"]
+branch = true
+parallel = true
+omit = [
+  "src/firebird/qa/__about__.py",
+]
+
+[tool.coverage.paths]
+firebird_qa = ["*/src/firebird/qa"]
+tests = ["tests"]
+
+[tool.coverage.report]
+exclude_lines = [
+  "no cov",
+  "if __name__ == .__main__.:",
+  "if TYPE_CHECKING:",
+]

@@ -19,9 +19,11 @@
 #include <cstring>
 #include <map>
 #include <mutex>
-#include <pwd.h>
-#include <grp.h>
-#include <unistd.h>
+#if !defined(_WIN32)
+    #include <pwd.h>
+    #include <grp.h>
+    #include <unistd.h>
+#endif
 
 namespace scratchbird {
 namespace security {
@@ -329,11 +331,13 @@ AuthResult PeerAuthMethod::start(AuthContext& ctx) {
     // Get OS username from peer credentials
     std::string os_username = conn.peer_username;
     if (os_username.empty()) {
+#if !defined(_WIN32)
         // Try to look up from UID
         struct passwd* pw = getpwuid(conn.peer_uid);
         if (pw) {
             os_username = pw->pw_name;
         }
+#endif
     }
 
     if (os_username.empty()) {

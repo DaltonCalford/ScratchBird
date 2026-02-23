@@ -33,6 +33,8 @@
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/database.h"
+#include "scratchbird/core/signal_control.h"
+#include "scratchbird/server/daemon.h"
 #include "scratchbird/server/ipc_server.h"
 #include "scratchbird/server/server_session.h"
 
@@ -224,7 +226,7 @@ public:
      * @param database_path Path to the database file
      * @return PID if running, 0 otherwise
      */
-    static pid_t getServerPID(const std::string& database_path);
+    static ProcessId getServerPID(const std::string& database_path);
 
 private:
     // ========================================================================
@@ -252,6 +254,11 @@ private:
     void handleClient(std::unique_ptr<IPCConnection> connection);
 
     /**
+     * Process pending runtime control signals
+     */
+    void checkControlSignals();
+
+    /**
      * Write PID file
      */
     core::Status writePIDFile(core::ErrorContext* ctx);
@@ -276,6 +283,7 @@ private:
 
     std::unique_ptr<core::Database> database_;      // Database instance
     std::unique_ptr<IPCServer> listener_;           // IPC listener
+    std::unique_ptr<core::SignalControl> signal_control_; // Runtime signal adapter
     SessionManager session_manager_;                // Session manager
 
     std::thread accept_thread_;                     // Accept loop thread
@@ -302,7 +310,7 @@ std::string getDefaultPIDPath(const std::string& database_path);
  * @param pid_path Path to PID file
  * @return PID if file exists and is valid, 0 otherwise
  */
-pid_t readPIDFile(const std::string& pid_path);
+ProcessId readPIDFile(const std::string& pid_path);
 
 /**
  * Check if a process is running
@@ -310,7 +318,7 @@ pid_t readPIDFile(const std::string& pid_path);
  * @param pid Process ID to check
  * @return true if process exists
  */
-bool isProcessRunning(pid_t pid);
+bool isProcessRunning(ProcessId pid);
 
 // ============================================================================
 // Server State Utilities

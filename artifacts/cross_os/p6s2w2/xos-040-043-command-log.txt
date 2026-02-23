@@ -1,0 +1,108 @@
+# XOS-040..043 command log
+2026-02-22T16:17:30Z
+
+$ cmake --build build -j4 --target sb_server scratchbird_tests
+[  2%] Built target scratchbird_optimizer_runtime
+[ 11%] Built target scratchbird_parser
+[ 16%] Built target scratchbird_security
+[ 19%] Built target scratchbird_optimizer_compiler
+[ 75%] Built target scratchbird_core
+[ 77%] Built target scratchbird_network
+[ 83%] Built target scratchbird_ipc
+[ 94%] Built target scratchbird_sblr
+[ 94%] Built target scratchbird_compiler
+[ 97%] Built target scratchbird_protocol
+[100%] Built target scratchbird_server
+[100%] Built target sb_server
+[  1%] Built target gtest
+[  3%] Built target scratchbird_security
+[  7%] Built target scratchbird_parser
+[  8%] Built target scratchbird_optimizer_runtime
+[  8%] Built target gtest_main
+[ 10%] Built target scratchbird_optimizer_compiler
+[ 35%] Built target scratchbird_core
+[ 36%] Built target scratchbird_network
+[ 36%] Built target scratchbird_pool
+[ 39%] Built target scratchbird_ipc
+[ 44%] Built target scratchbird_sblr
+[ 44%] Built target scratchbird_compiler
+[ 45%] Built target scratchbird_protocol
+[ 46%] Built target scratchbird_server
+[ 46%] Built target sb_manager
+[100%] Built target scratchbird_tests
+
+$ ctest --test-dir build -R 'WindowsServiceHostTest|LocalIPCPolicyTest|ServiceControllerListenerBootstrapTest|PortableRuntimeGuard|VNextScopeScanContract' --output-on-failure
+Internal ctest changing into directory: /home/dcalford/CliWork/ScratchBird/build
+Test project /home/dcalford/CliWork/ScratchBird/build
+      Start 1094: LocalIPCPolicyTest.DefaultPreferredMethodMatchesPlatformDefault
+ 1/17 Test #1094: LocalIPCPolicyTest.DefaultPreferredMethodMatchesPlatformDefault ...............................................   Passed    0.02 sec
+      Start 1095: LocalIPCPolicyTest.ResolveAutoUsesPolicyPreferredMethod
+ 2/17 Test #1095: LocalIPCPolicyTest.ResolveAutoUsesPolicyPreferredMethod .......................................................   Passed    0.02 sec
+      Start 1096: LocalIPCPolicyTest.ResolveExplicitMethodDisablesFallback
+ 3/17 Test #1096: LocalIPCPolicyTest.ResolveExplicitMethodDisablesFallback ......................................................   Passed    0.02 sec
+      Start 1097: LocalIPCPolicyTest.PeerCredentialExpectationMatchesPlatformContract
+ 4/17 Test #1097: LocalIPCPolicyTest.PeerCredentialExpectationMatchesPlatformContract ...........................................   Passed    0.02 sec
+      Start 1905: ServiceControllerListenerBootstrapTest.StartListenersPassesConfigFileToListenerProcess
+ 5/17 Test #1905: ServiceControllerListenerBootstrapTest.StartListenersPassesConfigFileToListenerProcess ........................   Passed    0.06 sec
+      Start 1906: ServiceControllerListenerBootstrapTest.PortCollisionSkipsListenerLaunchAndParserBootstrap
+ 6/17 Test #1906: ServiceControllerListenerBootstrapTest.PortCollisionSkipsListenerLaunchAndParserBootstrap .....................   Passed    0.02 sec
+      Start 1907: ServiceControllerListenerBootstrapTest.MultipleNativeListenersCanRunWithDistinctOwnersAndPorts
+ 7/17 Test #1907: ServiceControllerListenerBootstrapTest.MultipleNativeListenersCanRunWithDistinctOwnersAndPorts ................   Passed    0.06 sec
+      Start 1908: ServiceControllerListenerBootstrapTest.DirectModeLaunchesNativePgMysqlFirebirdListenerMatrix
+ 8/17 Test #1908: ServiceControllerListenerBootstrapTest.DirectModeLaunchesNativePgMysqlFirebirdListenerMatrix ..................   Passed    0.05 sec
+      Start 1909: ServiceControllerListenerBootstrapTest.ManagerProxyModeForcesSingleInternalNativeListener
+ 9/17 Test #1909: ServiceControllerListenerBootstrapTest.ManagerProxyModeForcesSingleInternalNativeListener .....................   Passed    0.05 sec
+      Start 1910: ServiceControllerListenerBootstrapTest.ManagerProxyStartManagerLaunchesConfiguredBinaryWithInternalEndpoint
+10/17 Test #1910: ServiceControllerListenerBootstrapTest.ManagerProxyStartManagerLaunchesConfiguredBinaryWithInternalEndpoint ...   Passed    1.03 sec
+      Start 1911: ServiceControllerListenerBootstrapTest.ManagerProxyRejectsPortCollisionWithInternalNativeListener
+11/17 Test #1911: ServiceControllerListenerBootstrapTest.ManagerProxyRejectsPortCollisionWithInternalNativeListener .............   Passed    0.04 sec
+      Start 1912: ServiceControllerListenerBootstrapTest.ManagerProxyStartManagerRejectsMissingMcpAuthSecret
+12/17 Test #1912: ServiceControllerListenerBootstrapTest.ManagerProxyStartManagerRejectsMissingMcpAuthSecret ....................   Passed    0.02 sec
+      Start 2506: WindowsServiceHostTest.ConsoleModeExecutesCallback
+13/17 Test #2506: WindowsServiceHostTest.ConsoleModeExecutesCallback ............................................................   Passed    0.02 sec
+      Start 2507: WindowsServiceHostTest.ConsoleModeReportsFailure
+14/17 Test #2507: WindowsServiceHostTest.ConsoleModeReportsFailure ..............................................................   Passed    0.02 sec
+      Start 2508: WindowsServiceHostTest.ServiceModeContractIsPlatformGuarded
+15/17 Test #2508: WindowsServiceHostTest.ServiceModeContractIsPlatformGuarded ...................................................   Passed    0.02 sec
+      Start 3499: VNextScopeScanContract
+16/17 Test #3499: VNextScopeScanContract ........................................................................................   Passed    0.08 sec
+      Start 3500: PortableRuntimeGuard
+17/17 Test #3500: PortableRuntimeGuard ..........................................................................................   Passed    0.04 sec
+
+100% tests passed, 0 tests failed out of 17
+
+Label Time Summary:
+compliance     =   0.12 sec*proc (2 tests)
+governance     =   0.08 sec*proc (1 test)
+portability    =   0.04 sec*proc (1 test)
+unit           =   1.59 sec*proc (17 tests)
+
+Total Test time (real) =   1.68 sec
+
+$ cmake --preset linux-mingw-windows-x64
+Preset CMake variables:
+
+  BUILD_TESTING="OFF"
+  CMAKE_BUILD_TYPE="Debug"
+  CMAKE_EXPORT_COMPILE_COMMANDS="ON"
+  CMAKE_TOOLCHAIN_FILE:FILEPATH="/home/dcalford/CliWork/ScratchBird/cmake/toolchains/mingw-w64-x86_64.cmake"
+  CMAKE_TRY_COMPILE_TARGET_TYPE="STATIC_LIBRARY"
+  SCRATCHBIRD_CTEST_TIMEOUT="3600"
+  SCRATCHBIRD_WINDOWS_REQUIRE_VCPKG="OFF"
+
+-- ScratchBird Database Engine - Planning Phase
+-- See ProjectPlan/ directory for specifications
+-- Runtime feature gates: systemd=OFF, fork=OFF
+-- Using the multi-header code from /home/dcalford/CliWork/ScratchBird/build/linux-mingw-windows-x64/_deps/json-src/include/
+-- nlohmann/json library: ENABLED (FetchContent)
+-- CTest maximum test time: 3600s (1 hour)
+-- CTest parallel level: 14
+CMake Error at /usr/share/cmake-3.30/Modules/FindPackageHandleStandardArgs.cmake:233 (message):
+  Could NOT find ZLIB (missing: ZLIB_LIBRARY ZLIB_INCLUDE_DIR)
+Call Stack (most recent call first):
+  /usr/share/cmake-3.30/Modules/FindPackageHandleStandardArgs.cmake:603 (_FPHSA_FAILURE_MESSAGE)
+  /usr/share/cmake-3.30/Modules/FindZLIB.cmake:202 (FIND_PACKAGE_HANDLE_STANDARD_ARGS)
+  CMakeLists.txt:143 (find_package)
+
+
+-- Configuring incomplete, errors occurred!

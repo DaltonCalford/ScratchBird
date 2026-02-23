@@ -1,0 +1,944 @@
+===========
+Usage Guide
+===========
+
+.. currentModule:: firebird.qa
+
+Before you start using Firebird QA suite
+========================================
+
+The Firebird QA suite is based on pytest_. If you are not familiar with this testing framework,
+you should read at least next sections from pytest documentation:
+
+1. `How to invoke pytest <https://docs.pytest.org/en/latest/how-to/usage.html>`_
+2. `Command-line Flags <https://docs.pytest.org/en/latest/reference/reference.html#command-line-flags>`_
+3. `Pytest customization <https://docs.pytest.org/en/latest/reference/customize.html>`_
+
+The Firebird QA suite resides in firebird-qa_ repository at github. This repository
+contains a `pytest` plugin, various support files, and a set of tests that uses this plugin
+to test Firebird server(s). Currentlly, only local Firebird installations could be tested.
+
+.. note::
+
+   The suite could NOT be used to test Firebird servers older than v3.
+
+Installation
+============
+
+Requirements
+------------
+
+1. Requires Python_ 3.8 or newer.
+2. Requires pytest_ 7.4 or newer.
+3. If you want to develop the Firebird QA plugin itself, you'll also need Hatch_ 1.9 or newer.
+4. It's **recommended** to use the pipx_ tool to install and manage `firebird-qa` and `hatch`,
+   or at least use the separate Python virtual environment to install and run the QA suite,
+   especially on Linux where Python `site-packages` are managed by Linux distribution package
+   manager.
+
+Installing pipx
+---------------
+
+You can install `pipx` using `pip` in command prompt / terminal with::
+
+   python -m pip install pipx
+
+or by using other suitable method listed at pipx_ website.
+
+.. note::
+
+   Don't forget to run::
+
+     pipx ensurepath
+
+   once after installation to ensure that tools installed via `pipx` will be available on
+   search path.
+
+Installing QA tools for regular use
+-----------------------------------
+
+From command prompt / terminal execute::
+
+  pipx install --include-deps firebird-qa
+
+If you want to install specific version, you can use version specification. For example::
+
+  pipx install --include-deps firebird-qa==0.19.0
+
+will install `firebird-qa` version 0.19.0.
+
+Installing QA tools for plugin development
+------------------------------------------
+
+Open the command prompt / terminal, switch to QA root directory and execute::
+
+  pipx install --include-deps -e .
+
+
+Upgrading QA tools
+------------------
+
+You can upgrade your installation to latest published version using::
+
+  pipx upgrade firebird-qa
+
+Alternativelly, you can reinstall it using::
+
+  pipx reinstall firebird-qa
+
+The reinstallation will also upgrade all dependencies.
+
+
+Configuration
+=============
+
+Firebird-driver configuration
+-----------------------------
+
+The QA plugin uses firebird-driver_ to access the Firebird servers, and uses
+`driver configuration object <firebird.driver.config.DriverConfig>` to set up various driver and server/database connection parameters.
+The configuration object is initialized from `firebird-driver.conf` file, and plugin
+specifically utilizes server sections in this file. When pytest is invoked, you must specify
+tested server with **--server <name>** option, where `<name>` is name of server configuration
+section in `firebird-driver.conf` file.
+
+This file is stored in firebird-qa repository, and defines default configuration suitable
+to most QA setups.
+
+.. note::
+
+   The `firebird-driver.conf` file is located in QA root directory. In default setup, the
+   QA plugin is used to test local Firebird installation with default user name and password
+   (SYSDBA/masterkey) via `local` server (configuration section).
+
+.. important::
+
+   The firebird-driver currently does not support specification of client library in server
+   sections. However, the QA plugin works around that limitation. If server section for
+   tested  server contains `fb_client_library` option specification, it's copied to global
+   setting.
+
+.. seealso::
+
+   See `configuration <https://firebird-driver.readthedocs.io/en/latest/usage-guide.html#configuration>`_
+   chapter in driver documentation for details.
+
+Pytest configuration
+--------------------
+
+While it's not required, it's recommended to create `pytest configuration file
+<https://docs.pytest.org/en/latest/reference/customize.html>`_ in QA root directory.
+You may use this file to simplify your use of pytest with `addopts` option, or adjust
+pytest behaviour.
+
+.. tip::
+
+   Suggested options for pytest.ini::
+
+     console_output_style = count
+     testpaths = tests
+     addopts = --server local --install-terminal
+
+Firebird server configuration
+-----------------------------
+
+Some tests in Firebird test suite require specific Firebird server configuration to work
+properly (as designed). If possible, these tests check the configuration of tested server,
+and mark itself to SKIP if required conditions are not met. However, it's not always possible
+(or desirable) to perform such check. You have to cosult `Firebird QA README` for current
+requirements on Firebird server configuration.
+
+
+Running QA test suite
+=====================
+
+Basics
+------
+
+1. Open the terminal / command-line.
+
+2. If you DID NOT USED `pipx`, but installed Firebird QA in Python virtual environment you
+   created manually, **activate it**.
+
+3. Switch to QA root directory.
+
+4. To run all tests in suite against local Firebird server, invoke::
+
+     pytest --server local ./tests
+
+   .. tip::
+
+      If you created `pytest.ini` with recommended values, you can just invoke `pytest`
+      without additional parameters.
+
+pytest report header
+--------------------
+
+When pytest is invoked, a report header is printed on terminal before individual tests
+are executed. The QA plugin extend this header with next information:
+
+* Python encodings
+
+  - system
+  - locale
+  - filesystem
+
+* Information about tested Firebird server
+
+  - conf. section name
+  - version
+  - mode
+  - architecture
+  - home directory
+  - tools directory
+  - used client library
+
+Example::
+
+   > pytest
+   ====================================================== test session starts =======================================================
+   platform linux -- Python 3.11.8, pytest-8.0.1, pluggy-1.4.0 -- /home/pcisar/.local/pipx/venvs/firebird-qa/bin/python
+   cachedir: .pytest_cache
+   System:
+     encodings: sys:utf-8 locale:UTF-8 filesystem:utf-8
+   Firebird:
+     configuration: firebird-driver.conf
+     ODS: 13.1
+     server: local [v5.0.0.1306, SuperServer, Firebird/Linux/AMD/Intel/x64]
+     home: /opt/firebird
+     bin: /opt/firebird/bin
+     client library: libfbclient.so.2
+   rootdir: /home/job/python/projects/firebird-qa
+   configfile: pytest.ini
+   plugins: firebird-qa-0.19.2
+   collected 2385 items / 475 deselected / 1910 selected
+
+   issue.full-join-push-where-predicate PASSED                                                                           [   1/1910]
+   ...
+
+pytest switches installed by QA plugin
+--------------------------------------
+
+The QA plugin installs several pytest command-line switches. When you run `pytest --help`,
+they are listed in `Firebird QA` section::
+
+   Firebird QA:
+      --server=SERVER       Server configuration name
+      --bin-dir=PATH        Path to directory with Firebird utilities
+      --protocol={xnet,inet,inet4,wnet}
+                            Network protocol used for database attachments
+      --runslow             Run slow tests
+      --save-output         Save test std[out|err] output to files
+      --skip-deselected={platform,version,any}
+                            SKIP tests instead deselection
+      --extend-xml          Extend XML JUnit report with additional information
+      --install-terminal    Use our own terminal reporter
+
+server
+~~~~~~
+
+**REQUIRED option.** Section name in `firebird-driver.conf` with connection parameters for
+tested server.
+
+bin-dir
+~~~~~~~
+
+Normally, the QA plugin detects and properly sets the directory where Firebird tools are
+installed. However, you can set this directory explicitly using the `--bin-dir` switch.
+
+protocol
+~~~~~~~~
+
+Override for network protocol specified in `firebird-driver.conf` file (or default).
+
+runslow
+~~~~~~~
+
+Tests that run for longer than 10 minutes on equipment used for regular Firebird QA are
+marked as `slow`. They are not executed, unless this switch is specified.
+
+.. note::  Currently, there are no slow tests in Firebird test suite.
+
+save-output
+~~~~~~~~~~~
+
+**Experimental switch**
+
+When this switch is specified, stdout/stderr output of external Firebird tool executed by
+test is stored in `./out` subdirectory. Intended for test debugging.
+
+skip-deselected
+~~~~~~~~~~~~~~~
+
+Tests that are not applicable to tested server (because they are for specific platform or
+Firebird versions) are deselected during pytest collection phase. It means that they are
+not shown in test session report. This switch changes the routine, so tests are marked to
+skip (with message explaining why) instead deselection, so they show up is session report.
+
+extend-xml
+~~~~~~~~~~
+
+When this switch is used together with `--junitxml` switch, the produced JUnitXML file
+will contain additional metadata for `testsuite` and `testcase` elements recorded as
+`property` sub-elements.
+
+.. important::
+
+   Please note that using this feature will break schema verifications for the latest
+   JUnitXML schema. This might be a problem when used with some CI servers.
+
+install-terminal
+~~~~~~~~~~~~~~~~
+
+This option changes default pytest terminal reporter that displays pytest NODE IDs, to custom
+reporter that displays Firebord QA test IDs.
+
+pytest node IDs are of the form `module.py::class::method` or `module.py::function`.
+
+Firebord QA test IDs are defined in our test metadata.
+
+.. important::
+
+   Right now, the custom terminal is `opt-in` feature. This will be changed in some future
+   release to `opt-out` using new switch.
+
+Tests for Firebird engine
+=========================
+
+Test suite
+----------
+
+The Firebird QA test suite is located in `tests` subdirectory of QA root directory. Because
+Firebird tests are written in Python, the test suite directory is a `Python package`_, so
+each  directory **must** contain `__init__.py` file.
+
+Test files
+----------
+
+For pytest framework, a single test is a function or class method that is executed during
+test session. Single Python module can contain arbitrary number of test functions/methods.
+Firebird QA uses slightly different model, where each test is a separate Python file (module_)
+that provides one or more specific test implementations as module-level test functions, and
+only one function is selected by pytest for execution. The selection is typically performed
+by marking  tests to be executed only on certain platform and/or Firebird engine version
+using `pytest.mark.version` or `pytest.mark.platform` decorators. The QA plugin then uses
+these marks to deselect (or skip) test functions that are not applicateble to tested Firebird
+engine.
+
+Test files must have `.py` extension and name that either starts with `test_` or ends with
+`_test`.
+
+Test encoding
+-------------
+
+Test files must be encoded in utf-8, and first line must specify this encoding::
+
+   #coding:utf-8
+
+Test metadata
+-------------
+
+Test files must have a docstring_ with test metadata. Each metadata item must start on
+separate line starting with item tag followed by `colon`.
+
+.. list-table:: **Currently supported metadata items**
+   :widths:  20 60 10 10
+   :header-rows: 1
+
+   * - Tag
+     - Description
+     - Required
+     - Multiline
+   * - ID
+     - Unique test identification. Can contain alphanumeric characters, dot, underscore and
+       hyphen. Must start with alphanum character.
+     - **Yes**
+     - No
+   * - TITLE
+     - Test title. Multiline titles are concatenated into single line (line breaks
+       removed and line contents separated with single space).
+     - **Yes**
+     - Yes
+   * - DESCRIPTION
+     - Test description
+     - No
+     - Yes
+   * - NOTES
+     - Notes for test (change log etc.)
+     - No
+     - Yes
+   * - ISSUE
+     - GitHub issue number
+     - No
+     - No
+   * - JIRA
+     - Legacy JIRA issue ID
+     - No
+     - No
+   * - FBTEST
+     - Legacy fbtest test ID
+     - No
+     - No
+
+Test functions
+--------------
+
+Each test is implemented as module-level function(s) with name starting with `test_`.
+
+.. important::
+
+   There could be multiple test variants implemented as separate test functions, but their
+   implementation must ensure that **only one** version is selected by pytest for execution!
+
+   Typical multi-variant scenario uses individual test variants marked for run on specific
+   platform, or against specific Firebird versions using `pytest.mark.version` or
+   `pytest.mark.platform` decorators.
+
+Test functions typically use various :doc:`fixtures <pytest:explanation/fixtures>` provided
+by QA plugin or pytest itself. In most cases, the test outcome is determined using `assert`
+statements.
+
+Fixtures
+--------
+
+The QA plugin implements fixture factories that provide resources and facilities frequently
+used by Firebird tests. Fixtures that provide temporary resources (like databases, users,
+files) ensure their initialization before test execution and removal when test finishes.
+
+.. note::
+
+   Fixtures returned by fixture factories must be assigned to module-level variables.
+   Variable names are then used as parameter names of test functions.
+
+   Example::
+
+     # fixture that provides Action object used in test function
+     act = python_act('db')
+
+     # test function
+     def test_1(act: Action):
+         act.execute()
+         ...
+
+Fixture values are typically a class instance that allows access to provided resource.
+
+Database
+~~~~~~~~
+
+Almost all tests need a database. The `.db_factory` function creates a fixture that provides
+`.Database` object. Test may use this object to create connections, access database
+parameters or perform other database-related actions.
+
+User
+~~~~
+
+Some tests may need to use different user accounts than SYSDBA, or multiple user accounts.
+The `.user_factory` function creates a fixture that provides `.User` object. Beside automatic
+setup/teardown of temporary Firebird user account, tests may use  this object to access
+user parameters or perform other user-related actions.
+
+Action
+~~~~~~
+
+The `.Action` object is a "Swiss army knife" provided by QA plugin to simplify implementation
+of Firebird tests. There are two Action fixture factories:
+
+* `.isql_act` for simple tests that use single ISQL test script.
+* `.python_act` for more complex test implementations.
+
+Role
+~~~~
+
+The `.role_factory` function creates a fixture that provides `.Role` object representing
+SQL role associated with specified test database.
+
+Envar
+~~~~~
+
+The `.envar_factory` function creates a fixture that could be used to temporary set value
+to environment variable.
+
+Temporary files
+~~~~~~~~~~~~~~~
+
+Although pytest provides fixtures for temporary files, QA plugin provides its own fixture
+factories `.temp_file` and `.temp_files`.
+
+Example test file
+-----------------
+
+Example test file `tests/issue/test_319.py`::
+
+   #coding:utf-8
+
+   """
+   ID:          issue-319
+   ISSUE:       319
+   JIRA:        CORE-1
+   TITLE:       Server shutdown
+   DESCRIPTION: Server shuts down when user password is attempted to be modified to a empty string
+   FBTEST:      bugs.core_0001
+   """
+
+   import pytest
+   from firebird.qa import *
+
+   # fixture providing test database
+   db = db_factory()
+
+   # fixture providing temporary user
+   user = user_factory('db', name='tmp$c0001', password='123')
+
+   # isql script executed to test Firebird
+   test_script = """
+       alter user tmp$c0001 password '';
+       commit;
+   """
+
+   # fixture that provides Action object used in test function
+   act = isql_act('db', test_script)
+
+   # Expected stderr output from isql
+   expected_stderr = """
+       Statement failed, SQLSTATE = 42000
+       unsuccessful metadata update
+       -ALTER USER TMP$C0001 failed
+       -Password should not be empty string
+   """
+
+   # Test function, marked to run on Firebird v3.0 or newer
+   @pytest.mark.version('>=3.0')
+   def test_1(act: Action, user: User):
+       act.expected_stderr = expected_stderr
+       act.execute()
+       # This evaluates test outcome
+       assert act.clean_stderr == act.clean_expected_stderr
+
+How-to guides
+=============
+
+How to use databases in tests
+-----------------------------
+
+Database fixture
+~~~~~~~~~~~~~~~~
+
+It's recommend to use fixtures created by `.db_factory` function. Function arguments specify
+how database is created, initialized and removed.
+
+* If not specified otherwise, the fixture creates new empty database.
+* To create database from backup file, use `from_backup` argument. File must be located in
+  `backups` directory.
+* To use copy of prepared database, use `copy_of` argument. File must be located in `databases`
+  directory.
+* The name of created temporary database could be specifid with `filename` argument. Default
+  database name is `test.fdb`.
+* It's possible to specify `page_size` and `sql_dialect` of created database. These options
+  are ignored if database is created as a copy, or from backup.
+* It's possible to specify database `charset` (not applid for backups and copies) that is
+  also default connection charset.
+* After temporary database is created (by either method), it could be initialized with SQL
+  commands (executed via isql) specified using `init` argument.
+* Database is created using default server user and password. It's possible to specify
+  alternate credentials with `user` and `password` arguments.
+* The fixture ensures that database is created an initialized during test setup, and removed
+  during test teardown. To disable either phase (because create/drop is performed by test
+  itself), use `do_not_create` or `do_not_drop` arguments.
+* By default, database is set to `async` write after creation to speed up database operations.
+  It's possible to change that with `async_write` argument.
+* The database is `registered <firebird.driver.config.DriverConfig.register_database>` in firebird
+  driver configuration as `fbtest`. You can specify the configuration name explicitly with
+  `config` argument.
+
+.. note::
+
+   The returned fixture must be assigned to module-level variable. Name of this variable
+   is important, as it's used to reference the fixture in other fixture-factory functions
+   that use the database, and the test function itself.
+
+Examples::
+
+   # new empty database with default charset, page size and SQL dialect 3
+   db = db_factory()
+
+   # database created from backup
+   db = db_factory(from_backup='mon-stat-gathering-2_5.fbk')
+
+   # new empty database with default charset, page size and SQL dialect 1 initialized with
+   # isql script
+   init_script = """create table T1 (F1 char(4), F2 char(4));
+   create index T1_F1 on T1 (F1);
+   insert into T1 (F1, F2) values ('001', '001');
+   insert into T1 (F1, F2) values ('002', '002');
+   insert into T1 (F1, F2) values ('003', '003');
+   insert into T1 (F1, F2) values ('004', '004');
+   commit;
+   """
+
+   db = db_factory(sql_dialect=1, init=init_script)
+
+   # new empty database with ISO8859_1 charset, SQL dialect 3 and default page size
+   db = db_factory(charset='ISO8859_1')
+
+Primary test database
+~~~~~~~~~~~~~~~~~~~~~
+
+Because almost all Firebird tests need a database, the QA plugins works with concept of
+`primary test database`. This fixture is typically named `db`, and is used by other fixtures
+that work with database.
+
+.. important::
+
+   Database fixture is referenced by other QA plugin fixtures `by name`, not `by value`,
+   so you have to pass the fixture name as string!
+
+   Example::
+
+     db = db_factory()
+     act = python_act('db')
+
+.. note::
+
+   When test has multiple variants, these variants typically use database with the same
+   parameters and content, so they can use the single database fixture. In rare cases where
+   individual test variants need different databases, the usual naming scheme for primary
+   databases is **db_<number>**.
+
+Test functions that use the `.Action` object provided by fixtures created with `.isql_act()`
+and `.python_act()` does not need to use the primary test database directly, because its
+exposed as `.Action.db` attribute.
+
+Example::
+
+  db = db_factory()
+  act = python_act('db')
+
+  @pytest.mark.version('>=3.0')
+  def test_1(act: Action):
+    # SQL executed on primary test database
+    act.isql(switches=[], input="show database;")
+    # Using connection to primary test database
+    with act.db.connect() as con:
+       ...
+
+Additional databases
+~~~~~~~~~~~~~~~~~~~~
+
+Some tests need more than one database. Fixtures for these databases must be used directly
+by test function.
+
+Example::
+
+  db = db_factory()
+  act = python_act('db')
+
+  db_dml_sessions = db_factory(sql_dialect=3, init=init_script, filename='tmp_5087_dml_heavy.fdb')
+
+  @pytest.mark.version('>=3.0')
+  def test_1(act: Action, db_dml_sessions: Database):
+    # Using connection to primary test database
+    with act.db.connect() as con:
+       ...
+    # Using connection to secondary test database
+    with db_dml_sessions.connect() as con:
+       ...
+
+The Database object
+~~~~~~~~~~~~~~~~~~~
+
+Database fixtures provide `.Database` instance that allows access to test database.
+
+The `~.Database.connect()` method creates new `connection <firebird.driver.core.Connection>`
+to database. It's recommended to manage connection using the `with` statement::
+
+    with act.db.connect() as con:
+       ...
+
+Database atributes are often needed to use the database with external tools:
+
+* `~.Database.db_path`: Full path to test database.
+* `~.Database.dsn`: DSN to test database.
+* `~.Database.charset`: Name of database CHARACTER SET
+* `~.Database.config_name`: firebird-driver database configuration name
+* `~.Database.user`: User name
+* `~.Database.password`: Password
+
+.. seealso:: `.Database` documentation for full reference.
+
+How to use the Action object
+----------------------------
+
+Action fixture
+~~~~~~~~~~~~~~
+
+The `.Action` object is provided by fixture created by `.isql_act()` or `.python_act()`
+factory function. These functions are identical (it's in fact only one function available
+under two names). It's a legacy from old `fbtest` QA system that had two types of tests, and
+such distinction was retained during conversion of tests from old system to new one.
+
+Although there is no difference, it's recommended to retain the distinction in new test by
+using:
+
+* `.isql_act` for simple tests that use single ISQL test script.
+* `.python_act` for more complex test implementations.
+
+This function has next arguments:
+
+* `db_fixture_name`: REQUIRED. Name of database fixture (primary database).
+* `script`: OptionalSQL script that tests the server.
+* `substitutions`: Optional list of additional substitution for stdout/stderr.
+
+.. note::
+
+   The returned fixture must be assigned to module-level variable. It's typically named `act`.
+
+   When test has multiple variants and these variants use the same primary database and
+   substitutions, they can use the single action fixture. In cases where
+   individual test variants need different actions, the usual naming scheme for them is
+   **act_<number>**.
+
+Example::
+
+  db = db_factory()
+  act = python_act('db')
+
+  @pytest.mark.version('>=3.0')
+  def test_1(act: Action):
+      ...
+
+The Action class
+~~~~~~~~~~~~~~~~
+
+The `.Action` is multipurpose object, that could be used to:
+
+* Execute external Firebird tools and capture their output with `~.Action.execute()`,
+  `~.Action.extract_meta()`, `~.Action.isql()`, `~.Action.gstat()`, `~.Action.gsec()`,
+  `~.Action.gbak()`, `~.Action.gfix()`, `~.Action.nbackup()` and `~.Action.svcmgr()`
+* Access primary test database as `~.Action.db` attribute.
+* Create `connection <firebird.driver.core.Server>` to Firebird service manager with
+  `~.Action.connect_server()`.
+* Query server configuration with `~.Action.get_config()`.
+* Prind data from `cursor <firebird.driver.core.Cursor>` with `~.Action.print_data()` and
+  `~.Action.print_data_list()`.
+* Get content of Firebird server log with `~.Action.get_firebird_log()`.
+* Check Firebird server version with `~.Action.is_version()`.
+* Determine Firebird server architecture with `~.Action.get_server_architecture()`.
+* Create arbitrary DSN for database connections with `~.Action.get_dsn()`.
+* Check presence of regex patterns in string using `~.Action.match_any()`.
+* Work with Firebird trace sessions using `~.Action.trace()` and `~.Action.trace_to_stdout()`.
+* Temporary set environment variables with `~.Action.envar()`.
+* Redirect output of services to stdout with `~.Action.print_callback`.
+* Access test execution environment with `.Action` attributes and properties.
+
+Using external Firebird tools
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+External Firebird tools could be executed with methods `~.Action.execute()`,
+`~.Action.extract_meta()`, `~.Action.isql()`, `~.Action.gstat()`, `~.Action.gsec()`,
+`~.Action.gbak()`, `~.Action.gfix()`, `~.Action.nbackup()` and `~.Action.svcmgr()`.
+
+All these methods store results into `~.Action.stdout`, `~.Action.stderr` and
+`~.Action.return_code` attributes. Test may assign expected outputs into `~.Action.expected_stdout`
+and `~.Action.expected_stderr` attributes to perform asserts between real and expected output.
+However, output must be often cleaned from unwanted or irrelevant parts (especially isql
+output contains many "noise" parts). The `.Action` properties `~.Action.clean_stdout`,
+`~.Action.clean_stderr`, `~.Action.clean_expected_stdout` and `~.Action.clean_expected_stderr`
+provide such clean content.
+
+.. important::
+
+   The tool execution may fail, which could be expected or unexpected by test. Expected
+   fails must be indicated by assigning *ANY* string to `~.Action.expected_stderr` before
+   tool is executed. In such case no error is reported and test may assert that execution
+   failed in expected way. If failure is unexpected, an `.ExecutionError` exception is raised.
+
+Example of test with expected failure::
+
+  import pytest
+  from firebird.qa import *
+
+  db = db_factory()
+
+  user = user_factory('db', name='tmp$c0001', password='123')
+
+  test_script = """
+      alter user tmp$c0001 password '';
+      commit;
+  """
+
+  act = isql_act('db', test_script)
+
+  expected_stderr = """
+      Statement failed, SQLSTATE = 42000
+      unsuccessful metadata update
+      -ALTER USER TMP$C0001 failed
+      -Password should not be empty string
+  """
+
+  @pytest.mark.version('>=3.0')
+  def test_1(act: Action, user: User):
+      act.expected_stderr = expected_stderr
+      act.execute()
+      assert act.clean_stderr == act.clean_expected_stderr
+
+Example of test that will raise an exception of failure::
+
+  import pytest
+  from firebird.qa import *
+
+  db = db_factory()
+
+  test_script = """
+      set list on;
+      create table t1 (
+          campo1 numeric(15,2),
+          campo2 numeric(15,2)
+      );
+      commit;
+      set term ^;
+      create procedure teste
+      returns (
+          retorno numeric(15,2))
+      as
+      begin
+        execute statement 'select first 1 (campo1*campo2) from t1' into :retorno;
+        suspend;
+      end
+      ^
+      set term ;^
+      commit;
+
+      insert into t1 (campo1, campo2) values (10.5, 5.5);
+      commit;
+
+      select * from teste;
+  """
+
+  act = isql_act('db', test_script)
+
+  expected_stdout = """
+      RETORNO                         57.75
+  """
+
+  @pytest.mark.version('>=3')
+  def test_1(act: Action):
+      act.expected_stdout = expected_stdout
+      act.execute()
+      assert act.clean_stdout == act.clean_expected_stdout
+
+.. important::
+
+   If test performs multiple executions, it's neccessary to call `.Action.reset()` to
+   reinitialize internal variables. Otherwise "clean" functions will return wrong values,
+   and you can experience other annomalies.
+
+   Example::
+
+    @pytest.mark.version('>=3.0')
+    def test_1(act: Action, tmp_file: Path):
+        tmp_file.write_bytes(non_ascii_ddl.encode('cp1251'))
+        # run without specifying charset
+        act.expected_stdout = expected_stdout_a
+        act.expected_stderr = expected_stderr_a_40 if act.is_version('>=4.0') else expected_stderr_a_30
+        act.isql(switches=['-q'], input_file=tmp_file, charset=None, io_enc='cp1251')
+        assert (act.clean_stdout == act.clean_expected_stdout and
+                act.clean_stderr == act.clean_expected_stderr)
+        # run with charset
+        act.reset() # <-- Necessary to reinitialize internal variables
+        act.isql(switches=['-q'], input_file=tmp_file, charset='win1251', io_enc='cp1251')
+        assert act.clean_stdout.endswith('Metadata created OK.')
+
+Using trace
+~~~~~~~~~~~
+
+Test can use Firebird trace session using `~.Action.trace()` method. This method returns
+`.TraceSession` context manager instance that runs trace session in separate thread.
+
+There are two (mutually exclusive) methods how to configure the trace session:
+
+1. Using `db_events` and/or `svc_events` lists, and optional `database` specification.
+   This method is more convenient and readable, as you don't need to worry about
+   proper construction of trace config string (brackets etc.)
+2. Using `config`, when you specifically need to pass configuration in original "full" format.
+
+.. important::
+
+   It's absolutely necessary to use the :ref:`with <with>` statement to manage the
+   trace session!
+
+Example::
+
+  import pytest
+  import platform
+  from firebird.qa import *
+
+  db = db_factory()
+
+  act = python_act('db', substitutions=[('^((?!records fetched).)*$', '')])
+
+  expected_stdout = """
+      1 records fetched
+  """
+
+  test_script = """
+      set list on;
+      -- statistics for this statement SHOULD appear in trace log:
+      select 1 k1 from rdb$database;
+      commit;
+      -- statistics for this statement should NOT appear in trace log:
+      select 2 k2 from rdb$types rows 2 /* no_trace*/;
+      -- statistics for this statement should NOT appear in trace log:
+      select 3 no_trace from rdb$types rows 3;
+      -- statistics for this statement should NOT appear in trace log:
+      set term ^;
+      execute block returns(k4 int) as
+      begin
+         for select 4 from rdb$types rows 4 into k4 do suspend;
+      end -- no_trace
+      ^
+      set term ;^
+  """
+
+  trace = ['log_connections = true',
+           'log_transactions = true',
+           'log_statement_finish = true',
+           'print_plan = true',
+           'print_perf = true',
+           'time_threshold = 0',
+           'exclude_filter = %no_trace%',
+           ]
+
+  @pytest.mark.version('>=3.0')
+  def test_1(act: Action):
+      with act.trace(db_events=trace):
+          # Actions that would be traced
+          act.isql(switches=['-n'], input=test_script)
+      # Actions that are not traced
+      act.expected_stdout = expected_stdout
+      act.trace_to_stdout()
+      assert act.clean_stdout == act.clean_expected_stdout
+
+
+How to use users
+----------------
+
+How to use roles
+----------------
+
+How to use temporary files
+--------------------------
+
+.. _Python: http://www.python.org
+.. _virtualenv: https://virtualenv.pypa.io/en/latest/
+.. _virtualenvwrapper: https://virtualenvwrapper.rtfd.io
+.. _virtualenvwrapper-win: https://github.com/davidmarble/virtualenvwrapper-win/
+.. _firebird-base: https://firebird-base.rtfd.io
+.. _firebird-driver: https://firebird-driver.rtfd.io
+.. _pytest: https://docs.pytest.org
+.. _firebird-qa: https://github.com/FirebirdSQL/firebird-qa
+.. _Python package: https://docs.python.org/3/tutorial/modules.html#packages
+.. _module: https://docs.python.org/3/tutorial/modules.html
+.. _docstring: https://docs.python.org/3/glossary.html#term-docstring
+.. _pipx: https://pipx.pypa.io
+.. _venv: https://docs.python.org/3/library/venv.html
+.. _hatch: https://hatch.pypa.io

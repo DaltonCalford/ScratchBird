@@ -9,6 +9,7 @@ Last modified: 2026-02-21
 ### Source Build
 
 - `building-from-source.md`
+- `cross-os-linux-windows.md`
 
 ### Release Packages
 
@@ -51,4 +52,4 @@ After installation/build:
 ctest --test-dir build -N
 ```
 
-Expected baseline test count: `3433`.
+Expected baseline test count: `3448`.

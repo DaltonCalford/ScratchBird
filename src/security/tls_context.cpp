@@ -32,8 +32,13 @@
 #include <iomanip>
 
 // Network includes for IP address handling
-#include <arpa/inet.h>
-#include <netinet/in.h>
+#if defined(_WIN32)
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+#else
+    #include <arpa/inet.h>
+    #include <netinet/in.h>
+#endif
 
 namespace scratchbird {
 namespace security {
@@ -308,7 +313,12 @@ static std::chrono::system_clock::time_point asnTimeToTimePoint(const ASN1_TIME*
         return {};
     }
 
-    time_t t = timegm(&tm);
+    time_t t = 0;
+#if defined(_WIN32)
+    t = _mkgmtime(&tm);
+#else
+    t = timegm(&tm);
+#endif
     return std::chrono::system_clock::from_time_t(t);
 }
 
@@ -618,7 +628,7 @@ core::Status TLSContext::initServer(const TLSConfig& config, core::ErrorContext*
         case VerifyMode::NONE:
             verify_flags = SSL_VERIFY_NONE;
             break;
-        case VerifyMode::OPTIONAL:
+        case VerifyMode::OPTIONAL_VERIFY:
             verify_flags = SSL_VERIFY_PEER;
             break;
         case VerifyMode::REQUIRE:
@@ -1016,7 +1026,7 @@ core::Status TLSConnection::accept() {
         return core::Status::LOCK_TIMEOUT;
     }
 
-    state_ = TLSState::ERROR;
+    state_ = TLSState::ERROR_STATE;
     return core::Status::IO_ERROR;
 }
 
@@ -1041,7 +1051,7 @@ core::Status TLSConnection::connect() {
         return core::Status::LOCK_TIMEOUT;
     }
 
-    state_ = TLSState::ERROR;
+    state_ = TLSState::ERROR_STATE;
     return core::Status::IO_ERROR;
 }
 
@@ -1107,7 +1117,7 @@ core::Status TLSConnection::shutdown() {
         return core::Status::LOCK_TIMEOUT;
     }
 
-    state_ = TLSState::ERROR;
+    state_ = TLSState::ERROR_STATE;
     return core::Status::IO_ERROR;
 }
 

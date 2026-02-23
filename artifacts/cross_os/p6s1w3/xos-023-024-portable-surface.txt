@@ -1,0 +1,19 @@
+# POSIX include scan (runtime targets)
+src/core/job_scheduler.cpp:32:#include <poll.h>
+src/core/job_scheduler.cpp:33:#include <sys/resource.h>
+src/core/job_scheduler.cpp:34:#include <sys/stat.h>
+src/core/job_scheduler.cpp:35:#include <sys/types.h>
+src/core/job_scheduler.cpp:36:#include <sys/wait.h>
+src/core/job_scheduler.cpp:37:#include <unistd.h>
+src/core/job_scheduler.cpp:38:#include <fcntl.h>
+src/core/job_scheduler.cpp:39:#include <signal.h>
+src/network/sb_listener_main.cpp:52:#include <signal.h>
+src/network/sb_listener_main.cpp:53:#include <sys/wait.h>
+src/network/sb_listener_main.cpp:54:#include <unistd.h>
+src/network/sb_listener_main.cpp:55:#include <fcntl.h>
+src/server/service_controller.cpp:38:#include <grp.h>
+src/server/service_controller.cpp:39:#include <pwd.h>
+
+# POSIX type leak scan (portable headers)
+
+# Direct signal registration scan

@@ -65,14 +65,43 @@ std::unique_ptr<IPCClient> createTCPClient(const IPCClientConfig& config,
 // Platform Detection
 // ============================================================================
 
-IPCMethod getDefaultIPCMethod() {
+LocalIPCPolicy getDefaultLocalIPCPolicy() {
+    LocalIPCPolicy policy;
 #if defined(__linux__) || defined(__APPLE__) || defined(__unix__)
-    return IPCMethod::UNIX_SOCKET;
+    policy.preferred_method = IPCMethod::UNIX_SOCKET;
+    policy.fallback_method = IPCMethod::TCP_LOCALHOST;
+    policy.fallback_enabled = true;
+    policy.peer_credentials_supported = true;
+    policy.peer_credentials_required_for_peer_auth = true;
 #elif defined(_WIN32)
-    return IPCMethod::NAMED_PIPE;
+    policy.preferred_method = IPCMethod::NAMED_PIPE;
+    policy.fallback_method = IPCMethod::TCP_LOCALHOST;
+    policy.fallback_enabled = true;
+    // Windows named pipes currently expose PID only in this cycle.
+    policy.peer_credentials_supported = false;
+    policy.peer_credentials_required_for_peer_auth = true;
 #else
-    return IPCMethod::TCP_LOCALHOST;
+    policy.preferred_method = IPCMethod::TCP_LOCALHOST;
+    policy.fallback_method = IPCMethod::TCP_LOCALHOST;
+    policy.fallback_enabled = false;
+    policy.peer_credentials_supported = false;
+    policy.peer_credentials_required_for_peer_auth = false;
 #endif
+    return policy;
+}
+
+LocalIPCPolicy resolveLocalIPCPolicy(IPCMethod requested_method) {
+    LocalIPCPolicy resolved = getDefaultLocalIPCPolicy();
+    if (requested_method != IPCMethod::AUTO) {
+        resolved.preferred_method = requested_method;
+        resolved.fallback_method = requested_method;
+        resolved.fallback_enabled = false;
+    }
+    return resolved;
+}
+
+IPCMethod getDefaultIPCMethod() {
+    return getDefaultLocalIPCPolicy().preferred_method;
 }
 
 // ============================================================================

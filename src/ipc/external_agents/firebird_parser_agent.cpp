@@ -363,6 +363,14 @@ core::Status FirebirdParserAgent::handleOperation(FBClientState& state, core::Er
     state.last_op = op;
     
     switch (op) {
+        case fb::op_connect:
+            return sendErrorResponse(state, "op_connect is only valid during initial handshake");
+        case fb::op_exit:
+            state.state = FBClientState::DISCONNECTED;
+            return core::Status::CONNECTION_CLOSED;
+        case fb::op_protocol:
+            state.accept_version = state.protocol_version;
+            return sendAccept(state, ctx);
         case fb::op_attach:
             return handleAttach(state, packet, ctx);
         case fb::op_create:
@@ -381,6 +389,12 @@ core::Status FirebirdParserAgent::handleOperation(FBClientState& state, core::Er
             return handleRollback(state, op == fb::op_rollback_retaining, ctx);
         case fb::op_prepare:
             return handlePrepare(ctx);
+        case fb::op_reconnect:
+            if (state.handle == 0) {
+                state.handle = generateHandle();
+            }
+            sendResponse(state, state.handle, 0, nullptr, 0, ctx);
+            return core::Status::OK;
         case fb::op_start:
         case fb::op_start_and_receive:
             return handleStart(state, packet, op == fb::op_start_and_receive, ctx);
@@ -395,21 +409,31 @@ core::Status FirebirdParserAgent::handleOperation(FBClientState& state, core::Er
         case fb::op_info_database:
         case fb::op_info_request:
         case fb::op_info_transaction:
+        case fb::op_info_blob:
             return handleInfo(state, packet, op, ctx);
         case fb::op_open_blob:
         case fb::op_create_blob:
             return handleBlobOpen(state, packet, op == fb::op_create_blob, ctx);
         case fb::op_get_segment:
             return handleBlobGetSegment(state, packet, ctx);
+        case fb::op_batch_segments:
         case fb::op_put_segment:
             return handleBlobPutSegment(state, packet, ctx);
         case fb::op_close_blob:
         case fb::op_cancel_blob:
             return handleBlobClose(ctx, op == fb::op_cancel_blob);
+        case fb::op_que_events:
+        case fb::op_cancel_events:
+            sendResponse(state, 0, 0, nullptr, 0, ctx);
+            return core::Status::OK;
         case fb::op_disconnect:
             state.state = FBClientState::DISCONNECTED;
             return core::Status::OK;
+        case fb::op_credit:
+            // Flow-control credit updates are acknowledged by preserving connection state.
+            return core::Status::OK;
         case fb::op_crypt:
+        case fb::op_crypt_callback:
             return handleCrypt(state, packet, ctx);
         case fb::op_authenticate:
             return handleAuthenticate(state, packet, ctx);

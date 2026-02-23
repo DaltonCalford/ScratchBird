@@ -1,0 +1,146 @@
+{
+  "build_presets": [
+    {
+      "configurePreset": "linux-gcc-debug",
+      "name": "linux-gcc-debug-build"
+    },
+    {
+      "configurePreset": "linux-clang-debug",
+      "name": "linux-clang-debug-build"
+    },
+    {
+      "configurePreset": "linux-mingw-windows-x64",
+      "name": "linux-mingw-windows-x64-build"
+    },
+    {
+      "configuration": "Debug",
+      "configurePreset": "windows-msvc-debug",
+      "name": "windows-msvc-debug-build"
+    }
+  ],
+  "configure_presets": [
+    {
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "SCRATCHBIRD_CTEST_TIMEOUT": "3600"
+      },
+      "generator": "Ninja",
+      "hidden": true,
+      "name": "base-ninja-debug"
+    },
+    {
+      "condition": {
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux",
+        "type": "equals"
+      },
+      "description": "Primary Linux GCC configure preset for portability and CI smoke.",
+      "displayName": "Linux GCC Debug",
+      "environment": {
+        "CC": "gcc",
+        "CXX": "g++"
+      },
+      "inherits": "base-ninja-debug",
+      "name": "linux-gcc-debug"
+    },
+    {
+      "condition": {
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux",
+        "type": "equals"
+      },
+      "description": "Secondary Linux Clang configure preset for portability and CI smoke.",
+      "displayName": "Linux Clang Debug",
+      "environment": {
+        "CC": "clang",
+        "CXX": "clang++"
+      },
+      "inherits": "base-ninja-debug",
+      "name": "linux-clang-debug"
+    },
+    {
+      "cacheVariables": {
+        "BUILD_TESTING": "OFF",
+        "CMAKE_TRY_COMPILE_TARGET_TYPE": "STATIC_LIBRARY"
+      },
+      "condition": {
+        "lhs": "${hostSystemName}",
+        "rhs": "Linux",
+        "type": "equals"
+      },
+      "description": "Cross-compile from Linux to Windows x64 using MinGW-w64.",
+      "displayName": "Linux MinGW to Windows x64",
+      "inherits": "base-ninja-debug",
+      "name": "linux-mingw-windows-x64",
+      "toolchainFile": "${sourceDir}/cmake/toolchains/mingw-w64-x86_64.cmake"
+    },
+    {
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build/${presetName}",
+      "cacheVariables": {
+        "CMAKE_CONFIGURATION_TYPES": "Debug;Release",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "SCRATCHBIRD_CTEST_TIMEOUT": "3600",
+        "VCPKG_FEATURE_FLAGS": "manifests,registries",
+        "VCPKG_TARGET_TRIPLET": "x64-windows"
+      },
+      "condition": {
+        "lhs": "${hostSystemName}",
+        "rhs": "Windows",
+        "type": "equals"
+      },
+      "description": "Primary Windows MSVC configure preset for cross-OS parity (vcpkg manifest mode).",
+      "displayName": "Windows MSVC Debug",
+      "generator": "Visual Studio 17 2022",
+      "name": "windows-msvc-debug",
+      "toolchainFile": "$env{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake"
+    }
+  ],
+  "git_head": "43903bddbeabb83f3057d99e26d20e24c82dca03",
+  "inputs": {
+    "cmake_presets": {
+      "path": "CMakePresets.json",
+      "sha256": "542af8f19b40b0995314f16ad78d5b9215c161b29feaac9ce82a29ffa13ade5c"
+    },
+    "mingw_toolchain": {
+      "path": "cmake/toolchains/mingw-w64-x86_64.cmake",
+      "sha256": "723bb7278759d2bb04521d7e2f6e7b20a68023cdd9124c4b752764e609de7d4c"
+    },
+    "vcpkg_configuration": {
+      "path": "vcpkg-configuration.json",
+      "sha256": "3aee3cafa60e14d38ff5d54f9140d036ad17c4141f5dcdf9269c03bcc0afc941"
+    },
+    "vcpkg_manifest": {
+      "path": "vcpkg.json",
+      "sha256": "b6b1e0fcac7bdecfafd47a5726758a22da57fae251eb7e756b0515928a9b96a6"
+    }
+  },
+  "project_version": "0.1.0",
+  "schema": "scratchbird.cross_os.build_manifest.v1",
+  "test_presets": [
+    {
+      "configurePreset": "linux-gcc-debug",
+      "name": "linux-gcc-debug-test",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "configurePreset": "linux-clang-debug",
+      "name": "linux-clang-debug-test",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "configuration": "Debug",
+      "configurePreset": "windows-msvc-debug",
+      "name": "windows-msvc-debug-test",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ]
+}

@@ -117,6 +117,14 @@ bool cronFieldMatches(const CronField& field, int value) {
     return field.allowed[value - field.min_value];
 }
 
+bool gmtimeUtc(time_t input, std::tm* out) {
+#if defined(_WIN32)
+    return out != nullptr && gmtime_s(out, &input) == 0;
+#else
+    return out != nullptr && gmtime_r(&input, out) != nullptr;
+#endif
+}
+
 }  // namespace
 
 bool parseCronExpression(const std::string& expr, CronExpression& out) {
@@ -181,7 +189,9 @@ uint64_t computeNextCronRunMs(const std::string& expr, uint64_t after_ms) {
     for (int64_t minute = 0; minute < kMaxMinutes; ++minute) {
         time_t candidate = static_cast<time_t>(candidate_seconds + minute * 60);
         std::tm tm{};
-        gmtime_r(&candidate, &tm);
+        if (!gmtimeUtc(candidate, &tm)) {
+            continue;
+        }
         if (cronMatches(parsed, tm)) {
             return static_cast<uint64_t>(candidate) * 1000;
         }
@@ -236,7 +246,9 @@ uint64_t computeNextCronRunMsWithTimezone(const std::string& expr,
         }
         time_t local_seconds = static_cast<time_t>(*local_micro / 1000000);
         std::tm tm{};
-        gmtime_r(&local_seconds, &tm);
+        if (!gmtimeUtc(local_seconds, &tm)) {
+            continue;
+        }
         if (cronMatches(parsed, tm)) {
             return static_cast<uint64_t>(candidate) * 1000;
         }
@@ -278,7 +290,9 @@ uint64_t computePreviousCronRunMsWithTimezone(const std::string& expr,
         }
         time_t local_seconds = static_cast<time_t>(*local_micro / 1000000);
         std::tm tm{};
-        gmtime_r(&local_seconds, &tm);
+        if (!gmtimeUtc(local_seconds, &tm)) {
+            continue;
+        }
         if (cronMatches(parsed, tm)) {
             return static_cast<uint64_t>(candidate) * 1000;
         }

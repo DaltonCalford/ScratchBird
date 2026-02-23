@@ -22,8 +22,19 @@
 #include <thread>
 #include <ctime>
 #include <iostream>
+#include <cstring>
 
 namespace scratchbird::core {
+
+namespace {
+bool gmtimeUtc(time_t input, std::tm* out) {
+#if defined(_WIN32)
+    return out != nullptr && gmtime_s(out, &input) == 0;
+#else
+    return out != nullptr && gmtime_r(&input, out) != nullptr;
+#endif
+}
+}  // namespace
 
 // ============================================================================
 // StructuredLogEntry Implementation
@@ -120,7 +131,9 @@ std::string StructuredLogEntry::toJson() const {
     auto us = std::chrono::duration_cast<std::chrono::microseconds>(
         timestamp_.time_since_epoch()).count() % 1000000;
     std::tm tm_buf;
-    gmtime_r(&time_t, &tm_buf);
+    if (!gmtimeUtc(time_t, &tm_buf)) {
+        std::memset(&tm_buf, 0, sizeof(tm_buf));
+    }
     ss << "\"timestamp\":\"" << std::put_time(&tm_buf, "%Y-%m-%dT%H:%M:%S")
        << "." << std::setw(6) << std::setfill('0') << us << "Z\"";
     first = false;

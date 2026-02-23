@@ -88,6 +88,7 @@ Thumbs.db
 Testing/
 ctest-
 tests/compatibility/firebird/results/ctest/
+tests/compatibility/*/runtime/
 
 # Gradle caches/build output
 .gradle/
@@ -100,6 +101,7 @@ jdbc/build/
 # Python venvs (if used)
 .venv/
 venv/
+__pycache__/
 
 # Temporary files
 *.tmp
@@ -107,6 +109,7 @@ venv/
 *.swo
 *.kate-swp
 *~
+/.scratchbird-test-tmp/
 
 # Analysis and work-in-progress files in root
 /*.wip

@@ -1,0 +1,32 @@
+src/core/job_scheduler.cpp:286:                                     const ClockControl* clock_control) {
+src/core/job_scheduler.cpp:356:        return clock_control ? clock_control->monotonicNow() : std::chrono::steady_clock::now();
+src/core/job_scheduler.cpp:442:    , clock_control_(createDefaultClockControl())
+src/core/job_scheduler.cpp:527:        auto deadline = (clock_control_ ? clock_control_->monotonicNow() : std::chrono::steady_clock::now()) +
+src/core/job_scheduler.cpp:540:        if (clock_control_) {
+src/core/job_scheduler.cpp:541:            return clock_control_->realtimeNowMs();
+src/core/job_scheduler.cpp:786:        if (clock_control_) {
+src/core/job_scheduler.cpp:787:            return clock_control_->realtimeNowMs();
+src/core/job_scheduler.cpp:806:            return clock_control_ ? clock_control_->monotonicNow() : std::chrono::steady_clock::now();
+src/core/job_scheduler.cpp:819:            if (clock_control_) {
+src/core/job_scheduler.cpp:820:                clock_control_->sleepFor(std::chrono::milliseconds(10));
+src/core/job_scheduler.cpp:876:        if (clock_control_) {
+src/core/job_scheduler.cpp:877:            return clock_control_->realtimeNowMs();
+src/core/job_scheduler.cpp:884:        return clock_control_ ? clock_control_->monotonicNow() : std::chrono::steady_clock::now();
+src/core/job_scheduler.cpp:905:        if (clock_control_) {
+src/core/job_scheduler.cpp:906:            clock_control_->sleepFor(std::chrono::milliseconds(cfg.pre_execute_delay_ms));
+src/core/job_scheduler.cpp:993:                                                             clock_control_.get());
+include/scratchbird/core/job_scheduler.h:24:#include "scratchbird/core/clock_control.h"
+include/scratchbird/core/job_scheduler.h:97:    std::unique_ptr<ClockControl> clock_control_;
+include/scratchbird/core/clock_control.h:19:    class ClockControl
+include/scratchbird/core/clock_control.h:22:        virtual ~ClockControl() = default;
+include/scratchbird/core/clock_control.h:24:        virtual auto monotonicNow() const -> std::chrono::steady_clock::time_point = 0;
+include/scratchbird/core/clock_control.h:25:        virtual auto realtimeNowMs() const -> uint64_t = 0;
+include/scratchbird/core/clock_control.h:26:        virtual void sleepFor(std::chrono::milliseconds duration) const = 0;
+include/scratchbird/core/clock_control.h:29:    auto createDefaultClockControl() -> std::unique_ptr<ClockControl>;
+src/core/clock_control.cpp:10:#include "scratchbird/core/clock_control.h"
+src/core/clock_control.cpp:20:        class PlatformClockControl final : public ClockControl
+src/core/clock_control.cpp:23:            auto monotonicNow() const -> std::chrono::steady_clock::time_point override
+src/core/clock_control.cpp:28:            auto realtimeNowMs() const -> uint64_t override
+src/core/clock_control.cpp:35:            void sleepFor(std::chrono::milliseconds duration) const override
+src/core/clock_control.cpp:47:    auto createDefaultClockControl() -> std::unique_ptr<ClockControl>
+src/core/clock_control.cpp:49:        return std::make_unique<PlatformClockControl>();

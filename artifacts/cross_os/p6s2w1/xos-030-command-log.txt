@@ -1,0 +1,5 @@
+# XOS-030 command log
+
+cmake --list-presets
+cmake --preset linux-gcc-debug
+cmake --preset linux-clang-debug

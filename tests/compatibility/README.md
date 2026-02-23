@@ -7,14 +7,14 @@ This directory contains comprehensive SQL compatibility tests from three major d
 **Total Tests:** 11,905 SQL test files
 **Databases:** Firebird, MySQL, PostgreSQL
 **Purpose:** Validate ScratchBird's database emulation compatibility
-**Source Policy:** Firebird and PostgreSQL suites are vendored snapshots in `tests/compatibility/*/repos/` and updated one-way into ScratchBird via `scripts/update_test_repos.sh`. MySQL tests are optional/external-only (GPL); fetch them explicitly when needed.
+**Source Policy:** Firebird, MySQL, and PostgreSQL suites are vendored snapshots in `tests/compatibility/*/repos/` and updated one-way into ScratchBird via `scripts/update_test_repos.sh`.
 
 ## Statistics
 
 | Database   | Tests | Categories | Original Format | Repository |
 |------------|-------|------------|-----------------|------------|
 | **Firebird**   | 2,826 | 39 | .fbt | [fbt-repository](https://github.com/FirebirdSQL/fbt-repository) |
-| **MySQL**      | 8,841 | 59 | .test | [mysql-server](https://github.com/mysql/mysql-server) *(optional/external)* |
+| **MySQL**      | 8,841 | 59 | .test | [mysql-server](https://github.com/mysql/mysql-server) |
 | **PostgreSQL** |   238 |  1 | .sql | [postgres](https://github.com/postgres/postgres) |
 | **TOTAL**      | **11,905** | **99** | | |
 
@@ -23,15 +23,17 @@ This directory contains comprehensive SQL compatibility tests from three major d
 ```
 tests/compatibility/
 ├── firebird/                    # Firebird compatibility tests
-│   ├── repos/                  # Original test repository (vendored snapshot)
+│   ├── repos/                  # Original test repositories (vendored snapshots)
+│   │   ├── fbt-repository/
+│   │   └── firebird-qa/
 │   ├── converted/              # 2,826 converted SQL tests
 │   ├── expected/               # Expected output files
 │   ├── scripts/                # Conversion scripts
 │   ├── config/                 # Test manifests and configuration
 │   └── README.md
 │
-├── mysql/                       # MySQL compatibility tests (optional/external)
-│   ├── repos/                  # Optional snapshot (fetch with --with-mysql)
+├── mysql/                       # MySQL compatibility tests
+│   ├── repos/                  # Vendored snapshot
 │   ├── converted/              # 8,841 converted SQL tests
 │   ├── expected/               # Expected output files
 │   ├── scripts/                # Conversion scripts
@@ -70,7 +72,7 @@ tests/compatibility/
 
 ### 1. Refresh Test Repositories (Vendored Snapshots)
 
-Refresh the latest tests from official repositories (MySQL optional):
+Refresh the latest tests from official repositories:
 
 ```bash
 ./scripts/update_test_repos.sh
@@ -78,12 +80,12 @@ Refresh the latest tests from official repositories (MySQL optional):
 
 Run from `tests/compatibility/` (or use `./tests/compatibility/scripts/update_test_repos.sh` from the repo root). The script performs shallow clones and sparse checkout to refresh the vendored snapshots.
 
-To include MySQL tests (GPL), opt in:
+To skip MySQL refresh for a smaller update pass:
 
 ```bash
-SCRATCHBIRD_FETCH_MYSQL_TESTS=1 ./scripts/update_test_repos.sh
+SCRATCHBIRD_FETCH_MYSQL_TESTS=0 ./scripts/update_test_repos.sh
 # or
-./scripts/update_test_repos.sh --with-mysql
+./scripts/update_test_repos.sh --skip-mysql
 ```
 
 ### 2. Convert Tests to SQL
@@ -118,6 +120,16 @@ SCRATCHBIRD_PG_COMPAT_RUN=1 ctest -R CompatibilityPostgreSQL --test-dir build
 # MySQL compatibility subset (CTest, opt-in)
 SCRATCHBIRD_MY_COMPAT_RUN=1 ctest -R CompatibilityMySQL --test-dir build
 ```
+
+### 5. Run Full Emulation Verification Bundle
+
+To regenerate the standardized gate and wire-capture evidence from in-tree suites:
+
+```bash
+./scripts/verify_required_emulation_tests.sh
+```
+
+This writes reports under `tests/compatibility/results/emulation/`.
 
 ## Test Conversion
 
@@ -202,8 +214,9 @@ Test repositories are vendored snapshots (no git submodules). Refresh them with:
 Updates are one-way into ScratchBird; do not push to upstream repositories. Avoid adding `.git` metadata under `repos/`.
 
 The update script uses shallow clones and sparse checkout to minimize disk usage and rsyncs the snapshot into `repos/`:
-- **MySQL:** Optional; only `mysql-test/` directory when explicitly enabled
-- **PostgreSQL:** Only `src/test/regress/` directory (~18 MB vs 152 MB full repo)
+- **Firebird:** `fbt-repository` and `firebird-qa`
+- **MySQL:** `mysql-test/` directory from `mysql-server`
+- **PostgreSQL:** `src/test/regress/` directory from `postgres`
 
 Large upstream artifacts are kept for fidelity and regression coverage (for example, `tests/compatibility/mysql/repos/mysql-server/mysql-test/std_data/bug36444172/dump.sql`).
 
@@ -259,6 +272,6 @@ See individual repository licenses for details.
 
 ---
 
-**Last Updated:** 2025-12-31
+**Last Updated:** 2026-02-22
 **Test Count:** 11,905
 **Conversion Success Rate:** 99.8%

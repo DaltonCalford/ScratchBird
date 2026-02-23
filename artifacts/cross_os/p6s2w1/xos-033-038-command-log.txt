@@ -1,0 +1,12 @@
+# XOS-033..038 command log
+
+cmake --list-presets
+python3 -m json.tool vcpkg.json
+python3 -m json.tool vcpkg-configuration.json
+cmake --preset linux-gcc-debug -DSCRATCHBIRD_ENABLE_SYSTEMD_RUNTIME=OFF -DSCRATCHBIRD_ENABLE_FORK_RUNTIME=ON
+scripts/cross_os/collect_dependency_parity.sh artifacts/cross_os/p6s2w1/xos-035-dependency-parity.csv
+scripts/cross_os/generate_build_cache_keys.sh artifacts/cross_os/p6s2w1/xos-036-cache-keys.md
+scripts/cross_os/generate_build_manifest.py artifacts/cross_os/p6s2w1/xos-037-build-manifest.json
+scripts/cross_os/smoke_profiles.sh --mode local --profiles linux-gcc-debug --configure-only
+scripts/cross_os/smoke_profiles.sh --mode ci --profiles linux-gcc-debug,linux-clang-debug --configure-only --dry-run
+cmake --preset linux-gcc-debug -DSCRATCHBIRD_ENABLE_SYSTEMD_RUNTIME=ON -DSCRATCHBIRD_ENABLE_FORK_RUNTIME=ON

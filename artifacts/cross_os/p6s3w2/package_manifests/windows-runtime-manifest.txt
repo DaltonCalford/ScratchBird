@@ -1,0 +1,13 @@
+build/linux-mingw-windows-x64/src/sb_charset_loader.exe
+build/linux-mingw-windows-x64/src/sb_listener_fb.exe
+build/linux-mingw-windows-x64/src/sb_listener_mysql.exe
+build/linux-mingw-windows-x64/src/sb_listener_native.exe
+build/linux-mingw-windows-x64/src/sb_listener_pg.exe
+build/linux-mingw-windows-x64/src/sb_manager.exe
+build/linux-mingw-windows-x64/src/sb_parser_fb.exe
+build/linux-mingw-windows-x64/src/sb_parser_mysql.exe
+build/linux-mingw-windows-x64/src/sb_parser_native.exe
+build/linux-mingw-windows-x64/src/sb_parser_pg.exe
+build/linux-mingw-windows-x64/src/sb_server.exe
+build/linux-mingw-windows-x64/src/scratchbird.exe
+build/linux-mingw-windows-x64/tools/sb_timezone_loader.exe

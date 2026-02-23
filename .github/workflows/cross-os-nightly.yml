@@ -1,0 +1,52 @@
+name: Cross OS Nightly Extended
+
+on:
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+
+env:
+  CTEST_OUTPUT_ON_FAILURE: 1
+
+jobs:
+  linux_extended_suite:
+    name: Linux Extended Suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake ninja-build gcc g++ clang pkg-config \
+            libssl-dev libxml2-dev liblz4-dev libgeos-dev libproj-dev
+      - name: Configure
+        run: cmake --preset linux-gcc-debug
+      - name: Build
+        run: cmake --build --preset linux-gcc-debug-build --parallel
+      - name: Run Extended Lane
+        run: ctest --preset linux-gcc-debug-test -E "quarantine" --output-on-failure
+
+  linux_performance_sample:
+    name: Linux Performance Sample
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            cmake ninja-build gcc g++ clang pkg-config \
+            libssl-dev libxml2-dev liblz4-dev libgeos-dev libproj-dev
+      - name: Configure
+        run: cmake --preset linux-gcc-debug
+      - name: Build
+        run: cmake --build --preset linux-gcc-debug-build --parallel
+      - name: Run Performance Sample Lane
+        run: scripts/cross_os/run_portable_lane.sh --lane performance_sample --test-preset linux-gcc-debug-test

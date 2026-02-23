@@ -70,7 +70,7 @@ TEST(SBLRV3OpcodeIdentity, MapsExpandedStatementFamilies) {
     EXPECT_EQ(canonicalOpcodeSymbolForV3Name("SBLR3_ADMIN_RESTORE"), "OP_STMT_ADMIN_RESTORE");
     EXPECT_EQ(canonicalOpcodeSymbolForV3Name("SBLR3_ADMIN_VALIDATE"), "OP_STMT_ADMIN_VALIDATE");
     EXPECT_EQ(canonicalOpcodeSymbolForV3Name("SBLR3_ADMIN_VACUUM_ALIAS"),
-              "OP_STMT_ADMIN_VACUUM_ALIAS");
+              "OP_COMPAT_ADMIN_VACUUM_ALIAS");
     EXPECT_EQ(canonicalOpcodeSymbolForV3Name("SBLR3_SET_VARIABLE"), "OP_STMT_SESSION_SET");
     EXPECT_EQ(canonicalOpcodeSymbolForV3Name("SBLR3_SHOW_VARIABLE"), "OP_STMT_SESSION_SHOW");
     EXPECT_EQ(canonicalOpcodeSymbolForV3Name("SBLR3_SHOW_SYSTEM"), "OP_STMT_SHOW_SYSTEM_OBJECTS");
@@ -245,7 +245,7 @@ TEST(SBLRV3OpcodeIdentity, MapsExpandedStatementFamilies) {
     EXPECT_TRUE(opcodeMapsToCanonicalFeatureName("SBLR3_ADMIN_BACKUP"));
     EXPECT_TRUE(opcodeMapsToCanonicalFeatureName("SBLR3_ADMIN_RESTORE"));
     EXPECT_TRUE(opcodeMapsToCanonicalFeatureName("SBLR3_ADMIN_VALIDATE"));
-    EXPECT_TRUE(opcodeMapsToCanonicalFeatureName("SBLR3_ADMIN_VACUUM_ALIAS"));
+    EXPECT_FALSE(opcodeMapsToCanonicalFeatureName("SBLR3_ADMIN_VACUUM_ALIAS"));
     EXPECT_TRUE(opcodeMapsToCanonicalFeatureName("SBLR3_SET_VARIABLE"));
     EXPECT_TRUE(opcodeMapsToCanonicalFeatureName("SBLR3_SHOW_VARIABLE"));
     EXPECT_TRUE(opcodeMapsToCanonicalFeatureName("SBLR3_SHOW_SYSTEM"));

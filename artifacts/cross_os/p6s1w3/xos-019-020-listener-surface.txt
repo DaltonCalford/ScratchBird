@@ -1,0 +1,31 @@
+src/network/sb_listener_main.cpp:41:#include "scratchbird/network/listener_ipc_adapter.h"
+src/network/sb_listener_main.cpp:2038:    auto control_plane = scratchbird::network::createDefaultLocalControlChannel();
+src/network/sb_listener_main.cpp:2039:    auto management_plane = scratchbird::network::createDefaultLocalControlChannel();
+src/network/sb_listener_main.cpp:2040:    auto front_door = scratchbird::network::createDefaultListenerSocketAcceptor();
+src/network/sb_listener_main.cpp:2063:    if (control_plane->start(control_socket, &ctx) != scratchbird::core::Status::OK) {
+src/network/sb_listener_main.cpp:2071:            auto control_conn = control_plane->accept(&local_ctx);
+src/network/sb_listener_main.cpp:2082:        control_plane->stop();
+src/network/sb_listener_main.cpp:2093:        control_plane->stop();
+src/network/sb_listener_main.cpp:2102:        if (management_plane->start(management_socket, &ctx) == scratchbird::core::Status::OK) {
+src/network/sb_listener_main.cpp:2107:                    auto mgmt_conn = management_plane->accept(&local_ctx);
+src/network/sb_listener_main.cpp:2120:            control_plane->stop();
+src/network/sb_listener_main.cpp:2136:    if (front_door->start(front_door_config, &ctx) != scratchbird::core::Status::OK) {
+src/network/sb_listener_main.cpp:2140:        control_plane->stop();
+src/network/sb_listener_main.cpp:2141:        management_plane->stop();
+src/network/sb_listener_main.cpp:2194:        auto client = front_door->accept(&client_addr, &ctx);
+src/network/sb_listener_main.cpp:2231:    front_door->close();
+src/network/sb_listener_main.cpp:2233:    control_plane->stop();
+src/network/sb_listener_main.cpp:2234:    management_plane->stop();
+src/network/listener_ipc_adapter.cpp:10:#include "scratchbird/network/listener_ipc_adapter.h"
+src/network/listener_ipc_adapter.cpp:22:        class DefaultListenerSocketAcceptor final : public ListenerSocketAcceptor
+src/network/listener_ipc_adapter.cpp:99:        class DefaultLocalControlChannel final : public LocalControlChannel
+src/network/listener_ipc_adapter.cpp:134:    auto createDefaultListenerSocketAcceptor() -> std::unique_ptr<ListenerSocketAcceptor>
+src/network/listener_ipc_adapter.cpp:136:        return std::make_unique<DefaultListenerSocketAcceptor>();
+src/network/listener_ipc_adapter.cpp:139:    auto createDefaultLocalControlChannel() -> std::unique_ptr<LocalControlChannel>
+src/network/listener_ipc_adapter.cpp:141:        return std::make_unique<DefaultLocalControlChannel>();
+include/scratchbird/network/listener_ipc_adapter.h:33:    class ListenerSocketAcceptor
+include/scratchbird/network/listener_ipc_adapter.h:36:        virtual ~ListenerSocketAcceptor() = default;
+include/scratchbird/network/listener_ipc_adapter.h:49:    class LocalControlChannel
+include/scratchbird/network/listener_ipc_adapter.h:52:        virtual ~LocalControlChannel() = default;
+include/scratchbird/network/listener_ipc_adapter.h:64:    auto createDefaultListenerSocketAcceptor() -> std::unique_ptr<ListenerSocketAcceptor>;
+include/scratchbird/network/listener_ipc_adapter.h:65:    auto createDefaultLocalControlChannel() -> std::unique_ptr<LocalControlChannel>;

@@ -13,6 +13,7 @@
 #include "scratchbird/core/logger.h"
 #include "scratchbird/core/tablespace.h"
 #include "scratchbird/core/catalog_manager.h"
+#include "scratchbird/core/portable_file_io.h"
 #include <cstring>
 #include <algorithm>
 #include <chrono>
@@ -1069,7 +1070,7 @@ namespace scratchbird::core
         }
 
         // Step 3: Create .sbts file with exclusive create
-        int fd = ::open(path.c_str(), O_RDWR | O_CREAT | O_EXCL, 0644);
+        int fd = platform::openFd(path.c_str(), O_RDWR | O_CREAT | O_EXCL, 0644);
         if (fd < 0)
         {
             SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
@@ -1136,7 +1137,7 @@ namespace scratchbird::core
         header->latest_completed_xid = 0;
 
         // Step 5: Write TablespaceHeader to page 0
-        ssize_t bytes_written = ::pwrite(fd, header_buffer.get(), page_size_, 0);
+        ssize_t bytes_written = platform::writeAt(fd, header_buffer.get(), page_size_, 0);
         if (bytes_written != static_cast<ssize_t>(page_size_))
         {
             ::close(fd);
@@ -1184,7 +1185,7 @@ namespace scratchbird::core
         // We already set bitmap[0] = 0x03, so pages 2-7 in first byte are already 0 (free)
         // This is correct
 
-        bytes_written = ::pwrite(fd, fsm_buffer.get(), page_size_, page_size_);
+        bytes_written = platform::writeAt(fd, fsm_buffer.get(), page_size_, page_size_);
         if (bytes_written != static_cast<ssize_t>(page_size_))
         {
             ::close(fd);
@@ -1197,7 +1198,7 @@ namespace scratchbird::core
         }
 
         // Step 7: Sync initial pages (header + FSM) to disk before proceeding
-        if (::fsync(fd) != 0)
+        if (platform::syncFd(fd) != 0)
         {
             ::close(fd);
             ::unlink(path.c_str()); // Clean up partial file
@@ -1314,7 +1315,7 @@ namespace scratchbird::core
         }
 
         // Step 2: Open .sbts file
-        int fd = ::open(path.c_str(), O_RDWR);
+        int fd = platform::openFd(path.c_str(), O_RDWR);
         if (fd < 0)
         {
             SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
@@ -1325,7 +1326,7 @@ namespace scratchbird::core
 
         // Step 3: Read TablespaceHeader (page 0)
         auto header_buffer = std::make_unique<uint8_t[]>(page_size_);
-        ssize_t bytes_read = ::pread(fd, header_buffer.get(), page_size_, 0);
+        ssize_t bytes_read = platform::readAt(fd, header_buffer.get(), page_size_, 0);
         if (bytes_read != static_cast<ssize_t>(page_size_))
         {
             ::close(fd);
@@ -1414,7 +1415,7 @@ namespace scratchbird::core
 
         // Step 9: Load tablespace FSM (page 1)
         auto fsm_buffer = std::make_unique<uint8_t[]>(page_size_);
-        ssize_t fsm_bytes_read = ::pread(fd, fsm_buffer.get(), page_size_, page_size_);
+        ssize_t fsm_bytes_read = platform::readAt(fd, fsm_buffer.get(), page_size_, page_size_);
         if (fsm_bytes_read != static_cast<ssize_t>(page_size_))
         {
             ::close(fd);
@@ -1556,7 +1557,7 @@ namespace scratchbird::core
                 std::memcpy(fsm_data->bitmap, ts_fsm.bitmap.data(), bitmap_bytes);
 
                 // Write FSM to page 1 of tablespace
-                ssize_t bytes_written = ::pwrite(fd, fsm_buffer.get(), page_size_, page_size_);
+                ssize_t bytes_written = platform::writeAt(fd, fsm_buffer.get(), page_size_, page_size_);
                 if (bytes_written != static_cast<ssize_t>(page_size_))
                 {
                     LOG_WARNING(STORAGE,
@@ -1579,7 +1580,7 @@ namespace scratchbird::core
         }
 
         // Step 4: Sync tablespace file to disk
-        if (::fsync(fd) != 0)
+        if (platform::syncFd(fd) != 0)
         {
             // Log warning but don't fail - we'll still try to close
             LOG_WARNING(STORAGE,
@@ -1642,7 +1643,7 @@ namespace scratchbird::core
 
         // Step 3: Read TablespaceHeader to get autoextend config and current state
         auto header_buffer = std::make_unique<uint8_t[]>(page_size_);
-        ssize_t bytes_read = ::pread(fd, header_buffer.get(), page_size_, 0);
+        ssize_t bytes_read = platform::readAt(fd, header_buffer.get(), page_size_, 0);
         if (bytes_read != static_cast<ssize_t>(page_size_))
         {
             SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
@@ -1815,7 +1816,7 @@ namespace scratchbird::core
         }
 
         // Write updated header back to page 0
-        ssize_t bytes_written = ::pwrite(fd, header_buffer.get(), page_size_, 0);
+        ssize_t bytes_written = platform::writeAt(fd, header_buffer.get(), page_size_, 0);
         if (bytes_written != static_cast<ssize_t>(page_size_))
         {
             SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
@@ -1919,7 +1920,7 @@ namespace scratchbird::core
 
         // Read current header
         auto header_buffer = std::make_unique<uint8_t[]>(page_size_);
-        ssize_t bytes_read = ::pread(fd, header_buffer.get(), page_size_, 0);
+        ssize_t bytes_read = platform::readAt(fd, header_buffer.get(), page_size_, 0);
         if (bytes_read != static_cast<ssize_t>(page_size_))
         {
             SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
@@ -1988,7 +1989,7 @@ namespace scratchbird::core
         }
 
         // Write updated header back
-        ssize_t bytes_written = ::pwrite(fd, header_buffer.get(), page_size_, 0);
+        ssize_t bytes_written = platform::writeAt(fd, header_buffer.get(), page_size_, 0);
         if (bytes_written != static_cast<ssize_t>(page_size_))
         {
             SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
@@ -1998,7 +1999,7 @@ namespace scratchbird::core
         }
 
         // Sync to disk
-        ::fsync(fd);
+        platform::syncFd(fd);
 
         return Status::OK;
     }
@@ -2036,7 +2037,7 @@ namespace scratchbird::core
 
         // Step 3: Read TablespaceHeader to get current state
         auto header_buffer = std::make_unique<uint8_t[]>(page_size_);
-        ssize_t bytes_read = ::pread(fd, header_buffer.get(), page_size_, 0);
+        ssize_t bytes_read = platform::readAt(fd, header_buffer.get(), page_size_, 0);
         if (bytes_read != static_cast<ssize_t>(page_size_))
         {
             SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
@@ -2144,7 +2145,7 @@ namespace scratchbird::core
             {
                 size_t to_write = (remaining > static_cast<off_t>(BATCH_SIZE)) ? BATCH_SIZE : static_cast<size_t>(remaining);
 
-                ssize_t bytes_written = ::pwrite(fd, zero_buffer.get(), to_write, offset);
+                ssize_t bytes_written = platform::writeAt(fd, zero_buffer.get(), to_write, offset);
                 if (bytes_written != static_cast<ssize_t>(to_write))
                 {
                     SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
@@ -2224,7 +2225,7 @@ namespace scratchbird::core
         }
 
         // Write updated header back to page 0
-        ssize_t bytes_written = ::pwrite(fd, header_buffer.get(), page_size_, 0);
+        ssize_t bytes_written = platform::writeAt(fd, header_buffer.get(), page_size_, 0);
         if (bytes_written != static_cast<ssize_t>(page_size_))
         {
             SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
@@ -2236,7 +2237,7 @@ namespace scratchbird::core
         }
 
         // Step 9: Sync changes to disk
-        if (::fsync(fd) != 0)
+        if (platform::syncFd(fd) != 0)
         {
             LOG_WARNING(STORAGE,
                        "Failed to sync tablespace %u after preallocation (errno=%d)",

@@ -1,4 +1,5 @@
 # Building from Source
+Last modified: 2026-02-22
 
 Compile ScratchBird from source code.
 
@@ -104,6 +105,35 @@ ctest
 
 # Install (optional)
 sudo make install
+```
+
+## Cross-OS Preset Workflow (Linux + Windows)
+
+ScratchBird 0.1.0 uses CMake presets for reproducible Linux and Windows builds.
+
+```bash
+# Linux GCC
+cmake --preset linux-gcc-debug
+cmake --build --preset linux-gcc-debug-build --parallel
+ctest --preset linux-gcc-debug-test -E quarantine --output-on-failure
+
+# Linux Clang
+cmake --preset linux-clang-debug
+cmake --build --preset linux-clang-debug-build --parallel
+ctest --preset linux-clang-debug-test -E quarantine --output-on-failure
+
+# Linux -> Windows (MinGW cross compile)
+scripts/cross_os/bootstrap_mingw_zlib.sh
+scripts/cross_os/bootstrap_mingw_openssl.sh
+cmake --preset linux-mingw-windows-x64
+cmake --build --preset linux-mingw-windows-x64-build --parallel
+```
+
+Portable lane helpers:
+
+```bash
+scripts/cross_os/run_portable_lane.sh --lane portable --test-preset linux-gcc-debug-test
+scripts/cross_os/run_portable_lane.sh --lane windows_portable --test-preset windows-msvc-debug-test
 ```
 
 ---
@@ -260,44 +290,19 @@ You can run directly from the build directory:
 
 ## Windows Cross-Compilation
 
-Cross-compile Windows binaries on Linux using MinGW-w64:
-
-### Install Cross-Compiler
-
-**Debian/Ubuntu:**
-```bash
-sudo apt install mingw-w64
-```
-
-**Fedora:**
-```bash
-sudo dnf install mingw64-gcc-c++
-```
-
-### Create Toolchain File
-
-Create `Toolchain-MinGW-w64.cmake`:
-
-```cmake
-set(CMAKE_SYSTEM_NAME Windows)
-set(CMAKE_C_COMPILER x86_64-w64-mingw32-gcc)
-set(CMAKE_CXX_COMPILER x86_64-w64-mingw32-g++)
-set(CMAKE_RC_COMPILER x86_64-w64-mingw32-windres)
-set(CMAKE_FIND_ROOT_PATH /usr/x86_64-w64-mingw32)
-set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
-set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
-set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
-set(CMAKE_EXE_LINKER_FLAGS "-static-libgcc -static-libstdc++ -static -lpthread")
-```
-
-### Build for Windows
+Use the cross preset and bootstrap scripts in-tree:
 
 ```bash
-mkdir build-windows
-cd build-windows
-cmake .. -DCMAKE_TOOLCHAIN_FILE=../Toolchain-MinGW-w64.cmake
-make -j$(nproc)
+scripts/cross_os/bootstrap_mingw_zlib.sh
+scripts/cross_os/bootstrap_mingw_openssl.sh
+cmake --preset linux-mingw-windows-x64
+cmake --build --preset linux-mingw-windows-x64-build --parallel
 ```
+
+Output binaries are emitted under:
+
+- `build/linux-mingw-windows-x64/src/*.exe`
+- `build/linux-mingw-windows-x64/tools/*.exe`
 
 ---
 

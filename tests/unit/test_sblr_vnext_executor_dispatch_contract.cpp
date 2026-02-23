@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <cstdint>
 #include <cstring>
 #include <filesystem>
 #include <memory>
@@ -100,6 +101,33 @@ auto makeContainerWithInstruction(uint16_t opcode, Value::Object payload) -> std
 
     return makeContainerFromStream(stream);
 }
+
+auto makeContainerWithInstruction(uint16_t opcode, Value::Bytes payload) -> std::vector<uint8_t>
+{
+    Buffer stream;
+    DecodeError err;
+
+    Instruction version;
+    version.opcode = static_cast<uint16_t>(Opcode::SBLR3_VERSION);
+    version.flags = 0;
+    version.payload = Value(Value::Bytes{0x03, 0x00, 0x00, 0x00, 0x00, 0x00});
+    EXPECT_TRUE(scratchbird::sblr::v3::encodeInstructionWithSchema(version, stream, err))
+        << err.message;
+
+    Instruction stmt;
+    stmt.opcode = opcode;
+    stmt.flags = 0;
+    stmt.payload = Value(std::move(payload));
+    scratchbird::sblr::v3::encodeInstruction(stmt, stream);
+
+    Instruction end;
+    end.opcode = static_cast<uint16_t>(Opcode::SBLR3_END);
+    end.flags = 0;
+    end.payload = Value(Value::Bytes{});
+    scratchbird::sblr::v3::encodeInstruction(end, stream);
+
+    return makeContainerFromStream(stream);
+}
 } // namespace
 
 class SBLRVNextExecutorDispatchContractTest : public ::testing::Test
@@ -152,6 +180,11 @@ protected:
     }
 
     auto executeVNext(uint16_t opcode, Value::Object payload) -> ExecutionResult
+    {
+        return executeContainer(makeContainerWithInstruction(opcode, std::move(payload)));
+    }
+
+    auto executeVNextRaw(uint16_t opcode, Value::Bytes payload) -> ExecutionResult
     {
         return executeContainer(makeContainerWithInstruction(opcode, std::move(payload)));
     }
@@ -264,22 +297,43 @@ TEST_F(SBLRVNextExecutorDispatchContractTest, KnownVNextOpcodesRejectWithDetermi
               metricCounterValue(metric, {"vnext_opcode_dispatch", "reject", "BRG_0406"}));
 }
 
-TEST_F(SBLRVNextExecutorDispatchContractTest, VacuumAliasMapsToSweepGarbageCollection)
+TEST_F(SBLRVNextExecutorDispatchContractTest, RetiredVacuumAliasCodepointIsRejected)
 {
     const std::string metric = "scratchbird_vnext_executor_events_total";
-    const double ok_before =
-        metricCounterValue(metric, {"vnext_opcode_dispatch", "ok", "SBLR3_ADMIN_VACUUM_ALIAS"});
+    const double reject_before =
+        metricCounterValue(metric, {"vnext_opcode_dispatch", "reject", "IRX_0403"});
+
+    // 0x611E was the retired vacuum alias opcode codepoint.
+    // The retirement path remains a schema-validated control command.
+    const uint16_t retired_opcode = static_cast<uint16_t>(0x611E);
+    scratchbird::sblr::v3::Instruction retired_inst;
+    retired_inst.opcode = retired_opcode;
+    retired_inst.flags = 0;
+    retired_inst.payload = Value(Value::Object{{"action", Value(static_cast<uint64_t>(0))}});
+
+    scratchbird::sblr::v3::Buffer retired_encoded;
+    DecodeError retired_encode_err;
+    EXPECT_TRUE(scratchbird::sblr::v3::encodeInstructionWithSchema(retired_inst, retired_encoded, retired_encode_err))
+        << retired_encode_err.message;
+    EXPECT_GE(retired_encoded.size(), 8u);
+    const char* retired_schema_name = scratchbird::sblr::v3::opcodeName(retired_inst.opcode);
+    EXPECT_STREQ("SBLR3_RETIRED_VACUUM_ALIAS", retired_schema_name ? retired_schema_name : "");
+
+    size_t retired_offset = 0;
+    scratchbird::sblr::v3::Instruction retired_decoded;
+    DecodeError retired_decode_err;
+    bool retired_decoded_ok = scratchbird::sblr::v3::decodeInstructionWithSchema(
+        retired_encoded.data(), retired_encoded.size(), retired_offset, retired_decoded, retired_decode_err);
+    EXPECT_TRUE(retired_decoded_ok) << retired_decode_err.message;
 
     ExecutionResult result = executeVNext(
-        static_cast<uint16_t>(Opcode::SBLR3_ADMIN_VACUUM_ALIAS),
-        Value::Object{
-            {"action", Value(static_cast<uint64_t>(31))},
-            {"options", Value(Value::Object{})},
-        });
+        retired_opcode,
+        Value::Object{{"action", Value(static_cast<uint64_t>(0))}});
 
-    EXPECT_TRUE(result.success()) << result.error();
-    EXPECT_EQ(ok_before + 1.0,
-              metricCounterValue(metric, {"vnext_opcode_dispatch", "ok", "SBLR3_ADMIN_VACUUM_ALIAS"}));
+    EXPECT_FALSE(result.success());
+    EXPECT_NE(result.error().find("IRX_0403"), std::string::npos) << result.error();
+    EXPECT_EQ(reject_before + 1.0,
+              metricCounterValue(metric, {"vnext_opcode_dispatch", "reject", "IRX_0403"}));
 }
 
 TEST_F(SBLRVNextExecutorDispatchContractTest, UdrCompileDispatchAcceptsValidProfilePayload)

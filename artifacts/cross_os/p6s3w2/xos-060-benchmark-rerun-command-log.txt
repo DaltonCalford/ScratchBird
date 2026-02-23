@@ -1,0 +1,45 @@
+== 2026-02-22T20:20:34Z baseline rerun ==
+Wrote benchmark JSON: artifacts/cross_os/p6s3w2/xos-060-linux-benchmark-baseline.json
+{
+  "mean_ms": 260.11,
+  "median_ms": 258,
+  "runs": 9,
+  "samples_ms": [
+    261,
+    249,
+    270,
+    272,
+    254,
+    258,
+    254,
+    268,
+    255
+  ],
+  "schema": "scratchbird.cross_os.benchmark.v1",
+  "test_preset": "linux-gcc-debug-test",
+  "test_regex": "ServiceControllerListenerBootstrapTest\\.NormalizeConfigPathsAndValidateUtf8NormalizesKeyRuntimePaths|MySQLParserTest\\.CreateTableBasic|PostgreSQLParserTest\\.SimpleSelect|FirebirdParserTest\\.SelectSimple"
+}
+== 2026-02-22T20:20:36Z candidate rerun ==
+Wrote benchmark JSON: artifacts/cross_os/p6s3w2/xos-060-linux-benchmark.json
+{
+  "baseline_median_ms": 258,
+  "mean_ms": 260.56,
+  "median_ms": 260,
+  "regression_pct": 0.7751937984496124,
+  "runs": 9,
+  "samples_ms": [
+    253,
+    268,
+    260,
+    264,
+    255,
+    265,
+    267,
+    253,
+    260
+  ],
+  "schema": "scratchbird.cross_os.benchmark.v1",
+  "test_preset": "linux-gcc-debug-test",
+  "test_regex": "ServiceControllerListenerBootstrapTest\\.NormalizeConfigPathsAndValidateUtf8NormalizesKeyRuntimePaths|MySQLParserTest\\.CreateTableBasic|PostgreSQLParserTest\\.SimpleSelect|FirebirdParserTest\\.SelectSimple",
+  "within_5pct_threshold": "yes"
+}

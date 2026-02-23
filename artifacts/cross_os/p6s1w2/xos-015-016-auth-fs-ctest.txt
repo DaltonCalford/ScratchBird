@@ -1,0 +1,51 @@
+Internal ctest changing into directory: /home/dcalford/CliWork/ScratchBird/build
+Test project /home/dcalford/CliWork/ScratchBird/build
+      Start  97: AuthBootstrapClaimStandaloneTest.LocalProviderRejectsNullCatalog
+ 1/21 Test  #97: AuthBootstrapClaimStandaloneTest.LocalProviderRejectsNullCatalog .................   Passed    0.02 sec
+      Start  98: AuthBootstrapClaimTest.ConcurrentBootstrapClaimsHaveSingleWinner
+ 2/21 Test  #98: AuthBootstrapClaimTest.ConcurrentBootstrapClaimsHaveSingleWinner .................   Passed    0.66 sec
+      Start  99: AuthBootstrapClaimTest.BootstrapTokenSingleUseEnforced
+ 3/21 Test  #99: AuthBootstrapClaimTest.BootstrapTokenSingleUseEnforced ...........................   Passed    0.56 sec
+      Start 100: AuthBootstrapClaimTest.ReleasingWithoutClaimIsNoOp
+ 4/21 Test #100: AuthBootstrapClaimTest.ReleasingWithoutClaimIsNoOp ...............................   Passed    0.35 sec
+      Start 101: AuthBootstrapClaimTest.LegacyAuthMethodUsageUpdatesTelemetryCounters
+ 5/21 Test #101: AuthBootstrapClaimTest.LegacyAuthMethodUsageUpdatesTelemetryCounters .............   Passed    0.43 sec
+      Start 102: AuthBootstrapClaimTest.AuthKeyScopeBindingAndLastUsedRoundTrip
+ 6/21 Test #102: AuthBootstrapClaimTest.AuthKeyScopeBindingAndLastUsedRoundTrip ...................   Passed    0.36 sec
+      Start 103: AuthBootstrapClaimTest.AuthKeyBindingValidationRejectsMissingValue
+ 7/21 Test #103: AuthBootstrapClaimTest.AuthKeyBindingValidationRejectsMissingValue ...............   Passed    0.32 sec
+      Start 104: AuthBootstrapClaimTest.AuthKeyUsageValidationRejectsInvalidSeedCounts
+ 8/21 Test #104: AuthBootstrapClaimTest.AuthKeyUsageValidationRejectsInvalidSeedCounts ............   Passed    0.32 sec
+      Start 105: AuthBootstrapClaimTest.AuthKeyListNormalizesExpiredStatusAndPersistsIt
+ 9/21 Test #105: AuthBootstrapClaimTest.AuthKeyListNormalizesExpiredStatusAndPersistsIt ...........   Passed    0.35 sec
+      Start 106: AuthBootstrapClaimTest.AuthTokenSuccessConsumesKey
+10/21 Test #106: AuthBootstrapClaimTest.AuthTokenSuccessConsumesKey ...............................   Passed    0.35 sec
+      Start 107: AuthBootstrapClaimTest.AuthTokenDeniedForRevokedOrExpiredKey
+11/21 Test #107: AuthBootstrapClaimTest.AuthTokenDeniedForRevokedOrExpiredKey .....................   Passed    0.38 sec
+      Start 108: AuthBootstrapClaimTest.AuthKeyBulkRevocationByIssuerAndScope
+12/21 Test #108: AuthBootstrapClaimTest.AuthKeyBulkRevocationByIssuerAndScope .....................   Passed    0.54 sec
+      Start 109: AuthBootstrapClaimTest.PeerAuthRequiresExplicitPeerMapping
+13/21 Test #109: AuthBootstrapClaimTest.PeerAuthRequiresExplicitPeerMapping .......................   Passed    0.32 sec
+      Start 110: AuthBootstrapClaimTest.LockoutStatePersistsAcrossProviderInstances
+14/21 Test #110: AuthBootstrapClaimTest.LockoutStatePersistsAcrossProviderInstances ...............   Passed    1.06 sec
+      Start 111: AuthBootstrapClaimTest.LockoutScopeIsBoundToPeerIdentityAttributes
+15/21 Test #111: AuthBootstrapClaimTest.LockoutScopeIsBoundToPeerIdentityAttributes ...............   Passed    1.05 sec
+      Start 112: AuthBootstrapClaimTest.ScramBeginAndFinishRateLimitsAreSeparated
+16/21 Test #112: AuthBootstrapClaimTest.ScramBeginAndFinishRateLimitsAreSeparated .................   Passed    0.69 sec
+      Start 113: AuthBootstrapClaimTest.ScramPolicyRejectsWeakIterationsAndMarksUpgradeMetadata
+17/21 Test #113: AuthBootstrapClaimTest.ScramPolicyRejectsWeakIterationsAndMarksUpgradeMetadata ...   Passed    0.44 sec
+      Start 114: AuthBootstrapClaimTest.DormantDetachIssuesReattachAuthKeyAndRequiresToken
+18/21 Test #114: AuthBootstrapClaimTest.DormantDetachIssuesReattachAuthKeyAndRequiresToken ........   Passed    0.34 sec
+      Start 115: AuthBootstrapClaimTest.DormantReattachAuthKeyRevokedOnDatabaseClose
+19/21 Test #115: AuthBootstrapClaimTest.DormantReattachAuthKeyRevokedOnDatabaseClose ..............   Passed    0.58 sec
+      Start 781: FilePermissionsControlTest.ReadMetadataForExistingFile
+20/21 Test #781: FilePermissionsControlTest.ReadMetadataForExistingFile ...........................   Passed    0.02 sec
+      Start 782: FilePermissionsControlTest.SetModeAndReadBack
+21/21 Test #782: FilePermissionsControlTest.SetModeAndReadBack ....................................   Passed    0.02 sec
+
+100% tests passed, 0 tests failed out of 21
+
+Label Time Summary:
+unit    =   9.16 sec*proc (21 tests)
+
+Total Test time (real) =   9.25 sec

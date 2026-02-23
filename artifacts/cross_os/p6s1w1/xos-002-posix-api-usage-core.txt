@@ -1,0 +1,247 @@
+tests/benchmark/test_front_door_mode_benchmark.cpp:183:        pid_ = fork();
+tests/benchmark/test_front_door_mode_benchmark.cpp:195:            execv(argv[0], argv.data());
+tests/benchmark/test_front_door_mode_benchmark.cpp:205:        ::kill(pid_, SIGTERM);
+tests/benchmark/test_front_door_mode_benchmark.cpp:208:            pid_t result = waitpid(pid_, &status, WNOHANG);
+tests/benchmark/test_front_door_mode_benchmark.cpp:215:        ::kill(pid_, SIGKILL);
+tests/benchmark/test_front_door_mode_benchmark.cpp:216:        waitpid(pid_, &status, 0);
+tests/integration/test_rtree_dml.cpp:45:        test_db_path_ = "/tmp/test_rtree_dml_" + std::to_string(getpid()) + ".db";
+tests/integration/test_ipc_integration_harness.cpp:174:        startup.process_id = getpid();
+tests/integration/test_ipc_integration_harness.cpp:448:    startup.process_id = getpid();
+tests/integration/test_ipc_integration_harness.cpp:478:    startup.process_id = getpid();
+tests/integration/test_ipc_integration_harness.cpp:505:        startup.process_id = getpid();
+tests/integration/test_bit_manipulation.cpp:43:                   ("sb_bit_manipulation_" + std::to_string(::getpid()) + ".db"))
+tests/integration/test_bitmap_dml.cpp:67:        test_db_path_ = "/tmp/test_bitmap_dml_" + std::to_string(getpid()) + ".db";
+tests/integration/test_brin_dml.cpp:101:        test_db_path_ = "/tmp/test_brin_dml_" + std::to_string(getpid()) + "_" +
+tests/integration/test_lsm_tree_simple.cpp:71:    std::string suffix = "_" + std::to_string(getpid()) + "_" + test_name;
+tests/integration/test_columnstore_simple_e2e.cpp:34:        "/tmp/columnstore_simple_e2e_" + std::to_string(getpid()) + ".db";
+tests/integration/test_lsm_tree_comprehensive.cpp:77:    std::string suffix = "_" + std::to_string(getpid()) + "_" + test_name;
+tests/integration/test_index_bytecode_generation.cpp:47:        test_db_path_ = "/tmp/test_index_bytecode_" + std::to_string(::getpid()) + ".db";
+src/ipc/ipc_server.cpp:694:    unlink(config_.endpoint.c_str());
+tests/unit/test_btree_gc.cpp:35:        test_db_path_ = "/tmp/test_btree_gc_" + std::to_string(getpid()) + ".db";
+src/ipc/parser_agent.cpp:143:        unlink(config_.listen_endpoint.c_str());
+src/core/lsm_tree_index.cpp:136:    if (mkdir(index_path_.c_str(), 0755) != 0 && errno != EEXIST)
+src/core/lsm_tree_index.cpp:147:        if (mkdir(level_path.c_str(), 0755) != 0 && errno != EEXIST)
+src/core/lsm_tree_index.cpp:871:        DIR *dir = opendir(level_path.c_str());
+src/core/lsm_tree_index.cpp:881:        while ((entry = readdir(dir)) != nullptr)
+src/core/lsm_tree_index.cpp:889:        closedir(dir);
+tests/unit/test_catalog_engine_specific_extension_contract.cpp:42:        db_path_ = "/tmp/test_catalog_engine_specific_extension_contract_" + std::to_string(getpid()) + ".db";
+tests/unit/test_catalog_emulation_engine_coverage_contract.cpp:38:            "/tmp/test_catalog_emulation_engine_coverage_contract_" + std::to_string(getpid()) + ".db";
+tests/unit/test_dependency_errors.cpp:31:        test_db_path = "/tmp/test_dep_errors_" + std::to_string(getpid()) + ".sbdb";
+tests/unit/test_code_dependencies.cpp:34:        test_db_path = "/tmp/test_code_dep_" + std::to_string(getpid()) + ".sbdb";
+src/server/daemon.cpp:104:    file << getpid() << std::endl;
+src/server/daemon.cpp:178:    std::string pid_str = std::to_string(getpid()) + "\n";
+src/server/daemon.cpp:259:        void* handle = dlopen("libsystemd.so.0", RTLD_LAZY | RTLD_LOCAL);
+src/server/daemon.cpp:261:            func = reinterpret_cast<sd_notify_func>(dlsym(handle, "sd_notify"));
+src/server/daemon.cpp:273:        void* handle = dlopen("libsystemd.so.0", RTLD_LAZY | RTLD_LOCAL);
+src/server/daemon.cpp:275:            func = reinterpret_cast<sd_watchdog_enabled_func>(dlsym(handle, "sd_watchdog_enabled"));
+src/server/daemon.cpp:409:        // Second fork (prevents acquiring controlling terminal)
+src/server/daemon.cpp:443:        umask(options_.umask);
+src/server/daemon.cpp:476:    pid_t pid = fork();
+src/server/daemon.cpp:574:        if (setgid(gid) < 0) {
+src/server/daemon.cpp:594:        if (setuid(uid) < 0) {
+src/server/daemon.cpp:616:    sigaction(SIGTERM, &sa, nullptr);
+src/server/daemon.cpp:617:    sigaction(SIGINT, &sa, nullptr);
+src/server/daemon.cpp:618:    sigaction(SIGHUP, &sa, nullptr);
+src/server/daemon.cpp:619:    sigaction(SIGUSR1, &sa, nullptr);
+src/server/daemon.cpp:620:    sigaction(SIGUSR2, &sa, nullptr);
+src/server/daemon.cpp:621:    sigaction(SIGQUIT, &sa, nullptr);
+src/server/daemon.cpp:736:    return getpid();
+src/server/daemon.cpp:753:    return kill(pid, 0) == 0;
+src/server/daemon.cpp:761:    return kill(pid, signal) == 0;
+src/server/daemon.cpp:797:    chmod(path.c_str(), mode);
+tests/unit/test_catalog_domain_extension_contract.cpp:37:        db_path_ = "/tmp/test_catalog_domain_extension_contract_" + std::to_string(getpid()) + ".db";
+src/protocol/adapters/native_adapter.cpp:73:    return static_cast<uint32_t>(::getpid());
+src/server/service_controller.cpp:1533:    pid_t pid = fork();
+src/server/service_controller.cpp:1653:    pid_t pid = fork();
+src/server/service_controller.cpp:1773:        pid_t result = waitpid(listener.pid, &status, WNOHANG);
+src/server/service_controller.cpp:1815:        pid_t result = waitpid(manager.pid, &status, WNOHANG);
+src/server/service_controller.cpp:1842:        ::kill(listener.pid, SIGTERM);
+src/server/service_controller.cpp:1854:        ::kill(manager.pid, SIGTERM);
+src/server/service_controller.cpp:1885:        pid_t result = waitpid(listener.pid, &status, WNOHANG);
+src/server/service_controller.cpp:1931:    pid_t result = waitpid(manager_.pid, &status, WNOHANG);
+tests/unit/test_catalog_virtual_overlay_conformance_contract.cpp:42:        db_path_ = "/tmp/test_catalog_virtual_overlay_contract_" + std::to_string(getpid()) + ".db";
+src/server/ipc_common.cpp:273:    if (kill(static_cast<pid_t>(pid), 0) == 0) {
+tests/unit/test_virtual_catalog_canonical_backing_contract.cpp:40:                   std::to_string(getpid()) + ".db";
+tests/unit/test_catalog_security_acl_abac_graph_token_quota_settings_contract.cpp:58:                   std::to_string(getpid()) + ".db";
+src/server/config_parser.cpp:880:        struct passwd* pw = getpwuid(getuid());
+src/server/config_parser.cpp:918:        struct passwd* pw = getpwuid(getuid());
+tests/unit/test_catalog_cluster_fabric_extension_contract.cpp:40:                   std::to_string(getpid()) + ".db";
+tests/unit/test_catalog_incident_healing_alert_extension_contract.cpp:37:                   std::to_string(getpid()) + ".db";
+src/server/server_session.cpp:261:    return static_cast<uint32_t>(::geteuid());
+src/server/ipc_unix.cpp:339:        ::unlink(socket_path_.c_str());
+src/server/ipc_unix.cpp:367:        if (::chmod(socket_path_.c_str(), 0600) < 0) {
+src/server/ipc_unix.cpp:370:            ::unlink(socket_path_.c_str());
+src/server/ipc_unix.cpp:372:                              ("chmod() failed: " + std::string(strerror(errno))).c_str());
+src/server/ipc_unix.cpp:380:            ::unlink(socket_path_.c_str());
+src/server/ipc_unix.cpp:495:            ::unlink(socket_path_.c_str());
+src/server/scratchbird_server.cpp:384:    file << getpid() << std::endl;
+tests/unit/test_catalog_security_auth_provider_rule_chain_contract.cpp:37:                   std::to_string(getpid()) + ".db";
+tests/unit/test_catalog_routing_admission_extension_contract.cpp:37:                   std::to_string(getpid()) + ".db";
+tests/unit/test_auth_mfa_challenge_flow.cpp:109:    return "/tmp/" + prefix + "_" + std::to_string(getpid()) + "_" +
+tests/unit/test_auth_mfa_challenge_flow.cpp:116:        prefix + "_" + std::to_string(getpid()) + "_" + std::to_string(counter.fetch_add(1)));
+tests/unit/test_auth_mfa_challenge_flow.cpp:121:    return prefix + "_" + std::to_string(getpid()) + "_" + std::to_string(counter.fetch_add(1));
+tests/unit/test_compression.cpp:37:        std::string test_id = std::to_string(getpid()) + "_" + std::to_string(test_counter++);
+tests/unit/test_dependency_performance.cpp:31:        test_db_path = "/tmp/test_dep_perf_" + std::to_string(getpid()) + ".sbdb";
+tests/unit/test_virtual_catalog_overlay_group_c_contract.cpp:39:        db_path_ = "/tmp/test_virtual_catalog_overlay_group_c_" + std::to_string(getpid()) + ".db";
+tests/unit/test_catalog_family_matrix_contract.cpp:34:        db_path_ = "/tmp/test_catalog_family_matrix_contract_" + std::to_string(getpid()) + ".db";
+tests/unit/test_catalog_manager.cpp:45:        test_db_path = "/tmp/test_catalog_" + std::to_string(getpid()) + ".db";
+src/network/socket.cpp:942:    if (ioctl(fd_, FIONREAD, &bytes) == 0) {
+tests/unit/test_unix_socket_channel.cpp:27:        socket_path_ = "/tmp/test_scratchbird_" + std::to_string(getpid()) + "_" + 
+tests/unit/test_config.cpp:81:        std::string dir_name = "sb_config_test_" + std::to_string(static_cast<long long>(getpid()));
+src/network/control_plane.cpp:1089:    ::unlink(path.c_str());
+src/network/control_plane.cpp:1121:        ::unlink(path_.c_str());
+tests/compatibility/firebird/scripts/convert_fbt_to_sql.py:68:    output_dir.mkdir(parents=True, exist_ok=True)
+tests/compatibility/firebird/scripts/convert_fbt_to_sql.py:152:            expected_dir.mkdir(parents=True, exist_ok=True)
+tests/unit/test_catalog_type_schema_contract.cpp:36:        db_path_ = "/tmp/test_catalog_type_schema_contract_" + std::to_string(getpid()) + ".db";
+tests/unit/test_catalog_resource_timezone_extension_contract.cpp:37:                   std::to_string(getpid()) + ".db";
+src/parser/sb_parser_main.cpp:280:    uint32_t pid = static_cast<uint32_t>(getpid());
+src/parser/sb_parser_main.cpp:685:    uint32_t pid = static_cast<uint32_t>(getpid());
+src/network/event_loop.cpp:122:    if (pipe(pipefd) == 0) {
+tests/unit/test_gin_index_gc.cpp:33:        test_db_path_ = "/tmp/test_gin_index_gc_" + std::to_string(getpid()) + ".db";
+tests/unit/test_dependency_integration.cpp:31:        test_db_path = "/tmp/test_dep_integ_" + std::to_string(getpid()) + ".sbdb";
+tests/compatibility/scripts/generate_test_manifests.py:158:        config_dir.mkdir(parents=True, exist_ok=True)
+tests/unit/test_catalog_sblr_artifact_extension_contract.cpp:36:        db_path_ = "/tmp/test_catalog_sblr_artifact_extension_contract_" + std::to_string(getpid()) + ".db";
+tests/unit/test_auth_policy_protocol_parity.cpp:107:    return "/tmp/" + prefix + "_" + std::to_string(getpid()) + "_" +
+tests/unit/test_auth_policy_protocol_parity.cpp:114:        prefix + "_" + std::to_string(getpid()) + "_" + std::to_string(counter.fetch_add(1)));
+tests/unit/test_auth_policy_protocol_parity.cpp:119:    return prefix + "_" + std::to_string(getpid()) + "_" + std::to_string(counter.fetch_add(1));
+tests/unit/test_catalog_olap_cube_extension_contract.cpp:44:        db_path_ = "/tmp/test_catalog_olap_cube_extension_contract_" + std::to_string(getpid()) + ".db";
+tests/unit/test_page_management_edge_cases.cpp:44:        test_id_ = std::to_string(getpid()) + "_" + std::to_string(test_counter++);
+tests/unit/test_catalog_mga_compliance.cpp:42:        test_db_path = "/tmp/test_catalog_mga_" + std::to_string(getpid()) + ".db";
+tests/unit/test_catalog_mga_compliance.cpp:110:    std::string ts_path = "/tmp/test_ts_alter_" + std::to_string(getpid()) + ".sbts";
+tests/unit/test_catalog_mga_compliance.cpp:153:    std::string ts1_path = "/tmp/test_ts1_" + std::to_string(getpid()) + ".sbts";
+tests/unit/test_catalog_mga_compliance.cpp:154:    std::string ts2_path = "/tmp/test_ts2_" + std::to_string(getpid()) + ".sbts";
+tests/unit/test_catalog_mga_compliance.cpp:205:        std::string ts_path = "/tmp/test_ts_drop_" + std::to_string(getpid()) + ".sbts";
+tests/unit/test_catalog_mga_compliance.cpp:263:        std::string ts_path = "/tmp/test_ts_detach_" + std::to_string(getpid()) + ".sbts";
+tests/unit/test_catalog_mga_compliance.cpp:306:    std::string ts_path = "/tmp/test_ts_detach_" + std::to_string(getpid()) + ".sbts";
+tests/unit/test_catalog_mga_compliance.cpp:321:    std::string ts_path_template = "/tmp/test_ts_cycle_" + std::to_string(getpid());
+tests/unit/test_catalog_mga_compliance.cpp:366:    std::string ts_path = "/tmp/test_ts_combined_" + std::to_string(getpid()) + ".sbts";
+tests/unit/test_catalog_mga_compliance.cpp:419:        std::string ts_path = "/tmp/test_ts_create_" + std::to_string(getpid()) +
+src/network/sb_listener_main.cpp:470:        if (::kill(static_cast<pid_t>(target->worker_pid), SIGTERM) != 0) {
+src/network/sb_listener_main.cpp:870:        pid_t pid = fork();
+src/network/sb_listener_main.cpp:881:                log_path += std::to_string(getpid());
+src/network/sb_listener_main.cpp:978:                pid_t exited = waitpid(worker->worker_pid, &exit_status, WNOHANG);
+tests/unit/test_backup_tablespace_manifest.cpp:32:        test_id_ = std::to_string(getpid()) + "_" + std::to_string(counter++);
+tests/unit/test_memory_safety.cpp:178:        test_id_ = std::to_string(getpid()) + "_" + std::to_string(test_counter++);
+tests/unit/test_logger.cpp:35:        test_id_ = std::to_string(getpid()) + "_" + std::to_string(test_counter++);
+src/client/connection.cpp:1356:            getpid(),
+src/client/connection.cpp:3161:    pid_t pid = fork();
+src/client/connection.cpp:3175:        execl(exe_path.c_str(), "sb_server",
+src/client/connection.cpp:3182:        if (ctx) ctx->message = "fork() failed";
+src/client/connection.cpp:3228:    kill(pid, SIGTERM);
+src/client/connection.cpp:3241:    kill(pid, SIGKILL);
+tests/unit/test_manager_proxy_mcp.cpp:145:        pid_ = fork();
+tests/unit/test_manager_proxy_mcp.cpp:158:            execv(argv[0], argv.data());
+tests/unit/test_manager_proxy_mcp.cpp:169:        ::kill(pid_, SIGTERM);
+tests/unit/test_manager_proxy_mcp.cpp:172:            pid_t result = waitpid(pid_, &status, WNOHANG);
+tests/unit/test_manager_proxy_mcp.cpp:179:        ::kill(pid_, SIGKILL);
+tests/unit/test_manager_proxy_mcp.cpp:180:        waitpid(pid_, &status, 0);
+tests/unit/test_ipc_server.cpp:216:            uint16_t base_port = 20000 + (static_cast<uint16_t>(getpid()) % 1000) * 10;
+tests/unit/test_ipc_server.cpp:524:        db_name_ = "unix_test_" + std::to_string(::getpid()) + "_" + std::to_string(counter++);
+tests/unit/test_ipc_server.cpp:530:        unlink(socket_path.c_str());
+tests/unit/test_catalog_security_mfa_policy_enrollment_recovery_contract.cpp:120:                   std::to_string(getpid()) + "_" + std::to_string(now) + ".db";
+tests/unit/test_catalog_storage_extension_contract.cpp:37:                   std::to_string(getpid()) + ".db";
+tests/unit/test_hnsw_index.cpp:36:        test_db_path_ = "/tmp/test_hnsw_" + std::to_string(getpid()) + ".db";
+tests/unit/test_virtual_catalog_overlay_lifecycle_contract.cpp:35:        db_path_ = "/tmp/test_virtual_catalog_overlay_lifecycle_" + std::to_string(getpid()) + ".db";
+tests/unit/test_catalog_sharding_extension_contract.cpp:38:        db_path_ = "/tmp/test_catalog_sharding_extension_contract_" + std::to_string(getpid()) + ".db";
+tests/unit/test_extended_page_sizes_agent_c_review.cpp:37:    return "test_agent_c_" + std::to_string(getpid()) + "_";
+tests/unit/test_extended_page_sizes_agent_c_review.cpp:866:    const std::string db_path = "/tmp/test_agent_c_oom_" + std::to_string(getpid()) + ".db";
+tests/unit/test_tablespace_autoextend.cpp:30:        test_id_ = std::to_string(getpid()) + "_" + std::to_string(test_counter_++);
+tests/unit/test_vnext_storage_metrics_contract.cpp:44:        db_path_ = "/tmp/test_vnext_storage_metrics_contract_" + std::to_string(getpid()) + ".db";
+tests/unit/test_catalog_scheduler_extension_contract.cpp:37:                   std::to_string(getpid()) + ".db";
+tests/unit/test_catalog_security_identity_account_contract.cpp:37:                   std::to_string(getpid()) + ".db";
+tests/unit/test_tablespace_recovery.cpp:26:        test_id_ = std::to_string(getpid()) + "_" + std::to_string(test_counter_++);
+tests/unit/test_catalog_cluster_clock_extension_contract.cpp:37:                   std::to_string(getpid()) + ".db";
+tests/unit/test_rtree.cpp:48:        test_db_path_ = "/tmp/test_rtree_" + std::to_string(getpid()) + ".db";
+tests/unit/test_firebird_drop_semantics.cpp:36:        test_db_path = "/tmp/test_fb_drop_" + std::to_string(getpid()) + ".sbdb";
+tests/unit/test_inverted_index_basic.cpp:38:        void* handle = dlopen(name, RTLD_LAZY);
+tests/unit/test_inverted_index_basic.cpp:43:        auto stemmer_new = dlsym(handle, "sb_stemmer_new");
+tests/unit/test_inverted_index_basic.cpp:44:        auto stemmer_stem = dlsym(handle, "sb_stemmer_stem");
+tests/unit/test_inverted_index_basic.cpp:45:        auto stemmer_len = dlsym(handle, "sb_stemmer_length");
+tests/unit/test_inverted_index_basic.cpp:46:        auto stemmer_del = dlsym(handle, "sb_stemmer_delete");
+tests/unit/test_inverted_index_basic.cpp:47:        dlclose(handle);
+tests/unit/test_schema_introspection.cpp:42:        test_db_path = "/tmp/test_schema_introspection_" + std::to_string(getpid()) + ".db";
+tests/unit/test_virtual_catalogs.cpp:35:        db_path = "/tmp/test_virtual_catalog_" + std::to_string(getpid()) + ".db";
+tests/unit/test_wire_protocol.cpp:940:        socket_path_ = (base / ("wireproto_" + std::to_string(getpid()) + "_" + std::to_string(idx) + ".sock")).string();
+tests/unit/test_tablespace_migration_index_updates.cpp:77:        test_id_ = std::to_string(getpid()) + "_" + std::to_string(test_counter_++);
+tests/unit/test_catalog_security_extension_contract.cpp:37:                   std::to_string(getpid()) + ".db";
+tests/unit/test_catalog_parentage_and_name_uniqueness.cpp:36:        db_path_ = "/tmp/test_catalog_parentage_" + std::to_string(getpid()) + ".db";
+src/core/index_factory.cpp:489:                if (mkdir(index_dir.c_str(), 0755) != 0 && errno != EEXIST)
+src/core/index_factory.cpp:499:            if (mkdir(index_path.c_str(), 0755) != 0 && errno != EEXIST)
+tests/unit/test_statistics_accuracy.cpp:85:        stats_log_path_ = "/tmp/sb_stats_accuracy_" + std::to_string(getpid()) +
+tests/unit/test_catalog_index_metrics_extension_contract.cpp:39:                   std::to_string(getpid()) + ".db";
+tests/unit/test_catalog_rename_move.cpp:41:        test_db_path_ = "/tmp/test_catalog_rename_move_" + std::to_string(getpid()) + ".db";
+src/core/inverted_index.cpp:85:                lib.handle = dlopen(name, RTLD_LAZY);
+src/core/inverted_index.cpp:96:                dlsym(lib.handle, "sb_stemmer_new"));
+src/core/inverted_index.cpp:98:                dlsym(lib.handle, "sb_stemmer_delete"));
+src/core/inverted_index.cpp:100:                dlsym(lib.handle, "sb_stemmer_stem"));
+src/core/inverted_index.cpp:102:                dlsym(lib.handle, "sb_stemmer_length"));
+src/core/inverted_index.cpp:106:                dlclose(lib.handle);
+tests/unit/test_dependency_transactions.cpp:31:        test_db_path = "/tmp/test_dep_txn_" + std::to_string(getpid()) + ".sbdb";
+src/core/proc_array.cpp:197:        pcb->backend_pid = getpid();
+src/core/job_scheduler.cpp:293:    if (pipe(pipefd) != 0) {
+src/core/job_scheduler.cpp:298:    pid_t pid = fork();
+src/core/job_scheduler.cpp:347:        execve(argv[0], argv.data(), envp.data());
+src/core/job_scheduler.cpp:373:            kill(pid, SIGTERM);
+src/core/job_scheduler.cpp:382:                kill(pid, SIGKILL);
+src/core/job_scheduler.cpp:404:                    kill(pid, SIGTERM);
+src/core/job_scheduler.cpp:412:        pid_t wait_res = waitpid(pid, &status, WNOHANG);
+tests/unit/test_table_dependencies.cpp:32:        test_db_path = "/tmp/test_table_dep_" + std::to_string(getpid()) + ".sbdb";
+tests/unit/test_dependency_tracking.cpp:30:        test_db_path = "/tmp/test_dependency_" + std::to_string(getpid()) + ".db";
+tests/unit/test_error_paths.cpp:86:    ::unlink(path);
+tests/unit/test_catalog_runtime_context_extension_contract.cpp:37:                   std::to_string(getpid()) + ".db";
+tests/unit/test_index_advisor.cpp:48:        db_path_ = "/tmp/test_index_advisor_v3_" + std::to_string(::getpid()) + ".db";
+tests/unit/test_catalog_parser_capability_contract.cpp:36:        db_path_ = "/tmp/test_catalog_parser_capability_contract_" + std::to_string(getpid()) + ".db";
+tests/unit/test_type_dependencies.cpp:37:        test_db_path = "/tmp/test_type_dep_" + std::to_string(getpid()) + ".sbdb";
+tests/unit/test_catalog_extension_publication_subscription_contract.cpp:40:                   std::to_string(getpid()) + ".db";
+tests/unit/test_catalog_text_search_extension_contract.cpp:36:        db_path_ = "/tmp/test_catalog_text_search_extension_contract_" + std::to_string(getpid()) + ".db";
+tests/unit/test_hash_index_gc.cpp:35:        test_db_path_ = "/tmp/test_hash_index_gc_" + std::to_string(getpid()) + ".db";
+tests/unit/test_virtual_catalog_overlay_group_b_contract.cpp:39:        db_path_ = "/tmp/test_virtual_catalog_overlay_group_b_" + std::to_string(getpid()) + ".db";
+src/core/page_manager.cpp:1143:            ::unlink(path.c_str()); // Clean up partial file
+src/core/page_manager.cpp:1191:            ::unlink(path.c_str()); // Clean up partial file
+src/core/page_manager.cpp:1203:            ::unlink(path.c_str()); // Clean up partial file
+src/core/page_manager.cpp:1216:            ::unlink(path.c_str()); // Clean up file
+src/core/page_manager.cpp:1256:                ::unlink(path.c_str()); // Clean up partial file
+tests/unit/test_catalog_security_crypto_baseline_key_lifecycle_contract.cpp:36:                   std::to_string(getpid()) + ".db";
+tests/unit/test_schema_path_resolution.cpp:192:        test_db_path_ = "/tmp/test_schema_path_" + std::to_string(getpid()) + ".db";
+tests/unit/test_compression_interop.cpp:43:        std::string unique_id = std::to_string(getpid()) + "_" + std::to_string(test_counter++);
+tests/unit/test_catalog_charset_collation_extension_contract.cpp:38:                   std::to_string(getpid()) + ".db";
+src/core/tzfile_parser.cpp:559:        DIR *dir = opendir(dir_path.c_str());
+src/core/tzfile_parser.cpp:568:        while ((entry = readdir(dir)) != nullptr)
+src/core/tzfile_parser.cpp:608:        closedir(dir);
+tests/compatibility/mysql/scripts/convert_mysql_test.py:42:    output_dir.mkdir(parents=True, exist_ok=True)
+tests/compatibility/mysql/scripts/convert_mysql_test.py:136:            expected_dir.mkdir(parents=True, exist_ok=True)
+src/core/database.cpp:1606:            unlink(canonical_path.c_str()); // Clean up file on failure
+src/core/database.cpp:1616:            unlink(canonical_path.c_str());
+src/core/database.cpp:1628:            unlink(canonical_path.c_str());
+src/core/database.cpp:1636:            unlink(canonical_path.c_str());
+src/core/database.cpp:1645:            unlink(canonical_path.c_str());
+src/core/database.cpp:1653:            unlink(canonical_path.c_str());
+src/core/database.cpp:1661:            unlink(canonical_path.c_str());
+src/core/database.cpp:1671:            unlink(canonical_path.c_str());
+src/core/database.cpp:1696:            unlink(canonical_path.c_str());
+tests/unit/test_catalog_relation_extension_contract.cpp:38:        db_path_ = "/tmp/test_catalog_relation_extension_contract_" + std::to_string(getpid()) + ".db";
+tests/unit/test_brin_index.cpp:38:        test_db_path_ = "/tmp/test_brin_" + std::to_string(getpid()) + ".db";
+tests/compatibility/postgresql/scripts/convert_pg_test.py:39:    output_dir.mkdir(parents=True, exist_ok=True)
+tests/compatibility/postgresql/scripts/convert_pg_test.py:64:            expected_dir.mkdir(parents=True, exist_ok=True)
+tests/compatibility/postgresql/scripts/convert_pg_test.py:88:            expected_dir.mkdir(parents=True, exist_ok=True)
+tests/unit/test_virtual_catalog_overlay_group_a_contract.cpp:39:        db_path_ = "/tmp/test_virtual_catalog_overlay_group_a_" + std::to_string(getpid()) + ".db";
+tests/unit/test_security_issues.cpp:158:    unlink(test_symlink_path_.c_str());
+tests/unit/test_security_issues.cpp:349:    ASSERT_EQ(pipe(sync_pipe), 0) << "Failed to create sync pipe";
+tests/unit/test_security_issues.cpp:352:    pid_t pid = fork();
+tests/unit/test_security_issues.cpp:403:        waitpid(pid, &status, 0);
+tests/unit/test_security_issues.cpp:413:        FAIL() << "fork() failed in ConcurrentAccess_TwoProcesses";
+tests/unit/test_security_issues.cpp:424:    pid_t pid = fork();
+tests/unit/test_security_issues.cpp:438:        waitpid(pid, &status, 0);
+tests/unit/test_charset_catalog.cpp:27:        test_db_path_ = "/tmp/test_charset_catalog_" + std::to_string(getpid()) + "_" +
+tests/unit/test_auth_bootstrap_claim.cpp:62:    return "/tmp/test_bootstrap_claim_" + std::to_string(getpid()) + "_" +
+tests/unit/test_auth_bootstrap_claim.cpp:283:    ASSERT_EQ(::chmod(token_path.c_str(), S_IRUSR | S_IWUSR), 0);
+tests/unit/test_bitmap_index_gc.cpp:34:        test_db_path_ = "/tmp/test_bitmap_index_gc_" + std::to_string(getpid()) + ".db";
+tests/unit/test_heap_index_gc_integration.cpp:56:        test_db_path_ = "/tmp/test_heap_index_gc_" + std::to_string(getpid()) + ".db";
+tests/unit/test_schema_dependencies.cpp:30:        test_db_path = "/tmp/test_schema_dep_" + std::to_string(getpid()) + ".sbdb";
+tests/unit/test_catalog_remote_connector_extension_contract.cpp:41:                   std::to_string(getpid()) + ".db";
+tests/unit/domains/test_record_domain.cpp:29:        test_id_ = std::to_string(getpid()) + "_" + std::to_string(test_counter++);
+tests/unit/test_catalog_replication_runtime_conflict_extension_contract.cpp:39:                   std::to_string(getpid()) + ".db";
+tests/unit/test_service_controller_listener_bootstrap.cpp:187:    return ::chmod(binary_path.c_str(), 0755) == 0;
+tests/unit/test_service_controller_listener_bootstrap.cpp:202:    return ::chmod(binary_path.c_str(), 0755) == 0;
+tests/unit/test_catalog_index_metadata_extension_contract.cpp:39:                   std::to_string(getpid()) + ".db";
+tests/unit/test_view_dependencies.cpp:31:        test_db_path = "/tmp/test_view_dep_" + std::to_string(getpid()) + ".sbdb";

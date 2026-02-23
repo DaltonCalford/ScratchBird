@@ -261,11 +261,16 @@ public:
         ULONG client_pid = 0;
         if (GetNamedPipeClientProcessId(pipe_, &client_pid)) {
             creds.pid = static_cast<uint32_t>(client_pid);
-            creds.available = true;
+            // This cycle exposes PID for observability only. UID/GID-equivalent
+            // mapping requires Windows token resolution and is not yet complete.
+            // Keep available=false so peer-auth policy cannot treat this as a
+            // full identity mapping.
+            creds.available = false;
         }
 
         // Note: Getting UID/GID equivalent on Windows requires impersonation
-        // and token inspection, which is more complex. For now, we just get PID.
+        // and token inspection. Until that is implemented, peer auth mapping
+        // remains disabled for Named Pipe sessions.
 
         return creds;
     }

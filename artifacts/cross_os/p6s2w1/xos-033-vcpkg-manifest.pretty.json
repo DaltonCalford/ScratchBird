@@ -1,0 +1,14 @@
+{
+    "name": "scratchbird",
+    "version-string": "0.1.0",
+    "builtin-baseline": "05442024c3fda64320bd25d2251cc9807b84fb6f",
+    "dependencies": [
+        "zlib",
+        "openssl",
+        "libxml2",
+        "lz4",
+        "zstd",
+        "geos",
+        "proj4"
+    ]
+}

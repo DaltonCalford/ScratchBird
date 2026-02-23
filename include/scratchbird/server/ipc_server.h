@@ -412,6 +412,29 @@ protected:
 // ============================================================================
 
 /**
+ * OS-specific local IPC policy contract.
+ */
+struct LocalIPCPolicy {
+    IPCMethod preferred_method = IPCMethod::AUTO;
+    IPCMethod fallback_method = IPCMethod::TCP_LOCALHOST;
+    bool fallback_enabled = false;
+    bool peer_credentials_supported = false;
+    bool peer_credentials_required_for_peer_auth = false;
+};
+
+/**
+ * Get default local IPC policy for the host OS.
+ */
+LocalIPCPolicy getDefaultLocalIPCPolicy();
+
+/**
+ * Resolve requested IPC method against local policy.
+ *
+ * AUTO selects the policy preferred method. Explicit methods disable fallback.
+ */
+LocalIPCPolicy resolveLocalIPCPolicy(IPCMethod requested_method);
+
+/**
  * Get the default IPC method for the current platform
  *
  * @return IPCMethod::UNIX_SOCKET on Linux/macOS, IPCMethod::NAMED_PIPE on Windows

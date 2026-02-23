@@ -4202,6 +4202,12 @@ Statement* Parser::parseGrantStatement() {
             stmt->privileges.push_back(ast::PrivilegeType::EXECUTE);
         } else if (matchIdentifierText("USAGE")) {
             stmt->privileges.push_back(ast::PrivilegeType::USAGE);
+        } else if (matchKeyword(TokenType::KW_CREATE)) {
+            stmt->privileges.push_back(ast::PrivilegeType::CREATE);
+        } else if (matchKeyword(TokenType::KW_CONNECT)) {
+            stmt->privileges.push_back(ast::PrivilegeType::CONNECT);
+        } else if (matchKeyword(TokenType::KW_TEMPORARY)) {
+            stmt->privileges.push_back(ast::PrivilegeType::TEMPORARY);
         } else if (matchIdentifierText("COPY")) {
             stmt->privileges.push_back(ast::PrivilegeType::COPY);
         } else if (matchKeyword(TokenType::KW_ALL)) {
@@ -4297,6 +4303,12 @@ Statement* Parser::parseRevokeStatement() {
             stmt->privileges.push_back(ast::PrivilegeType::EXECUTE);
         } else if (matchIdentifierText("USAGE")) {
             stmt->privileges.push_back(ast::PrivilegeType::USAGE);
+        } else if (matchKeyword(TokenType::KW_CREATE)) {
+            stmt->privileges.push_back(ast::PrivilegeType::CREATE);
+        } else if (matchKeyword(TokenType::KW_CONNECT)) {
+            stmt->privileges.push_back(ast::PrivilegeType::CONNECT);
+        } else if (matchKeyword(TokenType::KW_TEMPORARY)) {
+            stmt->privileges.push_back(ast::PrivilegeType::TEMPORARY);
         } else if (matchIdentifierText("COPY")) {
             stmt->privileges.push_back(ast::PrivilegeType::COPY);
         } else if (matchKeyword(TokenType::KW_ALL)) {

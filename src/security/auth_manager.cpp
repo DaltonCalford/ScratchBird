@@ -24,10 +24,24 @@
 #include <sstream>
 #include <algorithm>
 #include <ctime>
-#include <arpa/inet.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <syslog.h>
+#if defined(_WIN32)
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+    #ifdef ERROR
+        #undef ERROR
+    #endif
+    #ifdef DELETE
+        #undef DELETE
+    #endif
+    #ifdef ABSOLUTE
+        #undef ABSOLUTE
+    #endif
+#else
+    #include <arpa/inet.h>
+    #include <sys/socket.h>
+    #include <netinet/in.h>
+    #include <syslog.h>
+#endif
 
 namespace scratchbird {
 namespace security {
@@ -664,14 +678,21 @@ void FileAuditLogger::flush() {
 SyslogAuditLogger::SyslogAuditLogger(const std::string& ident)
     : ident_(ident)
 {
+#if !defined(_WIN32)
     openlog(ident_.c_str(), LOG_PID | LOG_NDELAY, LOG_AUTH);
+#endif
 }
 
 SyslogAuditLogger::~SyslogAuditLogger() {
+#if !defined(_WIN32)
     closelog();
+#endif
 }
 
 void SyslogAuditLogger::log(const AuthAuditEvent& event) {
+#if defined(_WIN32)
+    (void)event;
+#else
     int priority = LOG_INFO;
     if (event.type == AuthAuditEvent::Type::AUTH_FAILURE) {
         priority = LOG_WARNING;
@@ -709,6 +730,7 @@ void SyslogAuditLogger::log(const AuthAuditEvent& event) {
                event.client_port,
                authTypeToString(event.auth_type));
     }
+#endif
 }
 
 void SyslogAuditLogger::flush() {

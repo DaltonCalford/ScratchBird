@@ -49,9 +49,24 @@
 // WP-2 CAT-1/2: MV refresh - Parser/Executor includes removed due to circular dependency
 // MV refresh is now performed at the executor layer using getMVRefreshSQL()
 #include "scratchbird/core/tid_resolver.h"  // Sprint 5: ONLINE migration
+#include "scratchbird/core/portable_file_io.h"
 #include <fcntl.h>   // Phase 6: For open(), O_RDWR
 #include <unistd.h>  // Phase 6: For pread(), close()
-#include <arpa/inet.h> // EN-017: CIDR and IP scope matching
+#if defined(_WIN32)
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+    #ifdef ERROR
+        #undef ERROR
+    #endif
+    #ifdef DELETE
+        #undef DELETE
+    #endif
+    #ifdef ABSOLUTE
+        #undef ABSOLUTE
+    #endif
+#else
+    #include <arpa/inet.h> // EN-017: CIDR and IP scope matching
+#endif
 #include "scratchbird/core/utf8_utils.h"  // Phase 3: SQL Identifier UTF-8 Fix
 #include <queue>  // Phase 1.4: BFS for group transitive closure
 #include <unordered_set>  // Phase 1.4: Visited set for group transitive closure
@@ -24993,7 +25008,7 @@ bool hasTriggerNameConflictInTable(
 
         // ===== STEP 1: Validate file path exists and is readable =====
 
-        int fd = ::open(file_path.c_str(), O_RDWR);
+        int fd = platform::openFd(file_path.c_str(), O_RDWR);
         if (fd < 0)
         {
             SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
@@ -25007,7 +25022,7 @@ bool hasTriggerNameConflictInTable(
         uint32_t page_size = db_->page_size();
         auto header_buffer = std::make_unique<uint8_t[]>(page_size);
 
-        ssize_t bytes_read = ::pread(fd, header_buffer.get(), page_size, 0);
+        ssize_t bytes_read = platform::readAt(fd, header_buffer.get(), page_size, 0);
         if (bytes_read != static_cast<ssize_t>(page_size))
         {
             ::close(fd);

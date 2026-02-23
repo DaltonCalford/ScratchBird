@@ -1,0 +1,4 @@
+# XOS-031 command log
+
+cmake --list-presets
+cmake --preset linux-mingw-windows-x64

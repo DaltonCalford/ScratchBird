@@ -16,6 +16,7 @@
 #include "scratchbird/server/service_controller.h"
 #include "scratchbird/version.h"
 #include "scratchbird/core/permission_cache.h"
+#include "scratchbird/core/utf8_utils.h"
 #include "scratchbird/network/control_plane.h"
 #include "scratchbird/network/socket.h"
 #include "scratchbird/server/ipc_server.h"
@@ -37,9 +38,6 @@
 #else
 #include <grp.h>
 #include <pwd.h>
-#include <signal.h>
-#include <sys/wait.h>
-#include <unistd.h>
 #endif
 
 namespace scratchbird {
@@ -213,6 +211,39 @@ bool hasConfiguredUser(const std::string& user_name) {
 #endif
 }
 
+std::string normalizePathForCurrentPlatform(const std::string& path_value) {
+    if (path_value.empty()) {
+        return path_value;
+    }
+    try {
+        std::filesystem::path normalized(path_value);
+        normalized = normalized.lexically_normal();
+#ifdef _WIN32
+        normalized.make_preferred();
+#endif
+        return normalized.string();
+    } catch (...) {
+        // Preserve the original value if normalization fails.
+        return path_value;
+    }
+}
+
+bool validateUtf8Setting(const std::string& key,
+                         const std::string& value,
+                         core::ErrorContext* ctx) {
+    if (value.empty()) {
+        return true;
+    }
+    if (core::UTF8Utils::isValidUTF8(value)) {
+        return true;
+    }
+    if (ctx) {
+        std::string message = "Invalid UTF-8 in configuration field: " + key;
+        SET_ERROR_CONTEXT(ctx, core::Status::INVALID_ARGUMENT, message.c_str());
+    }
+    return false;
+}
+
 }  // namespace
 
 // ============================================================================
@@ -283,7 +314,8 @@ void ServiceConfig::loadFromParser(const ConfigParser& parser) {
         parser_max_requests = static_cast<uint32_t>(network->getInt("parser_max_requests", parser_max_requests));
         parser_max_age_seconds = static_cast<uint32_t>(network->getInt("parser_max_age_seconds", parser_max_age_seconds));
         unix_socket = network->getString("unix_socket", unix_socket);
-        unix_socket_permissions = static_cast<mode_t>(network->getInt("unix_socket_permissions", unix_socket_permissions));
+        unix_socket_permissions = static_cast<uint32_t>(
+            network->getInt("unix_socket_permissions", unix_socket_permissions));
         unix_socket_group = network->getString("unix_socket_group", unix_socket_group);
 
         // Protocol ports
@@ -533,7 +565,8 @@ double ServiceStats::uptimeSeconds() const {
 // ============================================================================
 
 ServiceController::ServiceController()
-    : config_parser_(std::make_unique<ConfigParser>()) {}
+    : config_parser_(std::make_unique<ConfigParser>()),
+      process_control_(core::createDefaultProcessControl()) {}
 
 ServiceController::~ServiceController() {
     if (state_ != ServiceState::STOPPED && state_ != ServiceState::UNINITIALIZED) {
@@ -559,7 +592,7 @@ core::Status ServiceController::loadConfig(const std::string& path, core::ErrorC
     }
 
     config_.loadFromParser(*config_parser_);
-    return core::Status::OK;
+    return normalizeConfigPathsAndValidateUtf8(ctx);
 }
 
 core::Status ServiceController::parseCommandLine(int argc, char* argv[], core::ErrorContext* ctx) {
@@ -723,10 +756,15 @@ core::Status ServiceController::parseCommandLine(int argc, char* argv[], core::E
         return core::Status::OK;
     }
 
-    return core::Status::OK;
+    return normalizeConfigPathsAndValidateUtf8(ctx);
 }
 
 core::Status ServiceController::applyConfig(core::ErrorContext* ctx) {
+    core::Status normalize_status = normalizeConfigPathsAndValidateUtf8(ctx);
+    if (normalize_status != core::Status::OK) {
+        return normalize_status;
+    }
+
     // Update daemon options from config
     config_.daemon_options.pid_file = config_.pid_file;
     config_.daemon_options.shutdown_timeout_sec = config_.shutdown_timeout_sec;
@@ -748,6 +786,57 @@ core::Status ServiceController::applyConfig(core::ErrorContext* ctx) {
             SET_ERROR_CONTEXT(ctx, core::Status::NOT_FOUND, msg.c_str());
         }
         return core::Status::NOT_FOUND;
+    }
+
+    return core::Status::OK;
+}
+
+core::Status ServiceController::normalizeConfigPathsAndValidateUtf8(core::ErrorContext* ctx) {
+    config_.config_file = normalizePathForCurrentPlatform(config_.config_file);
+    config_.data_dir = normalizePathForCurrentPlatform(config_.data_dir);
+    config_.pid_file = normalizePathForCurrentPlatform(config_.pid_file);
+    config_.log_file = normalizePathForCurrentPlatform(config_.log_file);
+    config_.database_path = normalizePathForCurrentPlatform(config_.database_path);
+    config_.control_socket_dir = normalizePathForCurrentPlatform(config_.control_socket_dir);
+    config_.unix_socket = normalizePathForCurrentPlatform(config_.unix_socket);
+    config_.audit_sinks.file_path = normalizePathForCurrentPlatform(config_.audit_sinks.file_path);
+
+    config_.manager_proxy.binary = normalizePathForCurrentPlatform(config_.manager_proxy.binary);
+    config_.manager_proxy.dbbt_keyring =
+        normalizePathForCurrentPlatform(config_.manager_proxy.dbbt_keyring);
+
+    config_.daemon_options.pid_file =
+        normalizePathForCurrentPlatform(config_.daemon_options.pid_file);
+    config_.daemon_options.working_dir =
+        normalizePathForCurrentPlatform(config_.daemon_options.working_dir);
+    config_.daemon_options.stdout_file =
+        normalizePathForCurrentPlatform(config_.daemon_options.stdout_file);
+    config_.daemon_options.stderr_file =
+        normalizePathForCurrentPlatform(config_.daemon_options.stderr_file);
+    config_.daemon_options.stdin_file =
+        normalizePathForCurrentPlatform(config_.daemon_options.stdin_file);
+
+    std::vector<std::pair<std::string, std::string>> utf8_fields = {
+        {"config_file", config_.config_file},
+        {"data_dir", config_.data_dir},
+        {"pid_file", config_.pid_file},
+        {"log_file", config_.log_file},
+        {"database_path", config_.database_path},
+        {"control_socket_dir", config_.control_socket_dir},
+        {"unix_socket", config_.unix_socket},
+        {"audit.file_path", config_.audit_sinks.file_path},
+        {"manager.binary", config_.manager_proxy.binary},
+        {"manager.dbbt_keyring", config_.manager_proxy.dbbt_keyring},
+        {"daemon.working_dir", config_.daemon_options.working_dir},
+        {"daemon.stdout_file", config_.daemon_options.stdout_file},
+        {"daemon.stderr_file", config_.daemon_options.stderr_file},
+        {"daemon.stdin_file", config_.daemon_options.stdin_file}
+    };
+
+    for (const auto& field : utf8_fields) {
+        if (!validateUtf8Setting(field.first, field.second, ctx)) {
+            return core::Status::INVALID_ARGUMENT;
+        }
     }
 
     return core::Status::OK;
@@ -854,6 +943,24 @@ core::Status ServiceController::run(core::ErrorContext* ctx) {
     log(ServiceConfig::LogLevel::INFO, "Service stopped");
 
     return core::Status::OK;
+}
+
+core::Status ServiceController::runWithStartupMode(StartupMode mode, core::ErrorContext* ctx) {
+    const bool original_foreground = config_.foreground;
+    switch (mode) {
+        case StartupMode::AUTO:
+            break;
+        case StartupMode::FORCE_FOREGROUND:
+            config_.foreground = true;
+            break;
+        case StartupMode::FORCE_DAEMON:
+            config_.foreground = false;
+            break;
+    }
+
+    core::Status status = run(ctx);
+    config_.foreground = original_foreground;
+    return status;
 }
 
 void ServiceController::shutdown() {
@@ -1470,91 +1577,49 @@ core::Status ServiceController::stopManager(core::ErrorContext* ctx) {
 
 bool ServiceController::launchManagerProcess(ManagerProcess& manager,
                                              core::ErrorContext* ctx) {
-    std::vector<std::string> args;
-    args.push_back(manager.binary);
-    args.push_back("--bind");
-    args.push_back(manager.bind_address);
-    args.push_back("--port");
-    args.push_back(std::to_string(manager.port));
-    args.push_back("--native-bind");
-    args.push_back(manager.internal_native_bind);
-    args.push_back("--native-port");
-    args.push_back(std::to_string(manager.internal_native_port));
-    args.push_back("--database-owner");
-    args.push_back(manager.owner_database.empty() ? "main" : manager.owner_database);
-    args.push_back("--mcp-auth-secret");
-    args.push_back(manager.mcp_auth_secret);
-    args.push_back("--listener-id");
-    args.push_back(std::to_string(manager.listener_id));
-    args.push_back("--dbbt-ttl-ms");
-    args.push_back(std::to_string(manager.dbbt_ttl_ms));
+    core::ProcessLaunchSpec launch_spec;
+    launch_spec.executable = manager.binary;
+    launch_spec.arguments.push_back("--bind");
+    launch_spec.arguments.push_back(manager.bind_address);
+    launch_spec.arguments.push_back("--port");
+    launch_spec.arguments.push_back(std::to_string(manager.port));
+    launch_spec.arguments.push_back("--native-bind");
+    launch_spec.arguments.push_back(manager.internal_native_bind);
+    launch_spec.arguments.push_back("--native-port");
+    launch_spec.arguments.push_back(std::to_string(manager.internal_native_port));
+    launch_spec.arguments.push_back("--database-owner");
+    launch_spec.arguments.push_back(manager.owner_database.empty() ? "main" : manager.owner_database);
+    launch_spec.arguments.push_back("--mcp-auth-secret");
+    launch_spec.arguments.push_back(manager.mcp_auth_secret);
+    launch_spec.arguments.push_back("--listener-id");
+    launch_spec.arguments.push_back(std::to_string(manager.listener_id));
+    launch_spec.arguments.push_back("--dbbt-ttl-ms");
+    launch_spec.arguments.push_back(std::to_string(manager.dbbt_ttl_ms));
     if (!manager.dbbt_keyring.empty()) {
-        args.push_back("--dbbt-keyring");
-        args.push_back(manager.dbbt_keyring);
+        launch_spec.arguments.push_back("--dbbt-keyring");
+        launch_spec.arguments.push_back(manager.dbbt_keyring);
     }
 
     if (!config_.control_socket_dir.empty()) {
-        args.push_back("--control-socket-dir");
-        args.push_back(config_.control_socket_dir);
+        launch_spec.arguments.push_back("--control-socket-dir");
+        launch_spec.arguments.push_back(config_.control_socket_dir);
     }
     if (!config_.config_file.empty()) {
-        args.push_back("--config");
-        args.push_back(config_.config_file);
+        launch_spec.arguments.push_back("--config");
+        launch_spec.arguments.push_back(config_.config_file);
     }
-    args.push_back("--log-level");
-    args.push_back(logLevelString(config_.log_level));
+    launch_spec.arguments.push_back("--log-level");
+    launch_spec.arguments.push_back(logLevelString(config_.log_level));
 
-#ifdef _WIN32
-    std::string command_line;
-    for (const auto& item : args) {
-        if (!command_line.empty()) command_line += " ";
-        command_line += item;
-    }
-
-    STARTUPINFOA si{};
-    PROCESS_INFORMATION pi{};
-    si.cb = sizeof(si);
-    BOOL ok = CreateProcessA(nullptr, command_line.data(), nullptr, nullptr, FALSE,
-                             CREATE_NEW_PROCESS_GROUP, nullptr, nullptr, &si, &pi);
-    if (!ok) {
-        if (ctx) {
-            SET_ERROR_CONTEXT(ctx, core::Status::IO_ERROR,
-                              "Failed to spawn manager process");
-        }
+    core::ErrorContext local_ctx;
+    core::ErrorContext* spawn_ctx = ctx ? ctx : &local_ctx;
+    core::Status launch_status = process_control_->spawn(launch_spec, &manager.process, spawn_ctx);
+    if (launch_status != core::Status::OK) {
         log(ServiceConfig::LogLevel::ERROR, "Failed to spawn manager proxy process");
         return false;
     }
-    manager.process_handle = pi.hProcess;
-    manager.process_id = pi.dwProcessId;
     manager.running = true;
     manager.start_count++;
-    CloseHandle(pi.hThread);
-#else
-    pid_t pid = fork();
-    if (pid < 0) {
-        if (ctx) {
-            SET_ERROR_CONTEXT(ctx, core::Status::IO_ERROR,
-                              "Failed to fork manager process");
-        }
-        log(ServiceConfig::LogLevel::ERROR, "Failed to fork manager proxy process");
-        return false;
-    }
-
-    if (pid == 0) {
-        std::vector<char*> argv;
-        argv.reserve(args.size() + 1);
-        for (auto& item : args) {
-            argv.push_back(const_cast<char*>(item.c_str()));
-        }
-        argv.push_back(nullptr);
-        execvp(argv[0], argv.data());
-        _exit(127);
-    }
-
-    manager.pid = pid;
-    manager.running = true;
-    manager.start_count++;
-#endif
     return true;
 }
 
@@ -1563,30 +1628,30 @@ bool ServiceController::launchListenerProcess(ListenerProcess& listener,
                                               const std::string& engine_endpoint,
                                               core::ErrorContext* ctx) {
     const auto& proto = listener.config;
-    std::vector<std::string> args;
-    args.push_back(listener.binary);
-    args.push_back("--bind");
-    args.push_back(proto.bind_address);
-    args.push_back("--port");
-    args.push_back(std::to_string(proto.port));
-    args.push_back("--pool-min");
-    args.push_back(std::to_string(proto.pool_min));
-    args.push_back("--pool-max");
-    args.push_back(std::to_string(proto.pool_max));
-    args.push_back("--spawn-strategy");
-    args.push_back(config_.spawn_strategy);
+    core::ProcessLaunchSpec launch_spec;
+    launch_spec.executable = listener.binary;
+    launch_spec.arguments.push_back("--bind");
+    launch_spec.arguments.push_back(proto.bind_address);
+    launch_spec.arguments.push_back("--port");
+    launch_spec.arguments.push_back(std::to_string(proto.port));
+    launch_spec.arguments.push_back("--pool-min");
+    launch_spec.arguments.push_back(std::to_string(proto.pool_min));
+    launch_spec.arguments.push_back("--pool-max");
+    launch_spec.arguments.push_back(std::to_string(proto.pool_max));
+    launch_spec.arguments.push_back("--spawn-strategy");
+    launch_spec.arguments.push_back(config_.spawn_strategy);
 
     if (config_.parser_max_requests > 0) {
-        args.push_back("--max-requests");
-        args.push_back(std::to_string(config_.parser_max_requests));
+        launch_spec.arguments.push_back("--max-requests");
+        launch_spec.arguments.push_back(std::to_string(config_.parser_max_requests));
     }
     if (config_.parser_max_age_seconds > 0) {
-        args.push_back("--max-age-seconds");
-        args.push_back(std::to_string(config_.parser_max_age_seconds));
+        launch_spec.arguments.push_back("--max-age-seconds");
+        launch_spec.arguments.push_back(std::to_string(config_.parser_max_age_seconds));
     }
     if (!config_.control_socket_dir.empty()) {
-        args.push_back("--control-socket-dir");
-        args.push_back(config_.control_socket_dir);
+        launch_spec.arguments.push_back("--control-socket-dir");
+        launch_spec.arguments.push_back(config_.control_socket_dir);
     }
     if (engine_endpoint.empty()) {
         if (ctx) {
@@ -1598,84 +1663,41 @@ bool ServiceController::launchListenerProcess(ListenerProcess& listener,
             listener.owner_database);
         return false;
     }
-    args.push_back("--engine-endpoint");
-    args.push_back(engine_endpoint);
-    args.push_back("--database-owner");
-    args.push_back(listener.owner_database);
+    launch_spec.arguments.push_back("--engine-endpoint");
+    launch_spec.arguments.push_back(engine_endpoint);
+    launch_spec.arguments.push_back("--database-owner");
+    launch_spec.arguments.push_back(listener.owner_database);
     if (config_.front_door_mode == ServiceConfig::FrontDoorMode::MANAGER_PROXY &&
         proto.type == network::ProtocolType::NATIVE) {
-        args.push_back("--listener-id");
-        args.push_back(std::to_string(config_.manager_proxy.listener_id));
-        args.push_back("--dbbt-clock-skew-ms");
-        args.push_back(std::to_string(config_.manager_proxy.dbbt_clock_skew_ms));
-        args.push_back("--dbbt-replay-cache-size");
-        args.push_back(std::to_string(config_.manager_proxy.dbbt_replay_cache_size));
-        args.push_back("--require-proxy-binding");
+        launch_spec.arguments.push_back("--listener-id");
+        launch_spec.arguments.push_back(std::to_string(config_.manager_proxy.listener_id));
+        launch_spec.arguments.push_back("--dbbt-clock-skew-ms");
+        launch_spec.arguments.push_back(std::to_string(config_.manager_proxy.dbbt_clock_skew_ms));
+        launch_spec.arguments.push_back("--dbbt-replay-cache-size");
+        launch_spec.arguments.push_back(std::to_string(config_.manager_proxy.dbbt_replay_cache_size));
+        launch_spec.arguments.push_back("--require-proxy-binding");
         if (!config_.manager_proxy.dbbt_keyring.empty()) {
-            args.push_back("--dbbt-keyring");
-            args.push_back(config_.manager_proxy.dbbt_keyring);
+            launch_spec.arguments.push_back("--dbbt-keyring");
+            launch_spec.arguments.push_back(config_.manager_proxy.dbbt_keyring);
         }
     }
     if (allow_config_file_bootstrap && !config_.config_file.empty()) {
-        args.push_back("--config");
-        args.push_back(config_.config_file);
+        launch_spec.arguments.push_back("--config");
+        launch_spec.arguments.push_back(config_.config_file);
     }
-    args.push_back("--log-level");
-    args.push_back(logLevelString(config_.log_level));
+    launch_spec.arguments.push_back("--log-level");
+    launch_spec.arguments.push_back(logLevelString(config_.log_level));
 
-#ifdef _WIN32
-    std::string command_line;
-    for (const auto& item : args) {
-        if (!command_line.empty()) command_line += " ";
-        command_line += item;
-    }
-
-    STARTUPINFOA si{};
-    PROCESS_INFORMATION pi{};
-    si.cb = sizeof(si);
-    BOOL ok = CreateProcessA(nullptr, command_line.data(), nullptr, nullptr, FALSE,
-                             CREATE_NEW_PROCESS_GROUP, nullptr, nullptr, &si, &pi);
-    if (!ok) {
-        if (ctx) {
-            SET_ERROR_CONTEXT(ctx, core::Status::IO_ERROR,
-                              "Failed to spawn listener process");
-        }
+    core::ErrorContext local_ctx;
+    core::ErrorContext* spawn_ctx = ctx ? ctx : &local_ctx;
+    core::Status launch_status = process_control_->spawn(launch_spec, &listener.process, spawn_ctx);
+    if (launch_status != core::Status::OK) {
         log(ServiceConfig::LogLevel::ERROR,
             "Failed to spawn listener: " + listener.binary);
         return false;
     }
-    listener.process_handle = pi.hProcess;
-    listener.process_id = pi.dwProcessId;
     listener.running = true;
     listener.start_count++;
-    CloseHandle(pi.hThread);
-#else
-    pid_t pid = fork();
-    if (pid < 0) {
-        if (ctx) {
-            SET_ERROR_CONTEXT(ctx, core::Status::IO_ERROR,
-                              "Failed to fork listener process");
-        }
-        log(ServiceConfig::LogLevel::ERROR,
-            "Failed to fork listener: " + listener.binary);
-        return false;
-    }
-
-    if (pid == 0) {
-        std::vector<char*> argv;
-        argv.reserve(args.size() + 1);
-        for (auto& item : args) {
-            argv.push_back(const_cast<char*>(item.c_str()));
-        }
-        argv.push_back(nullptr);
-        execvp(argv[0], argv.data());
-        _exit(127);
-    }
-
-    listener.pid = pid;
-    listener.running = true;
-    listener.start_count++;
-#endif
 
     return true;
 }
@@ -1749,111 +1771,63 @@ bool ServiceController::sendListenerManagementCommand(const ListenerProcess& lis
 }
 
 bool ServiceController::waitForListenerExit(ListenerProcess& listener, uint32_t timeout_ms) {
-#ifdef _WIN32
-    if (!listener.process_handle) {
-        return true;
-    }
-    DWORD wait_result = WaitForSingleObject(listener.process_handle, timeout_ms);
-    if (wait_result == WAIT_OBJECT_0) {
-        CloseHandle(listener.process_handle);
-        listener.process_handle = nullptr;
-        listener.running = false;
-        return true;
-    }
-    return false;
-#else
-    if (listener.pid <= 0) {
+    if (!listener.running || listener.process.process_id == 0) {
         listener.running = false;
         return true;
     }
 
-    auto start = std::chrono::steady_clock::now();
-    while (true) {
-        int status = 0;
-        pid_t result = waitpid(listener.pid, &status, WNOHANG);
-        if (result == listener.pid) {
-            listener.pid = 0;
-            listener.running = false;
-            return true;
-        }
-        if (result < 0) {
-            listener.pid = 0;
-            listener.running = false;
-            return true;
-        }
-        if (std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now() - start).count() >= timeout_ms) {
-            return false;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    core::ProcessWaitResult wait_result;
+    core::Status status = process_control_->wait(listener.process, timeout_ms, &wait_result, nullptr);
+    if (status == core::Status::OK &&
+        (wait_result.state == core::ProcessState::EXITED ||
+         wait_result.state == core::ProcessState::NOT_FOUND)) {
+        process_control_->close(&listener.process, nullptr);
+        listener.running = false;
+        return true;
     }
-#endif
+    if (status == core::Status::NOT_FOUND) {
+        process_control_->close(&listener.process, nullptr);
+        listener.running = false;
+        return true;
+    }
+    return false;
 }
 
 bool ServiceController::waitForManagerExit(ManagerProcess& manager, uint32_t timeout_ms) {
-#ifdef _WIN32
-    if (!manager.process_handle) {
+    if (!manager.running || manager.process.process_id == 0) {
+        manager.running = false;
         return true;
     }
-    DWORD wait_result = WaitForSingleObject(manager.process_handle, timeout_ms);
-    if (wait_result == WAIT_OBJECT_0) {
-        CloseHandle(manager.process_handle);
-        manager.process_handle = nullptr;
+
+    core::ProcessWaitResult wait_result;
+    core::Status status = process_control_->wait(manager.process, timeout_ms, &wait_result, nullptr);
+    if (status == core::Status::OK &&
+        (wait_result.state == core::ProcessState::EXITED ||
+         wait_result.state == core::ProcessState::NOT_FOUND)) {
+        process_control_->close(&manager.process, nullptr);
+        manager.running = false;
+        return true;
+    }
+    if (status == core::Status::NOT_FOUND) {
+        process_control_->close(&manager.process, nullptr);
         manager.running = false;
         return true;
     }
     return false;
-#else
-    if (manager.pid <= 0) {
-        manager.running = false;
-        return true;
-    }
-
-    auto start = std::chrono::steady_clock::now();
-    while (true) {
-        int status = 0;
-        pid_t result = waitpid(manager.pid, &status, WNOHANG);
-        if (result == manager.pid) {
-            manager.pid = 0;
-            manager.running = false;
-            return true;
-        }
-        if (result < 0) {
-            manager.pid = 0;
-            manager.running = false;
-            return true;
-        }
-        if (std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now() - start).count() >= timeout_ms) {
-            return false;
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-    }
-#endif
 }
 
 void ServiceController::forceTerminateListener(ListenerProcess& listener) {
-#ifdef _WIN32
-    if (listener.process_handle) {
-        TerminateProcess(listener.process_handle, 0);
+    if (!listener.running || listener.process.process_id == 0) {
+        return;
     }
-#else
-    if (listener.pid > 0) {
-        ::kill(listener.pid, SIGTERM);
-    }
-#endif
+    (void)process_control_->terminate(listener.process, false, nullptr);
 }
 
 void ServiceController::forceTerminateManager(ManagerProcess& manager) {
-#ifdef _WIN32
-    if (manager.process_handle) {
-        TerminateProcess(manager.process_handle, 0);
+    if (!manager.running || manager.process.process_id == 0) {
+        return;
     }
-#else
-    if (manager.pid > 0) {
-        ::kill(manager.pid, SIGTERM);
-    }
-#endif
+    (void)process_control_->terminate(manager.process, false, nullptr);
 }
 
 void ServiceController::checkListeners() {
@@ -1863,14 +1837,14 @@ void ServiceController::checkListeners() {
         if (!listener.running) {
             continue;
         }
-#ifdef _WIN32
-        if (!listener.process_handle) {
-            continue;
-        }
-        DWORD exit_code = 0;
-        if (GetExitCodeProcess(listener.process_handle, &exit_code) && exit_code != STILL_ACTIVE) {
-            CloseHandle(listener.process_handle);
-            listener.process_handle = nullptr;
+
+        core::ProcessWaitResult wait_result;
+        core::Status wait_status = process_control_->wait(listener.process, 0, &wait_result, nullptr);
+        bool exited = (wait_status == core::Status::NOT_FOUND) ||
+                      (wait_status == core::Status::OK &&
+                       wait_result.state == core::ProcessState::EXITED);
+        if (exited) {
+            process_control_->close(&listener.process, nullptr);
             listener.running = false;
             listener.restart_count++;
             log(ServiceConfig::LogLevel::WARNING,
@@ -1880,21 +1854,6 @@ void ServiceController::checkListeners() {
                                       listener.engine_endpoint, nullptr);
             }
         }
-#else
-        int status = 0;
-        pid_t result = waitpid(listener.pid, &status, WNOHANG);
-        if (result == listener.pid) {
-            listener.running = false;
-            listener.pid = 0;
-            listener.restart_count++;
-            log(ServiceConfig::LogLevel::WARNING,
-                "Listener exited (" + listener.name + "), restarting");
-            if (!shutdown_requested_) {
-                launchListenerProcess(listener, !config_.config_file.empty(),
-                                      listener.engine_endpoint, nullptr);
-            }
-        }
-#endif
     }
 }
 
@@ -1908,14 +1867,17 @@ void ServiceController::checkManager() {
         return;
     }
 
-#ifdef _WIN32
-    if (!manager_.process_handle) {
+    if (manager_.process.process_id == 0) {
         return;
     }
-    DWORD exit_code = 0;
-    if (GetExitCodeProcess(manager_.process_handle, &exit_code) && exit_code != STILL_ACTIVE) {
-        CloseHandle(manager_.process_handle);
-        manager_.process_handle = nullptr;
+
+    core::ProcessWaitResult wait_result;
+    core::Status wait_status = process_control_->wait(manager_.process, 0, &wait_result, nullptr);
+    bool exited = (wait_status == core::Status::NOT_FOUND) ||
+                  (wait_status == core::Status::OK &&
+                   wait_result.state == core::ProcessState::EXITED);
+    if (exited) {
+        process_control_->close(&manager_.process, nullptr);
         manager_.running = false;
         manager_.restart_count++;
         log(ServiceConfig::LogLevel::WARNING, "Manager proxy exited, restarting");
@@ -1923,22 +1885,6 @@ void ServiceController::checkManager() {
             launchManagerProcess(manager_, nullptr);
         }
     }
-#else
-    if (manager_.pid <= 0) {
-        return;
-    }
-    int status = 0;
-    pid_t result = waitpid(manager_.pid, &status, WNOHANG);
-    if (result == manager_.pid) {
-        manager_.running = false;
-        manager_.pid = 0;
-        manager_.restart_count++;
-        log(ServiceConfig::LogLevel::WARNING, "Manager proxy exited, restarting");
-        if (!shutdown_requested_) {
-            launchManagerProcess(manager_, nullptr);
-        }
-    }
-#endif
 }
 
 void ServiceController::mainLoop() {

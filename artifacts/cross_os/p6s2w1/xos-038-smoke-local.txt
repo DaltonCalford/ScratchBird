@@ -1,0 +1,46 @@
+[smoke] cd "/home/dcalford/CliWork/ScratchBird" && cmake --preset linux-gcc-debug
+Preset CMake variables:
+
+  CMAKE_BUILD_TYPE="Debug"
+  CMAKE_EXPORT_COMPILE_COMMANDS="ON"
+  SCRATCHBIRD_CTEST_TIMEOUT="3600"
+
+Preset environment variables:
+
+  CC="gcc"
+  CXX="g++"
+
+-- ScratchBird Database Engine - Planning Phase
+-- See ProjectPlan/ directory for specifications
+-- Runtime feature gates: systemd=OFF, fork=ON
+-- Using the multi-header code from /home/dcalford/CliWork/ScratchBird/build/linux-gcc-debug/_deps/json-src/include/
+-- nlohmann/json library: ENABLED (FetchContent)
+-- CTest maximum test time: 3600s (1 hour)
+-- CTest parallel level: 14
+-- LZ4 compression support: ENABLED
+-- ZSTD compression support: ENABLED
+-- GEOS spatial library: ENABLED (3.12.1)
+-- PROJ coordinate system library: ENABLED (9.4.0)
+-- libcrypt found: Password hashing enabled
+-- OpenSSL found: Using secure random for password salts
+-- libxml2 found: Full XML/XPath support enabled
+-- Security library: OpenSSL found, full TLS/SSL support enabled
+-- Security library: scratchbird_security (TLS, auth, HBA, audit)
+-- Network library: scratchbird_network (socket, event loop, thread pool, connections)
+-- Server library: scratchbird_server (IPC + session management)
+-- Protocol library: scratchbird_protocol (wire protocol)
+-- Pool library: scratchbird_pool (connection pooling, statement/result caching)
+-- FDW library: scratchbird_fdw (PostgreSQL, MySQL, Firebird adapters)
+-- UDR library: scratchbird_udr (Remote Engine UDR Connectors)
+-- IPC library: scratchbird_ipc (IPC Contract v1.1 + SBWP Server)
+-- Testing library: scratchbird_testing (protocol, auth, load, security, benchmarks)
+-- Server executable: sb_server
+-- Manager executable: sb_manager
+-- Listener executables: sb_listener_native/pg/mysql/fb
+-- Parser agent executables: sb_parser_native/pg/mysql/fb
+-- Using global test timeout: 3600s
+-- TSAN tests disabled (set SCRATCHBIRD_ENABLE_TSAN=ON to enable)
+-- Configuring done (0.4s)
+-- Generating done (0.1s)
+-- Build files have been written to: /home/dcalford/CliWork/ScratchBird/build/linux-gcc-debug
+Smoke profile run complete.

@@ -1,0 +1,8 @@
+== 2026-02-22T19:22:45Z ==
+wrote /home/dcalford/CliWork/ScratchBird/artifacts/cross_os/p6s2w3/xos-050-test-partition.csv
+rows 3526
+linux_only,2
+portable,3524
+linux_only_examples:
+UnixSocketTest.ClientConnectToServer | skip reason: unix_socket_ipc_requires_af_unix
+UnixSocketTest.ServerListenAndClose | skip reason: unix_socket_ipc_requires_af_unix

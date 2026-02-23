@@ -6139,7 +6139,7 @@ namespace scratchbird::core
         } else {
             // Unsupported constraint pattern for now
             // Log and allow (fail-open for unknown patterns)
-            LOG_DEBUG(CATALOG, "Unsupported CHECK constraint pattern: {}", expr);
+            LOG_DEBUG(CATALOG, "Unsupported CHECK constraint pattern: %s", expr.c_str());
             return Status::OK;
         }
 

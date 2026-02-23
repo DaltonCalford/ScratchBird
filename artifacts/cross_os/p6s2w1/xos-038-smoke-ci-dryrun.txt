@@ -1,0 +1,3 @@
+[smoke] cd "/home/dcalford/CliWork/ScratchBird" && cmake --preset linux-gcc-debug
+[smoke] cd "/home/dcalford/CliWork/ScratchBird" && cmake --preset linux-clang-debug
+Smoke profile run complete.

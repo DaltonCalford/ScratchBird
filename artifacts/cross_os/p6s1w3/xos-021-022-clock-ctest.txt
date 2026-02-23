@@ -1,0 +1,41 @@
+Internal ctest changing into directory: /home/dcalford/CliWork/ScratchBird/build
+Test project /home/dcalford/CliWork/ScratchBird/build
+      Start  40: JobSchedulerCronParsing.RejectsInvalidFields
+ 1/16 Test  #40: JobSchedulerCronParsing.RejectsInvalidFields ..................   Passed    0.02 sec
+      Start  41: JobSchedulerCronParsing.ComputesNextRunFromEpoch
+ 2/16 Test  #41: JobSchedulerCronParsing.ComputesNextRunFromEpoch ..............   Passed    0.03 sec
+      Start  42: JobSchedulerCronParsing.ComputesNextRunWithStep
+ 3/16 Test  #42: JobSchedulerCronParsing.ComputesNextRunWithStep ...............   Passed    0.02 sec
+      Start  43: JobSchedulerDependencyGating.RequiresCompletedLatestRun
+ 4/16 Test  #43: JobSchedulerDependencyGating.RequiresCompletedLatestRun .......   Passed    0.02 sec
+      Start  44: JobSchedulerMaintenanceSeed.JobsPresentAndEnabled
+ 5/16 Test  #44: JobSchedulerMaintenanceSeed.JobsPresentAndEnabled .............   Passed    0.38 sec
+      Start  45: JobSchedulerCancellation.CancelledRunSkippedBeforeExecution
+ 6/16 Test  #45: JobSchedulerCancellation.CancelledRunSkippedBeforeExecution ...   Passed    1.39 sec
+      Start  46: JobSchedulerCancellation.RequestCancelInterruptsRun
+ 7/16 Test  #46: JobSchedulerCancellation.RequestCancelInterruptsRun ...........   Passed    0.90 sec
+      Start  47: JobSchedulerExecuteNow.ManualExecutionCreatesRun
+ 8/16 Test  #47: JobSchedulerExecuteNow.ManualExecutionCreatesRun ..............   Passed    0.40 sec
+      Start  48: JobSchedulerPendingState.RunTransitionsFromPendingToRunning
+ 9/16 Test  #48: JobSchedulerPendingState.RunTransitionsFromPendingToRunning ...   Passed    0.91 sec
+      Start  49: JobSchedulerResultData.PersistsResultPayloads
+10/16 Test  #49: JobSchedulerResultData.PersistsResultPayloads .................   Passed    0.40 sec
+      Start  50: JobSchedulerDependencies.DependentJobWaitsForCompletion
+11/16 Test  #50: JobSchedulerDependencies.DependentJobWaitsForCompletion .......   Passed    2.92 sec
+      Start  51: JobSchedulerRuntimeToggle.DisableStopsAndEnableResumesRuns
+12/16 Test  #51: JobSchedulerRuntimeToggle.DisableStopsAndEnableResumesRuns ....   Passed    3.41 sec
+      Start  52: JobSchedulerTimeout.MarksRunFailedAfterTimeout
+13/16 Test  #52: JobSchedulerTimeout.MarksRunFailedAfterTimeout ................   Passed    3.90 sec
+      Start  53: JobSchedulerRuntimeSql.AlterSystemAppliesSchedulerConfig
+14/16 Test  #53: JobSchedulerRuntimeSql.AlterSystemAppliesSchedulerConfig ......   Passed    0.40 sec
+      Start 408: ClockControlTest.MonotonicNowAndSleepAdvanceTime
+15/16 Test #408: ClockControlTest.MonotonicNowAndSleepAdvanceTime ..............   Passed    0.03 sec
+      Start 409: ClockControlTest.RealtimeNowMillisecondsIsNonZero
+16/16 Test #409: ClockControlTest.RealtimeNowMillisecondsIsNonZero .............   Passed    0.02 sec
+
+100% tests passed, 0 tests failed out of 16
+
+Label Time Summary:
+unit    =  15.13 sec*proc (16 tests)
+
+Total Test time (real) =  15.22 sec

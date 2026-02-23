@@ -36797,7 +36797,8 @@ namespace scratchbird
                         else
                         {
                             double radians = coerceToDouble(arg);
-                            push(Value::makeFloat64(radians * 180.0 / M_PI));
+                            push(Value::makeFloat64(
+                                radians * 180.0 / 3.141592653589793238462643383279502884));
                         }
                     }
                     else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_RADIANS))
@@ -36816,7 +36817,8 @@ namespace scratchbird
                         else
                         {
                             double degrees = coerceToDouble(arg);
-                            push(Value::makeFloat64(degrees * M_PI / 180.0));
+                            push(Value::makeFloat64(
+                                degrees * 3.141592653589793238462643383279502884 / 180.0));
                         }
                     }
                     else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_PI))
@@ -36827,7 +36829,7 @@ namespace scratchbird
                             error("PI expects 0 arguments, got " + std::to_string(arg_count));
                         }
 
-                        push(Value::makeFloat64(M_PI));
+                        push(Value::makeFloat64(3.141592653589793238462643383279502884));
                     }
                     // Algebraic functions
                     else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_ABS))
@@ -59591,41 +59593,12 @@ namespace scratchbird
                             return ExecutionResult();
                         };
 
-	                    switch (opcode)
-	                    {
+                        switch (opcode)
+                        {
                             case scratchbird::sblr::v3::Opcode::SBLR3_OP_UDR_COMPILE_DISPATCH:
                             case scratchbird::sblr::v3::Opcode::SBLR3_OP_UDR_EMBEDDED_SQL_COMPILE:
                                 return executeUdrCompileBridgeOpcode(opcode, payload);
-                            case scratchbird::sblr::v3::Opcode::SBLR3_ADMIN_VACUUM_ALIAS: {
-                                // Native MGA engines use sweep/garbage-collection semantics.
-                                // VACUUM is accepted as compatibility alias and mapped to sweep.
-                                if (!db_)
-                                {
-                                    return ExecutionResult("Database not available");
-                                }
-                                auto* sweep_mgr = db_->sweep_manager();
-                                if (!sweep_mgr)
-                                {
-                                    return ExecutionResult("Sweep manager not available");
-                                }
-
-                                core::ErrorContext err_ctx;
-                                auto status = sweep_mgr->executeSweep(true, &err_ctx);
-                                if (status != core::Status::OK)
-                                {
-                                    std::string err_msg = "Sweep failed";
-                                    if (!err_ctx.message.empty())
-                                    {
-                                        err_msg += ": " + err_ctx.message;
-                                    }
-                                    return ExecutionResult(err_msg);
-                                }
-
-                                core::VNextMetricsEventModel::recordExecutorEvent(
-                                    "vnext_opcode_dispatch", "ok", symbol);
-                                return ExecutionResult();
-                            }
-	                        case scratchbird::sblr::v3::Opcode::SBLR3_OP_DOC_PATH_FILTER:
+			                        case scratchbird::sblr::v3::Opcode::SBLR3_OP_DOC_PATH_FILTER:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_OP_TS_BUCKET_AGG:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_OP_COL_SCAN:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_OP_SEARCH_DSL_EVAL:
@@ -61595,7 +61568,6 @@ namespace scratchbird
                     case scratchbird::sblr::v3::Opcode::SBLR3_ADMIN_BACKUP:
                     case scratchbird::sblr::v3::Opcode::SBLR3_ADMIN_RESTORE:
                     case scratchbird::sblr::v3::Opcode::SBLR3_ADMIN_VALIDATE:
-                    case scratchbird::sblr::v3::Opcode::SBLR3_ADMIN_VACUUM_ALIAS:
                     case scratchbird::sblr::v3::Opcode::SBLR3_CQL_KEYSPACE:
                     case scratchbird::sblr::v3::Opcode::SBLR3_CQL_BATCH:
                     case scratchbird::sblr::v3::Opcode::SBLR3_CQL_TTL:

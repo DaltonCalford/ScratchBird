@@ -1,0 +1,227 @@
+[firebird.driver]
+    ;
+    ; Firebird driver configuration.
+
+    ; Path to Firebird client library
+    ; Type: str
+    ;fb_client_library = <UNDEFINED>
+
+    ; BLOB size threshold. Bigger BLOB will be returned as stream BLOBs.
+    ; Type: int
+    ;stream_blob_threshold = 65536
+
+    ; Registered servers
+    ; Type: list of configuration section names
+    servers = fb308,fb401,fb50
+
+    ; Registered databases
+    ; Type: list of configuration section names
+    ;databases =
+
+
+; ############################################################################
+
+[firebird.db.defaults]
+
+    ;
+    ; Default database configuration.
+
+    ; Name of server where database is located
+    ; Type: str
+    ;server = <UNDEFINED>
+
+    ; Database connection string
+    ; Type: str
+    ;dsn = <UNDEFINED>
+
+    ; Database file specification or alias
+    ; Type: str
+    ;database = <UNDEFINED>
+
+    ; Database filename should be passed in UTF8
+    ; Type: bool
+    ;utf8filename = <UNDEFINED>
+
+    ; Protocol to be used for database
+    ; Type: enum [xnet, inet, inet4, wnet]
+    ;protocol = <UNDEFINED>
+
+    ; Defaul user name
+    ; Type: str
+    ;user = <UNDEFINED>
+    ;user=SYSDBA
+
+    ; Default user password
+    ; Type: str
+    ;password = <UNDEFINED>
+
+    ;; Use trusted authentication
+    ; Type: bool
+    ;trusted_auth = no
+
+    ; User role
+    ; Type: str
+    ;role = <UNDEFINED>
+
+    ; Character set for database connection
+    ; Type: str
+    ;charset = <UNDEFINED>
+
+    ; SQL Dialect for database connection
+    ; Type: int
+    ;sql_dialect = 3
+
+    ; Connection timeout
+    ; Type: int
+    ;timeout = <UNDEFINED>
+
+    ; Do not use linger for database connection
+    ; Type: bool
+    ;no_linger = <UNDEFINED>
+
+    ; Page cache size override for database connection
+    ; Type: int
+    ;cache_size = <UNDEFINED>
+
+    ; Dummy packet interval
+    ; Type: int
+    ;dummy_packet_interval = <UNDEFINED>
+
+    ; Configuration override
+    ; Type: str
+    ;config = <UNDEFINED>
+
+    ; List of authentication plugins override
+    ; Type: str
+    ;auth_plugin_list = <UNDEFINED>
+
+    ; Page size to be used for created database.
+    ; Type: int
+    ;page_size = <UNDEFINED>
+
+    ; Write mode for created database (True = sync, False = async)
+    ; Type: bool
+    ;forced_writes = <UNDEFINED>
+
+    ; Character set for created database
+    ; Type: str
+    ;db_charset = <UNDEFINED>
+
+    ; SQL dialect for created database
+    ; Type: int
+    ;db_sql_dialect = <UNDEFINED>
+
+    ; Page cache size override for created database
+    ; Type: int
+    ;db_cache_size = <UNDEFINED>
+
+    ; Sweep interval for created database
+    ; Type: int
+    ;sweep_interval = <UNDEFINED>
+
+    ; Data page space usage for created database (True = reserve space, False = Use all space)
+    ; Type: bool
+    ;reserve_space = <UNDEFINED>
+
+; ############################################################################
+
+[firebird.server.defaults]
+    ;
+    ; Default server configuration.
+
+    ; Server host machine specification
+    ; Type: str
+    ;host = <UNDEFINED>
+
+    ; Port used by Firebird server
+    ; Type: str
+    ;port = <UNDEFINED>
+
+    ; Defaul user name
+    ; Type: str
+    ;user=SYSDBA
+
+    ; Default user password
+    ; Type: str
+    ;password=masterkey
+
+
+    ; Configuration override
+    ; Type: str
+    ;config = <UNDEFINED>
+
+    ; List of authentication plugins override
+    ; Type: str
+    ;auth_plugin_list = <UNDEFINED>
+
+    ; Use trusted authentication
+    ; Type: bool
+    ;trusted_auth = no
+
+    ; no helps...
+    ;ncoding = cp1251
+    ;encoding_errors = ignore
+
+; ############################################################################
+
+[DEFAULT]
+    ; this section was added 20.07.2022, it was NOT in original file.
+    ; see letter from P.C. 28-dec-2021 15:14, subj:
+    ; "firebird-driver.conf: why some parameters can not be specified as COMMON for all tested servers ?"
+
+    host = localhost
+    user=SYSDBA
+    password=masterkey
+    encoding_errors = ignore
+
+;[local]
+    ;
+    ; Server configuration.
+
+    ; Server host machine specification
+    ; Type: str
+    ;host = localhost
+
+    ; Port used by Firebird server
+    ; Type: str
+    ;port = <UNDEFINED>
+
+    ; Defaul user name
+    ; Type: str
+
+    ; Default user password
+    ; Type: str
+
+
+    ; Configuration override
+    ; Type: str
+    ;config = <UNDEFINED>
+
+    ; List of authentication plugins override
+    ; Type: str
+    ;auth_plugin_list = <UNDEFINED>
+
+    ; Use trusted authentication
+    ; Type: bool
+    ;trusted_auth = no
+
+; ############################################################################
+
+
+; Hereafter 'fb_client_library' must be specified in every server section.
+; NB: fb_client_library is part of DriverConfig and not server or database conf
+; Explanation see in:
+; 1. Letter from pcisar 28-dec-2021 15:14, subj: "firebird-driver-version"
+; 2. Letter from pcisar 07-mar-2022 21:30, subj: "firebird-qa [new framework]: unable to make connection as NON-ASCII user ..."
+
+[fb308]
+    port = 33308
+    fb_client_library = /opt/fb30/lib/libfbclient.so
+
+[fb401]
+    port = 34000
+    fb_client_library = /opt/fb40/lib/libfbclient.so
+
+[fb50]
+    port = 35000
+    fb_client_library = /opt/fb50/lib/libfbclient.so

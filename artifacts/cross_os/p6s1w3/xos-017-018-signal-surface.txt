@@ -1,0 +1,84 @@
+include/scratchbird/server/daemon.h:20: * - Signal handling (SIGTERM, SIGHUP, SIGUSR1, etc.)
+include/scratchbird/server/daemon.h:49:    SHUTDOWN = 1,       // SIGTERM/SIGINT - graceful shutdown
+include/scratchbird/server/daemon.h:50:    RELOAD = 2,         // SIGHUP - reload configuration
+include/scratchbird/server/daemon.h:51:    ROTATE_LOGS = 3,    // SIGUSR1 - rotate log files
+include/scratchbird/server/daemon.h:52:    DUMP_STATS = 4,     // SIGUSR2 - dump statistics
+include/scratchbird/server/daemon.h:53:    IMMEDIATE_STOP = 5  // SIGQUIT - immediate shutdown
+src/server/scratchbird_server.cpp:98:        core::SignalInstallSpec signal_spec;
+src/server/scratchbird_server.cpp:287:        checkControlSignals();
+src/server/scratchbird_server.cpp:296:            checkControlSignals();
+src/server/scratchbird_server.cpp:342:void ScratchBirdServer::checkControlSignals() {
+src/server/scratchbird_server.cpp:347:    core::ControlSignal signal = core::ControlSignal::NONE;
+src/server/scratchbird_server.cpp:353:        case core::ControlSignal::SHUTDOWN:
+src/server/scratchbird_server.cpp:354:        case core::ControlSignal::IMMEDIATE_STOP:
+src/server/scratchbird_server.cpp:358:        case core::ControlSignal::RELOAD:
+src/server/scratchbird_server.cpp:364:        case core::ControlSignal::ROTATE_LOGS:
+src/server/scratchbird_server.cpp:365:        case core::ControlSignal::DUMP_STATS:
+src/server/scratchbird_server.cpp:366:        case core::ControlSignal::NONE:
+include/scratchbird/core/signal_control.h:21:    enum class ControlSignal : uint8_t
+include/scratchbird/core/signal_control.h:31:    struct SignalInstallSpec
+include/scratchbird/core/signal_control.h:46:        virtual auto install(const SignalInstallSpec& spec,
+include/scratchbird/core/signal_control.h:51:        virtual auto poll(ControlSignal* signal_out,
+include/scratchbird/core/signal_control.h:54:        virtual auto inject(ControlSignal signal,
+include/scratchbird/server/scratchbird_server.h:258:    void checkControlSignals();
+src/server/daemon.cpp:48:DaemonSignal mapControlSignal(core::ControlSignal signal) {
+src/server/daemon.cpp:50:        case core::ControlSignal::SHUTDOWN:
+src/server/daemon.cpp:52:        case core::ControlSignal::RELOAD:
+src/server/daemon.cpp:54:        case core::ControlSignal::ROTATE_LOGS:
+src/server/daemon.cpp:56:        case core::ControlSignal::DUMP_STATS:
+src/server/daemon.cpp:58:        case core::ControlSignal::IMMEDIATE_STOP:
+src/server/daemon.cpp:60:        case core::ControlSignal::NONE:
+src/server/daemon.cpp:634:    core::SignalInstallSpec spec;
+src/server/daemon.cpp:651:        core::ControlSignal control_signal = core::ControlSignal::NONE;
+src/server/daemon.cpp:653:            DaemonSignal signal = mapControlSignal(control_signal);
+src/core/signal_control.cpp:41:            auto install(const SignalInstallSpec& spec,
+src/core/signal_control.cpp:60:                pending_signal_.store(static_cast<int>(ControlSignal::NONE),
+src/core/signal_control.cpp:65:                    Status status = installSignal(SIGINT, ctx);
+src/core/signal_control.cpp:71:                    status = installSignal(SIGTERM, ctx);
+src/core/signal_control.cpp:79:#ifdef SIGHUP
+src/core/signal_control.cpp:82:                    Status status = installSignal(SIGHUP, ctx);
+src/core/signal_control.cpp:91:#ifdef SIGUSR1
+src/core/signal_control.cpp:94:                    Status status = installSignal(SIGUSR1, ctx);
+src/core/signal_control.cpp:103:#ifdef SIGUSR2
+src/core/signal_control.cpp:106:                    Status status = installSignal(SIGUSR2, ctx);
+src/core/signal_control.cpp:115:#ifdef SIGQUIT
+src/core/signal_control.cpp:118:                    Status status = installSignal(SIGQUIT, ctx);
+src/core/signal_control.cpp:127:#if !defined(_WIN32) && defined(SIGPIPE)
+src/core/signal_control.cpp:130:                    Status status = installSignal(SIGPIPE, ctx, SIG_IGN, SA_RESTART);
+src/core/signal_control.cpp:160:                    std::signal(entry.signal_no, entry.handler);
+src/core/signal_control.cpp:170:                    if (::sigaction(entry.signal_no, &entry.previous_action, nullptr) != 0)
+src/core/signal_control.cpp:172:                        std::string message = "sigaction restore failed: ";
+src/core/signal_control.cpp:181:                pending_signal_.store(static_cast<int>(ControlSignal::NONE),
+src/core/signal_control.cpp:193:            auto poll(ControlSignal* signal_out,
+src/core/signal_control.cpp:201:                int raw = pending_signal_.exchange(static_cast<int>(ControlSignal::NONE),
+src/core/signal_control.cpp:203:                *signal_out = static_cast<ControlSignal>(raw);
+src/core/signal_control.cpp:207:            auto inject(ControlSignal signal,
+src/core/signal_control.cpp:210:                if (signal == ControlSignal::NONE)
+src/core/signal_control.cpp:231:                struct sigaction previous_action
+src/core/signal_control.cpp:245:                ControlSignal mapped = instance->mapSignal(signal_no);
+src/core/signal_control.cpp:246:                if (mapped != ControlSignal::NONE)
+src/core/signal_control.cpp:273:                void (*previous_handler)(int) = std::signal(signal_no, handler);
+src/core/signal_control.cpp:298:                struct sigaction action
+src/core/signal_control.cpp:305:                struct sigaction previous
+src/core/signal_control.cpp:308:                if (::sigaction(signal_no, &action, &previous) != 0)
+src/core/signal_control.cpp:310:                    std::string message = "sigaction install failed: ";
+src/core/signal_control.cpp:324:            auto mapSignal(int signal_no) const -> ControlSignal
+src/core/signal_control.cpp:328:                    case SIGINT:
+src/core/signal_control.cpp:329:                    case SIGTERM:
+src/core/signal_control.cpp:330:                        return ControlSignal::SHUTDOWN;
+src/core/signal_control.cpp:331:#ifdef SIGHUP
+src/core/signal_control.cpp:332:                    case SIGHUP:
+src/core/signal_control.cpp:333:                        return ControlSignal::RELOAD;
+src/core/signal_control.cpp:335:#ifdef SIGUSR1
+src/core/signal_control.cpp:336:                    case SIGUSR1:
+src/core/signal_control.cpp:337:                        return ControlSignal::ROTATE_LOGS;
+src/core/signal_control.cpp:339:#ifdef SIGUSR2
+src/core/signal_control.cpp:340:                    case SIGUSR2:
+src/core/signal_control.cpp:341:                        return ControlSignal::DUMP_STATS;
+src/core/signal_control.cpp:343:#ifdef SIGQUIT
+src/core/signal_control.cpp:344:                    case SIGQUIT:
+src/core/signal_control.cpp:345:                        return ControlSignal::IMMEDIATE_STOP;
+src/core/signal_control.cpp:348:                        return ControlSignal::NONE;
+src/core/signal_control.cpp:352:            void queue(ControlSignal signal)
+src/core/signal_control.cpp:357:            SignalInstallSpec install_spec_{};
+src/core/signal_control.cpp:358:            std::atomic<int> pending_signal_{static_cast<int>(ControlSignal::NONE)};

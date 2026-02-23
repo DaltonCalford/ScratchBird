@@ -1,0 +1,312 @@
+tests/benchmark/test_front_door_mode_benchmark.cpp:31:#include <signal.h>
+tests/benchmark/test_front_door_mode_benchmark.cpp:32:#include <sys/wait.h>
+tests/benchmark/test_front_door_mode_benchmark.cpp:33:#include <unistd.h>
+src/ipc/unix_socket_channel.cpp:23:#include <sys/socket.h>
+src/ipc/unix_socket_channel.cpp:24:#include <sys/un.h>
+src/ipc/unix_socket_channel.cpp:25:#include <unistd.h>
+src/ipc/unix_socket_channel.cpp:26:#include <fcntl.h>
+src/ipc/unix_socket_channel.cpp:27:#include <poll.h>
+src/ipc/unix_socket_channel.cpp:29:#include <errno.h>
+src/ipc/external_agents/postgresql_parser_agent.cpp:26:#include <sys/socket.h>
+src/ipc/external_agents/postgresql_parser_agent.cpp:27:#include <netinet/in.h>
+src/ipc/external_agents/postgresql_parser_agent.cpp:28:#include <unistd.h>
+src/ipc/external_agents/firebird_parser_agent.cpp:24:#include <sys/socket.h>
+src/ipc/external_agents/firebird_parser_agent.cpp:25:#include <netinet/in.h>
+src/ipc/external_agents/firebird_parser_agent.cpp:26:#include <unistd.h>
+src/ipc/parser_agent.cpp:19:#include <sys/socket.h>
+src/ipc/parser_agent.cpp:20:#include <sys/un.h>
+src/ipc/parser_agent.cpp:21:#include <netinet/in.h>
+src/ipc/parser_agent.cpp:22:#include <arpa/inet.h>
+src/ipc/parser_agent.cpp:23:#include <unistd.h>
+src/ipc/parser_agent.cpp:24:#include <fcntl.h>
+src/ipc/parser_agent.cpp:25:#include <errno.h>
+src/ipc/parser_agent.cpp:26:#include <poll.h>
+src/ipc/ipc_server.cpp:17:#include <sys/socket.h>
+src/ipc/ipc_server.cpp:18:#include <sys/un.h>
+src/ipc/ipc_server.cpp:19:#include <netinet/in.h>
+src/ipc/ipc_server.cpp:20:#include <arpa/inet.h>
+src/ipc/ipc_server.cpp:21:#include <unistd.h>
+src/ipc/ipc_server.cpp:22:#include <fcntl.h>
+src/ipc/ipc_server.cpp:23:#include <errno.h>
+src/core/job_scheduler.cpp:29:#include <poll.h>
+src/core/job_scheduler.cpp:30:#include <sys/resource.h>
+src/core/job_scheduler.cpp:31:#include <sys/stat.h>
+src/core/job_scheduler.cpp:32:#include <sys/types.h>
+src/core/job_scheduler.cpp:33:#include <sys/wait.h>
+src/core/job_scheduler.cpp:34:#include <unistd.h>
+src/core/job_scheduler.cpp:35:#include <fcntl.h>
+src/core/job_scheduler.cpp:36:#include <signal.h>
+src/protocol/adapters/native_adapter.cpp:39:#include <unistd.h>
+src/udr/firebird_udr.cpp:11:#include <arpa/inet.h>
+src/udr/firebird_udr.cpp:12:#include <sys/socket.h>
+src/udr/firebird_udr.cpp:13:#include <netinet/in.h>
+src/udr/firebird_udr.cpp:15:#include <netdb.h>
+src/udr/firebird_udr.cpp:16:#include <unistd.h>
+src/udr/firebird_udr.cpp:17:#include <fcntl.h>
+src/udr/scratchbird_udr.cpp:12:#include <arpa/inet.h>
+src/udr/scratchbird_udr.cpp:13:#include <sys/socket.h>
+src/udr/scratchbird_udr.cpp:14:#include <netinet/in.h>
+src/udr/scratchbird_udr.cpp:16:#include <netdb.h>
+src/udr/scratchbird_udr.cpp:17:#include <unistd.h>
+src/udr/scratchbird_udr.cpp:18:#include <fcntl.h>
+src/core/backup_manager.cpp:32:#include <fcntl.h>
+src/core/backup_manager.cpp:33:#include <unistd.h>
+src/core/backup_manager.cpp:34:#include <sys/stat.h>
+src/udr/mysql_udr.cpp:12:#include <arpa/inet.h>
+src/udr/mysql_udr.cpp:13:#include <sys/socket.h>
+src/udr/mysql_udr.cpp:14:#include <netinet/in.h>
+src/udr/mysql_udr.cpp:16:#include <netdb.h>
+src/udr/mysql_udr.cpp:17:#include <unistd.h>
+src/udr/mysql_udr.cpp:18:#include <fcntl.h>
+src/core/network.cpp:15:#include <arpa/inet.h>
+src/udr/postgresql_udr.cpp:13:#include <arpa/inet.h>
+src/udr/postgresql_udr.cpp:14:#include <sys/socket.h>
+src/udr/postgresql_udr.cpp:15:#include <netinet/in.h>
+src/udr/postgresql_udr.cpp:17:#include <netdb.h>
+src/udr/postgresql_udr.cpp:18:#include <unistd.h>
+src/udr/postgresql_udr.cpp:19:#include <fcntl.h>
+src/testing/ProtocolTester.cpp:21:#include <sys/socket.h>
+src/testing/ProtocolTester.cpp:22:#include <netinet/in.h>
+src/testing/ProtocolTester.cpp:23:#include <arpa/inet.h>
+src/testing/ProtocolTester.cpp:24:#include <netdb.h>
+src/testing/ProtocolTester.cpp:25:#include <unistd.h>
+src/testing/ProtocolTester.cpp:26:#include <poll.h>
+src/core/lsm_tree_index.cpp:26:#include <sys/stat.h>
+src/core/lsm_tree_index.cpp:27:#include <sys/types.h>
+src/core/lsm_tree_index.cpp:28:#include <dirent.h>
+tests/integration/test_columnstore_simple_e2e.cpp:24:#include <unistd.h>
+tests/unit/test_btree_gc.cpp:22:#include <unistd.h>
+tests/integration/test_lsm_tree_comprehensive.cpp:27:#include <unistd.h>
+tests/integration/test_bit_manipulation.cpp:25:#include <unistd.h>
+src/core/auth_provider.cpp:40:#include <sys/stat.h>
+src/core/auth_provider.cpp:41:#include <unistd.h>
+src/server/sb_manager_main.cpp:37:#include <poll.h>
+tests/integration/test_index_bytecode_generation.cpp:22:#include <unistd.h>
+src/server/daemon.cpp:31:#include <unistd.h>
+src/server/daemon.cpp:32:#include <sys/types.h>
+src/server/daemon.cpp:33:#include <sys/stat.h>
+src/server/daemon.cpp:35:#include <sys/wait.h>
+src/server/daemon.cpp:36:#include <signal.h>
+src/server/daemon.cpp:37:#include <fcntl.h>
+src/server/daemon.cpp:38:#include <pwd.h>
+src/server/daemon.cpp:39:#include <grp.h>
+src/server/daemon.cpp:40:#include <dlfcn.h>
+tests/unit/test_catalog_engine_specific_extension_contract.cpp:15:#include <unistd.h>
+src/server/service_controller.cpp:38:#include <grp.h>
+src/server/service_controller.cpp:39:#include <pwd.h>
+src/server/service_controller.cpp:40:#include <signal.h>
+src/server/service_controller.cpp:41:#include <sys/wait.h>
+src/server/service_controller.cpp:42:#include <unistd.h>
+tests/unit/test_catalog_emulation_engine_coverage_contract.cpp:18:#include <unistd.h>
+src/server/ipc_common.cpp:36:    #include <sys/types.h>
+src/server/ipc_common.cpp:37:    #include <signal.h>
+src/server/ipc_common.cpp:38:    #include <unistd.h>
+src/network/socket.cpp:29:    #include <sys/types.h>
+src/network/socket.cpp:30:    #include <sys/socket.h>
+src/network/socket.cpp:32:    #include <sys/un.h>
+src/network/socket.cpp:34:    #include <netinet/in.h>
+src/network/socket.cpp:36:    #include <arpa/inet.h>
+src/network/socket.cpp:37:    #include <netdb.h>
+src/network/socket.cpp:38:    #include <unistd.h>
+src/network/socket.cpp:39:    #include <fcntl.h>
+src/network/socket.cpp:40:    #include <poll.h>
+src/network/socket.cpp:41:    #include <errno.h>
+src/core/buffer_pool.cpp:24:#include <unistd.h>
+src/fdw/firebird_adapter.cpp:24:#include <arpa/inet.h>
+src/fdw/firebird_adapter.cpp:25:#include <netdb.h>
+src/fdw/firebird_adapter.cpp:27:#include <sys/socket.h>
+src/fdw/firebird_adapter.cpp:28:#include <unistd.h>
+src/network/control_plane.cpp:34:#include <sys/stat.h>
+src/network/control_plane.cpp:35:#include <sys/socket.h>
+src/network/control_plane.cpp:37:#include <unistd.h>
+src/server/config_parser.cpp:29:#include <unistd.h>
+src/server/config_parser.cpp:30:#include <pwd.h>
+src/server/config_parser.cpp:31:#include <sys/types.h>
+src/fdw/postgresql_adapter.cpp:24:#include <arpa/inet.h>
+src/fdw/postgresql_adapter.cpp:25:#include <netdb.h>
+src/fdw/postgresql_adapter.cpp:27:#include <sys/socket.h>
+src/fdw/postgresql_adapter.cpp:28:#include <unistd.h>
+src/network/event_loop.cpp:29:    #include <sys/types.h>
+src/network/event_loop.cpp:31:    #include <sys/time.h>
+src/network/event_loop.cpp:35:    #include <unistd.h>
+src/network/event_loop.cpp:36:    #include <poll.h>
+src/network/event_loop.cpp:37:    #include <fcntl.h>
+tests/integration/test_lsm_tree_simple.cpp:23:#include <unistd.h>
+src/testing/AuthTester.cpp:21:#include <sys/socket.h>
+src/testing/AuthTester.cpp:22:#include <netinet/in.h>
+src/testing/AuthTester.cpp:23:#include <arpa/inet.h>
+src/testing/AuthTester.cpp:24:#include <netdb.h>
+src/testing/AuthTester.cpp:25:#include <unistd.h>
+src/network/thread_pool.cpp:24:    #include <pthread.h>
+src/ipc/external_agents/mysql_parser_agent.cpp:26:#include <sys/socket.h>
+src/ipc/external_agents/mysql_parser_agent.cpp:27:#include <netinet/in.h>
+src/ipc/external_agents/mysql_parser_agent.cpp:28:#include <unistd.h>
+src/fdw/mysql_adapter.cpp:24:#include <arpa/inet.h>
+src/fdw/mysql_adapter.cpp:25:#include <netdb.h>
+src/fdw/mysql_adapter.cpp:27:#include <sys/socket.h>
+src/fdw/mysql_adapter.cpp:28:#include <unistd.h>
+tests/integration/test_ipc_integration_harness.cpp:29:#include <unistd.h>
+tests/unit/test_storage_critical_fixes.cpp:20:#include <sys/resource.h>
+src/network/sb_listener_main.cpp:36:#include <fcntl.h>
+src/network/sb_listener_main.cpp:52:#include <signal.h>
+src/network/sb_listener_main.cpp:53:#include <sys/wait.h>
+src/network/sb_listener_main.cpp:54:#include <unistd.h>
+src/server/scratchbird_server.cpp:30:#include <unistd.h>
+src/server/scratchbird_server.cpp:31:#include <sys/stat.h>
+src/server/scratchbird_server.cpp:32:#include <signal.h>
+src/server/server_session.cpp:45:#include <unistd.h>
+src/server/ipc_tcp.cpp:62:    #include <sys/socket.h>
+src/server/ipc_tcp.cpp:63:    #include <netinet/in.h>
+src/server/ipc_tcp.cpp:65:    #include <arpa/inet.h>
+src/server/ipc_tcp.cpp:66:    #include <unistd.h>
+src/server/ipc_tcp.cpp:67:    #include <fcntl.h>
+src/server/ipc_tcp.cpp:68:    #include <poll.h>
+src/server/ipc_tcp.cpp:69:    #include <errno.h>
+src/core/tzfile_parser.cpp:13:#include <sys/types.h>
+src/core/tzfile_parser.cpp:14:#include <sys/stat.h>
+src/core/tzfile_parser.cpp:15:#include <dirent.h>
+src/client/connection.cpp:42:#include <fcntl.h>
+src/client/connection.cpp:51:#include <unistd.h>
+src/client/connection.cpp:52:#include <sys/types.h>
+src/client/connection.cpp:53:#include <sys/wait.h>
+src/client/connection.cpp:54:#include <signal.h>
+src/catalog/firebird_catalog.cpp:27:#include <unistd.h>
+src/server/ipc_unix.cpp:30:#include <sys/socket.h>
+src/server/ipc_unix.cpp:31:#include <sys/un.h>
+src/server/ipc_unix.cpp:32:#include <sys/stat.h>
+src/server/ipc_unix.cpp:33:#include <sys/types.h>
+src/server/ipc_unix.cpp:34:#include <unistd.h>
+src/server/ipc_unix.cpp:35:#include <fcntl.h>
+src/server/ipc_unix.cpp:36:#include <poll.h>
+src/server/ipc_unix.cpp:37:#include <errno.h>
+tests/unit/test_catalog_domain_extension_contract.cpp:15:#include <unistd.h>
+src/core/index_factory.cpp:32:#include <sys/stat.h>
+src/core/index_factory.cpp:33:#include <sys/types.h>
+src/security/auth_method.cpp:22:#include <pwd.h>
+src/security/auth_method.cpp:23:#include <grp.h>
+src/security/auth_method.cpp:24:#include <unistd.h>
+tests/unit/test_catalog_virtual_overlay_conformance_contract.cpp:15:#include <unistd.h>
+src/core/page_manager.cpp:19:#include <fcntl.h>
+src/core/page_manager.cpp:20:#include <unistd.h>
+src/core/page_manager.cpp:21:#include <sys/stat.h>
+src/core/database.cpp:42:#include <fcntl.h>
+src/core/database.cpp:43:#include <unistd.h>
+src/core/database.cpp:44:#include <sys/stat.h>
+src/core/transaction_manager.cpp:27:#include <unistd.h>
+src/security/auth_manager.cpp:27:#include <arpa/inet.h>
+src/security/auth_manager.cpp:28:#include <sys/socket.h>
+src/security/auth_manager.cpp:29:#include <netinet/in.h>
+src/security/auth_manager.cpp:30:#include <syslog.h>
+src/core/proc_array.cpp:15:#include <unistd.h>
+src/core/proc_array.cpp:16:#include <sys/mman.h>
+src/core/password_hash.cpp:21:#include <unistd.h>
+src/core/inverted_index.cpp:22:#include <dlfcn.h>
+src/security/tls_context.cpp:35:#include <arpa/inet.h>
+src/security/tls_context.cpp:36:#include <netinet/in.h>
+src/core/lsm_compaction_manager.cpp:38:#include <sys/stat.h>
+tests/unit/test_virtual_catalog_canonical_backing_contract.cpp:16:#include <unistd.h>
+src/core/lsm_tree_components.cpp:29:#include <fcntl.h>
+src/core/lsm_tree_components.cpp:30:#include <unistd.h>
+tests/unit/test_catalog_security_acl_abac_graph_token_quota_settings_contract.cpp:16:#include <unistd.h>
+tests/unit/test_catalog_cluster_fabric_extension_contract.cpp:15:#include <unistd.h>
+src/parser/sb_parser_main.cpp:46:#include <unistd.h>
+tests/unit/test_catalog_incident_healing_alert_extension_contract.cpp:15:#include <unistd.h>
+tests/unit/test_catalog_resource_timezone_extension_contract.cpp:15:#include <unistd.h>
+tests/unit/test_postgresql_parser_agent.cpp:21:#include <sys/socket.h>
+tests/unit/test_postgresql_parser_agent.cpp:22:#include <unistd.h>
+tests/unit/test_gin_index_gc.cpp:20:#include <unistd.h>
+tests/unit/test_catalog_security_auth_provider_rule_chain_contract.cpp:15:#include <unistd.h>
+tests/unit/test_auth_policy_protocol_parity.cpp:25:#include <unistd.h>
+tests/unit/test_ipc_server.cpp:28:#include <unistd.h>
+tests/unit/test_catalog_routing_admission_extension_contract.cpp:15:#include <unistd.h>
+tests/unit/test_catalog_storage_extension_contract.cpp:15:#include <unistd.h>
+tests/unit/test_auth_mfa_challenge_flow.cpp:25:#include <unistd.h>
+tests/unit/test_memory_safety.cpp:21:#include <unistd.h>
+tests/unit/test_memory_safety.cpp:22:#include <fcntl.h>
+tests/unit/test_memory_safety.cpp:23:#include <sys/stat.h>
+tests/unit/test_memory_safety.cpp:24:#include <sys/resource.h>
+tests/unit/test_compression.cpp:19:#include <unistd.h>
+tests/unit/test_manager_proxy_mcp.cpp:26:#include <signal.h>
+tests/unit/test_manager_proxy_mcp.cpp:27:#include <sys/wait.h>
+tests/unit/test_manager_proxy_mcp.cpp:28:#include <unistd.h>
+tests/unit/test_tablespace_autoextend.cpp:20:#include <unistd.h>
+tests/unit/test_logger.cpp:24:#include <unistd.h>
+tests/unit/test_firebird_parser_agent.cpp:31:#include <unistd.h>
+tests/unit/test_firebird_parser_agent.cpp:32:#include <sys/socket.h>
+tests/unit/test_firebird_parser_agent.cpp:33:#include <netinet/in.h>
+tests/unit/test_firebird_parser_agent.cpp:34:#include <arpa/inet.h>
+tests/unit/test_virtual_catalog_overlay_group_c_contract.cpp:16:#include <unistd.h>
+tests/unit/test_statistics_accuracy.cpp:46:#include <unistd.h>
+tests/unit/test_catalog_security_crypto_baseline_key_lifecycle_contract.cpp:15:#include <unistd.h>
+tests/unit/test_compression_interop.cpp:25:#include <unistd.h>
+tests/unit/test_catalog_rename_move.cpp:22:#include <unistd.h>
+tests/unit/test_tablespace_header_and_files.cpp:13:#include <fcntl.h>
+tests/unit/test_tablespace_header_and_files.cpp:14:#include <unistd.h>
+tests/unit/test_catalog_charset_collation_extension_contract.cpp:16:#include <unistd.h>
+tests/unit/test_security_issues.cpp:21:#include <unistd.h>
+tests/unit/test_security_issues.cpp:22:#include <sys/stat.h>
+tests/unit/test_security_issues.cpp:23:#include <sys/wait.h>
+tests/unit/test_security_issues.cpp:24:#include <fcntl.h>
+tests/unit/test_security_issues.cpp:25:#include <poll.h>
+tests/unit/test_error_paths.cpp:14:#include <fcntl.h>
+tests/unit/test_error_paths.cpp:15:#include <unistd.h>
+tests/unit/test_error_paths.cpp:16:#include <sys/stat.h>
+tests/unit/test_catalog_family_matrix_contract.cpp:15:#include <unistd.h>
+tests/unit/test_index_advisor.cpp:19:#include <unistd.h>
+tests/unit/test_network.cpp:33:    #include <sys/socket.h>
+tests/unit/test_network.cpp:34:    #include <netinet/in.h>
+tests/unit/test_network.cpp:35:    #include <arpa/inet.h>
+tests/unit/test_network.cpp:36:    #include <unistd.h>
+tests/unit/test_brin_index.cpp:24:#include <unistd.h>
+tests/unit/test_catalog_extension_publication_subscription_contract.cpp:15:#include <unistd.h>
+tests/unit/test_catalog_relation_extension_contract.cpp:15:#include <unistd.h>
+tests/unit/test_bitmap_index_gc.cpp:21:#include <unistd.h>
+tests/unit/test_unix_socket_channel.cpp:10:#include <sys/socket.h>
+tests/unit/test_unix_socket_channel.cpp:11:#include <sys/un.h>
+tests/unit/test_unix_socket_channel.cpp:12:#include <unistd.h>
+src/core/catalog_manager.cpp:52:#include <fcntl.h>   // Phase 6: For open(), O_RDWR
+src/core/catalog_manager.cpp:53:#include <unistd.h>  // Phase 6: For pread(), close()
+src/core/catalog_manager.cpp:54:#include <arpa/inet.h> // EN-017: CIDR and IP scope matching
+tests/unit/test_catalog_runtime_context_extension_contract.cpp:15:#include <unistd.h>
+tests/unit/test_auth_bootstrap_claim.cpp:26:#include <unistd.h>
+tests/unit/test_auth_bootstrap_claim.cpp:27:#include <sys/stat.h>
+tests/unit/test_schema_introspection.cpp:18:#include <unistd.h>
+tests/unit/test_wire_protocol.cpp:30:#include <unistd.h>
+tests/unit/test_catalog_security_extension_contract.cpp:15:#include <unistd.h>
+tests/unit/test_catalog_index_metadata_extension_contract.cpp:15:#include <unistd.h>
+tests/unit/test_virtual_catalogs.cpp:14:#include <unistd.h>
+tests/unit/test_catalog_parser_capability_contract.cpp:15:#include <unistd.h>
+tests/unit/test_catalog_remote_connector_extension_contract.cpp:15:#include <unistd.h>
+tests/unit/test_config.cpp:23:#include <unistd.h>
+tests/unit/domains/test_record_domain.cpp:18:#include <unistd.h>
+tests/unit/test_page_management.cpp:19:#include <sys/stat.h>
+tests/unit/test_virtual_catalog_overlay_group_b_contract.cpp:16:#include <unistd.h>
+tests/unit/test_service_controller_listener_bootstrap.cpp:32:#include <sys/stat.h>
+tests/unit/test_catalog_type_schema_contract.cpp:15:#include <unistd.h>
+tests/unit/test_catalog_text_search_extension_contract.cpp:15:#include <unistd.h>
+tests/unit/test_alpha_101.cpp:12:#include <sys/stat.h>
+tests/unit/test_virtual_catalog_overlay_group_a_contract.cpp:16:#include <unistd.h>
+tests/unit/test_catalog_replication_runtime_conflict_extension_contract.cpp:15:#include <unistd.h>
+tests/unit/test_hash_index_gc.cpp:22:#include <unistd.h>
+tests/unit/test_tablespace_recovery.cpp:13:#include <unistd.h>
+tests/unit/test_page_management_edge_cases.cpp:27:#include <sys/stat.h>
+tests/unit/test_page_management_edge_cases.cpp:28:#include <fcntl.h>
+tests/unit/test_page_management_edge_cases.cpp:29:#include <unistd.h>
+tests/unit/test_hnsw_index.cpp:21:#include <unistd.h>
+tests/unit/test_catalog_parentage_and_name_uniqueness.cpp:14:#include <unistd.h>
+tests/unit/test_catalog_index_metrics_extension_contract.cpp:15:#include <unistd.h>
+tests/unit/test_catalog_cluster_clock_extension_contract.cpp:15:#include <unistd.h>
+tests/unit/test_virtual_catalog_overlay_lifecycle_contract.cpp:16:#include <unistd.h>
+tests/unit/test_backup_tablespace_manifest.cpp:18:#include <fcntl.h>
+tests/unit/test_backup_tablespace_manifest.cpp:22:#include <unistd.h>
+tests/unit/test_rtree.cpp:32:#include <unistd.h>
+tests/unit/test_catalog_sharding_extension_contract.cpp:15:#include <unistd.h>
+tests/unit/test_catalog_security_mfa_policy_enrollment_recovery_contract.cpp:19:#include <unistd.h>
+tests/unit/test_catalog_olap_cube_extension_contract.cpp:15:#include <unistd.h>
+tests/unit/test_extended_page_sizes_agent_c_review.cpp:28:#include <unistd.h>
+tests/unit/test_inverted_index_basic.cpp:22:#include <dlfcn.h>
+tests/unit/test_vnext_storage_metrics_contract.cpp:6:#include <unistd.h>
+tests/unit/test_catalog_security_identity_account_contract.cpp:15:#include <unistd.h>
+tests/unit/test_tablespace_migration_index_updates.cpp:26:#include <unistd.h>
+tests/unit/test_catalog_sblr_artifact_extension_contract.cpp:15:#include <unistd.h>
+tests/unit/test_catalog_scheduler_extension_contract.cpp:15:#include <unistd.h>

@@ -11,13 +11,42 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/error_context.h"
 #include <cstring>
+#include <cstdlib>
 #include <chrono>
 #include <unistd.h>
-#include <sys/mman.h>
 #include <mutex>
+#if !defined(_WIN32)
+    #include <sys/mman.h>
+#endif
 
 namespace scratchbird::core
 {
+    namespace
+    {
+#if defined(_WIN32)
+        void* allocateProcArraySharedMemory(size_t size)
+        {
+            return std::malloc(size);
+        }
+
+        int releaseProcArraySharedMemory(void* ptr, size_t /*size*/)
+        {
+            std::free(ptr);
+            return 0;
+        }
+#else
+        void* allocateProcArraySharedMemory(size_t size)
+        {
+            return mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+        }
+
+        int releaseProcArraySharedMemory(void* ptr, size_t size)
+        {
+            return munmap(ptr, size);
+        }
+#endif
+    } // namespace
+
     // Static member initialization
     std::atomic<ProcArray *> ProcArrayManager::proc_array_{nullptr};
     Database *ProcArrayManager::database_ = nullptr;
@@ -52,11 +81,14 @@ namespace scratchbird::core
         size_t pcb_array_size = sizeof(ProcessControlBlock) * max_backends;
         size_t total_size = header_size + pcb_array_size;
 
-        // Allocate shared memory (mmap with MAP_SHARED)
-        void *shared_mem =
-            mmap(nullptr, total_size, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+        // Allocate shared state backing memory.
+        void *shared_mem = allocateProcArraySharedMemory(total_size);
 
+#if defined(_WIN32)
+        if (shared_mem == nullptr)
+#else
         if (shared_mem == MAP_FAILED)
+#endif
         {
             SET_ERROR_CONTEXT(ctx, Status::OOM, "Failed to allocate shared memory for ProcArray");
             return Status::OOM;
@@ -135,8 +167,8 @@ namespace scratchbird::core
         pthread_rwlock_destroy(&array->array_lock);
         pthread_mutex_destroy(&array->alloc_lock);
 
-        // Unmap shared memory
-        if (munmap(array, total_size) != 0)
+        // Release shared memory
+        if (releaseProcArraySharedMemory(array, total_size) != 0)
         {
             SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to unmap ProcArray");
             return Status::IO_ERROR;

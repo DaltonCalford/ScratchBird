@@ -19,6 +19,7 @@
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/core/logger.h"
 #include "scratchbird/core/config.h"
+#include "scratchbird/core/portable_file_io.h"
 #include <algorithm>
 #include <chrono>
 #include <cstring>
@@ -1813,7 +1814,7 @@ namespace scratchbird::core
 
         // Write the page to disk at the correct offset
         off_t offset = static_cast<off_t>(page_id_out) * db_->page_size();
-        if (lseek(db_->fd(), offset, SEEK_SET) < 0 ||
+        if (platform::seekFd(db_->fd(), offset, SEEK_SET) < 0 ||
             write(db_->fd(), new_page.get(), db_->page_size()) !=
                 static_cast<ssize_t>(db_->page_size()))
         {
@@ -1823,7 +1824,7 @@ namespace scratchbird::core
         }
 
         // Sync to ensure page is on disk before BufferPool reads it
-        fsync(db_->fd());
+        platform::syncFd(db_->fd());
 
         // Flush page manager to ensure FSM is updated with new total_pages
         status = page_manager_->flush(ctx);

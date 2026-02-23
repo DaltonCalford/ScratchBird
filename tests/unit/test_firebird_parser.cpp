@@ -801,6 +801,11 @@ TEST_F(FirebirdParserTest, GrantStatement) {
     auto result = parser.parseStatement();
     EXPECT_TRUE(result.success);
     EXPECT_EQ(result.statement->kind(), ASTKind::GrantStmt);
+
+    Parser admin_parser("GRANT CREATE, CONNECT, TEMPORARY ON DATABASE employees TO bob");
+    auto admin_result = admin_parser.parseStatement();
+    EXPECT_TRUE(admin_result.success);
+    EXPECT_EQ(admin_result.statement->kind(), ASTKind::GrantStmt);
 }
 
 TEST_F(FirebirdParserTest, RevokeStatement) {
@@ -808,6 +813,11 @@ TEST_F(FirebirdParserTest, RevokeStatement) {
     auto result = parser.parseStatement();
     EXPECT_TRUE(result.success);
     EXPECT_EQ(result.statement->kind(), ASTKind::RevokeStmt);
+
+    Parser admin_parser("REVOKE CREATE, CONNECT, TEMPORARY ON DATABASE employees FROM bob");
+    auto admin_result = admin_parser.parseStatement();
+    EXPECT_TRUE(admin_result.success);
+    EXPECT_EQ(admin_result.statement->kind(), ASTKind::RevokeStmt);
 }
 
 TEST_F(FirebirdParserTest, CommentStatement) {

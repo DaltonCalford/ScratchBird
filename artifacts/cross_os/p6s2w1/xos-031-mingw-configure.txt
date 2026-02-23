@@ -1,0 +1,24 @@
+Preset CMake variables:
+
+  BUILD_TESTING="OFF"
+  CMAKE_BUILD_TYPE="Debug"
+  CMAKE_EXPORT_COMPILE_COMMANDS="ON"
+  CMAKE_TOOLCHAIN_FILE:FILEPATH="/home/dcalford/CliWork/ScratchBird/cmake/toolchains/mingw-w64-x86_64.cmake"
+  CMAKE_TRY_COMPILE_TARGET_TYPE="STATIC_LIBRARY"
+  SCRATCHBIRD_CTEST_TIMEOUT="3600"
+
+-- ScratchBird Database Engine - Planning Phase
+-- See ProjectPlan/ directory for specifications
+-- Using the multi-header code from /home/dcalford/CliWork/ScratchBird/build/linux-mingw-windows-x64/_deps/json-src/include/
+-- nlohmann/json library: ENABLED (FetchContent)
+-- CTest maximum test time: 3600s (1 hour)
+-- CTest parallel level: 14
+CMake Error at /usr/share/cmake-3.30/Modules/FindPackageHandleStandardArgs.cmake:233 (message):
+  Could NOT find ZLIB (missing: ZLIB_LIBRARY ZLIB_INCLUDE_DIR)
+Call Stack (most recent call first):
+  /usr/share/cmake-3.30/Modules/FindPackageHandleStandardArgs.cmake:603 (_FPHSA_FAILURE_MESSAGE)
+  /usr/share/cmake-3.30/Modules/FindZLIB.cmake:202 (FIND_PACKAGE_HANDLE_STANDARD_ARGS)
+  CMakeLists.txt:83 (find_package)
+
+
+-- Configuring incomplete, errors occurred!

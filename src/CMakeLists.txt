@@ -30,6 +30,13 @@ target_include_directories(scratchbird_core PUBLIC
     ${PROJECT_SOURCE_DIR}/include
 )
 
+if(SCRATCHBIRD_WINDOWS_CROSS_COMPILE)
+    set(SCRATCHBIRD_MINGW_BOOST_INCLUDE "${PROJECT_SOURCE_DIR}/build/deps/mingw-boost/include")
+    if(EXISTS "${SCRATCHBIRD_MINGW_BOOST_INCLUDE}/boost/multiprecision/cpp_int.hpp")
+        target_include_directories(scratchbird_core PRIVATE "${SCRATCHBIRD_MINGW_BOOST_INCLUDE}")
+    endif()
+endif()
+
 if(LZ4_FOUND)
     target_include_directories(scratchbird_core PUBLIC ${LZ4_INCLUDE_DIRS})
     target_link_libraries(scratchbird_core PUBLIC ${LZ4_LIBRARIES})
@@ -50,6 +57,12 @@ if(PROJ_FOUND)
     target_link_libraries(scratchbird_core PUBLIC ${PROJ_LIBRARIES})
 endif()
 
+find_package(Threads REQUIRED)
+target_link_libraries(scratchbird_core PUBLIC Threads::Threads)
+if(MINGW)
+    target_link_libraries(scratchbird_core PUBLIC winpthread)
+endif()
+
 # Link with libcrypt for password hashing (Security Phase 3.0)
 find_library(CRYPT_LIBRARY crypt)
 if(CRYPT_LIBRARY)
@@ -65,6 +78,11 @@ if(OPENSSL_FOUND)
     target_include_directories(scratchbird_core PUBLIC ${OPENSSL_INCLUDE_DIR})
 target_link_libraries(scratchbird_core PUBLIC OpenSSL::Crypto)
 target_link_libraries(scratchbird_core PUBLIC ZLIB::ZLIB)
+    if(WIN32)
+        # MinGW static OpenSSL requires explicit Win32 system libs after libcrypto.
+        target_link_libraries(OpenSSL::Crypto INTERFACE ws2_32 crypt32 iphlpapi)
+        target_link_libraries(OpenSSL::SSL INTERFACE ws2_32 crypt32 iphlpapi)
+    endif()
     message(STATUS "OpenSSL found: Using secure random for password salts")
 else()
     message(WARNING "OpenSSL not found: Using std::random_device for salts")
@@ -76,6 +94,10 @@ set_target_properties(scratchbird_core PROPERTIES
     CXX_EXTENSIONS NO
     POSITION_INDEPENDENT_CODE ON
 )
+
+if(MINGW)
+    target_compile_options(scratchbird_core PRIVATE -Wa,-mbig-obj)
+endif()
 
 # Note: scratchbird_optimizer_runtime dependency will be added after optimizer library is defined
 
@@ -92,6 +114,12 @@ add_library(scratchbird_parser STATIC
 target_include_directories(scratchbird_parser PUBLIC
     ${PROJECT_SOURCE_DIR}/include
 )
+
+if(SCRATCHBIRD_WINDOWS_CROSS_COMPILE)
+    if(EXISTS "${SCRATCHBIRD_MINGW_BOOST_INCLUDE}/boost/multiprecision/cpp_int.hpp")
+        target_include_directories(scratchbird_parser PRIVATE "${SCRATCHBIRD_MINGW_BOOST_INCLUDE}")
+    endif()
+endif()
 
 set_target_properties(scratchbird_parser PROPERTIES
     CXX_STANDARD 17
@@ -129,6 +157,12 @@ target_include_directories(scratchbird_sblr PUBLIC
     ${PROJECT_SOURCE_DIR}/include
 )
 
+if(SCRATCHBIRD_WINDOWS_CROSS_COMPILE)
+    if(EXISTS "${SCRATCHBIRD_MINGW_BOOST_INCLUDE}/boost/multiprecision/cpp_int.hpp")
+        target_include_directories(scratchbird_sblr PRIVATE "${SCRATCHBIRD_MINGW_BOOST_INCLUDE}")
+    endif()
+endif()
+
 target_link_libraries(scratchbird_sblr PUBLIC
     scratchbird_core
     nlohmann_json::nlohmann_json
@@ -150,6 +184,10 @@ set_target_properties(scratchbird_sblr PROPERTIES
     CXX_EXTENSIONS NO
     POSITION_INDEPENDENT_CODE ON
 )
+
+if(MINGW)
+    target_compile_options(scratchbird_sblr PRIVATE -Wa,-mbig-obj)
+endif()
 
 
 # Compiler library: scratchbird_compiler (parsers + semantic + bytecode)
@@ -181,11 +219,13 @@ if(SCRATCHBIRD_WITH_COMPILER)
         $<LINK_GROUP:RESCAN,scratchbird_core,scratchbird_sblr,scratchbird_compiler,scratchbird_parser,scratchbird_optimizer_runtime,scratchbird_optimizer_compiler,scratchbird_security,scratchbird_ipc>
     )
 else()
-    target_link_libraries(scratchbird_link_group INTERFACE
+target_link_libraries(scratchbird_link_group INTERFACE
         $<LINK_GROUP:RESCAN,scratchbird_core,scratchbird_sblr,scratchbird_parser,scratchbird_optimizer_runtime,scratchbird_security,scratchbird_ipc>
     )
 endif()
-target_link_options(scratchbird_link_group INTERFACE -Wl,--no-as-needed)
+if(NOT WIN32)
+    target_link_options(scratchbird_link_group INTERFACE -Wl,--no-as-needed)
+endif()
 if(PROJ_FOUND)
     target_link_libraries(scratchbird_link_group INTERFACE ${PROJ_LIBRARIES})
 endif()
@@ -298,6 +338,9 @@ endif()
 # Thread support for auth state management
 find_package(Threads REQUIRED)
 target_link_libraries(scratchbird_security PUBLIC Threads::Threads)
+if(WIN32)
+    target_link_libraries(scratchbird_security PUBLIC ws2_32)
+endif()
 
 set_target_properties(scratchbird_security PROPERTIES
     CXX_STANDARD 17
@@ -332,12 +375,15 @@ target_include_directories(scratchbird_network PUBLIC
 
 # Thread support for thread pool
 find_package(Threads REQUIRED)
-target_link_libraries(scratchbird_network PUBLIC Threads::Threads scratchbird_core)
-
-# Platform-specific linking for network
+set(SCRATCHBIRD_PLATFORM_NETWORK_LIBS "")
 if(WIN32)
-    target_link_libraries(scratchbird_network PUBLIC ws2_32)
+    list(APPEND SCRATCHBIRD_PLATFORM_NETWORK_LIBS ws2_32)
 endif()
+target_link_libraries(scratchbird_network PUBLIC
+    Threads::Threads
+    scratchbird_core
+    ${SCRATCHBIRD_PLATFORM_NETWORK_LIBS}
+)
 
 set_target_properties(scratchbird_network PROPERTIES
     CXX_STANDARD 17
@@ -362,6 +408,7 @@ file(GLOB SCRATCHBIRD_SERVER_SOURCES
     server/config_parser.cpp
     server/daemon.cpp
     server/service_controller.cpp
+    server/windows_service.cpp
 )
 
 add_library(scratchbird_server STATIC
@@ -374,20 +421,20 @@ target_include_directories(scratchbird_server PUBLIC
 
 # Note: Dependencies are added after scratchbird_protocol is defined (circular dependency resolution)
 
-# Platform-specific linking for server
-if(WIN32)
-    # Windows: Winsock2 for TCP, Advapi32 for security descriptors
-    target_link_libraries(scratchbird_server PUBLIC ws2_32 advapi32)
-endif()
-
 # Thread support for multi-client handling
 find_package(Threads REQUIRED)
-target_link_libraries(scratchbird_server PUBLIC Threads::Threads)
-
-# Dynamic loading for libsystemd (Phase 3.3 Service Mode)
-if(NOT WIN32)
-    target_link_libraries(scratchbird_server PUBLIC ${CMAKE_DL_LIBS})
+set(SCRATCHBIRD_PLATFORM_SERVER_LIBS "")
+if(WIN32)
+    # Windows: Winsock2 for TCP, Advapi32 for security descriptors
+    list(APPEND SCRATCHBIRD_PLATFORM_SERVER_LIBS ws2_32 advapi32)
+elseif(SCRATCHBIRD_ENABLE_SYSTEMD_RUNTIME)
+    # POSIX: dynamic loading used for optional systemd runtime hooks.
+    list(APPEND SCRATCHBIRD_PLATFORM_SERVER_LIBS ${CMAKE_DL_LIBS})
 endif()
+target_link_libraries(scratchbird_server PUBLIC
+    Threads::Threads
+    ${SCRATCHBIRD_PLATFORM_SERVER_LIBS}
+)
 
 set_target_properties(scratchbird_server PROPERTIES
     CXX_STANDARD 17
@@ -483,36 +530,66 @@ message(STATUS "Pool library: scratchbird_pool (connection pooling, statement/re
 # Foreign Data Wrapper for connecting to remote databases
 # Components: PostgreSQL, MySQL, Firebird adapters, connection pooling
 
-file(GLOB SCRATCHBIRD_FDW_SOURCES
-    fdw/*.cpp
-)
+option(SCRATCHBIRD_ENABLE_FDW "Build FDW adapters library" ON)
+option(SCRATCHBIRD_ENABLE_UDR "Build UDR connector library" ON)
+option(SCRATCHBIRD_ENABLE_IPC_RUNTIME "Build IPC runtime/static library" ON)
+option(SCRATCHBIRD_ENABLE_TESTING_LIB "Build testing helper library" ON)
 
-add_library(scratchbird_fdw STATIC
-    ${SCRATCHBIRD_FDW_SOURCES}
-)
-
-target_include_directories(scratchbird_fdw PUBLIC
-    ${PROJECT_SOURCE_DIR}/include
-)
-
-# OpenSSL required for MySQL password hashing and TLS
-if(OPENSSL_FOUND)
-    target_include_directories(scratchbird_fdw PUBLIC ${OPENSSL_INCLUDE_DIR})
-    target_link_libraries(scratchbird_fdw PUBLIC OpenSSL::Crypto)
+if(WIN32)
+    if(SCRATCHBIRD_ENABLE_FDW)
+        message(STATUS
+            "FDW library disabled on Windows toolchains pending portability closure.")
+        set(SCRATCHBIRD_ENABLE_FDW OFF)
+    endif()
+    if(SCRATCHBIRD_ENABLE_UDR)
+        message(STATUS
+            "UDR library disabled on Windows toolchains pending portability closure.")
+        set(SCRATCHBIRD_ENABLE_UDR OFF)
+    endif()
+    if(SCRATCHBIRD_ENABLE_IPC_RUNTIME)
+        message(STATUS
+            "IPC runtime library disabled on Windows toolchains pending AF_UNIX portability closure.")
+        set(SCRATCHBIRD_ENABLE_IPC_RUNTIME OFF)
+    endif()
+    if(SCRATCHBIRD_ENABLE_TESTING_LIB)
+        message(STATUS
+            "Testing library disabled on Windows toolchains pending socket portability closure.")
+        set(SCRATCHBIRD_ENABLE_TESTING_LIB OFF)
+    endif()
 endif()
 
-# Thread support for connection pool management
-find_package(Threads REQUIRED)
-target_link_libraries(scratchbird_fdw PUBLIC Threads::Threads scratchbird_core)
+if(SCRATCHBIRD_ENABLE_FDW)
+    file(GLOB SCRATCHBIRD_FDW_SOURCES
+        fdw/*.cpp
+    )
 
-set_target_properties(scratchbird_fdw PROPERTIES
-    CXX_STANDARD 17
-    CXX_STANDARD_REQUIRED YES
-    CXX_EXTENSIONS NO
-    POSITION_INDEPENDENT_CODE ON
-)
+    add_library(scratchbird_fdw STATIC
+        ${SCRATCHBIRD_FDW_SOURCES}
+    )
 
-message(STATUS "FDW library: scratchbird_fdw (PostgreSQL, MySQL, Firebird adapters)")
+    target_include_directories(scratchbird_fdw PUBLIC
+        ${PROJECT_SOURCE_DIR}/include
+    )
+
+    # OpenSSL required for MySQL password hashing and TLS
+    if(OPENSSL_FOUND)
+        target_include_directories(scratchbird_fdw PUBLIC ${OPENSSL_INCLUDE_DIR})
+        target_link_libraries(scratchbird_fdw PUBLIC OpenSSL::Crypto)
+    endif()
+
+    # Thread support for connection pool management
+    find_package(Threads REQUIRED)
+    target_link_libraries(scratchbird_fdw PUBLIC Threads::Threads scratchbird_core)
+
+    set_target_properties(scratchbird_fdw PROPERTIES
+        CXX_STANDARD 17
+        CXX_STANDARD_REQUIRED YES
+        CXX_EXTENSIONS NO
+        POSITION_INDEPENDENT_CODE ON
+    )
+
+    message(STATUS "FDW library: scratchbird_fdw (PostgreSQL, MySQL, Firebird adapters)")
+endif()
 
 # ==============================================================================
 # UDR Library: scratchbird_udr (Section D: Remote Engine UDR Connectors)
@@ -520,36 +597,38 @@ message(STATUS "FDW library: scratchbird_fdw (PostgreSQL, MySQL, Firebird adapte
 # User Defined Routine connectors for remote database access
 # Components: Connection pool, connector framework, PostgreSQL/MySQL/Firebird/SB clients
 
-file(GLOB SCRATCHBIRD_UDR_SOURCES
-    udr/*.cpp
-)
+if(SCRATCHBIRD_ENABLE_UDR)
+    file(GLOB SCRATCHBIRD_UDR_SOURCES
+        udr/*.cpp
+    )
 
-add_library(scratchbird_udr STATIC
-    ${SCRATCHBIRD_UDR_SOURCES}
-)
+    add_library(scratchbird_udr STATIC
+        ${SCRATCHBIRD_UDR_SOURCES}
+    )
 
-# OpenSSL required for PostgreSQL MD5 auth and TLS
-if(OPENSSL_FOUND)
-    target_include_directories(scratchbird_udr PUBLIC ${OPENSSL_INCLUDE_DIR})
-    target_link_libraries(scratchbird_udr PUBLIC OpenSSL::SSL OpenSSL::Crypto)
+    # OpenSSL required for PostgreSQL MD5 auth and TLS
+    if(OPENSSL_FOUND)
+        target_include_directories(scratchbird_udr PUBLIC ${OPENSSL_INCLUDE_DIR})
+        target_link_libraries(scratchbird_udr PUBLIC OpenSSL::SSL OpenSSL::Crypto)
+    endif()
+
+    target_include_directories(scratchbird_udr PUBLIC
+        ${PROJECT_SOURCE_DIR}/include
+    )
+
+    # Thread support for connection pool
+    find_package(Threads REQUIRED)
+    target_link_libraries(scratchbird_udr PUBLIC Threads::Threads scratchbird_core)
+
+    set_target_properties(scratchbird_udr PROPERTIES
+        CXX_STANDARD 17
+        CXX_STANDARD_REQUIRED YES
+        CXX_EXTENSIONS NO
+        POSITION_INDEPENDENT_CODE ON
+    )
+
+    message(STATUS "UDR library: scratchbird_udr (Remote Engine UDR Connectors)")
 endif()
-
-target_include_directories(scratchbird_udr PUBLIC
-    ${PROJECT_SOURCE_DIR}/include
-)
-
-# Thread support for connection pool
-find_package(Threads REQUIRED)
-target_link_libraries(scratchbird_udr PUBLIC Threads::Threads scratchbird_core)
-
-set_target_properties(scratchbird_udr PROPERTIES
-    CXX_STANDARD 17
-    CXX_STANDARD_REQUIRED YES
-    CXX_EXTENSIONS NO
-    POSITION_INDEPENDENT_CODE ON
-)
-
-message(STATUS "UDR library: scratchbird_udr (Remote Engine UDR Connectors)")
 
 # ==============================================================================
 # IPC Library: scratchbird_ipc (Section E: IPC + SBWP v1.1)
@@ -562,26 +641,34 @@ file(GLOB SCRATCHBIRD_IPC_SOURCES CONFIGURE_DEPENDS
     ipc/external_agents/*.cpp
 )
 
-add_library(scratchbird_ipc STATIC
-    ${SCRATCHBIRD_IPC_SOURCES}
-)
+if(SCRATCHBIRD_ENABLE_IPC_RUNTIME)
+    add_library(scratchbird_ipc STATIC
+        ${SCRATCHBIRD_IPC_SOURCES}
+    )
 
-target_include_directories(scratchbird_ipc PUBLIC
-    ${PROJECT_SOURCE_DIR}/include
-)
+    target_include_directories(scratchbird_ipc PUBLIC
+        ${PROJECT_SOURCE_DIR}/include
+    )
 
-# Thread support for session management
-find_package(Threads REQUIRED)
-target_link_libraries(scratchbird_ipc PUBLIC Threads::Threads scratchbird_core)
+    # Thread support for session management
+    find_package(Threads REQUIRED)
+    target_link_libraries(scratchbird_ipc PUBLIC Threads::Threads scratchbird_core)
 
-set_target_properties(scratchbird_ipc PROPERTIES
-    CXX_STANDARD 17
-    CXX_STANDARD_REQUIRED YES
-    CXX_EXTENSIONS NO
-    POSITION_INDEPENDENT_CODE ON
-)
+    set_target_properties(scratchbird_ipc PROPERTIES
+        CXX_STANDARD 17
+        CXX_STANDARD_REQUIRED YES
+        CXX_EXTENSIONS NO
+        POSITION_INDEPENDENT_CODE ON
+    )
 
-message(STATUS "IPC library: scratchbird_ipc (IPC Contract v1.1 + SBWP Server)")
+    message(STATUS "IPC library: scratchbird_ipc (IPC Contract v1.1 + SBWP Server)")
+else()
+    add_library(scratchbird_ipc INTERFACE)
+    target_include_directories(scratchbird_ipc INTERFACE
+        ${PROJECT_SOURCE_DIR}/include
+    )
+    message(STATUS "IPC library: scratchbird_ipc disabled (interface stub target)")
+endif()
 
 # ==============================================================================
 # Testing Library: scratchbird_testing (Alpha 3 Phase 3.12)
@@ -594,26 +681,34 @@ file(GLOB SCRATCHBIRD_TESTING_SOURCES
     testing/*.cpp
 )
 
-add_library(scratchbird_testing STATIC
-    ${SCRATCHBIRD_TESTING_SOURCES}
-)
+if(SCRATCHBIRD_ENABLE_TESTING_LIB)
+    add_library(scratchbird_testing STATIC
+        ${SCRATCHBIRD_TESTING_SOURCES}
+    )
 
-target_include_directories(scratchbird_testing PUBLIC
-    ${PROJECT_SOURCE_DIR}/include
-)
+    target_include_directories(scratchbird_testing PUBLIC
+        ${PROJECT_SOURCE_DIR}/include
+    )
 
-# Thread support for load testing
-find_package(Threads REQUIRED)
-target_link_libraries(scratchbird_testing PUBLIC Threads::Threads scratchbird_core)
+    # Thread support for load testing
+    find_package(Threads REQUIRED)
+    target_link_libraries(scratchbird_testing PUBLIC Threads::Threads scratchbird_core)
 
-set_target_properties(scratchbird_testing PROPERTIES
-    CXX_STANDARD 17
-    CXX_STANDARD_REQUIRED YES
-    CXX_EXTENSIONS NO
-    POSITION_INDEPENDENT_CODE ON
-)
+    set_target_properties(scratchbird_testing PROPERTIES
+        CXX_STANDARD 17
+        CXX_STANDARD_REQUIRED YES
+        CXX_EXTENSIONS NO
+        POSITION_INDEPENDENT_CODE ON
+    )
 
-message(STATUS "Testing library: scratchbird_testing (protocol, auth, load, security, benchmarks)")
+    message(STATUS "Testing library: scratchbird_testing (protocol, auth, load, security, benchmarks)")
+else()
+    add_library(scratchbird_testing INTERFACE)
+    target_include_directories(scratchbird_testing INTERFACE
+        ${PROJECT_SOURCE_DIR}/include
+    )
+    message(STATUS "Testing library: scratchbird_testing disabled (interface stub target)")
+endif()
 
 # ==============================================================================
 # sb_server Executable (Local Server Architecture - Phase 3)
@@ -794,7 +889,28 @@ set_target_properties(sb_charset_loader PROPERTIES
 )
 
 # Installation (for future use)
-install(TARGETS scratchbird sb_server sb_manager sb_charset_loader scratchbird_core scratchbird_parser scratchbird_sblr scratchbird_optimizer_runtime scratchbird_server scratchbird_protocol scratchbird_pool scratchbird_fdw scratchbird_testing
+set(SCRATCHBIRD_INSTALL_TARGETS
+    scratchbird
+    sb_server
+    sb_manager
+    sb_charset_loader
+    scratchbird_core
+    scratchbird_parser
+    scratchbird_sblr
+    scratchbird_optimizer_runtime
+    scratchbird_server
+    scratchbird_protocol
+    scratchbird_pool
+    scratchbird_testing
+)
+if(TARGET scratchbird_fdw)
+    list(APPEND SCRATCHBIRD_INSTALL_TARGETS scratchbird_fdw)
+endif()
+if(TARGET scratchbird_udr)
+    list(APPEND SCRATCHBIRD_INSTALL_TARGETS scratchbird_udr)
+endif()
+
+install(TARGETS ${SCRATCHBIRD_INSTALL_TARGETS}
     RUNTIME DESTINATION bin
     ARCHIVE DESTINATION lib
     LIBRARY DESTINATION lib

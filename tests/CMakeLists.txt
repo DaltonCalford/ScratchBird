@@ -271,6 +271,28 @@ set(SCRATCHBIRD_DIALECT_PARSER_TESTS
 )
 list(JOIN SCRATCHBIRD_DIALECT_PARSER_TESTS ":" SCRATCHBIRD_DIALECT_PARSER_FILTER)
 
+set(SCRATCHBIRD_CROSS_OS_RUNTIME_SMOKE_TESTS
+    ServiceControllerListenerBootstrapTest.NormalizeConfigPathsAndValidateUtf8NormalizesKeyRuntimePaths
+    ServiceControllerListenerBootstrapTest.ListenerCrashRecoveryRestartsExitedListenerProcess
+    ServiceControllerListenerBootstrapTest.DirectModeLaunchesNativePgMysqlFirebirdListenerMatrix
+    ListenerIpcAdapterTest.FrontDoorSocketLifecycle
+    FirebirdParserTest.CreateTableSimple
+    FirebirdParserTest.InsertSimple
+    FirebirdParserTest.SelectSimple
+    FirebirdParserTest.SetSqlDialect
+    MySQLParserTest.CreateTableBasic
+    MySQLParserTest.InsertBasic
+    MySQLParserTest.UpdateBasic
+    MySQLParserTest.SelectWithFrom
+    MySQLParserTest.UseStatement
+    PostgreSQLParserTest.CreateTableBasic
+    PostgreSQLParserTest.InsertBasic
+    PostgreSQLParserTest.UpdateBasic
+    PostgreSQLParserTest.SimpleSelect
+    PostgreSQLParserTest.SetAndShowStatements
+)
+list(JOIN SCRATCHBIRD_CROSS_OS_RUNTIME_SMOKE_TESTS ":" SCRATCHBIRD_CROSS_OS_RUNTIME_SMOKE_FILTER)
+
 set(SCRATCHBIRD_STRESS_TESTS
     StorageStressTest.*
     *Stress*
@@ -295,7 +317,6 @@ list(JOIN SCRATCHBIRD_QUARANTINE_TESTS ":" SCRATCHBIRD_QUARANTINE_FILTER)
 
 set(SCRATCHBIRD_INTEGRATION_TESTS
     TCPIntegrationTest.*
-    UnixSocketTest.*
     NetworkTest.*
     ProtocolSessionTest.*
     SweepMechanismTest.*
@@ -306,6 +327,11 @@ set(SCRATCHBIRD_INTEGRATION_TESTS
     Week3Week4ComprehensiveTest.*
 )
 list(JOIN SCRATCHBIRD_INTEGRATION_TESTS ":" SCRATCHBIRD_INTEGRATION_FILTER)
+
+set(SCRATCHBIRD_LINUX_ONLY_TESTS
+    UnixSocketTest.*
+)
+list(JOIN SCRATCHBIRD_LINUX_ONLY_TESTS ":" SCRATCHBIRD_LINUX_ONLY_FILTER)
 
 set(SCRATCHBIRD_UNIT_EXCLUDE_FILTER "${SCRATCHBIRD_SMOKE_FILTER}")
 if(SCRATCHBIRD_DIALECT_PARSER_FILTER)
@@ -326,6 +352,11 @@ endif()
 if(SCRATCHBIRD_INTEGRATION_FILTER)
     set(SCRATCHBIRD_UNIT_EXCLUDE_FILTER
         "${SCRATCHBIRD_UNIT_EXCLUDE_FILTER}:${SCRATCHBIRD_INTEGRATION_FILTER}"
+    )
+endif()
+if(SCRATCHBIRD_LINUX_ONLY_FILTER)
+    set(SCRATCHBIRD_UNIT_EXCLUDE_FILTER
+        "${SCRATCHBIRD_UNIT_EXCLUDE_FILTER}:${SCRATCHBIRD_LINUX_ONLY_FILTER}"
     )
 endif()
 if(SCRATCHBIRD_QUARANTINE_FILTER)
@@ -349,6 +380,16 @@ gtest_discover_tests(scratchbird_tests
         ENVIRONMENT "SCRATCHBIRD_TEST_NETWORK=1"
     TEST_FILTER "${SCRATCHBIRD_SMOKE_FILTER}"
 )
+
+if(SCRATCHBIRD_CROSS_OS_RUNTIME_SMOKE_FILTER)
+    gtest_discover_tests(scratchbird_tests
+        PROPERTIES
+            TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_UNIT}
+            LABELS "unit\\;smoke\\;cross_os_runtime"
+            ENVIRONMENT "SCRATCHBIRD_TEST_NETWORK=1"
+        TEST_FILTER "${SCRATCHBIRD_CROSS_OS_RUNTIME_SMOKE_FILTER}"
+    )
+endif()
 
 if(SCRATCHBIRD_DIALECT_PARSER_FILTER)
     gtest_discover_tests(scratchbird_tests
@@ -396,6 +437,16 @@ if(SCRATCHBIRD_INTEGRATION_FILTER)
             LABELS "integration"
             ENVIRONMENT "SCRATCHBIRD_TEST_NETWORK=1"
         TEST_FILTER "${SCRATCHBIRD_INTEGRATION_FILTER}"
+    )
+endif()
+
+if(SCRATCHBIRD_LINUX_ONLY_FILTER)
+    gtest_discover_tests(scratchbird_tests
+        PROPERTIES
+            TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_INTEGRATION}
+            LABELS "integration\\;linux_only\\;skip_unix_socket_ipc"
+            ENVIRONMENT "SCRATCHBIRD_TEST_NETWORK=1"
+        TEST_FILTER "${SCRATCHBIRD_LINUX_ONLY_FILTER}"
     )
 endif()
 
@@ -2018,6 +2069,17 @@ if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/compliance/test_vnext_scope_scan_contract
     )
     set_tests_properties(VNextScopeScanContract PROPERTIES
         LABELS "unit;compliance;governance"
+        TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
+    )
+endif()
+
+if(EXISTS "${CMAKE_SOURCE_DIR}/tools/compliance/portable_runtime_guard.sh")
+    add_test(
+        NAME PortableRuntimeGuard
+        COMMAND ${CMAKE_SOURCE_DIR}/tools/compliance/portable_runtime_guard.sh --repo ${CMAKE_SOURCE_DIR}
+    )
+    set_tests_properties(PortableRuntimeGuard PROPERTIES
+        LABELS "unit;compliance;portability"
         TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
     )
 endif()

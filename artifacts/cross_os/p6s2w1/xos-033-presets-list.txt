@@ -1,0 +1,5 @@
+Available configure presets:
+
+  "linux-gcc-debug"         - Linux GCC Debug
+  "linux-clang-debug"       - Linux Clang Debug
+  "linux-mingw-windows-x64" - Linux MinGW to Windows x64

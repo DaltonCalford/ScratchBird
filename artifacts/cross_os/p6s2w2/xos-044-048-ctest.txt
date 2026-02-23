@@ -1,0 +1,41 @@
+Internal ctest changing into directory: /home/dcalford/CliWork/ScratchBird/build
+Test project /home/dcalford/CliWork/ScratchBird/build
+      Start   80: AuditLoggerTest.EventTypeNames
+ 1/16 Test   #80: AuditLoggerTest.EventTypeNames ........................................................................   Passed    0.12 sec
+      Start 1094: LocalIPCPolicyTest.DefaultPreferredMethodMatchesPlatformDefault
+ 2/16 Test #1094: LocalIPCPolicyTest.DefaultPreferredMethodMatchesPlatformDefault .......................................   Passed    0.03 sec
+      Start 1095: LocalIPCPolicyTest.ResolveAutoUsesPolicyPreferredMethod
+ 3/16 Test #1095: LocalIPCPolicyTest.ResolveAutoUsesPolicyPreferredMethod ...............................................   Passed    0.03 sec
+      Start 1096: LocalIPCPolicyTest.ResolveExplicitMethodDisablesFallback
+ 4/16 Test #1096: LocalIPCPolicyTest.ResolveExplicitMethodDisablesFallback ..............................................   Passed    0.02 sec
+      Start 1097: LocalIPCPolicyTest.PeerCredentialExpectationMatchesPlatformContract
+ 5/16 Test #1097: LocalIPCPolicyTest.PeerCredentialExpectationMatchesPlatformContract ...................................   Passed    0.04 sec
+      Start 1108: IPCPathTest.LayoutParityUsesSharedSanitizedObjectIdentity
+ 6/16 Test #1108: IPCPathTest.LayoutParityUsesSharedSanitizedObjectIdentity .............................................   Passed    0.03 sec
+      Start 1109: IPCPathTest.LayoutParityRuntimeRootsAreDeterministicByPlatform
+ 7/16 Test #1109: IPCPathTest.LayoutParityRuntimeRootsAreDeterministicByPlatform ........................................   Passed    0.02 sec
+      Start 1907: ServiceControllerListenerBootstrapTest.NormalizeConfigPathsAndValidateUtf8NormalizesKeyRuntimePaths
+ 8/16 Test #1907: ServiceControllerListenerBootstrapTest.NormalizeConfigPathsAndValidateUtf8NormalizesKeyRuntimePaths ...   Passed    0.03 sec
+      Start 1908: ServiceControllerListenerBootstrapTest.NormalizeConfigPathsAndValidateUtf8RejectsInvalidUtf8Fields
+ 9/16 Test #1908: ServiceControllerListenerBootstrapTest.NormalizeConfigPathsAndValidateUtf8RejectsInvalidUtf8Fields ....   Passed    0.03 sec
+      Start 1910: ServiceControllerListenerBootstrapTest.ListenerCrashRecoveryRestartsExitedListenerProcess
+10/16 Test #1910: ServiceControllerListenerBootstrapTest.ListenerCrashRecoveryRestartsExitedListenerProcess .............   Passed    0.17 sec
+      Start 1916: ServiceControllerListenerBootstrapTest.ManagerProxyCrashRecoveryRestartsExitedManagerProcess
+11/16 Test #1916: ServiceControllerListenerBootstrapTest.ManagerProxyCrashRecoveryRestartsExitedManagerProcess ..........   Passed    2.37 sec
+      Start 2512: WindowsServiceHostTest.ConsoleModeExecutesCallback
+12/16 Test #2512: WindowsServiceHostTest.ConsoleModeExecutesCallback ....................................................   Passed    0.02 sec
+      Start 2513: WindowsServiceHostTest.ConsoleModeReportsFailure
+13/16 Test #2513: WindowsServiceHostTest.ConsoleModeReportsFailure ......................................................   Passed    0.02 sec
+      Start 2514: WindowsServiceHostTest.ServiceModeContractIsPlatformGuarded
+14/16 Test #2514: WindowsServiceHostTest.ServiceModeContractIsPlatformGuarded ...........................................   Passed    0.02 sec
+      Start 2919: ServiceControllerListenerBootstrapTest.NormalizeConfigPathsAndValidateUtf8NormalizesKeyRuntimePaths
+15/16 Test #2919: ServiceControllerListenerBootstrapTest.NormalizeConfigPathsAndValidateUtf8NormalizesKeyRuntimePaths ...   Passed    0.02 sec
+      Start 2920: ServiceControllerListenerBootstrapTest.ListenerCrashRecoveryRestartsExitedListenerProcess
+16/16 Test #2920: ServiceControllerListenerBootstrapTest.ListenerCrashRecoveryRestartsExitedListenerProcess .............   Passed    0.16 sec
+
+100% tests passed, 0 tests failed out of 16
+
+Label Time Summary:
+unit    =   3.11 sec*proc (16 tests)
+
+Total Test time (real) =   3.26 sec

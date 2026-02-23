@@ -43,6 +43,28 @@
 namespace scratchbird {
 namespace server {
 
+namespace {
+
+DaemonSignal mapControlSignal(core::ControlSignal signal) {
+    switch (signal) {
+        case core::ControlSignal::SHUTDOWN:
+            return DaemonSignal::SHUTDOWN;
+        case core::ControlSignal::RELOAD:
+            return DaemonSignal::RELOAD;
+        case core::ControlSignal::ROTATE_LOGS:
+            return DaemonSignal::ROTATE_LOGS;
+        case core::ControlSignal::DUMP_STATS:
+            return DaemonSignal::DUMP_STATS;
+        case core::ControlSignal::IMMEDIATE_STOP:
+            return DaemonSignal::IMMEDIATE_STOP;
+        case core::ControlSignal::NONE:
+        default:
+            return DaemonSignal::NONE;
+    }
+}
+
+}  // namespace
+
 // ============================================================================
 // Daemon State String Conversion
 // ============================================================================
@@ -82,26 +104,26 @@ core::Status PIDFile::create(const std::string& path, bool create_dir,
     }
 
     // Check if already locked
-    pid_t existing_pid;
+    ProcessId existing_pid = 0;
     if (isLocked(path, &existing_pid)) {
         if (ctx) {
-            SET_ERROR_CONTEXT(ctx, core::Status::ALREADY_EXISTS,
-                             "Server already running (PID " + std::to_string(existing_pid) + ")");
+            std::string msg = "Server already running (PID " + std::to_string(existing_pid) + ")";
+            SET_ERROR_CONTEXT(ctx, core::Status::FILE_EXISTS, msg.c_str());
         }
-        return core::Status::ALREADY_EXISTS;
+        return core::Status::FILE_EXISTS;
     }
 
     // Write PID file
     std::ofstream file(path);
     if (!file) {
         if (ctx) {
-            SET_ERROR_CONTEXT(ctx, core::Status::IO_ERROR,
-                             "Failed to create PID file: " + path);
+            std::string msg = "Failed to create PID file: " + path;
+            SET_ERROR_CONTEXT(ctx, core::Status::IO_ERROR, msg.c_str());
         }
         return core::Status::IO_ERROR;
     }
 
-    file << getpid() << std::endl;
+    file << getCurrentPid() << std::endl;
     file.close();
     fd_ = 0;  // Mark as held
 
@@ -142,7 +164,7 @@ core::Status PIDFile::create(const std::string& path, bool create_dir,
             close(fd_);
             fd_ = -1;
 
-            pid_t existing_pid = 0;
+            ProcessId existing_pid = 0;
             if (n > 0) {
                 buf[n] = '\0';
                 existing_pid = std::stoi(buf);
@@ -175,7 +197,7 @@ core::Status PIDFile::create(const std::string& path, bool create_dir,
         return core::Status::IO_ERROR;
     }
 
-    std::string pid_str = std::to_string(getpid()) + "\n";
+    std::string pid_str = std::to_string(getCurrentPid()) + "\n";
     if (write(fd_, pid_str.c_str(), pid_str.size()) != static_cast<ssize_t>(pid_str.size())) {
         if (ctx) {
             std::string msg = "Failed to write PID file: " + std::string(strerror(errno));
@@ -208,13 +230,13 @@ void PIDFile::remove() {
     }
 }
 
-bool PIDFile::isLocked(const std::string& path, pid_t* pid) {
+bool PIDFile::isLocked(const std::string& path, ProcessId* pid) {
     if (!std::filesystem::exists(path)) {
         return false;
     }
 
     // Read PID from file
-    pid_t file_pid = read(path);
+    ProcessId file_pid = read(path);
     if (file_pid <= 0) {
         return false;
     }
@@ -230,13 +252,13 @@ bool PIDFile::isLocked(const std::string& path, pid_t* pid) {
     return true;
 }
 
-pid_t PIDFile::read(const std::string& path) {
+ProcessId PIDFile::read(const std::string& path) {
     std::ifstream file(path);
     if (!file) {
         return 0;
     }
 
-    pid_t pid = 0;
+    ProcessId pid = 0;
     file >> pid;
     return pid;
 }
@@ -320,7 +342,7 @@ void SystemdNotify::extendTimeout(uint64_t microseconds) {
     notify("EXTEND_TIMEOUT_USEC=" + std::to_string(microseconds));
 }
 
-void SystemdNotify::mainPid(pid_t pid) {
+void SystemdNotify::mainPid(ProcessId pid) {
     notify("MAINPID=" + std::to_string(pid));
 }
 
@@ -343,11 +365,10 @@ uint64_t SystemdNotify::getWatchdogUsec() {
 // Daemon Implementation
 // ============================================================================
 
-// Global instance for signal routing
-Daemon* Daemon::g_instance_ = nullptr;
-
 Daemon::Daemon(const DaemonOptions& options)
-    : options_(options) {}
+    : options_(options),
+      process_control_(core::createDefaultProcessControl()),
+      signal_control_(core::createDefaultSignalControl()) {}
 
 Daemon::~Daemon() {
     cleanup();
@@ -373,7 +394,7 @@ core::Status Daemon::daemonize(core::ErrorContext* ctx) {
     // Create PID file first to check for existing instance
     // (We'll update it after forking)
     if (!options_.pid_file.empty()) {
-        pid_t existing_pid;
+        ProcessId existing_pid = 0;
         if (PIDFile::isLocked(options_.pid_file, &existing_pid)) {
             if (ctx) {
                 std::string msg = "Server already running (PID " + std::to_string(existing_pid) + ")";
@@ -440,7 +461,7 @@ core::Status Daemon::daemonize(core::ErrorContext* ctx) {
         }
 
         // Set umask
-        umask(options_.umask);
+        umask(static_cast<mode_t>(options_.umask & 0777U));
     }
 
     // Create PID file (now with actual daemon PID)
@@ -473,24 +494,14 @@ core::Status Daemon::daemonize(core::ErrorContext* ctx) {
 
 #ifndef _WIN32
 core::Status Daemon::doFork(core::ErrorContext* ctx) {
-    pid_t pid = fork();
-
-    if (pid < 0) {
-        if (ctx) {
-            std::string msg = "Fork failed: " + std::string(strerror(errno));
-            SET_ERROR_CONTEXT(ctx, core::Status::INTERNAL_ERROR, msg.c_str());
-        }
-        return core::Status::INTERNAL_ERROR;
+    if (!process_control_) {
+        process_control_ = core::createDefaultProcessControl();
     }
-
-    if (pid > 0) {
-        // Parent process
-        is_parent_ = true;
-    } else {
-        // Child process
-        is_parent_ = false;
+    uint64_t child_pid = 0;
+    core::Status status = process_control_->forkSelf(&is_parent_, &child_pid, ctx);
+    if (status != core::Status::OK) {
+        return status;
     }
-
     return core::Status::OK;
 }
 
@@ -562,7 +573,7 @@ core::Status Daemon::dropPrivileges(core::ErrorContext* ctx) {
 
     // Change group
     if (!options_.run_as_group.empty()) {
-        gid_t gid;
+        GroupId gid = 0;
         if (!getGroupId(options_.run_as_group, gid)) {
             if (ctx) {
                 std::string msg = "Group not found: " + options_.run_as_group;
@@ -571,7 +582,7 @@ core::Status Daemon::dropPrivileges(core::ErrorContext* ctx) {
             return core::Status::NOT_FOUND;
         }
 
-        if (setgid(gid) < 0) {
+        if (setgid(static_cast<gid_t>(gid)) < 0) {
             if (ctx) {
                 std::string msg = "Failed to set GID: " + std::string(strerror(errno));
                 SET_ERROR_CONTEXT(ctx, core::Status::PERMISSION_DENIED, msg.c_str());
@@ -582,7 +593,7 @@ core::Status Daemon::dropPrivileges(core::ErrorContext* ctx) {
 
     // Change user
     if (!options_.run_as_user.empty()) {
-        uid_t uid;
+        UserId uid = 0;
         if (!getUserId(options_.run_as_user, uid)) {
             if (ctx) {
                 std::string msg = "User not found: " + options_.run_as_user;
@@ -591,7 +602,7 @@ core::Status Daemon::dropPrivileges(core::ErrorContext* ctx) {
             return core::Status::NOT_FOUND;
         }
 
-        if (setuid(uid) < 0) {
+        if (setuid(static_cast<uid_t>(uid)) < 0) {
             if (ctx) {
                 std::string msg = "Failed to set UID: " + std::string(strerror(errno));
                 SET_ERROR_CONTEXT(ctx, core::Status::PERMISSION_DENIED, msg.c_str());
@@ -603,61 +614,6 @@ core::Status Daemon::dropPrivileges(core::ErrorContext* ctx) {
     return core::Status::OK;
 }
 
-void Daemon::setupSignals() {
-    g_instance_ = this;
-
-    // Set up signal handlers
-    struct sigaction sa;
-    memset(&sa, 0, sizeof(sa));
-    sa.sa_handler = staticSignalHandler;
-    sigemptyset(&sa.sa_mask);
-    sa.sa_flags = SA_RESTART;
-
-    sigaction(SIGTERM, &sa, nullptr);
-    sigaction(SIGINT, &sa, nullptr);
-    sigaction(SIGHUP, &sa, nullptr);
-    sigaction(SIGUSR1, &sa, nullptr);
-    sigaction(SIGUSR2, &sa, nullptr);
-    sigaction(SIGQUIT, &sa, nullptr);
-
-    // Ignore SIGPIPE
-    signal(SIGPIPE, SIG_IGN);
-}
-
-void Daemon::staticSignalHandler(int sig) {
-    if (!g_instance_) return;
-
-    DaemonSignal dsig = DaemonSignal::NONE;
-    switch (sig) {
-        case SIGTERM:
-        case SIGINT:
-            dsig = DaemonSignal::SHUTDOWN;
-            break;
-        case SIGHUP:
-            dsig = DaemonSignal::RELOAD;
-            break;
-        case SIGUSR1:
-            dsig = DaemonSignal::ROTATE_LOGS;
-            break;
-        case SIGUSR2:
-            dsig = DaemonSignal::DUMP_STATS;
-            break;
-        case SIGQUIT:
-            dsig = DaemonSignal::IMMEDIATE_STOP;
-            break;
-    }
-
-    if (dsig != DaemonSignal::NONE) {
-        g_instance_->pending_signal_.store(dsig);
-
-        if (dsig == DaemonSignal::SHUTDOWN || dsig == DaemonSignal::IMMEDIATE_STOP) {
-            g_instance_->shutdown_requested_.store(true);
-            g_instance_->state_.store(DaemonState::STOPPING);
-        } else if (dsig == DaemonSignal::RELOAD) {
-            g_instance_->state_.store(DaemonState::RELOADING);
-        }
-    }
-}
 #else
 // Windows stubs
 core::Status Daemon::doFork(core::ErrorContext* ctx) { return core::Status::OK; }
@@ -665,14 +621,48 @@ core::Status Daemon::setupSession(core::ErrorContext* ctx) { return core::Status
 core::Status Daemon::redirectIO(core::ErrorContext* ctx) { return core::Status::OK; }
 core::Status Daemon::closeFDs(core::ErrorContext* ctx) { return core::Status::OK; }
 core::Status Daemon::dropPrivileges(core::ErrorContext* ctx) { return core::Status::OK; }
-void Daemon::setupSignals() { g_instance_ = this; }
 #endif
+
+void Daemon::setupSignals() {
+    if (!signal_control_) {
+        signal_control_ = core::createDefaultSignalControl();
+    }
+    if (!signal_control_) {
+        return;
+    }
+
+    core::SignalInstallSpec spec;
+    spec.enable_shutdown_signal = true;
+    spec.enable_reload_signal = true;
+    spec.enable_rotate_logs_signal = true;
+    spec.enable_dump_stats_signal = true;
+    spec.enable_immediate_stop_signal = true;
+    spec.ignore_broken_pipe = true;
+
+    (void)signal_control_->install(spec, nullptr);
+}
 
 void Daemon::setSignalHandler(SignalHandler handler) {
     signal_handler_ = std::move(handler);
 }
 
 void Daemon::checkSignals() {
+    if (signal_control_) {
+        core::ControlSignal control_signal = core::ControlSignal::NONE;
+        if (signal_control_->poll(&control_signal, nullptr) == core::Status::OK) {
+            DaemonSignal signal = mapControlSignal(control_signal);
+            if (signal != DaemonSignal::NONE) {
+                pending_signal_.store(signal);
+                if (signal == DaemonSignal::SHUTDOWN || signal == DaemonSignal::IMMEDIATE_STOP) {
+                    shutdown_requested_.store(true);
+                    state_.store(DaemonState::STOPPING);
+                } else if (signal == DaemonSignal::RELOAD) {
+                    state_.store(DaemonState::RELOADING);
+                }
+            }
+        }
+    }
+
     DaemonSignal sig = pending_signal_.exchange(DaemonSignal::NONE);
     if (sig != DaemonSignal::NONE && signal_handler_) {
         signal_handler_(sig);
@@ -690,8 +680,8 @@ void Daemon::requestShutdown() {
 }
 
 void Daemon::cleanup() {
-    if (g_instance_ == this) {
-        g_instance_ = nullptr;
+    if (signal_control_) {
+        (void)signal_control_->uninstall(nullptr);
     }
 
     pid_file_.remove();
@@ -732,15 +722,17 @@ void Daemon::notifyWatchdog() {
 // Utility Functions
 // ============================================================================
 
-pid_t getCurrentPid() {
-    return getpid();
+ProcessId getCurrentPid() {
+    return static_cast<ProcessId>(getpid());
 }
 
-bool isProcessRunning(pid_t pid) {
+bool isProcessRunning(ProcessId pid) {
     if (pid <= 0) return false;
 
 #ifdef _WIN32
-    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+    HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION,
+                                 FALSE,
+                                 static_cast<DWORD>(pid));
     if (process) {
         DWORD exit_code;
         bool running = GetExitCodeProcess(process, &exit_code) && exit_code == STILL_ACTIVE;
@@ -750,51 +742,51 @@ bool isProcessRunning(pid_t pid) {
     return false;
 #else
     // kill with signal 0 checks if process exists
-    return kill(pid, 0) == 0;
+    return kill(static_cast<pid_t>(pid), 0) == 0;
 #endif
 }
 
-bool sendSignal(pid_t pid, int signal) {
+bool sendSignal(ProcessId pid, int signal) {
 #ifdef _WIN32
     return false;  // Not supported
 #else
-    return kill(pid, signal) == 0;
+    return kill(static_cast<pid_t>(pid), signal) == 0;
 #endif
 }
 
-bool getUserId(const std::string& username, uid_t& uid) {
+bool getUserId(const std::string& username, UserId& uid) {
 #ifdef _WIN32
     return false;
 #else
     struct passwd* pw = getpwnam(username.c_str());
     if (pw) {
-        uid = pw->pw_uid;
+        uid = static_cast<UserId>(pw->pw_uid);
         return true;
     }
     return false;
 #endif
 }
 
-bool getGroupId(const std::string& groupname, gid_t& gid) {
+bool getGroupId(const std::string& groupname, GroupId& gid) {
 #ifdef _WIN32
     return false;
 #else
     struct group* gr = getgrnam(groupname.c_str());
     if (gr) {
-        gid = gr->gr_gid;
+        gid = static_cast<GroupId>(gr->gr_gid);
         return true;
     }
     return false;
 #endif
 }
 
-bool createDirectory(const std::string& path, mode_t mode) {
+bool createDirectory(const std::string& path, FileModeBits mode) {
     std::error_code ec;
     std::filesystem::create_directories(path, ec);
     if (ec) return false;
 
 #ifndef _WIN32
-    chmod(path.c_str(), mode);
+    chmod(path.c_str(), static_cast<mode_t>(mode & 0777U));
 #endif
     return true;
 }

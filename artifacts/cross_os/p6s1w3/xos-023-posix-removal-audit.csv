@@ -1,0 +1,11 @@
+file,check,status,details
+include/scratchbird/server/daemon.h,portable_header_posix_types,removed,"No pid_t/uid_t/gid_t/mode_t in public API; replaced with ProcessId/UserId/GroupId/FileModeBits aliases"
+include/scratchbird/server/daemon.h,portable_header_posix_includes,removed,"No direct POSIX headers in public daemon header"
+include/scratchbird/server/scratchbird_server.h,portable_header_posix_types,removed,"PID interfaces now use ProcessId"
+include/scratchbird/server/scratchbird_server.h,portable_header_posix_includes,removed,"No direct POSIX headers in server public header"
+include/scratchbird/server/service_controller.h,portable_header_posix_types,removed,"unix_socket_permissions remains uint32_t and header has no POSIX type leak"
+src/server/scratchbird_server.cpp,direct_signal_registration,removed,"No std::signal/::signal usage; runtime control polling uses SignalControl adapter"
+src/network/sb_listener_main.cpp,direct_signal_registration,removed,"Legacy std::signal handlers removed; listener now installs/polls SignalControl"
+src/network/sb_listener_main.cpp,posix_process_runtime,retained_with_linux_guard,"fork/waitpid/kill and related includes are constrained to Linux worker lifecycle paths"
+src/core/job_scheduler.cpp,posix_external_job_runtime,retained_with_linux_guard,"External process execution path remains POSIX and is wrapped in #ifndef _WIN32"
+src/server/service_controller.cpp,posix_identity_lookup,retained_with_linux_guard,"getpwnam/getgrnam includes (<pwd.h>/<grp.h>) retained for Linux account validation only"

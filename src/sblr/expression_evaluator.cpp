@@ -1399,7 +1399,8 @@ namespace scratchbird::sblr
                 throw std::runtime_error("DEGREES requires 1 argument");
             if (arg_values[0].isNull())
                 return TypedValue::makeNull();
-            return TypedValue::makeFloat64(coerceToDouble(arg_values[0]) * 180.0 / M_PI);
+            return TypedValue::makeFloat64(
+                coerceToDouble(arg_values[0]) * 180.0 / 3.141592653589793238462643383279502884);
         }
         else if (func_name == "RADIANS")
         {
@@ -1407,13 +1408,14 @@ namespace scratchbird::sblr
                 throw std::runtime_error("RADIANS requires 1 argument");
             if (arg_values[0].isNull())
                 return TypedValue::makeNull();
-            return TypedValue::makeFloat64(coerceToDouble(arg_values[0]) * M_PI / 180.0);
+            return TypedValue::makeFloat64(
+                coerceToDouble(arg_values[0]) * 3.141592653589793238462643383279502884 / 180.0);
         }
         else if (func_name == "PI")
         {
             if (!arg_values.empty())
                 throw std::runtime_error("PI requires 0 arguments");
-            return TypedValue::makeFloat64(M_PI);
+            return TypedValue::makeFloat64(3.141592653589793238462643383279502884);
         }
         else if (func_name == "SINH")
         {

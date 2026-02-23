@@ -63,6 +63,7 @@ namespace mysql {
     constexpr uint32_t CLIENT_PLUGIN_AUTH = 0x00080000;
     constexpr uint32_t CLIENT_CONNECT_ATTRS = 0x00100000;
     constexpr uint32_t CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA = 0x00200000;
+    constexpr uint32_t CLIENT_SECURE_CONNECTION = 0x00008000;
     constexpr uint32_t CLIENT_CAN_HANDLE_EXPIRED_PASSWORDS = 0x00400000;
     constexpr uint32_t CLIENT_SESSION_TRACK = 0x00800000;
     constexpr uint32_t CLIENT_DEPRECATE_EOF = 0x01000000;
@@ -507,6 +508,24 @@ core::Status MySQLParserAgent::handleCommand(MySQLClientState& state, core::Erro
     
     uint8_t cmd = packet[0];
     state.seq = 0;  // Reset sequence for response
+
+    auto unsupported = [&](const std::string& name) {
+        sendErrorPacket(state, 1235, "42000",
+                        name + " is not yet supported by ScratchBird MySQL emulation");
+        return core::Status::OK;
+    };
+
+    auto readNullTerminated = [&](size_t& offset) -> std::string {
+        size_t start = offset;
+        while (offset < packet.size() && packet[offset] != '\0') {
+            ++offset;
+        }
+        std::string value(reinterpret_cast<const char*>(packet.data() + start), offset - start);
+        if (offset < packet.size() && packet[offset] == '\0') {
+            ++offset;
+        }
+        return value;
+    };
     
     switch (cmd) {
         case mysql::COM_QUIT:
@@ -521,22 +540,146 @@ core::Status MySQLParserAgent::handleCommand(MySQLClientState& state, core::Erro
             
         case mysql::COM_FIELD_LIST:
             return handleFieldList(state, packet, ctx);
+
+        case mysql::COM_CREATE_DB:
+        case mysql::COM_DROP_DB: {
+            if (packet.size() <= 1) {
+                sendErrorPacket(state, 1102, "42000", "No database name provided");
+                return core::Status::OK;
+            }
+
+            std::string database(reinterpret_cast<const char*>(packet.data() + 1), packet.size() - 1);
+            while (!database.empty() && database.back() == '\0') {
+                database.pop_back();
+            }
+            if (database.empty()) {
+                sendErrorPacket(state, 1102, "42000", "No database name provided");
+                return core::Status::OK;
+            }
+
+            std::string escaped;
+            escaped.reserve(database.size());
+            for (char ch : database) {
+                escaped.push_back(ch);
+                if (ch == '`') {
+                    escaped.push_back('`');
+                }
+            }
+
+            std::string sql = (cmd == mysql::COM_CREATE_DB ? "CREATE DATABASE `" : "DROP DATABASE `");
+            sql += escaped;
+            sql += "`";
+
+            std::vector<uint8_t> query_packet;
+            query_packet.reserve(sql.size() + 1);
+            query_packet.push_back(mysql::COM_QUERY);
+            query_packet.insert(query_packet.end(), sql.begin(), sql.end());
+            return handleQuery(state, query_packet, ctx);
+        }
             
         case mysql::COM_REFRESH:
-        case mysql::COM_STATISTICS:
-        case mysql::COM_PROCESS_INFO:
-        case mysql::COM_DEBUG:
-        case mysql::COM_PING:
-        case mysql::COM_CHANGE_USER:
-            // Send OK packet for these commands
             sendOKPacket(state, 0, 0, state.status_flags, 0, "");
             return core::Status::OK;
+
+        case mysql::COM_STATISTICS: {
+            static constexpr const char* kStats =
+                "Uptime: 0  Threads: 1  Questions: 0  Slow queries: 0  "
+                "Opens: 0  Flush tables: 0  Open tables: 0  Queries per second avg: 0.000";
+            std::vector<uint8_t> stats_payload(kStats, kStats + std::strlen(kStats));
+            return sendPacket(state, stats_payload, ctx);
+        }
+
+        case mysql::COM_PROCESS_INFO:
+            sendResultSet(state, {}, {});
+            return core::Status::OK;
+
+        case mysql::COM_DEBUG:
+        case mysql::COM_PING:
+            sendOKPacket(state, 0, 0, state.status_flags, 0, "");
+            return core::Status::OK;
+
+        case mysql::COM_CHANGE_USER: {
+            if (packet.size() <= 1) {
+                sendErrorPacket(state, 1045, "28000", "Invalid COM_CHANGE_USER payload");
+                return core::Status::OK;
+            }
+
+            size_t offset = 1;
+            state.username = readNullTerminated(offset);
+            if (state.username.empty()) {
+                sendErrorPacket(state, 1045, "28000", "COM_CHANGE_USER requires a username");
+                return core::Status::OK;
+            }
+
+            state.auth_response.clear();
+            if (state.capabilities & mysql::CLIENT_SECURE_CONNECTION) {
+                if (offset >= packet.size()) {
+                    sendErrorPacket(state, 1045, "28000", "Invalid COM_CHANGE_USER auth response");
+                    return core::Status::OK;
+                }
+                uint8_t auth_len = packet[offset++];
+                if (offset + auth_len > packet.size()) {
+                    sendErrorPacket(state, 1045, "28000", "Truncated COM_CHANGE_USER auth response");
+                    return core::Status::OK;
+                }
+                state.auth_response.insert(state.auth_response.end(),
+                                           packet.begin() + offset,
+                                           packet.begin() + offset + auth_len);
+                offset += auth_len;
+            } else {
+                std::string auth = readNullTerminated(offset);
+                state.auth_response.assign(auth.begin(), auth.end());
+            }
+
+            if (offset < packet.size()) {
+                state.database = readNullTerminated(offset);
+            } else {
+                state.database.clear();
+            }
+
+            if (offset + 2 <= packet.size()) {
+                state.charset = packet[offset];
+                offset += 2;
+            }
+
+            if (offset < packet.size()) {
+                std::string plugin = readNullTerminated(offset);
+                if (!plugin.empty()) {
+                    state.auth_plugin = plugin;
+                }
+            }
+
+            auto auth_status = authenticate(state, ctx);
+            if (auth_status != core::Status::OK) {
+                return auth_status;
+            }
+
+            sendOKPacket(state, 0, 0, state.status_flags, 0, "");
+            return core::Status::OK;
+        }
             
         case mysql::COM_STMT_PREPARE:
             return handleStmtPrepare(state, packet, ctx);
             
         case mysql::COM_STMT_EXECUTE:
             return handleStmtExecute(state, packet, ctx);
+
+        case mysql::COM_STMT_SEND_LONG_DATA: {
+            // COM_STMT_SEND_LONG_DATA has no success response; it appends data to a statement parameter.
+            if (packet.size() < 7) {
+                sendErrorPacket(state, 1210, "HY000", "Malformed COM_STMT_SEND_LONG_DATA packet");
+                return core::Status::OK;
+            }
+
+            uint32_t stmt_id = readUint32LE(packet.data() + 1);
+            (void)readUint16LE(packet.data() + 5);  // parameter id
+            if (state.prepared_stmts.find(stmt_id) == state.prepared_stmts.end()) {
+                sendErrorPacket(state, 1243, "HY000", "Unknown prepared statement");
+                return core::Status::OK;
+            }
+
+            return core::Status::OK;
+        }
             
         case mysql::COM_STMT_CLOSE:
             return handleStmtClose(state, packet, ctx);
@@ -552,6 +695,39 @@ core::Status MySQLParserAgent::handleCommand(MySQLClientState& state, core::Erro
             
         case mysql::COM_RESET_CONNECTION:
             return handleResetConnection(state, ctx);
+
+        case mysql::COM_SLEEP:
+            return unsupported("COM_SLEEP");
+        case mysql::COM_SHUTDOWN:
+            sendErrorPacket(state, 1227, "42000",
+                            "COM_SHUTDOWN requires elevated server privileges");
+            return core::Status::OK;
+        case mysql::COM_PROCESS_KILL:
+            return unsupported("COM_PROCESS_KILL");
+        case mysql::COM_TIME:
+            return unsupported("COM_TIME");
+        case mysql::COM_DELAYED_INSERT:
+            return unsupported("COM_DELAYED_INSERT");
+        case mysql::COM_CONNECT:
+            return unsupported("COM_CONNECT");
+        case mysql::COM_CONNECT_OUT:
+            return unsupported("COM_CONNECT_OUT");
+        case mysql::COM_REGISTER_SLAVE:
+            return unsupported("COM_REGISTER_SLAVE");
+        case mysql::COM_BINLOG_DUMP:
+            return unsupported("COM_BINLOG_DUMP");
+        case mysql::COM_TABLE_DUMP:
+            return unsupported("COM_TABLE_DUMP");
+        case mysql::COM_DAEMON:
+            return unsupported("COM_DAEMON");
+        case mysql::COM_BINLOG_DUMP_GTID:
+            return unsupported("COM_BINLOG_DUMP_GTID");
+        case mysql::COM_CLONE:
+            return unsupported("COM_CLONE");
+        case mysql::COM_SUBSCRIBE_GROUP_REPLICATION_STREAM:
+            return unsupported("COM_SUBSCRIBE_GROUP_REPLICATION_STREAM");
+        case mysql::COM_END:
+            return unsupported("COM_END");
             
         default:
             sendErrorPacket(state, 1047, "08S01", "Unknown command: " + std::to_string(cmd));

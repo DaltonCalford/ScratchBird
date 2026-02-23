@@ -1,0 +1,14 @@
+[0/2] Re-checking globbed directories...
+[1/13] Linking CXX executable src/sb_manager.exe
+[2/13] Linking CXX executable src/sb_listener_pg.exe
+[3/13] Linking CXX executable src/sb_listener_fb.exe
+[4/13] Linking CXX executable src/sb_listener_mysql.exe
+[5/13] Linking CXX executable src/sb_listener_native.exe
+[6/13] Linking CXX executable src/sb_parser_mysql.exe
+[7/13] Linking CXX executable src/sb_charset_loader.exe
+[8/13] Linking CXX executable src/scratchbird.exe
+[9/13] Linking CXX executable src/sb_parser_native.exe
+[10/13] Linking CXX executable src/sb_parser_pg.exe
+[11/13] Linking CXX executable src/sb_server.exe
+[12/13] Linking CXX executable tools/sb_timezone_loader.exe
+[13/13] Linking CXX executable src/sb_parser_fb.exe

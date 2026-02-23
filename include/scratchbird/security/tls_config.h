@@ -74,7 +74,7 @@ bool parseTLSVersion(const std::string& str, TLSVersion& version);
  */
 enum class VerifyMode : uint8_t {
     NONE = 0,           // No client certificate required
-    OPTIONAL = 1,       // Request but don't require
+    OPTIONAL_VERIFY = 1, // Request but don't require
     REQUIRE = 2,        // Require valid client certificate
     REQUIRE_ONCE = 3    // Require on first connection only
 };
@@ -421,7 +421,7 @@ enum class TLSState : uint8_t {
     ESTABLISHED,
     SHUTDOWN_IN_PROGRESS,
     SHUTDOWN_COMPLETE,
-    ERROR
+    ERROR_STATE
 };
 
 /**

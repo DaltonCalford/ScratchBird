@@ -15,9 +15,30 @@
 #include <cmath>
 #include <algorithm>
 #include <vector>
+#include <cstring>
 
 namespace scratchbird::core
 {
+    namespace
+    {
+        bool gmtimeUtc(time_t input, struct tm* out)
+        {
+#if defined(_WIN32)
+            return out != nullptr && gmtime_s(out, &input) == 0;
+#else
+            return out != nullptr && gmtime_r(&input, out) != nullptr;
+#endif
+        }
+
+        time_t timegmPortable(struct tm* input)
+        {
+#if defined(_WIN32)
+            return _mkgmtime(input);
+#else
+            return timegm(input);
+#endif
+        }
+    } // namespace
 
     // ===== TimezoneOffset Implementation =====
 
@@ -763,7 +784,7 @@ namespace scratchbird::core
         timeinfo.tm_sec = second;
         timeinfo.tm_isdst = -1;
 
-        time_t epoch_seconds = timegm(&timeinfo);
+        time_t epoch_seconds = timegmPortable(&timeinfo);
         if (epoch_seconds == -1)
         {
             if (ctx)
@@ -826,7 +847,10 @@ namespace scratchbird::core
 
         time_t epoch_seconds = static_cast<time_t>(total_seconds);
         struct tm timeinfo;
-        gmtime_r(&epoch_seconds, &timeinfo);
+        if (!gmtimeUtc(epoch_seconds, &timeinfo))
+        {
+            std::memset(&timeinfo, 0, sizeof(timeinfo));
+        }
 
         // Format: YYYY-MM-DD HH:MM:SS.ffffff
         std::ostringstream oss;

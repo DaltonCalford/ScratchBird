@@ -33,6 +33,9 @@
 #include <sys/types.h>
 #include <array>
 #include <cstring>
+#if defined(_WIN32)
+    #include <direct.h>
+#endif
 
 namespace scratchbird
 {
@@ -40,6 +43,15 @@ namespace core
 {
 
 namespace {
+
+int createDirectoryPortable(const std::string& path)
+{
+#if defined(_WIN32)
+    return ::_mkdir(path.c_str());
+#else
+    return ::mkdir(path.c_str(), 0755);
+#endif
+}
 
 using IndexType = CatalogManager::IndexType;
 using IndexCaps = IndexFactory::IndexFamilyCapabilities;
@@ -486,7 +498,7 @@ Status IndexFactory::createIndex(
             }
             if (!index_dir.empty())
             {
-                if (mkdir(index_dir.c_str(), 0755) != 0 && errno != EEXIST)
+                if (createDirectoryPortable(index_dir) != 0 && errno != EEXIST)
                 {
                     std::string error_msg = "Failed to create LSM-Tree directory: " +
                         std::string(strerror(errno));
@@ -496,7 +508,7 @@ Status IndexFactory::createIndex(
             }
 
             // Create directory for LSM-Tree index data
-            if (mkdir(index_path.c_str(), 0755) != 0 && errno != EEXIST)
+            if (createDirectoryPortable(index_path) != 0 && errno != EEXIST)
             {
                 std::string error_msg = "Failed to create LSM-Tree directory: " + std::string(strerror(errno));
                 SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, error_msg.c_str());

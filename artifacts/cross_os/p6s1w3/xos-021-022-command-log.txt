@@ -1,0 +1,12 @@
+# XOS-021/022 Command Log
+
+Last-Modified: 2026-02-22
+
+## Commands Executed
+1. `cmake --build build -j4`
+2. `ctest --test-dir build -R 'JobScheduler|ClockControlTest' --output-on-failure`
+3. `rg -n "clock_control|ClockControl|monotonicNow\(|realtimeNowMs\(|sleepFor\(" include/scratchbird/core/clock_control.h src/core/clock_control.cpp include/scratchbird/core/job_scheduler.h src/core/job_scheduler.cpp`
+
+## Outputs
+- Test results: `artifacts/cross_os/p6s1w3/xos-021-022-clock-ctest.txt`
+- Migration surface: `artifacts/cross_os/p6s1w3/xos-021-022-clock-surface.txt`

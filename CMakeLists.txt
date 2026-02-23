@@ -19,6 +19,66 @@ else()
     add_compile_definitions(SCRATCHBIRD_WITH_COMPILER=0)
 endif()
 
+# Platform feature gates used by cross-OS slices and portability guards.
+if(WIN32)
+    set(SCRATCHBIRD_DEFAULT_SYSTEMD_RUNTIME OFF)
+    set(SCRATCHBIRD_DEFAULT_FORK_RUNTIME OFF)
+elseif(UNIX AND NOT APPLE)
+    set(SCRATCHBIRD_DEFAULT_SYSTEMD_RUNTIME ON)
+    set(SCRATCHBIRD_DEFAULT_FORK_RUNTIME ON)
+else()
+    set(SCRATCHBIRD_DEFAULT_SYSTEMD_RUNTIME OFF)
+    set(SCRATCHBIRD_DEFAULT_FORK_RUNTIME ON)
+endif()
+
+option(SCRATCHBIRD_ENABLE_SYSTEMD_RUNTIME
+    "Enable Linux systemd runtime hooks."
+    ${SCRATCHBIRD_DEFAULT_SYSTEMD_RUNTIME}
+)
+option(SCRATCHBIRD_ENABLE_FORK_RUNTIME
+    "Enable fork/wait-based runtime components."
+    ${SCRATCHBIRD_DEFAULT_FORK_RUNTIME}
+)
+
+if(WIN32 AND SCRATCHBIRD_ENABLE_SYSTEMD_RUNTIME)
+    message(FATAL_ERROR "SCRATCHBIRD_ENABLE_SYSTEMD_RUNTIME cannot be ON on Windows.")
+endif()
+if(WIN32 AND SCRATCHBIRD_ENABLE_FORK_RUNTIME)
+    message(FATAL_ERROR "SCRATCHBIRD_ENABLE_FORK_RUNTIME cannot be ON on Windows.")
+endif()
+
+if(SCRATCHBIRD_ENABLE_SYSTEMD_RUNTIME)
+    set(SCRATCHBIRD_FEATURE_SYSTEMD_RUNTIME_VALUE 1)
+else()
+    set(SCRATCHBIRD_FEATURE_SYSTEMD_RUNTIME_VALUE 0)
+endif()
+if(SCRATCHBIRD_ENABLE_FORK_RUNTIME)
+    set(SCRATCHBIRD_FEATURE_POSIX_DAEMON_VALUE 1)
+else()
+    set(SCRATCHBIRD_FEATURE_POSIX_DAEMON_VALUE 0)
+endif()
+if(WIN32)
+    set(SCRATCHBIRD_PLATFORM_WINDOWS_VALUE 1)
+    set(SCRATCHBIRD_PLATFORM_POSIX_VALUE 0)
+else()
+    set(SCRATCHBIRD_PLATFORM_WINDOWS_VALUE 0)
+    set(SCRATCHBIRD_PLATFORM_POSIX_VALUE 1)
+endif()
+
+add_compile_definitions(
+    SCRATCHBIRD_PLATFORM_WINDOWS=${SCRATCHBIRD_PLATFORM_WINDOWS_VALUE}
+    SCRATCHBIRD_PLATFORM_POSIX=${SCRATCHBIRD_PLATFORM_POSIX_VALUE}
+    SCRATCHBIRD_FEATURE_SYSTEMD_RUNTIME=${SCRATCHBIRD_FEATURE_SYSTEMD_RUNTIME_VALUE}
+    SCRATCHBIRD_FEATURE_POSIX_DAEMON=${SCRATCHBIRD_FEATURE_POSIX_DAEMON_VALUE}
+)
+
+message(STATUS
+    "Runtime feature gates: systemd=${SCRATCHBIRD_ENABLE_SYSTEMD_RUNTIME}, "
+    "fork=${SCRATCHBIRD_ENABLE_FORK_RUNTIME}"
+)
+
+include(${CMAKE_SOURCE_DIR}/cmake/dependencies/windows_dependency_resolution.cmake)
+
 # Fetch nlohmann/json library (header-only, no external dependencies needed)
 include(FetchContent)
 FetchContent_Declare(json
@@ -71,51 +131,70 @@ if(SCRATCHBIRD_TEST_PARALLEL_LEVEL GREATER 1)
 endif()
 
 # Find optional packages
-find_package(PkgConfig)
-if(PkgConfig_FOUND)
-    pkg_check_modules(LZ4 liblz4)
-    pkg_check_modules(GEOS geos)
-    pkg_check_modules(PROJ proj)
-    pkg_check_modules(LIBXML2 libxml-2.0)
+set(SCRATCHBIRD_WINDOWS_CROSS_COMPILE FALSE)
+if(CMAKE_CROSSCOMPILING AND WIN32)
+    set(SCRATCHBIRD_WINDOWS_CROSS_COMPILE TRUE)
+endif()
+
+if(NOT SCRATCHBIRD_WINDOWS_CROSS_COMPILE)
+    find_package(PkgConfig)
+    if(PkgConfig_FOUND)
+        pkg_check_modules(LZ4 liblz4)
+        pkg_check_modules(GEOS geos)
+        pkg_check_modules(PROJ proj)
+        pkg_check_modules(LIBXML2 libxml-2.0)
+    endif()
+else()
+    message(STATUS
+        "Cross-compiling to Windows: optional host dependency autodiscovery "
+        "(LZ4/ZSTD/GEOS/PROJ/LIBXML2) is disabled.")
 endif()
 
 # Required packages
 find_package(ZLIB REQUIRED)
 
-# If LZ4 not found via pkg-config, try to find it manually
-if(NOT LZ4_FOUND)
-    find_path(LZ4_INCLUDE_DIRS NAMES lz4.h)
-    find_library(LZ4_LIBRARIES NAMES lz4)
-    if(LZ4_INCLUDE_DIRS AND LZ4_LIBRARIES)
-        set(LZ4_FOUND TRUE)
+if(NOT SCRATCHBIRD_WINDOWS_CROSS_COMPILE)
+    # If LZ4 not found via pkg-config, try to find it manually
+    if(NOT LZ4_FOUND)
+        find_path(LZ4_INCLUDE_DIRS NAMES lz4.h)
+        find_library(LZ4_LIBRARIES NAMES lz4)
+        if(LZ4_INCLUDE_DIRS AND LZ4_LIBRARIES)
+            set(LZ4_FOUND TRUE)
+        endif()
     endif()
-endif()
 
-# If ZSTD not found via pkg-config, try to find it manually
-if(NOT ZSTD_FOUND)
-    find_path(ZSTD_INCLUDE_DIRS NAMES zstd.h)
-    find_library(ZSTD_LIBRARIES NAMES zstd)
-    if(ZSTD_INCLUDE_DIRS AND ZSTD_LIBRARIES)
-        set(ZSTD_FOUND TRUE)
+    # If ZSTD not found via pkg-config, try to find it manually
+    if(NOT ZSTD_FOUND)
+        find_path(ZSTD_INCLUDE_DIRS NAMES zstd.h)
+        find_library(ZSTD_LIBRARIES NAMES zstd)
+        if(ZSTD_INCLUDE_DIRS AND ZSTD_LIBRARIES)
+            set(ZSTD_FOUND TRUE)
+        endif()
     endif()
-endif()
 
-# If GEOS not found via pkg-config, try to find it manually
-if(NOT GEOS_FOUND)
-    find_path(GEOS_INCLUDE_DIRS NAMES geos_c.h)
-    find_library(GEOS_LIBRARIES NAMES geos_c)
-    if(GEOS_INCLUDE_DIRS AND GEOS_LIBRARIES)
-        set(GEOS_FOUND TRUE)
+    # If GEOS not found via pkg-config, try to find it manually
+    if(NOT GEOS_FOUND)
+        find_path(GEOS_INCLUDE_DIRS NAMES geos_c.h)
+        find_library(GEOS_LIBRARIES NAMES geos_c)
+        if(GEOS_INCLUDE_DIRS AND GEOS_LIBRARIES)
+            set(GEOS_FOUND TRUE)
+        endif()
     endif()
-endif()
 
-# If PROJ not found via pkg-config, try to find it manually
-if(NOT PROJ_FOUND)
-    find_path(PROJ_INCLUDE_DIRS NAMES proj.h)
-    find_library(PROJ_LIBRARIES NAMES proj)
-    if(PROJ_INCLUDE_DIRS AND PROJ_LIBRARIES)
-        set(PROJ_FOUND TRUE)
+    # If PROJ not found via pkg-config, try to find it manually
+    if(NOT PROJ_FOUND)
+        find_path(PROJ_INCLUDE_DIRS NAMES proj.h)
+        find_library(PROJ_LIBRARIES NAMES proj)
+        if(PROJ_INCLUDE_DIRS AND PROJ_LIBRARIES)
+            set(PROJ_FOUND TRUE)
+        endif()
     endif()
+else()
+    set(LZ4_FOUND FALSE)
+    set(ZSTD_FOUND FALSE)
+    set(GEOS_FOUND FALSE)
+    set(PROJ_FOUND FALSE)
+    set(LIBXML2_FOUND FALSE)
 endif()
 
 # Define macro if LZ4 is available

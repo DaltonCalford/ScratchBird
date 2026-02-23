@@ -47,6 +47,21 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <process.h>
+    #ifdef ERROR
+        #undef ERROR
+    #endif
+    #ifdef DELETE
+        #undef DELETE
+    #endif
+    #ifdef ABSOLUTE
+        #undef ABSOLUTE
+    #endif
+    #ifdef OPTIONAL
+        #undef OPTIONAL
+    #endif
+    #ifdef ID
+        #undef ID
+    #endif
 #else
 #include <unistd.h>
 #include <sys/types.h>

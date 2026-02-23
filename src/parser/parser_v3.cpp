@@ -16702,8 +16702,16 @@ GrantStmt* Parser::parseGrant() {
         } else if (match(TokenType::KW_COPY)) {
             stmt->privileges.push_back(PrivilegeType::COPY);
         } else if (matchContextual("CREATE")) {
-            expectContextual("JOB", "Expected JOB after CREATE");
-            stmt->privileges.push_back(PrivilegeType::CREATE_JOB);
+            if (checkContextual("JOB")) {
+                expectContextual("JOB", "Expected JOB after CREATE");
+                stmt->privileges.push_back(PrivilegeType::CREATE_JOB);
+            } else {
+                stmt->privileges.push_back(PrivilegeType::CREATE);
+            }
+        } else if (matchContextual("CONNECT")) {
+            stmt->privileges.push_back(PrivilegeType::CONNECT);
+        } else if (matchContextual("TEMPORARY")) {
+            stmt->privileges.push_back(PrivilegeType::TEMPORARY);
         } else if (matchContextual("VIEW")) {
             expectContextual("JOB", "Expected JOB after VIEW");
             if (!matchContextual("HISTORY")) {
@@ -16790,6 +16798,12 @@ RevokeStmt* Parser::parseRevoke() {
             stmt->privileges.push_back(PrivilegeType::UPDATE);
         } else if (match(TokenType::KW_DELETE)) {
             stmt->privileges.push_back(PrivilegeType::DELETE);
+        } else if (matchContextual("TRUNCATE")) {
+            stmt->privileges.push_back(PrivilegeType::TRUNCATE);
+        } else if (matchContextual("REFERENCES")) {
+            stmt->privileges.push_back(PrivilegeType::REFERENCES);
+        } else if (matchContextual("TRIGGER")) {
+            stmt->privileges.push_back(PrivilegeType::TRIGGER);
         } else if (match(TokenType::KW_EXECUTE) || matchContextual("EXECUTE")) {
             if (matchContextual("EXTERNAL")) {
                 expectContextual("JOB", "Expected JOB after EXECUTE EXTERNAL");
@@ -16797,11 +16811,21 @@ RevokeStmt* Parser::parseRevoke() {
             } else {
                 stmt->privileges.push_back(PrivilegeType::EXECUTE);
             }
+        } else if (matchContextual("USAGE")) {
+            stmt->privileges.push_back(PrivilegeType::USAGE);
         } else if (match(TokenType::KW_COPY)) {
             stmt->privileges.push_back(PrivilegeType::COPY);
         } else if (matchContextual("CREATE")) {
-            expectContextual("JOB", "Expected JOB after CREATE");
-            stmt->privileges.push_back(PrivilegeType::CREATE_JOB);
+            if (checkContextual("JOB")) {
+                expectContextual("JOB", "Expected JOB after CREATE");
+                stmt->privileges.push_back(PrivilegeType::CREATE_JOB);
+            } else {
+                stmt->privileges.push_back(PrivilegeType::CREATE);
+            }
+        } else if (matchContextual("CONNECT")) {
+            stmt->privileges.push_back(PrivilegeType::CONNECT);
+        } else if (matchContextual("TEMPORARY")) {
+            stmt->privileges.push_back(PrivilegeType::TEMPORARY);
         } else if (matchContextual("VIEW")) {
             expectContextual("JOB", "Expected JOB after VIEW");
             if (!matchContextual("HISTORY")) {

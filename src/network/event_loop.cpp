@@ -269,7 +269,11 @@ int EventLoop::poll(int timeout_ms) {
         if (event.fd == wakeup_read_fd_) {
             // Drain wakeup pipe
             char buf[64];
+#ifdef _WIN32
+            while (::recv(wakeup_read_fd_, buf, sizeof(buf), 0) > 0) {}
+#else
             while (::read(wakeup_read_fd_, buf, sizeof(buf)) > 0) {}
+#endif
             continue;
         }
 

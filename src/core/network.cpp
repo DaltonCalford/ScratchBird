@@ -12,7 +12,21 @@
 #include <iomanip>
 #include <algorithm>
 #include <cstring>
-#include <arpa/inet.h>
+#if defined(_WIN32)
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+    #ifdef ERROR
+        #undef ERROR
+    #endif
+    #ifdef DELETE
+        #undef DELETE
+    #endif
+    #ifdef ABSOLUTE
+        #undef ABSOLUTE
+    #endif
+#else
+    #include <arpa/inet.h>
+#endif
 
 namespace scratchbird::core
 {

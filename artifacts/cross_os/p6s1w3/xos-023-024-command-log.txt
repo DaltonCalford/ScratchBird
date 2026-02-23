@@ -1,0 +1,15 @@
+# XOS-023/024 command log
+
+# scan target tracker and state
+nl -ba /home/dcalford/CliWork/local_work/docs/planning/CROSS_OS_LINUX_WINDOWS_EXECUTION_TRACKER_2026-02-22.csv | sed -n '1,260p'
+
+# portability scans
+rg -n '#include <(unistd\.h|signal\.h|sys/[^>]+|pwd\.h|grp\.h|fcntl\.h|poll\.h)>' include/scratchbird/server/daemon.h include/scratchbird/server/scratchbird_server.h include/scratchbird/server/service_controller.h src/server/scratchbird_server.cpp src/server/service_controller.cpp src/network/sb_listener_main.cpp src/core/job_scheduler.cpp
+rg -n '\b(pid_t|uid_t|gid_t|mode_t)\b' include/scratchbird/server/daemon.h include/scratchbird/server/scratchbird_server.h include/scratchbird/server/service_controller.h
+rg -n '\b(std::signal|::signal)\s*\(' src/server/scratchbird_server.cpp src/server/service_controller.cpp src/network/sb_listener_main.cpp
+
+# build
+cmake --build /home/dcalford/CliWork/ScratchBird/build -j4
+
+# regression + guard gate
+ctest --test-dir build -R 'PortableRuntimeGuard|SignalControlTest|ListenerIpcAdapterTest|ClockControlTest|ServiceControllerListenerBootstrapTest|ProcessControlTest|FilePermissionsControlTest|AuthBootstrapClaimTest|AuthBootstrapClaimStandaloneTest|JobScheduler' --output-on-failure

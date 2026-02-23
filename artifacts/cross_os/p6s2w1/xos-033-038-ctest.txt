@@ -1,0 +1,16 @@
+Internal ctest changing into directory: /home/dcalford/CliWork/ScratchBird/build
+Test project /home/dcalford/CliWork/ScratchBird/build
+    Start 3492: VNextScopeScanContract
+1/2 Test #3492: VNextScopeScanContract ...........   Passed    0.09 sec
+    Start 3493: PortableRuntimeGuard
+2/2 Test #3493: PortableRuntimeGuard .............   Passed    0.02 sec
+
+100% tests passed, 0 tests failed out of 2
+
+Label Time Summary:
+compliance     =   0.12 sec*proc (2 tests)
+governance     =   0.09 sec*proc (1 test)
+portability    =   0.02 sec*proc (1 test)
+unit           =   0.12 sec*proc (2 tests)
+
+Total Test time (real) =   0.19 sec

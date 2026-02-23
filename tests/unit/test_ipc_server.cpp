@@ -24,6 +24,7 @@
 #include <thread>
 #include <chrono>
 #include <atomic>
+#include <cctype>
 #include <cstring>
 #include <unistd.h>
 
@@ -158,6 +159,41 @@ TEST_F(IPCPathTest, PIDFilePath) {
     EXPECT_TRUE(pid_path.find("scratchbird-mydb.pid") != std::string::npos);
 #else
     EXPECT_EQ(pid_path, "build/run/scratchbird-mydb.pid");
+#endif
+}
+
+TEST_F(IPCPathTest, LayoutParityUsesSharedSanitizedObjectIdentity) {
+    const std::string logical_name = "tenant@app#01";
+    std::string sanitized;
+    for (char c : logical_name) {
+        if (std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-') {
+            sanitized.push_back(c);
+        }
+    }
+    ASSERT_FALSE(sanitized.empty());
+
+    const std::string unix_path = getIPCPath(logical_name, IPCMethod::UNIX_SOCKET);
+    const std::string pipe_path = getIPCPath(logical_name, IPCMethod::NAMED_PIPE);
+    const std::string pid_path = getPIDFilePath(logical_name);
+
+    EXPECT_NE(unix_path.find("scratchbird-" + sanitized), std::string::npos);
+    EXPECT_NE(pipe_path.find("scratchbird-" + sanitized), std::string::npos);
+    EXPECT_NE(pid_path.find("scratchbird-" + sanitized), std::string::npos);
+}
+
+TEST_F(IPCPathTest, LayoutParityRuntimeRootsAreDeterministicByPlatform) {
+    const std::string unix_path = getIPCPath("layout_test", IPCMethod::UNIX_SOCKET);
+    const std::string pipe_path = getIPCPath("layout_test", IPCMethod::NAMED_PIPE);
+    const std::string pid_path = getPIDFilePath("layout_test");
+
+    EXPECT_NE(unix_path.find("scratchbird-layout_test"), std::string::npos);
+    EXPECT_NE(pipe_path.find("\\\\.\\pipe\\scratchbird-layout_test"), std::string::npos);
+
+#ifdef _WIN32
+    EXPECT_TRUE(pid_path.find("scratchbird-layout_test.pid") != std::string::npos);
+#else
+    EXPECT_EQ(unix_path.find("build/"), 0u);
+    EXPECT_EQ(pid_path.find("build/run/"), 0u);
 #endif
 }
 

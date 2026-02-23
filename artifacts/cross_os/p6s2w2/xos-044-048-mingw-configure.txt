@@ -1,0 +1,107 @@
+Preset CMake variables:
+
+  BUILD_TESTING="OFF"
+  CMAKE_BUILD_TYPE="Debug"
+  CMAKE_EXPORT_COMPILE_COMMANDS="ON"
+  CMAKE_TOOLCHAIN_FILE:FILEPATH="/home/dcalford/CliWork/ScratchBird/cmake/toolchains/mingw-w64-x86_64.cmake"
+  CMAKE_TRY_COMPILE_TARGET_TYPE="STATIC_LIBRARY"
+  SCRATCHBIRD_CTEST_TIMEOUT="3600"
+  SCRATCHBIRD_WINDOWS_REQUIRE_VCPKG="OFF"
+
+Preset environment variables:
+
+  SCRATCHBIRD_MINGW_OPENSSL_ROOT="/home/dcalford/CliWork/ScratchBird/build/deps/mingw-openssl"
+  SCRATCHBIRD_MINGW_ZLIB_ROOT="/home/dcalford/CliWork/ScratchBird/build/deps/mingw-zlib"
+
+-- ScratchBird Database Engine - Planning Phase
+-- See ProjectPlan/ directory for specifications
+-- Runtime feature gates: systemd=OFF, fork=OFF
+-- Using the multi-header code from /home/dcalford/CliWork/ScratchBird/build/linux-mingw-windows-x64/_deps/json-src/include/
+-- nlohmann/json library: ENABLED (FetchContent)
+-- CTest maximum test time: 3600s (1 hour)
+-- CTest parallel level: 14
+-- Cross-compiling to Windows: optional host dependency autodiscovery (LZ4/ZSTD/GEOS/PROJ/LIBXML2) is disabled.
+-- LZ4 compression support: DISABLED (install liblz4-dev to enable)
+-- ZSTD compression support: DISABLED (install libzstd-dev to enable)
+-- GEOS spatial library: DISABLED (install libgeos-dev to enable)
+-- PROJ coordinate system library: DISABLED (install libproj-dev to enable)
+CMake Warning at CMakeLists.txt:247 (message):
+  clang-format not found.  'make format' target will not be available.
+
+
+CMake Warning at src/CMakeLists.txt:72 (message):
+  libcrypt not found: Password hashing will use fallback (insecure)
+
+
+-- OpenSSL found: Using secure random for password salts
+CMake Warning at src/CMakeLists.txt:178 (message):
+  libxml2 not found: XML functions will use basic string-based implementation
+
+
+-- Security library: OpenSSL found, full TLS/SSL support enabled
+-- Security library: scratchbird_security (TLS, auth, HBA, audit)
+-- Network library: scratchbird_network (socket, event loop, thread pool, connections)
+-- Server library: scratchbird_server (IPC + session management)
+-- Protocol library: scratchbird_protocol (wire protocol)
+-- Pool library: scratchbird_pool (connection pooling, statement/result caching)
+-- FDW library disabled on Windows toolchains pending portability closure.
+-- UDR library disabled on Windows toolchains pending portability closure.
+-- IPC runtime library disabled on Windows toolchains pending AF_UNIX portability closure.
+-- Testing library disabled on Windows toolchains pending socket portability closure.
+-- IPC library: scratchbird_ipc disabled (interface stub target)
+-- Testing library: scratchbird_testing disabled (interface stub target)
+-- Server executable: sb_server
+-- Manager executable: sb_manager
+-- Listener executables: sb_listener_native/pg/mysql/fb
+-- Parser agent executables: sb_parser_native/pg/mysql/fb
+-- Configuring done (0.1s)
+CMake Warning (dev) at src/CMakeLists.txt:718 (add_executable):
+  The feature 'RESCAN', specified as part of a generator-expression
+  '$<LINK_GROUP:RESCAN>', will not be applied to the INTERFACE library
+  'scratchbird_ipc'.
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+CMake Warning (dev) at src/CMakeLists.txt:818 (add_executable):
+  The feature 'RESCAN', specified as part of a generator-expression
+  '$<LINK_GROUP:RESCAN>', will not be applied to the INTERFACE library
+  'scratchbird_ipc'.
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+CMake Warning (dev) at src/CMakeLists.txt:830 (add_executable):
+  The feature 'RESCAN', specified as part of a generator-expression
+  '$<LINK_GROUP:RESCAN>', will not be applied to the INTERFACE library
+  'scratchbird_ipc'.
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+CMake Warning (dev) at src/CMakeLists.txt:842 (add_executable):
+  The feature 'RESCAN', specified as part of a generator-expression
+  '$<LINK_GROUP:RESCAN>', will not be applied to the INTERFACE library
+  'scratchbird_ipc'.
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+CMake Warning (dev) at src/CMakeLists.txt:854 (add_executable):
+  The feature 'RESCAN', specified as part of a generator-expression
+  '$<LINK_GROUP:RESCAN>', will not be applied to the INTERFACE library
+  'scratchbird_ipc'.
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+CMake Warning (dev) at src/CMakeLists.txt:870 (add_executable):
+  The feature 'RESCAN', specified as part of a generator-expression
+  '$<LINK_GROUP:RESCAN>', will not be applied to the INTERFACE library
+  'scratchbird_ipc'.
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+CMake Warning (dev) at src/CMakeLists.txt:881 (add_executable):
+  The feature 'RESCAN', specified as part of a generator-expression
+  '$<LINK_GROUP:RESCAN>', will not be applied to the INTERFACE library
+  'scratchbird_ipc'.
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+CMake Warning (dev) at tools/CMakeLists.txt:4 (add_executable):
+  The feature 'RESCAN', specified as part of a generator-expression
+  '$<LINK_GROUP:RESCAN>', will not be applied to the INTERFACE library
+  'scratchbird_ipc'.
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+-- Generating done (0.0s)
+-- Build files have been written to: /home/dcalford/CliWork/ScratchBird/build/linux-mingw-windows-x64

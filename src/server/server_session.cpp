@@ -1461,6 +1461,9 @@ ServerSession::ServerSession(IPCConnection* connection,
             << ",uid=" << peer_credentials_.uid
             << ",gid=" << peer_credentials_.gid;
         client_info_ = oss.str();
+    } else if (peer_credentials_.pid != 0) {
+        client_info_ = "pid=" + std::to_string(peer_credentials_.pid) +
+                       ",mapping=unavailable";
     } else {
         client_info_ = "unknown";
     }
@@ -1674,6 +1677,11 @@ core::Status ServerSession::handleConnect(const protocol::Message& msg, core::Er
         client_info_ += " [peer uid=" + std::to_string(peer_credentials_.uid) +
                         " gid=" + std::to_string(peer_credentials_.gid) +
                         " pid=" + std::to_string(peer_credentials_.pid) + "]";
+    } else if (connection_ &&
+               connection_->getMethod() == IPCMethod::NAMED_PIPE &&
+               peer_credentials_.pid != 0) {
+        client_info_ += " [peer pid=" + std::to_string(peer_credentials_.pid) +
+                        " mapping=unavailable]";
     }
 
     // Check if database is open
@@ -1796,6 +1804,10 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
         if (peer_credentials_available_) {
             conn_ctx_->setSessionVariable("SB$PEER_UID", std::to_string(peer_credentials_.uid));
             conn_ctx_->setSessionVariable("SB$PEER_GID", std::to_string(peer_credentials_.gid));
+            conn_ctx_->setSessionVariable("SB$PEER_PID", std::to_string(peer_credentials_.pid));
+        } else if (connection_ &&
+                   connection_->getMethod() == IPCMethod::NAMED_PIPE &&
+                   peer_credentials_.pid != 0) {
             conn_ctx_->setSessionVariable("SB$PEER_PID", std::to_string(peer_credentials_.pid));
         }
 

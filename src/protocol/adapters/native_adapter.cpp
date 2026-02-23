@@ -41,7 +41,6 @@
 
 namespace scratchbird {
 namespace protocol {
-namespace sbwp = scratchbird::protocol::sbwp;
 
 namespace {
 

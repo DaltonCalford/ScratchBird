@@ -26,6 +26,9 @@
 #include <cstdlib>
 #include <cctype>
 #include <system_error>
+#include <filesystem>
+
+#ifndef _WIN32
 #include <poll.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
@@ -34,6 +37,7 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <signal.h>
+#endif
 
 namespace scratchbird::core {
 
@@ -191,12 +195,12 @@ bool commandAllowed(const std::vector<std::string>& args,
 }
 
 bool validateWorkingDir(const std::string& working_dir, std::string& error) {
-    struct stat st;
-    if (stat(working_dir.c_str(), &st) != 0) {
+    std::error_code ec;
+    if (!std::filesystem::exists(working_dir, ec)) {
         error = "External working directory not found";
         return false;
     }
-    if (!S_ISDIR(st.st_mode)) {
+    if (!std::filesystem::is_directory(working_dir, ec)) {
         error = "External working directory is not a directory";
         return false;
     }
@@ -282,9 +286,24 @@ ExternalRunResult runExternalCommand(const std::vector<std::string>& args,
                                      uint32_t kill_grace_ms,
                                      uint32_t cpu_limit_seconds,
                                      uint64_t memory_max_bytes,
-                                     const std::shared_ptr<std::atomic<bool>>& cancel_flag) {
+                                     const std::shared_ptr<std::atomic<bool>>& cancel_flag,
+                                     const ClockControl* clock_control) {
     ExternalRunResult result;
 
+#ifdef _WIN32
+    (void)args;
+    (void)working_dir;
+    (void)env_entries;
+    (void)output_cap;
+    (void)timeout_seconds;
+    (void)kill_grace_ms;
+    (void)cpu_limit_seconds;
+    (void)memory_max_bytes;
+    (void)cancel_flag;
+    (void)clock_control;
+    result.output = "External jobs are not supported on Windows in this cycle";
+    return result;
+#else
     if (args.empty()) {
         return result;
     }
@@ -351,7 +370,11 @@ ExternalRunResult runExternalCommand(const std::vector<std::string>& args,
     close(pipefd[1]);
     fcntl(pipefd[0], F_SETFL, O_NONBLOCK);
 
-    auto start = std::chrono::steady_clock::now();
+    auto monotonic_now = [&]() {
+        return clock_control ? clock_control->monotonicNow() : std::chrono::steady_clock::now();
+    };
+
+    auto start = monotonic_now();
     bool done = false;
     bool sent_term = false;
     auto term_time = start;
@@ -363,7 +386,7 @@ ExternalRunResult runExternalCommand(const std::vector<std::string>& args,
 
         if (!result.cancelled && timeout_seconds > 0) {
             auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
-                std::chrono::steady_clock::now() - start).count();
+                monotonic_now() - start).count();
             if (elapsed > static_cast<int64_t>(timeout_seconds)) {
                 result.timed_out = true;
             }
@@ -372,12 +395,12 @@ ExternalRunResult runExternalCommand(const std::vector<std::string>& args,
         if ((result.cancelled || result.timed_out) && !sent_term) {
             kill(pid, SIGTERM);
             sent_term = true;
-            term_time = std::chrono::steady_clock::now();
+            term_time = monotonic_now();
         }
 
         if (sent_term) {
             auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now() - term_time).count();
+                monotonic_now() - term_time).count();
             if (elapsed > static_cast<int64_t>(kill_grace_ms)) {
                 kill(pid, SIGKILL);
             }
@@ -403,7 +426,7 @@ ExternalRunResult runExternalCommand(const std::vector<std::string>& args,
                 if (result.output.size() >= output_cap && !sent_term) {
                     kill(pid, SIGTERM);
                     sent_term = true;
-                    term_time = std::chrono::steady_clock::now();
+                    term_time = monotonic_now();
                 }
             }
         }
@@ -422,6 +445,7 @@ ExternalRunResult runExternalCommand(const std::vector<std::string>& args,
 
     close(pipefd[0]);
     return result;
+#endif
 }
 
 }  // namespace
@@ -434,6 +458,7 @@ JobScheduler::JobScheduler(Database* db)
 JobScheduler::JobScheduler(Database* db, const Config& config)
     : db_(db)
     , config_(config)
+    , clock_control_(createDefaultClockControl())
 {
 }
 
@@ -518,7 +543,9 @@ void JobScheduler::runLoop() {
 
         std::unique_lock<std::mutex> lock(mutex_);
         const uint32_t polling_interval_seconds = config_.polling_interval_seconds;
-        cv_.wait_for(lock, std::chrono::seconds(polling_interval_seconds), [&]() {
+        auto deadline = (clock_control_ ? clock_control_->monotonicNow() : std::chrono::steady_clock::now()) +
+                        std::chrono::seconds(polling_interval_seconds);
+        cv_.wait_until(lock, deadline, [&]() {
             return stop_requested_;
         });
         if (stop_requested_) {
@@ -528,7 +555,10 @@ void JobScheduler::runLoop() {
 }
 
 void JobScheduler::processDueJobs() {
-    auto now_ms = []() -> uint64_t {
+    auto now_ms = [&]() -> uint64_t {
+        if (clock_control_) {
+            return clock_control_->realtimeNowMs();
+        }
         auto now = std::chrono::system_clock::now().time_since_epoch();
         return static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::milliseconds>(now).count());
@@ -771,7 +801,10 @@ Status JobScheduler::startJobExecution(const CatalogManager::JobInfo& job,
 
 Status JobScheduler::executeJobNow(const CatalogManager::JobInfo& job, ID& run_id,
                                    ErrorContext* ctx) {
-    auto now_ms = []() -> uint64_t {
+    auto now_ms = [&]() -> uint64_t {
+        if (clock_control_) {
+            return clock_control_->realtimeNowMs();
+        }
         auto now = std::chrono::system_clock::now().time_since_epoch();
         return static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::milliseconds>(now).count());
@@ -788,8 +821,11 @@ Status JobScheduler::executeJobNow(const CatalogManager::JobInfo& job, ID& run_i
     }
 
     if (job.job_type == CatalogManager::JobType::SQL && cfg.pre_execute_delay_ms == 0) {
-        auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(1500);
-        while (std::chrono::steady_clock::now() < deadline) {
+        auto monotonic_now = [&]() {
+            return clock_control_ ? clock_control_->monotonicNow() : std::chrono::steady_clock::now();
+        };
+        auto deadline = monotonic_now() + std::chrono::milliseconds(1500);
+        while (monotonic_now() < deadline) {
             CatalogManager::JobRunInfo run;
             ErrorContext poll_ctx;
             if (db_ && db_->catalog_manager() &&
@@ -799,7 +835,11 @@ Status JobScheduler::executeJobNow(const CatalogManager::JobInfo& job, ID& run_i
                     break;
                 }
             }
-            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            if (clock_control_) {
+                clock_control_->sleepFor(std::chrono::milliseconds(10));
+            } else {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
         }
     }
 
@@ -851,10 +891,16 @@ void JobScheduler::executeJobRun(const CatalogManager::JobInfo& job,
                                  CatalogManager::JobRunInfo run,
                                  const ID& run_id,
                                  uint64_t now) {
-    auto now_ms = []() -> uint64_t {
+    auto now_ms = [&]() -> uint64_t {
+        if (clock_control_) {
+            return clock_control_->realtimeNowMs();
+        }
         auto now = std::chrono::system_clock::now().time_since_epoch();
         return static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::milliseconds>(now).count());
+    };
+    auto monotonic_now = [&]() {
+        return clock_control_ ? clock_control_->monotonicNow() : std::chrono::steady_clock::now();
     };
 
     ErrorContext ctx;
@@ -866,7 +912,7 @@ void JobScheduler::executeJobRun(const CatalogManager::JobInfo& job,
     std::string run_message;
     int32_t run_error_code = 0;
     int64_t rows_affected = 0;
-    auto execution_start = std::chrono::steady_clock::now();
+    auto execution_start = monotonic_now();
 
     Config cfg;
     {
@@ -875,7 +921,11 @@ void JobScheduler::executeJobRun(const CatalogManager::JobInfo& job,
     }
 
     if (cfg.pre_execute_delay_ms > 0) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(cfg.pre_execute_delay_ms));
+        if (clock_control_) {
+            clock_control_->sleepFor(std::chrono::milliseconds(cfg.pre_execute_delay_ms));
+        } else {
+            std::this_thread::sleep_for(std::chrono::milliseconds(cfg.pre_execute_delay_ms));
+        }
     }
 
     std::shared_ptr<std::atomic<bool>> cancel_requested;
@@ -950,15 +1000,16 @@ void JobScheduler::executeJobRun(const CatalogManager::JobInfo& job,
                             if (timeout_seconds == 0) {
                                 timeout_seconds = cfg.job_timeout_seconds;
                             }
-                            auto run_result = runExternalCommand(args,
-                                                                 cfg.external_working_dir,
-                                                                 env_entries,
-                                                                 cfg.external_output_max_bytes,
-                                                                 timeout_seconds,
-                                                                 cfg.external_kill_grace_ms,
-                                                                 cfg.external_cpu_time_limit_seconds,
-                                                                 cfg.external_memory_max_bytes,
-                                                                 cancel_requested);
+                        auto run_result = runExternalCommand(args,
+                                                             cfg.external_working_dir,
+                                                             env_entries,
+                                                             cfg.external_output_max_bytes,
+                                                             timeout_seconds,
+                                                             cfg.external_kill_grace_ms,
+                                                             cfg.external_cpu_time_limit_seconds,
+                                                             cfg.external_memory_max_bytes,
+                                                             cancel_requested,
+                                                             clock_control_.get());
                             if (run_result.cancelled) {
                                 run_cancelled = true;
                                 run_message = "External job cancelled";
@@ -1088,7 +1139,7 @@ void JobScheduler::executeJobRun(const CatalogManager::JobInfo& job,
     if (!run_cancelled && run_success && timeout_seconds > 0) {
         auto elapsed_ms =
             std::chrono::duration_cast<std::chrono::milliseconds>(
-                std::chrono::steady_clock::now() - execution_start).count();
+                monotonic_now() - execution_start).count();
         if (elapsed_ms >= static_cast<int64_t>(timeout_seconds) * 1000) {
             run_success = false;
             run_error_code = static_cast<int32_t>(Status::QUERY_CANCELED);
@@ -1127,7 +1178,7 @@ void JobScheduler::executeJobRun(const CatalogManager::JobInfo& job,
 
     {
         auto duration = std::chrono::duration_cast<std::chrono::duration<double>>(
-            std::chrono::steady_clock::now() - execution_start).count();
+            monotonic_now() - execution_start).count();
         auto& metrics = ScratchBirdMetrics::getInstance();
         metrics.initialize();
         if (metrics.scheduler_job_run_latency_seconds) {

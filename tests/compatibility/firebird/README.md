@@ -1,6 +1,6 @@
 # Firebird Compatibility Tests
 
-This directory contains converted Firebird compatibility tests from the official [fbt-repository](https://github.com/FirebirdSQL/fbt-repository).
+This directory contains converted Firebird compatibility tests from the official [fbt-repository](https://github.com/FirebirdSQL/fbt-repository), plus the vendored [firebird-qa](https://github.com/FirebirdSQL/firebird-qa) harness.
 
 ## Statistics
 
@@ -8,13 +8,15 @@ This directory contains converted Firebird compatibility tests from the official
 - **Categories:** 39 test categories
 - **Original Format:** .fbt (Python-based test files)
 - **Source Repository:** FirebirdSQL/fbt-repository
+- **QA Harness Repository:** FirebirdSQL/firebird-qa
 
 ## Directory Structure
 
 ```
 firebird/
 ├── repos/
-│   └── fbt-repository/          # Vendored snapshot of original .fbt tests
+│   ├── fbt-repository/          # Vendored snapshot of original .fbt tests
+│   └── firebird-qa/             # Vendored Firebird QA pytest harness
 ├── converted/                    # Converted SQL test files
 │   ├── bugs/                    # Bug regression tests
 │   ├── functional/              # Functional tests organized by feature
@@ -61,6 +63,16 @@ ctest -R CompatibilityFirebird --test-dir build
 ```
 
 This uses `sb_fb_isql` and creates a fresh ScratchBird database per test under `results/ctest/`.
+
+### Firebird-QA Harness Smoke
+
+The vendored `repos/firebird-qa/` harness is exercised by:
+
+```bash
+../scripts/verify_required_emulation_tests.sh
+```
+
+This produces `tests/compatibility/results/emulation/firebird/p5s2w2/fb-emu-041-firebird-qa-report.md`.
 
 ### Manual runs
 

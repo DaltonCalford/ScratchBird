@@ -1,0 +1,19 @@
+{
+  "mean_ms": 260.11,
+  "median_ms": 258,
+  "runs": 9,
+  "samples_ms": [
+    261,
+    249,
+    270,
+    272,
+    254,
+    258,
+    254,
+    268,
+    255
+  ],
+  "schema": "scratchbird.cross_os.benchmark.v1",
+  "test_preset": "linux-gcc-debug-test",
+  "test_regex": "ServiceControllerListenerBootstrapTest\\.NormalizeConfigPathsAndValidateUtf8NormalizesKeyRuntimePaths|MySQLParserTest\\.CreateTableBasic|PostgreSQLParserTest\\.SimpleSelect|FirebirdParserTest\\.SelectSimple"
+}

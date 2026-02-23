@@ -1,0 +1,31 @@
+Internal ctest changing into directory: /home/dcalford/CliWork/ScratchBird/build
+Test project /home/dcalford/CliWork/ScratchBird/build
+      Start 1627: ProcessControlTest.SpawnsAndWaitsForExit
+ 1/11 Test #1627: ProcessControlTest.SpawnsAndWaitsForExit ......................................................................   Passed    0.04 sec
+      Start 1628: ProcessControlTest.TerminatesProcess
+ 2/11 Test #1628: ProcessControlTest.TerminatesProcess ..........................................................................   Passed    0.04 sec
+      Start 1629: ProcessControlTest.ForkSelfCreatesChildProcess
+ 3/11 Test #1629: ProcessControlTest.ForkSelfCreatesChildProcess ................................................................   Passed    0.03 sec
+      Start 1895: ServiceControllerListenerBootstrapTest.StartListenersPassesConfigFileToListenerProcess
+ 4/11 Test #1895: ServiceControllerListenerBootstrapTest.StartListenersPassesConfigFileToListenerProcess ........................   Passed    0.05 sec
+      Start 1896: ServiceControllerListenerBootstrapTest.PortCollisionSkipsListenerLaunchAndParserBootstrap
+ 5/11 Test #1896: ServiceControllerListenerBootstrapTest.PortCollisionSkipsListenerLaunchAndParserBootstrap .....................   Passed    0.02 sec
+      Start 1897: ServiceControllerListenerBootstrapTest.MultipleNativeListenersCanRunWithDistinctOwnersAndPorts
+ 6/11 Test #1897: ServiceControllerListenerBootstrapTest.MultipleNativeListenersCanRunWithDistinctOwnersAndPorts ................   Passed    0.06 sec
+      Start 1898: ServiceControllerListenerBootstrapTest.DirectModeLaunchesNativePgMysqlFirebirdListenerMatrix
+ 7/11 Test #1898: ServiceControllerListenerBootstrapTest.DirectModeLaunchesNativePgMysqlFirebirdListenerMatrix ..................   Passed    0.05 sec
+      Start 1899: ServiceControllerListenerBootstrapTest.ManagerProxyModeForcesSingleInternalNativeListener
+ 8/11 Test #1899: ServiceControllerListenerBootstrapTest.ManagerProxyModeForcesSingleInternalNativeListener .....................   Passed    0.05 sec
+      Start 1900: ServiceControllerListenerBootstrapTest.ManagerProxyStartManagerLaunchesConfiguredBinaryWithInternalEndpoint
+ 9/11 Test #1900: ServiceControllerListenerBootstrapTest.ManagerProxyStartManagerLaunchesConfiguredBinaryWithInternalEndpoint ...   Passed    1.03 sec
+      Start 1901: ServiceControllerListenerBootstrapTest.ManagerProxyRejectsPortCollisionWithInternalNativeListener
+10/11 Test #1901: ServiceControllerListenerBootstrapTest.ManagerProxyRejectsPortCollisionWithInternalNativeListener .............   Passed    0.04 sec
+      Start 1902: ServiceControllerListenerBootstrapTest.ManagerProxyStartManagerRejectsMissingMcpAuthSecret
+11/11 Test #1902: ServiceControllerListenerBootstrapTest.ManagerProxyStartManagerRejectsMissingMcpAuthSecret ....................   Passed    0.02 sec
+
+100% tests passed, 0 tests failed out of 11
+
+Label Time Summary:
+unit    =   1.44 sec*proc (11 tests)
+
+Total Test time (real) =   1.51 sec

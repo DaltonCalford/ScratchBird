@@ -1,0 +1,12 @@
+# XOS-019/020 Command Log
+
+Last-Modified: 2026-02-22
+
+## Commands Executed
+1. `cmake --build build -j4`
+2. `ctest --test-dir build -R 'ListenerIpcAdapterTest|ServiceControllerListenerBootstrapTest|SignalControlTest' --output-on-failure`
+3. `rg -n "listener_ipc_adapter|createDefaultListenerSocketAcceptor|createDefaultLocalControlChannel|ListenerSocketAcceptor|LocalControlChannel|front_door->|control_plane->|management_plane->" include/scratchbird/network/listener_ipc_adapter.h src/network/listener_ipc_adapter.cpp src/network/sb_listener_main.cpp`
+
+## Outputs
+- Test results: `artifacts/cross_os/p6s1w3/xos-019-020-listener-ctest.txt`
+- Migration surface: `artifacts/cross_os/p6s1w3/xos-019-020-listener-surface.txt`

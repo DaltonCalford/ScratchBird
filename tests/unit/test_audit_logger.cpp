@@ -137,6 +137,7 @@ TEST_F(AuditLoggerTest, AllEventTypes) {
 }
 
 TEST_F(AuditLoggerTest, EventTypeNames) {
+    // Auth parity checks
     EXPECT_EQ("LOGIN_SUCCESS", AuditLogger::getEventTypeName(AuditEventType::LOGIN_SUCCESS));
     EXPECT_EQ("LOGIN_FAILURE", AuditLogger::getEventTypeName(AuditEventType::LOGIN_FAILURE));
     EXPECT_EQ("BOOTSTRAP_ATTEMPT", AuditLogger::getEventTypeName(AuditEventType::BOOTSTRAP_ATTEMPT));
@@ -153,6 +154,11 @@ TEST_F(AuditLoggerTest, EventTypeNames) {
     EXPECT_EQ("MANAGED_PREFACE_DECISION",
               AuditLogger::getEventTypeName(AuditEventType::MANAGED_PREFACE_DECISION));
     EXPECT_EQ("MANAGED_DBBT_ISSUED", AuditLogger::getEventTypeName(AuditEventType::MANAGED_DBBT_ISSUED));
+
+    // Service/runtime parity checks
+    EXPECT_EQ("DATABASE_STARTUP", AuditLogger::getEventTypeName(AuditEventType::DATABASE_STARTUP));
+    EXPECT_EQ("DATABASE_SHUTDOWN", AuditLogger::getEventTypeName(AuditEventType::DATABASE_SHUTDOWN));
+
     EXPECT_EQ("PERMISSION_DENIED", AuditLogger::getEventTypeName(AuditEventType::PERMISSION_DENIED));
     EXPECT_EQ("USER_CREATED", AuditLogger::getEventTypeName(AuditEventType::USER_CREATED));
 }

@@ -2272,6 +2272,9 @@ enum class PrivilegeType : uint8_t {
     CREATE_JOB,
     VIEW_JOB_HISTORY,
     EXECUTE_EXTERNAL_JOB,
+    CREATE,
+    CONNECT,
+    TEMPORARY,
     ALL
 };
 

@@ -1,0 +1,35 @@
+Internal ctest changing into directory: /home/dcalford/CliWork/ScratchBird/build
+Test project /home/dcalford/CliWork/ScratchBird/build
+      Start 1200: ListenerIpcAdapterTest.FrontDoorSocketLifecycle
+ 1/13 Test #1200: ListenerIpcAdapterTest.FrontDoorSocketLifecycle ...............................................................   Passed    0.02 sec
+      Start 1201: ListenerIpcAdapterTest.LocalControlChannelLifecycle
+ 2/13 Test #1201: ListenerIpcAdapterTest.LocalControlChannelLifecycle ...........................................................   Passed    0.02 sec
+      Start 1899: ServiceControllerListenerBootstrapTest.StartListenersPassesConfigFileToListenerProcess
+ 3/13 Test #1899: ServiceControllerListenerBootstrapTest.StartListenersPassesConfigFileToListenerProcess ........................   Passed    0.06 sec
+      Start 1900: ServiceControllerListenerBootstrapTest.PortCollisionSkipsListenerLaunchAndParserBootstrap
+ 4/13 Test #1900: ServiceControllerListenerBootstrapTest.PortCollisionSkipsListenerLaunchAndParserBootstrap .....................   Passed    0.02 sec
+      Start 1901: ServiceControllerListenerBootstrapTest.MultipleNativeListenersCanRunWithDistinctOwnersAndPorts
+ 5/13 Test #1901: ServiceControllerListenerBootstrapTest.MultipleNativeListenersCanRunWithDistinctOwnersAndPorts ................   Passed    0.06 sec
+      Start 1902: ServiceControllerListenerBootstrapTest.DirectModeLaunchesNativePgMysqlFirebirdListenerMatrix
+ 6/13 Test #1902: ServiceControllerListenerBootstrapTest.DirectModeLaunchesNativePgMysqlFirebirdListenerMatrix ..................   Passed    0.05 sec
+      Start 1903: ServiceControllerListenerBootstrapTest.ManagerProxyModeForcesSingleInternalNativeListener
+ 7/13 Test #1903: ServiceControllerListenerBootstrapTest.ManagerProxyModeForcesSingleInternalNativeListener .....................   Passed    0.05 sec
+      Start 1904: ServiceControllerListenerBootstrapTest.ManagerProxyStartManagerLaunchesConfiguredBinaryWithInternalEndpoint
+ 8/13 Test #1904: ServiceControllerListenerBootstrapTest.ManagerProxyStartManagerLaunchesConfiguredBinaryWithInternalEndpoint ...   Passed    1.03 sec
+      Start 1905: ServiceControllerListenerBootstrapTest.ManagerProxyRejectsPortCollisionWithInternalNativeListener
+ 9/13 Test #1905: ServiceControllerListenerBootstrapTest.ManagerProxyRejectsPortCollisionWithInternalNativeListener .............   Passed    0.04 sec
+      Start 1906: ServiceControllerListenerBootstrapTest.ManagerProxyStartManagerRejectsMissingMcpAuthSecret
+10/13 Test #1906: ServiceControllerListenerBootstrapTest.ManagerProxyStartManagerRejectsMissingMcpAuthSecret ....................   Passed    0.02 sec
+      Start 1914: SignalControlTest.InjectAndPollReturnsSignalThenClears
+11/13 Test #1914: SignalControlTest.InjectAndPollReturnsSignalThenClears ........................................................   Passed    0.02 sec
+      Start 1915: SignalControlTest.RejectsNoneInjection
+12/13 Test #1915: SignalControlTest.RejectsNoneInjection ........................................................................   Passed    0.02 sec
+      Start 1916: SignalControlTest.PollRejectsNullOutput
+13/13 Test #1916: SignalControlTest.PollRejectsNullOutput .......................................................................   Passed    0.02 sec
+
+100% tests passed, 0 tests failed out of 13
+
+Label Time Summary:
+unit    =   1.42 sec*proc (13 tests)
+
+Total Test time (real) =   1.50 sec

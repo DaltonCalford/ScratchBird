@@ -37,6 +37,18 @@ case "${1:-all}" in
         echo "Running smoke tests..."
         run_ctest "smoke" ctest -L smoke --output-on-failure
         ;;
+    portable)
+        echo "Running portable tests (cross-OS safe lanes)..."
+        run_ctest "portable" ctest -L "smoke|unit|integration" -E "quarantine" -LE "linux_only|disabled" --output-on-failure --timeout 60
+        ;;
+    windows_portable)
+        echo "Running Windows portable suite (unit + integration minus linux_only)..."
+        run_ctest "windows_portable" ctest -L "smoke|unit|integration" -E "quarantine" -LE "linux_only|disabled|stress|performance|tsan" --output-on-failure --timeout 60
+        ;;
+    linux_only)
+        echo "Running Linux-only tests..."
+        run_ctest "linux_only" ctest -L linux_only --output-on-failure --timeout 60
+        ;;
     unit)
         echo "Running unit tests..."
         run_ctest "unit" ctest -L unit --output-on-failure --timeout 10
@@ -70,9 +82,12 @@ case "${1:-all}" in
         run_ctest "all" ctest -E "quarantine" --output-on-failure --timeout 300
         ;;
     *)
-        echo "Usage: $0 {smoke|unit|integration|stress|performance|quarantine|quick|ci|all}" >&2
+        echo "Usage: $0 {smoke|portable|windows_portable|linux_only|unit|integration|stress|performance|quarantine|quick|ci|all}" >&2
         echo "" >&2
         echo "  smoke       - Fast sanity tests (< 1s each, ~30s total)" >&2
+        echo "  portable    - Cross-OS portable lanes (smoke + unit + integration minus linux_only)" >&2
+        echo "  windows_portable - Windows-safe unit/integration lane used by CI matrix" >&2
+        echo "  linux_only  - Tests tagged as Linux-only" >&2
         echo "  unit        - Unit tests (< 5s each, ~5min total)" >&2
         echo "  integration - Integration tests (< 30s each, ~20min total)" >&2
         echo "  stress      - Stress tests (> 30s each, ~1hr total)" >&2

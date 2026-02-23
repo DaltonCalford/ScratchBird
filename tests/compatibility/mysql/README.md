@@ -1,6 +1,6 @@
 # MySQL Compatibility Tests
 
-This directory contains converted MySQL compatibility tests from the official [mysql-server repository](https://github.com/mysql/mysql-server). The upstream MySQL suite is GPL-licensed and is treated as optional/external only; fetch it explicitly when needed.
+This directory contains converted MySQL compatibility tests from the official [mysql-server repository](https://github.com/mysql/mysql-server). The mysql test snapshot is vendored in this tree under `repos/mysql-server/mysql-test`.
 
 ## Statistics
 
@@ -14,7 +14,7 @@ This directory contains converted MySQL compatibility tests from the official [m
 ```
 mysql/
 ├── repos/
-│   └── mysql-server/             # Optional snapshot (fetch with --with-mysql)
+│   └── mysql-server/             # Vendored snapshot (mysql-test subtree)
 │       └── mysql-test/
 │           ├── t/               # Main test suite (.test files)
 │           ├── r/               # Expected results (.result files)
@@ -55,9 +55,9 @@ The converted tests are organized into 59 suites including:
 
 **Prerequisites:** The `sb_my_isql` client must be built first (see [Plan 06](/docs/planning/PLAN_06_DEDICATED_ISQL_CLIENTS.md)).
 
-**Fetch optional MySQL tests:**
+**Refresh vendored MySQL tests:**
 ```bash
-SCRATCHBIRD_FETCH_MYSQL_TESTS=1 ./tests/compatibility/scripts/update_test_repos.sh
+./tests/compatibility/scripts/update_test_repos.sh
 ```
 
 Once `sb_my_isql` is available:

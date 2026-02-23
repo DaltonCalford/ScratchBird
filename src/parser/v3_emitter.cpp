@@ -11,6 +11,7 @@
 #include <string_view>
 #include <unordered_map>
 
+#include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/sblr/v3_codec.h"
 #include "scratchbird/sblr/v3_opcode_registry.h"
 
@@ -115,6 +116,48 @@ bool parseDoubleToken(std::string_view raw, double& out) {
         return false;
     }
     return true;
+}
+
+uint64_t privilegeToCatalogMask(PrivilegeType privilege) {
+    using CatalogPrivilege = scratchbird::core::CatalogManager::Privilege;
+    switch (privilege) {
+        case PrivilegeType::SELECT:
+            return static_cast<uint64_t>(CatalogPrivilege::SELECT);
+        case PrivilegeType::INSERT:
+            return static_cast<uint64_t>(CatalogPrivilege::INSERT);
+        case PrivilegeType::UPDATE:
+            return static_cast<uint64_t>(CatalogPrivilege::UPDATE);
+        case PrivilegeType::DELETE:
+            return static_cast<uint64_t>(CatalogPrivilege::DELETE);
+        case PrivilegeType::TRUNCATE:
+            return static_cast<uint64_t>(CatalogPrivilege::TRUNCATE);
+        case PrivilegeType::REFERENCES:
+            return static_cast<uint64_t>(CatalogPrivilege::REFERENCES);
+        case PrivilegeType::TRIGGER:
+            return static_cast<uint64_t>(CatalogPrivilege::TRIGGER);
+        case PrivilegeType::EXECUTE:
+            return static_cast<uint64_t>(CatalogPrivilege::EXECUTE);
+        case PrivilegeType::USAGE:
+            return static_cast<uint64_t>(CatalogPrivilege::USAGE);
+        case PrivilegeType::COPY:
+            return static_cast<uint64_t>(CatalogPrivilege::COPY_FILE);
+        case PrivilegeType::CREATE_JOB:
+            return static_cast<uint64_t>(CatalogPrivilege::CREATE_JOB);
+        case PrivilegeType::VIEW_JOB_HISTORY:
+            return static_cast<uint64_t>(CatalogPrivilege::VIEW_JOB_HISTORY);
+        case PrivilegeType::EXECUTE_EXTERNAL_JOB:
+            return static_cast<uint64_t>(CatalogPrivilege::EXECUTE_EXTERNAL_JOB);
+        case PrivilegeType::CREATE:
+            return static_cast<uint64_t>(CatalogPrivilege::CREATE);
+        case PrivilegeType::CONNECT:
+            return static_cast<uint64_t>(CatalogPrivilege::CONNECT);
+        case PrivilegeType::TEMPORARY:
+            return static_cast<uint64_t>(CatalogPrivilege::TEMPORARY);
+        case PrivilegeType::ALL:
+            return static_cast<uint64_t>(CatalogPrivilege::ALL);
+        default:
+            return 0;
+    }
 }
 
 Instruction makeIndexOptionValueInstruction(std::string_view raw) {
@@ -2755,9 +2798,6 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitDdlAlter(parser::v3::Statement
             if (key_text == "admin.validate") {
                 return emit_multi_model(Opcode::SBLR3_ADMIN_VALIDATE, 30);
             }
-            if (key_text == "admin.vacuum_alias") {
-                return emit_multi_model(Opcode::SBLR3_ADMIN_VACUUM_ALIAS, 31);
-            }
             if (key_text.rfind("cluster.workload_class.create.", 0) == 0) {
                 return emit_multi_model(Opcode::SBLR3_CLUSTER_WORKLOAD_CLASS, 32);
             }
@@ -3104,7 +3144,7 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitGrant(parser::v3::GrantStmt* s
     payload["is_grant"] = Value(true);
     uint64_t privs = 0;
     for (auto p : stmt->privileges) {
-        privs |= (1ull << static_cast<uint8_t>(p));
+        privs |= privilegeToCatalogMask(p);
     }
     payload["privileges"] = Value(privs);
     payload["object_type"] = Value(uint64_t(static_cast<uint8_t>(stmt->object_type)));
@@ -3131,7 +3171,7 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitRevoke(parser::v3::RevokeStmt*
     payload["is_grant"] = Value(false);
     uint64_t privs = 0;
     for (auto p : stmt->privileges) {
-        privs |= (1ull << static_cast<uint8_t>(p));
+        privs |= privilegeToCatalogMask(p);
     }
     payload["privileges"] = Value(privs);
     payload["object_type"] = Value(uint64_t(static_cast<uint8_t>(stmt->object_type)));

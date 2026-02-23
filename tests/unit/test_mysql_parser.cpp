@@ -471,6 +471,20 @@ TEST_F(MySQLParserTest, CreateTableWithGeneratedColumn) {
     expectSuccess("CREATE TABLE test (a INT, b INT AS (a + 1) VIRTUAL)");
 }
 
+TEST_F(MySQLParserTest, CreateObjectFamiliesV3Coverage) {
+    expectSuccess("CREATE OR REPLACE VIEW v_replaced AS SELECT 1");
+    expectSuccess("CREATE DEFINER = 'root'@'localhost' VIEW v_secured AS SELECT 1");
+    expectSuccess("CREATE TABLESPACE ts_app ADD DATAFILE '/tmp/ts_app.ibd'");
+    expectSuccess("CREATE PROCEDURE proc_add(IN p_id INT, OUT p_out INT) AS SET p_out = p_id + 1");
+    expectSuccess("CREATE OR REPLACE FUNCTION fn_add(p_id INT) RETURNS INT DETERMINISTIC RETURN p_id + 1");
+    expectSuccess("CREATE TRIGGER trg_users_bi BEFORE INSERT ON users FOR EACH ROW SET NEW.created_at = NOW()");
+    expectSuccess("CREATE KEY idx_users_name ON users (name)");
+    expectSuccess("CREATE FULLTEXT INDEX idx_docs_body ON docs (body)");
+    expectSuccess("CREATE SPATIAL INDEX idx_geo_loc ON geo (loc)");
+    expectSuccess("CREATE INDEX idx_users_name USING HASH ON users (name(16))");
+    expectSuccess("CREATE INDEX idx_users_name2 ON users (name(8)) USING BTREE");
+}
+
 TEST_F(MySQLParserTest, CreateTableWithConstraints) {
     expectSuccess("CREATE TABLE test (id INT, name VARCHAR(50), PRIMARY KEY (id))");
     expectSuccess("CREATE TABLE test (id INT, name VARCHAR(50), UNIQUE KEY uq_name (name))");
@@ -647,6 +661,16 @@ TEST_F(MySQLParserTest, AlterTableColumnActions) {
 TEST_F(MySQLParserTest, CreateTableWithOptions) {
     expectSuccess("CREATE TABLE users (id INT) ENGINE=InnoDB AUTO_INCREMENT=1 "
                   "DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci COMMENT='test'");
+}
+
+TEST_F(MySQLParserTest, GrantRevokeAdminPrivileges) {
+    expectSuccess("GRANT CREATE ON SCHEMA app_schema TO alice");
+    expectSuccess("GRANT CONNECT ON DATABASE scratchdb TO alice");
+    expectSuccess("GRANT TEMPORARY ON DATABASE scratchdb TO alice");
+
+    expectSuccess("REVOKE CREATE ON SCHEMA app_schema FROM alice");
+    expectSuccess("REVOKE CONNECT ON DATABASE scratchdb FROM alice");
+    expectSuccess("REVOKE TEMPORARY ON DATABASE scratchdb FROM alice");
 }
 
 // ============================================================================
