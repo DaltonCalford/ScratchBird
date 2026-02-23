@@ -34,7 +34,7 @@
 #include <sys/stat.h>
 #include <sys/socket.h>
 #include <sys/uio.h>
-#include <unistd.h>
+#include "scratchbird/core/posix_compat.h"
 #endif
 
 namespace scratchbird::network {

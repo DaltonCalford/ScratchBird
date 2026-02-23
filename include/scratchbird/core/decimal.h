@@ -41,7 +41,10 @@
 namespace scratchbird::core {
 
 // 128-bit integer for high precision
-#ifdef __SIZEOF_INT128__
+#if defined(_MSC_VER) && !defined(__clang__)
+using int128_t = int64_t;
+using uint128_t = uint64_t;
+#elif defined(__SIZEOF_INT128__)
 using int128_t = __int128;
 using uint128_t = unsigned __int128;
 #else
@@ -80,7 +83,9 @@ public:
     Decimal(int64_t value, uint8_t precision, uint8_t scale);
     Decimal(double value, uint8_t precision, uint8_t scale);
     Decimal(const std::string& str, uint8_t precision = 0, uint8_t scale = 0);
+#if !(defined(_MSC_VER) && !defined(__clang__))
     Decimal(int128_t unscaled_value, uint8_t precision, uint8_t scale);
+#endif
 
     // Copy/move
     Decimal(const Decimal& other) = default;

@@ -16,12 +16,21 @@
 #include "scratchbird/core/index_gc_interface.h"
 #include "scratchbird/core/tid.h"
 #include "scratchbird/core/gpid.h"
+#include <cstddef>
 #include <cstdint>
 #include <memory>
 #include <vector>
 #include <string>
 #include <string_view>
 #include <map>
+
+#ifdef _MSC_VER
+    #define SB_PACKED
+    #define SB_FLEX_ARRAY 1
+#else
+    #define SB_PACKED __attribute__((packed))
+    #define SB_FLEX_ARRAY
+#endif
 
 namespace scratchbird::core
 {
@@ -74,8 +83,8 @@ struct SBInvertedIndexMetaPage
     uint64_t ii_avg_query_time_us;
     uint64_t ii_last_merge_time;
     uint64_t ii_reserved2;
-    uint8_t ii_padding[];
-} __attribute__((packed));
+    uint8_t ii_padding[SB_FLEX_ARRAY];
+} SB_PACKED;
 
 struct SBInvertedIndexSegmentMeta
 {
@@ -97,8 +106,8 @@ struct SBInvertedIndexSegmentMeta
     uint64_t seg_delete_bitmap_page;
     uint64_t seg_total_posting_bytes;
     uint64_t seg_reserved2;
-    uint8_t seg_padding[];
-} __attribute__((packed));
+    uint8_t seg_padding[SB_FLEX_ARRAY];
+} SB_PACKED;
 
 struct TermDictionaryEntry
 {
@@ -110,7 +119,7 @@ struct TermDictionaryEntry
     uint32_t posting_length;
     uint32_t reserved;
     uint64_t reserved2[4];
-} __attribute__((packed));
+} SB_PACKED;
 
 static_assert(sizeof(TermDictionaryEntry) == 128, "TermDictionaryEntry must be 128 bytes");
 
@@ -121,8 +130,8 @@ struct SBTermDictionaryPage
     uint16_t dict_num_entries;
     uint16_t dict_reserved;
     uint64_t dict_first_term_hash;
-    uint8_t dict_entries[];
-} __attribute__((packed));
+    uint8_t dict_entries[SB_FLEX_ARRAY];
+} SB_PACKED;
 
 struct SBPostingListPage
 {
@@ -131,8 +140,8 @@ struct SBPostingListPage
     uint32_t post_data_length;
     uint8_t post_compression_type;
     uint8_t post_reserved[7];
-    uint8_t post_data[];
-} __attribute__((packed));
+    uint8_t post_data[SB_FLEX_ARRAY];
+} SB_PACKED;
 
 struct DocumentStats
 {
@@ -140,7 +149,7 @@ struct DocumentStats
     uint32_t doc_length;
     uint32_t num_unique_terms;
     uint32_t reserved;
-} __attribute__((packed));
+} SB_PACKED;
 
 static_assert(sizeof(DocumentStats) == 16, "DocumentStats must be 16 bytes");
 
@@ -151,7 +160,7 @@ struct InvertedDocStatsEntry
     uint16_t reserved;
     uint32_t doc_length;
     uint32_t num_unique_terms;
-} __attribute__((packed));
+} SB_PACKED;
 
 static_assert(sizeof(InvertedDocStatsEntry) == 20, "InvertedDocStatsEntry must be 20 bytes");
 
@@ -161,10 +170,24 @@ struct SBDocumentStatsPage
     uint64_t docstats_next_page;
     uint32_t docstats_num_entries;
     uint64_t docstats_reserved;
-    uint8_t docstats_data[];
-} __attribute__((packed));
+    uint8_t docstats_data[SB_FLEX_ARRAY];
+} SB_PACKED;
 
 #pragma pack(pop)
+
+constexpr uint32_t SB_INVERTED_META_PAGE_HEADER_SIZE =
+    static_cast<uint32_t>(offsetof(SBInvertedIndexMetaPage, ii_padding));
+constexpr uint32_t SB_INVERTED_SEGMENT_META_HEADER_SIZE =
+    static_cast<uint32_t>(offsetof(SBInvertedIndexSegmentMeta, seg_padding));
+constexpr uint32_t SB_TERM_DICTIONARY_PAGE_HEADER_SIZE =
+    static_cast<uint32_t>(offsetof(SBTermDictionaryPage, dict_entries));
+constexpr uint32_t SB_POSTING_LIST_PAGE_HEADER_SIZE =
+    static_cast<uint32_t>(offsetof(SBPostingListPage, post_data));
+constexpr uint32_t SB_DOCUMENT_STATS_PAGE_HEADER_SIZE =
+    static_cast<uint32_t>(offsetof(SBDocumentStatsPage, docstats_data));
+
+#undef SB_PACKED
+#undef SB_FLEX_ARRAY
 
 inline uint32_t maxTermsPerPage(uint32_t page_size)
 {

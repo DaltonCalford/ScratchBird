@@ -39,7 +39,7 @@ namespace scratchbird::core
         std::random_device rd;
         std::mt19937_64 gen(rd());
         std::uniform_int_distribution<uint16_t> dist16(0, 0x0FFF);
-        std::uniform_int_distribution<uint8_t> dist8(0, 0xFF);
+        std::uniform_int_distribution<unsigned int> dist8(0, 0xFF);
         uint16_t rand_a = dist16(gen);
         out.bytes[6] = static_cast<uint8_t>(0x70 | ((rand_a >> 8) & 0x0F));
         out.bytes[7] = static_cast<uint8_t>(rand_a & 0xFF);

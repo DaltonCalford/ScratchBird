@@ -22,6 +22,9 @@
 #include <algorithm>
 #include <functional>
 #include <set>
+#ifdef _MSC_VER
+    #include <intrin.h>
+#endif
 
 namespace scratchbird
 {
@@ -33,6 +36,15 @@ namespace scratchbird
         inline uint32_t bitsetWordCount(uint32_t page_size)
         {
             return BitmapSettings::getBitsetElementCount(page_size);
+        }
+
+        inline auto popcount64(uint64_t value) -> uint32_t
+        {
+#ifdef _MSC_VER
+            return static_cast<uint32_t>(__popcnt64(value));
+#else
+            return static_cast<uint32_t>(__builtin_popcountll(value));
+#endif
         }
 
         // ========================================
@@ -2117,7 +2129,7 @@ namespace scratchbird
                     full_cont.num_values = 0;
                     for (size_t i = 0; i < bitsetWordCount(bitmap.db_->page_size()); i++)
                     {
-                        full_cont.num_values += __builtin_popcountll(full_cont.bitset_data[i]);
+                        full_cont.num_values += popcount64(full_cont.bitset_data[i]);
                     }
 
                     result->containers_.push_back(full_cont);
@@ -2169,7 +2181,7 @@ namespace scratchbird
                     uint64_t lhs_word = (i < lhs.bitset_data.size()) ? lhs.bitset_data[i] : 0;
                     uint64_t rhs_word = (i < rhs.bitset_data.size()) ? rhs.bitset_data[i] : 0;
                     result->bitset_data[i] = lhs_word & rhs_word;
-                    result->num_values += __builtin_popcountll(result->bitset_data[i]);
+                    result->num_values += popcount64(result->bitset_data[i]);
                 }
             }
             else
@@ -2211,7 +2223,7 @@ namespace scratchbird
                 for (size_t i = 0; i < word_count; i++)
                 {
                     result->bitset_data[i] = lhs_bitset[i] & rhs_bitset[i];
-                    result->num_values += __builtin_popcountll(result->bitset_data[i]);
+                    result->num_values += popcount64(result->bitset_data[i]);
                 }
             }
         }
@@ -2256,7 +2268,7 @@ namespace scratchbird
                 // Count bits
                 for (size_t i = 0; i < word_count; i++)
                 {
-                    result->num_values += __builtin_popcountll(result->bitset_data[i]);
+                    result->num_values += popcount64(result->bitset_data[i]);
                 }
             }
             else
@@ -2305,7 +2317,7 @@ namespace scratchbird
                 // Count set bits
                 for (size_t i = 0; i < word_count; i++)
                 {
-                    result->num_values += __builtin_popcountll(result->bitset_data[i]);
+                    result->num_values += popcount64(result->bitset_data[i]);
                 }
             }
             else if (container.type == ContainerType::BITSET)
@@ -2315,7 +2327,7 @@ namespace scratchbird
                 {
                     uint64_t value = (i < container.bitset_data.size()) ? container.bitset_data[i] : 0;
                     result->bitset_data[i] = ~value;
-                    result->num_values += __builtin_popcountll(result->bitset_data[i]);
+                    result->num_values += popcount64(result->bitset_data[i]);
                 }
             }
 

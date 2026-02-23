@@ -523,7 +523,7 @@ Status InvertedIndex::loadMeta(SBInvertedIndexMetaPage* meta_out, ErrorContext* 
         return status;
     }
 
-    std::memcpy(meta_out, meta_data, sizeof(SBInvertedIndexMetaPage));
+    std::memcpy(meta_out, meta_data, SB_INVERTED_META_PAGE_HEADER_SIZE);
     buffer_pool->unpinPageGlobal(meta_gpid_, false, ctx);
     return Status::OK;
 }
@@ -573,7 +573,7 @@ Status InvertedIndex::loadSegmentMeta(uint32_t segment_id,
         return status;
     }
 
-    std::memcpy(seg_out, seg_data, sizeof(SBInvertedIndexSegmentMeta));
+    std::memcpy(seg_out, seg_data, SB_INVERTED_SEGMENT_META_HEADER_SIZE);
     buffer_pool->unpinPageGlobal(seg_gpid, false, ctx);
 
     *seg_gpid_out = seg_gpid;
@@ -598,7 +598,7 @@ Status InvertedIndex::updateSegmentMeta(GPID seg_gpid,
         return status;
     }
 
-    std::memcpy(seg_data, &seg, sizeof(SBInvertedIndexSegmentMeta));
+    std::memcpy(seg_data, &seg, SB_INVERTED_SEGMENT_META_HEADER_SIZE);
     buffer_pool->unpinPageGlobal(seg_gpid, true, ctx);
     return Status::OK;
 }
@@ -619,7 +619,7 @@ Status InvertedIndex::updateMeta(const SBInvertedIndexMetaPage& meta, ErrorConte
         return status;
     }
 
-    std::memcpy(meta_data, &meta, sizeof(SBInvertedIndexMetaPage));
+    std::memcpy(meta_data, &meta, SB_INVERTED_META_PAGE_HEADER_SIZE);
     buffer_pool->unpinPageGlobal(meta_gpid_, true, ctx);
     return Status::OK;
 }
@@ -687,7 +687,7 @@ Status InvertedIndex::appendDocStats(uint32_t segment_id,
         page->docstats_header.checksum = 0;
         page->docstats_header.flags = 0;
         page->docstats_header.lsn = 0;
-        pageSetLower(page->docstats_header, sizeof(SBDocumentStatsPage));
+        pageSetLower(page->docstats_header, SB_DOCUMENT_STATS_PAGE_HEADER_SIZE);
         pageSetUpper(page->docstats_header, page_size);
         pageSetSpecial(page->docstats_header, page_size);
         page->docstats_next_page = 0;
@@ -756,7 +756,7 @@ Status InvertedIndex::appendDocStats(uint32_t segment_id,
     new_page_ptr->docstats_header.checksum = 0;
     new_page_ptr->docstats_header.flags = 0;
     new_page_ptr->docstats_header.lsn = 0;
-    pageSetLower(new_page_ptr->docstats_header, sizeof(SBDocumentStatsPage));
+    pageSetLower(new_page_ptr->docstats_header, SB_DOCUMENT_STATS_PAGE_HEADER_SIZE);
     pageSetUpper(new_page_ptr->docstats_header, page_size);
     pageSetSpecial(new_page_ptr->docstats_header, page_size);
     new_page_ptr->docstats_next_page = 0;
@@ -991,7 +991,7 @@ Status InvertedIndex::createSegment(uint32_t* segment_id_out, GPID* seg_gpid_out
     seg->seg_header.checksum = 0;
     seg->seg_header.flags = 0;
     seg->seg_header.lsn = 0;
-    pageSetLower(seg->seg_header, sizeof(SBInvertedIndexSegmentMeta));
+    pageSetLower(seg->seg_header, SB_INVERTED_SEGMENT_META_HEADER_SIZE);
     pageSetUpper(seg->seg_header, page_size);
     pageSetSpecial(seg->seg_header, page_size);
     seg->seg_id = new_segment_id;
@@ -1556,7 +1556,7 @@ Status InvertedIndex::insertTerm(uint32_t segment_id,
         dict_page->dict_header.checksum = 0;
         dict_page->dict_header.flags = 0;
         dict_page->dict_header.lsn = 0;
-        pageSetLower(dict_page->dict_header, sizeof(SBTermDictionaryPage));
+        pageSetLower(dict_page->dict_header, SB_TERM_DICTIONARY_PAGE_HEADER_SIZE);
         pageSetUpper(dict_page->dict_header, page_size);
         pageSetSpecial(dict_page->dict_header, page_size);
         dict_page->dict_next_page = 0;
@@ -1630,7 +1630,7 @@ Status InvertedIndex::insertTerm(uint32_t segment_id,
     new_page->dict_header.checksum = 0;
     new_page->dict_header.flags = 0;
     new_page->dict_header.lsn = 0;
-    pageSetLower(new_page->dict_header, sizeof(SBTermDictionaryPage));
+    pageSetLower(new_page->dict_header, SB_TERM_DICTIONARY_PAGE_HEADER_SIZE);
     pageSetUpper(new_page->dict_header, page_size);
     pageSetSpecial(new_page->dict_header, page_size);
     new_page->dict_next_page = 0;
@@ -1723,7 +1723,7 @@ Status InvertedIndex::writePostingList(uint32_t segment_id,
     }
 
     uint32_t page_size = db_->page_size();
-    uint32_t header_size = static_cast<uint32_t>(offsetof(SBPostingListPage, post_data));
+    uint32_t header_size = SB_POSTING_LIST_PAGE_HEADER_SIZE;
     uint32_t capacity = page_size - header_size;
 
     GPID posting_gpid = seg.seg_posting_first_page;
@@ -1760,7 +1760,7 @@ Status InvertedIndex::writePostingList(uint32_t segment_id,
         page->post_header.checksum = 0;
         page->post_header.flags = 0;
         page->post_header.lsn = 0;
-        pageSetLower(page->post_header, sizeof(SBPostingListPage));
+        pageSetLower(page->post_header, SB_POSTING_LIST_PAGE_HEADER_SIZE);
         pageSetUpper(page->post_header, page_size);
         pageSetSpecial(page->post_header, page_size);
         page->post_next_page = 0;
@@ -1853,7 +1853,7 @@ Status InvertedIndex::writePostingList(uint32_t segment_id,
             new_page_ptr->post_header.checksum = 0;
             new_page_ptr->post_header.flags = 0;
             new_page_ptr->post_header.lsn = 0;
-            pageSetLower(new_page_ptr->post_header, sizeof(SBPostingListPage));
+            pageSetLower(new_page_ptr->post_header, SB_POSTING_LIST_PAGE_HEADER_SIZE);
             pageSetUpper(new_page_ptr->post_header, page_size);
             pageSetSpecial(new_page_ptr->post_header, page_size);
             new_page_ptr->post_next_page = 0;
@@ -2066,7 +2066,7 @@ Status InvertedIndex::writePostingListWithPositions(uint32_t segment_id,
     }
 
     uint32_t page_size = db_->page_size();
-    uint32_t header_size = static_cast<uint32_t>(offsetof(SBPostingListPage, post_data));
+    uint32_t header_size = SB_POSTING_LIST_PAGE_HEADER_SIZE;
     uint32_t capacity = page_size - header_size;
 
     GPID posting_gpid = seg.seg_posting_first_page;
@@ -2103,7 +2103,7 @@ Status InvertedIndex::writePostingListWithPositions(uint32_t segment_id,
         page->post_header.checksum = 0;
         page->post_header.flags = 0;
         page->post_header.lsn = 0;
-        pageSetLower(page->post_header, sizeof(SBPostingListPage));
+        pageSetLower(page->post_header, SB_POSTING_LIST_PAGE_HEADER_SIZE);
         pageSetUpper(page->post_header, page_size);
         pageSetSpecial(page->post_header, page_size);
         page->post_next_page = 0;
@@ -2196,7 +2196,7 @@ Status InvertedIndex::writePostingListWithPositions(uint32_t segment_id,
             new_page_ptr->post_header.checksum = 0;
             new_page_ptr->post_header.flags = 0;
             new_page_ptr->post_header.lsn = 0;
-            pageSetLower(new_page_ptr->post_header, sizeof(SBPostingListPage));
+            pageSetLower(new_page_ptr->post_header, SB_POSTING_LIST_PAGE_HEADER_SIZE);
             pageSetUpper(new_page_ptr->post_header, page_size);
             pageSetSpecial(new_page_ptr->post_header, page_size);
             new_page_ptr->post_next_page = 0;
@@ -2271,7 +2271,7 @@ Status InvertedIndex::readPostingList(uint32_t segment_id,
     }
 
     uint32_t page_size = db_->page_size();
-    uint32_t header_size = static_cast<uint32_t>(offsetof(SBPostingListPage, post_data));
+    uint32_t header_size = SB_POSTING_LIST_PAGE_HEADER_SIZE;
     uint32_t capacity = page_size - header_size;
 
     std::vector<uint8_t> raw;
@@ -2429,7 +2429,7 @@ Status InvertedIndex::readPostingListWithPositions(uint32_t segment_id,
     }
 
     uint32_t page_size = db_->page_size();
-    uint32_t header_size = static_cast<uint32_t>(offsetof(SBPostingListPage, post_data));
+    uint32_t header_size = SB_POSTING_LIST_PAGE_HEADER_SIZE;
     uint32_t capacity = page_size - header_size;
 
     std::vector<uint8_t> raw;
@@ -2759,7 +2759,7 @@ Status InvertedIndex::create(Database* db,
     meta->ii_header.checksum = 0;
     meta->ii_header.flags = 0;
     meta->ii_header.lsn = 0;
-    pageSetLower(meta->ii_header, sizeof(SBInvertedIndexMetaPage));
+    pageSetLower(meta->ii_header, SB_INVERTED_META_PAGE_HEADER_SIZE);
     pageSetUpper(meta->ii_header, page_size);
     pageSetSpecial(meta->ii_header, page_size);
 
@@ -2816,7 +2816,7 @@ Status InvertedIndex::create(Database* db,
     seg->seg_header.checksum = 0;
     seg->seg_header.flags = 0;
     seg->seg_header.lsn = 0;
-    pageSetLower(seg->seg_header, sizeof(SBInvertedIndexSegmentMeta));
+    pageSetLower(seg->seg_header, SB_INVERTED_SEGMENT_META_HEADER_SIZE);
     pageSetUpper(seg->seg_header, page_size);
     pageSetSpecial(seg->seg_header, page_size);
     seg->seg_id = 0;

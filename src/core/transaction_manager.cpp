@@ -25,7 +25,6 @@
 #include <cstring>
 #include <new>
 #include <thread>
-#include <unistd.h>
 #include <unordered_set>
 
 namespace {

@@ -36,6 +36,7 @@
 #include <cstring>
 #include <sstream>
 
+
 namespace scratchbird {
 namespace fdw {
 
@@ -155,14 +156,14 @@ Result<void> PostgreSQLAdapter::connect(const ServerDefinition& server,
 
     // Set TCP_NODELAY
     int flag = 1;
-    setsockopt(impl_->socket_fd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
+    sb_socket_setsockopt(impl_->socket_fd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
 
     // Set connection timeout
     struct timeval timeout;
     timeout.tv_sec = server.connection_timeout_ms / 1000;
     timeout.tv_usec = (server.connection_timeout_ms % 1000) * 1000;
-    setsockopt(impl_->socket_fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
-    setsockopt(impl_->socket_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    sb_socket_setsockopt(impl_->socket_fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+    sb_socket_setsockopt(impl_->socket_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
 
     if (::connect(impl_->socket_fd, result->ai_addr, result->ai_addrlen) < 0) {
         freeaddrinfo(result);
@@ -850,7 +851,7 @@ Result<void> PostgreSQLAdapter::sendStartupMessage(const ServerDefinition& serve
     message.insert(message.end(), data.begin(), data.end());
 
     // Send
-    ssize_t sent = send(impl_->socket_fd, message.data(), message.size(), 0);
+    ssize_t sent = sb_socket_send(impl_->socket_fd, message.data(), message.size(), 0);
     if (sent != static_cast<ssize_t>(message.size())) {
         return makeError(core::Status::IO_ERROR, "Failed to send startup message");
     }
@@ -1263,7 +1264,7 @@ Result<void> PostgreSQLAdapter::writeMessage(char type, const std::vector<uint8_
     // Data
     message.insert(message.end(), data.begin(), data.end());
 
-    ssize_t sent = send(impl_->socket_fd, message.data(), message.size(), 0);
+    ssize_t sent = sb_socket_send(impl_->socket_fd, message.data(), message.size(), 0);
     if (sent != static_cast<ssize_t>(message.size())) {
         return makeError(core::Status::IO_ERROR, "Failed to send message");
     }
@@ -1276,7 +1277,7 @@ Result<std::pair<char, std::vector<uint8_t>>> PostgreSQLAdapter::readMessage() {
     uint8_t header[5];
 
     // Read type and length
-    ssize_t received = recv(impl_->socket_fd, header, 5, MSG_WAITALL);
+    ssize_t received = sb_socket_recv(impl_->socket_fd, header, 5, MSG_WAITALL);
     if (received != 5) {
         return makeError<std::pair<char, std::vector<uint8_t>>>(
             core::Status::IO_ERROR, "Failed to read message header");
@@ -1300,7 +1301,7 @@ Result<std::pair<char, std::vector<uint8_t>>> PostgreSQLAdapter::readMessage() {
     std::vector<uint8_t> data(data_len);
 
     if (data_len > 0) {
-        received = recv(impl_->socket_fd, data.data(), data_len, MSG_WAITALL);
+        received = sb_socket_recv(impl_->socket_fd, data.data(), data_len, MSG_WAITALL);
         if (received != static_cast<ssize_t>(data_len)) {
             return makeError<std::pair<char, std::vector<uint8_t>>>(
                 core::Status::IO_ERROR, "Failed to read message data");

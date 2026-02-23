@@ -63,7 +63,7 @@
     #include <netinet/in.h>
     #include <netinet/tcp.h>
     #include <arpa/inet.h>
-    #include <unistd.h>
+    #include "scratchbird/core/posix_compat.h"
     #include <fcntl.h>
     #include <poll.h>
     #include <errno.h>

@@ -35,7 +35,7 @@
 #else
     #include <sys/types.h>
     #include <signal.h>
-    #include <unistd.h>
+    #include "scratchbird/core/posix_compat.h"
 #endif
 
 namespace scratchbird {

@@ -16,11 +16,22 @@
 #include <string>
 #include "scratchbird/core/uuidv7.h"
 
+#ifdef DOMAIN
+// Windows headers may define DOMAIN as a macro.
+#undef DOMAIN
+#endif
+
 namespace scratchbird::core
 {
-    // 128-bit integer type (GCC extension)
+    // 128-bit integer type
+#if defined(_MSC_VER) && !defined(__clang__)
+    // MSVC lacks native 128-bit integer support; use a conservative 64-bit fallback.
+    using int128_t = int64_t;
+    using uint128_t = uint64_t;
+#else
     using int128_t = __int128;
     using uint128_t = unsigned __int128;
+#endif
 
     // Common type alias for object IDs (UUIDv7)
     // Used across the system for users, roles, tables, etc.

@@ -9,12 +9,17 @@
 #include "scratchbird/protocol/sbwp_protocol.h"
 
 #include <cstring>
-#include <arpa/inet.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-#include <netdb.h>
-#include <unistd.h>
+#ifdef _WIN32
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+#else
+    #include <arpa/inet.h>
+    #include <sys/socket.h>
+    #include <netinet/in.h>
+    #include <netinet/tcp.h>
+    #include <netdb.h>
+#endif
+#include "scratchbird/core/posix_compat.h"
 #include <fcntl.h>
 #include <openssl/ssl.h>
 
@@ -235,7 +240,7 @@ core::Status ScratchBirdConnection::startup(core::ErrorContext* ctx) {
             // Authentication required
             return authenticate(ctx);
             
-        case sbwp::MessageType::ERROR:
+        case sbwp::MessageType::ERROR_MESSAGE:
             // Error response
             if (ctx && response.payload.size() >= 2) {
                 uint16_t error_code = (response.payload[0] << 8) | response.payload[1];
@@ -365,7 +370,7 @@ core::Status ScratchBirdConnection::authenticate(core::ErrorContext* ctx) {
         return core::Status::OK;
     }
     
-    if (response.type == sbwp::MessageType::ERROR) {
+    if (response.type == sbwp::MessageType::ERROR_MESSAGE) {
         if (ctx) {
             ctx->set(core::Status::INVALID_PASSWORD, "Authentication failed",
                     __FILE__, __LINE__, __func__);
@@ -674,7 +679,7 @@ core::Status ScratchBirdConnection::readRowDescription(std::vector<SBWPField>& f
     }
     
     if (msg.type != sbwp::MessageType::ROW_DESCRIPTION) {
-        if (msg.type == sbwp::MessageType::ERROR) {
+        if (msg.type == sbwp::MessageType::ERROR_MESSAGE) {
             return core::Status::INTERNAL_ERROR;  // Error handled by caller
         }
         if (ctx) {
@@ -1079,7 +1084,7 @@ core::Status ScratchBirdUDRConnector::rollbackToSavepoint(const std::string& nam
         SBWPMessage response;
         status = conn->readMessage(response, ctx);
         if (status == core::Status::OK) {
-            if (response.type == sbwp::MessageType::ERROR) {
+            if (response.type == sbwp::MessageType::ERROR_MESSAGE) {
                 if (ctx && response.payload.size() >= 2) {
                     uint16_t error_code = (response.payload[0] << 8) | response.payload[1];
                     ctx->set(core::Status::INTERNAL_ERROR,
@@ -1194,7 +1199,7 @@ core::Status ScratchBirdUDRConnector::declareCursor(const std::string& cursor_na
             return status;
         }
         
-        if (response.type == sbwp::MessageType::ERROR) {
+        if (response.type == sbwp::MessageType::ERROR_MESSAGE) {
             if (ctx && response.payload.size() >= 2) {
                 uint16_t error_code = (response.payload[0] << 8) | response.payload[1];
                 ctx->set(core::Status::INTERNAL_ERROR,
@@ -1358,7 +1363,7 @@ core::Status ScratchBirdUDRConnector::fetchCursor(const std::string& cursor_name
                 break;
             }
             
-            case sbwp::MessageType::ERROR: {
+            case sbwp::MessageType::ERROR_MESSAGE: {
                 if (ctx && response.payload.size() >= 2) {
                     uint16_t error_code = (response.payload[0] << 8) | response.payload[1];
                     ctx->set(core::Status::INTERNAL_ERROR,
@@ -1410,7 +1415,7 @@ core::Status ScratchBirdUDRConnector::closeCursor(const std::string& cursor_name
             return status;
         }
         
-        if (response.type == sbwp::MessageType::ERROR) {
+        if (response.type == sbwp::MessageType::ERROR_MESSAGE) {
             if (ctx && response.payload.size() >= 2) {
                 uint16_t error_code = (response.payload[0] << 8) | response.payload[1];
                 ctx->set(core::Status::INTERNAL_ERROR,
@@ -1555,7 +1560,7 @@ core::Status ScratchBirdUDRConnector::getTableInfo(const std::string& schema,
                 releaseConnection(std::move(conn));
                 return core::Status::OK;
                 
-            case sbwp::MessageType::ERROR:
+            case sbwp::MessageType::ERROR_MESSAGE:
                 if (ctx && response.payload.size() >= 2) {
                     uint16_t error_code = (response.payload[0] << 8) | response.payload[1];
                     ctx->set(core::Status::INTERNAL_ERROR,
@@ -1625,7 +1630,7 @@ core::Status ScratchBirdUDRConnector::listTables(const std::string& schema,
                 releaseConnection(std::move(conn));
                 return core::Status::OK;
                 
-            case sbwp::MessageType::ERROR:
+            case sbwp::MessageType::ERROR_MESSAGE:
                 if (ctx && response.payload.size() >= 2) {
                     uint16_t error_code = (response.payload[0] << 8) | response.payload[1];
                     ctx->set(core::Status::INTERNAL_ERROR,
@@ -1695,7 +1700,7 @@ core::Status ScratchBirdUDRConnector::getProcedureInfo(const std::string& schema
                 releaseConnection(std::move(conn));
                 return core::Status::OK;
                 
-            case sbwp::MessageType::ERROR:
+            case sbwp::MessageType::ERROR_MESSAGE:
                 if (ctx && response.payload.size() >= 2) {
                     uint16_t error_code = (response.payload[0] << 8) | response.payload[1];
                     ctx->set(core::Status::INTERNAL_ERROR,
@@ -1764,7 +1769,7 @@ core::Status ScratchBirdUDRConnector::listProcedures(const std::string& schema,
                 releaseConnection(std::move(conn));
                 return core::Status::OK;
                 
-            case sbwp::MessageType::ERROR:
+            case sbwp::MessageType::ERROR_MESSAGE:
                 if (ctx && response.payload.size() >= 2) {
                     uint16_t error_code = (response.payload[0] << 8) | response.payload[1];
                     ctx->set(core::Status::INTERNAL_ERROR,
@@ -1827,7 +1832,7 @@ core::Status ScratchBirdUDRConnector::startCopyIn(const std::string& table,
         return core::Status::OK;
     }
     
-    if (response.type == sbwp::MessageType::ERROR && ctx && response.payload.size() >= 2) {
+    if (response.type == sbwp::MessageType::ERROR_MESSAGE && ctx && response.payload.size() >= 2) {
         uint16_t error_code = (response.payload[0] << 8) | response.payload[1];
         ctx->set(core::Status::INTERNAL_ERROR,
                 ("Start copy in failed: " + std::to_string(error_code)).c_str(),
@@ -1899,7 +1904,7 @@ core::Status ScratchBirdUDRConnector::endCopyIn(uint64_t& rows_inserted,
             break;
         }
         
-        if (response.type == sbwp::MessageType::ERROR) {
+        if (response.type == sbwp::MessageType::ERROR_MESSAGE) {
             releaseConnection(std::unique_ptr<ScratchBirdConnection>(copy_conn_));
             copy_conn_ = nullptr;
             in_copy_in_ = false;
@@ -1946,7 +1951,7 @@ core::Status ScratchBirdUDRConnector::startCopyOut(const std::string& query,
         return core::Status::OK;
     }
     
-    if (response.type == sbwp::MessageType::ERROR && ctx && response.payload.size() >= 2) {
+    if (response.type == sbwp::MessageType::ERROR_MESSAGE && ctx && response.payload.size() >= 2) {
         uint16_t error_code = (response.payload[0] << 8) | response.payload[1];
         ctx->set(core::Status::INTERNAL_ERROR,
                 ("Start copy out failed: " + std::to_string(error_code)).c_str(),
@@ -2001,7 +2006,7 @@ core::Status ScratchBirdUDRConnector::receiveCopyData(std::vector<uint8_t>& data
         return core::Status::OK;
     }
     
-    if (response.type == sbwp::MessageType::ERROR) {
+    if (response.type == sbwp::MessageType::ERROR_MESSAGE) {
         releaseConnection(std::unique_ptr<ScratchBirdConnection>(copy_conn_));
         copy_conn_ = nullptr;
         in_copy_out_ = false;

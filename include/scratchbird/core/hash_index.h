@@ -24,6 +24,13 @@
 #include <shared_mutex>
 #include <atomic>
 
+#ifdef _MSC_VER
+    #define SB_PACKED
+    #pragma pack(push, 1)
+#else
+    #define SB_PACKED __attribute__((packed))
+#endif
+
 namespace scratchbird
 {
     namespace core
@@ -54,7 +61,7 @@ namespace scratchbird
             uint64_t hip_num_tuples;     // Total number of indexed tuples (8 bytes)
             uint64_t hip_num_deleted;    // Number of deleted entries (8 bytes)
             uint8_t hip_reserved[];      // Reserved for future use (page_size - 112)
-        } __attribute__((packed));
+        } SB_PACKED;
 
         // Directory Page - Maps hash values to bucket pages
         struct SBHashDirectoryPage
@@ -62,7 +69,7 @@ namespace scratchbird
             PageHeader hdp_header;  // Standard page header (80 bytes)
             uint64_t hdp_next_page; // Next directory page (0 if last) (8 bytes)
             uint64_t hdp_bucket_pointers[]; // Bucket page numbers (flexible array, capacity depends on page size)
-        } __attribute__((packed));
+        } SB_PACKED;
 
         // Hash Entry - Stores hash, tuple ID, and transaction tracking
         // Firebird MGA: Added xmin/xmax for TIP-based visibility (NOT snapshots)
@@ -79,7 +86,7 @@ namespace scratchbird
             // Helper to get TID
             TID getTID() const { return TID(he_gpid, he_slot); }
             void setTID(const TID &tid) { he_gpid = tid.gpid; he_slot = tid.slot; }
-        } __attribute__((packed));
+        } SB_PACKED;
 
         static_assert(sizeof(HashEntry) == 36, "HashEntry must be 36 bytes (GPID + slot + xmin + xmax)");
 
@@ -93,7 +100,7 @@ namespace scratchbird
             uint64_t hbp_overflow_page;              // Next overflow page (0 if none) (8 bytes)
             uint8_t hbp_reserved[16];                // Reserved for alignment (16 bytes)
             HashEntry hbp_entries[];                 // Hash entries (flexible array, capacity depends on page size)
-        } __attribute__((packed));
+        } SB_PACKED;
 
         // ===== Hash Index Class =====
 
@@ -251,6 +258,11 @@ namespace scratchbird
             HashIndex(HashIndex &&) = delete;
             HashIndex &operator=(HashIndex &&) = delete;
         };
+
+#ifdef _MSC_VER
+    #pragma pack(pop)
+#endif
+#undef SB_PACKED
 
     } // namespace core
 } // namespace scratchbird

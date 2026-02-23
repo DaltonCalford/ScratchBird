@@ -24,6 +24,8 @@ namespace geo {
  */
 class Geodetic {
 public:
+    static constexpr double PI = 3.14159265358979323846;
+
     // WGS84 ellipsoid parameters
     static constexpr double SEMI_MAJOR_AXIS = 6378137.0;        // a (meters)
     static constexpr double SEMI_MINOR_AXIS = 6356752.314245;   // b (meters)

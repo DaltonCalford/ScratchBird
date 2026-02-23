@@ -32,6 +32,14 @@
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"
 
+#ifdef _WIN32
+#ifdef OVERFLOW
+#pragma push_macro("OVERFLOW")
+#undef OVERFLOW
+#define SCRATCHBIRD_RESTORE_OVERFLOW_MACRO
+#endif
+#endif
+
 namespace scratchbird {
 namespace fdw {
 
@@ -650,5 +658,10 @@ inline bool isNull(const RemoteValue& value) {
 
 }  // namespace fdw
 }  // namespace scratchbird
+
+#ifdef SCRATCHBIRD_RESTORE_OVERFLOW_MACRO
+#pragma pop_macro("OVERFLOW")
+#undef SCRATCHBIRD_RESTORE_OVERFLOW_MACRO
+#endif
 
 #endif  // SCRATCHBIRD_FDW_TYPES_H

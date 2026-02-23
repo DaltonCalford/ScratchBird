@@ -23,12 +23,19 @@
  */
 
 #include "scratchbird/ipc/mysql_parser_agent.h"
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <unistd.h>
+#ifdef _WIN32
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+#else
+    #include <sys/socket.h>
+    #include <netinet/in.h>
+#endif
+#include "scratchbird/core/posix_compat.h"
+#include "scratchbird/core/socket_call_compat.h"
 #include <cstring>
 #include <sstream>
 #include <iomanip>
+
 
 namespace scratchbird {
 namespace ipc {
@@ -1084,7 +1091,7 @@ core::Status MySQLParserAgent::readPacket(MySQLClientState& state,
                                          core::ErrorContext* ctx) {
     // Read packet header (3 bytes length + 1 byte sequence)
     uint8_t header[4];
-    ssize_t n = recv(state.client_fd, header, 4, MSG_WAITALL);
+    ssize_t n = sb_socket_recv(state.client_fd, header, 4, MSG_WAITALL);
     if (n == 0) {
         return core::Status::CONNECTION_CLOSED;
     }
@@ -1105,7 +1112,7 @@ core::Status MySQLParserAgent::readPacket(MySQLClientState& state,
     // Read payload
     if (payload_len > 0) {
         packet.resize(payload_len);
-        n = recv(state.client_fd, packet.data(), payload_len, MSG_WAITALL);
+        n = sb_socket_recv(state.client_fd, packet.data(), payload_len, MSG_WAITALL);
         if (n != static_cast<ssize_t>(payload_len)) {
             if (ctx) {
                 ctx->set(core::Status::IO_ERROR, "Failed to read packet payload",
@@ -1131,7 +1138,7 @@ core::Status MySQLParserAgent::sendPacket(MySQLClientState& state,
         writeUint24LE(header, chunk_size);
         header[3] = seq++;
         
-        if (send(state.client_fd, header, 4, 0) != 4) {
+        if (sb_socket_send(state.client_fd, header, 4, 0) != 4) {
             if (ctx) {
                 ctx->set(core::Status::IO_ERROR, "Failed to send packet header",
                         __FILE__, __LINE__, __func__);
@@ -1140,7 +1147,7 @@ core::Status MySQLParserAgent::sendPacket(MySQLClientState& state,
         }
         
         if (chunk_size > 0) {
-            if (send(state.client_fd, payload.data() + offset, chunk_size, 0) != 
+            if (sb_socket_send(state.client_fd, payload.data() + offset, chunk_size, 0) != 
                 static_cast<ssize_t>(chunk_size)) {
                 if (ctx) {
                     ctx->set(core::Status::IO_ERROR, "Failed to send packet payload",

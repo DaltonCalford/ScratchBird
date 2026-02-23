@@ -63,7 +63,7 @@
         #undef ID
     #endif
 #else
-#include <unistd.h>
+#include "scratchbird/core/posix_compat.h"
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <signal.h>
@@ -1488,7 +1488,7 @@ public:
         }
 
         if (negotiation_response.getType() == protocol::MessageType::AUTH_RESPONSE) {
-            protocol::AuthStatus auth_status = protocol::AuthStatus::ERROR;
+            protocol::AuthStatus auth_status = protocol::AuthStatus::FAILURE;
             uint32_t user_id = 0;
             std::string error_msg;
             std::vector<uint8_t> data;
@@ -1498,7 +1498,7 @@ public:
                 last_error_ = "Failed to parse auth negotiation fallback response";
                 return status;
             }
-            if (auth_status == protocol::AuthStatus::ERROR) {
+            if (auth_status == protocol::AuthStatus::FAILURE) {
                 last_error_ = error_msg.empty()
                     ? "Authentication negotiation failed"
                     : error_msg;
@@ -1763,7 +1763,7 @@ public:
         if (status != core::Status::OK) {
             return status;
         }
-        if (auth_response.status == protocol::AuthStatus::ERROR) {
+        if (auth_response.status == protocol::AuthStatus::FAILURE) {
             last_error_ = auth_response.error_message.empty()
                 ? "SCRAM authentication failed"
                 : auth_response.error_message;
@@ -1899,7 +1899,7 @@ public:
             return core::Status::PROTOCOL_VIOLATION;
         }
 
-        protocol::AuthStatus auth_status = protocol::AuthStatus::ERROR;
+        protocol::AuthStatus auth_status = protocol::AuthStatus::FAILURE;
         uint32_t user_id = 0;
         std::string error_msg;
         std::vector<uint8_t> data;
@@ -1918,7 +1918,7 @@ public:
 
         if (auth_status == protocol::AuthStatus::OK) {
             clearAuthNegotiationState();
-        } else if (auth_status == protocol::AuthStatus::ERROR &&
+        } else if (auth_status == protocol::AuthStatus::FAILURE &&
                    error_msg == "AUTH_POLICY_NEGOTIATION_REQUIRED") {
             clearAuthNegotiationState();
         }

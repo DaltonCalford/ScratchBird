@@ -1033,6 +1033,8 @@ namespace scratchbird
                                                              ExecutionResult& result);
             bool executeLegacyShowSetExtendedOpcode(uint16_t ext_opcode,
                                                     ExecutionResult& result);
+            bool executeExtendedTrigMathOpcode(uint16_t ext_opcode);
+            bool executeExtendedTailOpcode(uint16_t ext_opcode);
             bool executeLegacyAdminControlExtendedOpcode(uint16_t ext_opcode,
                                                          ExecutionResult& result);
             bool executeLegacyRoutineExtendedOpcode(uint16_t ext_opcode,

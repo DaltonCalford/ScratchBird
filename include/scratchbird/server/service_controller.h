@@ -45,6 +45,12 @@
 #include "scratchbird/server/daemon.h"
 #include "scratchbird/network/socket_types.h"
 
+#ifdef _WIN32
+#ifdef ERROR
+#undef ERROR
+#endif
+#endif
+
 namespace scratchbird {
 namespace server {
 
@@ -191,7 +197,7 @@ struct ServiceConfig {
     // Security
     core::SecurityQuorumConfig security_quorum;
     core::ConnectionContext::RoleSwitchPolicy role_switch_policy =
-        core::ConnectionContext::RoleSwitchPolicy::ERROR;
+        core::ConnectionContext::RoleSwitchPolicy::REJECT;
 
     // Behavior
     bool foreground = false;        // Run in foreground (don't daemonize)

@@ -36,6 +36,7 @@
 #include <cstring>
 #include <sstream>
 
+
 namespace scratchbird {
 namespace fdw {
 
@@ -173,14 +174,14 @@ Result<void> FirebirdAdapter::connect(const ServerDefinition& server,
 
     // Set TCP_NODELAY
     int flag = 1;
-    setsockopt(impl_->socket_fd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
+    sb_socket_setsockopt(impl_->socket_fd, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
 
     // Set timeout
     struct timeval timeout;
     timeout.tv_sec = server.connection_timeout_ms / 1000;
     timeout.tv_usec = (server.connection_timeout_ms % 1000) * 1000;
-    setsockopt(impl_->socket_fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
-    setsockopt(impl_->socket_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    sb_socket_setsockopt(impl_->socket_fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+    sb_socket_setsockopt(impl_->socket_fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
 
     // Connect
     if (::connect(impl_->socket_fd, result->ai_addr, result->ai_addrlen) < 0) {
@@ -1054,7 +1055,7 @@ Result<void> FirebirdAdapter::sendOperation(uint32_t operation, const std::vecto
     // Data
     packet.insert(packet.end(), data.begin(), data.end());
 
-    ssize_t sent = send(impl_->socket_fd, packet.data(), packet.size(), 0);
+    ssize_t sent = sb_socket_send(impl_->socket_fd, packet.data(), packet.size(), 0);
     if (sent != static_cast<ssize_t>(packet.size())) {
         return makeError(core::Status::IO_ERROR, "Failed to send operation");
     }
@@ -1066,7 +1067,7 @@ Result<void> FirebirdAdapter::sendOperation(uint32_t operation, const std::vecto
 Result<std::pair<uint32_t, std::vector<uint8_t>>> FirebirdAdapter::receiveResponse() {
     // Read operation code (4 bytes)
     uint32_t op_net;
-    ssize_t received = recv(impl_->socket_fd, &op_net, 4, MSG_WAITALL);
+    ssize_t received = sb_socket_recv(impl_->socket_fd, &op_net, 4, MSG_WAITALL);
     if (received != 4) {
         return makeError<std::pair<uint32_t, std::vector<uint8_t>>>(
             core::Status::IO_ERROR, "Failed to read response operation");
@@ -1080,7 +1081,7 @@ Result<std::pair<uint32_t, std::vector<uint8_t>>> FirebirdAdapter::receiveRespon
     if (operation == fb_protocol::op_response) {
         // Read object handle (4 bytes)
         uint32_t handle;
-        received = recv(impl_->socket_fd, &handle, 4, MSG_WAITALL);
+        received = sb_socket_recv(impl_->socket_fd, &handle, 4, MSG_WAITALL);
         if (received == 4) {
             data.insert(data.end(), reinterpret_cast<uint8_t*>(&handle),
                         reinterpret_cast<uint8_t*>(&handle) + 4);
@@ -1088,7 +1089,7 @@ Result<std::pair<uint32_t, std::vector<uint8_t>>> FirebirdAdapter::receiveRespon
 
         // Read blob id (8 bytes)
         uint64_t blob_id;
-        received = recv(impl_->socket_fd, &blob_id, 8, MSG_WAITALL);
+        received = sb_socket_recv(impl_->socket_fd, &blob_id, 8, MSG_WAITALL);
         if (received == 8) {
             data.insert(data.end(), reinterpret_cast<uint8_t*>(&blob_id),
                         reinterpret_cast<uint8_t*>(&blob_id) + 8);
@@ -1096,12 +1097,12 @@ Result<std::pair<uint32_t, std::vector<uint8_t>>> FirebirdAdapter::receiveRespon
 
         // Read data length and data
         uint32_t data_len_net;
-        received = recv(impl_->socket_fd, &data_len_net, 4, MSG_WAITALL);
+        received = sb_socket_recv(impl_->socket_fd, &data_len_net, 4, MSG_WAITALL);
         if (received == 4) {
             uint32_t data_len = ntohl(data_len_net);
             if (data_len > 0 && data_len < 1000000) {  // Sanity check
                 std::vector<uint8_t> buffer(data_len);
-                received = recv(impl_->socket_fd, buffer.data(), data_len, MSG_WAITALL);
+                received = sb_socket_recv(impl_->socket_fd, buffer.data(), data_len, MSG_WAITALL);
                 if (received == static_cast<ssize_t>(data_len)) {
                     data.insert(data.end(), buffer.begin(), buffer.end());
                 }
@@ -1109,7 +1110,7 @@ Result<std::pair<uint32_t, std::vector<uint8_t>>> FirebirdAdapter::receiveRespon
                 size_t padding = (4 - (data_len % 4)) % 4;
                 if (padding > 0) {
                     uint8_t pad[4];
-                    recv(impl_->socket_fd, pad, padding, MSG_WAITALL);
+                    sb_socket_recv(impl_->socket_fd, pad, padding, MSG_WAITALL);
                 }
             }
         }
@@ -1119,9 +1120,9 @@ Result<std::pair<uint32_t, std::vector<uint8_t>>> FirebirdAdapter::receiveRespon
     } else if (operation == fb_protocol::op_accept) {
         // Read version, arch, type
         uint32_t version, arch, type;
-        recv(impl_->socket_fd, &version, 4, MSG_WAITALL);
-        recv(impl_->socket_fd, &arch, 4, MSG_WAITALL);
-        recv(impl_->socket_fd, &type, 4, MSG_WAITALL);
+        sb_socket_recv(impl_->socket_fd, &version, 4, MSG_WAITALL);
+        sb_socket_recv(impl_->socket_fd, &arch, 4, MSG_WAITALL);
+        sb_socket_recv(impl_->socket_fd, &type, 4, MSG_WAITALL);
 
         data.insert(data.end(), reinterpret_cast<uint8_t*>(&version),
                     reinterpret_cast<uint8_t*>(&version) + 4);

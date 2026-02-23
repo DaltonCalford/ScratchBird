@@ -221,7 +221,7 @@ namespace scratchbird::core
             DEFER = 0,   // Stage until next transaction (legacy behavior)
             COMMIT = 1,  // Commit before switching roles
             ROLLBACK = 2,// Rollback before switching roles
-            ERROR = 3    // Reject role switch during active transaction
+            REJECT = 3   // Reject role switch during active transaction
         };
 
         enum class SecurityMode : uint8_t
@@ -483,7 +483,7 @@ namespace scratchbird::core
         bool autocommit_mode_ = false;   // Autocommit mode (session-level)
         bool autocommit_suspended_ = false;  // Explicit transaction block active
 
-        RoleSwitchPolicy role_switch_policy_ = RoleSwitchPolicy::ERROR;
+        RoleSwitchPolicy role_switch_policy_ = RoleSwitchPolicy::REJECT;
 
         // Attachment/session identifiers (minimal attachment model placeholder)
         ID attachment_id_;

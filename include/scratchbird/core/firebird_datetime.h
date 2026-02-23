@@ -37,6 +37,18 @@ namespace scratchbird::core
  */
 namespace FirebirdDateTime
 {
+#ifdef _WIN32
+    inline std::time_t sbTimegm(std::tm* tm)
+    {
+        return _mkgmtime(tm);
+    }
+#else
+    inline std::time_t sbTimegm(std::tm* tm)
+    {
+        return timegm(tm);
+    }
+#endif
+
     // Modified Julian Date epoch: November 17, 1858
     // Unix epoch (January 1, 1970) = MJD 40587
     constexpr int32_t UNIX_EPOCH_MJD = 40587;

@@ -41,7 +41,6 @@
 #include <nlohmann/json.hpp>
 #include <openssl/md5.h>
 #include <fcntl.h>
-#include <unistd.h>
 #include <sys/stat.h>
 #if !defined(_WIN32)
     #include <sys/file.h>
@@ -62,6 +61,14 @@
 #if defined(_WIN32)
     #include <io.h>
     #include <sys/locking.h>
+#endif
+
+#ifdef _WIN32
+namespace {
+constexpr int LOCK_EX = 0x2;
+constexpr int LOCK_NB = 0x4;
+inline int flock(int, int) { return 0; }
+} // namespace
 #endif
 
 namespace scratchbird::core

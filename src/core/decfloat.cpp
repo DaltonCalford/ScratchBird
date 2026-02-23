@@ -8,6 +8,7 @@
  * https://www.firebirdsql.org/en/initial-developer-s-public-license-version-1-0/
  */
 #include "scratchbird/core/decfloat.h"
+#include "scratchbird/core/types.h"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -319,7 +320,7 @@ namespace scratchbird::core
             return Status::OK;
         }
 
-        std::vector<uint8_t> digitsFromUInt128(unsigned __int128 value)
+        std::vector<uint8_t> digitsFromUInt128(uint128_t value)
         {
             if (value == 0)
             {
@@ -336,9 +337,9 @@ namespace scratchbird::core
             return digits;
         }
 
-        unsigned __int128 uint128Pow10(uint8_t power)
+        uint128_t uint128Pow10(uint8_t power)
         {
-            unsigned __int128 value = 1;
+            uint128_t value = 1;
             for (uint8_t i = 0; i < power; ++i)
             {
                 value *= 10;
@@ -346,9 +347,9 @@ namespace scratchbird::core
             return value;
         }
 
-        unsigned __int128 digitsToUInt128(const std::vector<uint8_t>& digits)
+        uint128_t digitsToUInt128(const std::vector<uint8_t>& digits)
         {
-            unsigned __int128 value = 0;
+            uint128_t value = 0;
             for (uint8_t digit : digits)
             {
                 value = value * 10 + digit;
@@ -685,8 +686,8 @@ namespace scratchbird::core
 
         int32_t exponent = static_cast<int32_t>((exp_high << 8) | exp_cont);
         exponent -= getLimits(16).exponent_bias;
-        unsigned __int128 coeff = static_cast<unsigned __int128>(lead) * uint128Pow10(15) +
-                                  static_cast<unsigned __int128>(coeff_cont);
+        uint128_t coeff = static_cast<uint128_t>(lead) * uint128Pow10(15) +
+                                  static_cast<uint128_t>(coeff_cont);
         out.exponent = exponent;
         out.coefficient = digitsFromUInt128(coeff);
         stripLeadingZeros(out.coefficient);
@@ -699,7 +700,7 @@ namespace scratchbird::core
         DecFloat out;
         out.precision = 34;
         out.klass = DecFloatClass::Finite;
-        unsigned __int128 bits = (static_cast<unsigned __int128>(high) << 64) | low;
+        uint128_t bits = (static_cast<uint128_t>(high) << 64) | low;
         out.negative = (bits >> 127) != 0;
 
         uint64_t comb = static_cast<uint64_t>((bits >> 122) & 0x1F);
@@ -717,7 +718,7 @@ namespace scratchbird::core
         }
 
         uint64_t exp_cont = static_cast<uint64_t>((bits >> 110) & 0xFFF);
-        unsigned __int128 coeff_cont = bits & ((static_cast<unsigned __int128>(1) << 110) - 1);
+        uint128_t coeff_cont = bits & ((static_cast<uint128_t>(1) << 110) - 1);
 
         uint64_t exp_high = 0;
         uint64_t lead = 0;
@@ -734,7 +735,7 @@ namespace scratchbird::core
 
         int32_t exponent = static_cast<int32_t>((exp_high << 12) | exp_cont);
         exponent -= getLimits(34).exponent_bias;
-        unsigned __int128 coeff = static_cast<unsigned __int128>(lead) * uint128Pow10(33) +
+        uint128_t coeff = static_cast<uint128_t>(lead) * uint128Pow10(33) +
                                   coeff_cont;
         out.exponent = exponent;
         out.coefficient = digitsFromUInt128(coeff);
@@ -777,8 +778,8 @@ namespace scratchbird::core
             return Status::NUMERIC_VALUE_OUT_OF_RANGE;
         }
 
-        unsigned __int128 coeff = digitsToUInt128(value.coefficient);
-        unsigned __int128 pow10 = uint128Pow10(15);
+        uint128_t coeff = digitsToUInt128(value.coefficient);
+        uint128_t pow10 = uint128Pow10(15);
         uint64_t lead = static_cast<uint64_t>(coeff / pow10);
         uint64_t coeff_cont = static_cast<uint64_t>(coeff % pow10);
 
@@ -814,16 +815,16 @@ namespace scratchbird::core
         }
         if (klass == DecFloatClass::Infinity)
         {
-            unsigned __int128 bits = (static_cast<unsigned __int128>(negative) << 127) |
-                                     (static_cast<unsigned __int128>(0x1E) << 122);
+            uint128_t bits = (static_cast<uint128_t>(negative) << 127) |
+                                     (static_cast<uint128_t>(0x1E) << 122);
             high = static_cast<uint64_t>(bits >> 64);
             low = static_cast<uint64_t>(bits);
             return Status::OK;
         }
         if (klass == DecFloatClass::NaN || klass == DecFloatClass::SignalingNaN)
         {
-            unsigned __int128 bits = (static_cast<unsigned __int128>(negative) << 127) |
-                                     (static_cast<unsigned __int128>(0x1F) << 122);
+            uint128_t bits = (static_cast<uint128_t>(negative) << 127) |
+                                     (static_cast<uint128_t>(0x1F) << 122);
             high = static_cast<uint64_t>(bits >> 64);
             low = static_cast<uint64_t>(bits);
             return Status::OK;
@@ -843,10 +844,10 @@ namespace scratchbird::core
             return Status::NUMERIC_VALUE_OUT_OF_RANGE;
         }
 
-        unsigned __int128 coeff = digitsToUInt128(value.coefficient);
-        unsigned __int128 pow10 = uint128Pow10(33);
+        uint128_t coeff = digitsToUInt128(value.coefficient);
+        uint128_t pow10 = uint128Pow10(33);
         uint64_t lead = static_cast<uint64_t>(coeff / pow10);
-        unsigned __int128 coeff_cont = coeff % pow10;
+        uint128_t coeff_cont = coeff % pow10;
 
         int32_t biased_exp = value.exponent + limits.exponent_bias;
         uint64_t exp_high = static_cast<uint64_t>(biased_exp >> 12) & 0x3;
@@ -862,9 +863,9 @@ namespace scratchbird::core
             comb = 0x18 | (exp_high << 1) | (lead - 8);
         }
 
-        unsigned __int128 bits = (static_cast<unsigned __int128>(value.negative) << 127) |
-                                 (static_cast<unsigned __int128>(comb) << 122) |
-                                 (static_cast<unsigned __int128>(exp_cont) << 110) |
+        uint128_t bits = (static_cast<uint128_t>(value.negative) << 127) |
+                                 (static_cast<uint128_t>(comb) << 122) |
+                                 (static_cast<uint128_t>(exp_cont) << 110) |
                                  coeff_cont;
 
         high = static_cast<uint64_t>(bits >> 64);

@@ -243,7 +243,7 @@ void runMcpAuthHandshake(Socket& manager_socket,
 
     ASSERT_EQ(receiveWireMessage(manager_socket, response, &ctx), Status::OK) << ctx.message;
     ASSERT_EQ(response.getType(), MessageType::AUTH_RESPONSE);
-    AuthStatus auth_status = AuthStatus::ERROR;
+    AuthStatus auth_status = AuthStatus::FAILURE;
     uint32_t user_id = 0;
     std::string error_message;
     std::vector<uint8_t> auth_data;
@@ -510,7 +510,7 @@ TEST(ManagerProxyMcpTest, DbConnectTransitionsToByteProxyAndRelaysNativeAuthAndQ
     ASSERT_EQ(receiveWireMessage(*manager_socket, response, &ctx), Status::OK) << ctx.message;
     ASSERT_EQ(response.getType(), MessageType::AUTH_RESPONSE);
 
-    AuthStatus proxied_auth_status = AuthStatus::ERROR;
+    AuthStatus proxied_auth_status = AuthStatus::FAILURE;
     uint32_t proxied_user_id = 0;
     std::string proxied_auth_error;
     std::vector<uint8_t> proxied_auth_data;
@@ -649,7 +649,7 @@ TEST(ManagerProxyMcpTest, AuthFailsWithWrongManagerToken) {
     ASSERT_EQ(ProtocolCodec::parseAuthResponse(
                   response, auth_status, user_id, error_message, &auth_data, &ctx),
               Status::OK) << ctx.message;
-    EXPECT_EQ(auth_status, AuthStatus::ERROR);
+    EXPECT_EQ(auth_status, AuthStatus::FAILURE);
     EXPECT_NE(error_message.find("failed"), std::string::npos);
 #endif
 }
@@ -693,7 +693,7 @@ TEST(ManagerProxyMcpTest, AuthStartFastPathAcceptsTokenPayload) {
     ASSERT_EQ(receiveWireMessage(*manager_socket, response, &ctx), Status::OK) << ctx.message;
     ASSERT_EQ(response.getType(), MessageType::AUTH_RESPONSE);
 
-    AuthStatus auth_status = AuthStatus::ERROR;
+    AuthStatus auth_status = AuthStatus::FAILURE;
     uint32_t user_id = 0;
     std::string error_message;
     std::vector<uint8_t> auth_data;

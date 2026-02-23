@@ -298,7 +298,12 @@ public:
     // Determine minimum bits needed for value
     static uint8_t bitsRequired(uint64_t max_value) {
         if (max_value == 0) return 1;
-        return 64 - __builtin_clzll(max_value);
+        uint8_t bits = 0;
+        while (max_value != 0) {
+            ++bits;
+            max_value >>= 1;
+        }
+        return bits;
     }
 
     // Pack values with specified bit width

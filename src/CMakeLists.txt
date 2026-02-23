@@ -214,9 +214,26 @@ if(SCRATCHBIRD_WITH_COMPILER)
 endif()
 
 add_library(scratchbird_link_group INTERFACE)
+set(SCRATCHBIRD_LINK_GROUP_LIBS
+    scratchbird_core
+    scratchbird_sblr
+    scratchbird_parser
+    scratchbird_optimizer_runtime
+    scratchbird_security
+    scratchbird_ipc
+)
 if(SCRATCHBIRD_WITH_COMPILER)
+    list(APPEND SCRATCHBIRD_LINK_GROUP_LIBS
+        scratchbird_compiler
+        scratchbird_optimizer_compiler
+    )
+endif()
+
+# RESCAN link groups are not supported on all linkers (for example MSVC).
+if(CMAKE_CXX_LINK_GROUP_USING_RESCAN_SUPPORTED)
+    string(JOIN "," SCRATCHBIRD_LINK_GROUP_LIBS_CSV ${SCRATCHBIRD_LINK_GROUP_LIBS})
     target_link_libraries(scratchbird_link_group INTERFACE
-        $<LINK_GROUP:RESCAN,scratchbird_core,scratchbird_sblr,scratchbird_compiler,scratchbird_parser,scratchbird_optimizer_runtime,scratchbird_optimizer_compiler,scratchbird_security,scratchbird_ipc>
+        $<LINK_GROUP:RESCAN,${SCRATCHBIRD_LINK_GROUP_LIBS_CSV}>
     )
 else()
 target_link_libraries(scratchbird_link_group INTERFACE
@@ -640,6 +657,10 @@ file(GLOB SCRATCHBIRD_IPC_SOURCES CONFIGURE_DEPENDS
     ipc/*.cpp
     ipc/external_agents/*.cpp
 )
+if(WIN32)
+    # unix_socket_channel.cpp is POSIX-only; use the Windows stub implementation.
+    list(FILTER SCRATCHBIRD_IPC_SOURCES EXCLUDE REGEX ".*/unix_socket_channel\\.cpp$")
+endif()
 
 if(SCRATCHBIRD_ENABLE_IPC_RUNTIME)
     add_library(scratchbird_ipc STATIC
@@ -680,6 +701,11 @@ endif()
 file(GLOB SCRATCHBIRD_TESTING_SOURCES
     testing/*.cpp
 )
+if(WIN32)
+    # POSIX socket-only testers are excluded from native Windows evidence builds.
+    list(FILTER SCRATCHBIRD_TESTING_SOURCES EXCLUDE REGEX ".*/AuthTester\\.cpp$")
+    list(FILTER SCRATCHBIRD_TESTING_SOURCES EXCLUDE REGEX ".*/ProtocolTester\\.cpp$")
+endif()
 
 if(SCRATCHBIRD_ENABLE_TESTING_LIB)
     add_library(scratchbird_testing STATIC

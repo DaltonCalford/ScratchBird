@@ -10,12 +10,17 @@
 
 #include <cstring>
 #include <mutex>
-#include <arpa/inet.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-#include <netdb.h>
-#include <unistd.h>
+#ifdef _WIN32
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+#else
+    #include <arpa/inet.h>
+    #include <sys/socket.h>
+    #include <netinet/in.h>
+    #include <netinet/tcp.h>
+    #include <netdb.h>
+#endif
+#include "scratchbird/core/posix_compat.h"
 #include <fcntl.h>
 #include <openssl/ssl.h>
 #include <openssl/evp.h>

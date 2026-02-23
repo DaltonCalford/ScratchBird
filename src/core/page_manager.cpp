@@ -18,7 +18,6 @@
 #include <algorithm>
 #include <chrono>
 #include <fcntl.h>
-#include <unistd.h>
 #include <sys/stat.h>
 
 namespace scratchbird::core

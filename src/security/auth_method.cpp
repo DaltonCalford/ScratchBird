@@ -333,7 +333,7 @@ AuthResult PeerAuthMethod::start(AuthContext& ctx) {
     if (os_username.empty()) {
 #if !defined(_WIN32)
         // Try to look up from UID
-        struct passwd* pw = getpwuid(conn.peer_uid);
+        struct passwd* pw = getpwuid(static_cast<uid_t>(conn.peer_uid));
         if (pw) {
             os_username = pw->pw_name;
         }

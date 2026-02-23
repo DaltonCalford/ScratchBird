@@ -26,9 +26,12 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <process.h>
+#ifdef ALREADY_EXISTS
+#undef ALREADY_EXISTS
+#endif
 #define getpid _getpid
 #else
-#include <unistd.h>
+#include "scratchbird/core/posix_compat.h"
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/file.h>

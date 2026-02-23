@@ -32,7 +32,7 @@
 #endif
 
 #ifndef _WIN32
-    #include <unistd.h>
+    #include "scratchbird/core/posix_compat.h"
     #include <poll.h>
     #include <fcntl.h>
 #endif
@@ -409,7 +409,7 @@ uint32_t toEpollEvents(EventType events) {
     uint32_t ep_events = 0;
     if (hasEvent(events, EventType::READ)) ep_events |= EPOLLIN;
     if (hasEvent(events, EventType::WRITE)) ep_events |= EPOLLOUT;
-    if (hasEvent(events, EventType::ERROR)) ep_events |= EPOLLERR;
+    if (hasEvent(events, EventType::ERROR_EVENT)) ep_events |= EPOLLERR;
     return ep_events;
 }
 
@@ -417,7 +417,7 @@ EventType fromEpollEvents(uint32_t ep_events) {
     EventType events = EventType::NONE;
     if (ep_events & EPOLLIN) events |= EventType::READ;
     if (ep_events & EPOLLOUT) events |= EventType::WRITE;
-    if (ep_events & EPOLLERR) events |= EventType::ERROR;
+    if (ep_events & EPOLLERR) events |= EventType::ERROR_EVENT;
     if (ep_events & EPOLLHUP) events |= EventType::HANGUP;
     return events;
 }
@@ -622,7 +622,7 @@ int KqueueEventLoop::pollPlatform(int timeout_ms, std::vector<EventData>& events
             ev_type |= EventType::HANGUP;
         }
         if (kq_events[i].flags & EV_ERROR) {
-            ev_type |= EventType::ERROR;
+            ev_type |= EventType::ERROR_EVENT;
         }
 
         events.emplace_back(static_cast<socket_t>(kq_events[i].ident), ev_type);
@@ -713,7 +713,7 @@ int PollEventLoop::pollPlatform(int timeout_ms, std::vector<EventData>& events) 
             EventType ev = EventType::NONE;
             if (FD_ISSET(fd, &read_fds)) ev |= EventType::READ;
             if (FD_ISSET(fd, &write_fds)) ev |= EventType::WRITE;
-            if (FD_ISSET(fd, &except_fds)) ev |= EventType::ERROR;
+            if (FD_ISSET(fd, &except_fds)) ev |= EventType::ERROR_EVENT;
 
             if (ev != EventType::NONE) {
                 events.emplace_back(fd, ev);
@@ -754,7 +754,7 @@ int PollEventLoop::pollPlatform(int timeout_ms, std::vector<EventData>& events) 
         EventType ev = EventType::NONE;
         if (pfd.revents & POLLIN) ev |= EventType::READ;
         if (pfd.revents & POLLOUT) ev |= EventType::WRITE;
-        if (pfd.revents & POLLERR) ev |= EventType::ERROR;
+        if (pfd.revents & POLLERR) ev |= EventType::ERROR_EVENT;
         if (pfd.revents & POLLHUP) ev |= EventType::HANGUP;
 
         events.emplace_back(pfd.fd, ev);

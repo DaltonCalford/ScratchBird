@@ -29,6 +29,7 @@
 #include "scratchbird/core/logger.h"
 #include "scratchbird/core/gpid.h"
 #include "scratchbird/core/index_params.h"
+#include "scratchbird/core/posix_compat.h"
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <array>

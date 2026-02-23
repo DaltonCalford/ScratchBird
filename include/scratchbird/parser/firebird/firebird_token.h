@@ -27,6 +27,12 @@
 #include <unordered_map>
 #include <optional>
 
+#if defined(_WIN32)
+#ifdef ERROR
+#undef ERROR
+#endif
+#endif
+
 namespace scratchbird::parser::firebird {
 
 /**

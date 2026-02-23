@@ -71,8 +71,10 @@ Decimal::Decimal(const std::string& str, uint8_t precision, uint8_t scale) {
     }
 }
 
+#if !(defined(_MSC_VER) && !defined(__clang__))
 Decimal::Decimal(int128_t unscaled_value, uint8_t precision, uint8_t scale)
     : value_(unscaled_value), precision_(precision), scale_(scale) {}
+#endif
 
 // ============================================================================
 // Arithmetic Operations

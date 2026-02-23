@@ -555,7 +555,7 @@ core::Status ProtocolCodec::parseAuthRequest(const Message& msg,
 Message ProtocolCodec::buildAuthResponse(bool success,
                                          uint32_t user_id,
                                          const std::string& error_message) {
-    return buildAuthResponse(success ? AuthStatus::OK : AuthStatus::ERROR,
+    return buildAuthResponse(success ? AuthStatus::OK : AuthStatus::FAILURE,
                              user_id,
                              error_message);
 }
@@ -565,7 +565,7 @@ core::Status ProtocolCodec::parseAuthResponse(const Message& msg,
                                               uint32_t& user_id,
                                               std::string& error_message,
                                               core::ErrorContext* ctx) {
-    AuthStatus status = AuthStatus::ERROR;
+    AuthStatus status = AuthStatus::FAILURE;
     auto parse_status = parseAuthResponse(msg, status, user_id, error_message, nullptr, ctx);
     if (parse_status != core::Status::OK) {
         return parse_status;
@@ -2507,11 +2507,11 @@ void generateSessionId(uint8_t session_id[16]) {
     // Use random_device + mt19937 for UUID v4
     std::random_device rd;
     std::mt19937_64 gen(rd());
-    std::uniform_int_distribution<uint8_t> dis(0, 255);
+    std::uniform_int_distribution<unsigned int> dis(0u, 255u);
 
     // Generate 16 random bytes
     for (int i = 0; i < 16; i++) {
-        session_id[i] = dis(gen);
+        session_id[i] = static_cast<uint8_t>(dis(gen));
     }
 
     // Set version (4) at byte 6: clear high nibble, set to 0100xxxx

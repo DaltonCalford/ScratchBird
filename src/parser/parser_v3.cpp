@@ -214,7 +214,7 @@ static bool parseUuidBytes(std::string_view s, scratchbird::parser::v3::U128& ou
     return true;
 }
 
-static bool parseUnsigned128(std::string_view s, unsigned __int128& out) {
+static bool parseUnsigned128(std::string_view s, scratchbird::core::uint128_t& out) {
     while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front()))) s.remove_prefix(1);
     while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) s.remove_suffix(1);
     if (s.empty()) return false;
@@ -226,8 +226,8 @@ static bool parseUnsigned128(std::string_view s, unsigned __int128& out) {
     }
     if (s.empty()) return false;
 
-    unsigned __int128 value = 0;
-    const unsigned __int128 maxv = ~static_cast<unsigned __int128>(0);
+    scratchbird::core::uint128_t value = 0;
+    const scratchbird::core::uint128_t maxv = ~static_cast<scratchbird::core::uint128_t>(0);
     for (char c : s) {
         int digit = -1;
         if (base == 10) {
@@ -238,16 +238,18 @@ static bool parseUnsigned128(std::string_view s, unsigned __int128& out) {
             else if (c >= 'A' && c <= 'F') digit = 10 + (c - 'A');
         }
         if (digit < 0 || digit >= base) return false;
-        if (value > (maxv - static_cast<unsigned __int128>(digit)) / static_cast<unsigned __int128>(base)) {
+        if (value > (maxv - static_cast<scratchbird::core::uint128_t>(digit)) /
+                        static_cast<scratchbird::core::uint128_t>(base)) {
             return false;
         }
-        value = value * static_cast<unsigned __int128>(base) + static_cast<unsigned __int128>(digit);
+        value = value * static_cast<scratchbird::core::uint128_t>(base) +
+                static_cast<scratchbird::core::uint128_t>(digit);
     }
     out = value;
     return true;
 }
 
-static bool parseSigned128(std::string_view s, unsigned __int128& out) {
+static bool parseSigned128(std::string_view s, scratchbird::core::uint128_t& out) {
     while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front()))) s.remove_prefix(1);
     while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) s.remove_suffix(1);
     if (s.empty()) return false;
@@ -256,13 +258,15 @@ static bool parseSigned128(std::string_view s, unsigned __int128& out) {
         neg = (s.front() == '-');
         s.remove_prefix(1);
     }
-    unsigned __int128 mag = 0;
+    scratchbird::core::uint128_t mag = 0;
     if (!parseUnsigned128(s, mag)) return false;
-    const unsigned __int128 max_pos = (static_cast<unsigned __int128>(1) << 127) - 1;
-    const unsigned __int128 max_neg = (static_cast<unsigned __int128>(1) << 127);
+    const scratchbird::core::uint128_t max_pos =
+        (static_cast<scratchbird::core::uint128_t>(1) << 127) - 1;
+    const scratchbird::core::uint128_t max_neg =
+        (static_cast<scratchbird::core::uint128_t>(1) << 127);
     if (neg) {
         if (mag > max_neg) return false;
-        unsigned __int128 val = (~mag) + 1;
+        scratchbird::core::uint128_t val = (~mag) + 1;
         out = val;
     } else {
         if (mag > max_pos) return false;
@@ -271,7 +275,7 @@ static bool parseSigned128(std::string_view s, unsigned __int128& out) {
     return true;
 }
 
-static void storeU128LE(unsigned __int128 value, scratchbird::parser::v3::U128& out) {
+static void storeU128LE(scratchbird::core::uint128_t value, scratchbird::parser::v3::U128& out) {
     for (size_t i = 0; i < out.size(); ++i) {
         out[i] = static_cast<uint8_t>(value & 0xFF);
         value >>= 8;
@@ -12121,7 +12125,7 @@ Expression* Parser::parsePrimaryExpr() {
         matchContextual("UINT128");
         auto* lit = arena_.create<LiteralUInt128Expr>();
         auto id = parseStringLiteralId();
-        unsigned __int128 v = 0;
+        scratchbird::core::uint128_t v = 0;
         if (parseUnsigned128(stringPool().get(id), v)) {
             storeU128LE(v, lit->value);
         }
@@ -12131,7 +12135,7 @@ Expression* Parser::parsePrimaryExpr() {
         matchContextual("INT128");
         auto* lit = arena_.create<LiteralInt128Expr>();
         auto id = parseStringLiteralId();
-        unsigned __int128 v = 0;
+        scratchbird::core::uint128_t v = 0;
         if (parseSigned128(stringPool().get(id), v)) {
             storeU128LE(v, lit->value);
         }

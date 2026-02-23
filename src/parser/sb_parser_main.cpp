@@ -43,7 +43,7 @@
 #include <windows.h>
 #include <winsock2.h>
 #else
-#include <unistd.h>
+#include "scratchbird/core/posix_compat.h"
 #endif
 
 #ifndef SB_PARSER_PROTOCOL
@@ -246,7 +246,7 @@ bool loadTLSSettings(const std::string& path,
     out.verify_depth = static_cast<int>(ssl->getInt("verify_depth", out.verify_depth));
 
     if (ssl->getBool("require_client_cert", false)) {
-        out.verify_mode = scratchbird::security::VerifyMode::REQUIRE;
+        out.verify_mode = scratchbird::security::VerifyMode::REQUIRE_MODE;
     }
 
     std::string min_proto = ssl->getString("min_protocol", "");

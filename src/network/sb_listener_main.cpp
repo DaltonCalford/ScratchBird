@@ -1012,7 +1012,7 @@ private:
                 handleHandoffAck(worker, msg);
             } else if (type == scratchbird::network::ControlPlaneMessageType::HEALTH_REPORT) {
                 handleHealthReport(worker, msg);
-            } else if (type == scratchbird::network::ControlPlaneMessageType::ERROR) {
+            } else if (type == scratchbird::network::ControlPlaneMessageType::ERROR_MESSAGE) {
                 markWorkerFault(worker, "error");
             }
         }

@@ -28,7 +28,6 @@
 #include "scratchbird/core/logger.h"
 #include "scratchbird/core/portable_file_io.h"
 #include <fcntl.h>
-#include <unistd.h>
 #include <cstring>
 #include <algorithm>
 

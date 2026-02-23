@@ -17,6 +17,7 @@
 
 #include "scratchbird/network/socket.h"
 #include "scratchbird/security/tls_config.h"
+#include "scratchbird/core/posix_compat.h"
 
 #include <cstring>
 #include <algorithm>
@@ -35,7 +36,6 @@
     #include <netinet/tcp.h>
     #include <arpa/inet.h>
     #include <netdb.h>
-    #include <unistd.h>
     #include <fcntl.h>
     #include <poll.h>
     #include <errno.h>

@@ -26,6 +26,7 @@
 #include <algorithm>
 #include <cctype>
 #include <chrono>
+#include <limits>
 #include <regex>
 
 namespace scratchbird::sblr
@@ -156,17 +157,91 @@ namespace scratchbird::sblr
     // ========================================================================
 
     namespace {
+        constexpr double kPi = 3.14159265358979323846;
+        constexpr int64_t kInt64Max = std::numeric_limits<int64_t>::max();
+        constexpr int64_t kInt64Min = std::numeric_limits<int64_t>::min();
+
         // Safe arithmetic operations using compiler intrinsics
         inline bool safeAdd(int64_t a, int64_t b, int64_t* result) {
+#if defined(__has_builtin)
+#if __has_builtin(__builtin_add_overflow)
             return !__builtin_add_overflow(a, b, result);
+#else
+            if ((b > 0 && a > kInt64Max - b) || (b < 0 && a < kInt64Min - b)) {
+                return false;
+            }
+            *result = a + b;
+            return true;
+#endif
+#elif defined(__GNUC__) || defined(__clang__)
+            return !__builtin_add_overflow(a, b, result);
+#else
+            if ((b > 0 && a > kInt64Max - b) || (b < 0 && a < kInt64Min - b)) {
+                return false;
+            }
+            *result = a + b;
+            return true;
+#endif
         }
 
         inline bool safeSubtract(int64_t a, int64_t b, int64_t* result) {
+#if defined(__has_builtin)
+#if __has_builtin(__builtin_sub_overflow)
             return !__builtin_sub_overflow(a, b, result);
+#else
+            if ((b < 0 && a > kInt64Max + b) || (b > 0 && a < kInt64Min + b)) {
+                return false;
+            }
+            *result = a - b;
+            return true;
+#endif
+#elif defined(__GNUC__) || defined(__clang__)
+            return !__builtin_sub_overflow(a, b, result);
+#else
+            if ((b < 0 && a > kInt64Max + b) || (b > 0 && a < kInt64Min + b)) {
+                return false;
+            }
+            *result = a - b;
+            return true;
+#endif
         }
 
         inline bool safeMultiply(int64_t a, int64_t b, int64_t* result) {
+#if defined(__has_builtin)
+#if __has_builtin(__builtin_mul_overflow)
             return !__builtin_mul_overflow(a, b, result);
+#else
+            if (a == 0 || b == 0) {
+                *result = 0;
+                return true;
+            }
+            if (a > 0) {
+                if (b > 0 && a > kInt64Max / b) return false;
+                if (b < 0 && b < kInt64Min / a) return false;
+            } else {
+                if (b > 0 && a < kInt64Min / b) return false;
+                if (b < 0 && a < kInt64Max / b) return false;
+            }
+            *result = a * b;
+            return true;
+#endif
+#elif defined(__GNUC__) || defined(__clang__)
+            return !__builtin_mul_overflow(a, b, result);
+#else
+            if (a == 0 || b == 0) {
+                *result = 0;
+                return true;
+            }
+            if (a > 0) {
+                if (b > 0 && a > kInt64Max / b) return false;
+                if (b < 0 && b < kInt64Min / a) return false;
+            } else {
+                if (b > 0 && a < kInt64Min / b) return false;
+                if (b < 0 && a < kInt64Max / b) return false;
+            }
+            *result = a * b;
+            return true;
+#endif
         }
 
         inline bool safeDivide(int64_t a, int64_t b, int64_t* result) {
@@ -174,7 +249,7 @@ namespace scratchbird::sblr
                 return false;
             }
             // Check for INT64_MIN / -1 overflow
-            if (a == INT64_MIN && b == -1) {
+            if (a == kInt64Min && b == -1) {
                 return false;
             }
             *result = a / b;
@@ -186,7 +261,7 @@ namespace scratchbird::sblr
                 return false;
             }
             // Check for INT64_MIN % -1 (which is also problematic on some platforms)
-            if (a == INT64_MIN && b == -1) {
+            if (a == kInt64Min && b == -1) {
                 *result = 0;
                 return true;
             }
@@ -196,7 +271,14 @@ namespace scratchbird::sblr
 
         template <typename T>
         inline bool safeAdd128(T a, T b, T* result) {
-#if defined(__GNUC__) || defined(__clang__)
+#if defined(__has_builtin)
+#if __has_builtin(__builtin_add_overflow)
+            return !__builtin_add_overflow(a, b, result);
+#else
+            *result = a + b;
+            return true;
+#endif
+#elif defined(__GNUC__) || defined(__clang__)
             return !__builtin_add_overflow(a, b, result);
 #else
             *result = a + b;
@@ -206,7 +288,14 @@ namespace scratchbird::sblr
 
         template <typename T>
         inline bool safeSubtract128(T a, T b, T* result) {
-#if defined(__GNUC__) || defined(__clang__)
+#if defined(__has_builtin)
+#if __has_builtin(__builtin_sub_overflow)
+            return !__builtin_sub_overflow(a, b, result);
+#else
+            *result = a - b;
+            return true;
+#endif
+#elif defined(__GNUC__) || defined(__clang__)
             return !__builtin_sub_overflow(a, b, result);
 #else
             *result = a - b;
@@ -216,7 +305,14 @@ namespace scratchbird::sblr
 
         template <typename T>
         inline bool safeMultiply128(T a, T b, T* result) {
-#if defined(__GNUC__) || defined(__clang__)
+#if defined(__has_builtin)
+#if __has_builtin(__builtin_mul_overflow)
+            return !__builtin_mul_overflow(a, b, result);
+#else
+            *result = a * b;
+            return true;
+#endif
+#elif defined(__GNUC__) || defined(__clang__)
             return !__builtin_mul_overflow(a, b, result);
 #else
             *result = a * b;

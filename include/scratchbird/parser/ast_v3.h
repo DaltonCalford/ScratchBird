@@ -36,6 +36,42 @@
 #include <type_traits>
 #include <array>
 
+#if defined(_WIN32)
+#ifdef ERROR
+#undef ERROR
+#endif
+#ifdef IN
+#undef IN
+#endif
+#ifdef OUT
+#undef OUT
+#endif
+#ifdef ABSOLUTE
+#undef ABSOLUTE
+#endif
+#ifdef RELATIVE
+#undef RELATIVE
+#endif
+#ifdef DELETE
+#undef DELETE
+#endif
+#ifdef CONNECT
+#undef CONNECT
+#endif
+#ifdef DISCONNECT
+#undef DISCONNECT
+#endif
+#ifdef TRANSACTION_START
+#undef TRANSACTION_START
+#endif
+#ifdef TRANSACTION_COMMIT
+#undef TRANSACTION_COMMIT
+#endif
+#ifdef TRANSACTION_ROLLBACK
+#undef TRANSACTION_ROLLBACK
+#endif
+#endif
+
 namespace scratchbird::parser::v3 {
 
 // Import shared types from parser namespace
@@ -1201,6 +1237,10 @@ public:
  * DDL object types for rename/move statements.
  * Values align with core::CatalogManager::ObjectType.
  */
+#ifdef DOMAIN
+// Windows headers may define DOMAIN as a macro; keep enum value stable.
+#undef DOMAIN
+#endif
 enum class DdlObjectType : uint8_t {
     SCHEMA = 0,
     TABLE = 1,

@@ -8,12 +8,18 @@
 #include "scratchbird/udr/firebird_udr.h"
 
 #include <cstring>
-#include <arpa/inet.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <netinet/tcp.h>
-#include <netdb.h>
-#include <unistd.h>
+#ifdef _WIN32
+    #include <winsock2.h>
+    #include <ws2tcpip.h>
+#else
+    #include <arpa/inet.h>
+    #include <sys/socket.h>
+    #include <netinet/in.h>
+    #include <netinet/tcp.h>
+    #include <netdb.h>
+#endif
+#include "scratchbird/core/posix_compat.h"
+#include "scratchbird/core/socket_call_compat.h"
 #include <fcntl.h>
 
 namespace scratchbird {
@@ -184,8 +190,8 @@ core::Status FirebirdConnection::ping(core::ErrorContext* ctx) {
     // Use op_info_database with minimal request as ping
     // For simplicity, just check socket is valid
     int error = 0;
-    socklen_t len = sizeof(error);
-    int retval = getsockopt(socket_fd_, SOL_SOCKET, SO_ERROR, &error, &len);
+    int len = static_cast<int>(sizeof(error));
+    int retval = sb_socket_getsockopt(socket_fd_, SOL_SOCKET, SO_ERROR, &error, &len);
     if (retval < 0 || error != 0) {
         if (ctx) {
             ctx->set(core::Status::CONNECTION_FAILURE, "Socket error",

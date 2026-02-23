@@ -33,6 +33,7 @@
 #include "scratchbird/core/index_factory.h"  // LSM Integration Phase 3: Index factory
 #include "scratchbird/core/config.h"
 #include "scratchbird/core/vnext_metrics_event_model.h"
+#include "scratchbird/core/posix_compat.h"
 #include <cstring>
 #include "scratchbird/core/toast.h"       // Phase 5 Task 5.1.3: TOAST migration
 #include <algorithm>

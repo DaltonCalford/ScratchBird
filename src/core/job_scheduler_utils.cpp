@@ -20,6 +20,14 @@ namespace scratchbird::core::detail {
 
 namespace {
 
+bool utcTimeFromEpoch(time_t value, std::tm& tm_out) {
+#ifdef _WIN32
+    return gmtime_s(&tm_out, &value) == 0;
+#else
+    return gmtime_r(&value, &tm_out) != nullptr;
+#endif
+}
+
 std::vector<std::string> split(const std::string& input, char delim) {
     std::vector<std::string> out;
     std::stringstream ss(input);
