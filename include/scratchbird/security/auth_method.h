@@ -33,6 +33,12 @@
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"
 
+#ifdef _WIN32
+    #ifdef ERROR
+        #undef ERROR
+    #endif
+#endif
+
 namespace scratchbird {
 namespace security {
 
