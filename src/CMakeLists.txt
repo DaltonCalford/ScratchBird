@@ -572,6 +572,9 @@ target_include_directories(scratchbird_udr PUBLIC
 # Thread support for connection pool
 find_package(Threads REQUIRED)
 target_link_libraries(scratchbird_udr PUBLIC Threads::Threads scratchbird_core)
+if(WIN32)
+    target_link_libraries(scratchbird_udr PUBLIC ws2_32)
+endif()
 
 set_target_properties(scratchbird_udr PROPERTIES
     CXX_STANDARD 17
