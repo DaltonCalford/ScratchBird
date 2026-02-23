@@ -31,6 +31,24 @@
 #include "scratchbird/core/types.h"
 #include "scratchbird/core/tablespace.h"
 
+#if defined(_WIN32)
+#ifdef ERROR
+#undef ERROR
+#endif
+#ifdef IN
+#undef IN
+#endif
+#ifdef OUT
+#undef OUT
+#endif
+#ifdef ABSOLUTE
+#undef ABSOLUTE
+#endif
+#ifdef RELATIVE
+#undef RELATIVE
+#endif
+#endif
+
 namespace scratchbird::core
 {
 

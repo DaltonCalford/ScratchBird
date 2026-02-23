@@ -36,6 +36,24 @@
 #include <type_traits>
 #include <array>
 
+#if defined(_WIN32)
+#ifdef ERROR
+#undef ERROR
+#endif
+#ifdef IN
+#undef IN
+#endif
+#ifdef OUT
+#undef OUT
+#endif
+#ifdef ABSOLUTE
+#undef ABSOLUTE
+#endif
+#ifdef RELATIVE
+#undef RELATIVE
+#endif
+#endif
+
 namespace scratchbird::parser::v3 {
 
 // Import shared types from parser namespace
