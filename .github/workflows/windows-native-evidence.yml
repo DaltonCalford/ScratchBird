@@ -44,6 +44,9 @@ jobs:
         run: |
           New-Item -ItemType Directory -Force -Path "artifacts/cross_os/p6s3w1" | Out-Null
           $logPath = "artifacts/cross_os/p6s3w1/xos-058-windows-portable-suite.log"
+          $vcpkgBin = (Resolve-Path "build/windows-msvc/vcpkg_installed/x64-windows/bin").Path
+          $vcpkgDebugBin = (Resolve-Path "build/windows-msvc/vcpkg_installed/x64-windows/debug/bin").Path
+          $env:PATH = "$vcpkgBin;$vcpkgDebugBin;$env:PATH"
           ctest --test-dir build/windows-msvc -C Debug -L "smoke|unit|integration" -E "quarantine|UnixSocketTest\\.|TSAN_" -LE "linux_only|disabled|stress|performance|tsan" --output-on-failure 2>&1 | Tee-Object -FilePath $logPath
           if ($LASTEXITCODE -ne 0) {
             exit $LASTEXITCODE
@@ -63,6 +66,9 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path "artifacts/cross_os/p6s3w2" | Out-Null
+          $vcpkgBin = (Resolve-Path "build/windows-msvc/vcpkg_installed/x64-windows/bin").Path
+          $vcpkgDebugBin = (Resolve-Path "build/windows-msvc/vcpkg_installed/x64-windows/debug/bin").Path
+          $env:PATH = "$vcpkgBin;$vcpkgDebugBin;$env:PATH"
 
           $candidateNames = @(
             "BTreePageTest.Initialization",

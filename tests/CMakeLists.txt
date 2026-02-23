@@ -87,6 +87,15 @@ if(WIN32)
         scratchbird_link_group
     )
 
+    # Ensure ctest/gtest discovery can launch on Windows runners by staging
+    # all runtime DLL dependencies beside scratchbird_tests.exe.
+    add_custom_command(TARGET scratchbird_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:scratchbird_tests>
+            $<TARGET_FILE_DIR:scratchbird_tests>
+        COMMAND_EXPAND_LISTS
+    )
+
     if(GEOS_FOUND)
         target_link_libraries(scratchbird_tests ${GEOS_LIBRARIES})
     endif()
@@ -258,6 +267,16 @@ target_link_libraries(scratchbird_tests
     scratchbird_parser
     scratchbird_link_group
 )
+
+if(WIN32)
+    # Stage runtime DLL dependencies for ctest execution on Windows.
+    add_custom_command(TARGET scratchbird_tests POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+            $<TARGET_RUNTIME_DLLS:scratchbird_tests>
+            $<TARGET_FILE_DIR:scratchbird_tests>
+        COMMAND_EXPAND_LISTS
+    )
+endif()
 
 # Link GEOS library if available (for spatial functions)
 if(GEOS_FOUND)
