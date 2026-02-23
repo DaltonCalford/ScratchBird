@@ -89,9 +89,9 @@ core::Status PIDFile::create(const std::string& path, bool create_dir,
     if (isLocked(path, &existing_pid)) {
         if (ctx) {
             const std::string msg = "Server already running (PID " + std::to_string(existing_pid) + ")";
-            SET_ERROR_CONTEXT(ctx, core::Status::ALREADY_EXISTS, msg.c_str());
+            SET_ERROR_CONTEXT(ctx, core::Status::FILE_EXISTS, msg.c_str());
         }
-        return core::Status::ALREADY_EXISTS;
+        return core::Status::FILE_EXISTS;
     }
 
     // Write PID file
