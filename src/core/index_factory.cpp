@@ -487,7 +487,7 @@ Status IndexFactory::createIndex(
             }
             if (!index_dir.empty())
             {
-                if (mkdir(index_dir.c_str(), 0755) != 0 && errno != EEXIST)
+                if (sb_mkdir(index_dir.c_str(), 0755) != 0 && errno != EEXIST)
                 {
                     std::string error_msg = "Failed to create LSM-Tree directory: " +
                         std::string(strerror(errno));
@@ -497,7 +497,7 @@ Status IndexFactory::createIndex(
             }
 
             // Create directory for LSM-Tree index data
-            if (mkdir(index_path.c_str(), 0755) != 0 && errno != EEXIST)
+            if (sb_mkdir(index_path.c_str(), 0755) != 0 && errno != EEXIST)
             {
                 std::string error_msg = "Failed to create LSM-Tree directory: " + std::string(strerror(errno));
                 SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, error_msg.c_str());

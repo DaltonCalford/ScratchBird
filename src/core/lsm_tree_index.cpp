@@ -133,7 +133,7 @@ LSMTreeIndex::~LSMTreeIndex()
 Status LSMTreeIndex::create(ErrorContext *ctx)
 {
     // Create index directory
-    if (mkdir(index_path_.c_str(), 0755) != 0 && errno != EEXIST)
+    if (sb_mkdir(index_path_.c_str(), 0755) != 0 && errno != EEXIST)
     {
         SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
                          ("Failed to create index directory: " + index_path_).c_str());
@@ -144,7 +144,7 @@ Status LSMTreeIndex::create(ErrorContext *ctx)
     for (uint32_t level = 0; level < 4; level++)
     {
         std::string level_path = index_path_ + "/level" + std::to_string(level);
-        if (mkdir(level_path.c_str(), 0755) != 0 && errno != EEXIST)
+        if (sb_mkdir(level_path.c_str(), 0755) != 0 && errno != EEXIST)
         {
             SET_ERROR_CONTEXT(ctx, Status::IO_ERROR,
                              ("Failed to create level directory: " + level_path).c_str());
