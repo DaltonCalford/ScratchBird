@@ -37,6 +37,16 @@ endif()
 set(CMAKE_CXX_FLAGS_DEBUG "-g -O0")
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG")
 
+if(WIN32)
+    # Normalize Win32 headers and remove ERROR macro collisions with enum values.
+    add_compile_definitions(NOMINMAX WIN32_LEAN_AND_MEAN)
+    if(MSVC)
+        add_compile_options(/UERROR)
+    else()
+        add_compile_options(-UERROR)
+    endif()
+endif()
+
 # Enable CTest registration
 include(CTest)
 enable_testing()

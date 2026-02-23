@@ -24,27 +24,6 @@
 namespace
 {
 #ifdef _WIN32
-    constexpr int PTHREAD_PROCESS_SHARED = 0;
-
-    inline auto pthread_rwlockattr_init(pthread_rwlockattr_t*) -> int { return 0; }
-    inline auto pthread_rwlockattr_setpshared(pthread_rwlockattr_t*, int) -> int { return 0; }
-    inline auto pthread_rwlockattr_destroy(pthread_rwlockattr_t*) -> int { return 0; }
-
-    inline auto pthread_rwlock_init(pthread_rwlock_t*, const pthread_rwlockattr_t*) -> int { return 0; }
-    inline auto pthread_rwlock_destroy(pthread_rwlock_t*) -> int { return 0; }
-    inline auto pthread_rwlock_rdlock(pthread_rwlock_t*) -> int { return 0; }
-    inline auto pthread_rwlock_wrlock(pthread_rwlock_t*) -> int { return 0; }
-    inline auto pthread_rwlock_unlock(pthread_rwlock_t*) -> int { return 0; }
-
-    inline auto pthread_mutexattr_init(pthread_mutexattr_t*) -> int { return 0; }
-    inline auto pthread_mutexattr_setpshared(pthread_mutexattr_t*, int) -> int { return 0; }
-    inline auto pthread_mutexattr_destroy(pthread_mutexattr_t*) -> int { return 0; }
-
-    inline auto pthread_mutex_init(pthread_mutex_t*, const pthread_mutexattr_t*) -> int { return 0; }
-    inline auto pthread_mutex_destroy(pthread_mutex_t*) -> int { return 0; }
-    inline auto pthread_mutex_lock(pthread_mutex_t*) -> int { return 0; }
-    inline auto pthread_mutex_unlock(pthread_mutex_t*) -> int { return 0; }
-
     inline auto allocateProcArrayMemory(size_t total_size) -> void*
     {
         return std::malloc(total_size);

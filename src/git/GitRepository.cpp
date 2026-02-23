@@ -14,12 +14,17 @@
  */
 
 #include "scratchbird/git/GitRepository.h"
+#include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <sstream>
 #include <iomanip>
 #include <ctime>
 #include <openssl/sha.h>
+#ifndef _WIN32
+    #include <sys/wait.h>
+#endif
 
 // Note: In production, this would use libgit2
 // For now, we implement using git CLI commands as a fallback
@@ -28,6 +33,42 @@ namespace scratchbird {
 namespace git {
 
 namespace fs = std::filesystem;
+
+namespace {
+#ifdef _WIN32
+inline auto runPipeOpen(const char* command, const char* mode) -> FILE* {
+    return _popen(command, mode);
+}
+
+inline auto runPipeClose(FILE* pipe) -> int {
+    return _pclose(pipe);
+}
+
+inline auto didCommandSucceed(int status) -> bool {
+    return status == 0;
+}
+
+inline auto setEnvironmentValue(const char* key, const char* value) -> void {
+    (void)_putenv_s(key, value);
+}
+#else
+inline auto runPipeOpen(const char* command, const char* mode) -> FILE* {
+    return popen(command, mode);
+}
+
+inline auto runPipeClose(FILE* pipe) -> int {
+    return pclose(pipe);
+}
+
+inline auto didCommandSucceed(int status) -> bool {
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
+inline auto setEnvironmentValue(const char* key, const char* value) -> void {
+    setenv(key, value, 1);
+}
+#endif
+} // namespace
 
 //=============================================================================
 // Implementation Details
@@ -50,7 +91,7 @@ struct GitRepository::Impl {
         }
         cmd += " " + args + " 2>&1";
 
-        FILE* pipe = popen(cmd.c_str(), "r");
+        FILE* pipe = runPipeOpen(cmd.c_str(), "r");
         if (!pipe) {
             return {false, "Failed to execute git command"};
         }
@@ -61,8 +102,8 @@ struct GitRepository::Impl {
             result += buffer;
         }
 
-        int status = pclose(pipe);
-        bool success = (WIFEXITED(status) && WEXITSTATUS(status) == 0);
+        int status = runPipeClose(pipe);
+        bool success = didCommandSucceed(status);
 
         return {success, result};
     }
@@ -1029,7 +1070,7 @@ bool GitRepository::setupCredentials() {
         if (!config_.ssh_passphrase.empty()) {
             // Note: passphrase handling is more complex in practice
         }
-        setenv("GIT_SSH_COMMAND", ssh_cmd.c_str(), 1);
+        setEnvironmentValue("GIT_SSH_COMMAND", ssh_cmd.c_str());
     }
 
     // For username/password

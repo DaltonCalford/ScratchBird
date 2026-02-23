@@ -24,6 +24,7 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cstddef>
 #include <limits>
 #include <sstream>
 #include <string_view>
@@ -1863,8 +1864,15 @@ namespace scratchbird::core
         uint32_t free_offset;
         uint32_t next_page;
         uint32_t reserved;
+    #ifdef _MSC_VER
+        uint8_t data[1];
+    #else
         uint8_t data[];
+    #endif
     };
+
+    constexpr uint32_t kDomainCatalogPageHeaderSize =
+        static_cast<uint32_t>(offsetof(DomainCatalogPage, data));
 
     DomainManager::DomainManager(Database* db)
         : db_(db),
@@ -1934,12 +1942,12 @@ namespace scratchbird::core
             catalog_page->header.checksum = 0;
             catalog_page->header.flags = 0;
             catalog_page->header.lsn = 0;
-            pageSetLower(catalog_page->header, sizeof(DomainCatalogPage));
+            pageSetLower(catalog_page->header, kDomainCatalogPageHeaderSize);
             pageSetUpper(catalog_page->header, db_->page_size());
             pageSetSpecial(catalog_page->header, db_->page_size());
 
             catalog_page->record_count = 0;
-            catalog_page->free_offset = sizeof(DomainCatalogPage);
+            catalog_page->free_offset = kDomainCatalogPageHeaderSize;
             catalog_page->next_page = 0;
             catalog_page->reserved = 0;
         }
@@ -5427,7 +5435,7 @@ namespace scratchbird::core
             }
 
             const uint32_t capacity =
-                (db_->page_size() - sizeof(DomainCatalogPage)) / sizeof(DomainRecord);
+                (db_->page_size() - kDomainCatalogPageHeaderSize) / sizeof(DomainRecord);
 
             if (catalog_page->record_count < capacity)
             {
@@ -5460,11 +5468,11 @@ namespace scratchbird::core
                 new_page->header.checksum = 0;
                 new_page->header.flags = 0;
                 new_page->header.lsn = 0;
-                pageSetLower(new_page->header, sizeof(DomainCatalogPage));
+                pageSetLower(new_page->header, kDomainCatalogPageHeaderSize);
                 pageSetUpper(new_page->header, db_->page_size());
                 pageSetSpecial(new_page->header, db_->page_size());
                 new_page->record_count = 0;
-                new_page->free_offset = sizeof(DomainCatalogPage);
+                new_page->free_offset = kDomainCatalogPageHeaderSize;
                 new_page->next_page = 0;
                 new_page->reserved = 0;
 
