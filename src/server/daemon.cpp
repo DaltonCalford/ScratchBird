@@ -26,6 +26,9 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <process.h>
+#ifdef ALREADY_EXISTS
+#undef ALREADY_EXISTS
+#endif
 #define getpid _getpid
 #else
 #include "scratchbird/core/posix_compat.h"
@@ -85,8 +88,8 @@ core::Status PIDFile::create(const std::string& path, bool create_dir,
     pid_t existing_pid;
     if (isLocked(path, &existing_pid)) {
         if (ctx) {
-            SET_ERROR_CONTEXT(ctx, core::Status::ALREADY_EXISTS,
-                             "Server already running (PID " + std::to_string(existing_pid) + ")");
+            const std::string msg = "Server already running (PID " + std::to_string(existing_pid) + ")";
+            SET_ERROR_CONTEXT(ctx, core::Status::ALREADY_EXISTS, msg.c_str());
         }
         return core::Status::ALREADY_EXISTS;
     }
@@ -95,8 +98,8 @@ core::Status PIDFile::create(const std::string& path, bool create_dir,
     std::ofstream file(path);
     if (!file) {
         if (ctx) {
-            SET_ERROR_CONTEXT(ctx, core::Status::IO_ERROR,
-                             "Failed to create PID file: " + path);
+            const std::string msg = "Failed to create PID file: " + path;
+            SET_ERROR_CONTEXT(ctx, core::Status::IO_ERROR, msg.c_str());
         }
         return core::Status::IO_ERROR;
     }
