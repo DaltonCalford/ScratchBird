@@ -631,6 +631,11 @@ message(STATUS "IPC library: scratchbird_ipc (IPC Contract v1.1 + SBWP Server)")
 file(GLOB SCRATCHBIRD_TESTING_SOURCES
     testing/*.cpp
 )
+if(WIN32)
+    # POSIX socket-only testers are excluded from native Windows evidence builds.
+    list(FILTER SCRATCHBIRD_TESTING_SOURCES EXCLUDE REGEX ".*/AuthTester\\.cpp$")
+    list(FILTER SCRATCHBIRD_TESTING_SOURCES EXCLUDE REGEX ".*/ProtocolTester\\.cpp$")
+endif()
 
 add_library(scratchbird_testing STATIC
     ${SCRATCHBIRD_TESTING_SOURCES}
