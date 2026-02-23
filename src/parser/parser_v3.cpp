@@ -8104,6 +8104,9 @@ Statement* Parser::parseDrop() {
     if (matchContextual("CUBE")) {
         return parseDropCubeControl();
     }
+    if (matchContextual("COMMENT")) {
+        return parseDropComment();
+    }
 
     if (matchContextual("SCHEMA")) return parseDropSchema();
     if (matchContextual("DATABASE")) {
@@ -13998,22 +14001,57 @@ ShowStmt* Parser::parseShow() {
     SourceLocation start = currentLocation();
     auto* stmt = arena_.create<ShowStmt>();
 
-    // Helper to parse optional LIKE clause
+    auto parsePathString = [&](const char* message) -> StringPool::StringId {
+        if (!canStartSchemaPath(state_)) {
+            error(message);
+            return StringPool::INVALID_ID;
+        }
+        SchemaPath path = parseSchemaPath(state_);
+        return stringPool().intern(schemaPathToString(path, stringPool()));
+    };
+
+    auto parseLikeValue = [&]() {
+        if (check(TokenType::STRING_LITERAL) || check(TokenType::IDENTIFIER)) {
+            stmt->like_pattern = current().value.string_id;
+            advance();
+            return;
+        }
+        error("Expected pattern after LIKE");
+    };
+
     auto parseLikeClause = [&]() {
         if (match(TokenType::KW_LIKE)) {
-            if (check(TokenType::STRING_LITERAL)) {
-                stmt->like_pattern = current().value.string_id;
-                advance();
-            } else {
-                error("Expected string pattern after LIKE");
-            }
+            parseLikeValue();
         }
     };
 
-    // Helper to parse optional FROM clause
-    auto parseFromClause = [&]() {
-        if (match(TokenType::KW_FROM)) {
-            stmt->from_name = expectIdentifier("Expected name after FROM");
+    // Optional scope clause for canonical surface. Both IN and FROM are accepted.
+    auto parseScopeClause = [&]() {
+        if (match(TokenType::KW_IN) || match(TokenType::KW_FROM)) {
+            stmt->from_name = parsePathString("Expected schema/object path after IN/FROM");
+        }
+    };
+
+    auto parseRecursiveClause = [&]() {
+        if (!match(TokenType::KW_WITH)) {
+            return;
+        }
+        expectContextual("RECURSIVE", "Expected RECURSIVE after WITH");
+        stmt->recursive = true;
+        stmt->max_depth = 1;  // Contract default when WITH RECURSIVE has no explicit depth.
+        if (matchContextual("MAX")) {
+            expectContextual("DEPTH", "Expected DEPTH after MAX");
+            if (!check(TokenType::INTEGER_LITERAL)) {
+                error("Expected integer after MAX DEPTH");
+                return;
+            }
+            int64_t depth = current().value.int_value;
+            advance();
+            if (depth < 1) {
+                error("WITH RECURSIVE MAX DEPTH requires n >= 1");
+                return;
+            }
+            stmt->max_depth = static_cast<uint32_t>(depth);
         }
     };
 
@@ -14035,9 +14073,99 @@ ShowStmt* Parser::parseShow() {
         return stringPool().intern(name);
     };
 
+    auto setUnifiedType = [&](const char* object_type) {
+        stmt->unified_metadata = true;
+        stmt->metadata_object_type = stringPool().intern(object_type);
+    };
+
+    auto matchUnifiedObjectType = [&](std::string& object_type) -> bool {
+        struct Entry {
+            const char* singular;
+            const char* plural;
+            const char* canonical;
+        };
+        static const Entry kEntries[] = {
+            {"SCHEMA", "SCHEMAS", "SCHEMA"},
+            {"TABLE", "TABLES", "TABLE"},
+            {"VIEW", "VIEWS", "VIEW"},
+            {"COLUMN", "COLUMNS", "COLUMN"},
+            {"INDEX", "INDEXES", "INDEX"},
+            {"SEQUENCE", "SEQUENCES", "SEQUENCE"},
+            {"GENERATOR", "GENERATORS", "SEQUENCE"},
+            {"DOMAIN", "DOMAINS", "DOMAIN"},
+            {"FUNCTION", "FUNCTIONS", "FUNCTION"},
+            {"PROCEDURE", "PROCEDURES", "PROCEDURE"},
+            {"TRIGGER", "TRIGGERS", "TRIGGER"},
+            {"PACKAGE", "PACKAGES", "PACKAGE"},
+            {"ROLE", "ROLES", "ROLE"},
+            {"DATABASE", "DATABASES", "DATABASE"},
+            {"USER", "USERS", "USER"},
+            {"GROUP", "GROUPS", "GROUP"},
+            {"TYPE", "TYPES", "TYPE"},
+            {"SERVER", "SERVERS", "SERVER"},
+            {"TABLESPACE", "TABLESPACES", "TABLESPACE"},
+            {"POLICY", "POLICIES", "POLICY"},
+            {"JOB", "JOBS", "JOB"},
+        };
+
+        for (const auto& entry : kEntries) {
+            if (matchContextual(entry.singular) || matchContextual(entry.plural)) {
+                object_type = entry.canonical;
+                return true;
+            }
+        }
+        return false;
+    };
+
+    // Canonical prefix form:
+    // SHOW [IN|FROM <path>] <object_type> ...
+    if (check(TokenType::KW_IN) || check(TokenType::KW_FROM)) {
+        parseScopeClause();
+        std::string object_type;
+        if (matchContextual("ALL")) {
+            object_type = "ALL";
+        } else if (!matchUnifiedObjectType(object_type)) {
+            error("Expected object type after SHOW IN/FROM <path>");
+            stmt->span = makeSpan(start);
+            return stmt;
+        }
+
+        stmt->show_type = ShowStmt::ShowType::OBJECTS;
+        setUnifiedType(object_type.c_str());
+
+        if (match(TokenType::KW_LIKE)) {
+            parseLikeValue();
+        } else if (check(TokenType::IDENTIFIER) || check(TokenType::STRING_LITERAL)) {
+            stmt->name = current().value.string_id;
+            advance();
+        }
+        parseRecursiveClause();
+
+        stmt->span = makeSpan(start);
+        return stmt;
+    }
+
     // SHOW ALL
     if (matchContextual("ALL")) {
-        stmt->show_type = ShowStmt::ShowType::ALL;
+        // Canonical variant:
+        // SHOW ALL [IN|FROM <path>] [<name> | LIKE <pattern>] [WITH RECURSIVE ...]
+        if (check(TokenType::KW_IN) || check(TokenType::KW_FROM) || check(TokenType::KW_LIKE) ||
+            check(TokenType::IDENTIFIER) || check(TokenType::STRING_LITERAL) ||
+            check(TokenType::KW_WITH)) {
+            stmt->show_type = ShowStmt::ShowType::OBJECTS;
+            setUnifiedType("ALL");
+            parseScopeClause();
+            if (match(TokenType::KW_LIKE)) {
+                parseLikeValue();
+            } else if (check(TokenType::IDENTIFIER) || check(TokenType::STRING_LITERAL)) {
+                stmt->name = current().value.string_id;
+                advance();
+            }
+            parseRecursiveClause();
+        } else {
+            stmt->show_type = ShowStmt::ShowType::ALL;
+            setUnifiedType("ALL");
+        }
     }
     // SHOW TRANSACTION ISOLATION LEVEL
     else if (matchContextual("TRANSACTION")) {
@@ -14048,29 +14176,40 @@ ShowStmt* Parser::parseShow() {
     // SHOW TABLES [FROM db] [LIKE pattern]
     else if (matchContextual("TABLES")) {
         stmt->show_type = ShowStmt::ShowType::TABLES;
-        parseFromClause();
+        setUnifiedType("TABLE");
+        parseScopeClause();
         parseLikeClause();
+        parseRecursiveClause();
     }
     // SHOW DATABASES [LIKE pattern]
     else if (matchContextual("DATABASES")) {
         stmt->show_type = ShowStmt::ShowType::DATABASES;
+        setUnifiedType("DATABASE");
+        parseScopeClause();
         parseLikeClause();
+        parseRecursiveClause();
     }
     // SHOW COLUMNS FROM table [LIKE pattern]
     else if (matchContextual("COLUMNS")) {
         stmt->show_type = ShowStmt::ShowType::COLUMNS;
-        expect(TokenType::KW_FROM, "Expected FROM after COLUMNS");
-        stmt->from_name = expectIdentifier("Expected table name after FROM");
+        setUnifiedType("COLUMN");
+        if (check(TokenType::KW_IN) || check(TokenType::KW_FROM)) {
+            parseScopeClause();
+        } else {
+            expect(TokenType::KW_FROM, "Expected FROM/IN after COLUMNS");
+            stmt->from_name = parsePathString("Expected table path after FROM");
+        }
         parseLikeClause();
+        parseRecursiveClause();
     }
     // SHOW INDEX... family
     else if (matchContextual("INDEXES")) {
         stmt->show_type = ShowStmt::ShowType::INDEXES;
-        if (check(TokenType::KW_FROM)) {
-            advance();  // consume FROM
-            stmt->from_name = expectIdentifier("Expected table name after FROM");
-        }
+        setUnifiedType("INDEX");
+        parseScopeClause();
+        parseRecursiveClause();
     } else if (matchContextual("INDEX")) {
+        setUnifiedType("INDEX");
         if (matchContextual("HEALTH")) {
             stmt->show_type = ShowStmt::ShowType::INDEX_HEALTH;
             stmt->name = expectIdentifier("Expected index name after SHOW INDEX HEALTH");
@@ -14086,10 +14225,9 @@ ShowStmt* Parser::parseShow() {
         } else if (matchContextual("OPTIONS")) {
             stmt->show_type = ShowStmt::ShowType::INDEX_OPTIONS;
             stmt->name = expectIdentifier("Expected index name after SHOW INDEX OPTIONS");
-        } else if (check(TokenType::KW_FROM)) {
+        } else if (check(TokenType::KW_FROM) || check(TokenType::KW_IN)) {
             stmt->show_type = ShowStmt::ShowType::INDEXES;
-            advance();  // consume FROM
-            stmt->from_name = expectIdentifier("Expected table name after FROM");
+            parseScopeClause();
         } else if (check(TokenType::IDENTIFIER) || check(TokenType::STRING_LITERAL)) {
             // SHOW INDEX name - Firebird style
             stmt->show_type = ShowStmt::ShowType::INDEX;
@@ -14098,6 +14236,7 @@ ShowStmt* Parser::parseShow() {
             // SHOW INDEX (list all)
             stmt->show_type = ShowStmt::ShowType::INDEXES;
         }
+        parseRecursiveClause();
     }
     // SHOW CREATE TABLE name
     else if (match(TokenType::KW_CREATE) || matchContextual("CREATE")) {
@@ -14107,69 +14246,96 @@ ShowStmt* Parser::parseShow() {
     }
     // SHOW TABLE name - Firebird style detailed table info
     else if (matchContextual("TABLE")) {
+        setUnifiedType("TABLE");
+        parseScopeClause();
         if (check(TokenType::IDENTIFIER)) {
             stmt->show_type = ShowStmt::ShowType::TABLE;
             stmt->name = expectIdentifier("Expected table name");
         } else {
             stmt->show_type = ShowStmt::ShowType::TABLES;
         }
+        parseRecursiveClause();
     }
     // SHOW TRIGGER name
     else if (matchContextual("TRIGGER") || matchContextual("TRIGGERS")) {
         stmt->show_type = ShowStmt::ShowType::TRIGGER;
+        setUnifiedType("TRIGGER");
+        parseScopeClause();
         if (check(TokenType::IDENTIFIER)) {
             stmt->name = expectIdentifier("Expected trigger name");
         }
+        parseRecursiveClause();
     }
     // SHOW VIEW name
     else if (matchContextual("VIEW") || matchContextual("VIEWS")) {
         stmt->show_type = ShowStmt::ShowType::VIEW;
+        setUnifiedType("VIEW");
+        parseScopeClause();
         if (check(TokenType::IDENTIFIER)) {
             stmt->name = expectIdentifier("Expected view name");
         }
+        parseRecursiveClause();
     }
     // SHOW PROCEDURE name
     else if (matchContextual("PROCEDURE") || matchContextual("PROCEDURES")) {
         stmt->show_type = ShowStmt::ShowType::PROCEDURE;
+        setUnifiedType("PROCEDURE");
+        parseScopeClause();
         if (check(TokenType::IDENTIFIER)) {
             stmt->name = expectIdentifier("Expected procedure name");
         }
+        parseRecursiveClause();
     }
     // SHOW FUNCTION name
     else if (matchContextual("FUNCTION") || matchContextual("FUNCTIONS")) {
         stmt->show_type = ShowStmt::ShowType::FUNCTION;
+        setUnifiedType("FUNCTION");
+        parseScopeClause();
         if (check(TokenType::IDENTIFIER)) {
             stmt->name = expectIdentifier("Expected function name");
         }
+        parseRecursiveClause();
     }
     // SHOW DOMAIN name
     else if (matchContextual("DOMAIN") || matchContextual("DOMAINS")) {
         stmt->show_type = ShowStmt::ShowType::DOMAIN;
+        setUnifiedType("DOMAIN");
+        parseScopeClause();
         if (check(TokenType::IDENTIFIER)) {
             stmt->name = expectIdentifier("Expected domain name");
         }
+        parseRecursiveClause();
     }
     // SHOW GENERATOR/SEQUENCE name
     else if (matchContextual("GENERATOR") || matchContextual("GENERATORS") ||
              matchContextual("SEQUENCE") || matchContextual("SEQUENCES")) {
         stmt->show_type = ShowStmt::ShowType::GENERATOR;
+        setUnifiedType("SEQUENCE");
+        parseScopeClause();
         if (check(TokenType::IDENTIFIER)) {
             stmt->name = expectIdentifier("Expected sequence/generator name");
         }
+        parseRecursiveClause();
     }
     // SHOW SCHEMA [name]
     else if (matchContextual("SCHEMA") || matchContextual("SCHEMAS")) {
         stmt->show_type = ShowStmt::ShowType::SCHEMA;
+        setUnifiedType("SCHEMA");
+        parseScopeClause();
         if (check(TokenType::IDENTIFIER)) {
             stmt->name = expectIdentifier("Expected schema name");
         }
+        parseRecursiveClause();
     }
     // SHOW ROLE name
     else if (matchContextual("ROLE") || matchContextual("ROLES")) {
         stmt->show_type = ShowStmt::ShowType::ROLE;
+        setUnifiedType("ROLE");
+        parseScopeClause();
         if (check(TokenType::IDENTIFIER)) {
             stmt->name = expectIdentifier("Expected role name");
         }
+        parseRecursiveClause();
     }
     // SHOW GRANTS [FOR name]
     else if (matchContextual("GRANTS")) {
@@ -14181,10 +14347,15 @@ ShowStmt* Parser::parseShow() {
     // SHOW JOBS [LIKE pattern]
     else if (matchContextual("JOBS")) {
         stmt->show_type = ShowStmt::ShowType::JOBS;
+        setUnifiedType("JOB");
+        parseScopeClause();
         parseLikeClause();
+        parseRecursiveClause();
     }
     // SHOW JOB name or SHOW JOB RUNS [FOR] job_name
     else if (matchContextual("JOB")) {
+        setUnifiedType("JOB");
+        parseScopeClause();
         if (matchContextual("RUNS")) {
             stmt->show_type = ShowStmt::ShowType::JOB_RUNS;
             if (matchContextual("FOR")) {
@@ -14205,37 +14376,51 @@ ShowStmt* Parser::parseShow() {
                 stmt->name = expectIdentifier("Expected job name");
             }
         }
+        parseRecursiveClause();
     }
     // SHOW CHECKS table
     else if (matchContextual("CHECKS") || matchContextual("CHECK")) {
         stmt->show_type = ShowStmt::ShowType::CHECKS;
+        parseScopeClause();
         if (check(TokenType::IDENTIFIER)) {
             stmt->name = expectIdentifier("Expected table name");
         }
+        parseRecursiveClause();
     }
     // SHOW COLLATIONS [LIKE pattern]
     else if (matchContextual("COLLATIONS") || matchContextual("COLLATION")) {
         stmt->show_type = ShowStmt::ShowType::COLLATIONS;
+        parseScopeClause();
         parseLikeClause();
+        parseRecursiveClause();
     }
     // SHOW COMMENTS [object_name]
     else if (matchContextual("COMMENTS") || matchContextual("COMMENT")) {
         stmt->show_type = ShowStmt::ShowType::COMMENTS;
+        parseScopeClause();
         if (check(TokenType::IDENTIFIER)) {
             stmt->name = expectIdentifier("Expected object name");
         }
+        parseRecursiveClause();
     }
     // SHOW DEPENDENCIES [object_name]
     else if (matchContextual("DEPENDENCIES") || matchContextual("DEPENDENCY")) {
         stmt->show_type = ShowStmt::ShowType::DEPENDENCIES;
+        parseScopeClause();
         if (check(TokenType::IDENTIFIER)) {
             stmt->name = expectIdentifier("Expected object name");
         }
+        parseRecursiveClause();
     }
     // SHOW PACKAGE name
     else if (matchContextual("PACKAGE") || matchContextual("PACKAGES")) {
         stmt->show_type = ShowStmt::ShowType::PACKAGE;
-        stmt->name = expectIdentifier("Expected package name");
+        setUnifiedType("PACKAGE");
+        parseScopeClause();
+        if (check(TokenType::IDENTIFIER)) {
+            stmt->name = expectIdentifier("Expected package name");
+        }
+        parseRecursiveClause();
     }
     // SHOW SQL DIALECT
     else if (matchContextual("SQL")) {
@@ -14282,25 +14467,108 @@ ShowStmt* Parser::parseShow() {
 ShowStmt* Parser::parseDescribe() {
     SourceLocation start = currentLocation();
     auto* stmt = arena_.create<ShowStmt>();
-    stmt->show_type = ShowStmt::ShowType::COLUMNS;
+    stmt->is_describe = true;
 
-    if (check(TokenType::STRING_LITERAL)) {
-        stmt->from_name = current().value.string_id;
-        advance();
-    } else if (check(TokenType::IDENTIFIER)) {
-        stmt->from_name = expectIdentifier("Expected table name after DESCRIBE");
-    } else {
-        error("Expected table name after DESCRIBE");
-    }
+    auto parsePathString = [&](const char* message) -> StringPool::StringId {
+        if (!canStartSchemaPath(state_)) {
+            error(message);
+            return StringPool::INVALID_ID;
+        }
+        SchemaPath path = parseSchemaPath(state_);
+        return stringPool().intern(schemaPathToString(path, stringPool()));
+    };
 
+    auto parseDescribeMode = [&]() {
+        if (matchContextual("FULL")) {
+            stmt->describe_mode = ShowStmt::DescribeMode::FULL;
+            return;
+        }
+        if (matchContextual("DDL")) {
+            expectContextual("ONLY", "Expected ONLY after DDL");
+            stmt->describe_mode = ShowStmt::DescribeMode::DDL_ONLY;
+            return;
+        }
+        if (matchContextual("COMMENT")) {
+            expectContextual("ONLY", "Expected ONLY after COMMENT");
+            stmt->describe_mode = ShowStmt::DescribeMode::COMMENT_ONLY;
+            return;
+        }
+        stmt->describe_mode = ShowStmt::DescribeMode::COMMENT_ONLY;
+    };
+
+    auto parseDescribeObjectType = [&](std::string& object_type) -> bool {
+        struct Entry {
+            const char* singular;
+            const char* plural;
+            const char* canonical;
+        };
+        static const Entry kEntries[] = {
+            {"SCHEMA", "SCHEMAS", "SCHEMA"},
+            {"TABLE", "TABLES", "TABLE"},
+            {"VIEW", "VIEWS", "VIEW"},
+            {"COLUMN", "COLUMNS", "COLUMN"},
+            {"INDEX", "INDEXES", "INDEX"},
+            {"SEQUENCE", "SEQUENCES", "SEQUENCE"},
+            {"GENERATOR", "GENERATORS", "SEQUENCE"},
+            {"DOMAIN", "DOMAINS", "DOMAIN"},
+            {"FUNCTION", "FUNCTIONS", "FUNCTION"},
+            {"PROCEDURE", "PROCEDURES", "PROCEDURE"},
+            {"TRIGGER", "TRIGGERS", "TRIGGER"},
+            {"PACKAGE", "PACKAGES", "PACKAGE"},
+            {"ROLE", "ROLES", "ROLE"},
+            {"DATABASE", "DATABASES", "DATABASE"},
+            {"USER", "USERS", "USER"},
+            {"GROUP", "GROUPS", "GROUP"},
+        };
+        for (const auto& entry : kEntries) {
+            if (matchContextual(entry.singular) || matchContextual(entry.plural)) {
+                object_type = entry.canonical;
+                return true;
+            }
+        }
+        return false;
+    };
+
+    // Canonical DESCRIBE:
+    // DESCRIBE <object_name> OF <object_type> IN <path> [COMMENT ONLY|FULL|DDL ONLY]
     if (check(TokenType::IDENTIFIER) || check(TokenType::STRING_LITERAL)) {
-        if (check(TokenType::STRING_LITERAL)) {
+        stmt->name = current().value.string_id;
+        advance();
+
+        if (matchContextual("OF")) {
+            std::string object_type;
+            if (!parseDescribeObjectType(object_type)) {
+                error("Expected object type after DESCRIBE <name> OF");
+                stmt->span = makeSpan(start);
+                return stmt;
+            }
+
+            if (!(match(TokenType::KW_IN) || match(TokenType::KW_FROM))) {
+                error("Expected IN/FROM after DESCRIBE <name> OF <type>");
+                stmt->span = makeSpan(start);
+                return stmt;
+            }
+            stmt->from_name = parsePathString("Expected schema/object path after DESCRIBE ... IN/FROM");
+            stmt->show_type = ShowStmt::ShowType::OBJECTS;
+            stmt->unified_metadata = true;
+            stmt->metadata_object_type = stringPool().intern(object_type);
+            parseDescribeMode();
+            stmt->span = makeSpan(start);
+            return stmt;
+        }
+
+        // Legacy MySQL-compatible DESCRIBE <table> [column]
+        stmt->show_type = ShowStmt::ShowType::COLUMNS;
+        stmt->from_name = stmt->name;
+        if (check(TokenType::IDENTIFIER) || check(TokenType::STRING_LITERAL)) {
             stmt->like_pattern = current().value.string_id;
             advance();
-        } else {
-            stmt->like_pattern = expectIdentifier("Expected column name after DESCRIBE");
         }
+        stmt->span = makeSpan(start);
+        return stmt;
     }
+
+    error("Expected object name after DESCRIBE");
 
     stmt->span = makeSpan(start);
     return stmt;
@@ -16957,91 +17225,237 @@ CommentStmt* Parser::parseComment() {
 
     expect(TokenType::KW_ON, "Expected ON after COMMENT");
 
-    // Parse object type
-    if (matchContextual("TABLE")) {
-        stmt->object_type = CommentObjectType::TABLE;
-        stmt->object_path = parseSchemaPath(state_);
-    } else if (matchContextual("COLUMN")) {
-        stmt->object_type = CommentObjectType::COLUMN;
-        stmt->object_path = parseSchemaPath(state_);
-    } else if (matchContextual("INDEX")) {
-        stmt->object_type = CommentObjectType::INDEX;
-        stmt->object_path = parseSchemaPath(state_);
-    } else if (matchContextual("VIEW")) {
-        stmt->object_type = CommentObjectType::VIEW;
-        stmt->object_path = parseSchemaPath(state_);
-    } else if (matchContextual("SEQUENCE")) {
-        stmt->object_type = CommentObjectType::SEQUENCE;
-        stmt->object_path = parseSchemaPath(state_);
-    } else if (matchContextual("FUNCTION")) {
-        stmt->object_type = CommentObjectType::FUNCTION;
-        stmt->object_path = parseSchemaPath(state_);
-        if (match(TokenType::LEFT_PAREN)) {
-            int depth = 1;
-            while (!isAtEnd() && depth > 0) {
-                if (match(TokenType::LEFT_PAREN)) {
-                    depth++;
-                } else if (match(TokenType::RIGHT_PAREN)) {
-                    depth--;
-                } else {
-                    advance();
-                }
+    auto parseObjectType = [&](CommentObjectType& out_type) -> bool {
+        if (matchContextual("TABLE")) {
+            out_type = CommentObjectType::TABLE;
+            return true;
+        }
+        if (matchContextual("COLUMN")) {
+            out_type = CommentObjectType::COLUMN;
+            return true;
+        }
+        if (matchContextual("INDEX")) {
+            out_type = CommentObjectType::INDEX;
+            return true;
+        }
+        if (matchContextual("VIEW")) {
+            out_type = CommentObjectType::VIEW;
+            return true;
+        }
+        if (matchContextual("SEQUENCE")) {
+            out_type = CommentObjectType::SEQUENCE;
+            return true;
+        }
+        if (matchContextual("FUNCTION")) {
+            out_type = CommentObjectType::FUNCTION;
+            return true;
+        }
+        if (matchContextual("PROCEDURE")) {
+            out_type = CommentObjectType::PROCEDURE;
+            return true;
+        }
+        if (matchContextual("TRIGGER")) {
+            out_type = CommentObjectType::TRIGGER;
+            return true;
+        }
+        if (matchContextual("SCHEMA")) {
+            out_type = CommentObjectType::SCHEMA;
+            return true;
+        }
+        if (matchContextual("DATABASE")) {
+            out_type = CommentObjectType::DATABASE;
+            return true;
+        }
+        if (matchContextual("ROLE")) {
+            out_type = CommentObjectType::ROLE;
+            return true;
+        }
+        if (matchContextual("CONSTRAINT")) {
+            out_type = CommentObjectType::CONSTRAINT;
+            return true;
+        }
+        return false;
+    };
+
+    auto skipSignatureList = [&]() {
+        if (!match(TokenType::LEFT_PAREN)) {
+            return;
+        }
+        int depth = 1;
+        while (!isAtEnd() && depth > 0) {
+            if (match(TokenType::LEFT_PAREN)) {
+                depth++;
+            } else if (match(TokenType::RIGHT_PAREN)) {
+                depth--;
+            } else {
+                advance();
             }
         }
-    } else if (matchContextual("PROCEDURE")) {
-        stmt->object_type = CommentObjectType::PROCEDURE;
-        stmt->object_path = parseSchemaPath(state_);
-        if (match(TokenType::LEFT_PAREN)) {
-            int depth = 1;
-            while (!isAtEnd() && depth > 0) {
-                if (match(TokenType::LEFT_PAREN)) {
-                    depth++;
-                } else if (match(TokenType::RIGHT_PAREN)) {
-                    depth--;
-                } else {
-                    advance();
-                }
+    };
+
+    auto enforceParentRule = [&](CommentObjectType type, const SchemaPath& path) {
+        if (type == CommentObjectType::COLUMN ||
+            type == CommentObjectType::CONSTRAINT ||
+            type == CommentObjectType::INDEX) {
+            if (path.components.size() < 2) {
+                error("Parent path is required for COMMENT ON COLUMN/CONSTRAINT/INDEX");
             }
         }
-    } else if (matchContextual("TRIGGER")) {
-        stmt->object_type = CommentObjectType::TRIGGER;
+    };
+
+    // Compatibility grammar:
+    // COMMENT ON <object_type> <path> IS ...
+    if (parseObjectType(stmt->object_type)) {
         stmt->object_path = parseSchemaPath(state_);
-        if (matchContextual("ON")) {
-            parseSchemaPath(state_);
-        }
-    } else if (matchContextual("SCHEMA")) {
-        stmt->object_type = CommentObjectType::SCHEMA;
-        stmt->object_path = parseSchemaPath(state_);
-    } else if (matchContextual("DATABASE")) {
-        stmt->object_type = CommentObjectType::DATABASE;
-        stmt->object_path = parseSchemaPath(state_);
-    } else if (matchContextual("ROLE")) {
-        stmt->object_type = CommentObjectType::ROLE;
-        stmt->object_path = parseSchemaPath(state_);
-    } else if (matchContextual("CONSTRAINT")) {
-        stmt->object_type = CommentObjectType::CONSTRAINT;
-        stmt->object_path = parseSchemaPath(state_);
-        if (matchContextual("ON")) {
-            parseSchemaPath(state_);
+
+        if (stmt->object_type == CommentObjectType::FUNCTION ||
+            stmt->object_type == CommentObjectType::PROCEDURE) {
+            skipSignatureList();
+        } else if (stmt->object_type == CommentObjectType::TRIGGER) {
+            if (matchContextual("ON")) {
+                SchemaPath parent = parseSchemaPath(state_);
+                if (!stmt->object_path.components.empty()) {
+                    SchemaPath qualified = parent;
+                    qualified.components.push_back(stmt->object_path.components.back());
+                    stmt->object_path = std::move(qualified);
+                }
+            }
+        } else if (stmt->object_type == CommentObjectType::CONSTRAINT) {
+            if (matchContextual("ON")) {
+                SchemaPath parent = parseSchemaPath(state_);
+                if (!stmt->object_path.components.empty()) {
+                    SchemaPath qualified = parent;
+                    qualified.components.push_back(stmt->object_path.components.back());
+                    stmt->object_path = std::move(qualified);
+                }
+            }
         }
     } else {
-        error("Expected object type after COMMENT ON");
-        return nullptr;
+        // Canonical grammar:
+        // COMMENT ON <object_name> OF <object_type> IN <path> IS <text|NULL>
+        StringPool::StringId object_name = expectIdentifier("Expected object name after COMMENT ON");
+        expectContextual("OF", "Expected OF after object name in COMMENT ON");
+        if (!parseObjectType(stmt->object_type)) {
+            error("Expected object type after COMMENT ON <name> OF");
+            return nullptr;
+        }
+        if (!(match(TokenType::KW_IN) || match(TokenType::KW_FROM))) {
+            error("Expected IN/FROM after COMMENT ON <name> OF <type>");
+            return nullptr;
+        }
+        SchemaPath parent_path = parseSchemaPath(state_);
+        stmt->object_path = parent_path;
+        stmt->object_path.components.push_back(object_name);
+        if (stmt->object_type == CommentObjectType::COLUMN) {
+            stmt->column_name = object_name;
+        }
     }
+
+    enforceParentRule(stmt->object_type, stmt->object_path);
 
     // IS 'comment' or IS NULL
     expect(TokenType::KW_IS, "Expected IS");
 
     if (match(TokenType::KW_NULL)) {
         stmt->is_null = true;
+        stmt->action = CommentStmt::Action::SET_NULL;
     } else if (check(TokenType::STRING_LITERAL)) {
         stmt->comment_text = current().value.string_id;
         advance();
+        stmt->action = CommentStmt::Action::SET;
     } else {
         error("Expected string literal or NULL after IS");
         return nullptr;
     }
 
+    stmt->span = makeSpan(start);
+    return stmt;
+}
+
+CommentStmt* Parser::parseDropComment() {
+    SourceLocation start = currentLocation();
+    auto* stmt = arena_.create<CommentStmt>();
+
+    expect(TokenType::KW_ON, "Expected ON after DROP COMMENT");
+
+    auto parseObjectType = [&](CommentObjectType& out_type) -> bool {
+        if (matchContextual("TABLE")) {
+            out_type = CommentObjectType::TABLE;
+            return true;
+        }
+        if (matchContextual("COLUMN")) {
+            out_type = CommentObjectType::COLUMN;
+            return true;
+        }
+        if (matchContextual("INDEX")) {
+            out_type = CommentObjectType::INDEX;
+            return true;
+        }
+        if (matchContextual("VIEW")) {
+            out_type = CommentObjectType::VIEW;
+            return true;
+        }
+        if (matchContextual("SEQUENCE")) {
+            out_type = CommentObjectType::SEQUENCE;
+            return true;
+        }
+        if (matchContextual("FUNCTION")) {
+            out_type = CommentObjectType::FUNCTION;
+            return true;
+        }
+        if (matchContextual("PROCEDURE")) {
+            out_type = CommentObjectType::PROCEDURE;
+            return true;
+        }
+        if (matchContextual("TRIGGER")) {
+            out_type = CommentObjectType::TRIGGER;
+            return true;
+        }
+        if (matchContextual("SCHEMA")) {
+            out_type = CommentObjectType::SCHEMA;
+            return true;
+        }
+        if (matchContextual("DATABASE")) {
+            out_type = CommentObjectType::DATABASE;
+            return true;
+        }
+        if (matchContextual("ROLE")) {
+            out_type = CommentObjectType::ROLE;
+            return true;
+        }
+        if (matchContextual("CONSTRAINT")) {
+            out_type = CommentObjectType::CONSTRAINT;
+            return true;
+        }
+        return false;
+    };
+
+    StringPool::StringId object_name = expectIdentifier("Expected object name after DROP COMMENT ON");
+    expectContextual("OF", "Expected OF after object name");
+    if (!parseObjectType(stmt->object_type)) {
+        error("Expected object type after DROP COMMENT ON <name> OF");
+        return nullptr;
+    }
+    if (!(match(TokenType::KW_IN) || match(TokenType::KW_FROM))) {
+        error("Expected IN/FROM after DROP COMMENT ON <name> OF <type>");
+        return nullptr;
+    }
+
+    SchemaPath parent_path = parseSchemaPath(state_);
+    stmt->object_path = parent_path;
+    stmt->object_path.components.push_back(object_name);
+    if (stmt->object_type == CommentObjectType::COLUMN) {
+        stmt->column_name = object_name;
+    }
+    if ((stmt->object_type == CommentObjectType::COLUMN ||
+         stmt->object_type == CommentObjectType::CONSTRAINT ||
+         stmt->object_type == CommentObjectType::INDEX) &&
+        stmt->object_path.components.size() < 2) {
+        error("Parent path is required for DROP COMMENT ON COLUMN/CONSTRAINT/INDEX");
+    }
+
+    stmt->is_null = true;
+    stmt->action = CommentStmt::Action::DROP;
     stmt->span = makeSpan(start);
     return stmt;
 }

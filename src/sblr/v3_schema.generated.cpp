@@ -652,6 +652,8 @@ static const std::unordered_map<std::string, SchemaDef> kSchemas = {
     {"SCHEMA_DDL_COMMENT", SchemaDef{"SCHEMA_DDL_COMMENT", {
         FieldDef{"object_type", FieldType::U8, ""},
         FieldDef{"object_path", FieldType::SCHEMA_PATH, ""},
+        FieldDef{"action", FieldType::U8, ""},
+        FieldDef{"is_null", FieldType::BOOL, ""},
         FieldDef{"text", FieldType::STRING, ""},
     }}},
     {"SCHEMA_GRANT_REVOKE", SchemaDef{"SCHEMA_GRANT_REVOKE", {
@@ -675,6 +677,14 @@ static const std::unordered_map<std::string, SchemaDef> kSchemas = {
         FieldDef{"key", FieldType::IDENT, ""},
         FieldDef{"value", FieldType::OPT, "expr"},
         FieldDef{"scope", FieldType::U8, ""},
+        FieldDef{"metadata_mode", FieldType::OPT, "ident"},
+        FieldDef{"metadata_object_type", FieldType::OPT, "ident"},
+        FieldDef{"path", FieldType::OPT, "ident"},
+        FieldDef{"name", FieldType::OPT, "ident"},
+        FieldDef{"like", FieldType::OPT, "ident"},
+        FieldDef{"recursive", FieldType::OPT, "bool"},
+        FieldDef{"max_depth", FieldType::OPT, "u64"},
+        FieldDef{"describe_mode", FieldType::OPT, "u8"},
     }}},
     {"SCHEMA_EXPLAIN", SchemaDef{"SCHEMA_EXPLAIN", {
         FieldDef{"analyze", FieldType::BOOL, ""},

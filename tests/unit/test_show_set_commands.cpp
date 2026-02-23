@@ -615,6 +615,117 @@ TEST_F(ShowSetCommandsTest, ShowCreateTableStillWorks)
 }
 
 // =============================================================================
+// Canonical SHOW / DESCRIBE / COMMENT Surface
+// =============================================================================
+
+TEST_F(ShowSetCommandsTest, CanonicalShowWithPathUsesUnifiedOpcode)
+{
+    EXPECT_TRUE(compileSucceeds("SHOW IN public TABLES"));
+    auto bc = generateBytecode("SHOW IN public TABLES");
+    ASSERT_FALSE(bc.empty());
+    EXPECT_TRUE(
+        bytecodeContainsV3Opcode(bc, scratchbird::sblr::v3::Opcode::SBLR3_SHOW_OBJECTS));
+}
+
+TEST_F(ShowSetCommandsTest, CanonicalShowRecursiveUsesUnifiedOpcode)
+{
+    EXPECT_TRUE(compileSucceeds(
+        "SHOW ALL IN public LIKE 'test_%' WITH RECURSIVE MAX DEPTH 2"));
+    auto bc = generateBytecode(
+        "SHOW ALL IN public LIKE 'test_%' WITH RECURSIVE MAX DEPTH 2");
+    ASSERT_FALSE(bc.empty());
+    EXPECT_TRUE(
+        bytecodeContainsV3Opcode(bc, scratchbird::sblr::v3::Opcode::SBLR3_SHOW_OBJECTS));
+}
+
+TEST_F(ShowSetCommandsTest, CanonicalDescribeUsesUnifiedOpcode)
+{
+    EXPECT_TRUE(compileSucceeds("DESCRIBE users OF TABLE IN public FULL"));
+    auto bc = generateBytecode("DESCRIBE users OF TABLE IN public FULL");
+    ASSERT_FALSE(bc.empty());
+    EXPECT_TRUE(
+        bytecodeContainsV3Opcode(bc, scratchbird::sblr::v3::Opcode::SBLR3_SHOW_OBJECTS));
+}
+
+TEST_F(ShowSetCommandsTest, CanonicalCommentAndDropCommentCompile)
+{
+    EXPECT_TRUE(compileSucceeds("COMMENT ON users OF TABLE IN public IS 'note'"));
+    auto comment_bc = generateBytecode("COMMENT ON users OF TABLE IN public IS 'note'");
+    ASSERT_FALSE(comment_bc.empty());
+    EXPECT_TRUE(
+        bytecodeContainsV3Opcode(comment_bc, scratchbird::sblr::v3::Opcode::SBLR3_COMMENT));
+
+    EXPECT_TRUE(compileSucceeds("DROP COMMENT ON users OF TABLE IN public"));
+    auto drop_bc = generateBytecode("DROP COMMENT ON users OF TABLE IN public");
+    ASSERT_FALSE(drop_bc.empty());
+    EXPECT_TRUE(
+        bytecodeContainsV3Opcode(drop_bc, scratchbird::sblr::v3::Opcode::SBLR3_COMMENT));
+}
+
+TEST_F(ShowSetCommandsTest, CanonicalCommentMissingInClauseFails)
+{
+    EXPECT_FALSE(compileSucceeds("COMMENT ON col1 OF COLUMN IS 'note'"));
+    EXPECT_FALSE(compileSucceeds("DROP COMMENT ON col1 OF COLUMN"));
+}
+
+TEST_F(ShowSetCommandsTest, CanonicalCommentAndDescribeRoundTrip)
+{
+    auto* catalog = db_->catalog_manager();
+    ASSERT_NE(catalog, nullptr);
+
+    scratchbird::core::ErrorContext ctx;
+    scratchbird::core::CatalogManager::ColumnInfo id_col;
+    id_col.column_name = "id";
+    id_col.data_type = static_cast<uint16_t>(scratchbird::core::DataType::INT32);
+    id_col.nullable = false;
+
+    scratchbird::core::CatalogManager::ColumnInfo name_col;
+    name_col.column_name = "name";
+    name_col.data_type = static_cast<uint16_t>(scratchbird::core::DataType::TEXT);
+    name_col.nullable = true;
+
+    scratchbird::core::ID table_id;
+    ASSERT_EQ(catalog->createTable(schema_id_,
+                                   "canonical_comment_test",
+                                   {id_col, name_col},
+                                   table_id,
+                                   0,
+                                   &ctx),
+              scratchbird::core::Status::OK) << ctx.message;
+
+    std::string schema_path;
+    ASSERT_EQ(catalog->getSchemaPath(schema_id_, schema_path, &ctx),
+              scratchbird::core::Status::OK) << ctx.message;
+
+    std::string comment_sql = "COMMENT ON canonical_comment_test OF TABLE IN " +
+                              schema_path + " IS 'unified note'";
+    auto comment_result = compileAndExecute(comment_sql);
+    ASSERT_TRUE(comment_result.success()) << comment_result.error();
+
+    std::string describe_sql = "DESCRIBE canonical_comment_test OF TABLE IN " +
+                               schema_path + " COMMENT ONLY";
+    auto describe_result = compileAndExecute(describe_sql);
+    ASSERT_TRUE(describe_result.success()) << describe_result.error();
+    ASSERT_TRUE(describe_result.hasResultSet());
+
+    auto* rs = describe_result.resultSet();
+    ASSERT_EQ(rs->columnCount(), 5u);
+    EXPECT_EQ(rs->columnName(0), "ObjectType");
+    EXPECT_EQ(rs->columnName(1), "Path");
+    EXPECT_EQ(rs->columnName(2), "ParentPath");
+    EXPECT_EQ(rs->columnName(3), "ObjectName");
+    EXPECT_EQ(rs->columnName(4), "Comment");
+    ASSERT_EQ(rs->rowCount(), 1u);
+    EXPECT_EQ(rs->getValue(0, 3).toString(), "canonical_comment_test");
+    EXPECT_EQ(rs->getValue(0, 4).toString(), "unified note");
+
+    std::string drop_sql = "DROP COMMENT ON canonical_comment_test OF TABLE IN " +
+                           schema_path;
+    auto drop_result = compileAndExecute(drop_sql);
+    ASSERT_TRUE(drop_result.success()) << drop_result.error();
+}
+
+// =============================================================================
 // Edge Cases and Error Handling
 // =============================================================================
 

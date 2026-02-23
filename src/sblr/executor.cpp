@@ -59941,6 +59941,688 @@ namespace scratchbird
 	                        return runLegacyShowHandler(it->handler, args);
 	                    };
 
+	                    auto executeV3UnifiedMetadataOpcode =
+	                        [&](const scratchbird::sblr::v3::Value::Object& payload) -> ExecutionResult {
+	                        auto* catalog = db_ ? db_->catalog_manager() : nullptr;
+	                        if (!catalog)
+	                        {
+	                            return ExecutionResult("Catalog manager not available");
+	                        }
+
+	                        std::string metadata_mode;
+	                        if (!getString(payload, "metadata_mode", metadata_mode) || metadata_mode.empty())
+	                        {
+	                            return ExecutionResult("V3 SHOW OBJECTS missing metadata_mode");
+	                        }
+	                        metadata_mode = scratchbird::core::IdentifierUtils::toUpper(metadata_mode);
+
+	                        std::string object_type_name;
+	                        if (!getString(payload, "metadata_object_type", object_type_name) ||
+	                            object_type_name.empty())
+	                        {
+	                            object_type_name = "ALL";
+	                        }
+	                        object_type_name =
+	                            scratchbird::core::IdentifierUtils::toUpper(object_type_name);
+
+	                        core::CatalogManager::ObjectType target_type =
+	                            core::CatalogManager::ObjectType::UNKNOWN;
+	                        bool type_supported = true;
+	                        if (object_type_name == "ALL")
+	                        {
+	                            target_type = core::CatalogManager::ObjectType::UNKNOWN;
+	                        }
+	                        else if (object_type_name == "SCHEMA")
+	                        {
+	                            target_type = core::CatalogManager::ObjectType::SCHEMA;
+	                        }
+	                        else if (object_type_name == "TABLE")
+	                        {
+	                            target_type = core::CatalogManager::ObjectType::TABLE;
+	                        }
+	                        else if (object_type_name == "VIEW")
+	                        {
+	                            target_type = core::CatalogManager::ObjectType::VIEW;
+	                        }
+	                        else if (object_type_name == "COLUMN")
+	                        {
+	                            target_type = core::CatalogManager::ObjectType::COLUMN;
+	                        }
+	                        else if (object_type_name == "INDEX")
+	                        {
+	                            target_type = core::CatalogManager::ObjectType::INDEX;
+	                        }
+	                        else if (object_type_name == "SEQUENCE" || object_type_name == "GENERATOR")
+	                        {
+	                            target_type = core::CatalogManager::ObjectType::SEQUENCE;
+	                        }
+	                        else if (object_type_name == "DOMAIN")
+	                        {
+	                            target_type = core::CatalogManager::ObjectType::DOMAIN;
+	                        }
+	                        else if (object_type_name == "FUNCTION")
+	                        {
+	                            target_type = core::CatalogManager::ObjectType::FUNCTION;
+	                        }
+	                        else if (object_type_name == "PROCEDURE")
+	                        {
+	                            target_type = core::CatalogManager::ObjectType::PROCEDURE;
+	                        }
+	                        else if (object_type_name == "TRIGGER")
+	                        {
+	                            target_type = core::CatalogManager::ObjectType::TRIGGER;
+	                        }
+	                        else if (object_type_name == "PACKAGE")
+	                        {
+	                            target_type = core::CatalogManager::ObjectType::PACKAGE;
+	                        }
+	                        else if (object_type_name == "ROLE")
+	                        {
+	                            target_type = core::CatalogManager::ObjectType::ROLE;
+	                        }
+	                        else if (object_type_name == "DATABASE")
+	                        {
+	                            target_type = core::CatalogManager::ObjectType::DATABASE;
+	                        }
+	                        else if (object_type_name == "USER")
+	                        {
+	                            target_type = core::CatalogManager::ObjectType::USER;
+	                        }
+	                        else if (object_type_name == "GROUP")
+	                        {
+	                            target_type = core::CatalogManager::ObjectType::GROUP;
+	                        }
+	                        else if (object_type_name == "TABLESPACE")
+	                        {
+	                            target_type = core::CatalogManager::ObjectType::TABLESPACE;
+	                        }
+	                        else if (object_type_name == "POLICY")
+	                        {
+	                            target_type = core::CatalogManager::ObjectType::POLICY;
+	                        }
+	                        else if (object_type_name == "JOB")
+	                        {
+	                            target_type = core::CatalogManager::ObjectType::JOB;
+	                        }
+	                        else if (object_type_name == "TYPE")
+	                        {
+	                            target_type = core::CatalogManager::ObjectType::COMPOSITE_TYPE;
+	                        }
+	                        else if (object_type_name == "SERVER")
+	                        {
+	                            target_type = core::CatalogManager::ObjectType::FOREIGN_SERVER;
+	                        }
+	                        else
+	                        {
+	                            type_supported = false;
+	                        }
+
+	                        if (!type_supported)
+	                        {
+	                            return ExecutionResult(
+	                                "Unsupported metadata object type: " + object_type_name);
+	                        }
+
+	                        std::string base_path;
+	                        getString(payload, "path", base_path);
+	                        if (base_path.empty() && conn_ctx_)
+	                        {
+	                            if (!conn_ctx_->current_schema().empty())
+	                            {
+	                                base_path = conn_ctx_->current_schema();
+	                            }
+	                            else
+	                            {
+	                                core::ErrorContext schema_ctx;
+	                                core::ID schema_id = conn_ctx_->getCurrentSchemaId();
+	                                catalog->getSchemaPath(schema_id, base_path, &schema_ctx);
+	                            }
+	                        }
+
+	                        std::string exact_name;
+	                        getString(payload, "name", exact_name);
+	                        std::string like_pattern;
+	                        getString(payload, "like", like_pattern);
+
+	                        bool recursive = false;
+	                        getBool(payload, "recursive", recursive);
+	                        uint64_t max_depth = 0;
+	                        getU64(payload, "max_depth", max_depth);
+	                        if (recursive && max_depth == 0)
+	                        {
+	                            max_depth = 1;
+	                        }
+
+	                        auto normalize_path = [&](const std::string& path) -> std::string {
+	                            return scratchbird::core::IdentifierUtils::toUpper(
+	                                stripRootPrefixForDisplay(path));
+	                        };
+	                        auto split_components = [&](const std::string& path) -> std::vector<std::string> {
+	                            std::vector<std::string> out;
+	                            std::string current;
+	                            for (char c : path)
+	                            {
+	                                if (c == '.')
+	                                {
+	                                    if (!current.empty())
+	                                    {
+	                                        out.push_back(current);
+	                                        current.clear();
+	                                    }
+	                                    continue;
+	                                }
+	                                current.push_back(c);
+	                            }
+	                            if (!current.empty())
+	                            {
+	                                out.push_back(current);
+	                            }
+	                            return out;
+	                        };
+
+	                        std::string normalized_base = normalize_path(base_path);
+	                        std::vector<std::string> base_components =
+	                            split_components(normalized_base);
+
+	                        struct MetadataRow
+	                        {
+	                            std::string object_type;
+	                            std::string path;
+	                            std::string parent_path;
+	                            std::string object_name;
+	                            core::ID object_id;
+	                            core::CatalogManager::ObjectType raw_type =
+	                                core::CatalogManager::ObjectType::UNKNOWN;
+	                        };
+
+	                        auto to_object_type_name = [&](core::CatalogManager::ObjectType type) {
+	                            switch (type)
+	                            {
+	                                case core::CatalogManager::ObjectType::SCHEMA: return std::string("SCHEMA");
+	                                case core::CatalogManager::ObjectType::TABLE: return std::string("TABLE");
+	                                case core::CatalogManager::ObjectType::VIEW: return std::string("VIEW");
+	                                case core::CatalogManager::ObjectType::COLUMN: return std::string("COLUMN");
+	                                case core::CatalogManager::ObjectType::INDEX: return std::string("INDEX");
+	                                case core::CatalogManager::ObjectType::SEQUENCE: return std::string("SEQUENCE");
+	                                case core::CatalogManager::ObjectType::CONSTRAINT: return std::string("CONSTRAINT");
+	                                case core::CatalogManager::ObjectType::TRIGGER: return std::string("TRIGGER");
+	                                case core::CatalogManager::ObjectType::FUNCTION: return std::string("FUNCTION");
+	                                case core::CatalogManager::ObjectType::PROCEDURE: return std::string("PROCEDURE");
+	                                case core::CatalogManager::ObjectType::DOMAIN: return std::string("DOMAIN");
+	                                case core::CatalogManager::ObjectType::PACKAGE: return std::string("PACKAGE");
+	                                case core::CatalogManager::ObjectType::ROLE: return std::string("ROLE");
+	                                case core::CatalogManager::ObjectType::DATABASE: return std::string("DATABASE");
+	                                case core::CatalogManager::ObjectType::USER: return std::string("USER");
+	                                case core::CatalogManager::ObjectType::GROUP: return std::string("GROUP");
+	                                case core::CatalogManager::ObjectType::TABLESPACE: return std::string("TABLESPACE");
+	                                case core::CatalogManager::ObjectType::POLICY: return std::string("POLICY");
+	                                case core::CatalogManager::ObjectType::JOB: return std::string("JOB");
+	                                case core::CatalogManager::ObjectType::FOREIGN_SERVER: return std::string("SERVER");
+	                                case core::CatalogManager::ObjectType::COMPOSITE_TYPE: return std::string("TYPE");
+	                                default: return std::string("UNKNOWN");
+	                            }
+	                        };
+
+	                        auto resolve_parent_path = [&](const core::CatalogManager::ResolvedObject& obj) {
+	                            if (obj.parent_object_id != core::ID{})
+	                            {
+	                                core::CatalogManager::ResolvedObject parent_obj;
+	                                if (catalog->resolveObjectId(obj.parent_object_id, parent_obj, nullptr) ==
+	                                    core::Status::OK)
+	                                {
+	                                    return stripRootPrefixForDisplay(parent_obj.full_path);
+	                                }
+	                                return std::string();
+	                            }
+	                            if (obj.object_type == core::CatalogManager::ObjectType::SCHEMA)
+	                            {
+	                                std::string full = stripRootPrefixForDisplay(obj.full_path);
+	                                std::size_t pos = full.find_last_of('.');
+	                                if (pos == std::string::npos)
+	                                {
+	                                    return std::string();
+	                                }
+	                                return full.substr(0, pos);
+	                            }
+	                            return stripRootPrefixForDisplay(obj.schema_path);
+	                        };
+
+	                        auto row_is_visible = [&](const MetadataRow& row) -> bool {
+	                            if (conn_ctx_ && conn_ctx_->isSuperuser())
+	                            {
+	                                return true;
+	                            }
+
+	                            core::CatalogManager::PermissionObjectType perm_type =
+	                                core::CatalogManager::PermissionObjectType::TABLE;
+	                            uint32_t priv =
+	                                static_cast<uint32_t>(core::CatalogManager::Privilege::SELECT);
+
+	                            switch (row.raw_type)
+	                            {
+	                                case core::CatalogManager::ObjectType::SCHEMA:
+	                                    perm_type = core::CatalogManager::PermissionObjectType::SCHEMA;
+	                                    priv = static_cast<uint32_t>(core::CatalogManager::Privilege::USAGE);
+	                                    break;
+	                                case core::CatalogManager::ObjectType::TABLE:
+	                                case core::CatalogManager::ObjectType::INDEX:
+	                                case core::CatalogManager::ObjectType::TRIGGER:
+	                                case core::CatalogManager::ObjectType::CONSTRAINT:
+	                                case core::CatalogManager::ObjectType::COLUMN:
+	                                    perm_type = core::CatalogManager::PermissionObjectType::TABLE;
+	                                    priv = static_cast<uint32_t>(core::CatalogManager::Privilege::SELECT);
+	                                    break;
+	                                case core::CatalogManager::ObjectType::VIEW:
+	                                    perm_type = core::CatalogManager::PermissionObjectType::VIEW;
+	                                    priv = static_cast<uint32_t>(core::CatalogManager::Privilege::SELECT);
+	                                    break;
+	                                case core::CatalogManager::ObjectType::SEQUENCE:
+	                                    perm_type = core::CatalogManager::PermissionObjectType::SEQUENCE;
+	                                    priv = static_cast<uint32_t>(core::CatalogManager::Privilege::SEQUENCE_USAGE);
+	                                    break;
+	                                case core::CatalogManager::ObjectType::PROCEDURE:
+	                                case core::CatalogManager::ObjectType::PACKAGE:
+	                                    perm_type = core::CatalogManager::PermissionObjectType::PROCEDURE;
+	                                    priv = static_cast<uint32_t>(core::CatalogManager::Privilege::EXECUTE);
+	                                    break;
+	                                case core::CatalogManager::ObjectType::FUNCTION:
+	                                    perm_type = core::CatalogManager::PermissionObjectType::FUNCTION;
+	                                    priv = static_cast<uint32_t>(core::CatalogManager::Privilege::EXECUTE);
+	                                    break;
+	                                case core::CatalogManager::ObjectType::DOMAIN:
+	                                    perm_type = core::CatalogManager::PermissionObjectType::DOMAIN;
+	                                    priv = static_cast<uint32_t>(core::CatalogManager::Privilege::USAGE);
+	                                    break;
+	                                case core::CatalogManager::ObjectType::DATABASE:
+	                                    perm_type = core::CatalogManager::PermissionObjectType::DATABASE;
+	                                    priv = static_cast<uint32_t>(core::CatalogManager::Privilege::CONNECT);
+	                                    break;
+	                                default:
+	                                    return true;
+	                            }
+
+	                            if (shouldRedactMetadata(row.object_id, perm_type, core::ID{}, priv))
+	                            {
+	                                return false;
+	                            }
+	                            return true;
+	                        };
+
+	                        auto parent_matches_path = [&](const std::string& parent_path) {
+	                            if (normalized_base.empty())
+	                            {
+	                                return true;
+	                            }
+	                            std::string normalized_parent = normalize_path(parent_path);
+	                            if (normalized_parent.empty())
+	                            {
+	                                return false;
+	                            }
+	                            if (!recursive)
+	                            {
+	                                return normalized_parent == normalized_base;
+	                            }
+	                            if (normalized_parent == normalized_base)
+	                            {
+	                                return true;
+	                            }
+	                            if (normalized_parent.rfind(normalized_base + ".", 0) != 0)
+	                            {
+	                                return false;
+	                            }
+	                            std::vector<std::string> parent_components =
+	                                split_components(normalized_parent);
+	                            if (parent_components.size() < base_components.size())
+	                            {
+	                                return false;
+	                            }
+	                            uint64_t delta = static_cast<uint64_t>(
+	                                parent_components.size() - base_components.size());
+	                            return delta <= max_depth;
+	                        };
+
+	                        std::vector<core::CatalogManager::ResolvedObject> resolved;
+	                        core::CatalogManager::ResolveFilter filter;
+	                        filter.object_type = target_type;
+	                        core::ErrorContext list_ctx;
+	                        auto status = catalog->listResolvedObjects(filter, resolved, &list_ctx);
+	                        if (status != core::Status::OK)
+	                        {
+	                            return ExecutionResult(
+	                                list_ctx.message.empty()
+	                                    ? "Failed to enumerate metadata objects"
+	                                    : list_ctx.message);
+	                        }
+
+	                        std::vector<MetadataRow> rows;
+	                        rows.reserve(resolved.size());
+	                        for (const auto& obj : resolved)
+	                        {
+	                            MetadataRow row;
+	                            row.object_type = to_object_type_name(obj.object_type);
+	                            row.path = stripRootPrefixForDisplay(obj.full_path);
+	                            row.parent_path = resolve_parent_path(obj);
+	                            row.object_name = obj.object_name;
+	                            row.object_id = obj.object_id;
+	                            row.raw_type = obj.object_type;
+
+	                            if (!parent_matches_path(row.parent_path))
+	                            {
+	                                continue;
+	                            }
+
+	                            if (!exact_name.empty() &&
+	                                scratchbird::core::IdentifierUtils::toUpper(row.object_name) !=
+	                                    scratchbird::core::IdentifierUtils::toUpper(exact_name))
+	                            {
+	                                continue;
+	                            }
+
+	                            if (!like_pattern.empty())
+	                            {
+	                                bool like_match = false;
+	                                if (object_type_name == "ALL")
+	                                {
+	                                    like_match = matchSqlLike(row.object_name, like_pattern) ||
+	                                                 matchSqlLike(row.object_type, like_pattern);
+	                                }
+	                                else
+	                                {
+	                                    like_match = matchSqlLike(row.object_name, like_pattern);
+	                                }
+	                                if (!like_match)
+	                                {
+	                                    continue;
+	                                }
+	                            }
+
+	                            if (!row_is_visible(row))
+	                            {
+	                                continue;
+	                            }
+
+	                            rows.push_back(std::move(row));
+	                        }
+
+	                        auto row_sort = [](const MetadataRow& a, const MetadataRow& b) {
+	                            if (a.object_type != b.object_type)
+	                            {
+	                                return a.object_type < b.object_type;
+	                            }
+	                            if (a.object_name != b.object_name)
+	                            {
+	                                return a.object_name < b.object_name;
+	                            }
+	                            return a.path < b.path;
+	                        };
+	                        std::sort(rows.begin(), rows.end(), row_sort);
+
+	                        current_result_set_ = std::make_unique<ResultSet>();
+
+	                        if (metadata_mode == "DESCRIBE")
+	                        {
+	                            uint64_t describe_mode = 0;
+	                            getU64(payload, "describe_mode", describe_mode);
+	                            if (rows.empty())
+	                            {
+	                                return ExecutionResult("DESCRIBE target not found");
+	                            }
+	                            if (rows.size() > 1)
+	                            {
+	                                return ExecutionResult("DESCRIBE target is ambiguous");
+	                            }
+
+	                            const auto& target = rows.front();
+	                            std::string comment_text;
+	                            core::ErrorContext comment_ctx;
+	                            auto comment_status =
+	                                catalog->getComment(target.object_id, comment_text, &comment_ctx);
+	                            if (comment_status != core::Status::OK)
+	                            {
+	                                comment_text.clear();
+	                            }
+
+	                            std::string ddl_text;
+	                            if (describe_mode == 1 || describe_mode == 2)
+	                            {
+	                                core::CatalogManager::ObjectDefinitionInfo def_info;
+	                                core::ErrorContext def_ctx;
+	                                auto def_status = catalog->getObjectDefinition(
+	                                    target.object_id, def_info, &def_ctx);
+	                                if (def_status != core::Status::OK)
+	                                {
+	                                    return ExecutionResult(
+	                                        "DESCRIBE_DDL_NOT_AVAILABLE: canonical DDL is not available for target object");
+	                                }
+	                                ddl_text = def_info.ddl_text;
+	                            }
+
+	                            current_result_set_->addColumn("ObjectType", core::DataType::VARCHAR);
+	                            current_result_set_->addColumn("Path", core::DataType::VARCHAR);
+	                            current_result_set_->addColumn("ParentPath", core::DataType::VARCHAR);
+	                            current_result_set_->addColumn("ObjectName", core::DataType::VARCHAR);
+
+	                            std::vector<Value> row;
+	                            row.push_back(Value::makeVarchar(target.object_type));
+	                            row.push_back(Value::makeVarchar(target.path));
+	                            row.push_back(Value::makeVarchar(target.parent_path));
+	                            row.push_back(Value::makeVarchar(target.object_name));
+
+	                            if (describe_mode == 2)
+	                            {
+	                                current_result_set_->addColumn("DDL", core::DataType::VARCHAR);
+	                                row.push_back(Value::makeVarchar(ddl_text));
+	                            }
+	                            else if (describe_mode == 1)
+	                            {
+	                                current_result_set_->addColumn("Comment", core::DataType::VARCHAR);
+	                                current_result_set_->addColumn("DDL", core::DataType::VARCHAR);
+	                                row.push_back(Value::makeVarchar(comment_text));
+	                                row.push_back(Value::makeVarchar(ddl_text));
+	                            }
+	                            else
+	                            {
+	                                current_result_set_->addColumn("Comment", core::DataType::VARCHAR);
+	                                row.push_back(Value::makeVarchar(comment_text));
+	                            }
+
+	                            current_result_set_->addRow(row);
+	                            return ExecutionResult(std::move(current_result_set_));
+	                        }
+
+	                        current_result_set_->addColumn("ObjectType", core::DataType::VARCHAR);
+	                        current_result_set_->addColumn("Path", core::DataType::VARCHAR);
+	                        current_result_set_->addColumn("ParentPath", core::DataType::VARCHAR);
+	                        current_result_set_->addColumn("ObjectName", core::DataType::VARCHAR);
+
+	                        for (const auto& row : rows)
+	                        {
+	                            current_result_set_->addRow({
+	                                Value::makeVarchar(row.object_type),
+	                                Value::makeVarchar(row.path),
+	                                Value::makeVarchar(row.parent_path),
+	                                Value::makeVarchar(row.object_name),
+	                            });
+	                        }
+
+	                        return ExecutionResult(std::move(current_result_set_));
+	                    };
+
+	                    auto executeV3CommentOpcode =
+	                        [&](const scratchbird::sblr::v3::Value::Object& payload) -> ExecutionResult {
+	                        auto* catalog = db_ ? db_->catalog_manager() : nullptr;
+	                        if (!catalog)
+	                        {
+	                            return ExecutionResult("Catalog manager not available");
+	                        }
+
+	                        uint64_t object_type_u64 = 0;
+	                        if (!getU64(payload, "object_type", object_type_u64))
+	                        {
+	                            return ExecutionResult("V3 COMMENT missing object_type");
+	                        }
+
+	                        auto map_object_type =
+	                            [&](parser::CommentObjectType type) -> core::CatalogManager::ObjectType {
+	                            switch (type)
+	                            {
+	                                case parser::CommentObjectType::TABLE:
+	                                    return core::CatalogManager::ObjectType::TABLE;
+	                                case parser::CommentObjectType::COLUMN:
+	                                    return core::CatalogManager::ObjectType::COLUMN;
+	                                case parser::CommentObjectType::INDEX:
+	                                    return core::CatalogManager::ObjectType::INDEX;
+	                                case parser::CommentObjectType::VIEW:
+	                                    return core::CatalogManager::ObjectType::VIEW;
+	                                case parser::CommentObjectType::SEQUENCE:
+	                                    return core::CatalogManager::ObjectType::SEQUENCE;
+	                                case parser::CommentObjectType::FUNCTION:
+	                                    return core::CatalogManager::ObjectType::FUNCTION;
+	                                case parser::CommentObjectType::PROCEDURE:
+	                                    return core::CatalogManager::ObjectType::PROCEDURE;
+	                                case parser::CommentObjectType::TRIGGER:
+	                                    return core::CatalogManager::ObjectType::TRIGGER;
+	                                case parser::CommentObjectType::SCHEMA:
+	                                    return core::CatalogManager::ObjectType::SCHEMA;
+	                                case parser::CommentObjectType::DATABASE:
+	                                    return core::CatalogManager::ObjectType::DATABASE;
+	                                case parser::CommentObjectType::ROLE:
+	                                    return core::CatalogManager::ObjectType::ROLE;
+	                                case parser::CommentObjectType::CONSTRAINT:
+	                                    return core::CatalogManager::ObjectType::CONSTRAINT;
+	                                default:
+	                                    return core::CatalogManager::ObjectType::UNKNOWN;
+	                            }
+	                        };
+
+	                        auto map_permission_type =
+	                            [&](core::CatalogManager::ObjectType type,
+	                                core::CatalogManager::PermissionObjectType& out) -> bool {
+	                            switch (type)
+	                            {
+	                                case core::CatalogManager::ObjectType::TABLE:
+	                                    out = core::CatalogManager::PermissionObjectType::TABLE;
+	                                    return true;
+	                                case core::CatalogManager::ObjectType::VIEW:
+	                                    out = core::CatalogManager::PermissionObjectType::VIEW;
+	                                    return true;
+	                                case core::CatalogManager::ObjectType::SEQUENCE:
+	                                    out = core::CatalogManager::PermissionObjectType::SEQUENCE;
+	                                    return true;
+	                                case core::CatalogManager::ObjectType::PROCEDURE:
+	                                    out = core::CatalogManager::PermissionObjectType::PROCEDURE;
+	                                    return true;
+	                                case core::CatalogManager::ObjectType::FUNCTION:
+	                                    out = core::CatalogManager::PermissionObjectType::FUNCTION;
+	                                    return true;
+	                                case core::CatalogManager::ObjectType::DOMAIN:
+	                                    out = core::CatalogManager::PermissionObjectType::DOMAIN;
+	                                    return true;
+	                                case core::CatalogManager::ObjectType::DATABASE:
+	                                    out = core::CatalogManager::PermissionObjectType::DATABASE;
+	                                    return true;
+	                                case core::CatalogManager::ObjectType::SCHEMA:
+	                                    out = core::CatalogManager::PermissionObjectType::SCHEMA;
+	                                    return true;
+	                                default:
+	                                    return false;
+	                            }
+	                        };
+
+	                        parser::CommentObjectType parser_object_type =
+	                            static_cast<parser::CommentObjectType>(
+	                                static_cast<uint8_t>(object_type_u64));
+	                        core::CatalogManager::ObjectType object_type =
+	                            map_object_type(parser_object_type);
+	                        if (object_type == core::CatalogManager::ObjectType::UNKNOWN)
+	                        {
+	                            return ExecutionResult("Unsupported COMMENT object type");
+	                        }
+
+	                        std::string object_path;
+	                        if (!getSchemaPathString(payload, "object_path", object_path) ||
+	                            object_path.empty())
+	                        {
+	                            return ExecutionResult("V3 COMMENT missing object_path");
+	                        }
+
+	                        uint64_t action = 0;
+	                        getU64(payload, "action", action);
+	                        bool is_null = false;
+	                        getBool(payload, "is_null", is_null);
+	                        if (action == 0 && is_null)
+	                        {
+	                            action = 1;
+	                        }
+
+	                        std::string text;
+	                        getString(payload, "text", text);
+
+	                        core::ErrorContext resolve_ctx;
+	                        core::ID object_id;
+	                        core::CatalogManager::ObjectType resolved_type;
+	                        auto resolve_status = resolveObjectIdForQualifiedName(
+	                            object_path,
+	                            object_type,
+	                            object_id,
+	                            resolved_type,
+	                            nullptr,
+	                            &resolve_ctx);
+	                        if (resolve_status != core::Status::OK)
+	                        {
+	                            std::string err_msg = "COMMENT target not found: " + object_path;
+	                            if (!resolve_ctx.message.empty())
+	                            {
+	                                err_msg += ": " + resolve_ctx.message;
+	                            }
+	                            return ExecutionResult(err_msg);
+	                        }
+
+	                        if (conn_ctx_ && !isEffectiveSuperuser())
+	                        {
+	                            core::CatalogManager::PermissionObjectType perm_type;
+	                            if (map_permission_type(object_type, perm_type))
+	                            {
+	                                if (!checkPermission(
+	                                        object_id,
+	                                        perm_type,
+	                                        static_cast<uint32_t>(core::CatalogManager::Privilege::CREATE),
+	                                        core::PermissionCheckMode::VERIFIED))
+	                                {
+	                                    return ExecutionResult(
+	                                        "Permission denied: COMMENT requires CREATE privilege");
+	                                }
+	                            }
+	                        }
+
+	                        core::ErrorContext comment_ctx;
+	                        if (action == 1 || action == 2)
+	                        {
+	                            auto status = catalog->deleteComment(object_id, &comment_ctx);
+	                            if (status != core::Status::OK &&
+	                                status != core::Status::INVALID_ARGUMENT)
+	                            {
+	                                return ExecutionResult(
+	                                    comment_ctx.message.empty()
+	                                        ? "COMMENT delete failed"
+	                                        : comment_ctx.message);
+	                            }
+	                        }
+	                        else
+	                        {
+	                            auto status =
+	                                catalog->setComment(object_id, object_type, text, &comment_ctx);
+	                            if (status != core::Status::OK)
+	                            {
+	                                return ExecutionResult(
+	                                    comment_ctx.message.empty() ? "COMMENT failed"
+	                                                                : comment_ctx.message);
+	                            }
+	                        }
+
+	                        return ExecutionResult();
+	                    };
+
 	                    auto executeV3ShowIndexOpcode =
 	                        [&](const scratchbird::sblr::v3::Value::Object& payload) -> ExecutionResult {
 	                        std::string index_path;
@@ -61342,8 +62024,12 @@ namespace scratchbird
                                     return ExecutionResult();
 	                                case scratchbird::sblr::v3::Opcode::SBLR3_ANALYZE:
 	                                    return executeV3AnalyzeOpcode(payload);
+	                                case scratchbird::sblr::v3::Opcode::SBLR3_SHOW_OBJECTS:
+	                                    return executeV3UnifiedMetadataOpcode(payload);
 	                                case scratchbird::sblr::v3::Opcode::SBLR3_SHOW_INDEX:
 	                                    return executeV3ShowIndexOpcode(payload);
+	                                case scratchbird::sblr::v3::Opcode::SBLR3_COMMENT:
+	                                    return executeV3CommentOpcode(payload);
 	                                case scratchbird::sblr::v3::Opcode::SBLR3_SET_VARIABLE:
 	                                    return executeLegacySetVariableOpcode(payload);
 		                        case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_SYSTEM: {

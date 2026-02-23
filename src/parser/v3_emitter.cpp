@@ -3131,6 +3131,8 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitComment(parser::v3::CommentStm
     Value::Object payload;
     payload["object_type"] = Value(uint64_t(static_cast<uint8_t>(stmt->object_type)));
     payload["object_path"] = toSchemaPath(stmt->object_path);
+    payload["action"] = Value(uint64_t(static_cast<uint8_t>(stmt->action)));
+    payload["is_null"] = Value(stmt->is_null || stmt->action != parser::v3::CommentStmt::Action::SET);
     payload["text"] = Value(stmt->is_null ? std::string() : std::string(pool_.get(stmt->comment_text)));
     inst.payload = Value(std::move(payload));
     return inst;
@@ -3520,6 +3522,33 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitSetShowReset(parser::v3::State
         auto setKeyFromName = [&]() { payload["key"] = normalizeKey(s->name); };
         auto setKeyFromFrom = [&]() { payload["key"] = normalizeKey(s->from_name); };
         auto setValueFromLike = [&]() { setValueStringId(s->like_pattern); };
+        auto setUnifiedMetadataPayload = [&]() {
+            if (s->metadata_object_type != parser::v3::StringPool::INVALID_ID) {
+                payload["metadata_object_type"] = toIdent(s->metadata_object_type);
+            }
+            if (s->from_name != parser::v3::StringPool::INVALID_ID) {
+                payload["path"] = toIdent(s->from_name);
+            }
+            if (s->name != parser::v3::StringPool::INVALID_ID) {
+                payload["name"] = toIdent(s->name);
+            }
+            if (s->like_pattern != parser::v3::StringPool::INVALID_ID) {
+                payload["like"] = toIdent(s->like_pattern);
+            }
+            if (s->recursive) {
+                payload["recursive"] = Value(true);
+            }
+            if (s->max_depth > 0) {
+                payload["max_depth"] = Value(uint64_t(s->max_depth));
+            }
+            if (s->unified_metadata) {
+                payload["metadata_mode"] = Value(std::string(s->is_describe ? "DESCRIBE" : "SHOW"));
+            }
+            if (s->is_describe) {
+                payload["describe_mode"] =
+                    Value(uint64_t(static_cast<uint8_t>(s->describe_mode)));
+            }
+        };
 
         switch (s->show_type) {
             case parser::v3::ShowStmt::ShowType::ALL:
@@ -3676,6 +3705,10 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitSetShowReset(parser::v3::State
                 inst.opcode = op(Opcode::SBLR3_SHOW_METRICS);
                 payload["key"] = Value(std::string());
                 break;
+            case parser::v3::ShowStmt::ShowType::OBJECTS:
+                inst.opcode = op(Opcode::SBLR3_SHOW_OBJECTS);
+                payload["key"] = Value(std::string());
+                break;
             case parser::v3::ShowStmt::ShowType::VARIABLE:
             default:
                 inst.opcode = op(Opcode::SBLR3_SHOW_VARIABLE);
@@ -3683,6 +3716,7 @@ scratchbird::sblr::v3::Instruction V3Emitter::emitSetShowReset(parser::v3::State
                 break;
         }
 
+        setUnifiedMetadataPayload();
         inst.payload = Value(std::move(payload));
         return inst;
     }

@@ -2404,11 +2404,18 @@ public:
     ASTKind kind() const override { return ASTKind::CommentStmt; }
     void accept(ASTVisitor& visitor) override;
 
+    enum class Action : uint8_t {
+        SET = 0,
+        SET_NULL = 1,
+        DROP = 2
+    };
+
     CommentObjectType object_type = CommentObjectType::TABLE;
     SchemaPath object_path;                     // Object being commented
     StringPool::StringId column_name = StringPool::INVALID_ID;  // For COMMENT ON COLUMN
     StringPool::StringId comment_text = StringPool::INVALID_ID; // The comment (or INVALID for NULL)
     bool is_null = false;                       // COMMENT ON ... IS NULL (removes comment)
+    Action action = Action::SET;
 };
 
 // =============================================================================
@@ -4235,8 +4242,25 @@ public:
         DATABASE,           // SHOW DATABASE (current database info)
         SYSTEM,             // SHOW SYSTEM (system tables/info)
         METRICS,            // SHOW METRICS (metrics export)
+        OBJECTS,            // Unified metadata surface (SHOW/DESCRIBE canonical contract)
     };
     ShowType show_type = ShowType::VARIABLE;
+
+    enum class DescribeMode : uint8_t {
+        COMMENT_ONLY = 0,
+        FULL = 1,
+        DDL_ONLY = 2,
+    };
+    DescribeMode describe_mode = DescribeMode::COMMENT_ONLY;
+    bool is_describe = false;
+    bool unified_metadata = false;
+
+    // Canonical metadata object type (TABLE, VIEW, INDEX, ... or ALL)
+    StringPool::StringId metadata_object_type = StringPool::INVALID_ID;
+
+    // Canonical traversal controls: WITH RECURSIVE [MAX DEPTH n]
+    bool recursive = false;
+    uint32_t max_depth = 0;  // 0 means "not specified"
 
     // Object name for commands that take one (TABLE, INDEX, TRIGGER, etc.)
     StringPool::StringId name = StringPool::INVALID_ID;
