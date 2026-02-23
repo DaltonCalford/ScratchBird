@@ -54,6 +54,57 @@ if(SCRATCHBIRD_WITH_COMPILER)
     list(APPEND SCRATCHBIRD_TEST_OPTIMIZER_LIBS scratchbird_optimizer_compiler)
 endif()
 
+# Windows CI currently validates a portable subset of tests. Building the full
+# Linux-oriented matrix here pulls in POSIX-only headers/APIs and blocks the
+# XOS-058/XOS-061 evidence path.
+if(WIN32)
+    set(TEST_SOURCES
+        unit/btree_page_test.cpp
+        unit/test_scram_auth.cpp
+        unit/test_sqlstate.cpp
+        unit/domains/test_domain_manager.cpp
+        unit/test_lexer_v3.cpp
+    )
+
+    add_executable(scratchbird_tests ${TEST_SOURCES})
+    if(TARGET sb_manager)
+        add_dependencies(scratchbird_tests sb_manager)
+    endif()
+
+    target_include_directories(scratchbird_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+    target_link_libraries(scratchbird_tests
+        scratchbird_core
+        ${SCRATCHBIRD_TEST_COMPILER_LIBS}
+        scratchbird_sblr
+        ${SCRATCHBIRD_TEST_OPTIMIZER_LIBS}
+        scratchbird_protocol
+        scratchbird_pool
+        scratchbird_server
+        scratchbird_network
+        GTest::gtest
+        GTest::gtest_main
+        scratchbird_parser
+        scratchbird_link_group
+    )
+
+    if(GEOS_FOUND)
+        target_link_libraries(scratchbird_tests ${GEOS_LIBRARIES})
+    endif()
+    if(PROJ_FOUND)
+        target_link_libraries(scratchbird_tests ${PROJ_LIBRARIES})
+    endif()
+
+    include(GoogleTest)
+    gtest_discover_tests(scratchbird_tests
+        PROPERTIES
+            TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_UNIT}
+            LABELS "unit\\;smoke\\;integration"
+            ENVIRONMENT "SCRATCHBIRD_TEST_NETWORK=1"
+    )
+
+    return()
+endif()
+
 # Test sources (exclude deprecated tests)
 file(GLOB_RECURSE TEST_SOURCES CONFIGURE_DEPENDS
     "unit/*.cpp"
