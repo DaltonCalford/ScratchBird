@@ -31,6 +31,7 @@
     #include <netinet/in.h>
 #endif
 #include "scratchbird/core/posix_compat.h"
+#include "scratchbird/core/socket_call_compat.h"
 #include <array>
 #include <cctype>
 #include <cstring>
@@ -43,19 +44,6 @@
 #include <openssl/md5.h>
 #endif
 
-#ifdef _WIN32
-#ifndef MSG_WAITALL
-#define MSG_WAITALL 0
-#endif
-#define SB_SOCKET_RECV_BUF(buf) reinterpret_cast<char*>(buf)
-#define SB_SOCKET_SEND_BUF(buf) reinterpret_cast<const char*>(buf)
-#define recv(fd, buf, len, flags) ::recv((fd), SB_SOCKET_RECV_BUF(buf), static_cast<int>(len), (flags))
-#define send(fd, buf, len, flags) ::send((fd), SB_SOCKET_SEND_BUF(buf), static_cast<int>(len), (flags))
-#define setsockopt(fd, level, optname, optval, optlen) \
-    ::setsockopt((fd), (level), (optname), SB_SOCKET_SEND_BUF(optval), static_cast<int>(optlen))
-#define getsockopt(fd, level, optname, optval, optlen) \
-    ::getsockopt((fd), (level), (optname), SB_SOCKET_RECV_BUF(optval), (optlen))
-#endif
 
 namespace scratchbird {
 namespace ipc {
@@ -382,7 +370,7 @@ core::Status PostgreSQLParserAgent::handleStartupPhase(PGClientState& state, cor
     if (version == pg::SSL_REQUEST_CODE) {
         // Send SSL refusal (not supported in this implementation)
         uint8_t ssl_response = 'N';
-        if (send(state.client_fd, &ssl_response, 1, 0) != 1) {
+        if (sb_socket_send(state.client_fd, &ssl_response, 1, 0) != 1) {
             return core::Status::IO_ERROR;
         }
         
@@ -570,7 +558,7 @@ core::Status PostgreSQLParserAgent::handleSASLAuth(PGClientState& state, core::E
     uint32_t msg_len = msg.size();
     writeUint32(msg.data() + len_offset, msg_len);
     
-    if (send(state.client_fd, msg.data(), msg.size(), 0) != static_cast<ssize_t>(msg.size())) {
+    if (sb_socket_send(state.client_fd, msg.data(), msg.size(), 0) != static_cast<ssize_t>(msg.size())) {
         return core::Status::IO_ERROR;
     }
     
@@ -600,7 +588,7 @@ core::Status PostgreSQLParserAgent::handleSASLAuth(PGClientState& state, core::E
     
     writeUint32(continue_msg.data() + cont_len_offset, continue_msg.size());
     
-    if (send(state.client_fd, continue_msg.data(), continue_msg.size(), 0) != 
+    if (sb_socket_send(state.client_fd, continue_msg.data(), continue_msg.size(), 0) != 
         static_cast<ssize_t>(continue_msg.size())) {
         return core::Status::IO_ERROR;
     }
@@ -627,7 +615,7 @@ core::Status PostgreSQLParserAgent::handleSASLAuth(PGClientState& state, core::E
     
     writeUint32(final_msg.data() + final_len_offset, final_msg.size());
     
-    if (send(state.client_fd, final_msg.data(), final_msg.size(), 0) != 
+    if (sb_socket_send(state.client_fd, final_msg.data(), final_msg.size(), 0) != 
         static_cast<ssize_t>(final_msg.size())) {
         return core::Status::IO_ERROR;
     }
@@ -702,7 +690,7 @@ core::Status PostgreSQLParserAgent::handleQueryMessage(PGClientState& state,
         writeUint32(response.data() + response.size(), 4);
         response.resize(response.size() + 4);
         
-        if (send(state.client_fd, response.data(), response.size(), 0) != 
+        if (sb_socket_send(state.client_fd, response.data(), response.size(), 0) != 
             static_cast<ssize_t>(response.size())) {
             return core::Status::IO_ERROR;
         }
@@ -792,7 +780,7 @@ core::Status PostgreSQLParserAgent::handleParseMessage(PGClientState& state,
     writeUint32(response.data() + response.size(), 4);
     response.resize(response.size() + 4);
     
-    if (send(state.client_fd, response.data(), response.size(), 0) != 
+    if (sb_socket_send(state.client_fd, response.data(), response.size(), 0) != 
         static_cast<ssize_t>(response.size())) {
         return core::Status::IO_ERROR;
     }
@@ -865,7 +853,7 @@ core::Status PostgreSQLParserAgent::handleBindMessage(PGClientState& state,
     writeUint32(response.data() + response.size(), 4);
     response.resize(response.size() + 4);
     
-    if (send(state.client_fd, response.data(), response.size(), 0) != 
+    if (sb_socket_send(state.client_fd, response.data(), response.size(), 0) != 
         static_cast<ssize_t>(response.size())) {
         return core::Status::IO_ERROR;
     }
@@ -994,7 +982,7 @@ core::Status PostgreSQLParserAgent::handleCloseMessage(PGClientState& state,
     writeUint32(response.data() + response.size(), 4);
     response.resize(response.size() + 4);
     
-    if (send(state.client_fd, response.data(), response.size(), 0) != 
+    if (sb_socket_send(state.client_fd, response.data(), response.size(), 0) != 
         static_cast<ssize_t>(response.size())) {
         return core::Status::IO_ERROR;
     }
@@ -1028,7 +1016,7 @@ core::Status PostgreSQLParserAgent::handleDescribeMessage(PGClientState& state,
         writeUint16(param_desc.data() + param_desc.size(), 0);
         param_desc.resize(param_desc.size() + 2);
         
-        if (send(state.client_fd, param_desc.data(), param_desc.size(), 0) != 
+        if (sb_socket_send(state.client_fd, param_desc.data(), param_desc.size(), 0) != 
             static_cast<ssize_t>(param_desc.size())) {
             return core::Status::IO_ERROR;
         }
@@ -1041,7 +1029,7 @@ core::Status PostgreSQLParserAgent::handleDescribeMessage(PGClientState& state,
         writeUint16(row_desc.data() + row_desc.size(), 0);
         row_desc.resize(row_desc.size() + 2);
         
-        if (send(state.client_fd, row_desc.data(), row_desc.size(), 0) != 
+        if (sb_socket_send(state.client_fd, row_desc.data(), row_desc.size(), 0) != 
             static_cast<ssize_t>(row_desc.size())) {
             return core::Status::IO_ERROR;
         }
@@ -1060,7 +1048,7 @@ core::Status PostgreSQLParserAgent::handleDescribeMessage(PGClientState& state,
         writeUint16(row_desc.data() + row_desc.size(), 0);
         row_desc.resize(row_desc.size() + 2);
         
-        if (send(state.client_fd, row_desc.data(), row_desc.size(), 0) != 
+        if (sb_socket_send(state.client_fd, row_desc.data(), row_desc.size(), 0) != 
             static_cast<ssize_t>(row_desc.size())) {
             return core::Status::IO_ERROR;
         }
@@ -1188,7 +1176,7 @@ void PostgreSQLParserAgent::sendAuthenticationOk(PGClientState& state) {
     writeUint32(msg.data() + msg.size(), pg::AUTH_OK);
     msg.resize(msg.size() + 4);
     
-    send(state.client_fd, msg.data(), msg.size(), 0);
+    sb_socket_send(state.client_fd, msg.data(), msg.size(), 0);
 }
 
 void PostgreSQLParserAgent::sendAuthenticationCleartext(PGClientState& state) {
@@ -1199,7 +1187,7 @@ void PostgreSQLParserAgent::sendAuthenticationCleartext(PGClientState& state) {
     writeUint32(msg.data() + msg.size(), pg::AUTH_CLEARTEXT_PASSWORD);
     msg.resize(msg.size() + 4);
     
-    send(state.client_fd, msg.data(), msg.size(), 0);
+    sb_socket_send(state.client_fd, msg.data(), msg.size(), 0);
 }
 
 void PostgreSQLParserAgent::sendAuthenticationMD5(PGClientState& state, const std::string& salt) {
@@ -1214,7 +1202,7 @@ void PostgreSQLParserAgent::sendAuthenticationMD5(PGClientState& state, const st
     std::memcpy(salt_bytes.data(), salt.data(), std::min<size_t>(salt.size(), salt_bytes.size()));
     msg.insert(msg.end(), salt_bytes.begin(), salt_bytes.end());
     
-    send(state.client_fd, msg.data(), msg.size(), 0);
+    sb_socket_send(state.client_fd, msg.data(), msg.size(), 0);
 }
 
 void PostgreSQLParserAgent::sendBackendKeyData(PGClientState& state) {
@@ -1227,7 +1215,7 @@ void PostgreSQLParserAgent::sendBackendKeyData(PGClientState& state) {
     writeUint32(msg.data() + msg.size(), state.secret_key);
     msg.resize(msg.size() + 4);
     
-    send(state.client_fd, msg.data(), msg.size(), 0);
+    sb_socket_send(state.client_fd, msg.data(), msg.size(), 0);
 }
 
 void PostgreSQLParserAgent::sendReadyForQuery(PGClientState& state) {
@@ -1237,7 +1225,7 @@ void PostgreSQLParserAgent::sendReadyForQuery(PGClientState& state) {
     msg.resize(msg.size() + 4);
     msg.push_back(state.transaction_status);
     
-    send(state.client_fd, msg.data(), msg.size(), 0);
+    sb_socket_send(state.client_fd, msg.data(), msg.size(), 0);
 }
 
 void PostgreSQLParserAgent::sendParameterStatus(PGClientState& state, 
@@ -1255,7 +1243,7 @@ void PostgreSQLParserAgent::sendParameterStatus(PGClientState& state,
     msg.insert(msg.end(), value.begin(), value.end());
     msg.push_back('\0');
     
-    send(state.client_fd, msg.data(), msg.size(), 0);
+    sb_socket_send(state.client_fd, msg.data(), msg.size(), 0);
 }
 
 core::Status PostgreSQLParserAgent::sendErrorResponse(PGClientState& state,
@@ -1290,7 +1278,7 @@ core::Status PostgreSQLParserAgent::sendErrorResponse(PGClientState& state,
     // Update length
     writeUint32(msg.data() + len_offset, msg.size());
     
-    if (send(state.client_fd, msg.data(), msg.size(), 0) != 
+    if (sb_socket_send(state.client_fd, msg.data(), msg.size(), 0) != 
         static_cast<ssize_t>(msg.size())) {
         return core::Status::IO_ERROR;
     }
@@ -1309,7 +1297,7 @@ void PostgreSQLParserAgent::sendCommandComplete(PGClientState& state, const std:
     msg.insert(msg.end(), tag.begin(), tag.end());
     msg.push_back('\0');
     
-    send(state.client_fd, msg.data(), msg.size(), 0);
+    sb_socket_send(state.client_fd, msg.data(), msg.size(), 0);
 }
 
 // ============================================================================
@@ -1321,7 +1309,7 @@ core::Status PostgreSQLParserAgent::readMessageWithType(int fd,
                                                         core::ErrorContext* ctx) {
     // Read message type (1 byte) for non-startup messages
     uint8_t msg_type;
-    ssize_t n = recv(fd, &msg_type, 1, MSG_WAITALL);
+    ssize_t n = sb_socket_recv(fd, &msg_type, 1, MSG_WAITALL);
     if (n == 0) {
         return core::Status::CONNECTION_CLOSED;
     }
@@ -1337,7 +1325,7 @@ core::Status PostgreSQLParserAgent::readMessageWithType(int fd,
     
     // Read message length (4 bytes, includes itself)
     uint8_t len_buf[4];
-    n = recv(fd, len_buf, 4, MSG_WAITALL);
+    n = sb_socket_recv(fd, len_buf, 4, MSG_WAITALL);
     if (n != 4) {
         if (ctx) {
             ctx->set(core::Status::IO_ERROR, "Failed to read message length",
@@ -1361,7 +1349,7 @@ core::Status PostgreSQLParserAgent::readMessageWithType(int fd,
     uint32_t payload_len = msg_len - 4;
     if (payload_len > 0) {
         std::vector<uint8_t> payload(payload_len);
-        n = recv(fd, payload.data(), payload_len, MSG_WAITALL);
+        n = sb_socket_recv(fd, payload.data(), payload_len, MSG_WAITALL);
         if (n != static_cast<ssize_t>(payload_len)) {
             if (ctx) {
                 ctx->set(core::Status::IO_ERROR, "Failed to read message payload",
@@ -1380,7 +1368,7 @@ core::Status PostgreSQLParserAgent::readFullMessage(int fd,
                                                     core::ErrorContext* ctx) {
     // For startup messages, there's no type byte, just length
     uint8_t len_buf[4];
-    ssize_t n = recv(fd, len_buf, 4, MSG_WAITALL);
+    ssize_t n = sb_socket_recv(fd, len_buf, 4, MSG_WAITALL);
     if (n == 0) {
         return core::Status::CONNECTION_CLOSED;
     }
@@ -1407,7 +1395,7 @@ core::Status PostgreSQLParserAgent::readFullMessage(int fd,
     uint32_t payload_len = msg_len - 4;
     if (payload_len > 0) {
         std::vector<uint8_t> payload(payload_len);
-        n = recv(fd, payload.data(), payload_len, MSG_WAITALL);
+        n = sb_socket_recv(fd, payload.data(), payload_len, MSG_WAITALL);
         if (n != static_cast<ssize_t>(payload_len)) {
             if (ctx) {
                 ctx->set(core::Status::IO_ERROR, "Failed to read startup payload",
@@ -1424,7 +1412,7 @@ core::Status PostgreSQLParserAgent::readFullMessage(int fd,
 core::Status PostgreSQLParserAgent::writeMessage(int fd, 
                                                 const std::vector<uint8_t>& message,
                                                 core::ErrorContext* ctx) {
-    ssize_t n = send(fd, message.data(), message.size(), 0);
+    ssize_t n = sb_socket_send(fd, message.data(), message.size(), 0);
     if (n != static_cast<ssize_t>(message.size())) {
         if (ctx) {
             ctx->set(core::Status::IO_ERROR, "Failed to write message",
@@ -1623,7 +1611,7 @@ core::Status PostgreSQLParserAgent::translateAndSendResponse(PGClientState& stat
                     ipc_response.payload.data() + sizeof(IPCCopyDataPayload),
                     ipc_response.payload.data() + sizeof(IPCCopyDataPayload) + payload->length);
                 
-                if (send(state.client_fd, pg_msg.data(), pg_msg.size(), 0) != 
+                if (sb_socket_send(state.client_fd, pg_msg.data(), pg_msg.size(), 0) != 
                     static_cast<ssize_t>(pg_msg.size())) {
                     return core::Status::IO_ERROR;
                 }

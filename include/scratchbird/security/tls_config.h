@@ -421,7 +421,7 @@ enum class TLSState : uint8_t {
     ESTABLISHED,
     SHUTDOWN_IN_PROGRESS,
     SHUTDOWN_COMPLETE,
-    ERROR
+    ERROR_STATE
 };
 
 /**

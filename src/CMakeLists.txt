@@ -587,6 +587,10 @@ file(GLOB SCRATCHBIRD_IPC_SOURCES CONFIGURE_DEPENDS
     ipc/*.cpp
     ipc/external_agents/*.cpp
 )
+if(WIN32)
+    # unix_socket_channel.cpp is POSIX-only; use the Windows stub implementation.
+    list(FILTER SCRATCHBIRD_IPC_SOURCES EXCLUDE REGEX ".*/unix_socket_channel\\.cpp$")
+endif()
 
 add_library(scratchbird_ipc STATIC
     ${SCRATCHBIRD_IPC_SOURCES}

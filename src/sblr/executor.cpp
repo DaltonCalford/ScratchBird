@@ -2449,9 +2449,18 @@ namespace scratchbird
             }
         }
 
+        constexpr double kPi = 3.14159265358979323846;
+
         template <typename T>
         static bool safeAdd128(T a, T b, T* result) {
-#if defined(__GNUC__) || defined(__clang__)
+#if defined(__has_builtin)
+#if __has_builtin(__builtin_add_overflow)
+            return !__builtin_add_overflow(a, b, result);
+#else
+            *result = a + b;
+            return true;
+#endif
+#elif defined(__GNUC__) || defined(__clang__)
             return !__builtin_add_overflow(a, b, result);
 #else
             *result = a + b;
@@ -2461,7 +2470,14 @@ namespace scratchbird
 
         template <typename T>
         static bool safeSubtract128(T a, T b, T* result) {
-#if defined(__GNUC__) || defined(__clang__)
+#if defined(__has_builtin)
+#if __has_builtin(__builtin_sub_overflow)
+            return !__builtin_sub_overflow(a, b, result);
+#else
+            *result = a - b;
+            return true;
+#endif
+#elif defined(__GNUC__) || defined(__clang__)
             return !__builtin_sub_overflow(a, b, result);
 #else
             *result = a - b;
@@ -2471,7 +2487,14 @@ namespace scratchbird
 
         template <typename T>
         static bool safeMultiply128(T a, T b, T* result) {
-#if defined(__GNUC__) || defined(__clang__)
+#if defined(__has_builtin)
+#if __has_builtin(__builtin_mul_overflow)
+            return !__builtin_mul_overflow(a, b, result);
+#else
+            *result = a * b;
+            return true;
+#endif
+#elif defined(__GNUC__) || defined(__clang__)
             return !__builtin_mul_overflow(a, b, result);
 #else
             *result = a * b;
@@ -36797,7 +36820,7 @@ namespace scratchbird
                         else
                         {
                             double radians = coerceToDouble(arg);
-                            push(Value::makeFloat64(radians * 180.0 / M_PI));
+                            push(Value::makeFloat64(radians * 180.0 / kPi));
                         }
                     }
                     else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_RADIANS))
@@ -36816,7 +36839,7 @@ namespace scratchbird
                         else
                         {
                             double degrees = coerceToDouble(arg);
-                            push(Value::makeFloat64(degrees * M_PI / 180.0));
+                            push(Value::makeFloat64(degrees * kPi / 180.0));
                         }
                     }
                     else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_PI))
@@ -36827,7 +36850,7 @@ namespace scratchbird
                             error("PI expects 0 arguments, got " + std::to_string(arg_count));
                         }
 
-                        push(Value::makeFloat64(M_PI));
+                        push(Value::makeFloat64(kPi));
                     }
                     // Algebraic functions
                     else if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_FUNC_ABS))

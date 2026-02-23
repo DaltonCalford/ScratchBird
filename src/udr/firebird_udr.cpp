@@ -19,18 +19,8 @@
     #include <netdb.h>
 #endif
 #include "scratchbird/core/posix_compat.h"
+#include "scratchbird/core/socket_call_compat.h"
 #include <fcntl.h>
-
-#ifdef _WIN32
-#define SB_SOCKET_RECV_BUF(buf) reinterpret_cast<char*>(buf)
-#define SB_SOCKET_SEND_BUF(buf) reinterpret_cast<const char*>(buf)
-#define recv(fd, buf, len, flags) ::recv((fd), SB_SOCKET_RECV_BUF(buf), static_cast<int>(len), (flags))
-#define send(fd, buf, len, flags) ::send((fd), SB_SOCKET_SEND_BUF(buf), static_cast<int>(len), (flags))
-#define setsockopt(fd, level, optname, optval, optlen) \
-    ::setsockopt((fd), (level), (optname), SB_SOCKET_SEND_BUF(optval), static_cast<int>(optlen))
-#define getsockopt(fd, level, optname, optval, optlen) \
-    ::getsockopt((fd), (level), (optname), SB_SOCKET_RECV_BUF(optval), (optlen))
-#endif
 
 namespace scratchbird {
 namespace udr {
@@ -200,8 +190,8 @@ core::Status FirebirdConnection::ping(core::ErrorContext* ctx) {
     // Use op_info_database with minimal request as ping
     // For simplicity, just check socket is valid
     int error = 0;
-    socklen_t len = sizeof(error);
-    int retval = getsockopt(socket_fd_, SOL_SOCKET, SO_ERROR, &error, &len);
+    int len = static_cast<int>(sizeof(error));
+    int retval = sb_socket_getsockopt(socket_fd_, SOL_SOCKET, SO_ERROR, &error, &len);
     if (retval < 0 || error != 0) {
         if (ctx) {
             ctx->set(core::Status::CONNECTION_FAILURE, "Socket error",
