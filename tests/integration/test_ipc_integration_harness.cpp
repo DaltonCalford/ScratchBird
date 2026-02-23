@@ -26,7 +26,11 @@
 #include <atomic>
 #include <vector>
 #include <cstring>
+#if defined(_WIN32)
+#include <process.h>
+#else
 #include <unistd.h>
+#endif
 
 #include "scratchbird/ipc/engine_ipc_session_handler.h"
 #include "scratchbird/ipc/ipc_server.h"
@@ -41,6 +45,17 @@ using namespace scratchbird;
 using namespace scratchbird::ipc;
 using namespace scratchbird::sblr;
 using scratchbird::testing::TestDatabaseFile;
+
+namespace {
+int currentProcessId()
+{
+#if defined(_WIN32)
+    return _getpid();
+#else
+    return getpid();
+#endif
+}
+} // namespace
 
 // ============================================================================
 // Testable Handler that Captures Responses
@@ -171,7 +186,7 @@ protected:
         
         // Create initial session
         IPCStartupPayload startup;
-        startup.process_id = getpid();
+        startup.process_id = currentProcessId();
         startup.secret_key = 0;
         startup.feature_flags = 0;
         std::strncpy(startup.database, "test_db", sizeof(startup.database) - 1);
@@ -445,7 +460,7 @@ TEST_F(IPCIntegrationTest, ConcurrentSessions_MultipleClients) {
     
     // Create second session
     IPCStartupPayload startup;
-    startup.process_id = getpid();
+    startup.process_id = currentProcessId();
     startup.secret_key = 0;
     startup.feature_flags = 0;
     std::strncpy(startup.database, "test_db", sizeof(startup.database) - 1);
@@ -475,7 +490,7 @@ TEST_F(IPCIntegrationTest, ConcurrentSessions_Isolation) {
     
     // Create second session
     IPCStartupPayload startup;
-    startup.process_id = getpid();
+    startup.process_id = currentProcessId();
     startup.secret_key = 0;
     startup.feature_flags = 0;
     std::strncpy(startup.database, "test_db", sizeof(startup.database) - 1);
@@ -502,7 +517,7 @@ TEST_F(IPCIntegrationTest, MemoryLeak_SessionLifecycle) {
     // Create and detach multiple sessions
     for (int i = 0; i < 10; i++) {
         IPCStartupPayload startup;
-        startup.process_id = getpid();
+        startup.process_id = currentProcessId();
         startup.secret_key = 0;
         startup.feature_flags = 0;
         std::strncpy(startup.database, "test_db", sizeof(startup.database) - 1);

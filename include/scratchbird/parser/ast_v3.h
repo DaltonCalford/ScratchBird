@@ -52,6 +52,9 @@
 #ifdef RELATIVE
 #undef RELATIVE
 #endif
+#ifdef DELETE
+#undef DELETE
+#endif
 #endif
 
 namespace scratchbird::parser::v3 {
