@@ -1173,13 +1173,6 @@ auto executeBoundQuery(const SysRemoteRuntimeBinding& binding,
 
 } // namespace
 
-auto RemoteValue::toString() const -> std::string {
-    if (is_null || data.empty()) {
-        return std::string{};
-    }
-    return std::string(data.begin(), data.end());
-}
-
 auto RemoteValue::toInt64() const -> int64_t {
     if (is_null || data.empty()) {
         return 0;

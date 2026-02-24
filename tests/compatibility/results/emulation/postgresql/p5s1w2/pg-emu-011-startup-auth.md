@@ -1,4 +1,4 @@
-Last updated: 2026-02-22
+Last updated: 2026-02-24
 
 # PG-EMU-011 Startup/Auth Parity
 
@@ -11,8 +11,8 @@ Last updated: 2026-02-22
 ## Comparison
 - Byte-equivalent: `false`
 - Native length: `24`
-- Emulated length: `25`
-- First mismatch offset: `4`
+- Emulated length: `107`
+- First mismatch offset: `0`
 
 ## Capture Artifacts
 - Native capture: `artifacts/emulation/postgresql/p5s1w2/pg-emu-010-wire-captures/pg-native-live-startup-auth.hex`

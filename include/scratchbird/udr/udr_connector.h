@@ -152,7 +152,12 @@ struct RemoteValue {
     bool is_null = false;
     uint32_t type_oid = 0;
     
-    std::string toString() const;
+    std::string toString() const {
+        if (is_null || data.empty()) {
+            return std::string{};
+        }
+        return std::string(data.begin(), data.end());
+    }
     int64_t toInt64() const;
     double toDouble() const;
     bool toBool() const;

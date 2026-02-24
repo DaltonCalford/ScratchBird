@@ -25,7 +25,7 @@ import subprocess
 from typing import Iterable, List, Sequence, Tuple
 
 
-TODAY = date(2026, 2, 22).isoformat()
+TODAY = date.today().isoformat()
 SCRIPT_REPO_ROOT = Path(__file__).resolve().parents[2]
 ABS_PATH_PATTERN = re.compile(r"/(?:home|tmp|usr|etc|var|opt|run|mnt|srv|proc|sys|dev)/[^\s`\"'<>|]*")
 

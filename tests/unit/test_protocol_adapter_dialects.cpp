@@ -79,12 +79,53 @@ public:
     bool resolveDatabaseSelection(const std::string& requested, std::string& selected) const {
         return T::resolveDatabaseSelection(requested, selected);
     }
+
+    core::Status parseIncomingPacket(network::Connection* conn) {
+        return T::parseMessage(conn);
+    }
+
+    core::Status processIncomingPacket(network::Connection* conn) {
+        return T::processMessage(conn);
+    }
+
+    core::Status forceAuthSuccess(network::Connection* conn) {
+        return T::sendAuthResult(conn, true);
+    }
+
+    core::Status sendGreetingForTest(network::Connection* conn) {
+        return T::sendGreeting(conn);
+    }
 };
 
 void cleanupDb(const std::string& name) {
     std::error_code ec;
     std::filesystem::remove(dbPath(name), ec);
     std::filesystem::create_directories(dbPath(name).parent_path(), ec);
+}
+
+std::vector<uint8_t> buildMySqlWirePacket(const std::vector<uint8_t>& payload, uint8_t sequence = 0) {
+    std::vector<uint8_t> packet;
+    packet.reserve(4 + payload.size());
+    packet.push_back(static_cast<uint8_t>(payload.size() & 0xFF));
+    packet.push_back(static_cast<uint8_t>((payload.size() >> 8) & 0xFF));
+    packet.push_back(static_cast<uint8_t>((payload.size() >> 16) & 0xFF));
+    packet.push_back(sequence);
+    packet.insert(packet.end(), payload.begin(), payload.end());
+    return packet;
+}
+
+std::vector<uint8_t> extractMySqlPayload(const std::vector<uint8_t>& wire_packet) {
+    if (wire_packet.size() < 4) {
+        return {};
+    }
+    const size_t payload_size =
+        static_cast<size_t>(wire_packet[0]) |
+        (static_cast<size_t>(wire_packet[1]) << 8) |
+        (static_cast<size_t>(wire_packet[2]) << 16);
+    if (wire_packet.size() < 4 + payload_size) {
+        return {};
+    }
+    return std::vector<uint8_t>(wire_packet.begin() + 4, wire_packet.begin() + 4 + payload_size);
 }
 } // namespace
 
@@ -360,9 +401,9 @@ TEST(ProtocolAdapterDialectsC3, MySQLServerVersionFormat) {
 
     MySqlAdapter adapter(cfg);
     
-    // Default should be MySQL 8.0 format
+    // Default should be MySQL 8.0 native version format
     EXPECT_TRUE(adapter.getServerVersion().find("8.0") != std::string::npos);
-    EXPECT_TRUE(adapter.getServerVersion().find("ScratchBird") != std::string::npos);
+    EXPECT_FALSE(adapter.getServerVersion().empty());
 }
 
 TEST(ProtocolAdapterDialectsC3, MySQLEmulationTargetConfiguration) {
@@ -491,4 +532,98 @@ TEST(ProtocolAdapterDialectsC3, MySQLCachingSha2PasswordAuth) {
     // Empty password should produce empty result
     auto empty_result = adapter.computeCachingSha2PasswordAuth("", scramble);
     EXPECT_TRUE(empty_result.empty());
+}
+
+TEST(ProtocolAdapterDialectsC3, MySQLComChangeUserRequestsClearPasswordAuthSwitch) {
+    cleanupDb("test_mysql_change_user_auth_switch.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_mysql_change_user_auth_switch.sbdb").string();
+
+    AdapterHarness<MySqlAdapter> adapter(cfg);
+    network::Connection conn(nullptr, 101);
+
+    ASSERT_EQ(adapter.forceAuthSuccess(&conn), core::Status::OK);
+    conn.clearWriteBuffer();
+
+    std::vector<uint8_t> payload;
+    payload.push_back(mysql::Command::COM_CHANGE_USER);
+    payload.insert(payload.end(), {'a', 'l', 'i', 'c', 'e', '\0'});
+    payload.push_back('\0');  // empty auth response
+    payload.insert(payload.end(), {'d', 'e', 'f', 'a', 'u', 'l', 't', '\0'});
+
+    const auto packet = buildMySqlWirePacket(payload, 0);
+    auto& read_buffer = conn.getReadBuffer();
+    read_buffer.insert(read_buffer.end(), packet.begin(), packet.end());
+
+    ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+    ASSERT_EQ(adapter.processIncomingPacket(&conn), core::Status::OK);
+
+    const auto response_payload = extractMySqlPayload(conn.getWriteBuffer());
+    ASSERT_GE(response_payload.size(), 2u);
+    EXPECT_EQ(response_payload[0], mysql::EOF_PACKET);
+
+    const std::string plugin_name(reinterpret_cast<const char*>(response_payload.data() + 1));
+    EXPECT_EQ(plugin_name, "mysql_clear_password");
+}
+
+TEST(ProtocolAdapterDialectsC3, MySQLComChangeUserRejectsBoundDatabaseSwitch) {
+    cleanupDb("test_mysql_change_user_bound_db.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_mysql_change_user_bound_db.sbdb").string();
+    cfg.enforce_bound_database = true;
+    cfg.default_database = "tenant_a";
+
+    AdapterHarness<MySqlAdapter> adapter(cfg);
+    network::Connection conn(nullptr, 102);
+
+    ASSERT_EQ(adapter.forceAuthSuccess(&conn), core::Status::OK);
+    conn.clearWriteBuffer();
+
+    std::vector<uint8_t> payload;
+    payload.push_back(mysql::Command::COM_CHANGE_USER);
+    payload.insert(payload.end(), {'a', 'l', 'i', 'c', 'e', '\0'});
+    payload.push_back('\0');  // empty auth response
+    payload.insert(payload.end(), {'t', 'e', 'n', 'a', 'n', 't', '_', 'b', '\0'});
+
+    const auto packet = buildMySqlWirePacket(payload, 0);
+    auto& read_buffer = conn.getReadBuffer();
+    read_buffer.insert(read_buffer.end(), packet.begin(), packet.end());
+
+    ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+    ASSERT_EQ(adapter.processIncomingPacket(&conn), core::Status::OK);
+
+    const auto response_payload = extractMySqlPayload(conn.getWriteBuffer());
+    ASSERT_GE(response_payload.size(), 4u);
+    EXPECT_EQ(response_payload[0], mysql::ERR_PACKET);
+
+    const uint16_t error_code = static_cast<uint16_t>(response_payload[1]) |
+                                (static_cast<uint16_t>(response_payload[2]) << 8);
+    EXPECT_EQ(error_code, mysql::ErrorCode::ACCESS_DENIED);
+
+    std::string message(reinterpret_cast<const char*>(response_payload.data() + 3),
+                        response_payload.size() - 3);
+    EXPECT_NE(message.find("Database switch denied"), std::string::npos);
+}
+
+TEST(ProtocolAdapterDialectsC3, MySQLGreetingPacketHeaderHasValidPayloadLength) {
+    cleanupDb("test_mysql_greeting_packet_header.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_mysql_greeting_packet_header.sbdb").string();
+
+    AdapterHarness<MySqlAdapter> adapter(cfg);
+    network::Connection conn(nullptr, 103);
+
+    ASSERT_EQ(adapter.sendGreetingForTest(&conn), core::Status::OK);
+    const auto& wire_packet = conn.getWriteBuffer();
+    ASSERT_GE(wire_packet.size(), 4u);
+
+    const size_t payload_size =
+        static_cast<size_t>(wire_packet[0]) |
+        (static_cast<size_t>(wire_packet[1]) << 8) |
+        (static_cast<size_t>(wire_packet[2]) << 16);
+    EXPECT_GT(payload_size, 0u);
+    EXPECT_EQ(wire_packet.size(), payload_size + 4u);
 }

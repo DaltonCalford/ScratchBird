@@ -321,6 +321,7 @@ private:
     core::Status handleCommand(network::Connection* conn);
     core::Status handleComQuery(network::Connection* conn);
     core::Status handleComInitDb(network::Connection* conn);
+    core::Status handleComChangeUser(network::Connection* conn);
     core::Status handleComPing(network::Connection* conn);
     core::Status handleComQuit(network::Connection* conn);
     core::Status handleComStmtPrepare(network::Connection* conn);

@@ -646,9 +646,11 @@ if(SCRATCHBIRD_ENABLE_UDR)
 
     message(STATUS "UDR library: scratchbird_udr (Remote Engine UDR Connectors)")
 endif()
-
-# executor.cpp now dispatches remote control opcodes through UDR runtime entry
-# points; wire sblr -> udr when the UDR library is enabled.
+if(TARGET scratchbird_udr)
+    # Keep UDR after the core archive link-group so static resolution can satisfy
+    # SBLR symbols that depend on UDR helper implementations.
+    target_link_libraries(scratchbird_link_group INTERFACE scratchbird_udr)
+endif()
 
 # ==============================================================================
 # IPC Library: scratchbird_ipc (Section E: IPC + SBWP v1.1)

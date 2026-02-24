@@ -12,9 +12,11 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 import os
 import shutil
+import signal
 import socket
 import struct
 import subprocess
@@ -23,7 +25,7 @@ import time
 from typing import Dict, Optional, Tuple
 
 
-TODAY = "2026-02-22"
+TODAY = date.today().isoformat()
 SCRIPT_REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
@@ -272,6 +274,7 @@ class EmulatedServerHandle:
     log_path: Path
 
     def stop(self, cleanup_temp_dir: bool = True) -> None:
+        control_dir = self.temp_dir / "control"
         if self.process.poll() is None:
             self.process.terminate()
             try:
@@ -279,8 +282,65 @@ class EmulatedServerHandle:
             except subprocess.TimeoutExpired:
                 self.process.kill()
                 self.process.wait(timeout=5)
+        force_stop_orphaned_emulated_processes(control_dir)
         if cleanup_temp_dir:
             shutil.rmtree(self.temp_dir, ignore_errors=True)
+
+
+def force_stop_orphaned_emulated_processes(control_dir: Path) -> None:
+    """Best-effort cleanup for listener/parser processes that can outlive sb_server."""
+    marker = str(control_dir)
+    if not marker:
+        return
+
+    # Kill only listeners/parsers tied to this temp control directory marker.
+    targets = []
+    try:
+        listing = subprocess.check_output(
+            ["ps", "-eo", "pid=,args="],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+    except Exception:
+        return
+
+    for raw_line in listing.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        parts = line.split(None, 1)
+        if len(parts) != 2:
+            continue
+        pid_text, args = parts
+        if marker not in args:
+            continue
+        if "sb_listener_" not in args and "sb_parser_" not in args and "sb_server" not in args:
+            continue
+        try:
+            pid = int(pid_text)
+        except ValueError:
+            continue
+        targets.append(pid)
+
+    if not targets:
+        return
+
+    for pid in targets:
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except Exception:
+            continue
+
+    time.sleep(0.2)
+    for pid in targets:
+        try:
+            os.kill(pid, 0)
+        except Exception:
+            continue
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except Exception:
+            continue
 
 
 def resolve_current_identity() -> Tuple[str, str]:
@@ -409,6 +469,12 @@ def start_emulated_server(
         pg_host,
         "--port",
         "0",
+        "--postgres-pool-min",
+        "0",
+        "--mysql-pool-min",
+        "0",
+        "--firebird-pool-min",
+        "0",
         "--pg-port",
         str(pg_port),
         "--mysql-port",
@@ -428,7 +494,13 @@ def start_emulated_server(
     with open(log_path, "w", encoding="utf-8") as log_file:
         env = os.environ.copy()
         current_path = env.get("PATH", "")
-        env["PATH"] = f"{sb_server_path.parent}:{current_path}" if current_path else str(sb_server_path.parent)
+        path_parts = [str(sb_server_path.parent)]
+        build_src_dir = SCRIPT_REPO_ROOT / "build" / "src"
+        if build_src_dir.exists() and str(build_src_dir) not in path_parts:
+            path_parts.append(str(build_src_dir))
+        if current_path:
+            path_parts.append(current_path)
+        env["PATH"] = ":".join(path_parts)
         process = subprocess.Popen(
             cmd,
             stdout=log_file,

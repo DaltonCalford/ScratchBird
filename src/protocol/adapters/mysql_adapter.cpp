@@ -422,20 +422,20 @@ void MySqlAdapter::updateServerCapabilities() {
 
     switch (emulation_target_) {
         case EmulationTarget::MYSQL_5_7:
-            server_version_ = "5.7.44-ScratchBird";
+            server_version_ = "5.7.44";
             auth_plugin_name_ = "mysql_native_password";
             // MySQL 5.7 doesn't support DEPRECATE_EOF by default
             break;
             
         case EmulationTarget::MYSQL_8_0:
-            server_version_ = "8.0.35-ScratchBird";
+            server_version_ = "8.0.35";
             auth_plugin_name_ = "caching_sha2_password";
             // MySQL 8.0 supports DEPRECATE_EOF
             server_capabilities_ |= mysql::Capability::DEPRECATE_EOF;
             break;
             
         case EmulationTarget::MARIADB_10_5:
-            server_version_ = "10.5.23-MariaDB-ScratchBird";
+            server_version_ = "10.5.23-MariaDB";
             auth_plugin_name_ = "mysql_native_password";
             // MariaDB supports DEPRECATE_EOF
             server_capabilities_ |= mysql::Capability::DEPRECATE_EOF;
@@ -1089,7 +1089,7 @@ void MySqlAdapter::sendHandshakePacket(network::Connection* conn) {
     writeInt1(payload, 0x00);
 
     // Auth plugin name
-    writeNullString(payload, "mysql_native_password");
+    writeNullString(payload, auth_plugin_name_);
 
     sendPacket(conn, payload);
 }
@@ -1320,6 +1320,9 @@ core::Status MySqlAdapter::handleCommand(network::Connection* conn) {
 
         case mysql::Command::COM_INIT_DB:
             return handleComInitDb(conn);
+
+        case mysql::Command::COM_CHANGE_USER:
+            return handleComChangeUser(conn);
 
         case mysql::Command::COM_PING:
             return handleComPing(conn);
@@ -1721,6 +1724,138 @@ core::Status MySqlAdapter::handleComInitDb(network::Connection* conn) {
     return sendBuffer(conn);
 }
 
+core::Status MySqlAdapter::handleComChangeUser(network::Connection* conn) {
+    if (current_packet_.size() < 2) {
+        sendErrorPacket(conn,
+                        mysql::ErrorCode::ACCESS_DENIED,
+                        "28000",
+                        "Access denied");
+        return sendBuffer(conn);
+    }
+
+    size_t offset = 1;  // Skip command byte
+
+    size_t username_offset = 0;
+    std::string requested_user = readNullString(current_packet_.data() + offset,
+                                                username_offset,
+                                                current_packet_.size() - offset);
+    offset += username_offset;
+
+    std::string auth_response;
+    if (offset < current_packet_.size()) {
+        if (client_capabilities_ & mysql::Capability::PLUGIN_AUTH_LENENC_DATA) {
+            auth_response = readLenEncString(current_packet_.data(),
+                                             offset,
+                                             current_packet_.size());
+        } else if (client_capabilities_ & mysql::Capability::SECURE_CONNECTION) {
+            if (offset < current_packet_.size()) {
+                const uint8_t len = readInt1(current_packet_.data() + offset);
+                offset += 1;
+                if (offset + len <= current_packet_.size()) {
+                    auth_response.assign(
+                        reinterpret_cast<const char*>(current_packet_.data() + offset),
+                        len);
+                    offset += len;
+                } else {
+                    sendErrorPacket(conn,
+                                    mysql::ErrorCode::ACCESS_DENIED,
+                                    "28000",
+                                    "Access denied");
+                    return sendBuffer(conn);
+                }
+            }
+        } else {
+            size_t auth_offset = 0;
+            auth_response = readNullString(current_packet_.data() + offset,
+                                           auth_offset,
+                                           current_packet_.size() - offset);
+            offset += auth_offset;
+        }
+    }
+
+    std::string requested_database;
+    if (offset < current_packet_.size()) {
+        size_t db_offset = 0;
+        requested_database = readNullString(current_packet_.data() + offset,
+                                            db_offset,
+                                            current_packet_.size() - offset);
+        offset += db_offset;
+    }
+
+    if (offset + 2 <= current_packet_.size()) {
+        client_charset_ = readInt2(current_packet_.data() + offset);
+        offset += 2;
+    }
+
+    std::string plugin_name = auth_plugin_name_;
+    if ((client_capabilities_ & mysql::Capability::PLUGIN_AUTH) &&
+        offset < current_packet_.size()) {
+        size_t plugin_offset = 0;
+        plugin_name = readNullString(current_packet_.data() + offset,
+                                     plugin_offset,
+                                     current_packet_.size() - offset);
+        offset += plugin_offset;
+    }
+
+    std::string selected_database;
+    const std::string database_request =
+        requested_database.empty() ? database_name_ : requested_database;
+    if (!resolveDatabaseSelection(database_request, selected_database)) {
+        sendErrorPacket(conn,
+                        mysql::ErrorCode::ACCESS_DENIED,
+                        "28000",
+                        "Database switch denied by manager binding context");
+        return sendBuffer(conn);
+    }
+
+    if (requested_user.empty()) {
+        sendErrorPacket(conn,
+                        mysql::ErrorCode::ACCESS_DENIED,
+                        "28000",
+                        "Access denied");
+        return sendBuffer(conn);
+    }
+
+    username_ = requested_user;
+    database_name_ = std::move(selected_database);
+    if (!plugin_name.empty()) {
+        auth_plugin_name_ = std::move(plugin_name);
+    }
+
+    // COM_CHANGE_USER resets session state and prepared statements.
+    in_transaction_ = false;
+    server_status_ = mysql::ServerStatus::AUTOCOMMIT;
+    prepared_statements_.clear();
+    last_warnings_.clear();
+    last_errors_.clear();
+    last_error_code_ = 0;
+    last_error_sqlstate_.clear();
+    default_db_set_ = false;
+    information_schema_bootstrapped_ = false;
+
+    if (client_) {
+        client_->disconnect();
+        client_.reset();
+    }
+
+    if (toUpperAscii(auth_plugin_name_) != "MYSQL_CLEAR_PASSWORD") {
+        sendAuthSwitchRequest(conn, "mysql_clear_password");
+        mysql_state_ = MySqlProtocolState::AUTH_SWITCH;
+        return sendBuffer(conn);
+    }
+
+    std::string clear_password;
+    if (!decodeClearPasswordResponse(auth_response, clear_password)) {
+        sendErrorPacket(conn,
+                        mysql::ErrorCode::ACCESS_DENIED,
+                        "28000",
+                        "Access denied");
+        return sendBuffer(conn);
+    }
+
+    return authenticateRemoteUser(conn, clear_password);
+}
+
 core::Status MySqlAdapter::handleComPing(network::Connection* conn) {
     sendOkPacket(conn);
     return sendBuffer(conn);
@@ -2020,13 +2155,12 @@ core::Status MySqlAdapter::handleComResetConnection(network::Connection* conn) {
 // ============================================================================
 
 void MySqlAdapter::sendPacket(network::Connection* conn, const std::vector<uint8_t>& payload) {
-    std::vector<uint8_t> header(4);
+    std::vector<uint8_t> header;
+    header.reserve(4);
 
-    // Length (3 bytes, little-endian)
+    // Length (3 bytes, little-endian) + sequence byte.
     writeInt3(header, static_cast<uint32_t>(payload.size()));
-
-    // Sequence ID
-    header[3] = sequence_id_++;
+    writeInt1(header, sequence_id_++);
 
     writeToBuffer(conn, header.data(), header.size());
     if (!payload.empty()) {

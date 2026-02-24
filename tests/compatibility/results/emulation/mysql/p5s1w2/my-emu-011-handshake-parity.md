@@ -1,4 +1,4 @@
-Last updated: 2026-02-22
+Last updated: 2026-02-24
 
 # MY-EMU-011 Handshake Parity
 
@@ -11,7 +11,7 @@ Last updated: 2026-02-22
 ## Comparison
 - Byte-equivalent: `false`
 - Native length: `77`
-- Emulated length: `4`
+- Emulated length: `78`
 - First mismatch offset: `0`
 
 ## Capture Artifacts
