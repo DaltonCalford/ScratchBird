@@ -177,6 +177,13 @@ TEST_F(CatalogPersistencePhaseBTest, PhaseBCatalogsPersistAcrossRestart)
     EXPECT_EQ(mapping.mapping_id, mapping_id);
     EXPECT_EQ(mapping.remote_user, "fdw_user");
 
+    CatalogManager::UserMappingInfo runtime_mapping{};
+    status = catalog->getUserMappingForRuntime(system_user_id, foreign_server_id,
+                                               runtime_mapping, nullptr);
+    ASSERT_EQ(status, Status::OK) << "Failed to reload runtime user mapping";
+    EXPECT_EQ(runtime_mapping.mapping_id, mapping_id);
+    EXPECT_EQ(runtime_mapping.remote_user, "fdw_user");
+
     CatalogManager::ServerRegistryInfo registry{};
     status = catalog->getRegisteredServerByName("cluster_primary", registry, nullptr);
     ASSERT_EQ(status, Status::OK) << "Failed to reload server registry";

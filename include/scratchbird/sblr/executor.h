@@ -207,7 +207,7 @@ namespace scratchbird
             Executor(core::Database *db);
             ~Executor();
 
-            // Execute bytecode
+            // Execute bytecode (SBLR v3 container only; legacy stream input retired)
             ExecutionResult execute(const std::vector<uint8_t> &bytecode);
 
             // Set connection context for security and transaction state (Phase 2 - Security System)
@@ -329,7 +329,8 @@ namespace scratchbird
                 UdrInvocationScope previous_scope_ = UdrInvocationScope::NONE;
             };
 
-            ExecutionResult executeV3(const std::vector<uint8_t> &bytecode);
+            // Internal canonical executor path for SBLR v3 containers.
+            ExecutionResult executeCanonicalV3(const std::vector<uint8_t> &bytecode);
             auto callFunctionByInfo(const core::CatalogManager::FunctionInfo& function_info,
                                     const std::vector<Value>& args,
                                     Value& result_out,

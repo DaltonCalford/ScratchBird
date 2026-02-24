@@ -40,37 +40,6 @@ std::string joinErrors(const std::vector<std::string>& errors) {
     return oss.str();
 }
 
-void appendExtendedOpcode(std::vector<uint8_t>& bytecode, uint16_t opcode) {
-    bytecode.push_back(static_cast<uint8_t>(scratchbird::sblr::Opcode::EXTENDED_OPCODE));
-    bytecode.push_back(static_cast<uint8_t>(opcode & 0xFF));
-    bytecode.push_back(static_cast<uint8_t>((opcode >> 8) & 0xFF));
-}
-
-void appendExtendedOpcode(std::vector<uint8_t>& bytecode,
-                          scratchbird::sblr::ExtendedOpcode opcode) {
-    appendExtendedOpcode(bytecode, static_cast<uint16_t>(opcode));
-}
-
-std::vector<uint8_t> buildBlrSavepointBeginBytecode() {
-    std::vector<uint8_t> bytecode;
-    bytecode.push_back(static_cast<uint8_t>(scratchbird::sblr::Opcode::VERSION));
-    bytecode.push_back(scratchbird::sblr::SBLR_VERSION);
-    appendExtendedOpcode(bytecode, scratchbird::sblr::ExtendedOpcode::EXT_SAVEPOINT_BEGIN);
-    return bytecode;
-}
-
-std::vector<uint8_t> buildBlrSavepointBlockBytecode() {
-    std::vector<uint8_t> bytecode;
-    bytecode.push_back(static_cast<uint8_t>(scratchbird::sblr::Opcode::VERSION));
-    bytecode.push_back(scratchbird::sblr::SBLR_VERSION);
-    appendExtendedOpcode(bytecode, scratchbird::sblr::ExtendedOpcode::EXT_BLOCK);
-    bytecode.push_back(0); // variable declaration count
-    appendExtendedOpcode(bytecode, scratchbird::sblr::ExtendedOpcode::EXT_SAVEPOINT_BEGIN);
-    appendExtendedOpcode(bytecode, scratchbird::sblr::ExtendedOpcode::EXT_SAVEPOINT_END);
-    appendExtendedOpcode(bytecode, 0x00FF); // block end marker
-    return bytecode;
-}
-
 } // namespace
 
 class ExecutorTransactionPayloadTest : public ::testing::Test {
@@ -230,10 +199,12 @@ TEST_F(ExecutorTransactionPayloadTest, PrepareRollbackPrepared) {
     EXPECT_EQ(state, scratchbird::core::TransactionState::ABORTED);
 }
 
-TEST_F(ExecutorTransactionPayloadTest, BlrSavepointBeginCreatesImplicitSavepoint) {
+TEST_F(ExecutorTransactionPayloadTest, SavepointSqlCreatesExpectedSavepoint) {
     startTransaction();
 
-    auto result = executor_->execute(buildBlrSavepointBeginBytecode());
+    auto savepoint_compiled = compile("SAVEPOINT blr_sp_1");
+    ASSERT_TRUE(savepoint_compiled.success()) << joinErrors(savepoint_compiled.errors());
+    auto result = executor_->execute(savepoint_compiled.bytecode());
     ASSERT_TRUE(result.success()) << result.error();
 
     ErrorContext err_ctx;
@@ -245,10 +216,17 @@ TEST_F(ExecutorTransactionPayloadTest, BlrSavepointBeginCreatesImplicitSavepoint
         << release_ctx.message;
 }
 
-TEST_F(ExecutorTransactionPayloadTest, BlrSavepointBlockReleasesImplicitSavepoint) {
+TEST_F(ExecutorTransactionPayloadTest, SavepointSqlReleaseAllowsReuse) {
     startTransaction();
 
-    auto result = executor_->execute(buildBlrSavepointBlockBytecode());
+    auto savepoint_compiled = compile("SAVEPOINT blr_sp_1");
+    ASSERT_TRUE(savepoint_compiled.success()) << joinErrors(savepoint_compiled.errors());
+    auto result = executor_->execute(savepoint_compiled.bytecode());
+    ASSERT_TRUE(result.success()) << result.error();
+
+    auto release_compiled = compile("RELEASE SAVEPOINT blr_sp_1");
+    ASSERT_TRUE(release_compiled.success()) << joinErrors(release_compiled.errors());
+    result = executor_->execute(release_compiled.bytecode());
     ASSERT_TRUE(result.success()) << result.error();
 
     ErrorContext err_ctx;

@@ -61,9 +61,12 @@ protected:
         compiler_->setCurrentSchema(public_schema_info.schema_id);
         executor_->setCurrentSchema(public_schema_info.schema_id);
 
-        ASSERT_TRUE(executeSql("CREATE TABLE users (id INT, name TEXT)").success());
-        ASSERT_TRUE(executeSql("CREATE INDEX idx_users_id ON users USING BTREE (id)").success());
-        ASSERT_TRUE(executeSql("CREATE TABLE vectors (id INT, embedding VECTOR(3))").success());
+        auto create_users = executeSql("CREATE TABLE users (id INT, name TEXT)");
+        ASSERT_TRUE(create_users.success()) << create_users.error();
+        auto create_idx = executeSql("CREATE INDEX idx_users_id ON users USING BTREE (id)");
+        ASSERT_TRUE(create_idx.success()) << create_idx.error();
+        auto create_vectors = executeSql("CREATE TABLE vectors (id INT, embedding VECTOR(3))");
+        ASSERT_TRUE(create_vectors.success()) << create_vectors.error();
     }
 
     std::vector<uint8_t> compileSql(const std::string& sql)
@@ -82,7 +85,13 @@ protected:
         auto compile_result = compiler_->compile(sql);
         if (!compile_result.success())
         {
-            return ExecutionResult("Compilation failed: " + sql);
+            std::string compile_error = "Compilation failed: " + sql;
+            const auto& errors = compile_result.errors();
+            if (!errors.empty())
+            {
+                compile_error += " :: " + errors.front();
+            }
+            return ExecutionResult(std::move(compile_error));
         }
         return executor_->execute(compile_result.bytecode());
     }
@@ -857,12 +866,12 @@ TEST_F(IndexExecutorDispatchContractsTest, V3CreateIndexRejectsRedisInvalidPersi
         << result.error();
 }
 
-TEST_F(IndexExecutorDispatchContractsTest, LegacyCreateIndexRejectsOutOfRangeIndexTypeByte)
+TEST_F(IndexExecutorDispatchContractsTest, LegacyCreateIndexIsRejectedByV3OnlyExecutor)
 {
     std::vector<uint8_t> bytecode = buildLegacyCreateIndexBytecode(254);
     ExecutionResult result = executeBytecode(bytecode);
     ASSERT_FALSE(result.success());
-    EXPECT_NE(result.error().find("CREATE INDEX invalid index_type byte: 254"), std::string::npos)
+    EXPECT_NE(result.error().find("SBLR3_REQUIRED"), std::string::npos)
         << result.error();
 }
 

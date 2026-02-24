@@ -1,536 +1,366 @@
 # SB-CLUSTER-SWS-MGA-01
+## ScratchBird Cluster Specification
+### Single-Writer-Per-Shard Model (MGA / Firebird-Style Transaction Semantics)
 
-**Title:** Single-Writer-Per-Shard Cluster Specification (MGA / Firebird-style)  
-**Scope:** ScratchBird cluster mode with shared-nothing shards, single writer per shard, MGA versioning.  
-**Non-goals:** Cross-shard ACID with transparent 2PC (may be added later), shared-storage multi-writer.
-
----
-
-## A. Architecture
-
-### A.1 Entities
-
-- **Cluster**: a set of nodes participating in a configuration epoch domain.
-  
-- **Node**: a process/host with a `node_id` and credentials.
-  
-- **Shard**: a disjoint partition of a database’s data. Each shard has:
-  
-  - a **Leader** (single writer)
-    
-  - optional **Followers** (read replicas / warm standbys)
-    
-- **Shard Group**: all replicas of a shard.
-  
-- **Router**: component (can be embedded in listener/parser) that maps requests to a shard leader.
-  
-
-### A.2 Strong invariants (must hold)
-
-1. **Single-writer invariant:** At any time, for each shard, at most one node is the **writer leader**.
-  
-2. **Config epoch invariant:** Every routing decision is made against a specific `cluster_config_epoch` snapshot.
-  
-3. **MGA integrity invariant:** Record-version metadata remains correct without relying on WAL ordering.
-  
-4. **GC safety invariant:** No node may physically reclaim record versions that could still be required by:
-  
-  - any active snapshot on any node,
-    
-  - replication catch-up,
-    
-  - delayed follower.
-    
-
-### A.3 Core “epochs”
-
-Maintain three epochs (monotonic):
-
-- `cluster_config_epoch`: membership, shard maps, leadership terms
-  
-- `security_epoch`: auth policy, CA/cert epochs, cluster trust changes
-  
-- `schema_epoch`: DDL affecting object definitions / plan caches
-  
-
-Every session carries these and every execution checks them (policy determines replan vs fail).
+**Status:** Draft – Beta Cluster Target  
+**Applies To:** ScratchBird Native v3 Engine  
+**Transaction Model:** Firebird-style MGA (Multi-Generational Architecture)  
+**Cluster Model:** Shared-nothing, single writer per shard  
 
 ---
 
-## B. Control Plane
+# 1. Purpose
 
-### B.1 Control plane log
+This document defines the authoritative specification for ScratchBird’s distributed cluster architecture under a **Single-Writer-Per-Shard** model using **MGA (Firebird-style) versioning semantics**.
 
-Use a replicated control-plane log as the **source of truth** for:
+This specification establishes:
 
-- node membership
-  
-- shard definitions and placements
-  
-- leader assignments (with term/lease)
-  
-- routing tables
-  
-- policy epochs
-  
+- Cluster membership model
+- Shard ownership and routing rules
+- Transaction identity semantics
+- Snapshot consistency rules across shards
+- Replication primitives
+- GC / sweep safety rules under MGA
+- Fencing and leader enforcement
+- Epoch enforcement and correctness invariants
+- Cluster-managed domain behavior
 
-**Minimal requirement:** leader election must be safe (fencing), deterministic, and auditable.
-
-### B.2 Shard leadership: lease + fencing token
-
-For each shard, store:
-
-- `leader_node_id`
-  
-- `leader_term` (monotonic integer)
-  
-- `lease_expires_at` (logical time)
-  
-- `fencing_token = (shard_id, leader_term)` (presented by leader on every write)
-  
-
-**Rule:** The engine must reject any write that does not present the current fencing token.
-
-This prevents split-brain writes.
+This document is normative and directly convertible into an implementation work plan.
 
 ---
 
-## C. Data Plane Overview
+# 2. Design Goals
 
-### C.1 Routing contract
-
-Router maps each request to:
-
-- `target_shard_id`
-  
-- `target_leader_endpoint`
-  
-- `routing_epoch` used
-  
-
-Requests that touch multiple shards are executed as:
-
-- scatter-gather reads (initially allowed)
-  
-- multi-shard writes: either forbidden or require explicit 2PC extension (out of scope here)
-  
-
-### C.2 “Single DB per listener” vs “shard-aware listener”
-
-You can implement either:
-
-- **Shard-aware listener**: accepts client connections and routes per statement.
-  
-- **Shard-per-listener**: each listener instance is bound to a shard leader only.
-  
-
-Spec supports both, as long as routing is epoch-pinned.
+1. Preserve ScratchBird’s MGA transaction semantics.
+2. Avoid WAL-centric assumptions.
+3. Maintain deterministic correctness.
+4. Enforce single-writer guarantee per shard.
+5. Provide cluster-safe garbage collection.
+6. Enable shard-level replication.
+7. Provide cross-shard read consistency.
+8. Support phased future extension to multi-writer or 2PC.
+9. Ensure cluster-managed domains are identical across all nodes.
 
 ---
 
-## D. MGA Transaction Model in a Sharded Cluster
+# 3. Definitions
 
-### D.1 Transaction identity
-
-Define transaction identity as:
-
-- **LocalTxnId**: monotonically increasing integer per shard leader.
-  
-- **GlobalTxnId (GTXID)**: `(shard_id, local_txn_id)`
-  
-
-This is not “Postgres XID”; it’s a globally unique identifier for auditing, replication, and status queries.
-
-### D.2 TIP semantics per shard
-
-Each shard maintains its own TIP-like structure:
-
-- status: Active | Committed | RolledBack
-  
-- commit timestamp (optional)
-  
-- monotonic assignment of local_txn_id
-  
-
-**Visibility on a shard** uses MGA rules:
-
-- a snapshot sees committed txns up to its snapshot boundary, plus consistent rules for active txns.
-
-### D.3 Cross-shard read snapshots
-
-When a query spans multiple shards, you need a consistent “read point”.
-
-**Minimal consistent snapshot mechanism (recommended):**
-
-- Each shard exports a **Committed Watermark**:
-  
-  - `CWM_shard`: highest local_txn_id guaranteed committed and stable
-- Router chooses a **read snapshot** as:
-  
-  - `snapshot_vector[shard] = CWM_shard` at the time routing epoch is pinned
-
-Then each shard executes reads with:
-
-- a snapshot boundary = that shard’s `snapshot_vector[shard]`
-
-This yields a consistent *per-shard* snapshot without global ordering, which is MGA-friendly.
-
-**Note:** This is “vector snapshot” semantics (like per-partition stable points), not a single global timestamp.
-
-### D.4 Cross-shard writes
-
-Out of scope for transparent ACID.  
-Baseline rule for this spec:
-
-- Any statement that would perform writes across >1 shard must be rejected **unless** in explicit “multi-shard transaction mode” (future extension).
+| Term | Definition |
+|------|------------|
+| Cluster | A set of nodes participating in a shared configuration domain |
+| Node | A running ScratchBird instance with `node_id` |
+| Shard | A disjoint partition of a database |
+| Leader | The sole write-authorized node for a shard |
+| Follower | Replica node for a shard |
+| GTXID | Global Transaction Identifier `(shard_id, local_txn_id)` |
+| CWM | Committed Watermark per shard |
+| OST | Oldest Snapshot Transaction per shard |
+| RWM | Replication Watermark per shard |
+| GC Safe Horizon | Minimum safe transaction boundary for version reclamation |
+| Control Plane Log | Replicated configuration log governing cluster state |
+| Cluster-Managed Domain | Domain object replicated through control plane and identical across cluster |
 
 ---
 
-## E. Replication Model
+# 4. Cluster Invariants
 
-### E.1 What is replicated
+The following invariants MUST hold at all times:
 
-Per shard, replicate:
+## 4.1 Single Writer Invariant
+For any given shard, at most one node may accept write transactions.
 
-- **transaction outcomes** (commit/rollback)
-  
-- **page/record deltas** or **logical changes** (choose one; spec supports either)
-  
-- **metadata deltas** (schema changes that impact shard)
-  
+## 4.2 Fencing Invariant
+Every write must include a valid fencing token derived from the shard’s current leader term.
 
-### E.2 Replication ordering primitive
+## 4.3 Epoch Invariant
+All routing and execution decisions are evaluated against a pinned `cluster_config_epoch`.
 
-Because MGA isn’t WAL-based, you still need ordering for replication.
+## 4.4 MGA Visibility Invariant
+Record version visibility must follow Firebird-style transaction semantics.
 
-Two acceptable primitives:
+## 4.5 GC Safety Invariant
+No record version may be reclaimed if it may be visible to:
+- Any active snapshot in the cluster
+- Any follower requiring catch-up
+- Any committed snapshot boundary still in use
 
-1. **Shard Commit Log (SCL):** append-only log of committed changesets keyed by `(local_txn_id)`
-  
-2. **Page LSN stream:** monotonic per-page / per-shard LSN (harder)
-  
-
-**Recommended for beta:** Shard Commit Log:
-
-- each committed txn emits a changeset event
-  
-- followers apply in `local_txn_id` order
-  
-
-### E.3 Follower read policy
-
-A follower may serve reads only if:
-
-- it has applied up to at least the requested `snapshot_vector[shard]`
-  
-- otherwise it must forward to leader or wait.
-  
+## 4.6 Domain Identity Invariant
+Cluster-managed domains must:
+- Have identical UUIDs across all nodes
+- Have identical definition hashes across all nodes
+- Be replicated via control-plane log
 
 ---
 
-## F. GC / Sweep in MGA Cluster
+# 5. Epoch Model
 
-### F.1 Horizons (MGA equivalents)
+ScratchBird Cluster SHALL maintain:
 
-Define these per shard:
+- `cluster_config_epoch`
+- `security_epoch`
+- `schema_epoch`
 
-- `OAT_shard` (Oldest Active Txn) — min local_txn_id still active
-  
-- `OST_shard` (Oldest Snapshot Txn) — min snapshot boundary in use
-  
-- `RWM_shard` (Replication Watermark) — min applied point across followers, if replication is required for durability policy
-  
+Each session must carry these epochs and validate them at execution time.
 
-Compute **GC Safe Horizon** per shard:
+If mismatch occurs:
+- Replan OR
+- Reject (based on policy)
 
-- `GC_safe_shard = min(OST_shard, RWM_shard)`  
-  (and sometimes OAT_shard depending on your exact MGA definitions; OST usually dominates)
-
-Compute **Cluster GC Horizon**:
-
-- `GC_safe_cluster = min_over_all_shards(GC_safe_shard)` only for global resources.
-  
-- For per-shard storage, you can GC independently per shard *as long as you include follower lag and remote snapshots*.
-  
-
-### F.2 GC rules
-
-A shard leader MAY reclaim old record versions only if:
-
-- creator txn id < `GC_safe_shard`
-  
-- and versions are not required by any pinned snapshot or follower catch-up
-  
-
-Followers must also respect `GC_safe_shard` and cannot GC beyond their applied point.
-
-### F.3 Snapshot registry
-
-To compute OST safely, each node must publish active snapshots:
-
-- `(session_id, shard_id, snapshot_boundary, started_at, last_heartbeat)`
-
-The leader for each shard aggregates this to compute OST_shard.
+Domain modifications MUST bump at least `schema_epoch`, and SHOULD bump `cluster_config_epoch` if domains are control-plane managed.
 
 ---
 
-## G. DDL / Schema in Cluster
+# 6. Transaction Identity
 
-### G.1 Schema propagation
+## 6.1 Local Transaction ID
 
-DDL affecting shard layout or storage must be:
+Each shard leader maintains a monotonic `local_txn_id`.
 
-- recorded in control-plane log
-  
-- applied to shard leaders
-  
-- replicated/applied to followers
-  
+## 6.2 Global Transaction ID (GTXID)
 
-### G.2 DDL execution policy
+```
+GTXID := (shard_id, local_txn_id)
+```
 
-Baseline policy:
+Properties:
+- Globally unique
+- Deterministic ordering within shard
+- Used for replication, auditing, GC boundaries
 
-- DDL is executed through the control plane and applied to leaders first.
-  
-- Shard leaders reject writes using stale `schema_epoch`.
-  
+UUIDv7 ordering MUST NOT be used for transaction ordering.
 
 ---
 
-## H. Security / Identity
+# 7. Snapshot Semantics Across Shards
 
-### H.1 Node identity
+## 7.1 Per-Shard Committed Watermark (CWM)
 
-Each node has:
+Each shard leader maintains:
 
-- `node_id`
-  
-- cert identity / key (your CA/epoch model)
-  
-- roles: leader-eligible, follower-only, observer
-  
+```
+CWM_shard := highest local_txn_id fully committed and stable
+```
 
-### H.2 Fencing enforcement in engine
+## 7.2 Cross-Shard Snapshot Vector
 
-On any write, the engine checks:
+For cross-shard reads:
 
-- routing epoch
-  
-- shard fencing token
-  
-- node identity authorization
-  
+```
+snapshot_vector[shard] = CWM_shard at routing time
+```
 
-If token mismatch → reject.
+Each shard executes under its own snapshot boundary.
+
+This yields deterministic per-shard snapshot isolation without requiring global ordering.
 
 ---
 
-## I. Failure Handling
+# 8. Shard Routing
 
-### I.1 Leader failure
+## 8.1 Routing Inputs
 
-When leader is suspected dead:
+- `db_uuid`
+- `table_id`
+- `shard_key`
+- `cluster_config_epoch`
 
-- control plane runs election
-  
-- assigns new leader with incremented `leader_term`
-  
-- new leader must:
-  
-  - prove it has the highest applied SCL position (or otherwise catch up)
-    
-  - acquire lease
-    
-  - begin serving writes
-    
+## 8.2 Routing Output
 
-### I.2 Split brain prevention
+- `shard_id`
+- `leader_endpoint`
+- `routing_epoch`
 
-- Lease + fencing token ensures only the active leader can commit writes.
-  
-- Old leader may still run but cannot commit writes due to fencing token mismatch.
-  
+## 8.3 Write Enforcement
 
-### I.3 Network partitions
-
-- Majority partition retains control-plane leadership
-  
-- Minority partition leaders lose lease and cannot write
-  
+A write must be rejected if:
+- Routing epoch is stale
+- Fencing token does not match current leader term
+- Node is not current shard leader
 
 ---
 
-## J. Observability and Admin Surface
+# 9. Replication Model
 
-Minimum admin queries:
+## 9.1 Replication Primitive
+
+Each shard leader emits a **Shard Commit Log (SCL)** entry per committed transaction.
+
+Entry includes:
+- `local_txn_id`
+- `GTXID`
+- change payload (logical or physical)
+- commit timestamp
+
+## 9.2 Follower Application
+
+Followers apply entries in strictly increasing `local_txn_id` order.
+
+## 9.3 Replication Watermark
+
+Each shard maintains:
+
+```
+RWM_shard := highest local_txn_id applied on follower
+```
+
+---
+
+# 10. Garbage Collection (MGA Cluster Semantics)
+
+## 10.1 Snapshot Registry
+
+Each node publishes active snapshots:
+- session_id
+- shard_id
+- snapshot_boundary
+- start_time
+- last_heartbeat
+
+## 10.2 Per-Shard OST
+
+Leader computes:
+
+```
+OST_shard := minimum snapshot_boundary of active snapshots
+```
+
+## 10.3 GC Safe Horizon
+
+```
+GC_safe_shard = min(OST_shard, RWM_shard)
+```
+
+A record version may be reclaimed only if:
+
+```
+creator_txn_id < GC_safe_shard
+```
+
+---
+
+# 11. Leadership and Fencing
+
+## 11.1 Leader Term
+
+Each shard leader has:
+- `leader_term`
+- `lease_expires_at`
+
+## 11.2 Fencing Token
+
+```
+fencing_token = (shard_id, leader_term)
+```
+
+Every write request must include the current fencing token.
+
+Engine must validate before commit.
+
+---
+
+# 12. Cluster-Managed Domains
+
+## 12.1 Domain Replication
+
+Domains are replicated through the control-plane log.
+
+Control-plane log entries MUST exist for:
+- `DOMAIN_CREATE`
+- `DOMAIN_ALTER`
+- `DOMAIN_DROP`
+
+## 12.2 Domain Identity
+
+Each domain has:
+- `domain_id` (UUIDv7)
+- `definition_hash`
+- `version_counter`
+
+Domains MUST be identical across cluster nodes.
+
+## 12.3 Join/Rejoin DomainSync
+
+When a node joins or rejoins cluster:
+1. Fetch authoritative domain catalog snapshot.
+2. Validate `definition_hash` and UUID match.
+3. If mismatch: refuse join OR enter explicit repair mode.
+
+---
+
+# 13. Failure Handling
+
+## 13.1 Leader Failure
+
+- Control plane elects new leader.
+- `leader_term` increments.
+- New fencing token generated.
+- Old leader writes rejected.
+
+## 13.2 Split Brain Prevention
+
+Old leader without valid lease MUST reject writes.
+
+## 13.3 Network Partition
+
+Majority partition retains control-plane authority.
+Minority partition leaders lose lease and cannot write.
+
+---
+
+# 14. Observability Requirements
+
+Minimum required cluster introspection:
 
 - `SHOW CLUSTER`
-  
 - `SHOW NODES`
-  
 - `SHOW SHARDS`
-  
 - `SHOW SHARD LEADERS`
-  
 - `SHOW REPLICATION LAG`
-  
-- `SHOW SNAPSHOT REGISTRY`
-  
 - `SHOW GC HORIZONS`
-  
+- `SHOW SNAPSHOT REGISTRY`
 
-Export metrics:
-
-- leader elections count
-  
-- replication lag per shard
-  
-- active snapshot counts
-  
-- GC safe horizon per shard
-  
-- rejected writes due to fencing mismatch
-  
+Metrics must expose:
+- replication lag
+- leader term
+- active snapshot count
+- GC safe horizon
+- fencing rejection counts
 
 ---
 
-# Workplan Checklist (SB-CLUSTER-XXX)
+# 15. Non-Goals (Beta Scope)
 
-## Phase 0 — Foundations
-
-- **SB-CLUSTER-001** Add persistent `cluster_id`, `node_id`, `cluster_config_epoch` to DB header or catalog root.
-  
-- **SB-CLUSTER-002** Implement `TimeSource` abstraction for UUIDv7 and epoch timestamps.
-  
-- **SB-CLUSTER-003** Implement `StorageLockProvider` abstraction (local-only impl first).
-  
-- **SB-CLUSTER-004** Implement monotonic per-shard write order primitive (choose: Shard Commit Log recommended).
-  
-
-## Phase 1 — Control Plane MVP
-
-- **SB-CLUSTER-010** Implement replicated control-plane log (membership + shard map + leadership).
-  
-- **SB-CLUSTER-011** Implement node membership states + join/rejoin protocol.
-  
-- **SB-CLUSTER-012** Implement shard definition model (shard_id, key spec, placements).
-  
-- **SB-CLUSTER-013** Implement leader election per shard with `leader_term` + `lease_expires_at`.
-  
-- **SB-CLUSTER-014** Implement fencing token generation and propagation `(shard_id, leader_term)`.
-  
-
-## Phase 2 — Router + Epoch Pinning
-
-- **SB-CLUSTER-020** Implement router API: `route(table_id, shard_key) -> shard_id, endpoint, epoch`.
-  
-- **SB-CLUSTER-021** Implement query epoch pinning: attach `cluster_config_epoch` to query execution.
-  
-- **SB-CLUSTER-022** Implement write rejection when routing epoch or fencing token is stale.
-  
-- **SB-CLUSTER-023** Implement “multi-shard write detection” and reject by default.
-  
-
-## Phase 3 — MGA Transaction Identity + Status
-
-- **SB-CLUSTER-030** Implement `GlobalTxnId = (shard_id, local_txn_id)` formatting + storage.
-  
-- **SB-CLUSTER-031** Persist origin metadata where needed (audit, replication, debugging).
-  
-- **SB-CLUSTER-032** Implement per-shard TIP status query API (local).
-  
-- **SB-CLUSTER-033** Publish `Committed Watermark (CWM_shard)` from leaders.
-  
-
-## Phase 4 — Cross-shard Read Consistency
-
-- **SB-CLUSTER-040** Implement snapshot vector acquisition for scatter-gather reads.
-  
-- **SB-CLUSTER-041** Implement per-shard read execution under `snapshot_vector[shard]`.
-  
-- **SB-CLUSTER-042** Implement “read from follower if applied >= snapshot boundary” rule.
-  
-
-## Phase 5 — Replication MVP
-
-- **SB-CLUSTER-050** Implement Shard Commit Log (SCL) emission on commit (leader).
-  
-- **SB-CLUSTER-051** Implement follower apply pipeline (ordered by local_txn_id).
-  
-- **SB-CLUSTER-052** Implement replication lag tracking and `RWM_shard` publishing.
-  
-- **SB-CLUSTER-053** Implement follower promotion eligibility checks (highest applied point).
-  
-
-## Phase 6 — GC / Sweep Safety
-
-- **SB-CLUSTER-060** Implement snapshot registry publication from all nodes.
-  
-- **SB-CLUSTER-061** Compute `OST_shard` at leader from snapshot registry.
-  
-- **SB-CLUSTER-062** Compute `GC_safe_shard = min(OST_shard, RWM_shard)` and enforce it in sweep/GC.
-  
-- **SB-CLUSTER-063** Add admin visibility for horizons and blocked GC reasons.
-  
-
-## Phase 7 — Schema/DDL in Cluster
-
-- **SB-CLUSTER-070** Add `schema_epoch` tracking and attach to plans/sessions.
-  
-- **SB-CLUSTER-071** Control-plane log entries for DDL changes affecting shards.
-  
-- **SB-CLUSTER-072** Enforce schema epoch mismatch behavior (replan or reject based on policy).
-  
-
-## Phase 8 — Security & Hardening
-
-- **SB-CLUSTER-080** Node identity verification for control-plane participation.
-  
-- **SB-CLUSTER-081** Enforce leader-only write authorization and fencing checks in engine.
-  
-- **SB-CLUSTER-082** Audit: elections, leadership changes, shard map edits, replication state changes.
-  
-
-## Phase 9 — Observability + Tooling
-
-- **SB-CLUSTER-090** Implement `SHOW CLUSTER/NODES/SHARDS/LEADERS` surfaces.
-  
-- **SB-CLUSTER-091** Implement `SHOW REPLICATION LAG` + metrics export.
-  
-- **SB-CLUSTER-092** Implement `SHOW SNAPSHOT REGISTRY` + `SHOW GC HORIZONS`.
-  
-
-## Phase 10 — Test Harness (non-negotiable)
-
-- **SB-CLUSTER-100** Deterministic split-brain test: ensure stale leader cannot commit.
-  
-- **SB-CLUSTER-101** Election/failover test: leader crash → new leader → writes resume.
-  
-- **SB-CLUSTER-102** Replica lag test: follower behind cannot serve reads beyond its applied point.
-  
-- **SB-CLUSTER-103** GC safety test: long-running snapshot prevents version reclamation.
-  
-- **SB-CLUSTER-104** Scatter-gather consistency test: snapshot vector returns consistent results.
-  
-- **SB-CLUSTER-105** Rejoin test: node rejoins, catches up via SCL, resumes follower role.
-  
+- Transparent cross-shard ACID multi-write transactions
+- Shared-storage multi-writer concurrency
+- Global WAL ordering
+- Byzantine fault tolerance
 
 ---
 
-## Beta “credible cluster” milestone (if you want a sharp target)
+# 16. Acceptance Criteria
 
-If you want a clear beta deliverable, I’d define **Beta Cluster MVP** as completion of:
+Cluster implementation SHALL be considered beta-ready when:
 
-- SB-CLUSTER-010–014 (control plane + fencing)
-  
-- SB-CLUSTER-020–023 (routing + write gating)
-  
-- SB-CLUSTER-050–052 (replication basics)
-  
-- SB-CLUSTER-060–062 (GC safety)
-  
-- SB-CLUSTER-100–103 (core correctness tests)
-  
+1. Single-writer-per-shard enforcement is proven via fencing tests.
+2. Leader failover works without data loss.
+3. Followers replicate commit log correctly.
+4. GC safe horizon prevents premature version reclamation.
+5. Cross-shard read snapshots are deterministic.
+6. Domain replication remains identical across cluster.
+7. Split-brain attempts fail safely.
 
-Everything else can stage in.
+---
+
+# 17. Conclusion
+
+This specification defines a deterministic, MGA-consistent, single-writer-per-shard cluster architecture that:
+
+- Preserves ScratchBird’s Firebird-style semantics
+- Avoids WAL coupling
+- Maintains correctness through epoch enforcement
+- Provides safe replication
+- Enforces cluster-managed domain identity
+- Enables horizontal scaling by shard
+
+This is the authoritative cluster baseline for ScratchBird Beta.
+

@@ -1277,8 +1277,11 @@ public:
         {
             NONE = 0,
             AUTO = 1,
+            AUTONOMOUS = AUTO,
             JOINED = 2,
-            XA_PREPARED = 3
+            JOIN_LOCAL = JOINED,
+            XA_PREPARED = 3,
+            READ_ONLY_SNAPSHOT = 4
         };
 
         enum class RemoteTxnState : uint8_t
@@ -10099,8 +10102,13 @@ public:
         auto createUserMapping(const ID& user_id, const ID& foreign_server_id,
                                const std::string& remote_user, const std::string& remote_credentials,
                                ID& mapping_id_out, ErrorContext* ctx = nullptr) -> Status;
+        // Returns mapping metadata with write-only credential semantics (credentials are redacted).
         auto getUserMapping(const ID& user_id, const ID& foreign_server_id,
                             UserMappingInfo& mapping_out, ErrorContext* ctx = nullptr) -> Status;
+        // Runtime-only accessor for resolved credentials used by remote dispatch.
+        auto getUserMappingForRuntime(const ID& user_id, const ID& foreign_server_id,
+                                      UserMappingInfo& mapping_out, ErrorContext* ctx = nullptr)
+            -> Status;
         auto dropUserMapping(const ID& mapping_id, ErrorContext* ctx = nullptr) -> Status;
 
         // Server Registry operations (Phase B - Distributed MVCC)

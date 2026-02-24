@@ -222,9 +222,12 @@ const SchemaDef* schemaForOpcode(uint16_t opcode) {
     if (name == "SBLR3_EXTRACT" || name == "SBLR3_ALTER_ELEMENT") return lookupSchema("SCHEMA_FUNC_CALL");
     if (name == "SBLR3_RENAME_OBJECT" || name == "SBLR3_MOVE_OBJECT") return lookupSchema("SCHEMA_DDL_ALTER_RENAME");
 
-    if (name == "SBLR3_SET" || name == "SBLR3_SHOW" || name == "SBLR3_RESET" ||
-        name.rfind("SBLR3_SET_", 0) == 0 || name.rfind("SBLR3_SHOW_", 0) == 0 ||
-        name.rfind("SBLR3_RESET_", 0) == 0) {
+    const bool is_set_show_reset_family =
+        (name == "SBLR3_SET" || name == "SBLR3_SHOW" || name == "SBLR3_RESET" ||
+         name.rfind("SBLR3_SET_", 0) == 0 || name.rfind("SBLR3_SHOW_", 0) == 0 ||
+         name.rfind("SBLR3_RESET_", 0) == 0);
+    if (is_set_show_reset_family &&
+        kOpcodeSchemaMapGenerated.find(name) == kOpcodeSchemaMapGenerated.end()) {
         return lookupSchema("SCHEMA_SET_SHOW_RESET");
     }
     if (name == "SBLR3_EXPLAIN_PLAN") return lookupSchema("SCHEMA_EXPLAIN");

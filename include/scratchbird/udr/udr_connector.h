@@ -342,6 +342,15 @@ public:
 };
 
 // ============================================================================
+// sys.remote_* Runtime Binding
+// ============================================================================
+
+struct SysRemoteRuntimeBinding {
+    ConnectorType connector_type = ConnectorType::POSTGRESQL;
+    UDRServerConfig config;
+};
+
+// ============================================================================
 // sys.remote_* Procedure Implementations
 // ============================================================================
 
@@ -360,6 +369,22 @@ core::Status sys_remote_call(const std::string& server_name,
                              const std::vector<RemoteValue>& params,
                              RemoteResultSet& result,
                              core::ErrorContext* ctx = nullptr);
+
+core::Status sys_remote_exec_bound(const SysRemoteRuntimeBinding& binding,
+                                   const std::string& sql,
+                                   uint64_t& rows_affected,
+                                   core::ErrorContext* ctx = nullptr);
+
+core::Status sys_remote_query_bound(const SysRemoteRuntimeBinding& binding,
+                                    const std::string& sql,
+                                    RemoteResultSet& result,
+                                    core::ErrorContext* ctx = nullptr);
+
+core::Status sys_remote_call_bound(const SysRemoteRuntimeBinding& binding,
+                                   const std::string& procedure_name,
+                                   const std::vector<RemoteValue>& params,
+                                   RemoteResultSet& result,
+                                   core::ErrorContext* ctx = nullptr);
 
 } // namespace udr
 } // namespace scratchbird

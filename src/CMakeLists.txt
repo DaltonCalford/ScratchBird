@@ -647,6 +647,9 @@ if(SCRATCHBIRD_ENABLE_UDR)
     message(STATUS "UDR library: scratchbird_udr (Remote Engine UDR Connectors)")
 endif()
 
+# executor.cpp now dispatches remote control opcodes through UDR runtime entry
+# points; wire sblr -> udr when the UDR library is enabled.
+
 # ==============================================================================
 # IPC Library: scratchbird_ipc (Section E: IPC + SBWP v1.1)
 # ==============================================================================
@@ -750,6 +753,9 @@ target_link_libraries(sb_server PRIVATE
     scratchbird_core
     scratchbird_link_group
 )
+if(TARGET scratchbird_udr)
+    target_link_libraries(sb_server PRIVATE scratchbird_udr)
+endif()
 if(SCRATCHBIRD_WITH_COMPILER)
     target_link_libraries(sb_server PRIVATE scratchbird_compiler scratchbird_parser)
 else()
@@ -896,6 +902,9 @@ message(STATUS "Parser agent executables: sb_parser_native/pg/mysql/fb")
 add_executable(scratchbird main.cpp)
 
 target_link_libraries(scratchbird PRIVATE scratchbird_link_group)
+if(TARGET scratchbird_udr)
+    target_link_libraries(scratchbird PRIVATE scratchbird_udr)
+endif()
 
 set_target_properties(scratchbird PROPERTIES
     CXX_STANDARD 17

@@ -3,6 +3,7 @@
 
 #include <cstring>
 #include <limits>
+#include <memory>
 
 namespace scratchbird::sblr::v3 {
 
@@ -106,6 +107,78 @@ bool decodeBytes(const uint8_t* data, size_t size, size_t& offset, std::vector<u
     out.assign(data + offset, data + offset + len);
     offset += static_cast<size_t>(len);
     return true;
+}
+
+static bool wrapScalarAsLiteralExpression(const Value& value, Value::InstrPtr& out_instr) {
+    if (auto ptr = std::get_if<Value::InstrPtr>(&value.data)) {
+        if (ptr && *ptr) {
+            out_instr = *ptr;
+            return true;
+        }
+        return false;
+    }
+
+    auto inst = std::make_shared<Instruction>();
+    inst->flags = 0;
+    Value::Object payload;
+
+    if (value.isNull()) {
+        inst->opcode = static_cast<uint16_t>(Opcode::SBLR3_LITERAL_NULL);
+        payload["value"] = Value();
+        inst->payload = Value(std::move(payload));
+        out_instr = std::move(inst);
+        return true;
+    }
+
+    if (auto b = std::get_if<bool>(&value.data)) {
+        inst->opcode = static_cast<uint16_t>(Opcode::SBLR3_LITERAL_BOOLEAN);
+        payload["value"] = Value(*b);
+        inst->payload = Value(std::move(payload));
+        out_instr = std::move(inst);
+        return true;
+    }
+    if (auto i = std::get_if<int64_t>(&value.data)) {
+        inst->opcode = static_cast<uint16_t>(Opcode::SBLR3_LITERAL_INT64);
+        payload["value"] = Value(*i);
+        inst->payload = Value(std::move(payload));
+        out_instr = std::move(inst);
+        return true;
+    }
+    if (auto u = std::get_if<uint64_t>(&value.data)) {
+        if (*u <= static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
+            inst->opcode = static_cast<uint16_t>(Opcode::SBLR3_LITERAL_INT64);
+            payload["value"] = Value(static_cast<int64_t>(*u));
+        } else {
+            inst->opcode = static_cast<uint16_t>(Opcode::SBLR3_LITERAL_STRING);
+            payload["value"] = Value(std::to_string(*u));
+        }
+        inst->payload = Value(std::move(payload));
+        out_instr = std::move(inst);
+        return true;
+    }
+    if (auto d = std::get_if<double>(&value.data)) {
+        inst->opcode = static_cast<uint16_t>(Opcode::SBLR3_LITERAL_DOUBLE);
+        payload["value"] = Value(*d);
+        inst->payload = Value(std::move(payload));
+        out_instr = std::move(inst);
+        return true;
+    }
+    if (auto s = std::get_if<std::string>(&value.data)) {
+        inst->opcode = static_cast<uint16_t>(Opcode::SBLR3_LITERAL_STRING);
+        payload["value"] = Value(*s);
+        inst->payload = Value(std::move(payload));
+        out_instr = std::move(inst);
+        return true;
+    }
+    if (auto bytes = std::get_if<Value::Bytes>(&value.data)) {
+        inst->opcode = static_cast<uint16_t>(Opcode::SBLR3_LITERAL_BINARY);
+        payload["value"] = Value(*bytes);
+        inst->payload = Value(std::move(payload));
+        out_instr = std::move(inst);
+        return true;
+    }
+
+    return false;
 }
 
 void encodeInstruction(const Instruction& inst, Buffer& out) {
@@ -219,20 +292,36 @@ bool encodePayloadBySchema(const SchemaDef& schema, const Value& payload, Buffer
                         return false;
                     }
                 }
-                if (count == 0) {
-                    encodeVaruint(0, out);
-                    return true;
-                }
                 auto it_key = obj->find("key");
                 auto it_value = obj->find("value");
-                if (it_key == obj->end() || it_value == obj->end()) {
-                    err.message = "OPTION_KV missing key/value";
-                    return false;
+                if (it_key != obj->end() && it_value != obj->end()) {
+                    Value::Object entry;
+                    entry["key"] = it_key->second;
+                    entry["value"] = it_value->second;
+                    items.push_back(Value(std::move(entry)));
+                } else {
+                    // Backward-compat path: accept object-map option form like
+                    // {"count":2, "SQL_TEXT":"...", "TXN_MODE":"AUTONOMOUS"}.
+                    for (const auto& [key, value] : *obj) {
+                        if (key == "count" || key == "items") {
+                            continue;
+                        }
+                        Value::Object entry;
+                        entry["key"] = Value(key);
+                        entry["value"] = value;
+                        items.push_back(Value(std::move(entry)));
+                    }
+
+                    if (items.empty()) {
+                        encodeVaruint(0, out);
+                        return true;
+                    }
+
+                    if (count != 0 && count != items.size()) {
+                        err.message = "OPTION_KV count mismatch";
+                        return false;
+                    }
                 }
-                Value::Object entry;
-                entry["key"] = it_key->second;
-                entry["value"] = it_value->second;
-                items.push_back(Value(std::move(entry)));
             }
         } else {
             err.message = "OPTION_KV payload invalid";
@@ -252,7 +341,16 @@ bool encodePayloadBySchema(const SchemaDef& schema, const Value& payload, Buffer
                 return false;
             }
             if (!encodeValue(key_field, it_key->second, out, err)) return false;
-            if (!encodeValue(value_field, it_value->second, out, err)) return false;
+            Value value_expr = it_value->second;
+            if (!std::holds_alternative<Value::InstrPtr>(value_expr.data)) {
+                Value::InstrPtr literal_expr;
+                if (!wrapScalarAsLiteralExpression(value_expr, literal_expr)) {
+                    err.message = "OPTION_KV entry value is not encodable as expression";
+                    return false;
+                }
+                value_expr = Value(std::move(literal_expr));
+            }
+            if (!encodeValue(value_field, value_expr, out, err)) return false;
         }
         return true;
     }

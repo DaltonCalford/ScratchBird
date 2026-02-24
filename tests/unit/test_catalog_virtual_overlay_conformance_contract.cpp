@@ -121,6 +121,8 @@ TEST_F(CatalogVirtualOverlayConformanceContractTest, VirtualOverlayConformance)
     connector.endpoint_uri = "tcp://127.0.0.1:5432";
     connector.has_default_mapping_id = true;
     connector.default_mapping_id = user_mapping_id;
+    connector.has_engine_version_text = true;
+    connector.engine_version_text = "18.0";
     connector.state = CatalogManager::RemoteConnectorState::READY;
     connector.failure_count = 1;
     connector.has_last_probe_time = true;

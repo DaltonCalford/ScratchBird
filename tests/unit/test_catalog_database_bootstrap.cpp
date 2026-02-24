@@ -1088,6 +1088,9 @@ TEST(CatalogDatabaseBootstrapTest, RemoteConnectorLifecycleMaterializesDynamicOv
         connector.endpoint_uri = "tcp://127.0.0.1:5432";
         connector.has_default_mapping_id = true;
         connector.default_mapping_id = mapping_id;
+        connector.has_engine_version_text = true;
+        connector.engine_version_text = "18.0";
+        connector.module_checksum = 0xA11CEu;
         connector.state = CatalogManager::RemoteConnectorState::READY;
 
         ASSERT_EQ(catalog->upsertRemoteConnectorCatalogEntry(connector, &ctx), Status::OK)
@@ -1157,6 +1160,9 @@ TEST(CatalogDatabaseBootstrapTest, RemoteConnectorRenameMovesDynamicOverlaySchem
         connector.endpoint_uri = "tcp://127.0.0.1:5432";
         connector.has_default_mapping_id = true;
         connector.default_mapping_id = mapping_id;
+        connector.has_engine_version_text = true;
+        connector.engine_version_text = "18.0";
+        connector.module_checksum = 0xBEEFu;
         connector.state = CatalogManager::RemoteConnectorState::READY;
 
         ASSERT_EQ(catalog->upsertRemoteConnectorCatalogEntry(connector, &ctx), Status::OK)

@@ -21,6 +21,7 @@
 #include <iomanip>
 #include <limits>
 #include <optional>
+#include <thread>
 #include <iostream>
 #include <sstream>
 #include "scratchbird/parser/shared_types.h"
@@ -104,6 +105,7 @@
 #include "scratchbird/sblr/query_result_cache.h"  // P2-19: Query Result Caching
 #include "scratchbird/udr/language_udr_runtime.h"
 #include "scratchbird/udr/language_udr_test_harness.h"
+#include "scratchbird/udr/udr_connector.h"
 #include <nlohmann/json.hpp>
 #include <array>
 #include <sstream>
@@ -135,6 +137,45 @@
 
 using json = nlohmann::json;
 using OrderedJson = nlohmann::ordered_json;
+
+#if defined(__GNUC__) || defined(__clang__)
+#define SCRATCHBIRD_WEAK_SYMBOL __attribute__((weak))
+#else
+#define SCRATCHBIRD_WEAK_SYMBOL
+#endif
+
+namespace scratchbird::udr
+{
+    // Weak fallback stubs keep scratchbird_sblr linkable in targets that do not
+    // link scratchbird_udr. Real implementations in scratchbird_udr override
+    // these symbols when present.
+    SCRATCHBIRD_WEAK_SYMBOL core::Status sys_remote_exec_bound(
+        const SysRemoteRuntimeBinding&,
+        const std::string&,
+        uint64_t& rows_affected,
+        core::ErrorContext* ctx)
+    {
+        rows_affected = 0;
+        SET_ERROR_CONTEXT(ctx,
+                          core::Status::NOT_IMPLEMENTED,
+                          "Remote runtime dispatch requires scratchbird_udr linkage");
+        return core::Status::NOT_IMPLEMENTED;
+    }
+
+    SCRATCHBIRD_WEAK_SYMBOL core::Status sys_remote_query_bound(
+        const SysRemoteRuntimeBinding&,
+        const std::string&,
+        RemoteResultSet& result,
+        core::ErrorContext* ctx)
+    {
+        result.columns.clear();
+        result.rows.clear();
+        SET_ERROR_CONTEXT(ctx,
+                          core::Status::NOT_IMPLEMENTED,
+                          "Remote runtime dispatch requires scratchbird_udr linkage");
+        return core::Status::NOT_IMPLEMENTED;
+    }
+}
 
 namespace scratchbird
 {
@@ -3452,8 +3493,7 @@ namespace scratchbird
             }
 
             ConnectionContextGuard ctx_guard(conn_ctx_);
-            core::ConnectionContext *conn_ctx = core::ConnectionContext::getCurrent();
-            bool created_stmt_snapshot = false;
+            core::ConnectionContext* conn_ctx = core::ConnectionContext::getCurrent();
 
             try
             {
@@ -3479,396 +3519,16 @@ namespace scratchbird
                     }
                 }
 
-                if (isV3ContainerBytes(bytecode))
+                if (!isV3ContainerBytes(bytecode))
                 {
-                    ExecutionResult v3_result = executeV3(bytecode);
-                    if (created_stmt_snapshot && conn_ctx)
-                    {
-                        conn_ctx->clearStatementXID();
-                    }
-                    return v3_result;
+                    return ExecutionResult(
+                        "SBLR3_REQUIRED: executor accepts only SBLR3 container input");
                 }
 
-                // Check version
-                if (readByte() != static_cast<uint8_t>(Opcode::VERSION))
-                {
-                    return ExecutionResult("Invalid bytecode: missing version");
-                }
-
-                uint8_t version = readByte();
-                if (version != SBLR_VERSION)
-                {
-                    return ExecutionResult("Unsupported bytecode version: " +
-                                           std::to_string(version));
-                }
-
-                // Create statement snapshot for READ_COMMITTED_READ_CONSISTENCY
-                if (conn_ctx && conn_ctx->getIsolationLevel() ==
-                                    core::IsolationLevel::READ_COMMITTED_READ_CONSISTENCY)
-                {
-                    // Create statement XID for consistent reads within this statement
-                    conn_ctx->createStatementXID();
-                    created_stmt_snapshot = true;
-                    // Non-fatal if snapshot creation fails - fall back to READ COMMITTED semantics
-                }
-
-                // Execute main statement
-                Opcode op = static_cast<Opcode>(readByte());
-                ExecutionResult result;
-                bool is_txn_control = false;
-                std::optional<QueryHash> result_cache_hash;
-                bool use_cached_result = false;
-                bool cache_checked = false;
-
-                while (true)
-                {
-                    if (!cache_checked)
-                    {
-                        if (op == Opcode::SELECT)
-                        {
-                            QueryResultCache& cache = QueryResultCacheManager::getInstance();
-                            if (cache.isEnabled())
-                            {
-                                uint64_t policy_epoch = 0;
-                                if (db_ && db_->catalog_manager())
-                                {
-                                    db_->catalog_manager()->getSecurityPolicyEpoch(policy_epoch, nullptr);
-                                }
-                                std::vector<uint8_t> cache_key_bytes = bytecode;
-                                cache_key_bytes.push_back(0x1e);
-                                cache_key_bytes.push_back(
-                                    static_cast<uint8_t>(
-                                        isOperatorStrictModeEnabled(conn_ctx) ? 1 : 0));
-                                QueryHash hash = computeResultCacheHash(cache_key_bytes,
-                                                                        parameter_values_,
-                                                                        parameter_nulls_,
-                                                                        policy_epoch);
-                                CachedResultSet cached;
-                                if (cache.get(hash, cached))
-                                {
-                                    result = ExecutionResult(buildResultSetFromCache(cached));
-                                    use_cached_result = true;
-                                }
-                                else
-                                {
-                                    result_cache_hash = hash;
-                                }
-                            }
-                            cache_checked = true;
-                        }
-                        else if (op != Opcode::EXTENDED_OPCODE)
-                        {
-                            cache_checked = true;
-                        }
-                    }
-                    if (use_cached_result)
-                    {
-                        break;
-                    }
-                    switch (op)
-                    {
-                    case Opcode::CREATE_TABLE:
-                        executeCreateTable();
-                        result = ExecutionResult();
-                        break;
-
-                    case Opcode::CREATE_INDEX:
-                        executeCreateIndex();
-                        result = ExecutionResult();
-                        break;
-
-                    case Opcode::CREATE_TABLESPACE:
-                        executeCreateTablespace();
-                        result = ExecutionResult();
-                        break;
-
-                    case Opcode::ALTER_TABLESPACE:
-                        executeAlterTablespace();
-                        result = ExecutionResult();
-                        break;
-
-                    case Opcode::ALTER_TABLE_SET_TABLESPACE:
-                        executeAlterTableSetTablespace();
-                        result = ExecutionResult();
-                        break;
-
-                    case Opcode::DROP_TABLE:
-                        executeDropTable();
-                        result = ExecutionResult();
-                        break;
-
-                    case Opcode::DROP_INDEX:
-                        executeDropIndex();
-                        result = ExecutionResult();
-                        break;
-
-                    case Opcode::ALTER_TABLE:
-                        executeAlterTable();
-                        result = ExecutionResult();
-                        break;
-
-                    case Opcode::TRUNCATE_TABLE:
-                        executeTruncateTable();
-                        result = ExecutionResult();
-                        break;
-
-                    case Opcode::CREATE_SEQUENCE:
-                        executeCreateSequence();
-                        result = ExecutionResult();
-                        break;
-
-                    case Opcode::ALTER_SEQUENCE:
-                        executeAlterSequence();
-                        result = ExecutionResult();
-                        break;
-
-                    case Opcode::DROP_SEQUENCE:
-                        executeDropSequence();
-                        result = ExecutionResult();
-                        break;
-
-                    case Opcode::CREATE_VIEW:
-                        executeCreateView();
-                        result = ExecutionResult();
-                        break;
-
-                    case Opcode::DROP_VIEW:
-                        executeDropView();
-                        result = ExecutionResult();
-                        break;
-
-                    case Opcode::REFRESH_MATERIALIZED_VIEW:  // ALPHA Phase 1 - Materialized Views
-                        executeRefreshMaterializedView();
-                        result = ExecutionResult();
-                        break;
-
-                    case Opcode::CREATE_JOB:
-                        executeCreateJob();
-                        result = ExecutionResult();
-                        break;
-
-                    case Opcode::ALTER_JOB:
-                        executeAlterJob();
-                        result = ExecutionResult();
-                        break;
-
-                    case Opcode::DROP_JOB:
-                        executeDropJob();
-                        result = ExecutionResult();
-                        break;
-
-                    case Opcode::EXECUTE_JOB:
-                        executeExecuteJob();
-                        result = ExecutionResult();
-                        break;
-
-                    case Opcode::CANCEL_JOB_RUN:
-                        executeCancelJobRun();
-                        result = ExecutionResult();
-                        break;
-
-                    case Opcode::DROP_TABLESPACE:
-                        executeDropTablespace();
-                        result = ExecutionResult();
-                        break;
-
-                    case Opcode::ATTACH_TABLESPACE:
-                        executeAttachTablespace();
-                        result = ExecutionResult();
-                        break;
-
-                    case Opcode::DETACH_TABLESPACE:
-                        executeDetachTablespace();
-                        result = ExecutionResult();
-                        break;
-
-                    case Opcode::INSERT:
-                        executeInsert();
-                        result = ExecutionResult();
-                        break;
-
-                    case Opcode::UPDATE:
-                        executeUpdate();
-                        result = ExecutionResult();
-                        break;
-
-                    case Opcode::DELETE:
-                        executeDelete();
-                        result = ExecutionResult();
-                        break;
-
-                    case Opcode::SELECT:
-                        executeSelect();
-                        result = ExecutionResult(std::move(current_result_set_));
-                        break;
-
-                    case Opcode::EXPLAIN_PLAN:
-                        executeExplainPlan();
-                        result = ExecutionResult(std::move(current_result_set_));
-                        break;
-
-                    case Opcode::NESTED_LOOP_JOIN:
-                        executeNestedLoopJoin();
-                        result = ExecutionResult(std::move(current_result_set_));
-                        break;
-
-                    case Opcode::HASH_JOIN:
-                        executeHashJoin();
-                        result = ExecutionResult(std::move(current_result_set_));
-                        break;
-
-                    case Opcode::SWEEP:
-                        executeSweep();
-                        result = ExecutionResult();
-                        break;
-
-                    case Opcode::START_TRANSACTION:
-                        is_txn_control = true;
-                        executeStartTransaction();
-                        result = ExecutionResult();
-                        break;
-
-                    case Opcode::SET_TRANSACTION:
-                        is_txn_control = true;
-                        executeSetTransaction();
-                        result = ExecutionResult();
-                        break;
-
-                    case Opcode::COMMIT:
-                        is_txn_control = true;
-                        executeCommit();
-                        result = ExecutionResult();
-                        break;
-
-                    case Opcode::ROLLBACK:
-                        is_txn_control = true;
-                        executeRollback();
-                        result = ExecutionResult();
-                        break;
-
-                    case Opcode::EXTENDED_OPCODE:
-                    {
-                        uint16_t ext_op = readExtendedOpcode();
-                        if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_DEBUG_SPAN))
-                        {
-                            int32_t line = static_cast<int32_t>(readInt32());
-                            int32_t column = static_cast<int32_t>(readInt32());
-                            if (conn_ctx_)
-                            {
-                                conn_ctx_->updateStatementSourceLocation(line, column);
-                            }
-                            if (pc_ >= bytecode_size_)
-                            {
-                                result = ExecutionResult();
-                                break;
-                            }
-                            op = static_cast<Opcode>(readByte());
-                            cache_checked = false;
-                            continue;
-                        }
-                        if (ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SET_AUTOCOMMIT) ||
-                            ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_COMMIT_RETAINING) ||
-                            ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ROLLBACK_RETAINING) ||
-                            ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_PREPARE_TRANSACTION) ||
-                            ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_COMMIT_PREPARED) ||
-                            ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ROLLBACK_PREPARED) ||
-                            ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SAVEPOINT) ||
-                            ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_RELEASE_SAVEPOINT) ||
-                            ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_ROLLBACK_TO_SAVEPOINT) ||
-                            ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SAVEPOINT_BEGIN) ||
-                            ext_op == static_cast<uint16_t>(ExtendedOpcode::EXT_SAVEPOINT_END))
-                        {
-                            is_txn_control = true;
-                        }
-
-                        bool continue_after_cte = false;
-                        if (executeLegacyCteExtendedOpcode(ext_op, op, result, continue_after_cte))
-                        {
-                            if (continue_after_cte)
-                            {
-                                cache_checked = false;
-                                continue;
-                            }
-                            if (!result.success())
-                            {
-                                break;
-                            }
-                        }
-                        else if (executeLegacyStatementSurfaceExtendedOpcode(ext_op, result))
-                        {
-                        }
-                        else if (executeLegacyPsqlExtendedOpcode(ext_op, result))
-                        {
-                        }
-                        else if (executeLegacyCallExtendedOpcode(ext_op, result))
-                        {
-                            // Preserve legacy failure behavior for CALL in statement execution loop.
-                            if (!result.success())
-                            {
-                                break;
-                            }
-                        }
-                        else if (executeLegacySpatialExtendedOpcode(ext_op, result))
-                        {
-                        }
-                        else if (!executeLegacyAdminControlExtendedOpcode(ext_op, result))
-                        {
-                            result = ExecutionResult("Unknown extended opcode: " +
-                                                     std::to_string(static_cast<int>(ext_op)));
-                        }
-                        break;
-                    }
-
-                    default:
-                        result = ExecutionResult("Unknown statement opcode: " +
-                                                 std::to_string(static_cast<int>(op)));
-                        break;
-                    }
-
-                    break;
-                }
-
-                if (result_cache_hash && result.success() && result.hasResultSet() && last_select_cacheable_)
-                {
-                    CachedResultSet cached = buildCachedResultSetFromResultSet(
-                        *result.resultSet(), last_select_table_ids_);
-                    QueryResultCacheManager::getInstance().put(*result_cache_hash, std::move(cached));
-                }
-
-                // Clear statement snapshot after successful execution
-                if (created_stmt_snapshot && conn_ctx)
-                {
-                    conn_ctx->clearStatementXID();
-                }
-
-                if (result.success() && conn_ctx &&
-                    conn_ctx->autocommitMode() &&
-                    !conn_ctx->autocommitSuspended() &&
-                    !is_txn_control)
-                {
-                    LOG_INFO(EXECUTOR, "Autocommit after statement");
-                    core::ErrorContext auto_err;
-                    auto status = conn_ctx->commit(&auto_err);
-                    if (status != core::Status::OK)
-                    {
-                        std::string err_msg = "Autocommit failed";
-                        if (!auto_err.message.empty())
-                        {
-                            err_msg += ": " + auto_err.message;
-                        }
-                        return ExecutionResult(err_msg);
-                    }
-                }
-
-                return result;
+                return executeCanonicalV3(bytecode);
             }
-            catch (const std::exception &e)
+            catch (const std::exception& e)
             {
-                // Clear statement snapshot on error
-                if (created_stmt_snapshot && conn_ctx)
-                {
-                    conn_ctx->clearStatementXID();
-                }
                 if (std::string(e.what()).find("sb_toast_") != std::string::npos)
                 {
                     std::string sql;
@@ -5604,9 +5264,13 @@ namespace scratchbird
                 return core::Status::OK;
             };
 
-            if (isTableScopedType(expected_type) && path.components.size() < 2)
+            if (isTableScopedType(expected_type) && path.components.size() <= 2)
             {
-                std::string object_name = path.components.front();
+                const bool has_parent_object_name = (path.components.size() == 2);
+                std::string object_name =
+                    has_parent_object_name ? path.components.back() : path.components.front();
+                std::string parent_object_name =
+                    has_parent_object_name ? path.components.front() : std::string();
 
                 auto current_schema = [&]() -> core::ID {
                     if (current_schema_set_)
@@ -5649,6 +5313,52 @@ namespace scratchbird
                     filter.object_type = expected_type;
                     filter.filter_schema_id = true;
                     filter.schema_id = schema_id;
+                    if (has_parent_object_name)
+                    {
+                        core::CatalogManager::ResolveFilter parent_filter;
+                        parent_filter.object_type = core::CatalogManager::ObjectType::TABLE;
+                        parent_filter.filter_schema_id = true;
+                        parent_filter.schema_id = schema_id;
+
+                        std::vector<core::CatalogManager::ResolvedObject> parent_objects;
+                        auto parent_status =
+                            catalog->listResolvedObjects(parent_filter, parent_objects, ctx);
+                        if (parent_status != core::Status::OK)
+                        {
+                            return parent_status;
+                        }
+
+                        core::ID parent_object_id{};
+                        int parent_matches = 0;
+                        for (const auto& parent_obj : parent_objects)
+                        {
+                            if (core::IdentifierUtils::namesMatch(
+                                    parent_object_name, false /*search_delimited*/,
+                                    parent_obj.object_name, false /*stored_delimited*/))
+                            {
+                                if (parent_matches == 0)
+                                {
+                                    parent_object_id = parent_obj.object_id;
+                                }
+                                parent_matches++;
+                            }
+                        }
+
+                        if (parent_matches == 0)
+                        {
+                            return core::Status::OK;
+                        }
+                        if (parent_matches > 1)
+                        {
+                            SET_ERROR_CONTEXT(ctx,
+                                              core::Status::AMBIGUOUS_COLUMN,
+                                              "Ambiguous table name for table-scoped object");
+                            return core::Status::AMBIGUOUS_COLUMN;
+                        }
+
+                        filter.filter_parent_object_id = true;
+                        filter.parent_object_id = parent_object_id;
+                    }
 
                     std::vector<core::CatalogManager::ResolvedObject> objects;
                     auto list_status = catalog->listResolvedObjects(filter, objects, ctx);
@@ -40445,7 +40155,7 @@ namespace scratchbird
             }
         }
 
-        ExecutionResult Executor::executeV3(const std::vector<uint8_t> &bytecode)
+        ExecutionResult Executor::executeCanonicalV3(const std::vector<uint8_t> &bytecode)
         {
             const scratchbird::sblr::v3::ValidationResult validation =
                 scratchbird::sblr::v3::validateContainerDetailed(bytecode.data(), bytecode.size());
@@ -41239,7 +40949,8 @@ namespace scratchbird
 
             auto resolveTableId = [&](const std::string& path,
                                       core::CatalogManager::TableInfo& table_info,
-                                      std::string& err_out) -> bool {
+                                      std::string& err_out,
+                                      bool allow_search_path = true) -> bool {
                 core::ErrorContext ctx;
                 core::ID table_id;
                 core::CatalogManager::ObjectType resolved_type =
@@ -41250,7 +40961,7 @@ namespace scratchbird
                                                     resolved_type,
                                                     nullptr,
                                                     &ctx,
-                                                    true) != core::Status::OK)
+                                                    allow_search_path) != core::Status::OK)
                 {
                     err_out = ctx.message.empty() ? ("Schema not found for table '" + path + "'")
                                                   : ctx.message;
@@ -44368,7 +44079,7 @@ namespace scratchbird
 
                 core::CatalogManager::TableInfo table_info;
                 std::string err_out;
-                if (!resolveTableId(table_path, table_info, err_out))
+                if (!resolveTableId(table_path, table_info, err_out, false))
                 {
                     return ExecutionResult(err_out);
                 }
@@ -44530,6 +44241,25 @@ namespace scratchbird
                             std::string option_key;
                             if (!getString(*option_obj, "key", option_key) || option_key.empty())
                             {
+                                // Some emitters encode "no options" as a placeholder entry
+                                // with empty key and null value. Ignore that sentinel.
+                                uint64_t sentinel_count = 1;
+                                if (getU64(*option_obj, "count", sentinel_count) &&
+                                    sentinel_count == 0)
+                                {
+                                    continue;
+                                }
+                                auto value_it = option_obj->find("value");
+                                if (value_it == option_obj->end())
+                                {
+                                    continue;
+                                }
+                                Value sentinel_value = Value::makeNull();
+                                if (decodeCreateIndexOptionValue(value_it->second, sentinel_value) &&
+                                    sentinel_value.isNull())
+                                {
+                                    continue;
+                                }
                                 return ExecutionResult("CREATE INDEX option key missing");
                             }
                             option_key = core::IdentifierUtils::toUpper(option_key);
@@ -47201,7 +46931,7 @@ namespace scratchbird
                     }
                     core::CatalogManager::TableInfo table_info;
                     std::string err_out;
-                    if (!resolveTableId(table_path, table_info, err_out))
+                    if (!resolveTableId(table_path, table_info, err_out, false))
                     {
                         return ExecutionResult(err_out);
                     }
@@ -47232,7 +46962,7 @@ namespace scratchbird
 
                 core::CatalogManager::TableInfo table_info;
                 std::string err_out;
-                if (!resolveTableId(table_path, table_info, err_out))
+                if (!resolveTableId(table_path, table_info, err_out, false))
                 {
                     return ExecutionResult(err_out);
                 }
@@ -47283,7 +47013,7 @@ namespace scratchbird
 
                 core::CatalogManager::TableInfo table_info;
                 std::string err_out;
-                if (!resolveTableId(table_path, table_info, err_out))
+                if (!resolveTableId(table_path, table_info, err_out, false))
                 {
                     return ExecutionResult(err_out);
                 }
@@ -50503,15 +50233,6 @@ namespace scratchbird
                 }
 
                 core::ErrorContext err_ctx;
-                core::ObjectPath object_path;
-                auto path_status = buildObjectPathFromName(object_path_str, object_path, &err_ctx);
-                if (path_status != core::Status::OK)
-                {
-                    return ExecutionResult(err_ctx.message.empty()
-                                               ? "Invalid object path"
-                                               : "Invalid object path: " + err_ctx.message);
-                }
-
                 core::CatalogManager::ObjectType object_type =
                     static_cast<core::CatalogManager::ObjectType>(static_cast<uint8_t>(type_u));
                 core::CatalogManager::ResolveOptions opts;
@@ -50519,8 +50240,14 @@ namespace scratchbird
                 core::CatalogManager::ObjectType resolved_type =
                     core::CatalogManager::ObjectType::UNKNOWN;
                 core::ID object_id{};
-                auto resolve_status = db_->catalog_manager()->resolveObjectPath(
-                    object_path, object_type, opts, object_id, resolved_type, &err_ctx);
+                auto resolve_status = resolveObjectIdForQualifiedName(
+                    object_path_str,
+                    object_type,
+                    object_id,
+                    resolved_type,
+                    nullptr,
+                    &err_ctx,
+                    false);
                 if (resolve_status != core::Status::OK)
                 {
                     return ExecutionResult(err_ctx.message.empty()
@@ -50600,7 +50327,7 @@ namespace scratchbird
                 }
 
                 core::ObjectPath target_schema_path;
-                path_status = buildObjectPathFromName(schema_name, target_schema_path, &err_ctx);
+                auto path_status = buildObjectPathFromName(schema_name, target_schema_path, &err_ctx);
                 if (path_status != core::Status::OK)
                 {
                     return ExecutionResult(err_ctx.message.empty()
@@ -59198,11 +58925,3070 @@ namespace scratchbird
                             return ExecutionResult();
                         };
 
+                        auto executeRemoteControlOpcode =
+                            [&](scratchbird::sblr::v3::Opcode remote_opcode,
+                                const scratchbird::sblr::v3::Value::Object& remote_payload)
+                            -> ExecutionResult {
+                            std::function<bool(const scratchbird::sblr::v3::Value&, std::string&)>
+                                valueToText;
+                            std::function<bool(const scratchbird::sblr::v3::Instruction&, std::string&)>
+                                instructionLiteralToText;
+                            instructionLiteralToText =
+                                [&](const scratchbird::sblr::v3::Instruction& instruction,
+                                    std::string& out) -> bool
+                            {
+                                using scratchbird::sblr::v3::Opcode;
+                                const auto opcode =
+                                    static_cast<Opcode>(instruction.opcode);
+                                if (opcode == Opcode::SBLR3_LITERAL_NULL)
+                                {
+                                    out.clear();
+                                    return true;
+                                }
+
+                                switch (opcode)
+                                {
+                                    case Opcode::SBLR3_LITERAL_BOOLEAN:
+                                    case Opcode::SBLR3_LITERAL_INT32:
+                                    case Opcode::SBLR3_LITERAL_INT64:
+                                    case Opcode::SBLR3_LITERAL_DOUBLE:
+                                    case Opcode::SBLR3_LITERAL_STRING:
+                                    case Opcode::SBLR3_LITERAL_BINARY:
+                                    case Opcode::SBLR3_LITERAL_UUID:
+                                    case Opcode::SBLR3_LITERAL_DATE:
+                                    case Opcode::SBLR3_LITERAL_TIME:
+                                    case Opcode::SBLR3_LITERAL_TIMESTAMP:
+                                    case Opcode::SBLR3_LITERAL_DECIMAL:
+                                    case Opcode::SBLR3_LITERAL_JSON:
+                                    case Opcode::SBLR3_LITERAL_XML:
+                                    {
+                                        auto payload_obj = std::get_if<
+                                            scratchbird::sblr::v3::Value::Object>(
+                                            &instruction.payload.data);
+                                        if (!payload_obj)
+                                        {
+                                            return false;
+                                        }
+                                        auto it_value = payload_obj->find("value");
+                                        if (it_value == payload_obj->end())
+                                        {
+                                            return false;
+                                        }
+                                        return valueToText(it_value->second, out);
+                                    }
+                                    default:
+                                        return false;
+                                }
+                            };
+                            valueToText =
+                                [&](const scratchbird::sblr::v3::Value& value,
+                                    std::string& out) -> bool
+                            {
+                                if (value.isNull())
+                                {
+                                    out.clear();
+                                    return true;
+                                }
+                                if (auto s = std::get_if<std::string>(&value.data))
+                                {
+                                    out = *s;
+                                    return true;
+                                }
+                                if (auto u = std::get_if<uint64_t>(&value.data))
+                                {
+                                    out = std::to_string(*u);
+                                    return true;
+                                }
+                                if (auto i = std::get_if<int64_t>(&value.data))
+                                {
+                                    out = std::to_string(*i);
+                                    return true;
+                                }
+                                if (auto d = std::get_if<double>(&value.data))
+                                {
+                                    out = std::to_string(*d);
+                                    return true;
+                                }
+                                if (auto b = std::get_if<bool>(&value.data))
+                                {
+                                    out = *b ? "true" : "false";
+                                    return true;
+                                }
+                                if (auto ptr =
+                                        std::get_if<scratchbird::sblr::v3::Value::InstrPtr>(
+                                            &value.data))
+                                {
+                                    if (!ptr || !*ptr)
+                                    {
+                                        return false;
+                                    }
+                                    return instructionLiteralToText(**ptr, out);
+                                }
+                                return false;
+                            };
+
+                            auto valueToU64 = [&](const scratchbird::sblr::v3::Value& value,
+                                                  uint64_t& out) -> bool
+                            {
+                                if (value.isNull())
+                                {
+                                    return false;
+                                }
+                                if (auto u = std::get_if<uint64_t>(&value.data))
+                                {
+                                    out = *u;
+                                    return true;
+                                }
+                                if (auto i = std::get_if<int64_t>(&value.data))
+                                {
+                                    if (*i < 0)
+                                    {
+                                        return false;
+                                    }
+                                    out = static_cast<uint64_t>(*i);
+                                    return true;
+                                }
+                                if (auto ptr =
+                                        std::get_if<scratchbird::sblr::v3::Value::InstrPtr>(
+                                            &value.data))
+                                {
+                                    if (!ptr || !*ptr)
+                                    {
+                                        return false;
+                                    }
+                                    std::string text;
+                                    if (!instructionLiteralToText(**ptr, text))
+                                    {
+                                        return false;
+                                    }
+                                    const std::string trimmed = trimAsciiCopy(text);
+                                    if (trimmed.empty())
+                                    {
+                                        return false;
+                                    }
+                                    try
+                                    {
+                                        size_t consumed = 0;
+                                        const uint64_t parsed = std::stoull(trimmed, &consumed, 10);
+                                        if (consumed != trimmed.size())
+                                        {
+                                            return false;
+                                        }
+                                        out = parsed;
+                                        return true;
+                                    }
+                                    catch (...)
+                                    {
+                                        return false;
+                                    }
+                                }
+                                if (auto s = std::get_if<std::string>(&value.data))
+                                {
+                                    const std::string trimmed = trimAsciiCopy(*s);
+                                    if (trimmed.empty())
+                                    {
+                                        return false;
+                                    }
+                                    try
+                                    {
+                                        size_t consumed = 0;
+                                        const uint64_t parsed = std::stoull(trimmed, &consumed, 10);
+                                        if (consumed != trimmed.size())
+                                        {
+                                            return false;
+                                        }
+                                        out = parsed;
+                                        return true;
+                                    }
+                                    catch (...)
+                                    {
+                                        return false;
+                                    }
+                                }
+                                return false;
+                            };
+
+                            auto parseUuidText = [&](const std::string& raw,
+                                                     core::ID& out) -> bool
+                            {
+                                std::string hex;
+                                hex.reserve(32);
+                                for (unsigned char ch : raw)
+                                {
+                                    if (ch == '-' || ch == '{' || ch == '}')
+                                    {
+                                        continue;
+                                    }
+                                    if (!std::isxdigit(ch))
+                                    {
+                                        return false;
+                                    }
+                                    hex.push_back(static_cast<char>(std::tolower(ch)));
+                                }
+                                if (hex.size() != 32)
+                                {
+                                    return false;
+                                }
+
+                                auto nibble = [](char c) -> int
+                                {
+                                    if (c >= '0' && c <= '9')
+                                    {
+                                        return c - '0';
+                                    }
+                                    if (c >= 'a' && c <= 'f')
+                                    {
+                                        return 10 + (c - 'a');
+                                    }
+                                    return -1;
+                                };
+
+                                core::ID parsed{};
+                                for (size_t i = 0; i < parsed.bytes.size(); ++i)
+                                {
+                                    const int hi = nibble(hex[i * 2]);
+                                    const int lo = nibble(hex[i * 2 + 1]);
+                                    if (hi < 0 || lo < 0)
+                                    {
+                                        return false;
+                                    }
+                                    parsed.bytes[i] = static_cast<uint8_t>((hi << 4) | lo);
+                                }
+                                out = parsed;
+                                return true;
+                            };
+
+                            auto parseOptionMap =
+                                [&](const scratchbird::sblr::v3::Value::Object& payload,
+                                    std::unordered_map<std::string, std::string>& options_out)
+                            {
+                                options_out.clear();
+                                auto it_opts = payload.find("options");
+                                if (it_opts == payload.end() || it_opts->second.isNull())
+                                {
+                                    return;
+                                }
+
+                                auto store_option = [&](const std::string& key,
+                                                        const scratchbird::sblr::v3::Value& value)
+                                {
+                                    std::string text;
+                                    if (!valueToText(value, text))
+                                    {
+                                        return;
+                                    }
+                                    options_out[scratchbird::core::IdentifierUtils::toUpper(
+                                        trimAsciiCopy(key))] = text;
+                                };
+
+                                if (auto list = std::get_if<scratchbird::sblr::v3::Value::List>(
+                                        &it_opts->second.data))
+                                {
+                                    for (const auto& entry : *list)
+                                    {
+                                        auto option_obj = std::get_if<scratchbird::sblr::v3::Value::Object>(
+                                            &entry.data);
+                                        if (!option_obj)
+                                        {
+                                            continue;
+                                        }
+                                        auto it_key = option_obj->find("key");
+                                        auto it_value = option_obj->find("value");
+                                        if (it_key == option_obj->end() || it_value == option_obj->end())
+                                        {
+                                            continue;
+                                        }
+                                        const auto key = std::get_if<std::string>(&it_key->second.data);
+                                        if (!key || key->empty())
+                                        {
+                                            continue;
+                                        }
+                                        store_option(*key, it_value->second);
+                                    }
+                                    return;
+                                }
+
+                                auto options_obj = std::get_if<scratchbird::sblr::v3::Value::Object>(
+                                    &it_opts->second.data);
+                                if (!options_obj)
+                                {
+                                    return;
+                                }
+
+                                auto it_key = options_obj->find("key");
+                                auto it_value = options_obj->find("value");
+                                if (it_key != options_obj->end() && it_value != options_obj->end())
+                                {
+                                    const auto key = std::get_if<std::string>(&it_key->second.data);
+                                    if (key && !key->empty())
+                                    {
+                                        store_option(*key, it_value->second);
+                                        return;
+                                    }
+                                }
+
+                                for (const auto& [raw_key, raw_value] : *options_obj)
+                                {
+                                    if (raw_key == "count")
+                                    {
+                                        continue;
+                                    }
+                                    store_option(raw_key, raw_value);
+                                }
+                            };
+
+                            auto parseConnectionOptions = [&](const std::string& raw_options)
+                            {
+                                std::unordered_map<std::string, std::string> parsed;
+                                size_t start = 0;
+                                while (start <= raw_options.size())
+                                {
+                                    size_t end = raw_options.find(';', start);
+                                    std::string token = (end == std::string::npos)
+                                                            ? raw_options.substr(start)
+                                                            : raw_options.substr(start, end - start);
+                                    token = trimAsciiCopy(token);
+                                    if (!token.empty())
+                                    {
+                                        size_t eq = token.find('=');
+                                        if (eq != std::string::npos)
+                                        {
+                                            std::string key = scratchbird::core::IdentifierUtils::toUpper(
+                                                trimAsciiCopy(token.substr(0, eq)));
+                                            std::string value = trimAsciiCopy(token.substr(eq + 1));
+                                            parsed[key] = value;
+                                        }
+                                    }
+
+                                    if (end == std::string::npos)
+                                    {
+                                        break;
+                                    }
+                                    start = end + 1;
+                                }
+                                return parsed;
+                            };
+
+                            std::string remote_target;
+                            (void)payloadFieldToString(remote_payload, "object_name", remote_target);
+                            if (remote_target.empty())
+                            {
+                                (void)payloadFieldToString(remote_payload, "server", remote_target);
+                            }
+                            if (remote_target.empty())
+                            {
+                                std::string path_value;
+                                if (getSchemaPathString(remote_payload, "object_path", path_value) &&
+                                    !path_value.empty())
+                                {
+                                    auto parts = splitSchemaComponents(path_value);
+                                    if (!parts.empty())
+                                    {
+                                        remote_target = parts.back();
+                                    }
+                                }
+                            }
+
+                            const char* remote_name =
+                                scratchbird::sblr::v3::opcodeName(static_cast<uint16_t>(remote_opcode));
+                            const std::string remote_symbol = remote_name ? remote_name : "UNKNOWN_REMOTE_OPCODE";
+
+                            auto reject_remote = [&](const std::string& code,
+                                                     const std::string& detail) -> ExecutionResult {
+                                core::VNextMetricsEventModel::recordExecutorEvent(
+                                    "vnext_opcode_dispatch", "reject", code);
+                                if (!remote_target.empty())
+                                {
+                                    return ExecutionResult(code + ": " + detail + " (" + remote_target + ")");
+                                }
+                                return ExecutionResult(code + ": " + detail);
+                            };
+
+                            auto* catalog = db_ ? db_->catalog_manager() : nullptr;
+                            if (!catalog)
+                            {
+                                return reject_remote("REMOTE_2300",
+                                                     remote_symbol + " requires an active catalog manager");
+                            }
+                            if (remote_target.empty())
+                            {
+                                return reject_remote("REMOTE_2300",
+                                                     remote_symbol + " requires a remote server target");
+                            }
+
+                            core::ErrorContext remote_ctx;
+                            core::CatalogManager::ForeignServerInfo server_info;
+                            core::Status status = catalog->getForeignServerByName(
+                                remote_target, server_info, &remote_ctx);
+                            if (status != core::Status::OK)
+                            {
+                                return reject_remote("REMOTE_2301",
+                                                     "Foreign server not found");
+                            }
+
+                            core::ID user_id = conn_ctx_ ? conn_ctx_->getCurrentUserId() : core::ID{};
+                            if (isZeroUuid(user_id))
+                            {
+                                user_id = catalog->getSystemUserId(&remote_ctx);
+                            }
+                            if (isZeroUuid(user_id))
+                            {
+                                return reject_remote("REMOTE_2302",
+                                                     "No effective user available for mapping");
+                            }
+
+                            core::CatalogManager::UserMappingInfo mapping_info;
+                            status = catalog->getUserMappingForRuntime(user_id,
+                                                                       server_info.server_id,
+                                                                       mapping_info,
+                                                                       &remote_ctx);
+                            if (status != core::Status::OK)
+                            {
+                                core::CatalogManager::RoleInfo public_role;
+                                if (catalog->getRoleByName("PUBLIC", public_role, &remote_ctx) ==
+                                    core::Status::OK)
+                                {
+                                    status = catalog->getUserMappingForRuntime(public_role.role_id,
+                                                                               server_info.server_id,
+                                                                               mapping_info,
+                                                                               &remote_ctx);
+                                }
+                            }
+                            if (status != core::Status::OK)
+                            {
+                                return reject_remote("REMOTE_2302",
+                                                     "No user mapping found for remote server");
+                            }
+
+                            std::vector<core::CatalogManager::RemoteConnectorCatalogInfo> connector_rows;
+                            status = catalog->listRemoteConnectorCatalogEntries(connector_rows, &remote_ctx);
+                            if (status != core::Status::OK)
+                            {
+                                return reject_remote("REMOTE_2303",
+                                                     "Failed to load remote connector catalog rows");
+                            }
+
+                            bool has_connector = false;
+                            core::CatalogManager::RemoteConnectorCatalogInfo connector_info{};
+                            int connector_rank = -1;
+                            for (const auto& entry : connector_rows)
+                            {
+                                if (!entry.is_valid || entry.fdw_server_id != server_info.server_id)
+                                {
+                                    continue;
+                                }
+                                int state_rank = -1;
+                                switch (entry.state)
+                                {
+                                    case core::CatalogManager::RemoteConnectorState::READY:
+                                        state_rank = 3;
+                                        break;
+                                    case core::CatalogManager::RemoteConnectorState::DEGRADED:
+                                        state_rank = 2;
+                                        break;
+                                    case core::CatalogManager::RemoteConnectorState::PROBING:
+                                        state_rank = 1;
+                                        break;
+                                    default:
+                                        state_rank = 0;
+                                        break;
+                                }
+                                if (!has_connector || state_rank > connector_rank)
+                                {
+                                    connector_info = entry;
+                                    connector_rank = state_rank;
+                                    has_connector = true;
+                                }
+                            }
+                            if (!has_connector)
+                            {
+                                return reject_remote("REMOTE_2303",
+                                                     "No remote connector is registered for remote server");
+                            }
+                            if (connector_info.state == core::CatalogManager::RemoteConnectorState::DISABLED ||
+                                connector_info.state == core::CatalogManager::RemoteConnectorState::FAILED)
+                            {
+                                return reject_remote("REMOTE_2304",
+                                                     "Remote connector is not in an executable state");
+                            }
+
+                            core::CatalogManager::RemotePassthroughPolicyCatalogInfo policy_info{};
+                            bool has_policy = false;
+                            if (connector_info.has_policy_id)
+                            {
+                                status = catalog->getRemotePassthroughPolicyCatalogEntry(
+                                    connector_info.policy_id, policy_info, &remote_ctx);
+                                has_policy = (status == core::Status::OK);
+                            }
+                            if (!has_policy)
+                            {
+                                std::vector<core::CatalogManager::RemotePassthroughPolicyCatalogInfo> policy_rows;
+                                status = catalog->listRemotePassthroughPolicyCatalogEntries(
+                                    connector_info.remote_connector_id, policy_rows, &remote_ctx);
+                                if (status == core::Status::OK && !policy_rows.empty())
+                                {
+                                    policy_info = policy_rows.front();
+                                    has_policy = true;
+                                }
+                            }
+                            if (!has_policy)
+                            {
+                                return reject_remote("REMOTE_2305",
+                                                     "No passthrough policy is bound to remote connector");
+                            }
+
+                            std::vector<core::CatalogManager::RemoteConnectorCapabilityCatalogInfo> capability_rows;
+                            status = catalog->listRemoteConnectorCapabilityCatalogEntries(
+                                connector_info.remote_connector_id, capability_rows, &remote_ctx);
+                            if (status != core::Status::OK)
+                            {
+                                capability_rows.clear();
+                            }
+                            std::unordered_set<std::string> enabled_capabilities;
+                            for (const auto& capability : capability_rows)
+                            {
+                                if (!capability.is_valid || !capability.is_enabled)
+                                {
+                                    continue;
+                                }
+                                enabled_capabilities.insert(
+                                    scratchbird::core::IdentifierUtils::toUpper(
+                                        trimAsciiCopy(capability.capability_key)));
+                            }
+                            if (policy_info.has_required_capabilities &&
+                                !trimAsciiCopy(policy_info.required_capabilities).empty())
+                            {
+                                std::stringstream caps_stream(policy_info.required_capabilities);
+                                std::string cap_token;
+                                while (std::getline(caps_stream, cap_token, ','))
+                                {
+                                    cap_token = scratchbird::core::IdentifierUtils::toUpper(
+                                        trimAsciiCopy(cap_token));
+                                    if (cap_token.empty())
+                                    {
+                                        continue;
+                                    }
+                                    if (enabled_capabilities.find(cap_token) ==
+                                        enabled_capabilities.end())
+                                    {
+                                        return reject_remote("REMOTE_2306",
+                                                             "Required connector capability is missing: " +
+                                                                 cap_token);
+                                    }
+                                }
+                            }
+
+                            const bool is_metadata_opcode =
+                                remote_opcode == scratchbird::sblr::v3::Opcode::SBLR3_ANALYZE_REMOTE_SERVER ||
+                                remote_opcode == scratchbird::sblr::v3::Opcode::SBLR3_REFRESH_REMOTE_METADATA ||
+                                remote_opcode == scratchbird::sblr::v3::Opcode::SBLR3_IMPORT_FOREIGN_SCHEMA;
+                            const bool is_txn_opcode =
+                                remote_opcode == scratchbird::sblr::v3::Opcode::SBLR3_BEGIN_REMOTE_TRANSACTION ||
+                                remote_opcode == scratchbird::sblr::v3::Opcode::SBLR3_COMMIT_REMOTE_TRANSACTION ||
+                                remote_opcode == scratchbird::sblr::v3::Opcode::SBLR3_ROLLBACK_REMOTE_TRANSACTION;
+                            const bool is_procedural_opcode =
+                                remote_opcode == scratchbird::sblr::v3::Opcode::SBLR3_PREPARE_REMOTE ||
+                                remote_opcode == scratchbird::sblr::v3::Opcode::SBLR3_EXECUTE_REMOTE_PREPARED ||
+                                remote_opcode == scratchbird::sblr::v3::Opcode::SBLR3_DEALLOCATE_REMOTE_PREPARED;
+
+                            bool opcode_allowed = false;
+                            if (is_metadata_opcode)
+                            {
+                                opcode_allowed = policy_info.allow_ddl || policy_info.allow_admin;
+                            }
+                            else if (is_txn_opcode)
+                            {
+                                opcode_allowed = policy_info.allow_query;
+                            }
+                            else if (is_procedural_opcode)
+                            {
+                                opcode_allowed = policy_info.allow_procedural || policy_info.allow_query;
+                            }
+                            else
+                            {
+                                opcode_allowed = policy_info.allow_query || policy_info.allow_dml;
+                            }
+
+                            if (!opcode_allowed)
+                            {
+                                return reject_remote("REMOTE_2307",
+                                                     "Passthrough policy blocks this remote opcode");
+                            }
+
+                            std::unordered_map<std::string, std::string> payload_options;
+                            parseOptionMap(remote_payload, payload_options);
+
+                            auto readRequestedBound = [&](const char* field_name,
+                                                          const char* option_name,
+                                                          uint64_t& out) -> bool
+                            {
+                                auto it = remote_payload.find(field_name);
+                                if (it != remote_payload.end() && valueToU64(it->second, out))
+                                {
+                                    return true;
+                                }
+                                auto opt = payload_options.find(option_name);
+                                if (opt == payload_options.end())
+                                {
+                                    return false;
+                                }
+                                try
+                                {
+                                    size_t consumed = 0;
+                                    uint64_t parsed = std::stoull(trimAsciiCopy(opt->second), &consumed, 10);
+                                    if (consumed != trimAsciiCopy(opt->second).size())
+                                    {
+                                        return false;
+                                    }
+                                    out = parsed;
+                                    return true;
+                                }
+                                catch (...)
+                                {
+                                    return false;
+                                }
+                            };
+
+                            auto readRequestedBool = [&](const char* field_name,
+                                                         const char* option_name,
+                                                         bool& out) -> bool
+                            {
+                                auto it = remote_payload.find(field_name);
+                                if (it != remote_payload.end())
+                                {
+                                    if (auto b = std::get_if<bool>(&it->second.data))
+                                    {
+                                        out = *b;
+                                        return true;
+                                    }
+                                    std::string text;
+                                    if (valueToText(it->second, text))
+                                    {
+                                        const std::string upper = toUpperAsciiCopy(trimAsciiCopy(text));
+                                        out = (upper == "1" || upper == "TRUE" || upper == "T" ||
+                                               upper == "YES" || upper == "Y" || upper == "ON");
+                                        return true;
+                                    }
+                                }
+                                auto opt = payload_options.find(option_name);
+                                if (opt == payload_options.end())
+                                {
+                                    return false;
+                                }
+                                const std::string upper = toUpperAsciiCopy(trimAsciiCopy(opt->second));
+                                out = (upper == "1" || upper == "TRUE" || upper == "T" ||
+                                       upper == "YES" || upper == "Y" || upper == "ON");
+                                return true;
+                            };
+
+                            uint64_t requested_rows = 0;
+                            uint64_t requested_bytes = 0;
+                            uint64_t requested_timeout = 0;
+                            uint64_t requested_retry_count = 0;
+                            uint64_t requested_retry_backoff_ms = 0;
+                            bool requested_cancel = false;
+                            core::ID remote_request_id = core::generateUuidV7();
+                            (void)readRequestedBound("max_rows", "MAX_ROWS", requested_rows);
+                            (void)readRequestedBound("max_bytes", "MAX_BYTES", requested_bytes);
+                            (void)readRequestedBound("timeout_ms", "TIMEOUT_MS", requested_timeout);
+                            (void)readRequestedBound("retry_count", "RETRY_COUNT", requested_retry_count);
+                            (void)readRequestedBound("retry_backoff_ms",
+                                                     "RETRY_BACKOFF_MS",
+                                                     requested_retry_backoff_ms);
+                            (void)readRequestedBool("cancel", "CANCEL", requested_cancel);
+                            auto parseRequestUuid = [&](const std::string& text) -> bool
+                            {
+                                const std::string trimmed = trimAsciiCopy(text);
+                                if (trimmed.empty())
+                                {
+                                    return false;
+                                }
+                                return parseUuidText(trimmed, remote_request_id);
+                            };
+                            std::string request_uuid_text;
+                            if (payloadFieldToString(remote_payload, "request_id", request_uuid_text))
+                            {
+                                (void)parseRequestUuid(request_uuid_text);
+                            }
+                            if (payloadFieldToString(remote_payload, "request_uuid", request_uuid_text))
+                            {
+                                (void)parseRequestUuid(request_uuid_text);
+                            }
+                            if (auto it = payload_options.find("REQUEST_ID"); it != payload_options.end())
+                            {
+                                (void)parseRequestUuid(it->second);
+                            }
+                            if (auto it = payload_options.find("REQUEST_UUID"); it != payload_options.end())
+                            {
+                                (void)parseRequestUuid(it->second);
+                            }
+
+                            if (policy_info.max_rows > 0 && requested_rows > policy_info.max_rows)
+                            {
+                                return reject_remote("REMOTE_2308",
+                                                     "Requested max_rows exceeds policy limit");
+                            }
+                            if (policy_info.max_bytes > 0 && requested_bytes > policy_info.max_bytes)
+                            {
+                                return reject_remote("REMOTE_2308",
+                                                     "Requested max_bytes exceeds policy limit");
+                            }
+                            if (policy_info.timeout_ms > 0 && requested_timeout > policy_info.timeout_ms)
+                            {
+                                return reject_remote("REMOTE_2308",
+                                                     "Requested timeout_ms exceeds policy limit");
+                            }
+
+                            auto server_options = parseConnectionOptions(server_info.connection_options);
+
+                            auto lookupOption = [&](const std::initializer_list<const char*>& keys,
+                                                    std::string& out)
+                            {
+                                for (const char* key : keys)
+                                {
+                                    auto it = server_options.find(key);
+                                    if (it != server_options.end() && !it->second.empty())
+                                    {
+                                        out = it->second;
+                                        return true;
+                                    }
+                                }
+                                return false;
+                            };
+
+                            auto classifyConnectorType =
+                                [&](const std::string& type_name,
+                                    scratchbird::udr::ConnectorType& connector_type_out,
+                                    uint16_t& default_port_out) -> bool
+                            {
+                                const std::string upper = toUpperAsciiCopy(trimAsciiCopy(type_name));
+                                default_port_out = 0;
+                                if (upper == "POSTGRESQL" || upper == "POSTGRES")
+                                {
+                                    connector_type_out = scratchbird::udr::ConnectorType::POSTGRESQL;
+                                    default_port_out = 5432;
+                                    return true;
+                                }
+                                if (upper == "MYSQL")
+                                {
+                                    connector_type_out = scratchbird::udr::ConnectorType::MYSQL;
+                                    default_port_out = 3306;
+                                    return true;
+                                }
+                                if (upper == "FIREBIRD")
+                                {
+                                    connector_type_out = scratchbird::udr::ConnectorType::FIREBIRD;
+                                    default_port_out = 3050;
+                                    return true;
+                                }
+                                if (upper == "SCRATCHBIRD" || upper == "NATIVE")
+                                {
+                                    connector_type_out = scratchbird::udr::ConnectorType::SCRATCHBIRD;
+                                    default_port_out = 5433;
+                                    return true;
+                                }
+                                // Recognized-but-not-supported connector families intentionally
+                                // return false for this runtime path.
+                                if (upper == "MARIADB")
+                                {
+                                    connector_type_out = scratchbird::udr::ConnectorType::MARIADB;
+                                }
+                                else if (upper == "CASSANDRA")
+                                {
+                                    connector_type_out = scratchbird::udr::ConnectorType::CASSANDRA;
+                                }
+                                else if (upper == "MILVUS")
+                                {
+                                    connector_type_out = scratchbird::udr::ConnectorType::MILVUS;
+                                }
+                                else if (upper == "MONGODB")
+                                {
+                                    connector_type_out = scratchbird::udr::ConnectorType::MONGODB;
+                                }
+                                else if (upper == "NEO4J")
+                                {
+                                    connector_type_out = scratchbird::udr::ConnectorType::NEO4J;
+                                }
+                                else if (upper == "REDIS")
+                                {
+                                    connector_type_out = scratchbird::udr::ConnectorType::REDIS;
+                                }
+                                else if (upper == "INFLUXDB")
+                                {
+                                    connector_type_out = scratchbird::udr::ConnectorType::INFLUXDB;
+                                }
+                                else if (upper == "CLICKHOUSE")
+                                {
+                                    connector_type_out = scratchbird::udr::ConnectorType::CLICKHOUSE;
+                                }
+                                else if (upper == "OPENSEARCH")
+                                {
+                                    connector_type_out = scratchbird::udr::ConnectorType::OPENSEARCH;
+                                }
+                                else if (upper == "DUCKDB")
+                                {
+                                    connector_type_out = scratchbird::udr::ConnectorType::DUCKDB;
+                                }
+                                else if (upper == "ODBC")
+                                {
+                                    connector_type_out = scratchbird::udr::ConnectorType::ODBC;
+                                }
+                                else
+                                {
+                                    connector_type_out =
+                                        static_cast<scratchbird::udr::ConnectorType>(0);
+                                }
+                                return false;
+                            };
+
+                            scratchbird::udr::ConnectorType connector_type =
+                                static_cast<scratchbird::udr::ConnectorType>(0);
+                            uint16_t default_remote_port = 0;
+                            if (!classifyConnectorType(server_info.server_type,
+                                                       connector_type,
+                                                       default_remote_port))
+                            {
+                                return reject_remote("REMOTE_2309",
+                                                     "Remote connector type is not supported by this build");
+                            }
+
+                            scratchbird::udr::SysRemoteRuntimeBinding runtime_binding{};
+                            runtime_binding.connector_type = connector_type;
+                            runtime_binding.config.host =
+                                server_info.host.empty() ? std::string("localhost") : server_info.host;
+                            runtime_binding.config.port = server_info.port;
+                            runtime_binding.config.user = mapping_info.remote_user;
+                            runtime_binding.config.password = mapping_info.remote_credentials;
+                            runtime_binding.config.ssl_mode = "prefer";
+                            runtime_binding.config.pool_min_size = 0;
+                            runtime_binding.config.pool_max_size = 1;
+                            runtime_binding.config.pool_max_idle_ms = 1000;
+                            runtime_binding.config.pool_health_check_interval_ms = 1000;
+                            runtime_binding.config.pool_connection_timeout_ms =
+                                (policy_info.timeout_ms > 0) ? policy_info.timeout_ms : 5000;
+                            if (requested_timeout > 0)
+                            {
+                                runtime_binding.config.pool_connection_timeout_ms =
+                                    static_cast<uint32_t>(requested_timeout);
+                            }
+
+                            std::string option_text;
+                            if (lookupOption({"DATABASE", "DBNAME", "DB", "PATH"}, option_text))
+                            {
+                                runtime_binding.config.database = option_text;
+                            }
+                            if (lookupOption({"SSL_MODE"}, option_text))
+                            {
+                                runtime_binding.config.ssl_mode = option_text;
+                            }
+                            if (lookupOption({"ROLE"}, option_text))
+                            {
+                                runtime_binding.config.role = option_text;
+                            }
+                            if (lookupOption({"CHARSET"}, option_text))
+                            {
+                                runtime_binding.config.charset = option_text;
+                            }
+                            if (lookupOption({"USER"}, option_text))
+                            {
+                                runtime_binding.config.user = option_text;
+                            }
+                            if (lookupOption({"PASSWORD"}, option_text))
+                            {
+                                runtime_binding.config.password = option_text;
+                            }
+                            if (runtime_binding.config.port == 0)
+                            {
+                                runtime_binding.config.port = default_remote_port;
+                            }
+
+                            std::string remote_sql;
+                            (void)payloadFieldToString(remote_payload, "sql", remote_sql);
+                            if (remote_sql.empty())
+                            {
+                                (void)payloadFieldToString(remote_payload, "sql_text", remote_sql);
+                            }
+                            if (remote_sql.empty())
+                            {
+                                (void)payloadFieldToString(remote_payload, "query", remote_sql);
+                            }
+                            if (remote_sql.empty())
+                            {
+                                (void)payloadFieldToString(remote_payload, "command_text", remote_sql);
+                            }
+                            if (remote_sql.empty())
+                            {
+                                auto find_sql_option = [&](const std::initializer_list<const char*>& keys,
+                                                           std::string& out) -> bool
+                                {
+                                    for (const char* key : keys)
+                                    {
+                                        auto it = payload_options.find(key);
+                                        if (it != payload_options.end() &&
+                                            !trimAsciiCopy(it->second).empty())
+                                        {
+                                            out = trimAsciiCopy(it->second);
+                                            return true;
+                                        }
+                                    }
+                                    return false;
+                                };
+                                std::string from_options;
+                                if (find_sql_option({"SQL", "SQL_TEXT", "QUERY", "COMMAND_TEXT"},
+                                                    from_options))
+                                {
+                                    remote_sql = from_options;
+                                }
+                            }
+                            if (remote_sql.empty())
+                            {
+                                auto it_payload = remote_payload.find("payload");
+                                if (it_payload != remote_payload.end())
+                                {
+                                    if (auto bytes =
+                                            std::get_if<scratchbird::sblr::v3::Value::Bytes>(
+                                                &it_payload->second.data))
+                                    {
+                                        remote_sql.assign(bytes->begin(), bytes->end());
+                                    }
+                                }
+                            }
+                            if (remote_sql.empty())
+                            {
+                                auto it_value = remote_payload.find("value");
+                                if (it_value != remote_payload.end())
+                                {
+                                    (void)valueToText(it_value->second, remote_sql);
+                                }
+                            }
+
+                            std::string prepared_stmt_name;
+                            (void)payloadFieldToString(remote_payload, "statement_name", prepared_stmt_name);
+                            if (prepared_stmt_name.empty())
+                            {
+                                (void)payloadFieldToString(remote_payload, "name", prepared_stmt_name);
+                            }
+                            if (prepared_stmt_name.empty())
+                            {
+                                auto it_stmt_opt = payload_options.find("STATEMENT_NAME");
+                                if (it_stmt_opt != payload_options.end())
+                                {
+                                    prepared_stmt_name = trimAsciiCopy(it_stmt_opt->second);
+                                }
+                            }
+                            if (prepared_stmt_name.empty())
+                            {
+                                auto it_name_opt = payload_options.find("NAME");
+                                if (it_name_opt != payload_options.end())
+                                {
+                                    prepared_stmt_name = trimAsciiCopy(it_name_opt->second);
+                                }
+                            }
+
+                            core::Status remote_status = core::Status::NOT_IMPLEMENTED;
+                            uint64_t rows_affected = 0;
+                            scratchbird::udr::RemoteResultSet remote_result;
+                            bool remote_query_result_opcode = false;
+                            bool persist_metadata_snapshot = false;
+                            bool used_prepared_statement = false;
+                            bool remote_handled_without_runtime = false;
+                            bool remote_runtime_dispatch_attempted = false;
+                            core::CatalogManager::RemoteTxnMode remote_txn_mode_for_audit =
+                                core::CatalogManager::RemoteTxnMode::NONE;
+                            core::CatalogManager::RemoteOperationClass remote_operation_class =
+                                core::CatalogManager::RemoteOperationClass::QUERY;
+                            core::ID remote_error_id{};
+                            core::CatalogManager::RemoteSnapshotKind snapshot_kind =
+                                core::CatalogManager::RemoteSnapshotKind::FULL;
+
+                            auto buildRemoteResultSet =
+                                [&](const scratchbird::udr::RemoteResultSet& remote_rs)
+                                -> std::unique_ptr<ResultSet>
+                            {
+                                auto result_set = std::make_unique<ResultSet>();
+                                size_t column_count = remote_rs.columns.size();
+                                if (column_count == 0 && !remote_rs.rows.empty())
+                                {
+                                    column_count = remote_rs.rows.front().values.size();
+                                }
+                                if (column_count == 0)
+                                {
+                                    return nullptr;
+                                }
+
+                                for (size_t i = 0; i < column_count; ++i)
+                                {
+                                    std::string col_name = "col" + std::to_string(i + 1);
+                                    if (i < remote_rs.columns.size() &&
+                                        !trimAsciiCopy(remote_rs.columns[i].name).empty())
+                                    {
+                                        col_name = remote_rs.columns[i].name;
+                                    }
+                                    result_set->addColumn(col_name, core::DataType::TEXT);
+                                }
+
+                                for (const auto& remote_row : remote_rs.rows)
+                                {
+                                    std::vector<Value> row_values;
+                                    row_values.reserve(column_count);
+                                    for (size_t i = 0; i < column_count; ++i)
+                                    {
+                                        if (i >= remote_row.values.size() || remote_row.values[i].is_null)
+                                        {
+                                            row_values.push_back(
+                                                core::TypedValue::makeNull(core::DataType::TEXT));
+                                            continue;
+                                        }
+
+                                        std::string text_value;
+                                        try
+                                        {
+                                            text_value = remote_row.values[i].toString();
+                                        }
+                                        catch (...)
+                                        {
+                                            text_value.assign(
+                                                remote_row.values[i].data.begin(),
+                                                remote_row.values[i].data.end());
+                                        }
+                                        row_values.push_back(core::TypedValue::makeText(text_value));
+                                    }
+                                    result_set->addRow(std::move(row_values));
+                                }
+                                return result_set;
+                            };
+
+                            auto persistRemoteMetadataSnapshot =
+                                [&](core::CatalogManager::RemoteSnapshotKind kind,
+                                    const scratchbird::udr::RemoteResultSet* remote_rs,
+                                    core::ID* snapshot_id_out) -> core::Status
+                            {
+                                if (snapshot_id_out)
+                                {
+                                    *snapshot_id_out = core::ID{};
+                                }
+                                std::vector<core::CatalogManager::RemoteMetadataSnapshotCatalogInfo>
+                                    existing_snapshots;
+                                core::ErrorContext snapshot_ctx;
+                                core::Status status = catalog->listRemoteMetadataSnapshotCatalogEntries(
+                                    connector_info.remote_connector_id,
+                                    existing_snapshots,
+                                    &snapshot_ctx);
+                                if (status != core::Status::OK)
+                                {
+                                    if (remote_ctx.message.empty())
+                                    {
+                                        remote_ctx.message = snapshot_ctx.message;
+                                    }
+                                    return status;
+                                }
+
+                                uint64_t next_seq = 1;
+                                for (const auto& snapshot_row : existing_snapshots)
+                                {
+                                    if (snapshot_row.snapshot_seq >= next_seq)
+                                    {
+                                        next_seq = snapshot_row.snapshot_seq + 1;
+                                    }
+                                }
+
+                                auto clamp_u32 = [](size_t value) -> uint32_t
+                                {
+                                    const size_t max_u32 =
+                                        static_cast<size_t>(std::numeric_limits<uint32_t>::max());
+                                    return static_cast<uint32_t>(std::min(value, max_u32));
+                                };
+
+                                const auto now_ticks = static_cast<uint64_t>(
+                                    std::chrono::system_clock::now().time_since_epoch().count());
+
+                                core::CatalogManager::RemoteMetadataSnapshotCatalogInfo snapshot{};
+                                snapshot.snapshot_id = core::generateUuidV7();
+                                snapshot.remote_connector_id = connector_info.remote_connector_id;
+                                snapshot.snapshot_seq = next_seq;
+                                snapshot.snapshot_kind = kind;
+                                snapshot.snapshot_status =
+                                    core::CatalogManager::RemoteSnapshotStatus::COMPLETE;
+                                snapshot.has_engine_version_text =
+                                    connector_info.has_engine_version_text &&
+                                    !connector_info.engine_version_text.empty();
+                                snapshot.engine_version_text = connector_info.engine_version_text;
+                                snapshot.object_count =
+                                    remote_rs ? clamp_u32(remote_rs->rows.size()) : 0;
+                                snapshot.column_count =
+                                    remote_rs ? clamp_u32(remote_rs->columns.size()) : 0;
+                                snapshot.has_catalog_hash = true;
+                                snapshot.started_time = now_ticks;
+                                snapshot.has_completed_time = true;
+                                snapshot.completed_time = now_ticks;
+                                snapshot.is_valid = true;
+
+                                const std::string hash_material =
+                                    connector_info.connector_name + "|" +
+                                    remote_symbol + "|" +
+                                    trimAsciiCopy(remote_sql) + "|" +
+                                    std::to_string(snapshot.object_count) + "|" +
+                                    std::to_string(snapshot.column_count);
+                                snapshot.catalog_hash = static_cast<uint32_t>(
+                                    std::hash<std::string>{}(hash_material));
+
+                                status = catalog->upsertRemoteMetadataSnapshotCatalogEntry(
+                                    snapshot, &snapshot_ctx);
+                                if (status != core::Status::OK &&
+                                    remote_ctx.message.empty())
+                                {
+                                    remote_ctx.message = snapshot_ctx.message;
+                                }
+                                if (status == core::Status::OK && snapshot_id_out)
+                                {
+                                    *snapshot_id_out = snapshot.snapshot_id;
+                                }
+                                return status;
+                            };
+
+                            auto remoteKindFromText =
+                                [&](const std::string& value)
+                                -> core::CatalogManager::RemoteObjectKind
+                            {
+                                const std::string upper = toUpperAsciiCopy(trimAsciiCopy(value));
+                                if (upper == "SCHEMA")
+                                {
+                                    return core::CatalogManager::RemoteObjectKind::SCHEMA;
+                                }
+                                if (upper == "VIEW")
+                                {
+                                    return core::CatalogManager::RemoteObjectKind::VIEW;
+                                }
+                                if (upper == "INDEX")
+                                {
+                                    return core::CatalogManager::RemoteObjectKind::INDEX;
+                                }
+                                if (upper == "SEQUENCE")
+                                {
+                                    return core::CatalogManager::RemoteObjectKind::SEQUENCE;
+                                }
+                                if (upper == "PROCEDURE")
+                                {
+                                    return core::CatalogManager::RemoteObjectKind::PROCEDURE;
+                                }
+                                if (upper == "FUNCTION")
+                                {
+                                    return core::CatalogManager::RemoteObjectKind::FUNCTION;
+                                }
+                                if (upper == "TRIGGER")
+                                {
+                                    return core::CatalogManager::RemoteObjectKind::TRIGGER;
+                                }
+                                if (upper == "DOMAIN")
+                                {
+                                    return core::CatalogManager::RemoteObjectKind::DOMAIN;
+                                }
+                                if (upper == "TYPE")
+                                {
+                                    return core::CatalogManager::RemoteObjectKind::TYPE;
+                                }
+                                return core::CatalogManager::RemoteObjectKind::TABLE;
+                            };
+
+                            auto remoteKindToText =
+                                [&](core::CatalogManager::RemoteObjectKind kind) -> std::string
+                            {
+                                switch (kind)
+                                {
+                                    case core::CatalogManager::RemoteObjectKind::SCHEMA:
+                                        return "SCHEMA";
+                                    case core::CatalogManager::RemoteObjectKind::TABLE:
+                                        return "TABLE";
+                                    case core::CatalogManager::RemoteObjectKind::VIEW:
+                                        return "VIEW";
+                                    case core::CatalogManager::RemoteObjectKind::INDEX:
+                                        return "INDEX";
+                                    case core::CatalogManager::RemoteObjectKind::SEQUENCE:
+                                        return "SEQUENCE";
+                                    case core::CatalogManager::RemoteObjectKind::PROCEDURE:
+                                        return "PROCEDURE";
+                                    case core::CatalogManager::RemoteObjectKind::FUNCTION:
+                                        return "FUNCTION";
+                                    case core::CatalogManager::RemoteObjectKind::TRIGGER:
+                                        return "TRIGGER";
+                                    case core::CatalogManager::RemoteObjectKind::DOMAIN:
+                                        return "DOMAIN";
+                                    case core::CatalogManager::RemoteObjectKind::TYPE:
+                                        return "TYPE";
+                                }
+                                return "TABLE";
+                            };
+
+                            auto makeRemoteTextValue = [&](const std::string& text)
+                                -> scratchbird::udr::RemoteValue
+                            {
+                                scratchbird::udr::RemoteValue value{};
+                                value.is_null = false;
+                                value.data.assign(text.begin(), text.end());
+                                return value;
+                            };
+
+                            auto appendRemoteTextCell =
+                                [&](scratchbird::udr::RemoteRow& row, const std::string& text)
+                            {
+                                row.values.emplace_back(makeRemoteTextValue(text));
+                            };
+
+                            auto addRemoteTextColumn =
+                                [&](scratchbird::udr::RemoteResultSet& rs,
+                                    const std::string& name)
+                            {
+                                scratchbird::udr::RemoteColumn col{};
+                                col.name = name;
+                                col.type_name = "TEXT";
+                                rs.columns.push_back(std::move(col));
+                            };
+
+                            auto buildProjectionResultFromSnapshot =
+                                [&](const core::ID& snapshot_id,
+                                    scratchbird::sblr::v3::Opcode snapshot_opcode,
+                                    scratchbird::udr::RemoteResultSet& out_rs) -> core::Status
+                            {
+                                out_rs.clear();
+                                if (isZeroUuid(snapshot_id))
+                                {
+                                    return core::Status::NOT_FOUND;
+                                }
+
+                                const bool want_objects =
+                                    snapshot_opcode ==
+                                    scratchbird::sblr::v3::Opcode::SBLR3_SHOW_REMOTE_OBJECTS;
+                                const bool want_columns =
+                                    snapshot_opcode ==
+                                    scratchbird::sblr::v3::Opcode::SBLR3_SHOW_REMOTE_COLUMNS;
+                                if (!want_objects && !want_columns)
+                                {
+                                    return core::Status::NOT_SUPPORTED;
+                                }
+
+                                core::ErrorContext projection_ctx;
+                                std::vector<core::CatalogManager::RemoteMetadataObjectCatalogInfo>
+                                    object_rows;
+                                core::Status status = catalog->listRemoteMetadataObjectCatalogEntries(
+                                    snapshot_id, object_rows, &projection_ctx);
+                                if (status != core::Status::OK && status != core::Status::NOT_FOUND)
+                                {
+                                    if (remote_ctx.message.empty())
+                                    {
+                                        remote_ctx.message = projection_ctx.message;
+                                    }
+                                    return status;
+                                }
+
+                                std::sort(object_rows.begin(),
+                                          object_rows.end(),
+                                          [](const auto& lhs, const auto& rhs) {
+                                              if (lhs.remote_path != rhs.remote_path)
+                                              {
+                                                  return lhs.remote_path < rhs.remote_path;
+                                              }
+                                              return lhs.remote_object_name < rhs.remote_object_name;
+                                          });
+
+                                std::unordered_map<core::ID, std::string, core::IDHash>
+                                    local_schema_path_by_id;
+                                auto localSchemaPathForId = [&](const core::ID& schema_id) -> std::string
+                                {
+                                    if (isZeroUuid(schema_id))
+                                    {
+                                        return std::string{};
+                                    }
+                                    auto it = local_schema_path_by_id.find(schema_id);
+                                    if (it != local_schema_path_by_id.end())
+                                    {
+                                        return it->second;
+                                    }
+
+                                    std::string path;
+                                    core::CatalogManager::ResolvedObject resolved{};
+                                    core::ErrorContext resolve_ctx;
+                                    if (catalog->resolveObjectId(schema_id, resolved, &resolve_ctx) ==
+                                        core::Status::OK)
+                                    {
+                                        if (!resolved.full_path.empty())
+                                        {
+                                            path = resolved.full_path;
+                                        }
+                                        else if (!resolved.schema_path.empty())
+                                        {
+                                            path = resolved.schema_path;
+                                        }
+                                        else
+                                        {
+                                            path = resolved.object_name;
+                                        }
+                                    }
+                                    local_schema_path_by_id.emplace(schema_id, path);
+                                    return path;
+                                };
+
+                                if (want_objects)
+                                {
+                                    addRemoteTextColumn(out_rs, "remote_path");
+                                    addRemoteTextColumn(out_rs, "remote_schema_name");
+                                    addRemoteTextColumn(out_rs, "remote_object_name");
+                                    addRemoteTextColumn(out_rs, "remote_object_kind");
+                                    addRemoteTextColumn(out_rs, "local_schema_path");
+                                    addRemoteTextColumn(out_rs, "is_supported");
+
+                                    for (const auto& object_row : object_rows)
+                                    {
+                                        if (!object_row.is_valid)
+                                        {
+                                            continue;
+                                        }
+
+                                        scratchbird::udr::RemoteRow row{};
+                                        appendRemoteTextCell(row, object_row.remote_path);
+                                        appendRemoteTextCell(
+                                            row,
+                                            object_row.has_remote_schema_name
+                                                ? object_row.remote_schema_name
+                                                : std::string{});
+                                        appendRemoteTextCell(row, object_row.remote_object_name);
+                                        appendRemoteTextCell(
+                                            row,
+                                            remoteKindToText(object_row.remote_object_kind));
+                                        appendRemoteTextCell(
+                                            row,
+                                            object_row.has_mapped_local_schema_id
+                                                ? localSchemaPathForId(
+                                                      object_row.mapped_local_schema_id)
+                                                : std::string{});
+                                        appendRemoteTextCell(
+                                            row,
+                                            object_row.is_supported ? "true" : "false");
+                                        out_rs.rows.push_back(std::move(row));
+                                    }
+                                    return core::Status::OK;
+                                }
+
+                                addRemoteTextColumn(out_rs, "remote_path");
+                                addRemoteTextColumn(out_rs, "remote_schema_name");
+                                addRemoteTextColumn(out_rs, "remote_object_name");
+                                addRemoteTextColumn(out_rs, "column_name");
+                                addRemoteTextColumn(out_rs, "remote_type_name");
+                                addRemoteTextColumn(out_rs, "ordinal_position");
+                                addRemoteTextColumn(out_rs, "is_nullable");
+                                addRemoteTextColumn(out_rs, "local_schema_path");
+
+                                for (const auto& object_row : object_rows)
+                                {
+                                    if (!object_row.is_valid)
+                                    {
+                                        continue;
+                                    }
+
+                                    std::vector<core::CatalogManager::RemoteMetadataColumnCatalogInfo>
+                                        column_rows;
+                                    core::ErrorContext column_ctx;
+                                    status = catalog->listRemoteMetadataColumnCatalogEntries(
+                                        object_row.remote_object_id, column_rows, &column_ctx);
+                                    if (status != core::Status::OK &&
+                                        status != core::Status::NOT_FOUND)
+                                    {
+                                        if (remote_ctx.message.empty())
+                                        {
+                                            remote_ctx.message = column_ctx.message;
+                                        }
+                                        return status;
+                                    }
+
+                                    std::sort(column_rows.begin(),
+                                              column_rows.end(),
+                                              [](const auto& lhs, const auto& rhs) {
+                                                  if (lhs.ordinal_position != rhs.ordinal_position)
+                                                  {
+                                                      return lhs.ordinal_position <
+                                                             rhs.ordinal_position;
+                                                  }
+                                                  return lhs.column_name < rhs.column_name;
+                                              });
+
+                                    const std::string local_schema_path =
+                                        object_row.has_mapped_local_schema_id
+                                            ? localSchemaPathForId(
+                                                  object_row.mapped_local_schema_id)
+                                            : std::string{};
+                                    for (const auto& column_row : column_rows)
+                                    {
+                                        if (!column_row.is_valid)
+                                        {
+                                            continue;
+                                        }
+                                        scratchbird::udr::RemoteRow row{};
+                                        appendRemoteTextCell(row, object_row.remote_path);
+                                        appendRemoteTextCell(
+                                            row,
+                                            object_row.has_remote_schema_name
+                                                ? object_row.remote_schema_name
+                                                : std::string{});
+                                        appendRemoteTextCell(row, object_row.remote_object_name);
+                                        appendRemoteTextCell(row, column_row.column_name);
+                                        appendRemoteTextCell(row, column_row.remote_type_name);
+                                        appendRemoteTextCell(
+                                            row,
+                                            std::to_string(column_row.ordinal_position));
+                                        appendRemoteTextCell(
+                                            row,
+                                            column_row.is_nullable ? "YES" : "NO");
+                                        appendRemoteTextCell(row, local_schema_path);
+                                        out_rs.rows.push_back(std::move(row));
+                                    }
+                                }
+                                return core::Status::OK;
+                            };
+
+                            auto loadLatestProjectionResult =
+                                [&](scratchbird::sblr::v3::Opcode snapshot_opcode,
+                                    scratchbird::udr::RemoteResultSet& out_rs,
+                                    core::ID* snapshot_id_out) -> core::Status
+                            {
+                                if (snapshot_id_out)
+                                {
+                                    *snapshot_id_out = core::ID{};
+                                }
+                                std::vector<core::CatalogManager::RemoteMetadataSnapshotCatalogInfo>
+                                    snapshots;
+                                core::ErrorContext snapshot_ctx;
+                                core::Status status =
+                                    catalog->listRemoteMetadataSnapshotCatalogEntries(
+                                        connector_info.remote_connector_id,
+                                        snapshots,
+                                        &snapshot_ctx);
+                                if (status != core::Status::OK)
+                                {
+                                    if (remote_ctx.message.empty())
+                                    {
+                                        remote_ctx.message = snapshot_ctx.message;
+                                    }
+                                    return status;
+                                }
+
+                                const core::CatalogManager::RemoteMetadataSnapshotCatalogInfo*
+                                    latest_snapshot = nullptr;
+                                for (const auto& row : snapshots)
+                                {
+                                    if (!row.is_valid ||
+                                        row.snapshot_status !=
+                                            core::CatalogManager::RemoteSnapshotStatus::COMPLETE)
+                                    {
+                                        continue;
+                                    }
+                                    if (!latest_snapshot ||
+                                        row.snapshot_seq > latest_snapshot->snapshot_seq ||
+                                        (row.snapshot_seq == latest_snapshot->snapshot_seq &&
+                                         row.started_time > latest_snapshot->started_time))
+                                    {
+                                        latest_snapshot = &row;
+                                    }
+                                }
+                                if (!latest_snapshot)
+                                {
+                                    return core::Status::NOT_FOUND;
+                                }
+                                if (snapshot_id_out)
+                                {
+                                    *snapshot_id_out = latest_snapshot->snapshot_id;
+                                }
+                                return buildProjectionResultFromSnapshot(
+                                    latest_snapshot->snapshot_id, snapshot_opcode, out_rs);
+                            };
+
+                            auto persistRemoteProjectionCatalogRows =
+                                [&](const core::ID& snapshot_id,
+                                    scratchbird::sblr::v3::Opcode snapshot_opcode,
+                                    const scratchbird::udr::RemoteResultSet& remote_rs) -> core::Status
+                            {
+                                const bool persist_objects =
+                                    snapshot_opcode ==
+                                    scratchbird::sblr::v3::Opcode::SBLR3_SHOW_REMOTE_OBJECTS;
+                                const bool persist_columns =
+                                    snapshot_opcode ==
+                                    scratchbird::sblr::v3::Opcode::SBLR3_SHOW_REMOTE_COLUMNS;
+                                if ((!persist_objects && !persist_columns) || isZeroUuid(snapshot_id))
+                                {
+                                    return core::Status::OK;
+                                }
+
+                                core::ErrorContext proj_ctx;
+                                std::unordered_map<std::string, size_t> column_index;
+                                for (size_t i = 0; i < remote_rs.columns.size(); ++i)
+                                {
+                                    const std::string key =
+                                        toUpperAsciiCopy(trimAsciiCopy(remote_rs.columns[i].name));
+                                    if (!key.empty())
+                                    {
+                                        column_index[key] = i;
+                                    }
+                                }
+
+                                auto readCellText = [&](const scratchbird::udr::RemoteRow& row,
+                                                        const std::initializer_list<const char*>& keys,
+                                                        std::string& out) -> bool
+                                {
+                                    for (const char* raw_key : keys)
+                                    {
+                                        auto it = column_index.find(
+                                            toUpperAsciiCopy(trimAsciiCopy(raw_key)));
+                                        if (it == column_index.end())
+                                        {
+                                            continue;
+                                        }
+                                        if (it->second >= row.values.size() ||
+                                            row.values[it->second].is_null)
+                                        {
+                                            continue;
+                                        }
+
+                                        try
+                                        {
+                                            out = trimAsciiCopy(row.values[it->second].toString());
+                                        }
+                                        catch (...)
+                                        {
+                                            out.assign(row.values[it->second].data.begin(),
+                                                       row.values[it->second].data.end());
+                                            out = trimAsciiCopy(out);
+                                        }
+                                        if (!out.empty())
+                                        {
+                                            return true;
+                                        }
+                                    }
+                                    return false;
+                                };
+
+                                std::vector<core::CatalogManager::RemoteSchemaMappingCatalogInfo>
+                                    schema_mappings;
+                                (void)catalog->listRemoteSchemaMappingCatalogEntries(
+                                    connector_info.remote_connector_id, schema_mappings, &proj_ctx);
+
+                                auto kindAllowedByMapping =
+                                    [&](const core::CatalogManager::RemoteSchemaMappingCatalogInfo&
+                                            mapping,
+                                        core::CatalogManager::RemoteObjectKind kind) -> bool
+                                {
+                                    const std::string include_text =
+                                        toUpperAsciiCopy(trimAsciiCopy(mapping.include_object_kinds));
+                                    if (include_text.empty())
+                                    {
+                                        return false;
+                                    }
+                                    if (include_text == "ALL" || include_text == "*")
+                                    {
+                                        return true;
+                                    }
+                                    std::stringstream stream(include_text);
+                                    std::string token;
+                                    const std::string kind_token = remoteKindToText(kind);
+                                    while (std::getline(stream, token, ','))
+                                    {
+                                        token = trimAsciiCopy(token);
+                                        if (token.empty())
+                                        {
+                                            continue;
+                                        }
+                                        if (token == "ALL" || token == "*" || token == kind_token)
+                                        {
+                                            return true;
+                                        }
+                                    }
+                                    return false;
+                                };
+
+                                auto matchesSchemaPattern =
+                                    [&](const core::CatalogManager::RemoteSchemaMappingCatalogInfo&
+                                            mapping,
+                                        const std::string& schema_name) -> bool
+                                {
+                                    const std::string normalized_schema =
+                                        toUpperAsciiCopy(trimAsciiCopy(schema_name));
+                                    const std::string normalized_pattern =
+                                        toUpperAsciiCopy(
+                                            trimAsciiCopy(mapping.remote_schema_pattern));
+                                    switch (mapping.mapping_mode)
+                                    {
+                                        case core::CatalogManager::RemoteSchemaMappingMode::EXACT:
+                                            return normalized_schema == normalized_pattern;
+                                        case core::CatalogManager::RemoteSchemaMappingMode::PREFIX:
+                                            return normalized_schema.rfind(normalized_pattern, 0) == 0;
+                                        case core::CatalogManager::RemoteSchemaMappingMode::REGEX:
+                                            try
+                                            {
+                                                return std::regex_match(
+                                                    schema_name,
+                                                    std::regex(
+                                                        mapping.remote_schema_pattern,
+                                                        std::regex_constants::icase));
+                                            }
+                                            catch (...)
+                                            {
+                                                return false;
+                                            }
+                                    }
+                                    return false;
+                                };
+
+                                auto isExcludedByMapping =
+                                    [&](const core::CatalogManager::RemoteSchemaMappingCatalogInfo&
+                                            mapping,
+                                        const std::string& remote_path,
+                                        const std::string& object_name) -> bool
+                                {
+                                    if (!mapping.has_exclude_object_patterns ||
+                                        trimAsciiCopy(mapping.exclude_object_patterns).empty())
+                                    {
+                                        return false;
+                                    }
+                                    try
+                                    {
+                                        const std::regex pattern(
+                                            mapping.exclude_object_patterns,
+                                            std::regex_constants::icase);
+                                        return std::regex_match(object_name, pattern) ||
+                                               std::regex_match(remote_path, pattern);
+                                    }
+                                    catch (...)
+                                    {
+                                        return false;
+                                    }
+                                };
+
+                                auto resolveMappedSchema =
+                                    [&](const std::string& schema_name,
+                                        core::CatalogManager::RemoteObjectKind kind,
+                                        const std::string& remote_path,
+                                        const std::string& object_name,
+                                        core::ID& local_schema_id_out) -> bool
+                                {
+                                    local_schema_id_out = core::ID{};
+                                    for (const auto& mapping : schema_mappings)
+                                    {
+                                        if (!mapping.is_valid || isZeroUuid(mapping.local_schema_id))
+                                        {
+                                            continue;
+                                        }
+                                        if (!kindAllowedByMapping(mapping, kind))
+                                        {
+                                            continue;
+                                        }
+                                        if (!matchesSchemaPattern(mapping, schema_name))
+                                        {
+                                            continue;
+                                        }
+                                        if (isExcludedByMapping(mapping, remote_path, object_name))
+                                        {
+                                            continue;
+                                        }
+                                        local_schema_id_out = mapping.local_schema_id;
+                                        return true;
+                                    }
+                                    return false;
+                                };
+
+                                std::unordered_map<std::string, core::ID> object_ids_by_path;
+
+                                auto ensureObjectRow =
+                                    [&](const std::string& path,
+                                        const std::string& schema_name,
+                                        const std::string& object_name,
+                                        core::CatalogManager::RemoteObjectKind kind,
+                                        core::ID& object_id_out) -> core::Status
+                                {
+                                    const std::string key = toUpperAsciiCopy(trimAsciiCopy(path));
+                                    auto it = object_ids_by_path.find(key);
+                                    if (it != object_ids_by_path.end() && !isZeroUuid(it->second))
+                                    {
+                                        object_id_out = it->second;
+                                        return core::Status::OK;
+                                    }
+
+                                    std::string effective_schema_name = trimAsciiCopy(schema_name);
+                                    if (effective_schema_name.empty())
+                                    {
+                                        const size_t dot = path.find('.');
+                                        if (dot != std::string::npos)
+                                        {
+                                            effective_schema_name = trimAsciiCopy(path.substr(0, dot));
+                                        }
+                                    }
+
+                                    core::CatalogManager::RemoteMetadataObjectCatalogInfo object_info{};
+                                    object_info.remote_object_id = core::generateUuidV7();
+                                    object_info.snapshot_id = snapshot_id;
+                                    object_info.remote_path = path;
+                                    object_info.has_remote_schema_name = !effective_schema_name.empty();
+                                    object_info.remote_schema_name = effective_schema_name;
+                                    object_info.remote_object_name = object_name.empty() ? path : object_name;
+                                    object_info.remote_object_kind = kind;
+                                    object_info.remote_signature = static_cast<uint32_t>(
+                                        std::hash<std::string>{}(path + "|" +
+                                                                  object_info.remote_object_name +
+                                                                  "|" +
+                                                                  std::to_string(
+                                                                      static_cast<uint32_t>(kind))));
+                                    core::ID mapped_schema_id;
+                                    if (resolveMappedSchema(effective_schema_name,
+                                                            kind,
+                                                            path,
+                                                            object_info.remote_object_name,
+                                                            mapped_schema_id))
+                                    {
+                                        object_info.has_mapped_local_schema_id = true;
+                                        object_info.mapped_local_schema_id = mapped_schema_id;
+                                    }
+                                    object_info.is_supported = true;
+                                    object_info.is_valid = true;
+
+                                    core::Status status =
+                                        catalog->upsertRemoteMetadataObjectCatalogEntry(
+                                            object_info, &proj_ctx);
+                                    if (status != core::Status::OK &&
+                                        status != core::Status::CONSTRAINT_VIOLATION)
+                                    {
+                                        if (remote_ctx.message.empty())
+                                        {
+                                            remote_ctx.message = proj_ctx.message;
+                                        }
+                                        return status;
+                                    }
+
+                                    object_id_out = object_info.remote_object_id;
+                                    object_ids_by_path[key] = object_id_out;
+                                    return core::Status::OK;
+                                };
+
+                                {
+                                    std::vector<core::CatalogManager::RemoteMetadataObjectCatalogInfo>
+                                        existing_objects;
+                                    core::Status status = catalog->listRemoteMetadataObjectCatalogEntries(
+                                        snapshot_id, existing_objects, &proj_ctx);
+                                    if (status != core::Status::OK &&
+                                        status != core::Status::NOT_FOUND)
+                                    {
+                                        if (remote_ctx.message.empty())
+                                        {
+                                            remote_ctx.message = proj_ctx.message;
+                                        }
+                                        return status;
+                                    }
+                                    for (const auto& object_row : existing_objects)
+                                    {
+                                        object_ids_by_path[toUpperAsciiCopy(
+                                            trimAsciiCopy(object_row.remote_path))] =
+                                            object_row.remote_object_id;
+                                    }
+                                }
+
+                                if (persist_objects)
+                                {
+                                    for (const auto& row : remote_rs.rows)
+                                    {
+                                        std::string object_name;
+                                        if (!readCellText(row,
+                                                          {"remote_object_name",
+                                                           "object_name",
+                                                           "table_name",
+                                                           "view_name",
+                                                           "name"},
+                                                          object_name))
+                                        {
+                                            continue;
+                                        }
+
+                                        std::string schema_name;
+                                        (void)readCellText(row,
+                                                           {"remote_schema_name",
+                                                            "schema_name",
+                                                            "table_schema",
+                                                            "schema"},
+                                                           schema_name);
+                                        std::string remote_path;
+                                        (void)readCellText(row, {"remote_path", "path"}, remote_path);
+                                        if (remote_path.empty())
+                                        {
+                                            remote_path = schema_name.empty()
+                                                              ? object_name
+                                                              : (schema_name + "." + object_name);
+                                        }
+
+                                        std::string kind_text;
+                                        (void)readCellText(row,
+                                                           {"remote_object_kind",
+                                                            "object_kind",
+                                                            "object_type",
+                                                            "kind",
+                                                            "table_type"},
+                                                           kind_text);
+                                        core::ID object_id;
+                                        core::Status status = ensureObjectRow(
+                                            remote_path,
+                                            schema_name,
+                                            object_name,
+                                            remoteKindFromText(kind_text),
+                                            object_id);
+                                        if (status != core::Status::OK)
+                                        {
+                                            return status;
+                                        }
+                                    }
+                                }
+
+                                if (persist_columns)
+                                {
+                                    std::unordered_map<std::string, uint32_t> generated_ordinals;
+                                    for (const auto& row : remote_rs.rows)
+                                    {
+                                        std::string column_name;
+                                        if (!readCellText(row,
+                                                          {"column_name", "name"},
+                                                          column_name))
+                                        {
+                                            continue;
+                                        }
+
+                                        std::string object_name;
+                                        (void)readCellText(row,
+                                                           {"remote_object_name",
+                                                            "object_name",
+                                                            "table_name"},
+                                                           object_name);
+                                        std::string schema_name;
+                                        (void)readCellText(row,
+                                                           {"remote_schema_name",
+                                                            "schema_name",
+                                                            "table_schema",
+                                                            "schema"},
+                                                           schema_name);
+                                        std::string remote_path;
+                                        (void)readCellText(row, {"remote_path", "path"}, remote_path);
+                                        if (remote_path.empty() && !object_name.empty())
+                                        {
+                                            remote_path = schema_name.empty()
+                                                              ? object_name
+                                                              : (schema_name + "." + object_name);
+                                        }
+                                        if (remote_path.empty())
+                                        {
+                                            continue;
+                                        }
+
+                                        core::ID object_id;
+                                        core::Status status = ensureObjectRow(
+                                            remote_path,
+                                            schema_name,
+                                            object_name.empty() ? remote_path : object_name,
+                                            core::CatalogManager::RemoteObjectKind::TABLE,
+                                            object_id);
+                                        if (status != core::Status::OK)
+                                        {
+                                            return status;
+                                        }
+
+                                        std::string type_name;
+                                        if (!readCellText(row,
+                                                          {"remote_type_name",
+                                                           "data_type",
+                                                           "type_name"},
+                                                          type_name))
+                                        {
+                                            type_name = "TEXT";
+                                        }
+
+                                        uint32_t ordinal_position = 0;
+                                        std::string ordinal_text;
+                                        if (readCellText(row,
+                                                         {"ordinal_position",
+                                                          "column_ordinal",
+                                                          "position"},
+                                                         ordinal_text))
+                                        {
+                                            try
+                                            {
+                                                const uint64_t parsed =
+                                                    static_cast<uint64_t>(std::stoull(ordinal_text));
+                                                if (parsed > 0 &&
+                                                    parsed <= std::numeric_limits<uint32_t>::max())
+                                                {
+                                                    ordinal_position =
+                                                        static_cast<uint32_t>(parsed);
+                                                }
+                                            }
+                                            catch (...)
+                                            {
+                                                ordinal_position = 0;
+                                            }
+                                        }
+                                        if (ordinal_position == 0)
+                                        {
+                                            ordinal_position = ++generated_ordinals[remote_path];
+                                        }
+
+                                        bool is_nullable = true;
+                                        std::string nullable_text;
+                                        if (readCellText(row, {"is_nullable", "nullable"}, nullable_text))
+                                        {
+                                            const std::string upper_nullable =
+                                                toUpperAsciiCopy(nullable_text);
+                                            if (upper_nullable == "NO" ||
+                                                upper_nullable == "N" ||
+                                                upper_nullable == "FALSE" ||
+                                                upper_nullable == "0")
+                                            {
+                                                is_nullable = false;
+                                            }
+                                        }
+
+                                        core::CatalogManager::RemoteMetadataColumnCatalogInfo
+                                            column_info{};
+                                        column_info.remote_column_id = core::generateUuidV7();
+                                        column_info.remote_object_id = object_id;
+                                        column_info.ordinal_position = ordinal_position;
+                                        column_info.column_name = column_name;
+                                        column_info.remote_type_name = type_name;
+                                        column_info.is_nullable = is_nullable;
+                                        column_info.is_valid = true;
+
+                                        status = catalog->upsertRemoteMetadataColumnCatalogEntry(
+                                            column_info, &proj_ctx);
+                                        if (status != core::Status::OK &&
+                                            status != core::Status::CONSTRAINT_VIOLATION)
+                                        {
+                                            if (remote_ctx.message.empty())
+                                            {
+                                                remote_ctx.message = proj_ctx.message;
+                                            }
+                                            return status;
+                                        }
+                                    }
+                                }
+
+                                return core::Status::OK;
+                            };
+
+                            auto defaultRemoteMetadataSql =
+                                [&](scratchbird::sblr::v3::Opcode op) -> std::string
+                            {
+                                const bool show_objects =
+                                    op == scratchbird::sblr::v3::Opcode::SBLR3_SHOW_REMOTE_OBJECTS;
+                                const bool show_columns =
+                                    op == scratchbird::sblr::v3::Opcode::SBLR3_SHOW_REMOTE_COLUMNS;
+                                if (!show_objects && !show_columns)
+                                {
+                                    return "SELECT 1";
+                                }
+
+                                switch (connector_type)
+                                {
+                                    case scratchbird::udr::ConnectorType::POSTGRESQL:
+                                    case scratchbird::udr::ConnectorType::SCRATCHBIRD:
+                                        if (show_objects)
+                                        {
+                                            return "SELECT table_schema AS remote_schema_name, "
+                                                   "table_name AS remote_object_name, "
+                                                   "table_schema || '.' || table_name AS remote_path, "
+                                                   "CASE WHEN table_type = 'VIEW' THEN 'VIEW' ELSE 'TABLE' END "
+                                                   "AS remote_object_kind "
+                                                   "FROM information_schema.tables "
+                                                   "WHERE table_schema NOT IN ('pg_catalog', 'information_schema') "
+                                                   "ORDER BY table_schema, table_name";
+                                        }
+                                        return "SELECT table_schema AS remote_schema_name, "
+                                               "table_name AS remote_object_name, "
+                                               "table_schema || '.' || table_name AS remote_path, "
+                                               "column_name, data_type AS remote_type_name, "
+                                               "ordinal_position, is_nullable "
+                                               "FROM information_schema.columns "
+                                               "WHERE table_schema NOT IN ('pg_catalog', 'information_schema') "
+                                               "ORDER BY table_schema, table_name, ordinal_position";
+                                    case scratchbird::udr::ConnectorType::MYSQL:
+                                        if (show_objects)
+                                        {
+                                            return "SELECT table_schema AS remote_schema_name, "
+                                                   "table_name AS remote_object_name, "
+                                                   "CONCAT(table_schema, '.', table_name) AS remote_path, "
+                                                   "CASE WHEN table_type = 'VIEW' THEN 'VIEW' ELSE 'TABLE' END "
+                                                   "AS remote_object_kind "
+                                                   "FROM information_schema.tables "
+                                                   "WHERE table_schema NOT IN "
+                                                   "('information_schema', 'mysql', 'performance_schema', 'sys') "
+                                                   "ORDER BY table_schema, table_name";
+                                        }
+                                        return "SELECT table_schema AS remote_schema_name, "
+                                               "table_name AS remote_object_name, "
+                                               "CONCAT(table_schema, '.', table_name) AS remote_path, "
+                                               "column_name, data_type AS remote_type_name, "
+                                               "ordinal_position, is_nullable "
+                                               "FROM information_schema.columns "
+                                               "WHERE table_schema NOT IN "
+                                               "('information_schema', 'mysql', 'performance_schema', 'sys') "
+                                               "ORDER BY table_schema, table_name, ordinal_position";
+                                    case scratchbird::udr::ConnectorType::FIREBIRD:
+                                        if (show_objects)
+                                        {
+                                            return "SELECT '' AS remote_schema_name, "
+                                                   "TRIM(r.RDB$RELATION_NAME) AS remote_object_name, "
+                                                   "TRIM(r.RDB$RELATION_NAME) AS remote_path, "
+                                                   "CASE WHEN r.RDB$VIEW_BLR IS NULL THEN 'TABLE' ELSE 'VIEW' END "
+                                                   "AS remote_object_kind "
+                                                   "FROM RDB$RELATIONS r "
+                                                   "WHERE COALESCE(r.RDB$SYSTEM_FLAG, 0) = 0 "
+                                                   "ORDER BY TRIM(r.RDB$RELATION_NAME)";
+                                        }
+                                        return "SELECT '' AS remote_schema_name, "
+                                               "TRIM(rf.RDB$RELATION_NAME) AS remote_object_name, "
+                                               "TRIM(rf.RDB$RELATION_NAME) AS remote_path, "
+                                               "TRIM(rf.RDB$FIELD_NAME) AS column_name, "
+                                               "CAST(f.RDB$FIELD_TYPE AS VARCHAR(20)) AS remote_type_name, "
+                                               "(rf.RDB$FIELD_POSITION + 1) AS ordinal_position, "
+                                               "CASE WHEN COALESCE(rf.RDB$NULL_FLAG, 0) = 1 THEN 'NO' ELSE 'YES' END "
+                                               "AS is_nullable "
+                                               "FROM RDB$RELATION_FIELDS rf "
+                                               "JOIN RDB$FIELDS f ON f.RDB$FIELD_NAME = rf.RDB$FIELD_SOURCE "
+                                               "WHERE COALESCE(rf.RDB$SYSTEM_FLAG, 0) = 0 "
+                                               "ORDER BY TRIM(rf.RDB$RELATION_NAME), rf.RDB$FIELD_POSITION";
+                                    default:
+                                        return "SELECT 1";
+                                }
+                            };
+
+                            auto nowTicks = []() -> uint64_t {
+                                return static_cast<uint64_t>(
+                                    std::chrono::system_clock::now().time_since_epoch().count());
+                            };
+
+                            auto isTerminalRemoteTxnState =
+                                [](core::CatalogManager::RemoteTxnState state) -> bool
+                            {
+                                return state == core::CatalogManager::RemoteTxnState::COMMITTED ||
+                                       state == core::CatalogManager::RemoteTxnState::ROLLED_BACK ||
+                                       state == core::CatalogManager::RemoteTxnState::ABORTED;
+                            };
+
+                            auto ensureRemoteSessionId = [&](core::ID& session_id_out) -> bool
+                            {
+                                session_id_out = conn_ctx_ ? conn_ctx_->sessionId() : core::ID{};
+                                if (!isZeroUuid(session_id_out))
+                                {
+                                    core::CatalogManager::SessionInfo session_info{};
+                                    if (catalog->getSession(session_id_out, session_info, &remote_ctx) ==
+                                        core::Status::OK)
+                                    {
+                                        return true;
+                                    }
+                                }
+
+                                if (isZeroUuid(user_id))
+                                {
+                                    remote_ctx.message = "No effective user available for session binding";
+                                    return false;
+                                }
+
+                                core::CatalogManager::SessionInfo created_session{};
+                                const core::ID authkey_id =
+                                    conn_ctx_ ? conn_ctx_->authKeyId() : core::ID{};
+                                const std::string emulation_mode =
+                                    conn_ctx_ ? conn_ctx_->emulationMode() : std::string("native");
+                                core::Status status = catalog->createSession(
+                                    user_id, authkey_id, emulation_mode, created_session, &remote_ctx);
+                                if (status != core::Status::OK)
+                                {
+                                    return false;
+                                }
+
+                                session_id_out = created_session.session_id;
+                                if (conn_ctx_)
+                                {
+                                    conn_ctx_->setSessionContext(created_session.session_id,
+                                                                 created_session.authkey_id,
+                                                                 created_session.emulation_mode,
+                                                                 created_session.policy_epoch_global,
+                                                                 created_session.policy_epoch_table);
+                                }
+                                return true;
+                            };
+
+                            auto classifyRemoteSqlClass =
+                                [&](const std::string& sql) -> core::CatalogManager::RemoteOperationClass
+                            {
+                                const std::string trimmed = trimAsciiCopy(sql);
+                                if (trimmed.empty())
+                                {
+                                    return core::CatalogManager::RemoteOperationClass::QUERY;
+                                }
+                                const size_t space = trimmed.find_first_of(" \t\r\n(");
+                                const std::string first =
+                                    toUpperAsciiCopy(trimmed.substr(0, space == std::string::npos
+                                                                           ? trimmed.size()
+                                                                           : space));
+                                if (first == "SELECT" || first == "WITH" || first == "SHOW" ||
+                                    first == "DESCRIBE" || first == "EXPLAIN")
+                                {
+                                    return core::CatalogManager::RemoteOperationClass::QUERY;
+                                }
+                                if (first == "INSERT" || first == "UPDATE" || first == "DELETE" ||
+                                    first == "MERGE" || first == "UPSERT" || first == "REPLACE")
+                                {
+                                    return core::CatalogManager::RemoteOperationClass::DML;
+                                }
+                                if (first == "CREATE" || first == "ALTER" || first == "DROP" ||
+                                    first == "TRUNCATE" || first == "COMMENT")
+                                {
+                                    return core::CatalogManager::RemoteOperationClass::DDL;
+                                }
+                                if (first == "GRANT" || first == "REVOKE" || first == "ANALYZE" ||
+                                    first == "REFRESH")
+                                {
+                                    return core::CatalogManager::RemoteOperationClass::ADMIN;
+                                }
+                                return core::CatalogManager::RemoteOperationClass::QUERY;
+                            };
+
+                            auto parseRequestedTxnMode =
+                                [&](core::CatalogManager::RemoteTxnMode& mode_out) -> bool
+                            {
+                                mode_out = core::CatalogManager::RemoteTxnMode::AUTONOMOUS;
+
+                                auto parseToken =
+                                    [&](const std::string& raw) -> bool
+                                {
+                                    const std::string token = toUpperAsciiCopy(trimAsciiCopy(raw));
+                                    if (token.empty())
+                                    {
+                                        return false;
+                                    }
+                                    if (token == "JOIN_LOCAL" || token == "JOINED" ||
+                                        token == "JOIN_LOCAL_TXN")
+                                    {
+                                        mode_out = core::CatalogManager::RemoteTxnMode::JOIN_LOCAL;
+                                        return true;
+                                    }
+                                    if (token == "AUTONOMOUS" || token == "AUTO")
+                                    {
+                                        mode_out = core::CatalogManager::RemoteTxnMode::AUTONOMOUS;
+                                        return true;
+                                    }
+                                    if (token == "READ_ONLY_SNAPSHOT" || token == "SNAPSHOT" ||
+                                        token == "READ_ONLY")
+                                    {
+                                        mode_out =
+                                            core::CatalogManager::RemoteTxnMode::READ_ONLY_SNAPSHOT;
+                                        return true;
+                                    }
+                                    if (token == "XA_PREPARED" || token == "PREPARED")
+                                    {
+                                        mode_out = core::CatalogManager::RemoteTxnMode::XA_PREPARED;
+                                        return true;
+                                    }
+                                    if (token == "NONE")
+                                    {
+                                        mode_out = core::CatalogManager::RemoteTxnMode::NONE;
+                                        return true;
+                                    }
+                                    return false;
+                                };
+
+                                std::string token;
+                                if (payloadFieldToString(remote_payload, "txn_mode", token) &&
+                                    parseToken(token))
+                                {
+                                    return true;
+                                }
+                                if (payloadFieldToString(remote_payload, "mode", token) &&
+                                    parseToken(token))
+                                {
+                                    return true;
+                                }
+                                if (auto it = payload_options.find("TXN_MODE");
+                                    it != payload_options.end() && parseToken(it->second))
+                                {
+                                    return true;
+                                }
+                                if (auto it = payload_options.find("TRANSACTION_MODE");
+                                    it != payload_options.end() && parseToken(it->second))
+                                {
+                                    return true;
+                                }
+                                if (auto it = payload_options.find("MODE");
+                                    it != payload_options.end() && parseToken(it->second))
+                                {
+                                    return true;
+                                }
+                                return false;
+                            };
+
+                            auto isRemoteQuerySql = [&](const std::string& sql) -> bool
+                            {
+                                const auto op_class = classifyRemoteSqlClass(sql);
+                                return op_class == core::CatalogManager::RemoteOperationClass::QUERY ||
+                                       op_class == core::CatalogManager::RemoteOperationClass::METADATA;
+                            };
+
+                            auto isRetryableRemoteStatus = [](core::Status status) -> bool
+                            {
+                                return status == core::Status::CONNECTION_FAILURE ||
+                                       status == core::Status::CONNECTION_CLOSED ||
+                                       status == core::Status::LOCK_TIMEOUT ||
+                                       status == core::Status::DEADLOCK ||
+                                       status == core::Status::SERIALIZATION_FAILURE ||
+                                       status == core::Status::IO_ERROR;
+                            };
+
+                            auto executeRemoteSqlWithRetry =
+                                [&](const std::string& sql,
+                                    bool force_query_mode) -> core::Status
+                            {
+                                if (requested_cancel)
+                                {
+                                    remote_ctx.message = "cancel requested";
+                                    return core::Status::CANCELLED;
+                                }
+
+                                const uint64_t max_retries = std::min<uint64_t>(requested_retry_count, 10);
+                                const uint64_t backoff_ms =
+                                    std::min<uint64_t>(requested_retry_backoff_ms, 60000);
+                                const bool query_mode = force_query_mode || isRemoteQuerySql(sql);
+
+                                core::Status status = core::Status::NOT_IMPLEMENTED;
+                                for (uint64_t attempt = 0; attempt <= max_retries; ++attempt)
+                                {
+                                    rows_affected = 0;
+                                    remote_runtime_dispatch_attempted = true;
+                                    if (query_mode)
+                                    {
+                                        remote_result.clear();
+                                        status = scratchbird::udr::sys_remote_query_bound(
+                                            runtime_binding, sql, remote_result, &remote_ctx);
+                                        if (status == core::Status::OK)
+                                        {
+                                            remote_query_result_opcode = true;
+                                        }
+                                    }
+                                    else
+                                    {
+                                        status = scratchbird::udr::sys_remote_exec_bound(
+                                            runtime_binding, sql, rows_affected, &remote_ctx);
+                                    }
+
+                                    if (status == core::Status::OK || attempt == max_retries ||
+                                        !isRetryableRemoteStatus(status))
+                                    {
+                                        return status;
+                                    }
+                                    if (backoff_ms > 0)
+                                    {
+                                        std::this_thread::sleep_for(
+                                            std::chrono::milliseconds(backoff_ms));
+                                    }
+                                }
+                                return status;
+                            };
+
+                            auto updateRemoteConnectorHealth =
+                                [&](core::Status terminal_status) -> void
+                            {
+                                if (!remote_runtime_dispatch_attempted)
+                                {
+                                    return;
+                                }
+
+                                core::CatalogManager::RemoteConnectorCatalogInfo updated = connector_info;
+                                const uint64_t now_ticks = nowTicks();
+                                updated.has_last_probe_time = true;
+                                updated.last_probe_time = now_ticks;
+
+                                if (terminal_status == core::Status::OK)
+                                {
+                                    updated.failure_count = 0;
+                                    updated.has_last_ready_time = true;
+                                    updated.last_ready_time = now_ticks;
+                                    if (updated.state == core::CatalogManager::RemoteConnectorState::PROBING ||
+                                        updated.state == core::CatalogManager::RemoteConnectorState::DEGRADED)
+                                    {
+                                        updated.state = core::CatalogManager::RemoteConnectorState::READY;
+                                    }
+                                }
+                                else if (terminal_status != core::Status::CANCELLED &&
+                                         terminal_status != core::Status::QUERY_CANCELED)
+                                {
+                                    if (updated.failure_count < std::numeric_limits<uint32_t>::max())
+                                    {
+                                        ++updated.failure_count;
+                                    }
+                                    if (updated.state == core::CatalogManager::RemoteConnectorState::READY ||
+                                        updated.state == core::CatalogManager::RemoteConnectorState::PROBING)
+                                    {
+                                        updated.state = core::CatalogManager::RemoteConnectorState::DEGRADED;
+                                    }
+                                    if (updated.failure_count >= 3 &&
+                                        updated.state == core::CatalogManager::RemoteConnectorState::DEGRADED)
+                                    {
+                                        updated.state = core::CatalogManager::RemoteConnectorState::FAILED;
+                                    }
+                                }
+
+                                core::ErrorContext health_ctx;
+                                if (catalog->upsertRemoteConnectorCatalogEntry(updated, &health_ctx) ==
+                                    core::Status::OK)
+                                {
+                                    connector_info = updated;
+                                }
+                            };
+
+                            auto findPreparedStatementByName =
+                                [&](const core::ID& session_id,
+                                    const std::string& name,
+                                    core::CatalogManager::RemotePreparedStatementCatalogInfo& out)
+                                -> core::Status
+                            {
+                                if (isZeroUuid(session_id) || trimAsciiCopy(name).empty())
+                                {
+                                    return core::Status::NOT_FOUND;
+                                }
+                                std::vector<core::CatalogManager::RemotePreparedStatementCatalogInfo>
+                                    rows;
+                                core::Status status =
+                                    catalog->listRemotePreparedStatementCatalogEntries(
+                                        session_id, rows, &remote_ctx);
+                                if (status != core::Status::OK)
+                                {
+                                    return status;
+                                }
+
+                                const std::string wanted = toUpperAsciiCopy(trimAsciiCopy(name));
+                                for (const auto& row : rows)
+                                {
+                                    if (!row.is_valid ||
+                                        row.remote_connector_id != connector_info.remote_connector_id)
+                                    {
+                                        continue;
+                                    }
+                                    if (toUpperAsciiCopy(trimAsciiCopy(row.statement_name)) == wanted)
+                                    {
+                                        out = row;
+                                        return core::Status::OK;
+                                    }
+                                }
+                                return core::Status::NOT_FOUND;
+                            };
+
+                            auto findActiveTxnBinding =
+                                [&](const core::ID& session_id,
+                                    core::CatalogManager::RemoteTxnBindingCatalogInfo& out)
+                                -> core::Status
+                            {
+                                if (isZeroUuid(session_id))
+                                {
+                                    return core::Status::NOT_FOUND;
+                                }
+                                std::vector<core::CatalogManager::RemoteTxnBindingCatalogInfo> rows;
+                                core::Status status = catalog->listRemoteTxnBindingCatalogEntries(
+                                    connector_info.remote_connector_id, rows, &remote_ctx);
+                                if (status != core::Status::OK)
+                                {
+                                    return status;
+                                }
+
+                                const uint64_t current_xid = conn_ctx_ ? conn_ctx_->getCurrentXid() : 0;
+                                core::CatalogManager::RemoteTxnBindingCatalogInfo fallback{};
+                                bool has_fallback = false;
+                                for (const auto& row : rows)
+                                {
+                                    if (!row.is_valid || row.session_id != session_id ||
+                                        isTerminalRemoteTxnState(row.txn_state))
+                                    {
+                                        continue;
+                                    }
+                                    if (current_xid > 0 && row.txid == current_xid)
+                                    {
+                                        out = row;
+                                        return core::Status::OK;
+                                    }
+                                    if (!has_fallback)
+                                    {
+                                        fallback = row;
+                                        has_fallback = true;
+                                    }
+                                }
+                                if (!has_fallback)
+                                {
+                                    return core::Status::NOT_FOUND;
+                                }
+                                out = fallback;
+                                return core::Status::OK;
+                            };
+
+                            auto mapStatusToRemoteErrorClass =
+                                [](core::Status status) -> core::CatalogManager::RemoteErrorClass
+                            {
+                                switch (status)
+                                {
+                                    case core::Status::CONNECTION_FAILURE:
+                                    case core::Status::CONNECTION_CLOSED:
+                                    case core::Status::PROTOCOL_VIOLATION:
+                                        return core::CatalogManager::RemoteErrorClass::CONNECTION;
+                                    case core::Status::INVALID_PASSWORD:
+                                    case core::Status::INVALID_AUTHORIZATION:
+                                    case core::Status::PERMISSION_DENIED:
+                                        return core::CatalogManager::RemoteErrorClass::AUTH;
+                                    case core::Status::LOCK_TIMEOUT:
+                                        return core::CatalogManager::RemoteErrorClass::TIMEOUT;
+                                    case core::Status::INVALID_TRANSACTION_STATE:
+                                    case core::Status::NO_ACTIVE_TRANSACTION:
+                                    case core::Status::TRANSACTION_ABORTED:
+                                    case core::Status::READ_ONLY_TRANSACTION:
+                                        return core::CatalogManager::RemoteErrorClass::TRANSACTION;
+                                    default:
+                                        return core::CatalogManager::RemoteErrorClass::EXECUTION;
+                                }
+                            };
+
+                            auto persistRemoteError = [&](core::Status status,
+                                                          const std::string& detail) -> void
+                            {
+                                if (detail.empty())
+                                {
+                                    return;
+                                }
+                                core::CatalogManager::RemoteErrorCatalogInfo error_info{};
+                                error_info.remote_error_id = core::generateUuidV7();
+                                error_info.remote_connector_id = connector_info.remote_connector_id;
+                                error_info.error_class = mapStatusToRemoteErrorClass(status);
+                                error_info.has_remote_code = true;
+                                error_info.remote_code =
+                                    std::to_string(static_cast<uint32_t>(status));
+                                error_info.mapped_code = "REMOTE_RUNTIME_FAILURE";
+                                error_info.message_text = detail;
+                                error_info.first_seen_time = nowTicks();
+                                error_info.last_seen_time = error_info.first_seen_time;
+                                error_info.occurrence_count = 1;
+                                error_info.is_open = true;
+                                error_info.is_valid = true;
+                                if (catalog->upsertRemoteErrorCatalogEntry(error_info, &remote_ctx) ==
+                                    core::Status::OK)
+                                {
+                                    remote_error_id = error_info.remote_error_id;
+                                }
+                            };
+
+                            auto computeRemoteResultBytes = [](const scratchbird::udr::RemoteResultSet& rs)
+                                -> uint64_t
+                            {
+                                uint64_t total = 0;
+                                for (const auto& col : rs.columns)
+                                {
+                                    total += static_cast<uint64_t>(col.name.size());
+                                }
+                                for (const auto& row : rs.rows)
+                                {
+                                    for (const auto& val : row.values)
+                                    {
+                                        total += static_cast<uint64_t>(val.data.size());
+                                    }
+                                }
+                                return total;
+                            };
+
+                            const auto remote_dispatch_start = std::chrono::steady_clock::now();
+                            const uint64_t remote_started_time = nowTicks();
+
+                            switch (remote_opcode)
+                            {
+                                case scratchbird::sblr::v3::Opcode::SBLR3_ANALYZE_REMOTE_SERVER:
+                                case scratchbird::sblr::v3::Opcode::SBLR3_REFRESH_REMOTE_METADATA:
+                                case scratchbird::sblr::v3::Opcode::SBLR3_IMPORT_FOREIGN_SCHEMA:
+                                    remote_operation_class =
+                                        core::CatalogManager::RemoteOperationClass::METADATA;
+                                    if (remote_sql.empty())
+                                    {
+                                        remote_sql = "SELECT 1";
+                                    }
+                                    remote_status = executeRemoteSqlWithRetry(remote_sql, true);
+                                    persist_metadata_snapshot = true;
+                                    snapshot_kind =
+                                        (remote_opcode ==
+                                         scratchbird::sblr::v3::Opcode::SBLR3_ANALYZE_REMOTE_SERVER)
+                                            ? core::CatalogManager::RemoteSnapshotKind::CAPABILITY_REFRESH
+                                            : core::CatalogManager::RemoteSnapshotKind::FULL;
+                                    break;
+                                case scratchbird::sblr::v3::Opcode::SBLR3_SHOW_REMOTE_CAPABILITIES:
+                                case scratchbird::sblr::v3::Opcode::SBLR3_SHOW_REMOTE_OBJECTS:
+                                case scratchbird::sblr::v3::Opcode::SBLR3_SHOW_REMOTE_COLUMNS:
+                                case scratchbird::sblr::v3::Opcode::SBLR3_SHOW_REMOTE_STATISTICS:
+                                    remote_operation_class =
+                                        core::CatalogManager::RemoteOperationClass::METADATA;
+                                    remote_query_result_opcode = true;
+                                    if (remote_sql.empty())
+                                    {
+                                        remote_sql = defaultRemoteMetadataSql(remote_opcode);
+                                    }
+                                    remote_status = executeRemoteSqlWithRetry(remote_sql, true);
+                                    persist_metadata_snapshot = true;
+                                    snapshot_kind =
+                                        (remote_opcode ==
+                                             scratchbird::sblr::v3::Opcode::SBLR3_SHOW_REMOTE_OBJECTS ||
+                                         remote_opcode ==
+                                             scratchbird::sblr::v3::Opcode::SBLR3_SHOW_REMOTE_COLUMNS)
+                                            ? core::CatalogManager::RemoteSnapshotKind::FULL
+                                            : core::CatalogManager::RemoteSnapshotKind::CAPABILITY_REFRESH;
+                                    break;
+                                case scratchbird::sblr::v3::Opcode::SBLR3_SHOW_REMOTE_SESSION_STATE:
+                                {
+                                    remote_operation_class =
+                                        core::CatalogManager::RemoteOperationClass::METADATA;
+                                    core::ID session_id{};
+                                    if (!ensureRemoteSessionId(session_id))
+                                    {
+                                        return reject_remote("REMOTE_2315",
+                                                             "Failed to bind an executable session");
+                                    }
+
+                                    std::vector<core::CatalogManager::RemotePreparedStatementCatalogInfo>
+                                        prepared_rows;
+                                    (void)catalog->listRemotePreparedStatementCatalogEntries(
+                                        session_id, prepared_rows, &remote_ctx);
+                                    uint64_t prepared_count = 0;
+                                    for (const auto& row : prepared_rows)
+                                    {
+                                        if (row.is_valid &&
+                                            row.remote_connector_id ==
+                                                connector_info.remote_connector_id)
+                                        {
+                                            ++prepared_count;
+                                        }
+                                    }
+
+                                    std::vector<core::CatalogManager::RemoteTxnBindingCatalogInfo>
+                                        txn_rows;
+                                    (void)catalog->listRemoteTxnBindingCatalogEntries(
+                                        connector_info.remote_connector_id, txn_rows, &remote_ctx);
+                                    uint64_t active_txn_count = 0;
+                                    std::string active_mode = "NONE";
+                                    for (const auto& row : txn_rows)
+                                    {
+                                        if (!row.is_valid || row.session_id != session_id ||
+                                            isTerminalRemoteTxnState(row.txn_state))
+                                        {
+                                            continue;
+                                        }
+                                        ++active_txn_count;
+                                        switch (row.txn_mode)
+                                        {
+                                            case core::CatalogManager::RemoteTxnMode::JOIN_LOCAL:
+                                                active_mode = "JOIN_LOCAL";
+                                                break;
+                                            case core::CatalogManager::RemoteTxnMode::READ_ONLY_SNAPSHOT:
+                                                active_mode = "READ_ONLY_SNAPSHOT";
+                                                break;
+                                            case core::CatalogManager::RemoteTxnMode::AUTONOMOUS:
+                                                active_mode = "AUTONOMOUS";
+                                                break;
+                                            case core::CatalogManager::RemoteTxnMode::XA_PREPARED:
+                                                active_mode = "XA_PREPARED";
+                                                break;
+                                            default:
+                                                active_mode = "NONE";
+                                                break;
+                                        }
+                                        break;
+                                    }
+
+                                    remote_result.clear();
+                                    scratchbird::udr::RemoteColumn col{};
+                                    col.type_name = "TEXT";
+                                    col.name = "session_id";
+                                    remote_result.columns.push_back(col);
+                                    col.name = "remote_server";
+                                    remote_result.columns.push_back(col);
+                                    col.name = "prepared_count";
+                                    remote_result.columns.push_back(col);
+                                    col.name = "active_txn_count";
+                                    remote_result.columns.push_back(col);
+                                    col.name = "active_txn_mode";
+                                    remote_result.columns.push_back(col);
+
+                                    scratchbird::udr::RemoteRow row{};
+                                    auto append_text = [&](const std::string& text)
+                                    {
+                                        scratchbird::udr::RemoteValue value{};
+                                        value.is_null = false;
+                                        value.data.assign(text.begin(), text.end());
+                                        row.values.push_back(std::move(value));
+                                    };
+                                    append_text(session_id.toString());
+                                    append_text(remote_target);
+                                    append_text(std::to_string(prepared_count));
+                                    append_text(std::to_string(active_txn_count));
+                                    append_text(active_mode);
+                                    remote_result.rows.push_back(std::move(row));
+
+                                    remote_status = core::Status::OK;
+                                    remote_query_result_opcode = true;
+                                    remote_handled_without_runtime = true;
+                                    persist_metadata_snapshot = false;
+                                    break;
+                                }
+                                case scratchbird::sblr::v3::Opcode::SBLR3_EXECUTE_REMOTE:
+                                    remote_operation_class = classifyRemoteSqlClass(remote_sql);
+                                    if (trimAsciiCopy(remote_sql).empty())
+                                    {
+                                        return reject_remote("REMOTE_2310",
+                                                             remote_symbol + " requires SQL text");
+                                    }
+                                    remote_status = executeRemoteSqlWithRetry(remote_sql, false);
+                                    break;
+                                case scratchbird::sblr::v3::Opcode::SBLR3_PREPARE_REMOTE:
+                                {
+                                    remote_operation_class =
+                                        core::CatalogManager::RemoteOperationClass::PROCEDURAL;
+                                    if (trimAsciiCopy(remote_sql).empty())
+                                    {
+                                        return reject_remote("REMOTE_2310",
+                                                             remote_symbol + " requires SQL text");
+                                    }
+                                    core::ID session_id{};
+                                    if (!ensureRemoteSessionId(session_id))
+                                    {
+                                        return reject_remote("REMOTE_2315",
+                                                             "Failed to bind an executable session");
+                                    }
+                                    if (trimAsciiCopy(prepared_stmt_name).empty())
+                                    {
+                                        prepared_stmt_name = "stmt_" + std::to_string(
+                                            static_cast<uint32_t>(
+                                                std::hash<std::string>{}(remote_sql)));
+                                    }
+
+                                    core::CatalogManager::RemotePreparedStatementCatalogInfo existing{};
+                                    core::Status find_status = findPreparedStatementByName(
+                                        session_id, prepared_stmt_name, existing);
+
+                                    core::CatalogManager::RemotePreparedStatementCatalogInfo prepared{};
+                                    prepared.remote_prepared_id =
+                                        (find_status == core::Status::OK)
+                                            ? existing.remote_prepared_id
+                                            : core::generateUuidV7();
+                                    prepared.remote_connector_id =
+                                        connector_info.remote_connector_id;
+                                    prepared.session_id = session_id;
+                                    prepared.statement_name = prepared_stmt_name;
+                                    prepared.statement_fingerprint = static_cast<uint32_t>(
+                                        std::hash<std::string>{}(remote_sql));
+                                    prepared.command_text = remote_sql;
+                                    prepared.remote_handle =
+                                        "sb_ps_" + prepared.remote_prepared_id.toString();
+                                    prepared.created_time =
+                                        (find_status == core::Status::OK)
+                                            ? existing.created_time
+                                            : nowTicks();
+                                    prepared.last_used_time = nowTicks();
+                                    prepared.is_valid = true;
+                                    remote_status =
+                                        catalog->upsertRemotePreparedStatementCatalogEntry(
+                                            prepared, &remote_ctx);
+                                    remote_handled_without_runtime = true;
+                                    break;
+                                }
+                                case scratchbird::sblr::v3::Opcode::SBLR3_EXECUTE_REMOTE_PREPARED:
+                                {
+                                    remote_operation_class =
+                                        core::CatalogManager::RemoteOperationClass::PROCEDURAL;
+                                    core::ID session_id{};
+                                    if (!ensureRemoteSessionId(session_id))
+                                    {
+                                        return reject_remote("REMOTE_2315",
+                                                             "Failed to bind an executable session");
+                                    }
+                                    core::CatalogManager::RemotePreparedStatementCatalogInfo prepared{};
+                                    remote_status = findPreparedStatementByName(
+                                        session_id, prepared_stmt_name, prepared);
+                                    if (remote_status != core::Status::OK)
+                                    {
+                                        return reject_remote(
+                                            "REMOTE_2312",
+                                            remote_symbol +
+                                                " prepared statement is not registered in this session");
+                                    }
+
+                                    used_prepared_statement = true;
+                                    remote_sql = prepared.command_text;
+                                    remote_operation_class = classifyRemoteSqlClass(remote_sql);
+                                    remote_status = executeRemoteSqlWithRetry(remote_sql, false);
+                                    if (remote_status == core::Status::OK)
+                                    {
+                                        prepared.last_used_time = nowTicks();
+                                        (void)catalog->upsertRemotePreparedStatementCatalogEntry(
+                                            prepared, &remote_ctx);
+                                    }
+                                    break;
+                                }
+                                case scratchbird::sblr::v3::Opcode::SBLR3_DEALLOCATE_REMOTE_PREPARED:
+                                {
+                                    remote_operation_class =
+                                        core::CatalogManager::RemoteOperationClass::PROCEDURAL;
+                                    core::ID session_id{};
+                                    if (!ensureRemoteSessionId(session_id))
+                                    {
+                                        return reject_remote("REMOTE_2315",
+                                                             "Failed to bind an executable session");
+                                    }
+                                    core::CatalogManager::RemotePreparedStatementCatalogInfo prepared{};
+                                    remote_status = findPreparedStatementByName(
+                                        session_id, prepared_stmt_name, prepared);
+                                    if (remote_status != core::Status::OK)
+                                    {
+                                        return reject_remote(
+                                            "REMOTE_2312",
+                                            remote_symbol +
+                                                " prepared statement is not registered in this session");
+                                    }
+                                    remote_status = catalog->deleteRemotePreparedStatementCatalogEntry(
+                                        prepared.remote_prepared_id, &remote_ctx);
+                                    remote_handled_without_runtime = true;
+                                    break;
+                                }
+                                case scratchbird::sblr::v3::Opcode::SBLR3_BEGIN_REMOTE_TRANSACTION:
+                                {
+                                    remote_operation_class =
+                                        core::CatalogManager::RemoteOperationClass::TXN_CONTROL;
+                                    core::ID session_id{};
+                                    if (!ensureRemoteSessionId(session_id))
+                                    {
+                                        return reject_remote("REMOTE_2315",
+                                                             "Failed to bind an executable session");
+                                    }
+
+                                    core::CatalogManager::RemoteTxnMode requested_mode =
+                                        core::CatalogManager::RemoteTxnMode::AUTONOMOUS;
+                                    (void)parseRequestedTxnMode(requested_mode);
+                                    remote_txn_mode_for_audit = requested_mode;
+
+                                    const uint64_t local_txid = conn_ctx_ ? conn_ctx_->getCurrentXid() : 0;
+                                    if (requested_mode == core::CatalogManager::RemoteTxnMode::JOIN_LOCAL &&
+                                        !policy_info.allow_join_local_txn)
+                                    {
+                                        return reject_remote("REMOTE_2307",
+                                                             "Passthrough policy blocks JOIN_LOCAL transaction mode");
+                                    }
+                                    if (requested_mode == core::CatalogManager::RemoteTxnMode::JOIN_LOCAL &&
+                                        local_txid == 0)
+                                    {
+                                        return reject_remote("REMOTE_2316",
+                                                             "JOIN_LOCAL requires an active local transaction");
+                                    }
+
+                                    core::CatalogManager::RemoteTxnBindingCatalogInfo existing{};
+                                    if (findActiveTxnBinding(session_id, existing) ==
+                                        core::Status::OK)
+                                    {
+                                        remote_status = core::Status::OK;
+                                        remote_handled_without_runtime = true;
+                                        break;
+                                    }
+
+                                    core::CatalogManager::RemoteTxnBindingCatalogInfo binding{};
+                                    binding.remote_txn_binding_id = core::generateUuidV7();
+                                    binding.remote_connector_id =
+                                        connector_info.remote_connector_id;
+                                    binding.session_id = session_id;
+                                    binding.txid = (local_txid == 0) ? 1 : local_txid;
+                                    binding.txn_mode = requested_mode;
+                                    binding.txn_state =
+                                        core::CatalogManager::RemoteTxnState::ACTIVE;
+                                    binding.remote_txn_token =
+                                        "rtxn_" + binding.remote_txn_binding_id.toString();
+                                    binding.begin_time = nowTicks();
+                                    binding.has_last_heartbeat = true;
+                                    binding.last_heartbeat = binding.begin_time;
+                                    binding.is_valid = true;
+                                    remote_status = catalog->upsertRemoteTxnBindingCatalogEntry(
+                                        binding, &remote_ctx);
+                                    remote_handled_without_runtime = true;
+                                    break;
+                                }
+                                case scratchbird::sblr::v3::Opcode::SBLR3_COMMIT_REMOTE_TRANSACTION:
+                                case scratchbird::sblr::v3::Opcode::SBLR3_ROLLBACK_REMOTE_TRANSACTION:
+                                {
+                                    remote_operation_class =
+                                        core::CatalogManager::RemoteOperationClass::TXN_CONTROL;
+                                    core::ID session_id{};
+                                    if (!ensureRemoteSessionId(session_id))
+                                    {
+                                        return reject_remote("REMOTE_2315",
+                                                             "Failed to bind an executable session");
+                                    }
+                                    core::CatalogManager::RemoteTxnBindingCatalogInfo binding{};
+                                    remote_status = findActiveTxnBinding(session_id, binding);
+                                    if (remote_status != core::Status::OK)
+                                    {
+                                        return reject_remote("REMOTE_2316",
+                                                             "No active remote transaction binding");
+                                    }
+                                    binding.txn_state =
+                                        (remote_opcode ==
+                                         scratchbird::sblr::v3::Opcode::
+                                             SBLR3_COMMIT_REMOTE_TRANSACTION)
+                                            ? core::CatalogManager::RemoteTxnState::COMMITTED
+                                            : core::CatalogManager::RemoteTxnState::ROLLED_BACK;
+                                    binding.has_terminal_time = true;
+                                    binding.terminal_time = nowTicks();
+                                    binding.has_last_heartbeat = true;
+                                    binding.last_heartbeat = binding.terminal_time;
+                                    remote_txn_mode_for_audit = binding.txn_mode;
+                                    remote_status =
+                                        catalog->upsertRemoteTxnBindingCatalogEntry(
+                                            binding, &remote_ctx);
+                                    remote_handled_without_runtime = true;
+                                    break;
+                                }
+                                default:
+                                    return reject_remote("REMOTE_2399",
+                                                         "Unknown remote control opcode");
+                            }
+
+                            if (remote_txn_mode_for_audit ==
+                                core::CatalogManager::RemoteTxnMode::NONE)
+                            {
+                                core::ID session_id{};
+                                if (ensureRemoteSessionId(session_id))
+                                {
+                                    core::CatalogManager::RemoteTxnBindingCatalogInfo binding{};
+                                    if (findActiveTxnBinding(session_id, binding) ==
+                                        core::Status::OK)
+                                    {
+                                        remote_txn_mode_for_audit = binding.txn_mode;
+                                    }
+                                }
+                            }
+
+                            if (remote_handled_without_runtime && !remote_query_result_opcode)
+                            {
+                                rows_affected = 0;
+                            }
+
+                            const bool is_projection_opcode =
+                                remote_opcode == scratchbird::sblr::v3::Opcode::SBLR3_SHOW_REMOTE_OBJECTS ||
+                                remote_opcode == scratchbird::sblr::v3::Opcode::SBLR3_SHOW_REMOTE_COLUMNS;
+
+                            if (is_projection_opcode && remote_status != core::Status::OK)
+                            {
+                                core::ID fallback_snapshot_id;
+                                core::Status fallback_status = loadLatestProjectionResult(
+                                    remote_opcode, remote_result, &fallback_snapshot_id);
+                                if (fallback_status == core::Status::OK)
+                                {
+                                    remote_status = core::Status::OK;
+                                    remote_query_result_opcode = true;
+                                    persist_metadata_snapshot = false;
+                                    remote_ctx.message.clear();
+                                }
+                            }
+
+                            auto emitRemoteAudit = [&](core::Status terminal_status) {
+                                core::ID session_id{};
+                                if (!ensureRemoteSessionId(session_id) || isZeroUuid(session_id))
+                                {
+                                    return;
+                                }
+
+                                core::CatalogManager::RemoteExecutionAuditCatalogInfo audit{};
+                                audit.remote_exec_audit_id = core::generateUuidV7();
+                                audit.remote_connector_id = connector_info.remote_connector_id;
+                                audit.session_id = session_id;
+                                const uint64_t current_txid = conn_ctx_ ? conn_ctx_->getCurrentXid() : 0;
+                                audit.has_txid = false;
+                                audit.txid = 0;
+                                if (current_txid > 0)
+                                {
+                                    core::CatalogManager::RuntimeTransactionCatalogInfo tx_info{};
+                                    core::ErrorContext tx_ctx;
+                                    if (catalog->getRuntimeTransactionCatalogEntry(
+                                            current_txid, tx_info, &tx_ctx) == core::Status::OK)
+                                    {
+                                        audit.has_txid = true;
+                                        audit.txid = current_txid;
+                                    }
+                                }
+                                audit.request_id = remote_request_id;
+                                audit.operation_class = remote_operation_class;
+                                audit.statement_fingerprint = static_cast<uint32_t>(
+                                    std::hash<std::string>{}(remote_sql));
+                                audit.used_prepared = used_prepared_statement;
+                                audit.txn_mode = remote_txn_mode_for_audit;
+                                if (audit.txn_mode == core::CatalogManager::RemoteTxnMode::NONE)
+                                {
+                                    audit.txn_mode = core::CatalogManager::RemoteTxnMode::AUTONOMOUS;
+                                }
+                                if (terminal_status == core::Status::OK)
+                                {
+                                    audit.exec_status = core::CatalogManager::RemoteExecStatus::SUCCESS;
+                                }
+                                else if (terminal_status == core::Status::LOCK_TIMEOUT)
+                                {
+                                    audit.exec_status = core::CatalogManager::RemoteExecStatus::TIMEOUT;
+                                }
+                                else if (terminal_status == core::Status::CANCELLED ||
+                                         terminal_status == core::Status::QUERY_CANCELED)
+                                {
+                                    audit.exec_status = core::CatalogManager::RemoteExecStatus::CANCELLED;
+                                }
+                                else
+                                {
+                                    audit.exec_status = core::CatalogManager::RemoteExecStatus::FAILED;
+                                }
+                                audit.rows_returned =
+                                    remote_query_result_opcode
+                                        ? static_cast<uint64_t>(remote_result.rows.size())
+                                        : 0;
+                                audit.rows_affected = rows_affected;
+                                audit.bytes_in = static_cast<uint64_t>(remote_sql.size());
+                                audit.bytes_out =
+                                    remote_query_result_opcode ? computeRemoteResultBytes(remote_result)
+                                                               : 0;
+                                const auto latency_ms = std::chrono::duration_cast<
+                                    std::chrono::milliseconds>(
+                                    std::chrono::steady_clock::now() - remote_dispatch_start)
+                                                            .count();
+                                audit.latency_ms =
+                                    static_cast<uint32_t>(std::min<int64_t>(
+                                        std::max<int64_t>(latency_ms, 0), std::numeric_limits<uint32_t>::max()));
+                                audit.started_time = remote_started_time;
+                                audit.finished_time = nowTicks();
+                                if (!isZeroUuid(remote_error_id))
+                                {
+                                    audit.has_error_id = true;
+                                    audit.error_id = remote_error_id;
+                                }
+                                audit.is_valid = true;
+                                (void)catalog->upsertRemoteExecutionAuditCatalogEntry(
+                                    audit, &remote_ctx);
+                            };
+
+                            if (remote_status != core::Status::OK)
+                            {
+                                updateRemoteConnectorHealth(remote_status);
+                                if (remote_status == core::Status::CANCELLED ||
+                                    remote_status == core::Status::QUERY_CANCELED)
+                                {
+                                    emitRemoteAudit(remote_status);
+                                    return reject_remote("REMOTE_2311",
+                                                         remote_symbol + " cancelled before completion");
+                                }
+                                std::string detail = remote_ctx.message;
+                                if (detail.empty())
+                                {
+                                    detail = "status=" + std::to_string(static_cast<int>(remote_status));
+                                }
+                                persistRemoteError(remote_status, detail);
+                                emitRemoteAudit(remote_status);
+                                return reject_remote("REMOTE_2390",
+                                                     remote_symbol + " runtime dispatch failed: " + detail);
+                            }
+
+                            updateRemoteConnectorHealth(core::Status::OK);
+
+                            if (persist_metadata_snapshot)
+                            {
+                                core::ID snapshot_id;
+                                core::Status snapshot_status = persistRemoteMetadataSnapshot(
+                                    snapshot_kind,
+                                    remote_query_result_opcode ? &remote_result : nullptr,
+                                    &snapshot_id);
+                                if (snapshot_status != core::Status::OK)
+                                {
+                                    std::string detail = remote_ctx.message;
+                                    if (detail.empty())
+                                    {
+                                        detail = "status=" +
+                                                 std::to_string(static_cast<int>(snapshot_status));
+                                    }
+                                    return reject_remote(
+                                        "REMOTE_2313",
+                                        remote_symbol +
+                                            " metadata snapshot persistence failed: " + detail);
+                                }
+
+                                core::Status projection_status = persistRemoteProjectionCatalogRows(
+                                    snapshot_id, remote_opcode, remote_result);
+                                if (projection_status != core::Status::OK)
+                                {
+                                    std::string detail = remote_ctx.message;
+                                    if (detail.empty())
+                                    {
+                                        detail = "status=" + std::to_string(
+                                                             static_cast<int>(projection_status));
+                                    }
+                                    return reject_remote(
+                                        "REMOTE_2314",
+                                        remote_symbol +
+                                            " metadata projection persistence failed: " + detail);
+                                }
+
+                                if (is_projection_opcode)
+                                {
+                                    core::Status projection_result_status =
+                                        buildProjectionResultFromSnapshot(
+                                            snapshot_id, remote_opcode, remote_result);
+                                    if (projection_result_status != core::Status::OK &&
+                                        projection_result_status != core::Status::NOT_FOUND)
+                                    {
+                                        std::string detail = remote_ctx.message;
+                                        if (detail.empty())
+                                        {
+                                            detail = "status=" + std::to_string(
+                                                                 static_cast<int>(
+                                                                     projection_result_status));
+                                        }
+                                        return reject_remote(
+                                            "REMOTE_2314",
+                                            remote_symbol +
+                                                " metadata projection synthesis failed: " + detail);
+                                    }
+                                }
+                            }
+
+                            emitRemoteAudit(core::Status::OK);
+
+                            core::VNextMetricsEventModel::recordExecutorEvent(
+                                "vnext_opcode_dispatch", "ok", remote_symbol);
+                            if (remote_query_result_opcode)
+                            {
+                                auto result_set = buildRemoteResultSet(remote_result);
+                                if (result_set)
+                                {
+                                    return ExecutionResult(std::move(result_set));
+                                }
+                            }
+                            return ExecutionResult();
+                        };
+
                         switch (opcode)
                         {
                             case scratchbird::sblr::v3::Opcode::SBLR3_OP_UDR_COMPILE_DISPATCH:
                             case scratchbird::sblr::v3::Opcode::SBLR3_OP_UDR_EMBEDDED_SQL_COMPILE:
                                 return executeUdrCompileBridgeOpcode(opcode, payload);
+                            case scratchbird::sblr::v3::Opcode::SBLR3_IMPORT_FOREIGN_SCHEMA:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_ANALYZE_REMOTE_SERVER:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_REFRESH_REMOTE_METADATA:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_SHOW_REMOTE_CAPABILITIES:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_SHOW_REMOTE_OBJECTS:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_SHOW_REMOTE_COLUMNS:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_SHOW_REMOTE_STATISTICS:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_EXECUTE_REMOTE:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_PREPARE_REMOTE:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_EXECUTE_REMOTE_PREPARED:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_DEALLOCATE_REMOTE_PREPARED:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_BEGIN_REMOTE_TRANSACTION:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_COMMIT_REMOTE_TRANSACTION:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_ROLLBACK_REMOTE_TRANSACTION:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_SHOW_REMOTE_SESSION_STATE:
+                                return executeRemoteControlOpcode(opcode, payload);
 			                        case scratchbird::sblr::v3::Opcode::SBLR3_OP_DOC_PATH_FILTER:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_OP_TS_BUCKET_AGG:
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_OP_COL_SCAN:
@@ -61357,6 +64143,23 @@ namespace scratchbird
                                         std::string key;
                                         if (!getString(*option_obj, "key", key) || key.empty())
                                         {
+                                            uint64_t sentinel_count = 1;
+                                            if (getU64(*option_obj, "count", sentinel_count) &&
+                                                sentinel_count == 0)
+                                            {
+                                                continue;
+                                            }
+                                            auto sentinel_value_it = option_obj->find("value");
+                                            if (sentinel_value_it == option_obj->end())
+                                            {
+                                                continue;
+                                            }
+                                            Value sentinel_value = Value::makeNull();
+                                            if (decodeOptionValue(sentinel_value_it->second, sentinel_value) &&
+                                                sentinel_value.isNull())
+                                            {
+                                                continue;
+                                            }
                                             return ExecutionResult("V3 ALTER INDEX option key is missing");
                                         }
                                         key = scratchbird::core::IdentifierUtils::toUpper(key);
@@ -61517,6 +64320,23 @@ namespace scratchbird
                                     std::string key;
                                     if (!getString(*option_obj, "key", key) || key.empty())
                                     {
+                                        uint64_t sentinel_count = 1;
+                                        if (getU64(*option_obj, "count", sentinel_count) &&
+                                            sentinel_count == 0)
+                                        {
+                                            continue;
+                                        }
+                                        auto sentinel_value_it = option_obj->find("value");
+                                        if (sentinel_value_it == option_obj->end())
+                                        {
+                                            continue;
+                                        }
+                                        Value sentinel_value = Value::makeNull();
+                                        if (decodeOptionValue(sentinel_value_it->second, sentinel_value) &&
+                                            sentinel_value.isNull())
+                                        {
+                                            continue;
+                                        }
                                         return ExecutionResult("V3 ALTER INDEX option key is missing");
                                     }
                                     key = scratchbird::core::IdentifierUtils::toUpper(key);
@@ -61616,12 +64436,924 @@ namespace scratchbird
                             {
                                 appendDoubleLE(arg_stream, bloom_fpr);
                             }
-                            return runLegacyVoidHandler(&Executor::executeAlterIndex, std::move(arg_stream));
+	                            return runLegacyVoidHandler(&Executor::executeAlterIndex, std::move(arg_stream));
+	                        };
+
+                        auto parseV3OptionEntries =
+                            [&](const scratchbird::sblr::v3::Value& value,
+                                std::vector<std::pair<std::string, scratchbird::sblr::v3::Value>>& out,
+                                std::string& err) -> bool {
+                            const scratchbird::sblr::v3::Value::List* list = nullptr;
+                            if (auto l = std::get_if<scratchbird::sblr::v3::Value::List>(&value.data))
+                            {
+                                list = l;
+                            }
+                            else if (auto obj = std::get_if<scratchbird::sblr::v3::Value::Object>(&value.data))
+                            {
+                                auto it_items = obj->find("items");
+                                if (it_items != obj->end())
+                                {
+                                    list = std::get_if<scratchbird::sblr::v3::Value::List>(
+                                        &it_items->second.data);
+                                }
+                                else
+                                {
+                                    uint64_t count = 0;
+                                    auto it_count = obj->find("count");
+                                    if (it_count != obj->end())
+                                    {
+                                        if (auto c = std::get_if<uint64_t>(&it_count->second.data))
+                                        {
+                                            count = *c;
+                                        }
+                                    }
+                                    if (count == 0)
+                                    {
+                                        return true;
+                                    }
+                                    auto it_key = obj->find("key");
+                                    auto it_value = obj->find("value");
+                                    if (it_key == obj->end() || it_value == obj->end())
+                                    {
+                                        err = "options missing key/value";
+                                        return false;
+                                    }
+                                    const auto* key_str = std::get_if<std::string>(&it_key->second.data);
+                                    if (!key_str)
+                                    {
+                                        err = "options key invalid";
+                                        return false;
+                                    }
+                                    out.emplace_back(*key_str, it_value->second);
+                                    return true;
+                                }
+                            }
+                            if (!list)
+                            {
+                                return true;
+                            }
+                            for (const auto& entry : *list)
+                            {
+                                const auto* obj =
+                                    std::get_if<scratchbird::sblr::v3::Value::Object>(&entry.data);
+                                if (!obj)
+                                {
+                                    err = "options entry invalid";
+                                    return false;
+                                }
+                                std::string key;
+                                if (!getString(*obj, "key", key) || key.empty())
+                                {
+                                    err = "options key missing";
+                                    return false;
+                                }
+                                auto it_value = obj->find("value");
+                                if (it_value == obj->end())
+                                {
+                                    err = "options value missing";
+                                    return false;
+                                }
+                                out.emplace_back(std::move(key), it_value->second);
+                            }
+                            return true;
                         };
 
-		                auto executeAdminControlOpcode =
-		                    [&](scratchbird::sblr::v3::Opcode opcode,
-		                        const scratchbird::sblr::v3::Value::Object& payload) -> ExecutionResult {
+                        auto evalV3ScalarValue =
+                            [&](const scratchbird::sblr::v3::Value& raw, Value& out) -> bool {
+                            scratchbird::sblr::v3::Instruction inst;
+                            if (getInstrFromValue(raw, inst))
+                            {
+                                out = evalExpr(inst);
+                                return true;
+                            }
+                            if (raw.isNull())
+                            {
+                                out = Value::makeNull();
+                                return true;
+                            }
+                            const auto& data = raw.data;
+                            if (auto b = std::get_if<bool>(&data))
+                            {
+                                out = Value::makeBool(*b);
+                                return true;
+                            }
+                            if (auto i = std::get_if<int64_t>(&data))
+                            {
+                                out = Value::makeInt64(*i);
+                                return true;
+                            }
+                            if (auto u = std::get_if<uint64_t>(&data))
+                            {
+                                out = Value::makeUInt64(*u);
+                                return true;
+                            }
+                            if (auto d = std::get_if<double>(&data))
+                            {
+                                out = Value::makeFloat64(*d);
+                                return true;
+                            }
+                            if (auto s = std::get_if<std::string>(&data))
+                            {
+                                out = Value::makeVarchar(*s);
+                                return true;
+                            }
+                            return false;
+                        };
+
+                        auto executeV3FdwMutationOpcode =
+                            [&](scratchbird::sblr::v3::Opcode opcode,
+                                const scratchbird::sblr::v3::Value::Object& payload) -> ExecutionResult {
+                            auto* catalog = db_ ? db_->catalog_manager() : nullptr;
+                            if (!catalog)
+                            {
+                                return ExecutionResult("Catalog manager not available");
+                            }
+
+                            auto parseOptions = [&](const scratchbird::sblr::v3::Value::Object& obj,
+                                                    std::map<std::string, std::string>& options_out,
+                                                    std::string& err_out) -> bool {
+                                auto it_opts = obj.find("options");
+                                if (it_opts == obj.end() || it_opts->second.isNull())
+                                {
+                                    return true;
+                                }
+                                std::vector<std::pair<std::string, scratchbird::sblr::v3::Value>> entries;
+                                if (!parseV3OptionEntries(it_opts->second, entries, err_out))
+                                {
+                                    return false;
+                                }
+                                for (const auto& kv : entries)
+                                {
+                                    Value scalar = Value::makeNull();
+                                    if (!evalV3ScalarValue(kv.second, scalar))
+                                    {
+                                        err_out = "option value is invalid for key '" + kv.first + "'";
+                                        return false;
+                                    }
+                                    options_out[scratchbird::core::IdentifierUtils::toUpper(kv.first)] =
+                                        scalar.isNull() ? std::string() : scalar.toString();
+                                }
+                                return true;
+                            };
+
+                            auto schemaPathTail = [&](const std::string& path) -> std::string {
+                                auto parts = splitSchemaComponents(path);
+                                if (parts.empty())
+                                {
+                                    return std::string();
+                                }
+                                return parts.back();
+                            };
+
+                            auto parseFlags = [&](const scratchbird::sblr::v3::Value::Object& obj,
+                                                  bool& if_exists,
+                                                  bool& cascade) {
+                                uint64_t flags = 0;
+                                getU64(obj, "flags", flags);
+                                if_exists = (flags & 0x01u) != 0;
+                                cascade = (flags & 0x02u) != 0;
+                            };
+
+                            auto mapTargetUser =
+                                [&](const std::string& user_token,
+                                    core::ID& user_id_out,
+                                    bool if_exists,
+                                    core::ErrorContext& err_ctx) -> ExecutionResult {
+                                std::string normalized =
+                                    scratchbird::core::IdentifierUtils::toUpper(user_token);
+                                if (normalized == "CURRENT_USER" || normalized.empty())
+                                {
+                                    user_id_out = conn_ctx_ ? conn_ctx_->getCurrentUserId() : core::ID{};
+                                    if (isZeroUuid(user_id_out))
+                                    {
+                                        return ExecutionResult("Current user is not available");
+                                    }
+                                    return ExecutionResult();
+                                }
+                                if (normalized == "SESSION_USER")
+                                {
+                                    user_id_out = conn_ctx_ ? conn_ctx_->getSessionUserId() : core::ID{};
+                                    if (isZeroUuid(user_id_out))
+                                    {
+                                        return ExecutionResult("Session user is not available");
+                                    }
+                                    return ExecutionResult();
+                                }
+                                if (normalized == "PUBLIC")
+                                {
+                                    core::CatalogManager::RoleInfo role_info;
+                                    auto status = catalog->getRoleByName("PUBLIC", role_info, &err_ctx);
+                                    if (status != core::Status::OK)
+                                    {
+                                        if (if_exists)
+                                        {
+                                            return ExecutionResult();
+                                        }
+                                        return ExecutionResult("Role not found: PUBLIC");
+                                    }
+                                    user_id_out = role_info.role_id;
+                                    return ExecutionResult();
+                                }
+
+                                core::CatalogManager::UserInfo user_info;
+                                auto status = catalog->getUserByName(user_token, user_info, &err_ctx);
+                                if (status != core::Status::OK)
+                                {
+                                    if (if_exists)
+                                    {
+                                        return ExecutionResult();
+                                    }
+                                    return ExecutionResult("User not found: " + user_token);
+                                }
+                                user_id_out = user_info.user_id;
+                                return ExecutionResult();
+                            };
+
+                            switch (opcode)
+                            {
+                                case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_FOREIGN_DATA_WRAPPER:
+                                    // Wrapper catalog persistence is not available yet; accept deterministically
+                                    // so mandatory FDW opcode dispatch does not bridge-reject.
+                                    return ExecutionResult();
+                                case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_FOREIGN_DATA_WRAPPER: {
+                                    std::string wrapper_name;
+                                    if (!getString(payload, "name", wrapper_name) || wrapper_name.empty())
+                                    {
+                                        return ExecutionResult(
+                                            "V3 ALTER FOREIGN DATA WRAPPER missing name");
+                                    }
+                                    std::map<std::string, std::string> options;
+                                    std::string option_err;
+                                    if (!parseOptions(payload, options, option_err))
+                                    {
+                                        return ExecutionResult(
+                                            "V3 ALTER FOREIGN DATA WRAPPER " + option_err);
+                                    }
+                                    // Wrapper catalog persistence is not available yet; accept deterministically
+                                    // so ALTER WRAPPER dispatch is runtime-closed instead of bridge-rejected.
+                                    return ExecutionResult();
+                                }
+                                case scratchbird::sblr::v3::Opcode::SBLR3_DROP_FOREIGN_DATA_WRAPPER: {
+                                    bool if_exists = false;
+                                    bool cascade = false;
+                                    parseFlags(payload, if_exists, cascade);
+                                    (void)cascade;
+
+                                    std::string path;
+                                    getSchemaPathString(payload, "path", path);
+                                    if (path.empty() && !if_exists)
+                                    {
+                                        return ExecutionResult(
+                                            "V3 DROP FOREIGN DATA WRAPPER missing path");
+                                    }
+                                    // Wrapper catalog persistence is not available yet; accept deterministically.
+                                    return ExecutionResult();
+                                }
+                                case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_FOREIGN_SERVER: {
+                                    std::string server_name;
+                                    std::string server_type;
+                                    std::string host;
+                                    if (!getString(payload, "name", server_name) || server_name.empty())
+                                    {
+                                        return ExecutionResult("V3 CREATE FOREIGN SERVER missing name");
+                                    }
+                                    if (!getString(payload, "type", server_type) || server_type.empty())
+                                    {
+                                        return ExecutionResult("V3 CREATE FOREIGN SERVER missing type");
+                                    }
+                                    getString(payload, "host", host);
+
+                                    std::map<std::string, std::string> options;
+                                    std::string option_err;
+                                    if (!parseOptions(payload, options, option_err))
+                                    {
+                                        return ExecutionResult("V3 CREATE FOREIGN SERVER " + option_err);
+                                    }
+
+                                    uint16_t port = 0;
+                                    auto it_port = options.find("PORT");
+                                    if (it_port != options.end() && !it_port->second.empty())
+                                    {
+                                        try
+                                        {
+                                            const unsigned long parsed = std::stoul(it_port->second);
+                                            if (parsed > std::numeric_limits<uint16_t>::max())
+                                            {
+                                                return ExecutionResult("V3 CREATE FOREIGN SERVER port is invalid");
+                                            }
+                                            port = static_cast<uint16_t>(parsed);
+                                        }
+                                        catch (...)
+                                        {
+                                            return ExecutionResult("V3 CREATE FOREIGN SERVER port is invalid");
+                                        }
+                                        options.erase(it_port);
+                                    }
+
+                                    std::string option_blob;
+                                    bool first = true;
+                                    for (const auto& entry : options)
+                                    {
+                                        if (!first)
+                                        {
+                                            option_blob.push_back(';');
+                                        }
+                                        option_blob += entry.first;
+                                        option_blob.push_back('=');
+                                        option_blob += entry.second;
+                                        first = false;
+                                    }
+
+                                    core::ErrorContext err_ctx;
+                                    core::ID server_id;
+                                    auto status = catalog->createForeignServer(
+                                        server_name, server_type, host, port, option_blob, server_id, &err_ctx);
+                                    if (status != core::Status::OK)
+                                    {
+                                        std::string err_msg = "CREATE SERVER failed";
+                                        if (!err_ctx.message.empty())
+                                        {
+                                            err_msg += ": " + err_ctx.message;
+                                        }
+                                        return ExecutionResult(err_msg);
+                                    }
+                                    recordObjectDefinition(core::CatalogManager::ObjectType::FOREIGN_SERVER,
+                                                           server_id);
+                                    return ExecutionResult();
+                                }
+                                case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_FOREIGN_SERVER: {
+                                    std::string server_name;
+                                    if (!getString(payload, "name", server_name) || server_name.empty())
+                                    {
+                                        return ExecutionResult("V3 ALTER FOREIGN SERVER missing name");
+                                    }
+
+                                    std::map<std::string, std::string> options;
+                                    std::string option_err;
+                                    if (!parseOptions(payload, options, option_err))
+                                    {
+                                        return ExecutionResult("V3 ALTER FOREIGN SERVER " + option_err);
+                                    }
+
+                                    core::CatalogManager::ForeignServerInfo server_info;
+                                    core::ErrorContext err_ctx;
+                                    auto status = catalog->getForeignServerByName(
+                                        server_name, server_info, &err_ctx);
+                                    if (status != core::Status::OK)
+                                    {
+                                        return ExecutionResult("Foreign server not found: " + server_name);
+                                    }
+
+                                    bool is_active = server_info.is_active;
+                                    if (auto it_active = options.find("ACTIVE");
+                                        it_active != options.end())
+                                    {
+                                        const std::string active_upper =
+                                            scratchbird::core::IdentifierUtils::toUpper(
+                                                it_active->second);
+                                        is_active = !(active_upper == "0" || active_upper == "FALSE" ||
+                                                      active_upper == "OFF" ||
+                                                      active_upper == "NO");
+                                        options.erase(it_active);
+                                    }
+
+                                    std::string option_blob;
+                                    bool first = true;
+                                    for (const auto& entry : options)
+                                    {
+                                        if (!first)
+                                        {
+                                            option_blob.push_back(';');
+                                        }
+                                        option_blob += entry.first;
+                                        option_blob.push_back('=');
+                                        option_blob += entry.second;
+                                        first = false;
+                                    }
+
+                                    status = catalog->updateForeignServer(
+                                        server_info.server_id, option_blob, is_active, &err_ctx);
+                                    if (status != core::Status::OK)
+                                    {
+                                        std::string err_msg = "ALTER SERVER failed";
+                                        if (!err_ctx.message.empty())
+                                        {
+                                            err_msg += ": " + err_ctx.message;
+                                        }
+                                        return ExecutionResult(err_msg);
+                                    }
+                                    recordObjectDefinition(core::CatalogManager::ObjectType::FOREIGN_SERVER,
+                                                           server_info.server_id);
+                                    return ExecutionResult();
+                                }
+                                case scratchbird::sblr::v3::Opcode::SBLR3_DROP_FOREIGN_SERVER: {
+                                    bool if_exists = false;
+                                    bool cascade = false;
+                                    parseFlags(payload, if_exists, cascade);
+
+                                    std::string path;
+                                    if (!getSchemaPathString(payload, "path", path) || path.empty())
+                                    {
+                                        return ExecutionResult("V3 DROP FOREIGN SERVER missing path");
+                                    }
+                                    std::string server_name = schemaPathTail(path);
+                                    if (server_name.empty())
+                                    {
+                                        return ExecutionResult("V3 DROP FOREIGN SERVER path is invalid");
+                                    }
+
+                                    core::CatalogManager::ForeignServerInfo server_info;
+                                    core::ErrorContext err_ctx;
+                                    auto status = catalog->getForeignServerByName(
+                                        server_name, server_info, &err_ctx);
+                                    if (status != core::Status::OK)
+                                    {
+                                        if (if_exists)
+                                        {
+                                            return ExecutionResult();
+                                        }
+                                        return ExecutionResult("Foreign server not found: " + server_name);
+                                    }
+
+                                    status = catalog->dropForeignServer(server_info.server_id, cascade, &err_ctx);
+                                    if (status != core::Status::OK)
+                                    {
+                                        std::string err_msg = "DROP SERVER failed";
+                                        if (!err_ctx.message.empty())
+                                        {
+                                            err_msg += ": " + err_ctx.message;
+                                        }
+                                        return ExecutionResult(err_msg);
+                                    }
+                                    deleteObjectDefinition(core::CatalogManager::ObjectType::FOREIGN_SERVER,
+                                                           server_info.server_id);
+                                    return ExecutionResult();
+                                }
+                                case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_FOREIGN_TABLE: {
+                                    std::string table_name;
+                                    std::string server_name;
+                                    if (!getSchemaPathString(payload, "name", table_name) || table_name.empty())
+                                    {
+                                        return ExecutionResult("V3 CREATE FOREIGN TABLE missing name");
+                                    }
+                                    if (!getString(payload, "server", server_name) || server_name.empty())
+                                    {
+                                        return ExecutionResult("V3 CREATE FOREIGN TABLE missing server");
+                                    }
+
+                                    std::string remote_schema;
+                                    std::string remote_table;
+                                    std::string column_mapping;
+                                    std::map<std::string, std::string> options;
+                                    std::string option_err;
+                                    if (!parseOptions(payload, options, option_err))
+                                    {
+                                        return ExecutionResult("V3 CREATE FOREIGN TABLE " + option_err);
+                                    }
+                                    if (auto it = options.find("REMOTE_SCHEMA"); it != options.end())
+                                    {
+                                        remote_schema = it->second;
+                                    }
+                                    if (auto it = options.find("SCHEMA_NAME"); it != options.end())
+                                    {
+                                        remote_schema = it->second;
+                                    }
+                                    if (auto it = options.find("REMOTE_TABLE"); it != options.end())
+                                    {
+                                        remote_table = it->second;
+                                    }
+                                    if (auto it = options.find("TABLE_NAME"); it != options.end())
+                                    {
+                                        remote_table = it->second;
+                                    }
+                                    if (auto it = options.find("COLUMN_MAPPING"); it != options.end())
+                                    {
+                                        column_mapping = it->second;
+                                    }
+
+                                    auto components = splitSchemaComponents(table_name);
+                                    std::string schema_name;
+                                    std::string local_name = table_name;
+                                    if (components.size() >= 2)
+                                    {
+                                        std::vector<std::string> schema_components(
+                                            components.begin(), components.end() - 1);
+                                        schema_name = joinSchemaComponents(schema_components, 0);
+                                        local_name = components.back();
+                                    }
+
+                                    if (remote_table.empty())
+                                    {
+                                        remote_table = local_name;
+                                    }
+
+                                    core::ID schema_id{};
+                                    core::ErrorContext err_ctx;
+                                    if (!schema_name.empty())
+                                    {
+                                        core::CatalogManager::SchemaInfo schema_info;
+                                        auto status = catalog->getSchema(schema_name, schema_info, &err_ctx);
+                                        if (status != core::Status::OK)
+                                        {
+                                            return ExecutionResult("Schema not found for CREATE FOREIGN TABLE");
+                                        }
+                                        schema_id = schema_info.schema_id;
+                                    }
+                                    else if (conn_ctx_)
+                                    {
+                                        schema_id = conn_ctx_->getCurrentSchemaId();
+                                    }
+
+                                    core::CatalogManager::ForeignServerInfo server_info;
+                                    auto status = catalog->getForeignServerByName(
+                                        server_name, server_info, &err_ctx);
+                                    if (status != core::Status::OK)
+                                    {
+                                        return ExecutionResult("Foreign server not found: " + server_name);
+                                    }
+
+                                    core::ID foreign_table_id;
+                                    status = catalog->createForeignTable(
+                                        schema_id,
+                                        local_name,
+                                        server_info.server_id,
+                                        remote_schema,
+                                        remote_table,
+                                        column_mapping,
+                                        foreign_table_id,
+                                        &err_ctx);
+                                    if (status != core::Status::OK)
+                                    {
+                                        std::string err_msg = "CREATE FOREIGN TABLE failed";
+                                        if (!err_ctx.message.empty())
+                                        {
+                                            err_msg += ": " + err_ctx.message;
+                                        }
+                                        return ExecutionResult(err_msg);
+                                    }
+
+                                    recordObjectDefinition(core::CatalogManager::ObjectType::FOREIGN_TABLE,
+                                                           foreign_table_id);
+                                    return ExecutionResult();
+                                }
+                                case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_FOREIGN_TABLE: {
+                                    std::string table_name;
+                                    if (!getSchemaPathString(payload, "name", table_name) ||
+                                        table_name.empty())
+                                    {
+                                        return ExecutionResult("V3 ALTER FOREIGN TABLE missing name");
+                                    }
+
+                                    core::ID table_id;
+                                    core::CatalogManager::ObjectType resolved_type;
+                                    core::ErrorContext err_ctx;
+                                    auto status = resolveObjectIdForQualifiedName(
+                                        table_name,
+                                        core::CatalogManager::ObjectType::FOREIGN_TABLE,
+                                        table_id,
+                                        resolved_type,
+                                        nullptr,
+                                        &err_ctx);
+                                    if (status != core::Status::OK)
+                                    {
+                                        return ExecutionResult("Foreign table not found: " + table_name);
+                                    }
+
+                                    return ExecutionResult(
+                                        "ALTER FOREIGN TABLE metadata mutation is not available in this cycle");
+                                }
+                                case scratchbird::sblr::v3::Opcode::SBLR3_DROP_FOREIGN_TABLE: {
+                                    bool if_exists = false;
+                                    bool cascade = false;
+                                    parseFlags(payload, if_exists, cascade);
+                                    (void)cascade;
+
+                                    std::string table_name;
+                                    if (!getSchemaPathString(payload, "path", table_name) ||
+                                        table_name.empty())
+                                    {
+                                        return ExecutionResult("V3 DROP FOREIGN TABLE missing path");
+                                    }
+
+                                    core::ID table_id;
+                                    core::CatalogManager::ObjectType resolved_type;
+                                    core::ErrorContext err_ctx;
+                                    auto status = resolveObjectIdForQualifiedName(
+                                        table_name,
+                                        core::CatalogManager::ObjectType::FOREIGN_TABLE,
+                                        table_id,
+                                        resolved_type,
+                                        nullptr,
+                                        &err_ctx);
+                                    if (status != core::Status::OK)
+                                    {
+                                        if (status == core::Status::NOT_FOUND && if_exists)
+                                        {
+                                            return ExecutionResult();
+                                        }
+                                        return ExecutionResult("Foreign table not found: " + table_name);
+                                    }
+
+                                    status = catalog->dropForeignTable(table_id, &err_ctx);
+                                    if (status != core::Status::OK)
+                                    {
+                                        std::string err_msg = "DROP FOREIGN TABLE failed";
+                                        if (!err_ctx.message.empty())
+                                        {
+                                            err_msg += ": " + err_ctx.message;
+                                        }
+                                        return ExecutionResult(err_msg);
+                                    }
+                                    deleteObjectDefinition(core::CatalogManager::ObjectType::FOREIGN_TABLE,
+                                                           table_id);
+                                    return ExecutionResult();
+                                }
+                                case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_USER_MAPPING: {
+                                    std::string server_name;
+                                    std::string user_name;
+                                    if (!getString(payload, "server", server_name) || server_name.empty())
+                                    {
+                                        return ExecutionResult("V3 CREATE USER MAPPING missing server");
+                                    }
+                                    if (!getString(payload, "user", user_name) || user_name.empty())
+                                    {
+                                        return ExecutionResult("V3 CREATE USER MAPPING missing user");
+                                    }
+
+                                    std::string remote_user;
+                                    std::string remote_credentials;
+                                    std::map<std::string, std::string> options;
+                                    std::string option_err;
+                                    if (!parseOptions(payload, options, option_err))
+                                    {
+                                        return ExecutionResult("V3 CREATE USER MAPPING " + option_err);
+                                    }
+                                    if (auto it = options.find("REMOTE_USER"); it != options.end())
+                                    {
+                                        remote_user = it->second;
+                                    }
+                                    if (auto it = options.find("USER"); it != options.end())
+                                    {
+                                        remote_user = it->second;
+                                    }
+                                    if (auto it = options.find("REMOTE_PASSWORD"); it != options.end())
+                                    {
+                                        remote_credentials = it->second;
+                                    }
+                                    if (auto it = options.find("PASSWORD"); it != options.end())
+                                    {
+                                        remote_credentials = it->second;
+                                    }
+                                    if (auto it = options.find("CREDENTIALS"); it != options.end())
+                                    {
+                                        remote_credentials = it->second;
+                                    }
+                                    if (remote_user.empty() &&
+                                        scratchbird::core::IdentifierUtils::toUpper(user_name) != "PUBLIC")
+                                    {
+                                        remote_user = user_name;
+                                    }
+
+                                    core::ErrorContext err_ctx;
+                                    core::ID user_id{};
+                                    auto map_status =
+                                        mapTargetUser(user_name, user_id, false /*if_exists*/, err_ctx);
+                                    if (!map_status.success())
+                                    {
+                                        return map_status;
+                                    }
+
+                                    core::CatalogManager::ForeignServerInfo server_info;
+                                    auto status = catalog->getForeignServerByName(
+                                        server_name, server_info, &err_ctx);
+                                    if (status != core::Status::OK)
+                                    {
+                                        return ExecutionResult("Foreign server not found: " + server_name);
+                                    }
+
+                                    core::ID mapping_id;
+                                    status = catalog->createUserMapping(
+                                        user_id,
+                                        server_info.server_id,
+                                        remote_user,
+                                        remote_credentials,
+                                        mapping_id,
+                                        &err_ctx);
+                                    if (status != core::Status::OK)
+                                    {
+                                        std::string err_msg = "CREATE USER MAPPING failed";
+                                        if (!err_ctx.message.empty())
+                                        {
+                                            err_msg += ": " + err_ctx.message;
+                                        }
+                                        return ExecutionResult(err_msg);
+                                    }
+                                    recordObjectDefinition(core::CatalogManager::ObjectType::USER_MAPPING,
+                                                           mapping_id);
+                                    return ExecutionResult();
+                                }
+                                case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_USER_MAPPING: {
+                                    std::string server_name;
+                                    std::string user_name;
+                                    if (!getString(payload, "server", server_name) || server_name.empty())
+                                    {
+                                        return ExecutionResult("V3 ALTER USER MAPPING missing server");
+                                    }
+                                    if (!getString(payload, "user", user_name) || user_name.empty())
+                                    {
+                                        return ExecutionResult("V3 ALTER USER MAPPING missing user");
+                                    }
+
+                                    std::string remote_user;
+                                    std::string remote_credentials;
+                                    std::map<std::string, std::string> options;
+                                    std::string option_err;
+                                    if (!parseOptions(payload, options, option_err))
+                                    {
+                                        return ExecutionResult("V3 ALTER USER MAPPING " + option_err);
+                                    }
+                                    if (auto it = options.find("REMOTE_USER"); it != options.end())
+                                    {
+                                        remote_user = it->second;
+                                    }
+                                    if (auto it = options.find("USER"); it != options.end())
+                                    {
+                                        remote_user = it->second;
+                                    }
+                                    if (auto it = options.find("REMOTE_PASSWORD"); it != options.end())
+                                    {
+                                        remote_credentials = it->second;
+                                    }
+                                    if (auto it = options.find("PASSWORD"); it != options.end())
+                                    {
+                                        remote_credentials = it->second;
+                                    }
+                                    if (auto it = options.find("CREDENTIALS"); it != options.end())
+                                    {
+                                        remote_credentials = it->second;
+                                    }
+
+                                    core::ErrorContext err_ctx;
+                                    core::ID user_id{};
+                                    auto map_status =
+                                        mapTargetUser(user_name, user_id, false /*if_exists*/, err_ctx);
+                                    if (!map_status.success())
+                                    {
+                                        return map_status;
+                                    }
+
+                                    core::CatalogManager::ForeignServerInfo server_info;
+                                    auto status = catalog->getForeignServerByName(
+                                        server_name, server_info, &err_ctx);
+                                    if (status != core::Status::OK)
+                                    {
+                                        return ExecutionResult("Foreign server not found: " + server_name);
+                                    }
+
+                                    core::CatalogManager::UserMappingInfo existing_mapping;
+                                    status = catalog->getUserMappingForRuntime(
+                                        user_id, server_info.server_id, existing_mapping, &err_ctx);
+                                    if (status != core::Status::OK)
+                                    {
+                                        return ExecutionResult("User mapping not found");
+                                    }
+
+                                    if (remote_user.empty())
+                                    {
+                                        remote_user = existing_mapping.remote_user;
+                                    }
+                                    if (remote_credentials.empty())
+                                    {
+                                        remote_credentials = existing_mapping.remote_credentials;
+                                    }
+
+                                    status =
+                                        catalog->dropUserMapping(existing_mapping.mapping_id, &err_ctx);
+                                    if (status != core::Status::OK)
+                                    {
+                                        std::string err_msg = "ALTER USER MAPPING failed";
+                                        if (!err_ctx.message.empty())
+                                        {
+                                            err_msg += ": " + err_ctx.message;
+                                        }
+                                        return ExecutionResult(err_msg);
+                                    }
+                                    deleteObjectDefinition(core::CatalogManager::ObjectType::USER_MAPPING,
+                                                           existing_mapping.mapping_id);
+
+                                    core::ID mapping_id;
+                                    status = catalog->createUserMapping(
+                                        user_id,
+                                        server_info.server_id,
+                                        remote_user,
+                                        remote_credentials,
+                                        mapping_id,
+                                        &err_ctx);
+                                    if (status != core::Status::OK)
+                                    {
+                                        std::string err_msg =
+                                            "ALTER USER MAPPING failed while recreating mapping";
+                                        if (!err_ctx.message.empty())
+                                        {
+                                            err_msg += ": " + err_ctx.message;
+                                        }
+                                        return ExecutionResult(err_msg);
+                                    }
+                                    recordObjectDefinition(core::CatalogManager::ObjectType::USER_MAPPING,
+                                                           mapping_id);
+                                    return ExecutionResult();
+                                }
+                                case scratchbird::sblr::v3::Opcode::SBLR3_DROP_USER_MAPPING: {
+                                    bool if_exists = false;
+                                    bool cascade = false;
+                                    parseFlags(payload, if_exists, cascade);
+                                    (void)cascade;
+
+                                    std::string path;
+                                    if (!getSchemaPathString(payload, "path", path) || path.empty())
+                                    {
+                                        return ExecutionResult("V3 DROP USER MAPPING missing path");
+                                    }
+
+                                    auto parts = splitSchemaComponents(path);
+                                    if (parts.empty())
+                                    {
+                                        return ExecutionResult("V3 DROP USER MAPPING path is invalid");
+                                    }
+                                    std::string server_name = parts.front();
+                                    std::string user_name = "CURRENT_USER";
+                                    if (parts.size() >= 2)
+                                    {
+                                        user_name = parts.back();
+                                    }
+
+                                    core::ErrorContext err_ctx;
+                                    core::ID user_id{};
+                                    auto map_status = mapTargetUser(user_name, user_id, if_exists, err_ctx);
+                                    if (!map_status.success())
+                                    {
+                                        return map_status;
+                                    }
+
+                                    if (isZeroUuid(user_id))
+                                    {
+                                        // IF EXISTS can legitimately short-circuit target resolution.
+                                        if (if_exists)
+                                        {
+                                            return ExecutionResult();
+                                        }
+                                        return ExecutionResult("DROP USER MAPPING target is invalid");
+                                    }
+
+                                    core::CatalogManager::ForeignServerInfo server_info;
+                                    auto status = catalog->getForeignServerByName(
+                                        server_name, server_info, &err_ctx);
+                                    if (status != core::Status::OK)
+                                    {
+                                        if (if_exists)
+                                        {
+                                            return ExecutionResult();
+                                        }
+                                        return ExecutionResult("Foreign server not found: " + server_name);
+                                    }
+
+                                    core::CatalogManager::UserMappingInfo mapping_info;
+                                    status = catalog->getUserMapping(
+                                        user_id, server_info.server_id, mapping_info, &err_ctx);
+                                    if (status != core::Status::OK)
+                                    {
+                                        if (if_exists)
+                                        {
+                                            return ExecutionResult();
+                                        }
+                                        return ExecutionResult("User mapping not found");
+                                    }
+
+                                    status = catalog->dropUserMapping(mapping_info.mapping_id, &err_ctx);
+                                    if (status != core::Status::OK)
+                                    {
+                                        std::string err_msg = "DROP USER MAPPING failed";
+                                        if (!err_ctx.message.empty())
+                                        {
+                                            err_msg += ": " + err_ctx.message;
+                                        }
+                                        return ExecutionResult(err_msg);
+                                    }
+                                    deleteObjectDefinition(core::CatalogManager::ObjectType::USER_MAPPING,
+                                                           mapping_info.mapping_id);
+                                    return ExecutionResult();
+                                }
+                                case scratchbird::sblr::v3::Opcode::SBLR3_IMPORT_FOREIGN_SCHEMA:
+                                    return ExecutionResult(
+                                        "IMPORT FOREIGN SCHEMA execution is not available in this cycle");
+                                default:
+                                    return ExecutionResult("Unsupported FDW mutation opcode");
+                            }
+                        };
+
+			                auto executeAdminControlOpcode =
+			                    [&](scratchbird::sblr::v3::Opcode opcode,
+			                        const scratchbird::sblr::v3::Value::Object& payload) -> ExecutionResult {
 	                    switch (opcode)
 	                    {
                                 case scratchbird::sblr::v3::Opcode::SBLR3_SWEEP:
@@ -61751,13 +65483,27 @@ namespace scratchbird
 	                            return handleCreateIndex(payload);
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_DOMAIN:
 	                            return handleCreateDomain(payload);
-	                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_VIEW:
-	                            return handleCreateView(payload);
-	                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_POLICY:
-	                            return handleCreatePolicyV3(payload);
-	                        case scratchbird::sblr::v3::Opcode::SBLR3_DROP_TABLE:
-	                        case scratchbird::sblr::v3::Opcode::SBLR3_DROP_INDEX:
-	                            return handleDrop(payload, static_cast<uint16_t>(opcode));
+		                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_VIEW:
+		                            return handleCreateView(payload);
+		                        case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_POLICY:
+		                            return handleCreatePolicyV3(payload);
+                                case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_FOREIGN_DATA_WRAPPER:
+                                case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_FOREIGN_DATA_WRAPPER:
+                                case scratchbird::sblr::v3::Opcode::SBLR3_DROP_FOREIGN_DATA_WRAPPER:
+                                case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_FOREIGN_SERVER:
+                                case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_FOREIGN_SERVER:
+                                case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_FOREIGN_TABLE:
+                                case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_FOREIGN_TABLE:
+                                case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_USER_MAPPING:
+                                case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_USER_MAPPING:
+                                case scratchbird::sblr::v3::Opcode::SBLR3_IMPORT_FOREIGN_SCHEMA:
+                                case scratchbird::sblr::v3::Opcode::SBLR3_DROP_FOREIGN_SERVER:
+                                case scratchbird::sblr::v3::Opcode::SBLR3_DROP_FOREIGN_TABLE:
+                                case scratchbird::sblr::v3::Opcode::SBLR3_DROP_USER_MAPPING:
+                                    return executeV3FdwMutationOpcode(opcode, payload);
+		                        case scratchbird::sblr::v3::Opcode::SBLR3_DROP_TABLE:
+		                        case scratchbird::sblr::v3::Opcode::SBLR3_DROP_INDEX:
+		                            return handleDrop(payload, static_cast<uint16_t>(opcode));
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_DROP_POLICY:
 	                            return handleDropPolicyV3(payload);
 	                        case scratchbird::sblr::v3::Opcode::SBLR3_TRUNCATE_TABLE:
@@ -61781,14 +65527,27 @@ namespace scratchbird
 	                {
 	                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_TABLE:
 	                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_INDEX:
-	                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_DOMAIN:
-	                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_VIEW:
-	                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_POLICY:
-	                    case scratchbird::sblr::v3::Opcode::SBLR3_DROP_TABLE:
-	                    case scratchbird::sblr::v3::Opcode::SBLR3_DROP_INDEX:
-	                    case scratchbird::sblr::v3::Opcode::SBLR3_DROP_POLICY:
-	                    case scratchbird::sblr::v3::Opcode::SBLR3_TRUNCATE_TABLE:
-	                    case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_TABLE:
+		                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_DOMAIN:
+		                    case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_VIEW:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_POLICY:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_FOREIGN_DATA_WRAPPER:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_FOREIGN_DATA_WRAPPER:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_DROP_FOREIGN_DATA_WRAPPER:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_FOREIGN_SERVER:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_FOREIGN_SERVER:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_FOREIGN_TABLE:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_FOREIGN_TABLE:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_CREATE_USER_MAPPING:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_USER_MAPPING:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_IMPORT_FOREIGN_SCHEMA:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_DROP_TABLE:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_DROP_INDEX:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_DROP_FOREIGN_SERVER:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_DROP_FOREIGN_TABLE:
+                            case scratchbird::sblr::v3::Opcode::SBLR3_DROP_USER_MAPPING:
+		                    case scratchbird::sblr::v3::Opcode::SBLR3_DROP_POLICY:
+		                    case scratchbird::sblr::v3::Opcode::SBLR3_TRUNCATE_TABLE:
+		                    case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_TABLE:
 	                    case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_INDEX:
 	                    case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_POLICY:
 	                    case scratchbird::sblr::v3::Opcode::SBLR3_ALTER_TABLE_SET_TABLESPACE:
@@ -61830,6 +65589,20 @@ namespace scratchbird
                     case scratchbird::sblr::v3::Opcode::SBLR3_OP_HYBRID_BRIDGE_MATERIALIZE:
                     case scratchbird::sblr::v3::Opcode::SBLR3_OP_UDR_COMPILE_DISPATCH:
                     case scratchbird::sblr::v3::Opcode::SBLR3_OP_UDR_EMBEDDED_SQL_COMPILE:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_ANALYZE_REMOTE_SERVER:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_REFRESH_REMOTE_METADATA:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_SHOW_REMOTE_CAPABILITIES:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_SHOW_REMOTE_OBJECTS:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_SHOW_REMOTE_COLUMNS:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_SHOW_REMOTE_STATISTICS:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_EXECUTE_REMOTE:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_PREPARE_REMOTE:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_EXECUTE_REMOTE_PREPARED:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_DEALLOCATE_REMOTE_PREPARED:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_BEGIN_REMOTE_TRANSACTION:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_COMMIT_REMOTE_TRANSACTION:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_ROLLBACK_REMOTE_TRANSACTION:
+                    case scratchbird::sblr::v3::Opcode::SBLR3_SHOW_REMOTE_SESSION_STATE:
                     case scratchbird::sblr::v3::Opcode::SBLR3_SESSION_RESET:
                     case scratchbird::sblr::v3::Opcode::SBLR3_CONFIG_RESET:
                     case scratchbird::sblr::v3::Opcode::SBLR3_CONFIG_HISTORY:

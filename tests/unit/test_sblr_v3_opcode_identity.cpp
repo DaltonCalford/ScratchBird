@@ -58,12 +58,58 @@ TEST(SBLRV3OpcodeIdentity, MapsExpandedStatementFamilies) {
               "OP_STMT_DEALLOCATE_PREPARED");
     EXPECT_EQ(canonicalOpcodeSymbolForV3Name("SBLR3_CREATE_FOREIGN_DATA_WRAPPER"),
               "OP_STMT_FDW_CREATE_WRAPPER");
+    EXPECT_EQ(canonicalOpcodeSymbolForV3Name("SBLR3_ALTER_FOREIGN_DATA_WRAPPER"),
+              "OP_STMT_FDW_ALTER_WRAPPER");
+    EXPECT_EQ(canonicalOpcodeSymbolForV3Name("SBLR3_DROP_FOREIGN_DATA_WRAPPER"),
+              "OP_STMT_FDW_DROP_WRAPPER");
     EXPECT_EQ(canonicalOpcodeSymbolForV3Name("SBLR3_CREATE_FOREIGN_SERVER"),
               "OP_STMT_FDW_CREATE_SERVER");
+    EXPECT_EQ(canonicalOpcodeSymbolForV3Name("SBLR3_ALTER_FOREIGN_SERVER"),
+              "OP_STMT_FDW_ALTER_SERVER");
     EXPECT_EQ(canonicalOpcodeSymbolForV3Name("SBLR3_CREATE_USER_MAPPING"),
               "OP_STMT_FDW_USER_MAPPING");
+    EXPECT_EQ(canonicalOpcodeSymbolForV3Name("SBLR3_ALTER_USER_MAPPING"),
+              "OP_STMT_FDW_ALTER_USER_MAPPING");
     EXPECT_EQ(canonicalOpcodeSymbolForV3Name("SBLR3_CREATE_FOREIGN_TABLE"),
               "OP_STMT_FDW_FOREIGN_TABLE");
+    EXPECT_EQ(canonicalOpcodeSymbolForV3Name("SBLR3_ALTER_FOREIGN_TABLE"),
+              "OP_STMT_FDW_ALTER_FOREIGN_TABLE");
+    EXPECT_EQ(canonicalOpcodeSymbolForV3Name("SBLR3_IMPORT_FOREIGN_SCHEMA"),
+              "OP_STMT_FDW_IMPORT_SCHEMA");
+    EXPECT_EQ(canonicalOpcodeSymbolForV3Name("SBLR3_DROP_FOREIGN_SERVER"),
+              "OP_STMT_FDW_DROP_SERVER");
+    EXPECT_EQ(canonicalOpcodeSymbolForV3Name("SBLR3_DROP_FOREIGN_TABLE"),
+              "OP_STMT_FDW_DROP_FOREIGN_TABLE");
+    EXPECT_EQ(canonicalOpcodeSymbolForV3Name("SBLR3_DROP_USER_MAPPING"),
+              "OP_STMT_FDW_DROP_USER_MAPPING");
+    EXPECT_EQ(canonicalOpcodeSymbolForV3Name("SBLR3_ANALYZE_REMOTE_SERVER"),
+              "OP_STMT_REMOTE_ANALYZE_METADATA");
+    EXPECT_EQ(canonicalOpcodeSymbolForV3Name("SBLR3_REFRESH_REMOTE_METADATA"),
+              "OP_STMT_REMOTE_REFRESH_METADATA");
+    EXPECT_EQ(canonicalOpcodeSymbolForV3Name("SBLR3_SHOW_REMOTE_CAPABILITIES"),
+              "OP_STMT_REMOTE_SHOW_CAPABILITIES");
+    EXPECT_EQ(canonicalOpcodeSymbolForV3Name("SBLR3_SHOW_REMOTE_OBJECTS"),
+              "OP_STMT_REMOTE_SHOW_OBJECTS");
+    EXPECT_EQ(canonicalOpcodeSymbolForV3Name("SBLR3_SHOW_REMOTE_COLUMNS"),
+              "OP_STMT_REMOTE_SHOW_COLUMNS");
+    EXPECT_EQ(canonicalOpcodeSymbolForV3Name("SBLR3_SHOW_REMOTE_STATISTICS"),
+              "OP_STMT_REMOTE_SHOW_STATISTICS");
+    EXPECT_EQ(canonicalOpcodeSymbolForV3Name("SBLR3_EXECUTE_REMOTE"),
+              "OP_STMT_REMOTE_EXECUTE");
+    EXPECT_EQ(canonicalOpcodeSymbolForV3Name("SBLR3_PREPARE_REMOTE"),
+              "OP_STMT_REMOTE_PREPARE");
+    EXPECT_EQ(canonicalOpcodeSymbolForV3Name("SBLR3_EXECUTE_REMOTE_PREPARED"),
+              "OP_STMT_REMOTE_EXECUTE_PREPARED");
+    EXPECT_EQ(canonicalOpcodeSymbolForV3Name("SBLR3_DEALLOCATE_REMOTE_PREPARED"),
+              "OP_STMT_REMOTE_DEALLOCATE_PREPARED");
+    EXPECT_EQ(canonicalOpcodeSymbolForV3Name("SBLR3_BEGIN_REMOTE_TRANSACTION"),
+              "OP_STMT_REMOTE_BEGIN_TXN");
+    EXPECT_EQ(canonicalOpcodeSymbolForV3Name("SBLR3_COMMIT_REMOTE_TRANSACTION"),
+              "OP_STMT_REMOTE_COMMIT_TXN");
+    EXPECT_EQ(canonicalOpcodeSymbolForV3Name("SBLR3_ROLLBACK_REMOTE_TRANSACTION"),
+              "OP_STMT_REMOTE_ROLLBACK_TXN");
+    EXPECT_EQ(canonicalOpcodeSymbolForV3Name("SBLR3_SHOW_REMOTE_SESSION_STATE"),
+              "OP_STMT_REMOTE_SHOW_SESSION_STATE");
     EXPECT_EQ(canonicalOpcodeSymbolForV3Name("SBLR3_ANALYZE"), "OP_STMT_ADMIN_ANALYZE");
     EXPECT_EQ(canonicalOpcodeSymbolForV3Name("SBLR3_SWEEP"), "OP_STMT_ADMIN_SWEEP");
     EXPECT_EQ(canonicalOpcodeSymbolForV3Name("SBLR3_ADMIN_BACKUP"), "OP_STMT_ADMIN_BACKUP");
@@ -241,6 +287,29 @@ TEST(SBLRV3OpcodeIdentity, MapsExpandedStatementFamilies) {
     EXPECT_TRUE(opcodeMapsToCanonicalFeatureName("SBLR3_COPY"));
     EXPECT_TRUE(opcodeMapsToCanonicalFeatureName("SBLR3_PREPARE_STMT"));
     EXPECT_TRUE(opcodeMapsToCanonicalFeatureName("SBLR3_CREATE_FOREIGN_DATA_WRAPPER"));
+    EXPECT_TRUE(opcodeMapsToCanonicalFeatureName("SBLR3_ALTER_FOREIGN_DATA_WRAPPER"));
+    EXPECT_TRUE(opcodeMapsToCanonicalFeatureName("SBLR3_DROP_FOREIGN_DATA_WRAPPER"));
+    EXPECT_TRUE(opcodeMapsToCanonicalFeatureName("SBLR3_ALTER_FOREIGN_SERVER"));
+    EXPECT_TRUE(opcodeMapsToCanonicalFeatureName("SBLR3_ALTER_USER_MAPPING"));
+    EXPECT_TRUE(opcodeMapsToCanonicalFeatureName("SBLR3_ALTER_FOREIGN_TABLE"));
+    EXPECT_TRUE(opcodeMapsToCanonicalFeatureName("SBLR3_IMPORT_FOREIGN_SCHEMA"));
+    EXPECT_TRUE(opcodeMapsToCanonicalFeatureName("SBLR3_DROP_FOREIGN_SERVER"));
+    EXPECT_TRUE(opcodeMapsToCanonicalFeatureName("SBLR3_DROP_FOREIGN_TABLE"));
+    EXPECT_TRUE(opcodeMapsToCanonicalFeatureName("SBLR3_DROP_USER_MAPPING"));
+    EXPECT_TRUE(opcodeMapsToCanonicalFeatureName("SBLR3_ANALYZE_REMOTE_SERVER"));
+    EXPECT_TRUE(opcodeMapsToCanonicalFeatureName("SBLR3_REFRESH_REMOTE_METADATA"));
+    EXPECT_TRUE(opcodeMapsToCanonicalFeatureName("SBLR3_SHOW_REMOTE_CAPABILITIES"));
+    EXPECT_TRUE(opcodeMapsToCanonicalFeatureName("SBLR3_SHOW_REMOTE_OBJECTS"));
+    EXPECT_TRUE(opcodeMapsToCanonicalFeatureName("SBLR3_SHOW_REMOTE_COLUMNS"));
+    EXPECT_TRUE(opcodeMapsToCanonicalFeatureName("SBLR3_SHOW_REMOTE_STATISTICS"));
+    EXPECT_TRUE(opcodeMapsToCanonicalFeatureName("SBLR3_EXECUTE_REMOTE"));
+    EXPECT_TRUE(opcodeMapsToCanonicalFeatureName("SBLR3_PREPARE_REMOTE"));
+    EXPECT_TRUE(opcodeMapsToCanonicalFeatureName("SBLR3_EXECUTE_REMOTE_PREPARED"));
+    EXPECT_TRUE(opcodeMapsToCanonicalFeatureName("SBLR3_DEALLOCATE_REMOTE_PREPARED"));
+    EXPECT_TRUE(opcodeMapsToCanonicalFeatureName("SBLR3_BEGIN_REMOTE_TRANSACTION"));
+    EXPECT_TRUE(opcodeMapsToCanonicalFeatureName("SBLR3_COMMIT_REMOTE_TRANSACTION"));
+    EXPECT_TRUE(opcodeMapsToCanonicalFeatureName("SBLR3_ROLLBACK_REMOTE_TRANSACTION"));
+    EXPECT_TRUE(opcodeMapsToCanonicalFeatureName("SBLR3_SHOW_REMOTE_SESSION_STATE"));
     EXPECT_TRUE(opcodeMapsToCanonicalFeatureName("SBLR3_ANALYZE"));
     EXPECT_TRUE(opcodeMapsToCanonicalFeatureName("SBLR3_ADMIN_BACKUP"));
     EXPECT_TRUE(opcodeMapsToCanonicalFeatureName("SBLR3_ADMIN_RESTORE"));

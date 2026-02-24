@@ -72,6 +72,7 @@
 #include <queue>  // Phase 1.4: BFS for group transitive closure
 #include <unordered_set>  // Phase 1.4: Visited set for group transitive closure
 #include <filesystem>  // WP-2 CAT-5: Tablespace file deletion
+#include <regex>
 #include "scratchbird/core/connection_context.h"  // Phase 3.1: Object permissions grantor tracking
 #include "scratchbird/core/tablespace.h"
 #include "scratchbird/security/scram_auth.h"
@@ -217,6 +218,48 @@ bool resolveBuiltinTimezoneIdLocal(const std::string& name,
 uint64_t catalogNowTicks()
 {
     return static_cast<uint64_t>(std::chrono::system_clock::now().time_since_epoch().count());
+}
+
+constexpr const char* kWriteOnlyCredentialMarker = "<write-only>";
+
+void applyWriteOnlyCredentialView(CatalogManager::UserMappingInfo& mapping)
+{
+    if (!mapping.remote_credentials.empty())
+    {
+        mapping.remote_credentials = kWriteOnlyCredentialMarker;
+    }
+}
+
+std::string redactRemoteDiagnosticText(const std::string& input)
+{
+    if (input.empty())
+    {
+        return input;
+    }
+
+    std::string redacted = input;
+    static const std::regex kUriUserinfoRegex(
+        R"(([A-Za-z][A-Za-z0-9+.-]*://[^/@:\s]+:)([^@/\s]+)(@))",
+        std::regex::icase);
+    static const std::regex kUriAuthorityRegex(
+        R"(([A-Za-z][A-Za-z0-9+.-]*://)([^/\s?#]+))",
+        std::regex::icase);
+    static const std::regex kAssignmentRegex(
+        R"(((?:password|passwd|pwd|secret|token|api[_-]?key|credential(?:s)?)[ \t]*[:=][ \t]*)(\"[^\"]*\"|'[^']*'|[^,; \t\r\n]+))",
+        std::regex::icase);
+    static const std::regex kJsonAssignmentRegex(
+        R"((\"(?:password|passwd|pwd|secret|token|api[_-]?key|credential(?:s)?)\"[ \t]*:[ \t]*)(\"[^\"]*\"|[^,}\s]+))",
+        std::regex::icase);
+    static const std::regex kQueryParamRegex(
+        R"(([?&](?:password|passwd|pwd|secret|token|api[_-]?key|credential(?:s)?)=)[^&#\s]*)",
+        std::regex::icase);
+
+    redacted = std::regex_replace(redacted, kUriUserinfoRegex, "$1<redacted>$3");
+    redacted = std::regex_replace(redacted, kQueryParamRegex, "$1<redacted>");
+    redacted = std::regex_replace(redacted, kAssignmentRegex, "$1<redacted>");
+    redacted = std::regex_replace(redacted, kJsonAssignmentRegex, "$1\"<redacted>\"");
+    redacted = std::regex_replace(redacted, kUriAuthorityRegex, "$1<endpoint>");
+    return redacted;
 }
 
 std::string fixedNameFromBuffer(const char* data, size_t cap)
@@ -745,6 +788,31 @@ bool isValidRemoteConnectorState(CatalogManager::RemoteConnectorState state)
            state == RCS::FAILED;
 }
 
+bool isAllowedRemoteConnectorTransition(CatalogManager::RemoteConnectorState from,
+                                        CatalogManager::RemoteConnectorState to)
+{
+    using RCS = CatalogManager::RemoteConnectorState;
+    if (from == to)
+    {
+        return true;
+    }
+    switch (from)
+    {
+        case RCS::DISABLED:
+            return to == RCS::PROBING;
+        case RCS::PROBING:
+            return to == RCS::READY || to == RCS::DEGRADED || to == RCS::FAILED || to == RCS::DISABLED;
+        case RCS::READY:
+            return to == RCS::DEGRADED || to == RCS::FAILED || to == RCS::DISABLED;
+        case RCS::DEGRADED:
+            return to == RCS::READY || to == RCS::FAILED || to == RCS::DISABLED;
+        case RCS::FAILED:
+            return to == RCS::PROBING || to == RCS::DISABLED;
+        default:
+            return false;
+    }
+}
+
 bool isValidRemoteSnapshotKind(CatalogManager::RemoteSnapshotKind kind)
 {
     using RSK = CatalogManager::RemoteSnapshotKind;
@@ -759,6 +827,12 @@ bool isValidRemoteSnapshotStatus(CatalogManager::RemoteSnapshotStatus status)
            status == RSS::COMPLETE ||
            status == RSS::FAILED ||
            status == RSS::CANCELLED;
+}
+
+bool isTerminalRemoteSnapshotStatus(CatalogManager::RemoteSnapshotStatus status)
+{
+    using RSS = CatalogManager::RemoteSnapshotStatus;
+    return status == RSS::COMPLETE || status == RSS::FAILED || status == RSS::CANCELLED;
 }
 
 bool isValidRemoteObjectKind(CatalogManager::RemoteObjectKind kind)
@@ -785,7 +859,11 @@ bool isValidRemoteSchemaMappingMode(CatalogManager::RemoteSchemaMappingMode mode
 bool isValidRemoteTxnMode(CatalogManager::RemoteTxnMode mode)
 {
     using RTM = CatalogManager::RemoteTxnMode;
-    return mode == RTM::NONE || mode == RTM::AUTO || mode == RTM::JOINED || mode == RTM::XA_PREPARED;
+    return mode == RTM::NONE ||
+           mode == RTM::AUTO ||
+           mode == RTM::JOINED ||
+           mode == RTM::XA_PREPARED ||
+           mode == RTM::READ_ONLY_SNAPSHOT;
 }
 
 bool isValidRemoteTxnState(CatalogManager::RemoteTxnState state)
@@ -796,6 +874,12 @@ bool isValidRemoteTxnState(CatalogManager::RemoteTxnState state)
            state == RTS::COMMITTED ||
            state == RTS::ROLLED_BACK ||
            state == RTS::ABORTED;
+}
+
+bool isTerminalRemoteTxnState(CatalogManager::RemoteTxnState state)
+{
+    using RTS = CatalogManager::RemoteTxnState;
+    return state == RTS::COMMITTED || state == RTS::ROLLED_BACK || state == RTS::ABORTED;
 }
 
 bool isValidRemoteExecStatus(CatalogManager::RemoteExecStatus status)
@@ -35825,6 +35909,25 @@ auto CatalogManager::getUserMapping(const ID& user_id, const ID& foreign_server_
     }
 
     mapping_out = user_mapping_cache_[it->second];
+    applyWriteOnlyCredentialView(mapping_out);
+    return Status::OK;
+}
+
+auto CatalogManager::getUserMappingForRuntime(const ID& user_id,
+                                              const ID& foreign_server_id,
+                                              UserMappingInfo& mapping_out,
+                                              ErrorContext* ctx) -> Status
+{
+    std::lock_guard<std::mutex> lock(user_mapping_cache_mutex_);
+    auto key = std::make_pair(user_id, foreign_server_id);
+    auto it = user_mapping_lookup_.find(key);
+    if (it == user_mapping_lookup_.end())
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "User mapping not found");
+        return Status::NOT_FOUND;
+    }
+
+    mapping_out = user_mapping_cache_[it->second];
     return Status::OK;
 }
 
@@ -61041,6 +61144,41 @@ auto CatalogManager::upsertRuntimeTransactionCatalogEntry(const RuntimeTransacti
         }
     }
 
+    if (info.state != RuntimeTransactionState::IN_PROGRESS)
+    {
+        auto open_remote_binding_predicate = [&info](const RemoteTxnBindingRecord& rec) {
+            if (rec.is_valid != 1 || rec.txid != info.txid)
+            {
+                return false;
+            }
+            const auto remote_state = static_cast<RemoteTxnState>(rec.txn_state);
+            if (!isValidRemoteTxnState(remote_state))
+            {
+                return true;
+            }
+            return rec.has_terminal_time == 0 || !isTerminalRemoteTxnState(remote_state);
+        };
+        auto open_remote_binding = findRecordInHeapPage<RemoteTxnBindingRecord>(
+            remote_txn_binding_table_page_, open_remote_binding_predicate, ctx);
+        if (open_remote_binding.status == Status::OK)
+        {
+            const auto remote_state = static_cast<RemoteTxnState>(open_remote_binding.record.txn_state);
+            if (!isValidRemoteTxnState(remote_state))
+            {
+                SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "remote transaction binding state is invalid");
+                return Status::PAGE_CORRUPT;
+            }
+            SET_ERROR_CONTEXT(ctx,
+                              Status::CONSTRAINT_VIOLATION,
+                              "transaction cannot reach terminal state with open remote transaction bindings");
+            return Status::CONSTRAINT_VIOLATION;
+        }
+        if (open_remote_binding.status != Status::NOT_FOUND)
+        {
+            return open_remote_binding.status;
+        }
+    }
+
     const uint64_t now = catalogNowTicks();
     RuntimeTransactionRecord rec{};
     rec.txid = info.txid;
@@ -78630,6 +78768,24 @@ auto CatalogManager::upsertRemoteConnectorCatalogEntry(const RemoteConnectorCata
     {
         return Status::INVALID_ARGUMENT;
     }
+    if (info.state == RemoteConnectorState::READY ||
+        info.state == RemoteConnectorState::DEGRADED)
+    {
+        if (info.module_checksum == 0)
+        {
+            SET_ERROR_CONTEXT(ctx,
+                              Status::CONSTRAINT_VIOLATION,
+                              "remote connector attestation requires module checksum");
+            return Status::CONSTRAINT_VIOLATION;
+        }
+        if (!info.has_engine_version_text || info.engine_version_text.empty())
+        {
+            SET_ERROR_CONTEXT(ctx,
+                              Status::CONSTRAINT_VIOLATION,
+                              "remote connector attestation requires engine version text");
+            return Status::CONSTRAINT_VIOLATION;
+        }
+    }
 
     auto duplicate_server_predicate = [&info](const RemoteConnectorRecord& row) {
         return row.is_valid == 1 &&
@@ -78711,6 +78867,17 @@ auto CatalogManager::upsertRemoteConnectorCatalogEntry(const RemoteConnectorCata
     std::string previous_connector_name;
     if (existing.status == Status::OK)
     {
+        const auto previous_state = static_cast<RemoteConnectorState>(existing.record.state);
+        if (!isValidRemoteConnectorState(previous_state))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "remote connector state is invalid");
+            return Status::PAGE_CORRUPT;
+        }
+        if (!isAllowedRemoteConnectorTransition(previous_state, info.state))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, "invalid remote connector state transition");
+            return Status::CONSTRAINT_VIOLATION;
+        }
         rec.created_time = existing.record.created_time;
         previous_connector_name = fixedNameFromBuffer(existing.record.connector_name,
                                                       sizeof(existing.record.connector_name));
@@ -78901,10 +79068,57 @@ auto CatalogManager::upsertRemoteConnectorCapabilityCatalogEntry(
     auto connector_predicate = [&info](const RemoteConnectorRecord& rec) {
         return rec.remote_connector_id == info.remote_connector_id && rec.is_valid == 1;
     };
-    if (findRecordInHeapPage<RemoteConnectorRecord>(remote_connector_table_page_, connector_predicate, ctx).status != Status::OK)
+    auto connector_result = findRecordInHeapPage<RemoteConnectorRecord>(
+        remote_connector_table_page_, connector_predicate, ctx);
+    if (connector_result.status != Status::OK)
     {
         return Status::NOT_FOUND;
     }
+    const auto connector_state = static_cast<RemoteConnectorState>(connector_result.record.state);
+    if (!isValidRemoteConnectorState(connector_state))
+    {
+        return Status::PAGE_CORRUPT;
+    }
+    std::string connector_engine_version;
+    if (connector_result.record.has_engine_version_text != 0)
+    {
+        uint64_t xmin = 0;
+        Status load_status = loadStringFromToast(connector_result.record.engine_version_text_oid,
+                                                 xmin,
+                                                 connector_engine_version,
+                                                 ctx);
+        if (load_status != Status::OK)
+        {
+            return load_status;
+        }
+    }
+
+    if (info.is_enabled && (!info.has_source_version_text || info.source_version_text.empty()))
+    {
+        SET_ERROR_CONTEXT(ctx,
+                          Status::CONSTRAINT_VIOLATION,
+                          "enabled remote capability requires source version lineage");
+        return Status::CONSTRAINT_VIOLATION;
+    }
+    if (info.is_enabled &&
+        !connector_engine_version.empty() &&
+        info.source_version_text != connector_engine_version)
+    {
+        SET_ERROR_CONTEXT(ctx,
+                          Status::CONSTRAINT_VIOLATION,
+                          "remote capability source version must match connector engine version");
+        return Status::CONSTRAINT_VIOLATION;
+    }
+    if ((connector_state == RemoteConnectorState::READY ||
+         connector_state == RemoteConnectorState::DEGRADED) &&
+        !info.is_enabled)
+    {
+        SET_ERROR_CONTEXT(ctx,
+                          Status::CONSTRAINT_VIOLATION,
+                          "ready/degraded connectors require enabled capability lineage rows");
+        return Status::CONSTRAINT_VIOLATION;
+    }
+
     auto duplicate_predicate = [&info](const RemoteConnectorCapabilityRecord& row) {
         return row.is_valid == 1 &&
                row.capability_id != info.capability_id &&
@@ -78922,6 +79136,62 @@ auto CatalogManager::upsertRemoteConnectorCapabilityCatalogEntry(
         return duplicate.status;
     }
 
+    const uint64_t discovered_time = (info.discovered_time == 0) ? catalogNowTicks() : info.discovered_time;
+    auto existing_predicate = [&info](const RemoteConnectorCapabilityRecord& row) {
+        return row.capability_id == info.capability_id && row.is_valid == 1;
+    };
+    auto existing = findRecordInHeapPage<RemoteConnectorCapabilityRecord>(
+        remote_connector_capability_table_page_, existing_predicate, ctx);
+    if (existing.status == Status::OK)
+    {
+        if (discovered_time < existing.record.discovered_time)
+        {
+            SET_ERROR_CONTEXT(ctx,
+                              Status::CONSTRAINT_VIOLATION,
+                              "remote capability lineage discovered_time cannot move backwards");
+            return Status::CONSTRAINT_VIOLATION;
+        }
+
+        uint64_t xmin = 0;
+        std::string existing_value_json;
+        Status load_status = loadStringFromToast(existing.record.capability_value_oid,
+                                                 xmin,
+                                                 existing_value_json,
+                                                 ctx);
+        if (load_status != Status::OK)
+        {
+            return load_status;
+        }
+        std::string existing_source_version;
+        if (existing.record.has_source_version_text != 0)
+        {
+            load_status = loadStringFromToast(existing.record.source_version_text_oid,
+                                              xmin,
+                                              existing_source_version,
+                                              ctx);
+            if (load_status != Status::OK)
+            {
+                return load_status;
+            }
+        }
+        const bool source_changed = existing.record.has_source_version_text !=
+                                        (info.has_source_version_text && !info.source_version_text.empty()) ||
+                                    existing_source_version != info.source_version_text;
+        const bool value_changed = existing_value_json != info.capability_value_json;
+        if ((source_changed || value_changed) &&
+            discovered_time == existing.record.discovered_time)
+        {
+            SET_ERROR_CONTEXT(ctx,
+                              Status::CONSTRAINT_VIOLATION,
+                              "remote capability lineage changes require newer discovered_time");
+            return Status::CONSTRAINT_VIOLATION;
+        }
+    }
+    else if (existing.status != Status::NOT_FOUND)
+    {
+        return existing.status;
+    }
+
     RemoteConnectorCapabilityRecord rec{};
     rec.capability_id = info.capability_id;
     rec.remote_connector_id = info.remote_connector_id;
@@ -78934,7 +79204,7 @@ auto CatalogManager::upsertRemoteConnectorCapabilityCatalogEntry(
     rec.has_source_version_text = (info.has_source_version_text && !info.source_version_text.empty()) ? 1 : 0;
     rec.is_enabled = info.is_enabled ? 1 : 0;
     rec.is_valid = info.is_valid ? 1 : 0;
-    rec.discovered_time = (info.discovered_time == 0) ? catalogNowTicks() : info.discovered_time;
+    rec.discovered_time = discovered_time;
     uint64_t xmin = 0;
     Status status = storeStringInToast(info.capability_value_json, xmin, rec.capability_value_oid, ctx);
     if (status != Status::OK)
@@ -79110,6 +79380,30 @@ auto CatalogManager::upsertRemoteMetadataSnapshotCatalogEntry(
         return duplicate.status;
     }
 
+    auto existing_snapshot_predicate = [&info](const RemoteMetadataSnapshotRecord& row) {
+        return row.snapshot_id == info.snapshot_id && row.is_valid == 1;
+    };
+    auto existing_snapshot = findRecordInHeapPage<RemoteMetadataSnapshotRecord>(
+        remote_metadata_snapshot_table_page_, existing_snapshot_predicate, ctx);
+    if (existing_snapshot.status == Status::OK)
+    {
+        const auto existing_status = static_cast<RemoteSnapshotStatus>(existing_snapshot.record.snapshot_status);
+        if (!isValidRemoteSnapshotStatus(existing_status))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "remote metadata snapshot status is invalid");
+            return Status::PAGE_CORRUPT;
+        }
+        if (isTerminalRemoteSnapshotStatus(existing_status))
+        {
+            SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, "remote metadata snapshot is immutable after terminal status");
+            return Status::CONSTRAINT_VIOLATION;
+        }
+    }
+    else if (existing_snapshot.status != Status::NOT_FOUND)
+    {
+        return existing_snapshot.status;
+    }
+
     RemoteMetadataSnapshotRecord rec{};
     rec.snapshot_id = info.snapshot_id;
     rec.remote_connector_id = info.remote_connector_id;
@@ -79251,6 +79545,17 @@ auto CatalogManager::deleteRemoteMetadataSnapshotCatalogEntry(const ID& snapshot
     if (result.status != Status::OK)
     {
         return Status::NOT_FOUND;
+    }
+    const auto current_status = static_cast<RemoteSnapshotStatus>(result.record.snapshot_status);
+    if (!isValidRemoteSnapshotStatus(current_status))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::PAGE_CORRUPT, "remote metadata snapshot status is invalid");
+        return Status::PAGE_CORRUPT;
+    }
+    if (isTerminalRemoteSnapshotStatus(current_status))
+    {
+        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, "remote metadata snapshot delete is blocked for terminal status");
+        return Status::CONSTRAINT_VIOLATION;
     }
     RemoteMetadataSnapshotRecord updated = result.record;
     updated.is_valid = 0;
@@ -80428,6 +80733,14 @@ auto CatalogManager::upsertRemoteTxnBindingCatalogEntry(const RemoteTxnBindingCa
     {
         return Status::INVALID_ARGUMENT;
     }
+    if (isTerminalRemoteTxnState(info.txn_state) && !info.has_terminal_time)
+    {
+        return Status::INVALID_ARGUMENT;
+    }
+    if (!isTerminalRemoteTxnState(info.txn_state) && info.has_terminal_time)
+    {
+        return Status::INVALID_ARGUMENT;
+    }
     auto connector_predicate = [&info](const RemoteConnectorRecord& rec) {
         return rec.remote_connector_id == info.remote_connector_id && rec.is_valid == 1;
     };
@@ -80442,12 +80755,41 @@ auto CatalogManager::upsertRemoteTxnBindingCatalogEntry(const RemoteTxnBindingCa
     {
         return Status::NOT_FOUND;
     }
-    auto txn_predicate = [&info](const RuntimeTransactionRecord& rec) {
-        return rec.txid == info.txid && rec.is_valid == 1;
-    };
-    if (findRecordInHeapPage<RuntimeTransactionRecord>(transaction_table_page_, txn_predicate, ctx).status != Status::OK)
+    const bool requires_local_txn =
+        (info.txn_mode == RemoteTxnMode::JOIN_LOCAL ||
+         info.txn_mode == RemoteTxnMode::JOINED);
+    if (requires_local_txn)
     {
-        return Status::NOT_FOUND;
+        auto txn_predicate = [&info](const RuntimeTransactionRecord& rec) {
+            return rec.txid == info.txid && rec.is_valid == 1;
+        };
+        auto txn_row = findRecordInHeapPage<RuntimeTransactionRecord>(transaction_table_page_,
+                                                                      txn_predicate,
+                                                                      ctx);
+        if (txn_row.status != Status::OK)
+        {
+            return Status::NOT_FOUND;
+        }
+        const auto local_txn_state = static_cast<RuntimeTransactionState>(txn_row.record.state);
+        if (!isValidRuntimeTransactionState(local_txn_state))
+        {
+            return Status::PAGE_CORRUPT;
+        }
+        if (local_txn_state == RuntimeTransactionState::IN_PROGRESS &&
+            txn_row.record.has_end_time != 0)
+        {
+            return Status::PAGE_CORRUPT;
+        }
+        if (local_txn_state != RuntimeTransactionState::IN_PROGRESS &&
+            txn_row.record.has_end_time == 0)
+        {
+            return Status::PAGE_CORRUPT;
+        }
+        if (local_txn_state != RuntimeTransactionState::IN_PROGRESS &&
+            !isTerminalRemoteTxnState(info.txn_state))
+        {
+            return Status::CONSTRAINT_VIOLATION;
+        }
     }
     if (info.has_last_error_id)
     {
@@ -80475,6 +80817,20 @@ auto CatalogManager::upsertRemoteTxnBindingCatalogEntry(const RemoteTxnBindingCa
     if (duplicate.status != Status::NOT_FOUND)
     {
         return duplicate.status;
+    }
+
+    auto existing_predicate = [&info](const RemoteTxnBindingRecord& row) {
+        return row.remote_txn_binding_id == info.remote_txn_binding_id && row.is_valid == 1;
+    };
+    auto existing = findRecordInHeapPage<RemoteTxnBindingRecord>(
+        remote_txn_binding_table_page_, existing_predicate, ctx);
+    if (existing.status == Status::OK && existing.record.has_terminal_time != 0)
+    {
+        return Status::CONSTRAINT_VIOLATION;
+    }
+    if (existing.status != Status::OK && existing.status != Status::NOT_FOUND)
+    {
+        return existing.status;
     }
 
     RemoteTxnBindingRecord rec{};
@@ -80682,6 +81038,21 @@ auto CatalogManager::upsertRemoteExecutionAuditCatalogEntry(
         return duplicate.status;
     }
 
+    auto existing_audit_predicate = [&info](const RemoteExecutionAuditRecord& row) {
+        return row.remote_exec_audit_id == info.remote_exec_audit_id && row.is_valid == 1;
+    };
+    auto existing_audit = findRecordInHeapPage<RemoteExecutionAuditRecord>(
+        remote_execution_audit_table_page_, existing_audit_predicate, ctx);
+    if (existing_audit.status == Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, "remote execution audit rows are append-only");
+        return Status::CONSTRAINT_VIOLATION;
+    }
+    if (existing_audit.status != Status::NOT_FOUND)
+    {
+        return existing_audit.status;
+    }
+
     RemoteExecutionAuditRecord rec{};
     rec.remote_exec_audit_id = info.remote_exec_audit_id;
     rec.remote_connector_id = info.remote_connector_id;
@@ -80828,9 +81199,8 @@ auto CatalogManager::deleteRemoteExecutionAuditCatalogEntry(const ID& remote_exe
     {
         return Status::NOT_FOUND;
     }
-    RemoteExecutionAuditRecord updated = result.record;
-    updated.is_valid = 0;
-    return updateRecordInHeapPage(remote_execution_audit_table_page_, result.slot_index, updated, ctx);
+    SET_ERROR_CONTEXT(ctx, Status::CONSTRAINT_VIOLATION, "remote execution audit rows are append-only");
+    return Status::CONSTRAINT_VIOLATION;
 }
 
 auto CatalogManager::upsertRemoteErrorCatalogEntry(const RemoteErrorCatalogInfo& info,
@@ -80865,6 +81235,12 @@ auto CatalogManager::upsertRemoteErrorCatalogEntry(const RemoteErrorCatalogInfo&
         return Status::NOT_FOUND;
     }
 
+    std::string sanitized_message_text = redactRemoteDiagnosticText(info.message_text);
+    if (sanitized_message_text.empty())
+    {
+        sanitized_message_text = "<redacted>";
+    }
+
     RemoteErrorRecord rec{};
     rec.remote_error_id = info.remote_error_id;
     rec.remote_connector_id = info.remote_connector_id;
@@ -80877,7 +81253,7 @@ auto CatalogManager::upsertRemoteErrorCatalogEntry(const RemoteErrorCatalogInfo&
     rec.occurrence_count = info.occurrence_count;
 
     uint64_t xmin = 0;
-    Status status = storeStringInToast(info.message_text, xmin, rec.message_text_oid, ctx);
+    Status status = storeStringInToast(sanitized_message_text, xmin, rec.message_text_oid, ctx);
     if (status != Status::OK)
     {
         return status;

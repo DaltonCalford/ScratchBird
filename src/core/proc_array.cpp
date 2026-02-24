@@ -226,7 +226,7 @@ namespace scratchbird::core
         // Initialize PCB
         ProcessControlBlock *pcb = &pcbs[proc_id];
         pcb->is_active = true;
-        pcb->backend_pid = currentProcessId();
+        pcb->backend_pid = static_cast<pid_t>(::getpid());
         pcb->xid = 0;
         pcb->backend_xmin = 0;
         pcb->xmin = 0;

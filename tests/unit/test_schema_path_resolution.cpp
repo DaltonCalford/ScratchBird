@@ -14,10 +14,9 @@
 #include "scratchbird/core/database.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/sblr/executor.h"
-#include "scratchbird/sblr/opcodes.h"
+#include "scratchbird/sblr/query_compiler_v3.h"
 
 #include <chrono>
-#include <cstring>
 #include <cstdio>
 #include <string>
 #include <vector>
@@ -26,155 +25,6 @@ using namespace scratchbird::core;
 using ObjectType = CatalogManager::ObjectType;
 
 namespace {
-
-void appendUVarint(std::vector<uint8_t>& bytecode, uint64_t value)
-{
-    size_t offset = bytecode.size();
-    bytecode.resize(offset + 10);
-    size_t count = scratchbird::sblr::writeUVarint(&bytecode[offset], value);
-    bytecode.resize(offset + count);
-}
-
-void appendUint32(std::vector<uint8_t>& bytecode, uint32_t value)
-{
-    size_t offset = bytecode.size();
-    bytecode.resize(offset + 4);
-    scratchbird::sblr::writeInt32(&bytecode[offset], value);
-}
-
-void appendUint64(std::vector<uint8_t>& bytecode, uint64_t value)
-{
-    size_t offset = bytecode.size();
-    bytecode.resize(offset + 8);
-    scratchbird::sblr::writeInt64(&bytecode[offset], value);
-}
-
-void appendDouble(std::vector<uint8_t>& bytecode, double value)
-{
-    uint64_t bits = 0;
-    std::memcpy(&bits, &value, sizeof(double));
-    appendUint64(bytecode, bits);
-}
-
-void appendString(std::vector<uint8_t>& bytecode, const std::string& value)
-{
-    appendUVarint(bytecode, static_cast<uint64_t>(value.size()));
-    bytecode.insert(bytecode.end(), value.begin(), value.end());
-}
-
-std::vector<uint8_t> startBytecode(scratchbird::sblr::Opcode op)
-{
-    std::vector<uint8_t> bytecode;
-    bytecode.push_back(static_cast<uint8_t>(scratchbird::sblr::Opcode::VERSION));
-    bytecode.push_back(static_cast<uint8_t>(scratchbird::sblr::SBLR_VERSION));
-    bytecode.push_back(static_cast<uint8_t>(op));
-    return bytecode;
-}
-
-std::vector<uint8_t> buildCreateIndexBytecode(
-    const std::string& index_name,
-    const std::string& table_name,
-    const std::vector<std::string>& column_names,
-    bool is_unique = false,
-    scratchbird::core::CatalogManager::IndexType index_type =
-        scratchbird::core::CatalogManager::IndexType::BTREE,
-    bool bloom_filter_enabled = false,
-    double bloom_fpr = 0.01)
-{
-    auto bytecode = startBytecode(scratchbird::sblr::Opcode::CREATE_INDEX);
-    appendString(bytecode, index_name);
-    appendString(bytecode, table_name);
-    bytecode.push_back(is_unique ? 1 : 0);
-    appendUint32(bytecode, static_cast<uint32_t>(column_names.size()));
-    for (const auto& col : column_names)
-    {
-        appendString(bytecode, col);
-    }
-    appendUint32(bytecode, 0);  // Include column count
-    appendString(bytecode, "");  // Tablespace name
-    bytecode.push_back(static_cast<uint8_t>(index_type));
-    uint32_t options_flags = 0;
-    if (bloom_filter_enabled) {
-        options_flags |= 0x01;
-    }
-    appendUint32(bytecode, options_flags);
-    if (bloom_filter_enabled) {
-        appendDouble(bytecode, bloom_fpr);
-    }
-    bytecode.push_back(0);  // has expressions
-    bytecode.push_back(0);  // has predicate
-    return bytecode;
-}
-
-std::vector<uint8_t> buildDropTableBytecode(const std::string& table_name, bool if_exists = false,
-                                            bool cascade = false)
-{
-    auto bytecode = startBytecode(scratchbird::sblr::Opcode::DROP_TABLE);
-    appendString(bytecode, table_name);
-    uint8_t flags = 0;
-    if (if_exists)
-    {
-        flags |= 0x01;
-    }
-    if (cascade)
-    {
-        flags |= 0x02;
-    }
-    bytecode.push_back(flags);
-    return bytecode;
-}
-
-std::vector<uint8_t> buildDropIndexBytecode(const std::string& index_name, bool if_exists = false)
-{
-    auto bytecode = startBytecode(scratchbird::sblr::Opcode::DROP_INDEX);
-    appendString(bytecode, index_name);
-    bytecode.push_back(if_exists ? 1 : 0);
-    return bytecode;
-}
-
-std::vector<uint8_t> buildCreateTableBytecode(const std::string& table_name,
-                                              const std::vector<std::string>& column_names)
-{
-    auto bytecode = startBytecode(scratchbird::sblr::Opcode::CREATE_TABLE);
-    bytecode.push_back(static_cast<uint8_t>(scratchbird::sblr::Opcode::TABLE_REF));
-    bytecode.push_back(0);  // ref_kind: name
-    appendString(bytecode, table_name);
-    appendString(bytecode, "");  // alias
-    bytecode.push_back(static_cast<uint8_t>(scratchbird::sblr::Opcode::BEGIN_LIST));
-    appendUVarint(bytecode, static_cast<uint64_t>(column_names.size()));
-    for (const auto& col_name : column_names)
-    {
-        bytecode.push_back(static_cast<uint8_t>(scratchbird::sblr::Opcode::COLUMN_DEF));
-        bytecode.push_back(static_cast<uint8_t>(scratchbird::sblr::Opcode::COLUMN_REF));
-        appendString(bytecode, "");
-        appendString(bytecode, col_name);
-        bytecode.push_back(static_cast<uint8_t>(scratchbird::sblr::Opcode::TYPE_INTEGER));
-    }
-    bytecode.push_back(static_cast<uint8_t>(scratchbird::sblr::Opcode::END_LIST));
-    appendString(bytecode, "");
-    return bytecode;
-}
-
-std::vector<uint8_t> buildTruncateTableBytecode(const std::string& table_name, bool sync = false)
-{
-    auto bytecode = startBytecode(scratchbird::sblr::Opcode::TRUNCATE_TABLE);
-    appendString(bytecode, table_name);
-    bytecode.push_back(sync ? 1 : 0);
-    return bytecode;
-}
-
-std::vector<uint8_t> buildAlterTableRenameColumnBytecode(
-    const std::string& table_name,
-    const std::string& old_name,
-    const std::string& new_name)
-{
-    auto bytecode = startBytecode(scratchbird::sblr::Opcode::ALTER_TABLE);
-    appendString(bytecode, table_name);
-    bytecode.push_back(5);  // RENAME_COLUMN
-    appendString(bytecode, old_name);
-    appendString(bytecode, new_name);
-    return bytecode;
-}
 
 }  // namespace
 
@@ -334,6 +184,31 @@ protected:
         path.components = components;
         CatalogManager::ResolveOptions opts;
         return catalog_->resolveObjectPath(path, expected_type, opts, object_id_out, type_out, &ctx);
+    }
+
+    auto compileSql(const std::string& sql) -> std::vector<uint8_t>
+    {
+        scratchbird::sblr::QueryCompilerV3 compiler(db_);
+        compiler.setCurrentSchema(conn_->getCurrentSchemaId());
+        auto compiled = compiler.compile(sql);
+        EXPECT_TRUE(compiled.success()) << sql;
+        if (!compiled.success())
+        {
+            return {};
+        }
+        return compiled.bytecode();
+    }
+
+    auto executeSql(const std::string& sql) -> scratchbird::sblr::ExecutionResult
+    {
+        auto bytecode = compileSql(sql);
+        if (bytecode.empty())
+        {
+            return scratchbird::sblr::ExecutionResult("Failed to compile SQL: " + sql);
+        }
+        scratchbird::sblr::Executor executor(db_);
+        executor.setConnectionContext(conn_.get());
+        return executor.execute(bytecode);
     }
 };
 
@@ -532,10 +407,7 @@ TEST_F(SchemaPathResolutionTest, ExecutorDropTableUsesCurrentSchema)
     conn_->set_search_path({"public"});
     conn_->setCurrentUser(system_user_id_, true);
 
-    auto bytecode = buildDropTableBytecode("drop_target");
-    scratchbird::sblr::Executor executor(db_);
-    executor.setConnectionContext(conn_.get());
-    auto result = executor.execute(bytecode);
+    auto result = executeSql("DROP TABLE drop_target");
     ASSERT_TRUE(result.success()) << result.error();
 
     CatalogManager::TableInfo table_info;
@@ -555,10 +427,7 @@ TEST_F(SchemaPathResolutionTest, ExecutorCreateTableUsesCurrentSchema)
     conn_->set_search_path({"public"});
     conn_->setCurrentUser(system_user_id_, true);
 
-    auto bytecode = buildCreateTableBytecode("create_target", {"id"});
-    scratchbird::sblr::Executor executor(db_);
-    executor.setConnectionContext(conn_.get());
-    auto result = executor.execute(bytecode);
+    auto result = executeSql("CREATE TABLE create_target (id INT)");
     ASSERT_TRUE(result.success()) << result.error();
 
     CatalogManager::TableInfo table_info;
@@ -578,10 +447,7 @@ TEST_F(SchemaPathResolutionTest, ExecutorTruncateTableUsesCurrentSchema)
     conn_->set_search_path({"public"});
     conn_->setCurrentUser(system_user_id_, true);
 
-    auto bytecode = buildTruncateTableBytecode("truncate_target");
-    scratchbird::sblr::Executor executor(db_);
-    executor.setConnectionContext(conn_.get());
-    auto result = executor.execute(bytecode);
+    auto result = executeSql("TRUNCATE TABLE truncate_target");
 
     EXPECT_FALSE(result.success());
     EXPECT_NE(result.error().find("Object not found"), std::string::npos);
@@ -595,10 +461,7 @@ TEST_F(SchemaPathResolutionTest, ExecutorCreateIndexUsesCurrentSchema)
     conn_->setCurrentSchemaId(user_schema);
     conn_->set_search_path({"public"});
 
-    auto bytecode = buildCreateIndexBytecode("idx_current_id", "idx_table", {"id"});
-    scratchbird::sblr::Executor executor(db_);
-    executor.setConnectionContext(conn_.get());
-    auto result = executor.execute(bytecode);
+    auto result = executeSql("CREATE INDEX idx_current_id ON idx_table (id)");
     ASSERT_TRUE(result.success()) << result.error();
 
     CatalogManager::IndexInfo index_info;
@@ -621,10 +484,7 @@ TEST_F(SchemaPathResolutionTest, ExecutorDropIndexUsesCurrentSchema)
     conn_->setCurrentSchemaId(user_schema);
     conn_->set_search_path({"public"});
 
-    auto bytecode = buildDropIndexBytecode("idx_drop");
-    scratchbird::sblr::Executor executor(db_);
-    executor.setConnectionContext(conn_.get());
-    auto result = executor.execute(bytecode);
+    auto result = executeSql("DROP INDEX idx_drop");
     ASSERT_TRUE(result.success()) << result.error();
 
     CatalogManager::IndexInfo index_info;
@@ -643,10 +503,7 @@ TEST_F(SchemaPathResolutionTest, ExecutorAlterTableUsesCurrentSchema)
     conn_->set_search_path({"public"});
     conn_->setCurrentUser(system_user_id_, true);
 
-    auto bytecode = buildAlterTableRenameColumnBytecode("alter_target", "id", "id_renamed");
-    scratchbird::sblr::Executor executor(db_);
-    executor.setConnectionContext(conn_.get());
-    auto result = executor.execute(bytecode);
+    auto result = executeSql("ALTER TABLE alter_target RENAME COLUMN id TO id_renamed");
     ASSERT_TRUE(result.success()) << result.error();
 
     CatalogManager::ColumnInfo column_info;

@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 
 #include <array>
+#include <cctype>
 #include <cstdint>
 #include <cstring>
 #include <filesystem>
@@ -11,6 +12,7 @@
 #include "scratchbird/core/catalog_manager.h"
 #include "scratchbird/core/connection_context.h"
 #include "scratchbird/core/database.h"
+#include "scratchbird/core/uuidv7.h"
 #include "scratchbird/core/telemetry.h"
 #include "scratchbird/sblr/executor.h"
 #include "scratchbird/sblr/v3_container.h"
@@ -48,6 +50,55 @@ auto metricCounterValue(const std::string& metric_name,
         return 0.0;
     }
     return counter->get(labels);
+}
+
+auto parseUuidText(const std::string& raw, ID& out) -> bool
+{
+    std::string hex;
+    hex.reserve(32);
+    for (unsigned char ch : raw)
+    {
+        if (ch == '-' || ch == '{' || ch == '}')
+        {
+            continue;
+        }
+        if (!std::isxdigit(ch))
+        {
+            return false;
+        }
+        hex.push_back(static_cast<char>(std::tolower(ch)));
+    }
+    if (hex.size() != 32)
+    {
+        return false;
+    }
+
+    auto nibble = [](char c) -> int
+    {
+        if (c >= '0' && c <= '9')
+        {
+            return c - '0';
+        }
+        if (c >= 'a' && c <= 'f')
+        {
+            return 10 + (c - 'a');
+        }
+        return -1;
+    };
+
+    ID parsed{};
+    for (size_t i = 0; i < parsed.bytes.size(); ++i)
+    {
+        const int hi = nibble(hex[i * 2]);
+        const int lo = nibble(hex[i * 2 + 1]);
+        if (hi < 0 || lo < 0)
+        {
+            return false;
+        }
+        parsed.bytes[i] = static_cast<uint8_t>((hi << 4) | lo);
+    }
+    out = parsed;
+    return true;
 }
 
 auto makeContainerFromStream(const std::vector<uint8_t> &stream) -> std::vector<uint8_t>
@@ -133,6 +184,17 @@ auto makeContainerWithInstruction(uint16_t opcode, Value::Bytes payload) -> std:
 class SBLRVNextExecutorDispatchContractTest : public ::testing::Test
 {
 protected:
+    struct RemoteProjectionFixtureRows
+    {
+        std::string server_name;
+        ID server_id{};
+        ID user_mapping_id{};
+        ID remote_connector_id{};
+        ID remote_policy_id{};
+        ID snapshot_id{};
+        ID remote_object_id{};
+    };
+
     void SetUp() override
     {
         test_db_path_ = scratchbird::testing::uniqueTestDbPath("test_sblr_vnext_executor_dispatch", ".db");
@@ -187,6 +249,176 @@ protected:
     auto executeVNextRaw(uint16_t opcode, Value::Bytes payload) -> ExecutionResult
     {
         return executeContainer(makeContainerWithInstruction(opcode, std::move(payload)));
+    }
+
+    auto installRemoteProjectionFixture(const std::string& server_name) -> RemoteProjectionFixtureRows
+    {
+        RemoteProjectionFixtureRows fixture{};
+        fixture.server_name = server_name;
+
+        auto* catalog = db_->catalog_manager();
+        if (!catalog)
+        {
+            ADD_FAILURE() << "Catalog manager is null";
+            return fixture;
+        }
+
+        ErrorContext ctx;
+        auto expect_ok = [&](Status status, const std::string& where) -> bool {
+            if (status == Status::OK)
+            {
+                return true;
+            }
+            ADD_FAILURE() << where << " failed: " << ctx.message;
+            return false;
+        };
+
+        if (!expect_ok(catalog->createForeignServer(server_name,
+                                                    "postgresql",
+                                                    "127.0.0.1",
+                                                    1,
+                                                    "DATABASE=remote_test",
+                                                    fixture.server_id,
+                                                    &ctx),
+                       "createForeignServer"))
+        {
+            return fixture;
+        }
+
+        const ID current_user_id = conn_ctx_->getCurrentUserId();
+        if (current_user_id == ID{})
+        {
+            ADD_FAILURE() << "Current user ID is null";
+            return fixture;
+        }
+        if (!expect_ok(catalog->createUserMapping(current_user_id,
+                                                  fixture.server_id,
+                                                  "remote_user",
+                                                  "remote_secret",
+                                                  fixture.user_mapping_id,
+                                                  &ctx),
+                       "createUserMapping"))
+        {
+            return fixture;
+        }
+
+        CatalogManager::RemoteConnectorCatalogInfo connector{};
+        connector.remote_connector_id = scratchbird::core::generateUuidV7();
+        connector.fdw_server_id = fixture.server_id;
+        connector.fdw_id = scratchbird::core::generateUuidV7();
+        connector.connector_name = server_name + "_connector";
+        connector.engine_name = "postgresql";
+        connector.has_engine_version_text = true;
+        connector.engine_version_text = "18.0";
+        connector.endpoint_uri = "tcp://127.0.0.1:1";
+        connector.has_default_mapping_id = true;
+        connector.default_mapping_id = fixture.user_mapping_id;
+        connector.state = CatalogManager::RemoteConnectorState::READY;
+        connector.module_checksum = 1;
+        if (!expect_ok(catalog->upsertRemoteConnectorCatalogEntry(connector, &ctx),
+                       "upsertRemoteConnectorCatalogEntry(initial)"))
+        {
+            return fixture;
+        }
+        fixture.remote_connector_id = connector.remote_connector_id;
+
+        CatalogManager::RemotePassthroughPolicyCatalogInfo policy{};
+        policy.remote_policy_id = scratchbird::core::generateUuidV7();
+        policy.remote_connector_id = connector.remote_connector_id;
+        policy.allow_query = true;
+        policy.allow_dml = true;
+        policy.allow_ddl = true;
+        policy.allow_admin = true;
+        policy.allow_procedural = true;
+        policy.allow_join_local_txn = true;
+        policy.timeout_ms = 100;
+        policy.audit_level = "basic";
+        if (!expect_ok(catalog->upsertRemotePassthroughPolicyCatalogEntry(policy, &ctx),
+                       "upsertRemotePassthroughPolicyCatalogEntry"))
+        {
+            return fixture;
+        }
+        fixture.remote_policy_id = policy.remote_policy_id;
+
+        connector.has_policy_id = true;
+        connector.policy_id = policy.remote_policy_id;
+        if (!expect_ok(catalog->upsertRemoteConnectorCatalogEntry(connector, &ctx),
+                       "upsertRemoteConnectorCatalogEntry(policy-bind)"))
+        {
+            return fixture;
+        }
+
+        CatalogManager::RemoteMetadataSnapshotCatalogInfo snapshot{};
+        snapshot.snapshot_id = scratchbird::core::generateUuidV7();
+        snapshot.remote_connector_id = connector.remote_connector_id;
+        snapshot.snapshot_seq = 1;
+        snapshot.snapshot_kind = CatalogManager::RemoteSnapshotKind::FULL;
+        snapshot.snapshot_status = CatalogManager::RemoteSnapshotStatus::COMPLETE;
+        snapshot.has_engine_version_text = true;
+        snapshot.engine_version_text = "18.0";
+        snapshot.object_count = 1;
+        snapshot.column_count = 2;
+        snapshot.has_catalog_hash = true;
+        snapshot.catalog_hash = 0xAA55;
+        snapshot.started_time = 1000;
+        snapshot.has_completed_time = true;
+        snapshot.completed_time = 1001;
+        if (!expect_ok(catalog->upsertRemoteMetadataSnapshotCatalogEntry(snapshot, &ctx),
+                       "upsertRemoteMetadataSnapshotCatalogEntry"))
+        {
+            return fixture;
+        }
+        fixture.snapshot_id = snapshot.snapshot_id;
+
+        CatalogManager::RemoteMetadataObjectCatalogInfo object_row{};
+        object_row.remote_object_id = scratchbird::core::generateUuidV7();
+        object_row.snapshot_id = snapshot.snapshot_id;
+        object_row.remote_path = "public.orders";
+        object_row.has_remote_schema_name = true;
+        object_row.remote_schema_name = "public";
+        object_row.remote_object_name = "orders";
+        object_row.remote_object_kind = CatalogManager::RemoteObjectKind::TABLE;
+        object_row.remote_signature = 0xABCD;
+        object_row.has_mapped_local_schema_id = true;
+        object_row.mapped_local_schema_id = default_schema_id_;
+        object_row.is_supported = true;
+        object_row.is_valid = true;
+        if (!expect_ok(catalog->upsertRemoteMetadataObjectCatalogEntry(object_row, &ctx),
+                       "upsertRemoteMetadataObjectCatalogEntry"))
+        {
+            return fixture;
+        }
+        fixture.remote_object_id = object_row.remote_object_id;
+
+        CatalogManager::RemoteMetadataColumnCatalogInfo column_id{};
+        column_id.remote_column_id = scratchbird::core::generateUuidV7();
+        column_id.remote_object_id = object_row.remote_object_id;
+        column_id.ordinal_position = 1;
+        column_id.column_name = "id";
+        column_id.remote_type_name = "bigint";
+        column_id.is_nullable = false;
+        column_id.is_valid = true;
+        if (!expect_ok(catalog->upsertRemoteMetadataColumnCatalogEntry(column_id, &ctx),
+                       "upsertRemoteMetadataColumnCatalogEntry(id)"))
+        {
+            return fixture;
+        }
+
+        CatalogManager::RemoteMetadataColumnCatalogInfo column_status{};
+        column_status.remote_column_id = scratchbird::core::generateUuidV7();
+        column_status.remote_object_id = object_row.remote_object_id;
+        column_status.ordinal_position = 2;
+        column_status.column_name = "status";
+        column_status.remote_type_name = "text";
+        column_status.is_nullable = true;
+        column_status.is_valid = true;
+        if (!expect_ok(catalog->upsertRemoteMetadataColumnCatalogEntry(column_status, &ctx),
+                       "upsertRemoteMetadataColumnCatalogEntry(status)"))
+        {
+            return fixture;
+        }
+
+        return fixture;
     }
 
     std::string test_db_path_;
@@ -530,6 +762,507 @@ TEST_F(SBLRVNextExecutorDispatchContractTest,
 
     EXPECT_EQ(reject_before + 1.0,
               metricCounterValue(metric, {"vnext_opcode_dispatch", "reject", "BRG_0406"}));
+}
+
+TEST_F(SBLRVNextExecutorDispatchContractTest,
+       FdwDropOpcodesRouteWithoutDeterministicBridgeReject)
+{
+    const std::string metric = "scratchbird_vnext_executor_events_total";
+    const double reject_before =
+        metricCounterValue(metric, {"vnext_opcode_dispatch", "reject", "BRG_0406"});
+
+    struct DispatchCase
+    {
+        Opcode opcode;
+        uint64_t object_type;
+        Value::List path;
+    };
+
+    const std::array<DispatchCase, 3> cases = {{
+        {Opcode::SBLR3_DROP_FOREIGN_SERVER,
+         31,
+         Value::List{Value(std::string("missing_server"))}},
+        {Opcode::SBLR3_DROP_FOREIGN_TABLE,
+         32,
+         Value::List{Value(std::string("public")), Value(std::string("missing_foreign_table"))}},
+        {Opcode::SBLR3_DROP_USER_MAPPING,
+         33,
+         Value::List{Value(std::string("missing_server"))}},
+    }};
+
+    for (const auto& entry : cases)
+    {
+        ExecutionResult result = executeVNext(
+            static_cast<uint16_t>(entry.opcode),
+            Value::Object{{"flags", Value(static_cast<uint64_t>(0))},
+                          {"object_type", Value(entry.object_type)},
+                          {"path", Value(entry.path)}});
+        EXPECT_FALSE(result.success());
+        EXPECT_EQ(result.error().find("BRG_0406"), std::string::npos) << result.error();
+        EXPECT_EQ(result.error().find("IRX_0403"), std::string::npos) << result.error();
+    }
+
+    EXPECT_EQ(reject_before,
+              metricCounterValue(metric, {"vnext_opcode_dispatch", "reject", "BRG_0406"}));
+}
+
+TEST_F(SBLRVNextExecutorDispatchContractTest,
+       FdwAlterAndImportOpcodesRouteWithoutDeterministicBridgeReject)
+{
+    const std::string metric = "scratchbird_vnext_executor_events_total";
+    const double reject_before =
+        metricCounterValue(metric, {"vnext_opcode_dispatch", "reject", "BRG_0406"});
+
+    struct DispatchCase
+    {
+        Opcode opcode;
+        Value::Object payload;
+    };
+
+    const std::array<DispatchCase, 6> cases = {{
+        {Opcode::SBLR3_ALTER_FOREIGN_DATA_WRAPPER,
+         Value::Object{{"name", Value(std::string("fdw_bridge"))},
+                       {"options", Value(Value::Object{{"count", Value(static_cast<uint64_t>(0))}})}}},
+        {Opcode::SBLR3_DROP_FOREIGN_DATA_WRAPPER,
+         Value::Object{{"flags", Value(static_cast<uint64_t>(0))},
+                       {"object_type", Value(static_cast<uint64_t>(30))},
+                       {"path", Value(Value::List{Value(std::string("fdw_bridge"))})}}},
+        {Opcode::SBLR3_ALTER_FOREIGN_SERVER,
+         Value::Object{{"name", Value(std::string("missing_server"))},
+                       {"type", Value(std::string("postgresql"))},
+                       {"host", Value(std::string("localhost"))},
+                       {"options", Value(Value::Object{{"count", Value(static_cast<uint64_t>(0))}})}}},
+        {Opcode::SBLR3_ALTER_FOREIGN_TABLE,
+         Value::Object{{"name", Value(Value::List{Value(std::string("public")),
+                                                  Value(std::string("missing_foreign_table"))})},
+                       {"server", Value(std::string("missing_server"))},
+                       {"columns", Value(Value::List{})},
+                       {"options", Value(Value::Object{{"count", Value(static_cast<uint64_t>(0))}})}}},
+        {Opcode::SBLR3_ALTER_USER_MAPPING,
+         Value::Object{{"server", Value(std::string("missing_server"))},
+                       {"user", Value(std::string("PUBLIC"))},
+                       {"options", Value(Value::Object{{"count", Value(static_cast<uint64_t>(0))}})}}},
+        {Opcode::SBLR3_IMPORT_FOREIGN_SCHEMA,
+         Value::Object{{"action", Value(static_cast<uint64_t>(1))},
+                       {"object_name", Value(std::string("missing_server"))},
+                       {"options", Value(Value::Object{{"count", Value(static_cast<uint64_t>(0))}})}}},
+    }};
+
+    for (const auto& entry : cases)
+    {
+        ExecutionResult result = executeVNext(
+            static_cast<uint16_t>(entry.opcode), entry.payload);
+        EXPECT_EQ(result.error().find("BRG_0406"), std::string::npos) << result.error();
+        EXPECT_EQ(result.error().find("IRX_0403"), std::string::npos) << result.error();
+    }
+
+    EXPECT_EQ(reject_before,
+              metricCounterValue(metric, {"vnext_opcode_dispatch", "reject", "BRG_0406"}));
+}
+
+TEST_F(SBLRVNextExecutorDispatchContractTest,
+       RemoteOpcodeFamilyRoutesWithoutDeterministicBridgeReject)
+{
+    const std::string metric = "scratchbird_vnext_executor_events_total";
+    const double reject_before =
+        metricCounterValue(metric, {"vnext_opcode_dispatch", "reject", "BRG_0406"});
+
+    const std::array<Opcode, 14> cases = {{
+        Opcode::SBLR3_ANALYZE_REMOTE_SERVER,
+        Opcode::SBLR3_REFRESH_REMOTE_METADATA,
+        Opcode::SBLR3_SHOW_REMOTE_CAPABILITIES,
+        Opcode::SBLR3_SHOW_REMOTE_OBJECTS,
+        Opcode::SBLR3_SHOW_REMOTE_COLUMNS,
+        Opcode::SBLR3_SHOW_REMOTE_STATISTICS,
+        Opcode::SBLR3_EXECUTE_REMOTE,
+        Opcode::SBLR3_PREPARE_REMOTE,
+        Opcode::SBLR3_EXECUTE_REMOTE_PREPARED,
+        Opcode::SBLR3_DEALLOCATE_REMOTE_PREPARED,
+        Opcode::SBLR3_BEGIN_REMOTE_TRANSACTION,
+        Opcode::SBLR3_COMMIT_REMOTE_TRANSACTION,
+        Opcode::SBLR3_ROLLBACK_REMOTE_TRANSACTION,
+        Opcode::SBLR3_SHOW_REMOTE_SESSION_STATE,
+    }};
+
+    for (const auto opcode : cases)
+    {
+        ExecutionResult result = executeVNext(
+            static_cast<uint16_t>(opcode),
+            Value::Object{{"action", Value(static_cast<uint64_t>(1))},
+                          {"object_name", Value(std::string("missing_server"))},
+                          {"options", Value(Value::Object{{"count", Value(static_cast<uint64_t>(0))}})}});
+        EXPECT_FALSE(result.success()) << static_cast<uint16_t>(opcode);
+        EXPECT_EQ(result.error().find("BRG_0406"), std::string::npos) << result.error();
+        EXPECT_EQ(result.error().find("IRX_0403"), std::string::npos) << result.error();
+        EXPECT_EQ(result.error().find("REMOTE_22"), std::string::npos) << result.error();
+        EXPECT_NE(result.error().find("REMOTE_23"), std::string::npos) << result.error();
+    }
+
+    EXPECT_EQ(reject_before,
+              metricCounterValue(metric, {"vnext_opcode_dispatch", "reject", "BRG_0406"}));
+}
+
+TEST_F(SBLRVNextExecutorDispatchContractTest,
+       ShowRemoteObjectsFallsBackToCatalogSnapshotWhenRemoteRuntimeFails)
+{
+    const auto fixture =
+        installRemoteProjectionFixture("remote_projection_fallback_objects");
+
+    ExecutionResult result = executeVNext(
+        static_cast<uint16_t>(Opcode::SBLR3_SHOW_REMOTE_OBJECTS),
+        Value::Object{{"action", Value(static_cast<uint64_t>(1))},
+                      {"object_name", Value(fixture.server_name)},
+                      {"object_path", Value(Value::List{Value(fixture.server_name)})},
+                      {"options", Value(Value::Object{{"count", Value(static_cast<uint64_t>(0))}})}});
+
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+    ASSERT_NE(result.resultSet(), nullptr);
+    auto* rs = result.resultSet();
+    ASSERT_EQ(rs->columnCount(), 6u);
+    EXPECT_EQ(rs->columnName(0), "remote_path");
+    EXPECT_EQ(rs->columnName(1), "remote_schema_name");
+    EXPECT_EQ(rs->columnName(2), "remote_object_name");
+    EXPECT_EQ(rs->columnName(3), "remote_object_kind");
+    EXPECT_EQ(rs->columnName(4), "local_schema_path");
+    EXPECT_EQ(rs->columnName(5), "is_supported");
+    ASSERT_EQ(rs->rowCount(), 1u);
+    EXPECT_EQ(rs->getValue(0, 0).toString(), "public.orders");
+    EXPECT_EQ(rs->getValue(0, 1).toString(), "public");
+    EXPECT_EQ(rs->getValue(0, 2).toString(), "orders");
+    EXPECT_EQ(rs->getValue(0, 3).toString(), "TABLE");
+    EXPECT_FALSE(rs->getValue(0, 4).toString().empty());
+    EXPECT_EQ(rs->getValue(0, 5).toString(), "true");
+}
+
+TEST_F(SBLRVNextExecutorDispatchContractTest,
+       ShowRemoteColumnsFallsBackToCatalogSnapshotWhenRemoteRuntimeFails)
+{
+    const auto fixture =
+        installRemoteProjectionFixture("remote_projection_fallback_columns");
+
+    ExecutionResult result = executeVNext(
+        static_cast<uint16_t>(Opcode::SBLR3_SHOW_REMOTE_COLUMNS),
+        Value::Object{{"action", Value(static_cast<uint64_t>(1))},
+                      {"object_name", Value(fixture.server_name)},
+                      {"object_path", Value(Value::List{Value(fixture.server_name)})},
+                      {"options", Value(Value::Object{{"count", Value(static_cast<uint64_t>(0))}})}});
+
+    ASSERT_TRUE(result.success()) << result.error();
+    ASSERT_TRUE(result.hasResultSet());
+    ASSERT_NE(result.resultSet(), nullptr);
+    auto* rs = result.resultSet();
+    ASSERT_EQ(rs->columnCount(), 8u);
+    EXPECT_EQ(rs->columnName(0), "remote_path");
+    EXPECT_EQ(rs->columnName(1), "remote_schema_name");
+    EXPECT_EQ(rs->columnName(2), "remote_object_name");
+    EXPECT_EQ(rs->columnName(3), "column_name");
+    EXPECT_EQ(rs->columnName(4), "remote_type_name");
+    EXPECT_EQ(rs->columnName(5), "ordinal_position");
+    EXPECT_EQ(rs->columnName(6), "is_nullable");
+    EXPECT_EQ(rs->columnName(7), "local_schema_path");
+    ASSERT_EQ(rs->rowCount(), 2u);
+    EXPECT_EQ(rs->getValue(0, 0).toString(), "public.orders");
+    EXPECT_EQ(rs->getValue(0, 1).toString(), "public");
+    EXPECT_EQ(rs->getValue(0, 2).toString(), "orders");
+    EXPECT_EQ(rs->getValue(0, 3).toString(), "id");
+    EXPECT_EQ(rs->getValue(0, 6).toString(), "NO");
+    EXPECT_EQ(rs->getValue(1, 3).toString(), "status");
+    EXPECT_EQ(rs->getValue(1, 6).toString(), "YES");
+    EXPECT_FALSE(rs->getValue(0, 7).toString().empty());
+}
+
+TEST_F(SBLRVNextExecutorDispatchContractTest,
+       PrepareRemoteCatalogLifecyclePersistsAndDeallocates)
+{
+    const auto fixture = installRemoteProjectionFixture("remote_prepare_lifecycle");
+
+    ExecutionResult prepare_result = executeVNext(
+        static_cast<uint16_t>(Opcode::SBLR3_PREPARE_REMOTE),
+        Value::Object{{"action", Value(static_cast<uint64_t>(1))},
+                      {"object_name", Value(fixture.server_name)},
+                      {"options", Value(Value::Object{
+                                      {"count", Value(static_cast<uint64_t>(2))},
+                                      {"STATEMENT_NAME", Value(std::string("ps_orders"))},
+                                      {"SQL_TEXT", Value(std::string("SELECT * FROM orders"))}})}});
+
+    ASSERT_TRUE(prepare_result.success()) << prepare_result.error();
+    ASSERT_NE(conn_ctx_->sessionId(), ID{});
+
+    ErrorContext ctx;
+    std::vector<CatalogManager::RemotePreparedStatementCatalogInfo> rows;
+    ASSERT_EQ(db_->catalog_manager()->listRemotePreparedStatementCatalogEntries(conn_ctx_->sessionId(),
+                                                                                rows,
+                                                                                &ctx),
+              Status::OK)
+        << ctx.message;
+
+    bool found_prepared = false;
+    for (const auto& row : rows)
+    {
+        if (row.remote_connector_id == fixture.remote_connector_id &&
+            row.statement_name == "ps_orders" && row.is_valid)
+        {
+            found_prepared = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(found_prepared);
+
+    ExecutionResult deallocate_result = executeVNext(
+        static_cast<uint16_t>(Opcode::SBLR3_DEALLOCATE_REMOTE_PREPARED),
+        Value::Object{{"action", Value(static_cast<uint64_t>(1))},
+                      {"object_name", Value(fixture.server_name)},
+                      {"options", Value(Value::Object{
+                                      {"count", Value(static_cast<uint64_t>(1))},
+                                      {"STATEMENT_NAME", Value(std::string("ps_orders"))}})}});
+
+    ASSERT_TRUE(deallocate_result.success()) << deallocate_result.error();
+
+    rows.clear();
+    ASSERT_EQ(db_->catalog_manager()->listRemotePreparedStatementCatalogEntries(conn_ctx_->sessionId(),
+                                                                                rows,
+                                                                                &ctx),
+              Status::OK)
+        << ctx.message;
+
+    bool still_present = false;
+    for (const auto& row : rows)
+    {
+        if (row.remote_connector_id == fixture.remote_connector_id &&
+            row.statement_name == "ps_orders" && row.is_valid)
+        {
+            still_present = true;
+            break;
+        }
+    }
+    EXPECT_FALSE(still_present);
+}
+
+TEST_F(SBLRVNextExecutorDispatchContractTest,
+       ExecuteRemotePreparedUsesCatalogPreparedStateInsteadOfStubReject)
+{
+    const auto fixture = installRemoteProjectionFixture("remote_prepare_execute");
+
+    ExecutionResult prepare_result = executeVNext(
+        static_cast<uint16_t>(Opcode::SBLR3_PREPARE_REMOTE),
+        Value::Object{{"action", Value(static_cast<uint64_t>(1))},
+                      {"object_name", Value(fixture.server_name)},
+                      {"options", Value(Value::Object{
+                                      {"count", Value(static_cast<uint64_t>(2))},
+                                      {"STATEMENT_NAME", Value(std::string("ps_exec"))},
+                                      {"SQL_TEXT", Value(std::string("SELECT 1"))}})}});
+    ASSERT_TRUE(prepare_result.success()) << prepare_result.error();
+
+    ExecutionResult execute_prepared_result = executeVNext(
+        static_cast<uint16_t>(Opcode::SBLR3_EXECUTE_REMOTE_PREPARED),
+        Value::Object{{"action", Value(static_cast<uint64_t>(1))},
+                      {"object_name", Value(fixture.server_name)},
+                      {"options", Value(Value::Object{
+                                      {"count", Value(static_cast<uint64_t>(1))},
+                                      {"STATEMENT_NAME", Value(std::string("ps_exec"))}})}});
+
+    ASSERT_FALSE(execute_prepared_result.success());
+    EXPECT_NE(execute_prepared_result.error().find("REMOTE_2390"), std::string::npos)
+        << execute_prepared_result.error();
+    EXPECT_EQ(execute_prepared_result.error().find("REMOTE_2312"), std::string::npos)
+        << execute_prepared_result.error();
+}
+
+TEST_F(SBLRVNextExecutorDispatchContractTest,
+       BeginCommitRemoteTransactionPersistsLifecycleForAutonomousMode)
+{
+    const auto fixture = installRemoteProjectionFixture("remote_txn_lifecycle");
+
+    ExecutionResult begin_result = executeVNext(
+        static_cast<uint16_t>(Opcode::SBLR3_BEGIN_REMOTE_TRANSACTION),
+        Value::Object{{"action", Value(static_cast<uint64_t>(1))},
+                      {"object_name", Value(fixture.server_name)},
+                      {"options", Value(Value::Object{
+                                      {"count", Value(static_cast<uint64_t>(1))},
+                                      {"TXN_MODE", Value(std::string("AUTONOMOUS"))}})}});
+    ASSERT_TRUE(begin_result.success()) << begin_result.error();
+    ASSERT_NE(conn_ctx_->sessionId(), ID{});
+
+    ErrorContext ctx;
+    std::vector<CatalogManager::RemoteTxnBindingCatalogInfo> binding_rows;
+    ASSERT_EQ(db_->catalog_manager()->listRemoteTxnBindingCatalogEntries(fixture.remote_connector_id,
+                                                                         binding_rows,
+                                                                         &ctx),
+              Status::OK)
+        << ctx.message;
+
+    ID binding_id{};
+    bool found_active = false;
+    for (const auto& row : binding_rows)
+    {
+        if (row.session_id == conn_ctx_->sessionId() && row.is_valid)
+        {
+            binding_id = row.remote_txn_binding_id;
+            found_active = true;
+            EXPECT_EQ(row.txn_mode, CatalogManager::RemoteTxnMode::AUTONOMOUS);
+            EXPECT_EQ(row.txn_state, CatalogManager::RemoteTxnState::ACTIVE);
+            break;
+        }
+    }
+    ASSERT_TRUE(found_active);
+
+    ExecutionResult commit_result = executeVNext(
+        static_cast<uint16_t>(Opcode::SBLR3_COMMIT_REMOTE_TRANSACTION),
+        Value::Object{{"action", Value(static_cast<uint64_t>(1))},
+                      {"object_name", Value(fixture.server_name)},
+                      {"options", Value(Value::Object{
+                                      {"count", Value(static_cast<uint64_t>(0))}})}});
+    ASSERT_TRUE(commit_result.success()) << commit_result.error();
+
+    CatalogManager::RemoteTxnBindingCatalogInfo binding_out{};
+    ASSERT_EQ(db_->catalog_manager()->getRemoteTxnBindingCatalogEntry(binding_id, binding_out, &ctx),
+              Status::OK)
+        << ctx.message;
+    EXPECT_EQ(binding_out.txn_state, CatalogManager::RemoteTxnState::COMMITTED);
+    EXPECT_TRUE(binding_out.has_terminal_time);
+}
+
+TEST_F(SBLRVNextExecutorDispatchContractTest,
+       ShowRemoteSessionStateReportsPreparedAndTransactionCounts)
+{
+    const auto fixture = installRemoteProjectionFixture("remote_session_state");
+
+    ASSERT_TRUE(executeVNext(
+                    static_cast<uint16_t>(Opcode::SBLR3_PREPARE_REMOTE),
+                    Value::Object{{"action", Value(static_cast<uint64_t>(1))},
+                                  {"object_name", Value(fixture.server_name)},
+                                  {"options", Value(Value::Object{
+                                                  {"count", Value(static_cast<uint64_t>(2))},
+                                                  {"STATEMENT_NAME", Value(std::string("ps_state"))},
+                                                  {"SQL_TEXT", Value(std::string("SELECT 1"))}})}})
+                    .success());
+    ASSERT_TRUE(executeVNext(
+                    static_cast<uint16_t>(Opcode::SBLR3_BEGIN_REMOTE_TRANSACTION),
+                    Value::Object{{"action", Value(static_cast<uint64_t>(1))},
+                                  {"object_name", Value(fixture.server_name)},
+                                  {"options", Value(Value::Object{
+                                                  {"count", Value(static_cast<uint64_t>(1))},
+                                                  {"TXN_MODE", Value(std::string("AUTONOMOUS"))}})}})
+                    .success());
+
+    ExecutionResult show_result = executeVNext(
+        static_cast<uint16_t>(Opcode::SBLR3_SHOW_REMOTE_SESSION_STATE),
+        Value::Object{{"action", Value(static_cast<uint64_t>(1))},
+                      {"object_name", Value(fixture.server_name)},
+                      {"options", Value(Value::Object{
+                                      {"count", Value(static_cast<uint64_t>(0))}})}});
+
+    ASSERT_TRUE(show_result.success()) << show_result.error();
+    ASSERT_TRUE(show_result.hasResultSet());
+    ASSERT_NE(show_result.resultSet(), nullptr);
+    auto* rs = show_result.resultSet();
+    ASSERT_EQ(rs->rowCount(), 1u);
+    EXPECT_EQ(rs->getValue(0, 1).toString(), fixture.server_name);
+    EXPECT_EQ(rs->getValue(0, 2).toString(), "1");
+    EXPECT_EQ(rs->getValue(0, 3).toString(), "1");
+    EXPECT_EQ(rs->getValue(0, 4).toString(), "AUTONOMOUS");
+}
+
+TEST_F(SBLRVNextExecutorDispatchContractTest,
+       ExecuteRemoteCancelProducesCancelledAuditAndPreservesConnectorReadiness)
+{
+    const auto fixture = installRemoteProjectionFixture("remote_cancel_audit");
+    const std::string request_id_text = "01234567-89ab-cdef-0123-456789abcdef";
+    ID expected_request_id{};
+    ASSERT_TRUE(parseUuidText(request_id_text, expected_request_id));
+
+    ExecutionResult cancel_result = executeVNext(
+        static_cast<uint16_t>(Opcode::SBLR3_EXECUTE_REMOTE),
+        Value::Object{{"action", Value(static_cast<uint64_t>(1))},
+                      {"object_name", Value(fixture.server_name)},
+                      {"options", Value(Value::Object{
+                                      {"count", Value(static_cast<uint64_t>(3))},
+                                      {"SQL_TEXT", Value(std::string("SELECT 1"))},
+                                      {"CANCEL", Value(true)},
+                                      {"REQUEST_ID", Value(request_id_text)}})}});
+
+    ASSERT_FALSE(cancel_result.success());
+    EXPECT_NE(cancel_result.error().find("REMOTE_2311"), std::string::npos)
+        << cancel_result.error();
+
+    ErrorContext ctx;
+    CatalogManager::RemoteConnectorCatalogInfo connector{};
+    ASSERT_EQ(db_->catalog_manager()->getRemoteConnectorCatalogEntry(fixture.remote_connector_id,
+                                                                     connector,
+                                                                     &ctx),
+              Status::OK)
+        << ctx.message;
+    EXPECT_EQ(connector.state, CatalogManager::RemoteConnectorState::READY);
+    EXPECT_EQ(connector.failure_count, 0u);
+
+    std::vector<CatalogManager::RemoteExecutionAuditCatalogInfo> audit_rows;
+    ASSERT_EQ(db_->catalog_manager()->listRemoteExecutionAuditCatalogEntries(fixture.remote_connector_id,
+                                                                             audit_rows,
+                                                                             &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_EQ(audit_rows.size(), 1u);
+    EXPECT_EQ(audit_rows.front().exec_status, CatalogManager::RemoteExecStatus::CANCELLED);
+    EXPECT_EQ(audit_rows.front().request_id, expected_request_id);
+}
+
+TEST_F(SBLRVNextExecutorDispatchContractTest,
+       ExecuteRemoteFailuresDriveConnectorDegradedThenFailedState)
+{
+    const auto fixture = installRemoteProjectionFixture("remote_degraded_state");
+
+    auto execute_failure = [&]() -> ExecutionResult {
+        return executeVNext(
+            static_cast<uint16_t>(Opcode::SBLR3_EXECUTE_REMOTE),
+            Value::Object{{"action", Value(static_cast<uint64_t>(1))},
+                          {"object_name", Value(fixture.server_name)},
+                          {"options", Value(Value::Object{
+                                          {"count", Value(static_cast<uint64_t>(1))},
+                                          {"SQL_TEXT", Value(std::string("SELECT 1"))}})}});
+    };
+
+    ErrorContext ctx;
+    CatalogManager::RemoteConnectorCatalogInfo connector{};
+
+    for (int attempt = 1; attempt <= 3; ++attempt)
+    {
+        ExecutionResult result = execute_failure();
+        ASSERT_FALSE(result.success());
+        EXPECT_NE(result.error().find("REMOTE_2390"), std::string::npos) << result.error();
+
+        ASSERT_EQ(db_->catalog_manager()->getRemoteConnectorCatalogEntry(fixture.remote_connector_id,
+                                                                         connector,
+                                                                         &ctx),
+                  Status::OK)
+            << ctx.message;
+        EXPECT_EQ(connector.failure_count, static_cast<uint32_t>(attempt));
+        if (attempt < 3)
+        {
+            EXPECT_EQ(connector.state, CatalogManager::RemoteConnectorState::DEGRADED);
+        }
+        else
+        {
+            EXPECT_EQ(connector.state, CatalogManager::RemoteConnectorState::FAILED);
+        }
+    }
+
+    ExecutionResult failed_state_result = execute_failure();
+    ASSERT_FALSE(failed_state_result.success());
+    EXPECT_NE(failed_state_result.error().find("REMOTE_2304"), std::string::npos)
+        << failed_state_result.error();
+
+    std::vector<CatalogManager::RemoteExecutionAuditCatalogInfo> audit_rows;
+    ASSERT_EQ(db_->catalog_manager()->listRemoteExecutionAuditCatalogEntries(fixture.remote_connector_id,
+                                                                             audit_rows,
+                                                                             &ctx),
+              Status::OK)
+        << ctx.message;
+    ASSERT_EQ(audit_rows.size(), 3u);
+    for (const auto& row : audit_rows)
+    {
+        EXPECT_EQ(row.exec_status, CatalogManager::RemoteExecStatus::FAILED);
+    }
 }
 
 TEST_F(SBLRVNextExecutorDispatchContractTest, BridgeOpcodeFamilyMatrixRejectsDeterministically)

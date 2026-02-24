@@ -1,7 +1,6 @@
 # SB-CLUSTER-THREAT-MODEL-AND-FAILURE-ANALYSIS
 ## Applies To: SB-CLUSTER-SWS-MGA-01
-### Transaction Model: MGA
-### Sharding Model: Single Writer Per Shard
+### Model: Single-Writer-Per-Shard (MGA)
 
 ---
 
@@ -9,20 +8,18 @@
 
 ## 1.1 Assumptions
 
-- Nodes may crash.
+- Nodes may crash unexpectedly.
 - Network partitions may occur.
 - Clock skew exists.
 - Nodes may be compromised.
-- Disk corruption possible.
-- Replay or message duplication possible.
+- Disk corruption is possible.
+- Replay or duplicate replication messages may occur.
 
 ---
 
 # 2. Threat Categories
 
----
-
-## 2.1 Split Brain (Dual Leaders)
+## 2.1 Split Brain
 
 ### Risk
 Two nodes accept writes for same shard.
@@ -31,10 +28,6 @@ Two nodes accept writes for same shard.
 - Leader term monotonic increment.
 - Lease expiration enforcement.
 - Fencing token required for every write.
-
-### Failure Outcome if Broken
-- Divergent histories.
-- Irreconcilable record versions.
 
 ---
 
@@ -52,13 +45,9 @@ Old leader continues writing after demotion.
 
 ## 2.3 Network Partition
 
-### Scenario
-Cluster splits into majority/minority.
-
 ### Expected Behavior
 - Majority elects leader.
-- Minority cannot form quorum.
-- Minority leader loses lease.
+- Minority loses lease.
 - Minority writes rejected.
 
 ---
@@ -70,50 +59,41 @@ Leader reclaims versions still required by lagging follower.
 
 ### Mitigation
 - RWM_shard included in GC_safe_shard.
-- Version reclamation blocked if below follower watermark.
 
 ---
 
-## 2.5 Long-Running Snapshot Data Loss
+## 2.5 Long-Running Snapshot Loss
 
 ### Risk
-Sweep deletes record versions needed by active snapshot.
+Sweep deletes versions required by snapshot.
 
 ### Mitigation
 - Snapshot registry.
-- OST_shard calculation.
+- OST_shard computation.
 - GC_safe_shard enforcement.
 
 ---
 
-## 2.6 Transaction ID Collision
+## 2.6 Transaction Identity Collision
 
 ### Risk
 Duplicate local_txn_id across shards.
 
 ### Mitigation
 - GTXID includes shard_id.
-- Local txn monotonic per shard.
 
 ---
 
 ## 2.7 Control Plane Compromise
 
-### Risk
-Malicious node injects fake shard leader.
-
 ### Mitigation
-- Node identity verification.
-- Certificate-based authentication.
-- Control-plane log signature validation.
-- Security epoch enforcement.
+- Mutual TLS between nodes.
+- Certificate validation.
+- Signed control-plane log entries.
 
 ---
 
-## 2.8 Replay Attack on Replication Log
-
-### Risk
-Duplicate or reordered commit entries applied.
+## 2.8 Replication Replay Attack
 
 ### Mitigation
 - Strict ordering by local_txn_id.
@@ -122,104 +102,55 @@ Duplicate or reordered commit entries applied.
 
 ---
 
-# 3. Failure Modes and Handling
-
----
+# 3. Failure Modes
 
 ## 3.1 Leader Crash
-
-**Behavior**
-- Control plane detects heartbeat timeout.
-- New leader elected.
+- Election triggered.
 - leader_term incremented.
-- New fencing token generated.
-
-**Recovery**
-- New leader replays SCL to ensure latest committed state.
-
----
+- Fencing prevents stale writes.
 
 ## 3.2 Follower Crash
-
-**Behavior**
 - Follower marked unhealthy.
-- Leader continues serving writes.
-- RWM_shard updated to exclude follower.
-
-**Recovery**
-- Follower replays SCL from last applied position.
-
----
+- Leader continues writes.
+- Follower replays SCL on recovery.
 
 ## 3.3 Disk Corruption
-
-**Behavior**
-- Node detects corruption.
 - Node leaves cluster.
-- Requires manual recovery or rebuild from replica.
-
----
+- Requires rebuild from replica.
 
 ## 3.4 Snapshot Registry Failure
-
-**Behavior**
-- Node fails to heartbeat snapshot.
-- Snapshot considered stale after timeout.
-- Removed from OST_shard computation.
-
----
-
-## 3.5 Control Plane Log Corruption
-
-**Mitigation**
-- Append-only.
-- Checksum validation.
-- Majority quorum required for commit.
+- Snapshot expires after timeout.
 
 ---
 
 # 4. Residual Risks
 
-- Simultaneous correlated hardware failure.
-- Byzantine node behavior (not mitigated in MVP).
+- Correlated hardware failures.
+- Byzantine behavior (not mitigated in MVP).
 - Operator misconfiguration.
-- Delayed detection of partition under low traffic.
 
 ---
 
-# 5. Security Hardening Recommendations
-
-- Mutual TLS between nodes.
-- Certificate pinning for control-plane communication.
-- Audit logging for:
-  - leader changes
-  - shard reassignments
-  - epoch changes
-  - fencing violations
-- Rate limiting join attempts.
-
----
-
-# 6. Validation Requirements
+# 5. Validation Requirements
 
 Cluster must pass:
 
 - Deterministic split-brain simulation.
-- High-latency replication test.
-- Snapshot retention stress test.
-- Leader churn under load test.
-- Forced crash recovery test.
+- High-latency replication stress.
+- Snapshot retention under load.
+- Leader churn under load.
+- Crash recovery consistency test.
 
 ---
 
-# 7. Conclusion
+# 6. Conclusion
 
 This cluster model provides:
+- Deterministic single-writer enforcement.
+- MGA-consistent snapshot behavior.
+- GC safety across shards.
+- Clean failover behavior.
+- Deterministic domain replication.
 
-- Deterministic safety under partition.
-- MGA-consistent visibility rules.
-- GC correctness across shards.
-- Single-writer enforcement.
-- Clean path toward future distributed extensions.
+This document defines the cluster threat envelope and required safeguards for ScratchBird Beta.
 
-The design prioritizes correctness and determinism over speculative multi-writer complexity.

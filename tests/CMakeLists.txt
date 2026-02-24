@@ -260,6 +260,9 @@ target_link_libraries(scratchbird_tests
     scratchbird_parser
     scratchbird_link_group
 )
+if(TARGET scratchbird_udr)
+    target_link_libraries(scratchbird_tests scratchbird_udr)
+endif()
 
 
 # Link GEOS library if available (for spatial functions)
@@ -298,6 +301,9 @@ target_link_libraries(scratchbird_tests_sequential
     scratchbird_parser
     scratchbird_link_group
 )
+if(TARGET scratchbird_udr)
+    target_link_libraries(scratchbird_tests_sequential scratchbird_udr)
+endif()
 
 if(GEOS_FOUND)
     target_link_libraries(scratchbird_tests_sequential ${GEOS_LIBRARIES})

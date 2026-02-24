@@ -68,6 +68,12 @@ TEST(SBLRVNextPayloadSchemaMappingContractTest, OpcodeToSchemaMappingsAreDetermi
 
 TEST(SBLRVNextPayloadSchemaMappingContractTest, BridgeOpcodeRangeMappingsAreDeterministic)
 {
+    struct MappingCase
+    {
+        uint16_t opcode;
+        const char *schema_name;
+    };
+
     auto expectRange = [](uint16_t start, uint16_t end, const char *schema_name) {
         for (uint16_t opcode = start; opcode <= end; ++opcode)
         {
@@ -84,6 +90,40 @@ TEST(SBLRVNextPayloadSchemaMappingContractTest, BridgeOpcodeRangeMappingsAreDete
     expectRange(0x6114, 0x611E, "SCHEMA_CONTROL_COMMAND");
     expectRange(0x611F, 0x6139, "SCHEMA_MULTI_MODEL_QUERY");
     expectRange(0x613A, 0x615F, "SCHEMA_CONTROL_COMMAND");
+
+    const std::array<MappingCase, 20> remote_fdw_bridge_mapping = {{
+        {static_cast<uint16_t>(Opcode::SBLR3_ALTER_FOREIGN_DATA_WRAPPER),
+         "SCHEMA_DDL_CREATE_FOREIGN_DATA_WRAPPER"},
+        {static_cast<uint16_t>(Opcode::SBLR3_DROP_FOREIGN_DATA_WRAPPER), "SCHEMA_DDL_DROP"},
+        {static_cast<uint16_t>(Opcode::SBLR3_ALTER_FOREIGN_SERVER),
+         "SCHEMA_DDL_CREATE_FOREIGN_SERVER"},
+        {static_cast<uint16_t>(Opcode::SBLR3_ALTER_FOREIGN_TABLE),
+         "SCHEMA_DDL_CREATE_FOREIGN_TABLE"},
+        {static_cast<uint16_t>(Opcode::SBLR3_ALTER_USER_MAPPING),
+         "SCHEMA_DDL_CREATE_USER_MAPPING"},
+        {static_cast<uint16_t>(Opcode::SBLR3_IMPORT_FOREIGN_SCHEMA), "SCHEMA_CONTROL_COMMAND"},
+        {static_cast<uint16_t>(Opcode::SBLR3_ANALYZE_REMOTE_SERVER), "SCHEMA_CONTROL_COMMAND"},
+        {static_cast<uint16_t>(Opcode::SBLR3_REFRESH_REMOTE_METADATA), "SCHEMA_CONTROL_COMMAND"},
+        {static_cast<uint16_t>(Opcode::SBLR3_SHOW_REMOTE_CAPABILITIES), "SCHEMA_CONTROL_COMMAND"},
+        {static_cast<uint16_t>(Opcode::SBLR3_SHOW_REMOTE_OBJECTS), "SCHEMA_CONTROL_COMMAND"},
+        {static_cast<uint16_t>(Opcode::SBLR3_SHOW_REMOTE_COLUMNS), "SCHEMA_CONTROL_COMMAND"},
+        {static_cast<uint16_t>(Opcode::SBLR3_SHOW_REMOTE_STATISTICS), "SCHEMA_CONTROL_COMMAND"},
+        {static_cast<uint16_t>(Opcode::SBLR3_EXECUTE_REMOTE), "SCHEMA_CONTROL_COMMAND"},
+        {static_cast<uint16_t>(Opcode::SBLR3_PREPARE_REMOTE), "SCHEMA_CONTROL_COMMAND"},
+        {static_cast<uint16_t>(Opcode::SBLR3_EXECUTE_REMOTE_PREPARED), "SCHEMA_CONTROL_COMMAND"},
+        {static_cast<uint16_t>(Opcode::SBLR3_DEALLOCATE_REMOTE_PREPARED), "SCHEMA_CONTROL_COMMAND"},
+        {static_cast<uint16_t>(Opcode::SBLR3_BEGIN_REMOTE_TRANSACTION), "SCHEMA_CONTROL_COMMAND"},
+        {static_cast<uint16_t>(Opcode::SBLR3_COMMIT_REMOTE_TRANSACTION), "SCHEMA_CONTROL_COMMAND"},
+        {static_cast<uint16_t>(Opcode::SBLR3_ROLLBACK_REMOTE_TRANSACTION), "SCHEMA_CONTROL_COMMAND"},
+        {static_cast<uint16_t>(Opcode::SBLR3_SHOW_REMOTE_SESSION_STATE), "SCHEMA_CONTROL_COMMAND"},
+    }};
+    for (const auto &entry : remote_fdw_bridge_mapping)
+    {
+        const SchemaDef *schema = scratchbird::sblr::v3::schemaForOpcode(entry.opcode);
+        ASSERT_NE(nullptr, schema) << "missing schema for bridge opcode " << entry.opcode;
+        EXPECT_EQ(std::string(entry.schema_name), schema->name)
+            << "unexpected schema for bridge opcode " << entry.opcode;
+    }
 
     const SchemaDef *create_db_emulated =
         scratchbird::sblr::v3::schemaForOpcode(static_cast<uint16_t>(Opcode::SBLR3_CREATE_DATABASE_EMULATED));
