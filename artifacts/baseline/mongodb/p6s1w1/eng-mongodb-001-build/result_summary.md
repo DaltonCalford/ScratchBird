@@ -7,7 +7,7 @@
 - commands_total: `3`
 - commands_passed: `2`
 - commands_failed: `1`
-- reason: `Command failed (timeout): bazel build install-mongod`
+- reason: `Command failed: bazel build install-mongod`
 
 ## Evidence Files
 - `run_manifest.md`

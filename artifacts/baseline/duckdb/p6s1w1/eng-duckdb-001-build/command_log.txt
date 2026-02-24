@@ -1,13 +1,13 @@
 task_id=ENG-DUCKDB-001
 status=blocked
-timestamp_utc=2026-02-24T04:31:47Z
+timestamp_utc=2026-02-24T15:19:53Z
 
 === command 1 ===
 cwd: /home/dcalford/CliWork
-timeout_s: 20
+timeout_s: 40
 rc: 0
 timed_out: False
-duration_s: 0.022
+duration_s: 0.018
 cmd: test -d /home/dcalford/CliWork/duckdb && git -C /home/dcalford/CliWork/duckdb rev-parse --short HEAD
 --- output begin ---
 e2be44ff8f
@@ -15,10 +15,10 @@ e2be44ff8f
 
 === command 2 ===
 cwd: /home/dcalford/CliWork/duckdb
-timeout_s: 300
+timeout_s: 600
 rc: 124
 timed_out: True
-duration_s: 300.014
+duration_s: 600.003
 cmd: make -j2
 --- output begin ---
 mkdir -p ./build/release && \
@@ -31,364 +31,1022 @@ cmake --build . --config Release
 -- Load extension 'parquet' from '/home/dcalford/CliWork/duckdb/extensions' @ e2be44ff8f
 -- Load extension 'jemalloc' from '/home/dcalford/CliWork/duckdb/extensions' @ e2be44ff8f
 -- Extensions linked into DuckDB: [core_functions, parquet, jemalloc]
--- Configuring done (1.8s)
--- Generating done (0.4s)
+-- Configuring done (1.6s)
+-- Generating done (0.3s)
 -- Build files have been written to: /home/dcalford/CliWork/duckdb/build/release
 gmake[1]: warning: jobserver unavailable: using -j1.  Add '+' to parent make rule.
 gmake[1]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
 gmake[2]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[  0%] Building CXX object extension/CMakeFiles/dummy_static_extension_loader.dir/loader/dummy_static_extension_loader.cpp.o
-[  0%] Linking CXX static library libdummy_static_extension_loader.a
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [  0%] Built target dummy_static_extension_loader
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[  0%] Building CXX object CMakeFiles/duckdb_platform_binary.dir/tools/utils/test_platform.cpp.o
-[  0%] Linking CXX executable duckdb_platform_binary
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [  0%] Built target duckdb_platform_binary
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[  0%] Generating duckdb_platform_out
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [  0%] Built target duckdb_platform
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[  0%] Building CXX object third_party/zstd/CMakeFiles/duckdb_zstd.dir/compress/zstd_compress_superblock.cpp.o
-[  1%] Building CXX object third_party/zstd/CMakeFiles/duckdb_zstd.dir/compress/zstdmt_compress.cpp.o
-[  1%] Building CXX object third_party/zstd/CMakeFiles/duckdb_zstd.dir/compress/zstd_double_fast.cpp.o
-[  1%] Building CXX object third_party/zstd/CMakeFiles/duckdb_zstd.dir/compress/zstd_fast.cpp.o
-[  1%] Building CXX object third_party/zstd/CMakeFiles/duckdb_zstd.dir/compress/zstd_compress_sequences.cpp.o
-[  1%] Building CXX object third_party/zstd/CMakeFiles/duckdb_zstd.dir/compress/zstd_ldm.cpp.o
-[  2%] Building CXX object third_party/zstd/CMakeFiles/duckdb_zstd.dir/compress/hist.cpp.o
-[  2%] Building CXX object third_party/zstd/CMakeFiles/duckdb_zstd.dir/compress/zstd_compress.cpp.o
-[  2%] Building CXX object third_party/zstd/CMakeFiles/duckdb_zstd.dir/compress/zstd_lazy.cpp.o
-[  2%] Building CXX object third_party/zstd/CMakeFiles/duckdb_zstd.dir/compress/zstd_compress_literals.cpp.o
-[  2%] Building CXX object third_party/zstd/CMakeFiles/duckdb_zstd.dir/compress/huf_compress.cpp.o
-[  2%] Building CXX object third_party/zstd/CMakeFiles/duckdb_zstd.dir/compress/zstd_opt.cpp.o
-[  3%] Building CXX object third_party/zstd/CMakeFiles/duckdb_zstd.dir/compress/fse_compress.cpp.o
-[  3%] Building CXX object third_party/zstd/CMakeFiles/duckdb_zstd.dir/decompress/zstd_ddict.cpp.o
-[  3%] Building CXX object third_party/zstd/CMakeFiles/duckdb_zstd.dir/decompress/huf_decompress.cpp.o
-[  3%] Building CXX object third_party/zstd/CMakeFiles/duckdb_zstd.dir/decompress/zstd_decompress.cpp.o
-[  3%] Building CXX object third_party/zstd/CMakeFiles/duckdb_zstd.dir/decompress/zstd_decompress_block.cpp.o
-[  3%] Building CXX object third_party/zstd/CMakeFiles/duckdb_zstd.dir/common/entropy_common.cpp.o
-[  4%] Building CXX object third_party/zstd/CMakeFiles/duckdb_zstd.dir/common/fse_decompress.cpp.o
-[  4%] Building CXX object third_party/zstd/CMakeFiles/duckdb_zstd.dir/common/debug.cpp.o
-[  4%] Building CXX object third_party/zstd/CMakeFiles/duckdb_zstd.dir/common/xxhash.cpp.o
-[  4%] Building CXX object third_party/zstd/CMakeFiles/duckdb_zstd.dir/common/pool.cpp.o
-[  4%] Building CXX object third_party/zstd/CMakeFiles/duckdb_zstd.dir/common/threading.cpp.o
-[  4%] Building CXX object third_party/zstd/CMakeFiles/duckdb_zstd.dir/common/zstd_common.cpp.o
-[  5%] Building CXX object third_party/zstd/CMakeFiles/duckdb_zstd.dir/common/error_private.cpp.o
-[  5%] Building CXX object third_party/zstd/CMakeFiles/duckdb_zstd.dir/dict/cover.cpp.o
-[  5%] Building CXX object third_party/zstd/CMakeFiles/duckdb_zstd.dir/dict/divsufsort.cpp.o
-[  5%] Building CXX object third_party/zstd/CMakeFiles/duckdb_zstd.dir/dict/fastcover.cpp.o
-[  5%] Building CXX object third_party/zstd/CMakeFiles/duckdb_zstd.dir/dict/zdict.cpp.o
-[  5%] Building CXX object third_party/zstd/CMakeFiles/duckdb_zstd.dir/deprecated/zbuff_common.cpp.o
-[  6%] Building CXX object third_party/zstd/CMakeFiles/duckdb_zstd.dir/deprecated/zbuff_decompress.cpp.o
-[  6%] Building CXX object third_party/zstd/CMakeFiles/duckdb_zstd.dir/deprecated/zbuff_compress.cpp.o
-[  6%] Linking CXX static library libduckdb_zstd.a
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [  6%] Built target duckdb_zstd
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[  7%] Building CXX object src/optimizer/CMakeFiles/duckdb_optimizer.dir/ub_duckdb_optimizer.cpp.o
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [  7%] Built target duckdb_optimizer
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[  7%] Building CXX object src/optimizer/compressed_materialization/CMakeFiles/duckdb_optimizer_compressed_materialization.dir/ub_duckdb_optimizer_compressed_materialization.cpp.o
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [  7%] Built target duckdb_optimizer_compressed_materialization
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[  7%] Building CXX object src/optimizer/join_order/CMakeFiles/duckdb_optimizer_join_order.dir/ub_duckdb_optimizer_join_order.cpp.o
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [  7%] Built target duckdb_optimizer_join_order
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[  7%] Building CXX object src/optimizer/matcher/CMakeFiles/duckdb_optimizer_matcher.dir/ub_duckdb_optimizer_matcher.cpp.o
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [  7%] Built target duckdb_optimizer_matcher
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[  7%] Building CXX object src/optimizer/pullup/CMakeFiles/duckdb_optimizer_pullup.dir/ub_duckdb_optimizer_pullup.cpp.o
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [  7%] Built target duckdb_optimizer_pullup
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[  7%] Building CXX object src/optimizer/pushdown/CMakeFiles/duckdb_optimizer_pushdown.dir/ub_duckdb_optimizer_pushdown.cpp.o
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [  7%] Built target duckdb_optimizer_pushdown
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[  8%] Building CXX object src/optimizer/rule/CMakeFiles/duckdb_optimizer_rules.dir/ub_duckdb_optimizer_rules.cpp.o
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [  8%] Built target duckdb_optimizer_rules
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[  8%] Building CXX object src/optimizer/statistics/expression/CMakeFiles/duckdb_optimizer_statistics_expr.dir/ub_duckdb_optimizer_statistics_expr.cpp.o
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [  8%] Built target duckdb_optimizer_statistics_expr
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[  8%] Building CXX object src/optimizer/statistics/operator/CMakeFiles/duckdb_optimizer_statistics_op.dir/ub_duckdb_optimizer_statistics_op.cpp.o
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [  8%] Built target duckdb_optimizer_statistics_op
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[  8%] Building CXX object src/planner/CMakeFiles/duckdb_planner.dir/ub_duckdb_planner.cpp.o
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [  8%] Built target duckdb_planner
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[  8%] Building CXX object src/planner/expression/CMakeFiles/duckdb_planner_expression.dir/ub_duckdb_planner_expression.cpp.o
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [  8%] Built target duckdb_planner_expression
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[  8%] Building CXX object src/planner/binder/expression/CMakeFiles/duckdb_bind_expression.dir/ub_duckdb_bind_expression.cpp.o
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [  8%] Built target duckdb_bind_expression
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[  8%] Building CXX object src/planner/binder/query_node/CMakeFiles/duckdb_bind_query_node.dir/ub_duckdb_bind_query_node.cpp.o
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [  8%] Built target duckdb_bind_query_node
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[  8%] Building CXX object src/planner/binder/statement/CMakeFiles/duckdb_bind_statement.dir/ub_duckdb_bind_statement.cpp.o
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [  8%] Built target duckdb_bind_statement
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[  8%] Building CXX object src/planner/binder/tableref/CMakeFiles/duckdb_bind_tableref.dir/ub_duckdb_bind_tableref.cpp.o
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [  8%] Built target duckdb_bind_tableref
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[  8%] Building CXX object src/planner/expression_binder/CMakeFiles/duckdb_expression_binders.dir/ub_duckdb_expression_binders.cpp.o
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [  8%] Built target duckdb_expression_binders
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[  8%] Building CXX object src/planner/filter/CMakeFiles/duckdb_planner_filter.dir/ub_duckdb_planner_filter.cpp.o
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [  8%] Built target duckdb_planner_filter
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[  8%] Building CXX object src/planner/operator/CMakeFiles/duckdb_planner_operator.dir/ub_duckdb_planner_operator.cpp.o
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [  8%] Built target duckdb_planner_operator
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[  9%] Building CXX object src/planner/subquery/CMakeFiles/duckdb_planner_subquery.dir/ub_duckdb_planner_subquery.cpp.o
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [  9%] Built target duckdb_planner_subquery
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[  9%] Building CXX object src/parser/CMakeFiles/duckdb_parser.dir/ub_duckdb_parser.cpp.o
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [  9%] Built target duckdb_parser
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[  9%] Building CXX object src/parser/constraints/CMakeFiles/duckdb_constraints.dir/ub_duckdb_constraints.cpp.o
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [  9%] Built target duckdb_constraints
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[  9%] Building CXX object src/parser/expression/CMakeFiles/duckdb_expression.dir/ub_duckdb_expression.cpp.o
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [  9%] Built target duckdb_expression
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[  9%] Building CXX object src/parser/parsed_data/CMakeFiles/duckdb_parsed_data.dir/ub_duckdb_parsed_data.cpp.o
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [  9%] Built target duckdb_parsed_data
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[  9%] Building CXX object src/parser/query_node/CMakeFiles/duckdb_query_node.dir/ub_duckdb_query_node.cpp.o
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [  9%] Built target duckdb_query_node
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[ 10%] Building CXX object src/parser/statement/CMakeFiles/duckdb_statement.dir/ub_duckdb_statement.cpp.o
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [ 10%] Built target duckdb_statement
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[ 11%] Building CXX object src/parser/tableref/CMakeFiles/duckdb_parser_tableref.dir/ub_duckdb_parser_tableref.cpp.o
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [ 11%] Built target duckdb_parser_tableref
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[ 11%] Building CXX object src/parser/transform/constraint/CMakeFiles/duckdb_transformer_constraint.dir/ub_duckdb_transformer_constraint.cpp.o
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [ 11%] Built target duckdb_transformer_constraint
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[ 11%] Building CXX object src/parser/transform/expression/CMakeFiles/duckdb_transformer_expression.dir/ub_duckdb_transformer_expression.cpp.o
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [ 11%] Built target duckdb_transformer_expression
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[ 11%] Building CXX object src/parser/transform/helpers/CMakeFiles/duckdb_transformer_helpers.dir/ub_duckdb_transformer_helpers.cpp.o
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [ 11%] Built target duckdb_transformer_helpers
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[ 11%] Building CXX object src/parser/transform/statement/CMakeFiles/duckdb_transformer_statement.dir/ub_duckdb_transformer_statement.cpp.o
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [ 11%] Built target duckdb_transformer_statement
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[ 11%] Building CXX object src/parser/transform/tableref/CMakeFiles/duckdb_transformer_tableref.dir/ub_duckdb_transformer_tableref.cpp.o
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [ 11%] Built target duckdb_transformer_tableref
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[ 11%] Building CXX object src/function/CMakeFiles/duckdb_function.dir/ub_duckdb_function.cpp.o
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [ 11%] Built target duckdb_function
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[ 11%] Building CXX object src/function/aggregate/CMakeFiles/duckdb_func_aggr.dir/ub_duckdb_func_aggr.cpp.o
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [ 11%] Built target duckdb_func_aggr
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[ 12%] Building CXX object src/function/aggregate/distributive/CMakeFiles/duckdb_aggr_distr.dir/ub_duckdb_aggr_distr.cpp.o
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [ 12%] Built target duckdb_aggr_distr
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[ 12%] Building CXX object src/function/cast/CMakeFiles/duckdb_func_cast.dir/ub_duckdb_func_cast.cpp.o
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [ 12%] Built target duckdb_func_cast
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[ 13%] Building CXX object src/function/cast/union/CMakeFiles/duckdb_union_cast.dir/ub_duckdb_union_cast.cpp.o
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [ 13%] Built target duckdb_union_cast
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[ 13%] Building CXX object src/function/cast/variant/CMakeFiles/duckdb_variant_cast.dir/ub_duckdb_variant_cast.cpp.o
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [ 13%] Built target duckdb_variant_cast
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[ 13%] Building CXX object src/function/pragma/CMakeFiles/duckdb_func_pragma.dir/ub_duckdb_func_pragma.cpp.o
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [ 13%] Built target duckdb_func_pragma
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[ 13%] Building CXX object src/function/scalar/CMakeFiles/duckdb_func_scalar.dir/ub_duckdb_func_scalar.cpp.o
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [ 13%] Built target duckdb_func_scalar
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[ 13%] Building CXX object src/function/scalar/compressed_materialization/CMakeFiles/duckdb_func_compressed_materialization.dir/ub_duckdb_func_compressed_materialization.cpp.o
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [ 13%] Built target duckdb_func_compressed_materialization
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[ 13%] Building CXX object src/function/scalar/date/CMakeFiles/duckdb_func_date.dir/ub_duckdb_func_date.cpp.o
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [ 13%] Built target duckdb_func_date
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[ 13%] Building CXX object src/function/scalar/generic/CMakeFiles/duckdb_func_generic_main.dir/ub_duckdb_func_generic_main.cpp.o
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [ 13%] Built target duckdb_func_generic_main
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[ 13%] Building CXX object src/function/scalar/list/CMakeFiles/duckdb_func_list_nested.dir/ub_duckdb_func_list_nested.cpp.o
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [ 13%] Built target duckdb_func_list_nested
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[ 13%] Building CXX object src/function/scalar/map/CMakeFiles/duckdb_function_map.dir/ub_duckdb_function_map.cpp.o
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [ 13%] Built target duckdb_function_map
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[ 13%] Building CXX object src/function/scalar/operator/CMakeFiles/duckdb_func_ops_main.dir/ub_duckdb_func_ops_main.cpp.o
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [ 13%] Built target duckdb_func_ops_main
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[ 13%] Building CXX object src/function/scalar/sequence/CMakeFiles/duckdb_func_seq.dir/ub_duckdb_func_seq.cpp.o
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [ 13%] Built target duckdb_func_seq
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[ 14%] Building CXX object src/function/scalar/string/CMakeFiles/duckdb_func_string_main.dir/ub_duckdb_func_string_main.cpp.o
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [ 14%] Built target duckdb_func_string_main
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
-gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[ 14%] Building CXX object src/function/scalar/string/regexp/CMakeFiles/duckdb_func_string_regexp.dir/ub_duckdb_func_string_regexp.cpp.o
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
 [ 14%] Built target duckdb_func_string_regexp
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
 gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 14%] Built target duckdb_func_struct_main
 gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
-[ 14%] Building CXX object src/function/scalar/struct/CMakeFiles/duckdb_func_struct_main.dir/ub_duckdb_func_struct_main.cpp.o
-gmake[3]: *** [src/function/scalar/struct/CMakeFiles/duckdb_func_struct_main.dir/build.make:76: src/function/scalar/struct/CMakeFiles/duckdb_func_struct_main.dir/ub_duckdb_func_struct_main.cpp.o] Terminated
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 15%] Built target duckdb_func_variant_main
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 15%] Built target duckdb_func_system
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 16%] Built target duckdb_func_geometry
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 16%] Built target duckdb_func_table
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 16%] Built target duckdb_table_func_system
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 16%] Built target duckdb_func_table_version
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 16%] Built target duckdb_arrow_conversion
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 16%] Built target duckdb_func_window
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 16%] Built target duckdb_function_variant
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 17%] Built target duckdb_catalog
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 17%] Built target duckdb_catalog_entries
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 17%] Built target duckdb_catalog_entries_dependency
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 17%] Built target duckdb_catalog_default_entries
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 17%] Built target duckdb_common
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 17%] Built target duckdb_adbc
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 17%] Built target duckdb_adbc_nanoarrow
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 17%] Built target duckdb_common_arrow
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 18%] Built target duckdb_common_arrow_appender
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 18%] Built target duckdb_common_crypto
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 18%] Built target duckdb_common_enums
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 18%] Built target duckdb_common_exception
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 19%] Built target duckdb_common_multi_file
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 19%] Built target duckdb_common_operators
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 19%] Built target duckdb_progress_bar
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 19%] Built target duckdb_common_tree_renderer
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 19%] Built target duckdb_row_operations
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 19%] Built target duckdb_common_serializer
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 19%] Built target duckdb_sort
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 19%] Built target duckdb_common_types
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 19%] Built target duckdb_common_types_column
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 20%] Built target duckdb_common_types_row
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 20%] Built target duckdb_common_variant
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 20%] Built target duckdb_value_operations
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 22%] Built target duckdb_vector_operations
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 23%] Built target duckdb_logging
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 24%] Built target duckdb_execution
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 24%] Built target duckdb_expression_executor
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 25%] Built target duckdb_nested_loop_join
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 25%] Built target duckdb_operator_aggregate
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 26%] Built target duckdb_csv_buffer_manager
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 26%] Built target duckdb_csv_encode
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 26%] Built target duckdb_csv_scanner
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 26%] Built target duckdb_csv_sniffer
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 26%] Built target duckdb_csv_state_machine
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 26%] Built target duckdb_operator_csv_table_function
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 26%] Built target duckdb_csv_util
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 26%] Built target duckdb_operator_filter
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 26%] Built target duckdb_operator_helper
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 26%] Built target duckdb_operator_join
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 27%] Built target duckdb_operator_order
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 27%] Built target duckdb_operator_persistent
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 27%] Built target duckdb_operator_projection
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 27%] Built target duckdb_operator_scan
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 27%] Built target duckdb_operator_schema
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 27%] Built target duckdb_operator_set
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 28%] Built target duckdb_physical_plan
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 28%] Built target duckdb_execution_index
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 28%] Built target duckdb_execution_index_art
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 28%] Built target duckdb_sample
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 28%] Built target duckdb_main
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 28%] Built target duckdb_main_capi
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 28%] Built target duckdb_main_capi_cast
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 29%] Built target duckdb_main_extension
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 29%] Built target duckdb_common_http
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 30%] Built target duckdb_main_relation
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 30%] Built target duckdb_main_secret
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 30%] Built target duckdb_main_settings
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 30%] Built target duckdb_main_buffered_data
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 30%] Built target duckdb_main_chunk_scan_state
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 30%] Built target duckdb_parallel
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 30%] Built target duckdb_storage
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 30%] Built target duckdb_storage_buffer
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 30%] Built target duckdb_storage_checkpoint
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 30%] Built target duckdb_storage_compression
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 30%] Building CXX object src/storage/compression/chimp/CMakeFiles/duckdb_storage_compression_chimp.dir/ub_duckdb_storage_compression_chimp.cpp.o
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 30%] Built target duckdb_storage_compression_chimp
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 31%] Building CXX object src/storage/compression/alp/CMakeFiles/duckdb_storage_compression_alp.dir/ub_duckdb_storage_compression_alp.cpp.o
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 31%] Built target duckdb_storage_compression_alp
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 31%] Building CXX object src/storage/compression/roaring/CMakeFiles/duckdb_storage_compression_roaring.dir/ub_duckdb_storage_compression_roaring.cpp.o
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 31%] Built target duckdb_storage_compression_roaring
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 31%] Building CXX object src/storage/compression/dictionary/CMakeFiles/duckdb_storage_compression_dictionary.dir/ub_duckdb_storage_compression_dictionary.cpp.o
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 31%] Built target duckdb_storage_compression_dictionary
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 31%] Building CXX object src/storage/compression/dict_fsst/CMakeFiles/duckdb_storage_compression_dict_fsst.dir/ub_duckdb_storage_compression_dict_fsst.cpp.o
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 31%] Built target duckdb_storage_compression_dict_fsst
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 32%] Building CXX object src/storage/metadata/CMakeFiles/duckdb_storage_metadata.dir/ub_duckdb_storage_metadata.cpp.o
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 32%] Built target duckdb_storage_metadata
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 32%] Building CXX object src/storage/serialization/CMakeFiles/duckdb_storage_serialization.dir/ub_duckdb_storage_serialization.cpp.o
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 32%] Built target duckdb_storage_serialization
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 32%] Building CXX object src/storage/statistics/CMakeFiles/duckdb_storage_statistics.dir/ub_duckdb_storage_statistics.cpp.o
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 32%] Built target duckdb_storage_statistics
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 32%] Building CXX object src/storage/table/CMakeFiles/duckdb_storage_table.dir/ub_duckdb_storage_table.cpp.o
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 32%] Built target duckdb_storage_table
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 32%] Building CXX object src/storage/table/variant/CMakeFiles/duckdb_storage_table_variant.dir/ub_duckdb_storage_table_variant.cpp.o
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 32%] Built target duckdb_storage_table_variant
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 33%] Building CXX object src/transaction/CMakeFiles/duckdb_transaction.dir/ub_duckdb_transaction.cpp.o
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 33%] Built target duckdb_transaction
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 33%] Building CXX object src/verification/CMakeFiles/duckdb_verification.dir/copied_statement_verifier.cpp.o
+[ 34%] Building CXX object src/verification/CMakeFiles/duckdb_verification.dir/external_statement_verifier.cpp.o
+[ 34%] Building CXX object src/verification/CMakeFiles/duckdb_verification.dir/fetch_row_verifier.cpp.o
+[ 34%] Building CXX object src/verification/CMakeFiles/duckdb_verification.dir/prepared_statement_verifier.cpp.o
+[ 34%] Building CXX object src/verification/CMakeFiles/duckdb_verification.dir/deserialized_statement_verifier.cpp.o
+[ 34%] Building CXX object src/verification/CMakeFiles/duckdb_verification.dir/explain_statement_verifier.cpp.o
+[ 34%] Building CXX object src/verification/CMakeFiles/duckdb_verification.dir/statement_verifier.cpp.o
+[ 35%] Building CXX object src/verification/CMakeFiles/duckdb_verification.dir/parsed_statement_verifier.cpp.o
+[ 35%] Building CXX object src/verification/CMakeFiles/duckdb_verification.dir/no_operator_caching_verifier.cpp.o
+[ 35%] Building CXX object src/verification/CMakeFiles/duckdb_verification.dir/unoptimized_statement_verifier.cpp.o
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 35%] Built target duckdb_verification
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 36%] Building CXX object third_party/fastpforlib/CMakeFiles/duckdb_fastpforlib.dir/bitpacking.cpp.o
+[ 36%] Linking CXX static library libduckdb_fastpforlib.a
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 36%] Built target duckdb_fastpforlib
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 36%] Building CXX object third_party/fmt/CMakeFiles/duckdb_fmt.dir/format.cc.o
+[ 36%] Linking CXX static library libduckdb_fmt.a
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 36%] Built target duckdb_fmt
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 36%] Building CXX object third_party/fsst/CMakeFiles/duckdb_fsst.dir/libfsst.cpp.o
+[ 37%] Linking CXX static library libduckdb_fsst.a
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 37%] Built target duckdb_fsst
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 37%] Building CXX object third_party/hyperloglog/CMakeFiles/duckdb_hyperloglog.dir/hyperloglog.cpp.o
+[ 37%] Building CXX object third_party/hyperloglog/CMakeFiles/duckdb_hyperloglog.dir/sds.cpp.o
+[ 37%] Linking CXX static library libduckdb_hyperloglog.a
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 37%] Built target duckdb_hyperloglog
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 37%] Building CXX object third_party/libpg_query/CMakeFiles/duckdb_pg_query.dir/postgres_parser.cpp.o
+[ 37%] Building CXX object third_party/libpg_query/CMakeFiles/duckdb_pg_query.dir/pg_functions.cpp.o
+[ 37%] Building CXX object third_party/libpg_query/CMakeFiles/duckdb_pg_query.dir/src_backend_parser_parser.cpp.o
+[ 37%] Building CXX object third_party/libpg_query/CMakeFiles/duckdb_pg_query.dir/src_backend_parser_gram.cpp.o
+[ 37%] Building CXX object third_party/libpg_query/CMakeFiles/duckdb_pg_query.dir/src_backend_nodes_list.cpp.o
+[ 38%] Building CXX object third_party/libpg_query/CMakeFiles/duckdb_pg_query.dir/src_backend_parser_scansup.cpp.o
+[ 38%] Building CXX object third_party/libpg_query/CMakeFiles/duckdb_pg_query.dir/src_backend_nodes_makefuncs.cpp.o
+[ 38%] Building CXX object third_party/libpg_query/CMakeFiles/duckdb_pg_query.dir/src_backend_nodes_value.cpp.o
+[ 38%] Building CXX object third_party/libpg_query/CMakeFiles/duckdb_pg_query.dir/src_backend_parser_scan.cpp.o
+[ 38%] Building CXX object third_party/libpg_query/CMakeFiles/duckdb_pg_query.dir/src_common_keywords.cpp.o
+[ 38%] Linking CXX static library libduckdb_pg_query.a
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 38%] Built target duckdb_pg_query
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 38%] Building CXX object third_party/mbedtls/CMakeFiles/duckdb_mbedtls.dir/mbedtls_wrapper.cpp.o
+[ 38%] Building CXX object third_party/mbedtls/CMakeFiles/duckdb_mbedtls.dir/library/aes.cpp.o
+[ 38%] Building CXX object third_party/mbedtls/CMakeFiles/duckdb_mbedtls.dir/library/asn1parse.cpp.o
+[ 39%] Building CXX object third_party/mbedtls/CMakeFiles/duckdb_mbedtls.dir/library/asn1write.cpp.o
+[ 39%] Building CXX object third_party/mbedtls/CMakeFiles/duckdb_mbedtls.dir/library/base64.cpp.o
+[ 39%] Building CXX object third_party/mbedtls/CMakeFiles/duckdb_mbedtls.dir/library/bignum.cpp.o
+[ 39%] Building CXX object third_party/mbedtls/CMakeFiles/duckdb_mbedtls.dir/library/bignum_core.cpp.o
+[ 39%] Building CXX object third_party/mbedtls/CMakeFiles/duckdb_mbedtls.dir/library/cipher.cpp.o
+[ 39%] Building CXX object third_party/mbedtls/CMakeFiles/duckdb_mbedtls.dir/library/cipher_wrap.cpp.o
+[ 40%] Building CXX object third_party/mbedtls/CMakeFiles/duckdb_mbedtls.dir/library/constant_time.cpp.o
+[ 40%] Building CXX object third_party/mbedtls/CMakeFiles/duckdb_mbedtls.dir/library/gcm.cpp.o
+[ 40%] Building CXX object third_party/mbedtls/CMakeFiles/duckdb_mbedtls.dir/library/md.cpp.o
+[ 40%] Building CXX object third_party/mbedtls/CMakeFiles/duckdb_mbedtls.dir/library/oid.cpp.o
+[ 40%] Building CXX object third_party/mbedtls/CMakeFiles/duckdb_mbedtls.dir/library/pem.cpp.o
+[ 40%] Building CXX object third_party/mbedtls/CMakeFiles/duckdb_mbedtls.dir/library/pk.cpp.o
+[ 41%] Building CXX object third_party/mbedtls/CMakeFiles/duckdb_mbedtls.dir/library/pk_wrap.cpp.o
+[ 41%] Building CXX object third_party/mbedtls/CMakeFiles/duckdb_mbedtls.dir/library/pkparse.cpp.o
+[ 41%] Building CXX object third_party/mbedtls/CMakeFiles/duckdb_mbedtls.dir/library/platform.cpp.o
+[ 41%] Building CXX object third_party/mbedtls/CMakeFiles/duckdb_mbedtls.dir/library/platform_util.cpp.o
+[ 41%] Building CXX object third_party/mbedtls/CMakeFiles/duckdb_mbedtls.dir/library/rsa.cpp.o
+[ 42%] Building CXX object third_party/mbedtls/CMakeFiles/duckdb_mbedtls.dir/library/rsa_alt_helpers.cpp.o
+[ 42%] Building CXX object third_party/mbedtls/CMakeFiles/duckdb_mbedtls.dir/library/sha1.cpp.o
+[ 42%] Building CXX object third_party/mbedtls/CMakeFiles/duckdb_mbedtls.dir/library/sha256.cpp.o
+[ 42%] Linking CXX static library libduckdb_mbedtls.a
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 42%] Built target duckdb_mbedtls
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 42%] Building CXX object third_party/miniz/CMakeFiles/duckdb_miniz.dir/miniz.cpp.o
+[ 42%] Linking CXX static library libduckdb_miniz.a
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 42%] Built target duckdb_miniz
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 43%] Building CXX object third_party/re2/CMakeFiles/duckdb_re2.dir/re2/bitmap256.cc.o
+[ 43%] Building CXX object third_party/re2/CMakeFiles/duckdb_re2.dir/re2/compile.cc.o
+[ 43%] Building CXX object third_party/re2/CMakeFiles/duckdb_re2.dir/re2/bitstate.cc.o
+[ 43%] Building CXX object third_party/re2/CMakeFiles/duckdb_re2.dir/re2/dfa.cc.o
+[ 43%] Building CXX object third_party/re2/CMakeFiles/duckdb_re2.dir/re2/filtered_re2.cc.o
+[ 43%] Building CXX object third_party/re2/CMakeFiles/duckdb_re2.dir/re2/mimics_pcre.cc.o
+[ 44%] Building CXX object third_party/re2/CMakeFiles/duckdb_re2.dir/re2/nfa.cc.o
+[ 44%] Building CXX object third_party/re2/CMakeFiles/duckdb_re2.dir/re2/onepass.cc.o
+[ 44%] Building CXX object third_party/re2/CMakeFiles/duckdb_re2.dir/re2/parse.cc.o
+[ 44%] Building CXX object third_party/re2/CMakeFiles/duckdb_re2.dir/re2/perl_groups.cc.o
+[ 44%] Building CXX object third_party/re2/CMakeFiles/duckdb_re2.dir/re2/prefilter.cc.o
+[ 44%] Building CXX object third_party/re2/CMakeFiles/duckdb_re2.dir/re2/prefilter_tree.cc.o
+[ 45%] Building CXX object third_party/re2/CMakeFiles/duckdb_re2.dir/re2/prog.cc.o
+[ 45%] Building CXX object third_party/re2/CMakeFiles/duckdb_re2.dir/re2/re2.cc.o
+[ 45%] Building CXX object third_party/re2/CMakeFiles/duckdb_re2.dir/re2/regexp.cc.o
+[ 45%] Building CXX object third_party/re2/CMakeFiles/duckdb_re2.dir/re2/set.cc.o
+[ 45%] Building CXX object third_party/re2/CMakeFiles/duckdb_re2.dir/re2/simplify.cc.o
+[ 46%] Building CXX object third_party/re2/CMakeFiles/duckdb_re2.dir/re2/stringpiece.cc.o
+[ 46%] Building CXX object third_party/re2/CMakeFiles/duckdb_re2.dir/re2/tostring.cc.o
+[ 46%] Building CXX object third_party/re2/CMakeFiles/duckdb_re2.dir/re2/unicode_casefold.cc.o
+[ 46%] Building CXX object third_party/re2/CMakeFiles/duckdb_re2.dir/re2/unicode_groups.cc.o
+[ 46%] Building CXX object third_party/re2/CMakeFiles/duckdb_re2.dir/util/rune.cc.o
+[ 46%] Building CXX object third_party/re2/CMakeFiles/duckdb_re2.dir/util/strutil.cc.o
+[ 47%] Linking CXX static library libduckdb_re2.a
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 47%] Built target duckdb_re2
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 47%] Building CXX object third_party/skiplist/CMakeFiles/duckdb_skiplistlib.dir/SkipList.cpp.o
+[ 47%] Linking CXX static library libduckdb_skiplistlib.a
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 47%] Built target duckdb_skiplistlib
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 47%] Building CXX object third_party/utf8proc/CMakeFiles/duckdb_utf8proc.dir/utf8proc.cpp.o
+[ 47%] Building CXX object third_party/utf8proc/CMakeFiles/duckdb_utf8proc.dir/utf8proc_wrapper.cpp.o
+[ 47%] Linking CXX static library libduckdb_utf8proc.a
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 47%] Built target duckdb_utf8proc
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 47%] Building CXX object third_party/yyjson/CMakeFiles/duckdb_yyjson.dir/yyjson.cpp.o
+[ 47%] Linking CXX static library libduckdb_yyjson.a
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 47%] Built target duckdb_yyjson
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 47%] Linking CXX static library libduckdb_static.a
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 47%] Built target duckdb_static
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 48%] Building CXX object test/extension/CMakeFiles/loadable_extension_optimizer_demo_loadable_extension.dir/loadable_extension_optimizer_demo.cpp.o
+[ 48%] Linking CXX shared library loadable_extension_optimizer_demo.duckdb_extension
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 48%] Built target loadable_extension_optimizer_demo_loadable_extension
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 48%] Building CXX object extension/core_functions/aggregate/algebraic/CMakeFiles/duckdb_core_functions_algebraic.dir/ub_duckdb_core_functions_algebraic.cpp.o
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 48%] Built target duckdb_core_functions_algebraic
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 48%] Building CXX object extension/core_functions/aggregate/distributive/CMakeFiles/duckdb_core_functions_distributive.dir/ub_duckdb_core_functions_distributive.cpp.o
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 48%] Built target duckdb_core_functions_distributive
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 49%] Building CXX object extension/core_functions/aggregate/holistic/CMakeFiles/duckdb_core_functions_holistic.dir/ub_duckdb_core_functions_holistic.cpp.o
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 49%] Built target duckdb_core_functions_holistic
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 49%] Building CXX object extension/core_functions/aggregate/nested/CMakeFiles/duckdb_core_functions_nested.dir/ub_duckdb_core_functions_nested.cpp.o
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 49%] Built target duckdb_core_functions_nested
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 49%] Building CXX object extension/core_functions/aggregate/regression/CMakeFiles/duckdb_core_functions_regression.dir/ub_duckdb_core_functions_regression.cpp.o
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 49%] Built target duckdb_core_functions_regression
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 49%] Building CXX object extension/core_functions/scalar/array/CMakeFiles/duckdb_core_functions_array.dir/ub_duckdb_core_functions_array.cpp.o
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 49%] Built target duckdb_core_functions_array
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 49%] Building CXX object extension/core_functions/scalar/bit/CMakeFiles/duckdb_core_functions_bit.dir/ub_duckdb_core_functions_bit.cpp.o
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 49%] Built target duckdb_core_functions_bit
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 50%] Building CXX object extension/core_functions/scalar/blob/CMakeFiles/duckdb_core_functions_blob.dir/ub_duckdb_core_functions_blob.cpp.o
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 50%] Built target duckdb_core_functions_blob
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 50%] Building CXX object extension/core_functions/scalar/date/CMakeFiles/duckdb_core_functions_date.dir/ub_duckdb_core_functions_date.cpp.o
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 50%] Built target duckdb_core_functions_date
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 50%] Building CXX object extension/core_functions/scalar/debug/CMakeFiles/duckdb_core_functions_debug.dir/ub_duckdb_core_functions_debug.cpp.o
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 50%] Built target duckdb_core_functions_debug
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 50%] Building CXX object extension/core_functions/scalar/enum/CMakeFiles/duckdb_core_functions_enum.dir/ub_duckdb_core_functions_enum.cpp.o
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 50%] Built target duckdb_core_functions_enum
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 50%] Building CXX object extension/core_functions/scalar/generic/CMakeFiles/duckdb_core_functions_generic.dir/ub_duckdb_core_functions_generic.cpp.o
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 50%] Built target duckdb_core_functions_generic
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 50%] Building CXX object extension/core_functions/scalar/list/CMakeFiles/duckdb_core_functions_list.dir/ub_duckdb_core_functions_list.cpp.o
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 50%] Built target duckdb_core_functions_list
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 50%] Building CXX object extension/core_functions/scalar/map/CMakeFiles/duckdb_core_functions_map.dir/ub_duckdb_core_functions_map.cpp.o
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 50%] Built target duckdb_core_functions_map
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 50%] Building CXX object extension/core_functions/scalar/math/CMakeFiles/duckdb_core_functions_math.dir/ub_duckdb_core_functions_math.cpp.o
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 50%] Built target duckdb_core_functions_math
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 51%] Building CXX object extension/core_functions/scalar/operators/CMakeFiles/duckdb_core_functions_operators.dir/ub_duckdb_core_functions_operators.cpp.o
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 51%] Built target duckdb_core_functions_operators
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 51%] Building CXX object extension/core_functions/scalar/random/CMakeFiles/duckdb_core_functions_random.dir/ub_duckdb_core_functions_random.cpp.o
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 51%] Built target duckdb_core_functions_random
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 51%] Building CXX object extension/core_functions/scalar/string/CMakeFiles/duckdb_core_functions_string.dir/ub_duckdb_core_functions_string.cpp.o
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 51%] Built target duckdb_core_functions_string
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 51%] Building CXX object extension/core_functions/scalar/struct/CMakeFiles/duckdb_core_functions_struct.dir/ub_duckdb_core_functions_struct.cpp.o
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 51%] Built target duckdb_core_functions_struct
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 51%] Building CXX object extension/core_functions/scalar/union/CMakeFiles/duckdb_core_functions_union.dir/ub_duckdb_core_functions_union.cpp.o
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 51%] Built target duckdb_core_functions_union
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 51%] Building CXX object extension/core_functions/CMakeFiles/core_functions_loadable_extension.dir/core_functions_extension.cpp.o
+[ 52%] Building CXX object extension/core_functions/CMakeFiles/core_functions_loadable_extension.dir/function_list.cpp.o
+[ 52%] Building CXX object extension/core_functions/CMakeFiles/core_functions_loadable_extension.dir/lambda_functions.cpp.o
+[ 52%] Linking CXX shared library core_functions.duckdb_extension
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 52%] Built target core_functions_loadable_extension
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 52%] Building CXX object extension/parquet/decoder/CMakeFiles/duckdb_parquet_decoders.dir/ub_duckdb_parquet_decoders.cpp.o
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 52%] Built target duckdb_parquet_decoders
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 52%] Building CXX object extension/parquet/reader/CMakeFiles/duckdb_parquet_readers.dir/ub_duckdb_parquet_readers.cpp.o
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 52%] Built target duckdb_parquet_readers
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 53%] Building CXX object extension/parquet/reader/variant/CMakeFiles/duckdb_parquet_reader_variant.dir/ub_duckdb_parquet_reader_variant.cpp.o
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 53%] Built target duckdb_parquet_reader_variant
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 53%] Building CXX object extension/parquet/writer/CMakeFiles/duckdb_parquet_writers.dir/ub_duckdb_parquet_writers.cpp.o
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 53%] Built target duckdb_parquet_writers
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 53%] Building CXX object extension/parquet/writer/variant/CMakeFiles/duckdb_parquet_writer_variant.dir/ub_duckdb_parquet_writer_variant.cpp.o
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 53%] Built target duckdb_parquet_writer_variant
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 53%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/column_reader.cpp.o
+[ 53%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/column_writer.cpp.o
+[ 53%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/parquet_crypto.cpp.o
+[ 53%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/parquet_extension.cpp.o
+[ 53%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/parquet_file_metadata_cache.cpp.o
+[ 54%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/parquet_float16.cpp.o
+[ 54%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/parquet_multi_file_info.cpp.o
+[ 54%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/parquet_metadata.cpp.o
+[ 54%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/parquet_reader.cpp.o
+[ 54%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/parquet_field_id.cpp.o
+[ 54%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/parquet_statistics.cpp.o
+[ 55%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/parquet_timestamp.cpp.o
+[ 55%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/parquet_writer.cpp.o
+[ 55%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/parquet_shredding.cpp.o
+[ 55%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/parquet_column_schema.cpp.o
+[ 55%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/parquet_geometry.cpp.o
+[ 56%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/serialize_parquet.cpp.o
+[ 56%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/zstd_file_system.cpp.o
+[ 56%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/__/__/third_party/parquet/parquet_types.cpp.o
+[ 56%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/__/__/third_party/thrift/thrift/protocol/TProtocol.cpp.o
+[ 56%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/__/__/third_party/thrift/thrift/transport/TTransportException.cpp.o
+[ 56%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/__/__/third_party/thrift/thrift/transport/TBufferTransports.cpp.o
+[ 57%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/__/__/third_party/snappy/snappy.cc.o
+[ 57%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/__/__/third_party/snappy/snappy-sinksource.cc.o
+[ 57%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/__/__/third_party/lz4/lz4.cpp.o
+[ 57%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/__/__/third_party/brotli/enc/dictionary_hash.cpp.o
+[ 57%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/__/__/third_party/brotli/enc/backward_references_hq.cpp.o
+[ 57%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/__/__/third_party/brotli/enc/histogram.cpp.o
+[ 58%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/__/__/third_party/brotli/enc/memory.cpp.o
+[ 58%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/__/__/third_party/brotli/enc/entropy_encode.cpp.o
+[ 58%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/__/__/third_party/brotli/enc/compound_dictionary.cpp.o
+[ 58%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/__/__/third_party/brotli/enc/compress_fragment_two_pass.cpp.o
+[ 58%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/__/__/third_party/brotli/enc/block_splitter.cpp.o
+[ 58%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/__/__/third_party/brotli/enc/command.cpp.o
+[ 59%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/__/__/third_party/brotli/enc/encode.cpp.o
+[ 59%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/__/__/third_party/brotli/enc/encoder_dict.cpp.o
+[ 59%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/__/__/third_party/brotli/enc/cluster.cpp.o
+[ 59%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/__/__/third_party/brotli/enc/backward_references.cpp.o
+[ 59%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/__/__/third_party/brotli/enc/utf8_util.cpp.o
+[ 60%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/__/__/third_party/brotli/enc/compress_fragment.cpp.o
+[ 60%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/__/__/third_party/brotli/enc/fast_log.cpp.o
+[ 60%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/__/__/third_party/brotli/enc/brotli_bit_stream.cpp.o
+[ 60%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/__/__/third_party/brotli/enc/bit_cost.cpp.o
+[ 60%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/__/__/third_party/brotli/enc/static_dict.cpp.o
+[ 60%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/__/__/third_party/brotli/enc/literal_cost.cpp.o
+[ 61%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/__/__/third_party/brotli/enc/metablock.cpp.o
+[ 61%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/__/__/third_party/brotli/common/dictionary.cpp.o
+[ 61%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/__/__/third_party/brotli/common/constants.cpp.o
+[ 61%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/__/__/third_party/brotli/common/transform.cpp.o
+[ 61%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/__/__/third_party/brotli/common/platform.cpp.o
+[ 61%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/__/__/third_party/brotli/common/shared_dictionary.cpp.o
+[ 62%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/__/__/third_party/brotli/common/context.cpp.o
+[ 62%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/__/__/third_party/brotli/dec/state.cpp.o
+[ 62%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/__/__/third_party/brotli/dec/decode.cpp.o
+[ 62%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/__/__/third_party/brotli/dec/huffman.cpp.o
+[ 62%] Building CXX object extension/parquet/CMakeFiles/parquet_loadable_extension.dir/__/__/third_party/brotli/dec/bit_reader.cpp.o
+[ 62%] Linking CXX shared library parquet.duckdb_extension
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 62%] Built target parquet_loadable_extension
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 62%] Building CXX object test/extension/CMakeFiles/loadable_extension_demo_loadable_extension.dir/loadable_extension_demo.cpp.o
+[ 62%] Linking CXX shared library loadable_extension_demo.duckdb_extension
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 62%] Built target loadable_extension_demo_loadable_extension
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 62%] repository
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 62%] Built target duckdb_local_extension_repo
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 62%] Building CXX object extension/core_functions/CMakeFiles/core_functions_extension.dir/core_functions_extension.cpp.o
+[ 62%] Building CXX object extension/core_functions/CMakeFiles/core_functions_extension.dir/function_list.cpp.o
+[ 62%] Building CXX object extension/core_functions/CMakeFiles/core_functions_extension.dir/lambda_functions.cpp.o
+[ 62%] Linking CXX static library libcore_functions_extension.a
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 62%] Built target core_functions_extension
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 62%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/column_reader.cpp.o
+[ 62%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/column_writer.cpp.o
+[ 62%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/parquet_crypto.cpp.o
+[ 62%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/parquet_extension.cpp.o
+[ 63%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/parquet_file_metadata_cache.cpp.o
+[ 63%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/parquet_float16.cpp.o
+[ 63%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/parquet_multi_file_info.cpp.o
+[ 63%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/parquet_metadata.cpp.o
+[ 63%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/parquet_reader.cpp.o
+[ 63%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/parquet_field_id.cpp.o
+[ 64%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/parquet_statistics.cpp.o
+[ 64%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/parquet_timestamp.cpp.o
+[ 64%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/parquet_writer.cpp.o
+[ 64%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/parquet_shredding.cpp.o
+[ 64%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/parquet_column_schema.cpp.o
+[ 64%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/parquet_geometry.cpp.o
+[ 65%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/serialize_parquet.cpp.o
+[ 65%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/zstd_file_system.cpp.o
+[ 65%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/__/__/third_party/parquet/parquet_types.cpp.o
+[ 65%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/__/__/third_party/thrift/thrift/protocol/TProtocol.cpp.o
+[ 65%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/__/__/third_party/thrift/thrift/transport/TTransportException.cpp.o
+[ 66%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/__/__/third_party/thrift/thrift/transport/TBufferTransports.cpp.o
+[ 66%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/__/__/third_party/snappy/snappy.cc.o
+[ 66%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/__/__/third_party/snappy/snappy-sinksource.cc.o
+[ 66%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/__/__/third_party/lz4/lz4.cpp.o
+[ 66%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/__/__/third_party/brotli/enc/dictionary_hash.cpp.o
+[ 66%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/__/__/third_party/brotli/enc/backward_references_hq.cpp.o
+[ 67%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/__/__/third_party/brotli/enc/histogram.cpp.o
+[ 67%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/__/__/third_party/brotli/enc/memory.cpp.o
+[ 67%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/__/__/third_party/brotli/enc/entropy_encode.cpp.o
+[ 67%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/__/__/third_party/brotli/enc/compound_dictionary.cpp.o
+[ 67%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/__/__/third_party/brotli/enc/compress_fragment_two_pass.cpp.o
+[ 67%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/__/__/third_party/brotli/enc/block_splitter.cpp.o
+[ 68%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/__/__/third_party/brotli/enc/command.cpp.o
+[ 68%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/__/__/third_party/brotli/enc/encode.cpp.o
+[ 68%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/__/__/third_party/brotli/enc/encoder_dict.cpp.o
+[ 68%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/__/__/third_party/brotli/enc/cluster.cpp.o
+[ 68%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/__/__/third_party/brotli/enc/backward_references.cpp.o
+[ 68%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/__/__/third_party/brotli/enc/utf8_util.cpp.o
+[ 69%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/__/__/third_party/brotli/enc/compress_fragment.cpp.o
+[ 69%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/__/__/third_party/brotli/enc/fast_log.cpp.o
+[ 69%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/__/__/third_party/brotli/enc/brotli_bit_stream.cpp.o
+[ 69%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/__/__/third_party/brotli/enc/bit_cost.cpp.o
+[ 69%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/__/__/third_party/brotli/enc/static_dict.cpp.o
+[ 70%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/__/__/third_party/brotli/enc/literal_cost.cpp.o
+[ 70%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/__/__/third_party/brotli/enc/metablock.cpp.o
+[ 70%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/__/__/third_party/brotli/common/dictionary.cpp.o
+[ 70%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/__/__/third_party/brotli/common/constants.cpp.o
+[ 70%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/__/__/third_party/brotli/common/transform.cpp.o
+[ 70%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/__/__/third_party/brotli/common/platform.cpp.o
+[ 71%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/__/__/third_party/brotli/common/shared_dictionary.cpp.o
+[ 71%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/__/__/third_party/brotli/common/context.cpp.o
+[ 71%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/__/__/third_party/brotli/dec/state.cpp.o
+[ 71%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/__/__/third_party/brotli/dec/decode.cpp.o
+[ 71%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/__/__/third_party/brotli/dec/huffman.cpp.o
+[ 71%] Building CXX object extension/parquet/CMakeFiles/parquet_extension.dir/__/__/third_party/brotli/dec/bit_reader.cpp.o
+[ 72%] Linking CXX static library libparquet_extension.a
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 72%] Built target parquet_extension
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 73%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/jemalloc.c.o
+[ 73%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/arena.c.o
+[ 73%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/background_thread.c.o
+[ 73%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/base.c.o
+[ 73%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/batcher.c.o
+[ 73%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/bin.c.o
+[ 74%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/bin_info.c.o
+[ 74%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/bitmap.c.o
+[ 74%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/buf_writer.c.o
+[ 74%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/cache_bin.c.o
+[ 74%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/ckh.c.o
+[ 74%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/counter.c.o
+[ 75%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/ctl.c.o
+[ 75%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/decay.c.o
+[ 75%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/div.c.o
+[ 75%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/ecache.c.o
+[ 75%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/edata.c.o
+[ 75%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/edata_cache.c.o
+[ 76%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/ehooks.c.o
+[ 76%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/emap.c.o
+[ 76%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/eset.c.o
+[ 76%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/exp_grow.c.o
+[ 76%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/extent.c.o
+[ 77%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/extent_dss.c.o
+[ 77%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/extent_mmap.c.o
+[ 77%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/fxp.c.o
+[ 77%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/san.c.o
+[ 77%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/san_bump.c.o
+[ 77%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/hook.c.o
+[ 78%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/hpa.c.o
+[ 78%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/hpa_hooks.c.o
+[ 78%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/hpdata.c.o
+[ 78%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/inspect.c.o
+[ 78%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/large.c.o
+[ 78%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/log.c.o
+[ 79%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/malloc_io.c.o
+[ 79%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/mutex.c.o
+[ 79%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/nstime.c.o
+[ 79%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/pa.c.o
+[ 79%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/pa_extra.c.o
+[ 79%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/pai.c.o
+[ 80%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/pac.c.o
+[ 80%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/pages.c.o
+[ 80%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/peak_event.c.o
+[ 80%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/prof.c.o
+[ 80%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/prof_data.c.o
+[ 81%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/prof_log.c.o
+[ 81%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/prof_recent.c.o
+[ 81%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/prof_stats.c.o
+[ 81%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/prof_sys.c.o
+[ 81%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/psset.c.o
+[ 81%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/rtree.c.o
+[ 82%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/safety_check.c.o
+[ 82%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/sc.c.o
+[ 82%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/sec.c.o
+[ 82%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/stats.c.o
+[ 82%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/sz.c.o
+[ 82%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/tcache.c.o
+[ 83%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/test_hooks.c.o
+[ 83%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/thread_event.c.o
+[ 83%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/ticker.c.o
+[ 83%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/tsd.c.o
+[ 83%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/util.c.o
+[ 83%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/witness.c.o
+[ 84%] Building C object extension/jemalloc/jemalloc/CMakeFiles/jemalloc.dir/src/zone.c.o
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 84%] Built target jemalloc
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 84%] Building CXX object extension/jemalloc/CMakeFiles/jemalloc_extension.dir/jemalloc_extension.cpp.o
+[ 84%] Linking CXX static library libjemalloc_extension.a
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 84%] Built target jemalloc_extension
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 85%] Building CXX object extension/CMakeFiles/duckdb_generated_extension_loader.dir/__/codegen/src/generated_extension_loader.cpp.o
+[ 85%] Linking CXX static library libduckdb_generated_extension_loader.a
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 85%] Built target duckdb_generated_extension_loader
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 85%] Linking CXX shared library libduckdb.so
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 85%] Built target duckdb
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/release'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/release'
+[ 85%] Building CXX object tools/shell/linenoise/CMakeFiles/duckdb_linenoise.dir/highlighting.cpp.o
+[ 86%] Building CXX object tools/shell/linenoise/CMakeFiles/duckdb_linenoise.dir/history.cpp.o
+[ 86%] Building CXX object tools/shell/linenoise/CMakeFiles/duckdb_linenoise.dir/linenoise.cpp.o
+gmake[3]: *** [tools/shell/linenoise/CMakeFiles/duckdb_linenoise.dir/build.make:104: tools/shell/linenoise/CMakeFiles/duckdb_linenoise.dir/linenoise.cpp.o] Terminated
 make: *** [Makefile:350: release] Terminated
-gmake[2]: *** [CMakeFiles/Makefile2:6563: src/function/scalar/struct/CMakeFiles/duckdb_func_struct_main.dir/all] Terminated
+gmake[2]: *** [CMakeFiles/Makefile2:8857: tools/shell/linenoise/CMakeFiles/duckdb_linenoise.dir/all] Terminated
 gmake[1]: *** [Makefile:136: all] Terminated
 --- output end ---

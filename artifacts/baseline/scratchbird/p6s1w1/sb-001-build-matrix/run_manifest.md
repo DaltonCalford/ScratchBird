@@ -1,6 +1,6 @@
 # Run Manifest
 
-- timestamp_utc: `2026-02-24T04:26:47Z`
+- timestamp_utc: `2026-02-24T14:23:55Z`
 - row_id: `8`
 - task_id: `SB-001`
 - workstream: `scratchbird`
@@ -8,7 +8,7 @@
 - owner: `agent-scratchbird`
 - sprint: `P6-S1/W1`
 - gate: `SB-GATE-01`
-- status: `blocked`
+- status: `done`
 - depends_on: `BASE-001`
 - parser_emitter_executor_touched_in_cycle: `parser:yes|emitter:yes|executor:yes`
 
@@ -16,7 +16,7 @@
 - cwd: `/home/dcalford/CliWork`
 - host_platform: `Linux-6.17.0-14-generic-x86_64-with-glibc2.39`
 - python: `3.12.3 (main, Jan 22 2026, 20:57:42) [GCC 13.3.0]`
-- timestamp_utc: `2026-02-24T04:21:44Z`
+- timestamp_utc: `2026-02-24T14:17:37Z`
 - tool_ant: `Apache Ant(TM) version 1.10.14 compiled on September 25 2023`
 - tool_bazel: `bazel 9.0.0`
 - tool_cargo: `cargo 1.93.0 (083ac5135 2025-12-15)`
@@ -42,7 +42,7 @@ OpenJDK 64-Bit Server VM (build 21.0.10+7-Ubuntu-124.04, mixed mode, sharing)`
 - tool_rustc: `rustc 1.93.0 (254b59607 2026-01-19)`
 
 ## Commands
-- 1. cwd=`/home/dcalford/CliWork/ScratchBird` timeout_s=`90` cmd=`cmake -S . -B build_baseline/sb_cfg_01 -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DSCRATCHBIRD_WITH_COMPILER=ON -DBUILD_TESTING=ON -DSCRATCHBIRD_ENABLE_FORK_RUNTIME=ON -DSCRATCHBIRD_ENABLE_SYSTEMD_RUNTIME=OFF`
-- 2. cwd=`/home/dcalford/CliWork/ScratchBird` timeout_s=`90` cmd=`cmake -S . -B build_baseline/sb_cfg_02 -G Ninja -DCMAKE_BUILD_TYPE=Debug -DSCRATCHBIRD_WITH_COMPILER=ON -DBUILD_TESTING=ON -DSCRATCHBIRD_ENABLE_FORK_RUNTIME=ON -DSCRATCHBIRD_ENABLE_SYSTEMD_RUNTIME=OFF`
-- 3. cwd=`/home/dcalford/CliWork/ScratchBird` timeout_s=`90` cmd=`cmake -S . -B build_baseline/sb_cfg_03 -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DSCRATCHBIRD_WITH_COMPILER=OFF -DBUILD_TESTING=ON -DSCRATCHBIRD_ENABLE_FORK_RUNTIME=ON -DSCRATCHBIRD_ENABLE_SYSTEMD_RUNTIME=OFF`
-- 4. cwd=`/home/dcalford/CliWork/ScratchBird` timeout_s=`300` cmd=`cmake --build build_baseline/sb_cfg_01 --target scratchbird_tests -j2`
+- 1. cwd=`/home/dcalford/CliWork/ScratchBird` timeout_s=`180` cmd=`cmake -S . -B build_baseline/sb_cfg_01 -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DSCRATCHBIRD_WITH_COMPILER=ON -DBUILD_TESTING=ON -DSCRATCHBIRD_ENABLE_FORK_RUNTIME=ON -DSCRATCHBIRD_ENABLE_SYSTEMD_RUNTIME=OFF`
+- 2. cwd=`/home/dcalford/CliWork/ScratchBird` timeout_s=`180` cmd=`cmake -S . -B build_baseline/sb_cfg_02 -G Ninja -DCMAKE_BUILD_TYPE=Debug -DSCRATCHBIRD_WITH_COMPILER=ON -DBUILD_TESTING=ON -DSCRATCHBIRD_ENABLE_FORK_RUNTIME=ON -DSCRATCHBIRD_ENABLE_SYSTEMD_RUNTIME=OFF`
+- 3. cwd=`/home/dcalford/CliWork/ScratchBird` timeout_s=`180` cmd=`cmake -S . -B build_baseline/sb_cfg_03 -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DSCRATCHBIRD_WITH_COMPILER=OFF -DBUILD_TESTING=ON -DSCRATCHBIRD_ENABLE_FORK_RUNTIME=ON -DSCRATCHBIRD_ENABLE_SYSTEMD_RUNTIME=OFF`
+- 4. cwd=`/home/dcalford/CliWork/ScratchBird` timeout_s=`600` cmd=`cmake --build build_baseline/sb_cfg_01 --target scratchbird_tests -j2`

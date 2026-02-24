@@ -1,13 +1,13 @@
 task_id=ENG-MONGODB-001
 status=blocked
-timestamp_utc=2026-02-24T04:43:57Z
+timestamp_utc=2026-02-24T15:31:20Z
 
 === command 1 ===
 cwd: /home/dcalford/CliWork
-timeout_s: 20
+timeout_s: 40
 rc: 0
 timed_out: False
-duration_s: 0.026
+duration_s: 0.230
 cmd: test -d /home/dcalford/CliWork/mongo && git -C /home/dcalford/CliWork/mongo rev-parse --short HEAD
 --- output begin ---
 b3e1d387194
@@ -15,10 +15,10 @@ b3e1d387194
 
 === command 2 ===
 cwd: /home/dcalford/CliWork/mongo
-timeout_s: 180
+timeout_s: 360
 rc: 0
 timed_out: False
-duration_s: 0.076
+duration_s: 0.628
 cmd: python3 buildscripts/install_bazel.py
 --- output begin ---
 Downloaded file /home/dcalford/.local/bin/buildozer already exists, validating...
@@ -32,11 +32,25 @@ Symlink /home/dcalford/.local/bin/bazel already exists, skipping symlink creatio
 
 === command 3 ===
 cwd: /home/dcalford/CliWork/mongo
-timeout_s: 300
-rc: 124
-timed_out: True
-duration_s: 310.101
+timeout_s: 1800
+rc: 1
+timed_out: False
+duration_s: 10.287
 cmd: bazel build install-mongod
 --- output begin ---
+[0;32mINFO:[0m running wrapper hook...
+INFO: auto_header build generated: 4.096 s
+Computing main repo mapping: 
+Loading: 
+Loading: 0 packages loaded
+Analyzing: target //:install-mongod (0 packages loaded, 0 targets configured)
+Analyzing: target //:install-mongod (0 packages loaded, 0 targets configured)
 
+ERROR: /home/dcalford/CliWork/mongo/src/mongo/db/BUILD.bazel:2763:16: While resolving toolchains for target //src/mongo/db:mongod (1071a72): No matching toolchains found for types @@bazel_tools//tools/cpp:toolchain_type.
+To debug, rerun with --toolchain_resolution_debug='@@bazel_tools//tools/cpp:toolchain_type'
+If platforms or toolchains are a new concept for you, we'd encourage reading https://bazel.build/concepts/platforms-intro.
+ERROR: Analysis of target '//:install-mongod' failed; build aborted: Analysis failed
+INFO: Elapsed time: 1.847s, Critical Path: 0.04s
+INFO: 1 process: 1 internal.
+ERROR: Build did NOT complete successfully
 --- output end ---

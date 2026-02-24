@@ -21,6 +21,7 @@ import shlex
 import signal
 import subprocess
 import sys
+import tempfile
 import textwrap
 import time
 from dataclasses import dataclass, field
@@ -142,43 +143,52 @@ def run_command(spec: CommandSpec, max_output_chars: int) -> CommandResult:
     env.update(spec.env or {})
 
     start = time.monotonic()
-    proc = subprocess.Popen(
-        ["bash", "-lc", spec.cmd],
-        cwd=str(spec.cwd),
-        env=env,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-        preexec_fn=os.setsid,
-    )
-
+    log_fd, log_path = tempfile.mkstemp(prefix="sb_baseline_cmd_", suffix=".log")
+    os.close(log_fd)
     timed_out = False
     output = ""
     rc = 1
-    try:
-        stdout, _ = proc.communicate(timeout=spec.timeout_s)
-        output = stdout or ""
-        rc = proc.returncode if proc.returncode is not None else 1
-    except subprocess.TimeoutExpired:
-        timed_out = True
+    with open(log_path, "w", encoding="utf-8", errors="replace") as out_handle:
+        proc = subprocess.Popen(
+            ["bash", "-lc", spec.cmd],
+            cwd=str(spec.cwd),
+            env=env,
+            stdout=out_handle,
+            stderr=subprocess.STDOUT,
+            text=True,
+            preexec_fn=os.setsid,
+        )
         try:
-            os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        try:
-            stdout, _ = proc.communicate(timeout=5)
+            proc.wait(timeout=spec.timeout_s)
+            rc = proc.returncode if proc.returncode is not None else 1
         except subprocess.TimeoutExpired:
+            timed_out = True
             try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
             except ProcessLookupError:
                 pass
             try:
-                stdout, _ = proc.communicate(timeout=5)
+                proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
-                stdout = ""
-        output = stdout or ""
-        rc = 124
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    pass
+            rc = 124
     duration = time.monotonic() - start
+
+    try:
+        with open(log_path, "r", encoding="utf-8", errors="replace") as in_handle:
+            output = in_handle.read()
+    finally:
+        try:
+            os.remove(log_path)
+        except OSError:
+            pass
 
     if len(output) > max_output_chars:
         output = output[:max_output_chars] + "\n[truncated]\n"
@@ -773,9 +783,11 @@ def execute_row(
     row: Dict[str, str],
     host_manifest: Dict[str, str],
     max_output_chars: int,
+    timeout_scale: float,
 ) -> Tuple[str, str]:
     primary_file, bundle_dir = make_evidence_paths(row["evidence_artifact"])
     specs, static_reason = tracker_row_specs(row)
+    executed_specs: List[CommandSpec] = []
     results: List[CommandResult] = []
     status = "done"
     reason = ""
@@ -785,7 +797,15 @@ def execute_row(
         reason = static_reason
     else:
         for spec in specs:
-            result = run_command(spec, max_output_chars=max_output_chars)
+            scaled_timeout = max(1, int(spec.timeout_s * timeout_scale))
+            run_spec = CommandSpec(
+                cmd=spec.cmd,
+                cwd=spec.cwd,
+                timeout_s=scaled_timeout,
+                env=spec.env,
+            )
+            executed_specs.append(run_spec)
+            result = run_command(run_spec, max_output_chars=max_output_chars)
             results.append(result)
             if result.rc != 0:
                 status = "blocked"
@@ -798,7 +818,7 @@ def execute_row(
         host_manifest=host_manifest,
         primary_file=primary_file,
         bundle_dir=bundle_dir,
-        command_specs=specs,
+        command_specs=executed_specs if executed_specs else specs,
         command_results=results,
         status=status,
         reason=reason or None,
@@ -828,6 +848,8 @@ def update_tracker(tracker_path: Path, rows: List[Dict[str, str]], fieldnames: L
 def execute_tracker(
     tracker_path: Path,
     max_output_chars: int,
+    timeout_scale: float,
+    only_task_ids: Optional[set[str]],
 ) -> None:
     with tracker_path.open("r", newline="", encoding="utf-8") as fh:
         reader = csv.DictReader(fh)
@@ -855,7 +877,14 @@ def execute_tracker(
 
     while True:
         progress = False
-        pending_rows = [row for row in rows if row.get("status", "").strip() == "pending"]
+        pending_rows = []
+        for row in rows:
+            if row.get("status", "").strip() != "pending":
+                continue
+            task_id = row.get("task_id", "").strip()
+            if only_task_ids and task_id not in only_task_ids:
+                continue
+            pending_rows.append(row)
         if not pending_rows:
             break
 
@@ -906,6 +935,7 @@ def execute_tracker(
                 row=row,
                 host_manifest=host_manifest,
                 max_output_chars=max_output_chars,
+                timeout_scale=timeout_scale,
             )
             row["status"] = status
             row["report_issue_to_user"] = "yes" if status == "blocked" else "no"
@@ -917,9 +947,20 @@ def execute_tracker(
             progress = True
 
         if not progress:
-            unresolved = [
-                row["task_id"] for row in rows if row.get("status", "").strip() == "pending"
-            ]
+            unresolved = []
+            for row in rows:
+                if row.get("status", "").strip() != "pending":
+                    continue
+                task_id = row.get("task_id", "").strip()
+                if only_task_ids and task_id not in only_task_ids:
+                    continue
+                unresolved.append(task_id)
+            if only_task_ids:
+                print(
+                    f"[warn] filtered execution stalled; unresolved tasks: {', '.join(unresolved)}",
+                    flush=True,
+                )
+                break
             for row in rows:
                 if row.get("status", "").strip() == "pending":
                     row["status"] = "blocked"
@@ -968,6 +1009,18 @@ def parse_args() -> argparse.Namespace:
         default=120_000,
         help="Maximum output chars captured per command.",
     )
+    parser.add_argument(
+        "--timeout-scale",
+        type=float,
+        default=1.0,
+        help="Multiply every command timeout by this scale factor.",
+    )
+    parser.add_argument(
+        "--only-task-ids",
+        type=str,
+        default="",
+        help="Comma-separated task IDs to execute (filtered rerun mode).",
+    )
     return parser.parse_args()
 
 
@@ -978,9 +1031,16 @@ def main() -> int:
         print(f"Tracker not found: {tracker_path}", file=sys.stderr)
         return 1
     try:
+        only_task_ids: Optional[set[str]] = None
+        if args.only_task_ids.strip():
+            only_task_ids = {
+                token.strip() for token in args.only_task_ids.split(",") if token.strip()
+            }
         execute_tracker(
             tracker_path=tracker_path,
             max_output_chars=args.max_output_chars,
+            timeout_scale=args.timeout_scale,
+            only_task_ids=only_task_ids,
         )
     except Exception as exc:
         print(f"Execution failed: {exc}", file=sys.stderr)

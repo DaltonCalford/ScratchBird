@@ -1,6 +1,6 @@
 # Run Manifest
 
-- timestamp_utc: `2026-02-24T04:43:57Z`
+- timestamp_utc: `2026-02-24T15:31:20Z`
 - row_id: `42`
 - task_id: `ENG-MONGODB-001`
 - workstream: `mongodb`
@@ -13,10 +13,10 @@
 - parser_emitter_executor_touched_in_cycle: `parser:no|emitter:no|executor:no`
 
 ## Host Snapshot
-- cwd: `/home/dcalford/CliWork`
+- cwd: `/home/dcalford/CliWork/ScratchBird`
 - host_platform: `Linux-6.17.0-14-generic-x86_64-with-glibc2.39`
 - python: `3.12.3 (main, Jan 22 2026, 20:57:42) [GCC 13.3.0]`
-- timestamp_utc: `2026-02-24T04:21:44Z`
+- timestamp_utc: `2026-02-24T15:31:00Z`
 - tool_ant: `Apache Ant(TM) version 1.10.14 compiled on September 25 2023`
 - tool_bazel: `bazel 9.0.0`
 - tool_cargo: `cargo 1.93.0 (083ac5135 2025-12-15)`
@@ -42,6 +42,6 @@ OpenJDK 64-Bit Server VM (build 21.0.10+7-Ubuntu-124.04, mixed mode, sharing)`
 - tool_rustc: `rustc 1.93.0 (254b59607 2026-01-19)`
 
 ## Commands
-- 1. cwd=`/home/dcalford/CliWork` timeout_s=`20` cmd=`test -d /home/dcalford/CliWork/mongo && git -C /home/dcalford/CliWork/mongo rev-parse --short HEAD`
-- 2. cwd=`/home/dcalford/CliWork/mongo` timeout_s=`180` cmd=`python3 buildscripts/install_bazel.py`
-- 3. cwd=`/home/dcalford/CliWork/mongo` timeout_s=`300` cmd=`bazel build install-mongod`
+- 1. cwd=`/home/dcalford/CliWork` timeout_s=`40` cmd=`test -d /home/dcalford/CliWork/mongo && git -C /home/dcalford/CliWork/mongo rev-parse --short HEAD`
+- 2. cwd=`/home/dcalford/CliWork/mongo` timeout_s=`360` cmd=`python3 buildscripts/install_bazel.py`
+- 3. cwd=`/home/dcalford/CliWork/mongo` timeout_s=`1800` cmd=`bazel build install-mongod`

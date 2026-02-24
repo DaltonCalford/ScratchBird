@@ -26,6 +26,7 @@ Scope: Unblock `ENGINE_BASELINE_COMPARISON_TRACKER_2026-02-22.csv` blocked root 
 5. Additional engine-specific hard requirements:
    - Cassandra `ant artifacts` requires Go `>= 1.23.1` for docs generation unless doc generation is skipped.
    - Firebird configure requires `tommath` dev headers unless built with builtin tommath option.
+   - MongoDB Bazel lane requires a resolvable C/C++ toolchain (`@@bazel_tools//tools/cpp:toolchain_type`), otherwise `bazel build install-mongod` fails at analysis phase.
 
 ## 2) Minimal Linux package checklist (Debian/Ubuntu)
 Run as privileged user:
@@ -33,6 +34,7 @@ Run as privileged user:
 ```bash
 sudo apt-get update
 sudo apt-get install -y \
+  build-essential \
   maven \
   bison \
   libsnappy-dev \
@@ -46,13 +48,14 @@ sudo apt-get install -y \
 ```
 
 Notes:
-1. `maven` is required for Neo4j gates.
-2. `bison` is hard-required by MariaDB configure.
-3. `libsnappy-dev` and `liblzo2-dev` remove non-fatal but important compression dependency gaps in MariaDB.
-4. `python3-venv` is used for isolated Python tool installs (Conan/Bazel helper dependencies).
-5. `protobuf-compiler` is required for InfluxDB codegen (`protoc`).
-6. `docker.io` is required by OpenSearch distribution docker tasks.
-7. `libtommath-dev` satisfies Firebird configure dependency.
+1. `build-essential` ensures local GCC/G++ toolchain discovery for Bazel C++ builds (MongoDB lane).
+2. `maven` is required for Neo4j gates.
+3. `bison` is hard-required by MariaDB configure.
+4. `libsnappy-dev` and `liblzo2-dev` remove non-fatal but important compression dependency gaps in MariaDB.
+5. `python3-venv` is used for isolated Python tool installs (Conan/Bazel helper dependencies).
+6. `protobuf-compiler` is required for InfluxDB codegen (`protoc`).
+7. `docker.io` is required by OpenSearch distribution docker tasks.
+8. `libtommath-dev` satisfies Firebird configure dependency.
 
 ## 3) User-local tools (no root required)
 ```bash
@@ -66,6 +69,7 @@ ln -sf ~/.venvs/conan/bin/conan ~/.local/bin/conan
 # Bazel (MongoDB helper script)
 python3 ~/CliWork/mongo/buildscripts/install_bazel.py
 ~/.local/bin/bazel --version
+~/.local/bin/bazel build //:buildifier --nobuild
 ```
 
 ## 4) ClickHouse compiler gate

@@ -1,13 +1,13 @@
 task_id=SB-001
-status=blocked
-timestamp_utc=2026-02-24T04:26:47Z
+status=done
+timestamp_utc=2026-02-24T14:23:55Z
 
 === command 1 ===
 cwd: /home/dcalford/CliWork/ScratchBird
-timeout_s: 90
+timeout_s: 180
 rc: 0
 timed_out: False
-duration_s: 0.463
+duration_s: 0.495
 cmd: cmake -S . -B build_baseline/sb_cfg_01 -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DSCRATCHBIRD_WITH_COMPILER=ON -DBUILD_TESTING=ON -DSCRATCHBIRD_ENABLE_FORK_RUNTIME=ON -DSCRATCHBIRD_ENABLE_SYSTEMD_RUNTIME=OFF
 --- output begin ---
 -- ScratchBird Database Engine - Planning Phase
@@ -44,17 +44,17 @@ CMake Warning at CMakeLists.txt:257 (message):
 -- Parser agent executables: sb_parser_native/pg/mysql/fb
 -- Using global test timeout: 3600s
 -- TSAN tests disabled (set SCRATCHBIRD_ENABLE_TSAN=ON to enable)
--- Configuring done (0.3s)
+-- Configuring done (0.4s)
 -- Generating done (0.1s)
 -- Build files have been written to: /home/dcalford/CliWork/ScratchBird/build_baseline/sb_cfg_01
 --- output end ---
 
 === command 2 ===
 cwd: /home/dcalford/CliWork/ScratchBird
-timeout_s: 90
+timeout_s: 180
 rc: 0
 timed_out: False
-duration_s: 0.457
+duration_s: 0.473
 cmd: cmake -S . -B build_baseline/sb_cfg_02 -G Ninja -DCMAKE_BUILD_TYPE=Debug -DSCRATCHBIRD_WITH_COMPILER=ON -DBUILD_TESTING=ON -DSCRATCHBIRD_ENABLE_FORK_RUNTIME=ON -DSCRATCHBIRD_ENABLE_SYSTEMD_RUNTIME=OFF
 --- output begin ---
 -- ScratchBird Database Engine - Planning Phase
@@ -91,17 +91,17 @@ CMake Warning at CMakeLists.txt:257 (message):
 -- Parser agent executables: sb_parser_native/pg/mysql/fb
 -- Using global test timeout: 3600s
 -- TSAN tests disabled (set SCRATCHBIRD_ENABLE_TSAN=ON to enable)
--- Configuring done (0.3s)
+-- Configuring done (0.4s)
 -- Generating done (0.1s)
 -- Build files have been written to: /home/dcalford/CliWork/ScratchBird/build_baseline/sb_cfg_02
 --- output end ---
 
 === command 3 ===
 cwd: /home/dcalford/CliWork/ScratchBird
-timeout_s: 90
+timeout_s: 180
 rc: 0
 timed_out: False
-duration_s: 0.466
+duration_s: 0.472
 cmd: cmake -S . -B build_baseline/sb_cfg_03 -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DSCRATCHBIRD_WITH_COMPILER=OFF -DBUILD_TESTING=ON -DSCRATCHBIRD_ENABLE_FORK_RUNTIME=ON -DSCRATCHBIRD_ENABLE_SYSTEMD_RUNTIME=OFF
 --- output begin ---
 -- ScratchBird Database Engine - Planning Phase
@@ -145,185 +145,265 @@ CMake Warning at CMakeLists.txt:257 (message):
 
 === command 4 ===
 cwd: /home/dcalford/CliWork/ScratchBird
-timeout_s: 300
-rc: 124
-timed_out: True
-duration_s: 300.007
+timeout_s: 600
+rc: 0
+timed_out: False
+duration_s: 375.026
 cmd: cmake --build build_baseline/sb_cfg_01 --target scratchbird_tests -j2
 --- output begin ---
 [0/2] Re-checking globbed directories...
-[1/355] Building CXX object src/CMakeFiles/scratchbird_pool.dir/pool/statement_cache.cpp.o
-[2/355] Linking CXX static library src/libscratchbird_pool.a
-[3/355] Building CXX object src/CMakeFiles/scratchbird_udr.dir/udr/connection_pool.cpp.o
-[4/355] Building CXX object src/CMakeFiles/scratchbird_udr.dir/udr/firebird_udr.cpp.o
-[5/355] Building CXX object src/CMakeFiles/scratchbird_udr.dir/udr/mysql_udr.cpp.o
-/home/dcalford/CliWork/ScratchBird/src/udr/mysql_udr.cpp: In member function ‘std::vector<unsigned char> scratchbird::udr::MySQLConnection::scrambleNativePassword(const std::string&, const std::vector<unsigned char>&)’:
-/home/dcalford/CliWork/ScratchBird/src/udr/mysql_udr.cpp:368:14: warning: ‘int SHA1_Init(SHA_CTX*)’ is deprecated: Since OpenSSL 3.0 [-Wdeprecated-declarations]
-  368 |     SHA1_Init(&ctx);
-      |     ~~~~~~~~~^~~~~~
-In file included from /usr/include/openssl/x509.h:41,
-                 from /usr/include/openssl/ssl.h:31,
-                 from /home/dcalford/CliWork/ScratchBird/src/udr/mysql_udr.cpp:24:
-/usr/include/openssl/sha.h:49:27: note: declared here
-   49 | OSSL_DEPRECATEDIN_3_0 int SHA1_Init(SHA_CTX *c);
-      |                           ^~~~~~~~~
-/home/dcalford/CliWork/ScratchBird/src/udr/mysql_udr.cpp:369:16: warning: ‘int SHA1_Update(SHA_CTX*, const void*, size_t)’ is deprecated: Since OpenSSL 3.0 [-Wdeprecated-declarations]
-  369 |     SHA1_Update(&ctx, scramble.data(), scramble.size());
-      |     ~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-/usr/include/openssl/sha.h:50:27: note: declared here
-   50 | OSSL_DEPRECATEDIN_3_0 int SHA1_Update(SHA_CTX *c, const void *data, size_t len);
-      |                           ^~~~~~~~~~~
-/home/dcalford/CliWork/ScratchBird/src/udr/mysql_udr.cpp:370:16: warning: ‘int SHA1_Update(SHA_CTX*, const void*, size_t)’ is deprecated: Since OpenSSL 3.0 [-Wdeprecated-declarations]
-  370 |     SHA1_Update(&ctx, hash2, SHA_DIGEST_LENGTH);
-      |     ~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-/usr/include/openssl/sha.h:50:27: note: declared here
-   50 | OSSL_DEPRECATEDIN_3_0 int SHA1_Update(SHA_CTX *c, const void *data, size_t len);
-      |                           ^~~~~~~~~~~
-/home/dcalford/CliWork/ScratchBird/src/udr/mysql_udr.cpp:371:15: warning: ‘int SHA1_Final(unsigned char*, SHA_CTX*)’ is deprecated: Since OpenSSL 3.0 [-Wdeprecated-declarations]
-  371 |     SHA1_Final(hash3, &ctx);
-      |     ~~~~~~~~~~^~~~~~~~~~~~~
-/usr/include/openssl/sha.h:51:27: note: declared here
-   51 | OSSL_DEPRECATEDIN_3_0 int SHA1_Final(unsigned char *md, SHA_CTX *c);
-      |                           ^~~~~~~~~~
-[6/355] Building CXX object src/CMakeFiles/scratchbird_udr.dir/udr/postgresql_udr.cpp.o
-/home/dcalford/CliWork/ScratchBird/src/udr/postgresql_udr.cpp: In member function ‘std::string scratchbird::udr::PostgreSQLConnection::md5Hash(const std::string&)’:
-/home/dcalford/CliWork/ScratchBird/src/udr/postgresql_udr.cpp:422:8: warning: ‘unsigned char* MD5(const unsigned char*, size_t, unsigned char*)’ is deprecated: Since OpenSSL 3.0 [-Wdeprecated-declarations]
-  422 |     MD5((unsigned char*)input.data(), input.size(), digest);
-      |     ~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-In file included from /home/dcalford/CliWork/ScratchBird/src/udr/postgresql_udr.cpp:27:
-/usr/include/openssl/md5.h:52:38: note: declared here
-   52 | OSSL_DEPRECATEDIN_3_0 unsigned char *MD5(const unsigned char *d, size_t n,
-      |                                      ^~~
-[7/355] Building CXX object src/CMakeFiles/scratchbird_udr.dir/udr/scram_auth.cpp.o
-[8/355] Building CXX object src/CMakeFiles/scratchbird_udr.dir/udr/scratchbird_udr.cpp.o
-[9/355] Building CXX object src/CMakeFiles/scratchbird_udr.dir/udr/type_mapping.cpp.o
-[10/355] Building CXX object src/CMakeFiles/scratchbird_udr.dir/udr/udr_connector.cpp.o
-[11/355] Linking CXX static library src/libscratchbird_udr.a
-[12/355] Building CXX object src/CMakeFiles/scratchbird_ipc.dir/ipc/external_agents/copy_flow_control.cpp.o
-[13/355] Building CXX object src/CMakeFiles/scratchbird_ipc.dir/ipc/external_agents/engine_ipc_session_handler.cpp.o
-[14/355] Building CXX object src/CMakeFiles/scratchbird_ipc.dir/ipc/external_agents/firebird_parser_agent.cpp.o
-[15/355] Building CXX object src/CMakeFiles/scratchbird_ipc.dir/ipc/external_agents/mysql_parser_agent.cpp.o
-[16/355] Building CXX object src/CMakeFiles/scratchbird_ipc.dir/ipc/external_agents/postgresql_parser_agent.cpp.o
-[17/355] Building CXX object src/CMakeFiles/scratchbird_ipc.dir/ipc/ipc_contract_v1_1.cpp.o
-[18/355] Building CXX object src/CMakeFiles/scratchbird_ipc.dir/ipc/ipc_error_mapper.cpp.o
-[19/355] Building CXX object src/CMakeFiles/scratchbird_ipc.dir/ipc/ipc_server.cpp.o
-[20/355] Building CXX object src/CMakeFiles/scratchbird_ipc.dir/ipc/parser_agent.cpp.o
-[21/355] Building CXX object src/CMakeFiles/scratchbird_ipc.dir/ipc/unix_socket_channel.cpp.o
-[22/355] Building CXX object src/CMakeFiles/scratchbird_ipc.dir/ipc/unix_socket_channel_win32.cpp.o
-[23/355] Linking CXX static library src/libscratchbird_ipc.a
-[24/355] Building CXX object src/CMakeFiles/sb_manager.dir/server/sb_manager_main.cpp.o
-[25/355] Building CXX object _deps/googletest-build/googletest/CMakeFiles/gtest.dir/src/gtest-all.cc.o
-[26/355] Linking CXX static library lib/libgtest.a
-[27/355] Building CXX object _deps/googletest-build/googletest/CMakeFiles/gtest_main.dir/src/gtest_main.cc.o
-[28/355] Linking CXX static library lib/libgtest_main.a
-[29/355] Building CXX object src/CMakeFiles/scratchbird_sblr.dir/sblr/executor.cpp.o
-/home/dcalford/CliWork/ScratchBird/src/sblr/executor.cpp: In function ‘std::string scratchbird::sblr::{anonymous}::computePgMd5StoredHash(const std::string&, const std::string&)’:
-/home/dcalford/CliWork/ScratchBird/src/sblr/executor.cpp:69609:20: warning: ‘unsigned char* MD5(const unsigned char*, std::size_t, unsigned char*)’ is deprecated: Since OpenSSL 3.0 [-Wdeprecated-declarations]
-69609 |                 MD5(reinterpret_cast<const unsigned char*>(input.data()), input.size(), hash);
-      |                 ~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-In file included from /home/dcalford/CliWork/ScratchBird/src/sblr/executor.cpp:126:
-/usr/include/openssl/md5.h:52:38: note: declared here
-   52 | OSSL_DEPRECATEDIN_3_0 unsigned char *MD5(const unsigned char *d, size_t n,
-      |                                      ^~~
-[30/355] Linking CXX static library src/libscratchbird_sblr.a
-[31/355] Linking CXX static library src/libscratchbird_compiler.a
-[32/355] Linking CXX static library src/libscratchbird_protocol.a
-[33/355] Linking CXX static library src/libscratchbird_server.a
-[34/355] Linking CXX executable src/sb_manager
-[35/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/benchmark/test_cache_buffer_benchmark.cpp.o
-[36/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/benchmark/benchmark_suite.cpp.o
-[37/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/benchmark/test_front_door_mode_benchmark.cpp.o
-[38/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/btree_page_test.cpp.o
-[39/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/benchmark/test_parser_v3_benchmark.cpp.o
-[40/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/domains/test_advanced_domain.cpp.o
-[41/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/domains/test_domain_manager.cpp.o
-[42/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/domains/test_domain_validation_frozen.cpp.o
-[43/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/domains/test_domain_persistence.cpp.o
-[44/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/domains/test_enum_domain.cpp.o
-[45/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/domains/test_record_domain.cpp.o
-[46/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/domains/test_set_domain.cpp.o
-[47/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/domains/test_system_domain_registry.cpp.o
-[48/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/domains/test_variant_domain.cpp.o
-[49/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/gin/test_gin_basic.cpp.o
-[50/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/gin/test_gin_phase3.cpp.o
-[51/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/gin/test_gin_phase4.cpp.o
-[52/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/gin/test_gin_phase6.cpp.o
-[53/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/gin/test_gin_phase5.cpp.o
-[54/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/gin/test_gin_posting_tree.cpp.o
-[55/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_alpha_101.cpp.o
-[56/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/job_scheduler_test.cpp.o
-[57/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_arithmetic_overflow.cpp.o
-[58/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_audit_logger.cpp.o
-[59/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_atomic_xid_allocation.cpp.o
-[60/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_auth_mfa_challenge_flow.cpp.o
-[61/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_auth_policy_protocol_parity.cpp.o
-[62/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_auth_bootstrap_claim.cpp.o
-[63/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_bitmap_index_gc.cpp.o
-[64/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_backup_tablespace_manifest.cpp.o
-[65/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_brin_index.cpp.o
-[66/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_btree_compression.cpp.o
-[67/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_btree_delete_parent_update.cpp.o
-[68/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_btree_gc.cpp.o
-[69/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_btree_gc_compaction.cpp.o
-[70/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_btree_iterator.cpp.o
-[71/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_btree_mga_compliance.cpp.o
-[72/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_btree_rightmost_simple.cpp.o
-[73/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_btree_rightmost_child.cpp.o
-[74/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_bytecode_opcodes.cpp.o
-[75/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_buffer_pool_concurrency.cpp.o
-[76/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_cache_unit.cpp.o
-[77/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_charset_collation_extension_contract.cpp.o
-[78/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_cluster_clock_extension_contract.cpp.o
-[79/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_cluster_fabric_extension_contract.cpp.o
-[80/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_domain_extension_contract.cpp.o
-[81/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_emulation_engine_coverage_contract.cpp.o
-[82/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_database_bootstrap.cpp.o
-[83/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_engine_specific_extension_contract.cpp.o
-[84/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_extension_publication_subscription_contract.cpp.o
-[85/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_family_matrix_contract.cpp.o
-[86/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_family_migration_backfill.cpp.o
-[87/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_incident_healing_alert_extension_contract.cpp.o
-[88/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_full_extract.cpp.o
-[89/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_index_metadata_extension_contract.cpp.o
-[90/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_index_metrics_extension_contract.cpp.o
-[91/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_index_migration_backfill.cpp.o
-[92/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_manager.cpp.o
-[93/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_mga_compliance.cpp.o
-[94/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_olap_cube_extension_contract.cpp.o
-[95/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_parentage_and_name_uniqueness.cpp.o
-[96/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_parser_capability_contract.cpp.o
-[97/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_permissions_persistence.cpp.o
-[98/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_persistence_phase_b.cpp.o
-[99/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_relation_extension_contract.cpp.o
-[100/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_remote_connector_extension_contract.cpp.o
-[101/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_rename_move.cpp.o
-[102/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_replication_runtime_conflict_extension_contract.cpp.o
-[103/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_resource_timezone_extension_contract.cpp.o
-[104/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_routing_admission_extension_contract.cpp.o
-[105/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_runtime_context_extension_contract.cpp.o
-[106/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_sblr_artifact_extension_contract.cpp.o
-[107/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_scheduler_extension_contract.cpp.o
-[108/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_security_acl_abac_graph_token_quota_settings_contract.cpp.o
-[109/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_security_auth_provider_rule_chain_contract.cpp.o
-[110/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_security_crypto_baseline_key_lifecycle_contract.cpp.o
-[111/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_security_extension_contract.cpp.o
-[112/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_security_identity_account_contract.cpp.o
-[113/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_security_mfa_policy_enrollment_recovery_contract.cpp.o
-[114/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_sharding_extension_contract.cpp.o
-[115/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_storage_extension_contract.cpp.o
-[116/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_text_search_extension_contract.cpp.o
-[117/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_type_schema_contract.cpp.o
-[118/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_virtual_overlay_conformance_contract.cpp.o
-[119/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_charset.cpp.o
-[120/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_charset_catalog.cpp.o
-[121/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_charset_loader.cpp.o
-[122/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_clock_control.cpp.o
-[123/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_clock_sweep.cpp.o
-[124/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_code_dependencies.cpp.o
-[125/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_compression.cpp.o
-[126/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_concurrent_transactions.cpp.o
-[127/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_compression_interop.cpp.o
-[128/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_config.cpp.o
-[129/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_conditional_functions.cpp.o
-ninja: build stopped: interrupted by user.
+[1/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_connection_manager.cpp.o
+[2/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_constraint_enforcement.cpp.o
+[3/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_connection_context.cpp.o
+[4/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_constraints_crud.cpp.o
+[5/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_control_plane_dbbt.cpp.o
+[6/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_crc32c_comprehensive.cpp.o
+[7/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_copy_executor.cpp.o
+[8/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_cross_page_updates.cpp.o
+[9/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_data_encryption.cpp.o
+[10/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_data_masking.cpp.o
+[11/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_deadlock_detection.cpp.o
+[12/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_dependency_errors.cpp.o
+[13/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_dependency_integration.cpp.o
+[14/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_dependency_performance.cpp.o
+[15/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_dependency_tracking.cpp.o
+[16/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_dependency_transactions.cpp.o
+[17/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_domain_validation.cpp.o
+[18/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_edge_cases.cpp.o
+[19/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_domain_opcodes.cpp.o
+[20/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_encryption_key_manager.cpp.o
+[21/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_encrypted_storage.cpp.o
+[22/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_engine_api_compatibility_contract.cpp.o
+[23/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_engine_cross_capability_audit_contract.cpp.o
+[24/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_engine_error_code_harmonization.cpp.o
+[25/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_engine_profile_enum_freeze_contract.cpp.o
+[26/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_environment.cpp.o
+[27/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_environment_config.cpp.o
+[28/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_engine_ipc_session_handler.cpp.o
+[29/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_error_paths.cpp.o
+[30/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_executor_transaction_payload.cpp.o
+[31/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_expression_matcher.cpp.o
+[32/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_executor.cpp.o
+[33/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_expression_serialization.cpp.o
+[34/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_extended_page_sizes.cpp.o
+[35/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_extended_page_sizes_agent_c_review.cpp.o
+/home/dcalford/CliWork/ScratchBird/tests/unit/test_extended_page_sizes_agent_c_review.cpp: In lambda function:
+/home/dcalford/CliWork/ScratchBird/tests/unit/test_extended_page_sizes_agent_c_review.cpp:496:47: warning: ignoring return value of ‘uint16_t scratchbird::core::HeapPage::getItemCount() const’, declared with attribute ‘nodiscard’ [-Wunused-result]
+  496 |                         heap_page.getItemCount();
+      |                         ~~~~~~~~~~~~~~~~~~~~~~^~
+In file included from /home/dcalford/CliWork/ScratchBird/tests/unit/test_extended_page_sizes_agent_c_review.cpp:14:
+/home/dcalford/CliWork/ScratchBird/include/scratchbird/core/heap_page.h:351:28: note: declared here
+  351 |         [[nodiscard]] auto getItemCount() const -> uint16_t;
+      |                            ^~~~~~~~~~~~
+[36/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_file_permissions.cpp.o
+[37/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_extract.cpp.o
+[38/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_firebird_lexer.cpp.o
+[39/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_firebird_drop_semantics.cpp.o
+[40/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_firebird_parser_window.cpp.o
+[41/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_firebird_parser.cpp.o
+[42/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_fk_actions.cpp.o
+[43/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_gin_index_gc.cpp.o
+[44/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_garbage_collector.cpp.o
+[45/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_global_uniqueness_index.cpp.o
+[46/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_group_commit.cpp.o
+[47/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_hash_custom_tablespace.cpp.o
+[48/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_hash_index.cpp.o
+[49/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_hash_index_gc.cpp.o
+[50/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_heap_free_space.cpp.o
+[51/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_heap_index_gc_integration.cpp.o
+[52/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_heap_page.cpp.o
+[53/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_heap_page_memory.cpp.o
+[54/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_heap_page_toast_api.cpp.o
+[55/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_heap_record_contract.cpp.o
+[56/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_heap_toast_lob_diagnostics.cpp.o
+[57/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_heap_toast_integration.cpp.o
+[58/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_hnsw_distance_metrics.cpp.o
+[59/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_hint_bits.cpp.o
+[60/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_hnsw_index.cpp.o
+[61/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_home_schema_resolution.cpp.o
+[62/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_index_advisor.cpp.o
+[63/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_index_corruption_error_contract.cpp.o
+[64/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_index_emitter_payload_contracts.cpp.o
+[65/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_index_executor_dispatch_contracts.cpp.o
+[66/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_index_factory_registry.cpp.o
+[67/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_index_gc_runtime_contracts.cpp.o
+[68/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_index_mga_compliance.cpp.o
+[69/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_index_page_base_layout_contract.cpp.o
+[70/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_index_page_type_sibling_contract.cpp.o
+[71/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_index_page_walk_conformance.cpp.o
+[72/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_inverted_index_basic.cpp.o
+[73/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_index_type_taxonomy.cpp.o
+[74/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_ipc_policy.cpp.o
+[75/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_ipc_contract.cpp.o
+[76/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_ipc_server.cpp.o
+[77/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_json_integration.cpp.o
+[78/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_language_udr_compile_api_matrix_contract.cpp.o
+[79/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_json_library.cpp.o
+[80/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_language_udr_registration_capability_contract.cpp.o
+[81/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_language_udr_test_harness.cpp.o
+[82/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_language_udr_sblr_sql_render_endpoint_contract.cpp.o
+[83/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_listener_ipc_adapter.cpp.o
+[84/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_lob_page_layout_contract.cpp.o
+[85/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_lexer_v3.cpp.o
+[86/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_lock_conflict_matrix.cpp.o
+[87/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_logger.cpp.o
+[88/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_lsm_bloom_filter.cpp.o
+[89/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_login_attempt_tracker.cpp.o
+[90/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_lsm_compaction.cpp.o
+[91/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_lsm_memtable.cpp.o
+[92/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_lsm_range_scan.cpp.o
+/home/dcalford/CliWork/ScratchBird/tests/unit/test_lsm_range_scan.cpp: In function ‘void {anonymous}::removeDirectory(const std::string&)’:
+/home/dcalford/CliWork/ScratchBird/tests/unit/test_lsm_range_scan.cpp:42:11: warning: ignoring return value of ‘int system(const char*)’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
+   42 |     system(cmd.c_str());
+      |     ~~~~~~^~~~~~~~~~~~~
+[93/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_lsm_sstable_reader.cpp.o
+/home/dcalford/CliWork/ScratchBird/tests/unit/test_lsm_sstable_reader.cpp: In function ‘void {anonymous}::testPointQuery()’:
+/home/dcalford/CliWork/ScratchBird/tests/unit/test_lsm_sstable_reader.cpp:146:16: warning: ignoring return value of ‘int system(const char*)’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
+  146 |     std::system(("rm -rf " + db_path + "*").c_str());
+      |     ~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+[94/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_lsm_sstable_writer.cpp.o
+[95/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_manager_proxy_mcp.cpp.o
+[96/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_mga_back_versioning.cpp.o
+[97/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_more_cases.cpp.o
+[98/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_mga_debug.cpp.o
+[99/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_multi_geometry.cpp.o
+[100/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_mysql_parser.cpp.o
+[101/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_nan_infinity.cpp.o
+[102/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_mysql_query_compiler.cpp.o
+[103/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_native_sql_render_contract.cpp.o
+[104/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_native_sql_ast_sblr_binding_coverage_meter.cpp.o
+[105/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_native_sql_renderer.cpp.o
+[106/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_native_sql_syn13_coverage_meter.cpp.o
+[107/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_new_integer_types.cpp.o
+[108/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_native_sql_roundtrip_fidelity.cpp.o
+[109/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_normalization.cpp.o
+[110/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_ondisk_crc_uuid.cpp.o
+[111/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_optimizer_multi_track_classification.cpp.o
+[112/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_object_resolver_view.cpp.o
+[113/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_optimizer_vnext_plan_cache.cpp.o
+[114/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_optimizer_vnext_plan_selection.cpp.o
+[115/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_overflow_fix.cpp.o
+[116/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_page_contract_stage_s1.cpp.o
+[117/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_page_management_edge_cases.cpp.o
+[118/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_page_management.cpp.o
+[119/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_page_manager_destructor.cpp.o
+[120/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_page_manager_overflow.cpp.o
+[121/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_parser_state_v3.cpp.o
+[122/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_page_manager_race.cpp.o
+[123/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_parser_v3_gap_contracts.cpp.o
+[124/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_parser_v3_index_management.cpp.o
+[125/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_parser_v3_nosql_emitter_contract.cpp.o
+[126/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_parser_v3_udr_compile_emitter_contract.cpp.o
+[127/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_parser_v3_native_extension_surface.cpp.o
+[128/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_password_policy.cpp.o
+[129/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_plain_value_persistence.cpp.o
+[130/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_predicate_matcher.cpp.o
+[131/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_postgresql_parser.cpp.o
+[132/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_process_control.cpp.o
+[133/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_protocol_adapter_dialects.cpp.o
+[134/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_psql_control_flow.cpp.o
+[135/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_quality_pipeline.cpp.o
+[136/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_python_psql_parity.cpp.o
+[137/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_query_compiler_v3.cpp.o
+[138/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_query_planner_integration.cpp.o
+[139/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_remediation_validation.cpp.o
+[140/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_query_result_cache.cpp.o
+[141/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_rename_move_opcodes.cpp.o
+[142/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_rtree.cpp.o
+[143/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_sblr_v3_container.cpp.o
+[144/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_sblr_type_opcodes.cpp.o
+[145/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_sblr_v3_handler_registry.cpp.o
+[146/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_sblr_v3_payload_codec.cpp.o
+[147/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_sblr_v3_plan_cache_key.cpp.o
+[148/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_sblr_v3_schema.cpp.o
+[149/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_sblr_vnext_ast_opcode_extension_contract.cpp.o
+[150/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_sblr_v3_opcode_identity.cpp.o
+[151/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_sblr_vnext_payload_schema_mapping_contract.cpp.o
+[152/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_sbwp_profile_capability_contract.cpp.o
+[153/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_schema_dependencies.cpp.o
+[154/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_sblr_vnext_executor_dispatch_contract.cpp.o
+[155/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_schema_path_v3.cpp.o
+[156/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_schema_path_resolution.cpp.o
+[157/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_security_issues.cpp.o
+/home/dcalford/CliWork/ScratchBird/tests/unit/test_security_issues.cpp: In member function ‘virtual void SecurityTest_PathTraversal_SymbolicLink_Test::TestBody()’:
+/home/dcalford/CliWork/ScratchBird/tests/unit/test_security_issues.cpp:150:12: warning: ignoring return value of ‘int symlink(const char*, const char*)’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
+  150 |     symlink("/etc/passwd", test_symlink_path_.c_str());
+      |     ~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/home/dcalford/CliWork/ScratchBird/tests/unit/test_security_issues.cpp: In member function ‘void SecurityTest::create_truncated_db(const char*, size_t)’:
+/home/dcalford/CliWork/ScratchBird/tests/unit/test_security_issues.cpp:82:18: warning: ignoring return value of ‘ssize_t write(int, const void*, size_t)’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
+   82 |             write(fd, buffer.data(), size);
+      |             ~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~
+/home/dcalford/CliWork/ScratchBird/tests/unit/test_security_issues.cpp: In member function ‘virtual void SecurityTest_ShortRead_PartialPage_Test::TestBody()’:
+/home/dcalford/CliWork/ScratchBird/tests/unit/test_security_issues.cpp:503:18: warning: ignoring return value of ‘int ftruncate(int, __off_t)’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
+  503 |         ftruncate(fd, 4096);
+      |         ~~~~~~~~~^~~~~~~~~~
+[158/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_scram_auth.cpp.o
+[159/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_session_timeout.cpp.o
+[160/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_service_controller_listener_bootstrap.cpp.o
+[161/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_signal_control.cpp.o
+[162/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_spatial_functions.cpp.o
+[163/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_show_set_commands.cpp.o
+[164/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_spatial_types.cpp.o
+[165/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_sql_to_bytecode.cpp.o
+[166/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_sql_to_sblr_trace_determinism.cpp.o
+[167/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_sqlstate.cpp.o
+[168/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_srid.cpp.o
+[169/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_statistics_accuracy.cpp.o
+[170/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_statistics_crud.cpp.o
+[171/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_storage_boundaries.cpp.o
+[172/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_storage_corruption.cpp.o
+[173/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_storage_critical_fixes.cpp.o
+[174/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_storage_engine_mga_crosspage.cpp.o
+[175/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_storage_engine.cpp.o
+[176/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_storage_performance.cpp.o
+[177/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_storage_stress.cpp.o
+[178/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_storage_transactions.cpp.o
+[179/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_table_dependencies.cpp.o
+[180/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_tablespace_autoextend.cpp.o
+[181/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_tablespace_header_and_files.cpp.o
+[182/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_tablespace_recovery.cpp.o
+[183/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_tablespace_migration_index_updates.cpp.o
+[184/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_telemetry_reporting_contract.cpp.o
+[185/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_temp_table_semantics.cpp.o
+[186/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_timezone.cpp.o
+[187/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_toast_cleanup.cpp.o
+[188/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_toast_cleanup_ordering.cpp.o
+[189/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_tip_performance_benchmark.cpp.o
+[190/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_toast_gc_contract.cpp.o
+[191/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_toast_operations.cpp.o
+[192/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_transaction_deadlock_simple.cpp.o
+[193/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_toast_tip_visibility.cpp.o
+[194/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_transaction_fixes_corrected.cpp.o
+[195/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_transaction_vnext_contract.cpp.o
+[196/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_transaction_manager.cpp.o
+[197/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_tuple_size_validation.cpp.o
+[198/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_tuple_alignment.cpp.o
+[199/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_type_dependencies.cpp.o
+[200/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_type_conversions.cpp.o
+[201/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_type_system.cpp.o
+[202/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_type_serialization.cpp.o
+[203/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_utf8_utils.cpp.o
+[204/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_view_dependencies.cpp.o
+[205/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_virtual_catalog_canonical_backing_contract.cpp.o
+[206/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_virtual_catalog_overlay_group_a_contract.cpp.o
+[207/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_virtual_catalog_overlay_group_b_contract.cpp.o
+[208/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_virtual_catalog_overlay_group_c_contract.cpp.o
+[209/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_virtual_catalog_overlay_lifecycle_contract.cpp.o
+[210/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_virtual_catalog_protocol_matrix_contract.cpp.o
+[211/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_vnext_bootstrap_contract.cpp.o
+[212/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_vnext_page_contract.cpp.o
+[213/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_vnext_storage_metrics_contract.cpp.o
+[214/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_virtual_catalogs.cpp.o
+[215/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_windows_service_host.cpp.o
+[216/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/types/test_array.cpp.o
+[217/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_wire_protocol.cpp.o
+[218/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/types/test_composite.cpp.o
+[219/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/types/test_decimal_arithmetic.cpp.o
+[220/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/types/test_interval_type.cpp.o
+[221/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/types/test_money_type.cpp.o
+[222/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/types/test_jsonb.cpp.o
+[223/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/types/test_new_types_standalone.cpp.o
+[224/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/types/test_vector.cpp.o
+[225/226] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/types/test_xml.cpp.o
+[226/226] Linking CXX executable tests/scratchbird_tests
 --- output end ---
