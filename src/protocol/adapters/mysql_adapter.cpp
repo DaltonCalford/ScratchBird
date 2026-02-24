@@ -455,7 +455,17 @@ core::Status MySqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
         return core::Status::OK;
     }
 
-    client_config_.database_name = database_name_.empty() ? "default" : database_name_;
+    std::string selected_database;
+    if (!resolveDatabaseSelection(database_name_, selected_database)) {
+        if (ctx) {
+            ctx->set(core::Status::INVALID_AUTHORIZATION,
+                     "Database switch denied by manager binding context",
+                     __FILE__, __LINE__, __func__);
+        }
+        return core::Status::INVALID_AUTHORIZATION;
+    }
+    database_name_ = selected_database;
+    client_config_.database_name = selected_database;
     if (!config_.engine_endpoint.empty()) {
         client_config_.ipc_method = server::IPCMethod::AUTO;
         client_config_.socket_path = config_.engine_endpoint;
@@ -469,6 +479,9 @@ core::Status MySqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
     client_config_.write_timeout_ms = config_.write_timeout_ms;
     client_config_.auto_commit = true;
     client_config_.auto_start_server = false;
+    client_config_.connect_client_flags = config_.connect_client_flags;
+    client_config_.has_bound_db_uuid = config_.has_bound_db_uuid;
+    client_config_.bound_db_uuid = config_.bound_db_uuid;
     if (username_.empty()) {
         client_config_.username = "BOOTSTRAP";
         client_config_.password.clear();
@@ -486,7 +499,7 @@ core::Status MySqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
 
     // Switch to emulated MySQL schema for this database if possible
     if (!default_db_set_) {
-        std::string db_name = database_name_.empty() ? std::string("default") : database_name_;
+        std::string db_name = selected_database;
         auto execute_set = [&](const std::string& schema_name) -> core::Status {
             std::string use_stmt = "SET search_path TO '" + escapeLiteral(schema_name) + "'";
             client::ResultSet rs;
@@ -690,6 +703,9 @@ core::Status MySqlAdapter::processMessage(network::Connection* conn) {
         case MySqlProtocolState::HANDSHAKE_SENT:
             return handleHandshakeResponse(conn);
 
+        case MySqlProtocolState::AUTH_SWITCH:
+            return handleAuthSwitchResponse(conn);
+
         case MySqlProtocolState::READY:
         case MySqlProtocolState::AUTHENTICATED:
             return handleCommand(conn);
@@ -778,7 +794,11 @@ core::Status MySqlAdapter::compileQuery(const std::string& sql,
     last_warnings_.clear();
 
     sblr::MySQLQueryCompiler compiler(engineDatabase());
-    std::string db_name = database_name_.empty() ? std::string("default") : database_name_;
+    std::string db_name;
+    if (!resolveDatabaseSelection(database_name_, db_name)) {
+        error_out = "Database switch denied by manager binding context";
+        return core::Status::INVALID_AUTHORIZATION;
+    }
     compiler.setDefaultSchema(
         resolveMySqlSchemaPath(engineDatabase() ? engineDatabase()->catalog_manager() : nullptr,
                                db_name));
@@ -1128,23 +1148,111 @@ core::Status MySqlAdapter::handleHandshakeResponse(network::Connection* conn) {
         offset += db_offset;
     }
 
+    std::string selected_database;
+    if (!resolveDatabaseSelection(database_name_, selected_database)) {
+        sendErrorPacket(conn,
+                        mysql::ErrorCode::ACCESS_DENIED,
+                        "28000",
+                        "Database switch denied by manager binding context");
+        return core::Status::INVALID_AUTHORIZATION;
+    }
+    database_name_ = std::move(selected_database);
+
     // Auth plugin name (if PLUGIN_AUTH)
     if ((client_capabilities_ & mysql::Capability::PLUGIN_AUTH) && offset < current_packet_.size()) {
         size_t plugin_offset = 0;
         auth_plugin_name_ = readNullString(current_packet_.data() + offset, plugin_offset, current_packet_.size() - offset);
     }
 
-    const char* configured_password = std::getenv("SCRATCHBIRD_MYSQL_AUTH_PASSWORD");
-    remote_password_ = (configured_password && configured_password[0] != '\0')
-        ? std::string(configured_password)
-        : std::string();
-
-    if (!validateAuthResponse(auth_plugin_name_, auth_response_, auth_scramble_, remote_password_)) {
+    if (username_.empty()) {
         sendErrorPacket(conn,
                         mysql::ErrorCode::ACCESS_DENIED,
                         "28000",
                         "Access denied for user '" + username_ + "'");
         return core::Status::INVALID_PASSWORD;
+    }
+
+    if (toUpperAscii(auth_plugin_name_) != "MYSQL_CLEAR_PASSWORD") {
+        sendAuthSwitchRequest(conn, "mysql_clear_password");
+        mysql_state_ = MySqlProtocolState::AUTH_SWITCH;
+        return sendBuffer(conn);
+    }
+
+    std::string clear_password;
+    if (!decodeClearPasswordResponse(auth_response_, clear_password)) {
+        sendErrorPacket(conn,
+                        mysql::ErrorCode::ACCESS_DENIED,
+                        "28000",
+                        "Access denied for user '" + username_ + "'");
+        return core::Status::INVALID_PASSWORD;
+    }
+
+    return authenticateRemoteUser(conn, clear_password);
+}
+
+core::Status MySqlAdapter::handleAuthSwitchResponse(network::Connection* conn) {
+    std::string response(reinterpret_cast<const char*>(current_packet_.data()), current_packet_.size());
+    std::string clear_password;
+    if (!decodeClearPasswordResponse(response, clear_password)) {
+        sendErrorPacket(conn,
+                        mysql::ErrorCode::ACCESS_DENIED,
+                        "28000",
+                        "Access denied for user '" + username_ + "'");
+        return core::Status::INVALID_PASSWORD;
+    }
+
+    return authenticateRemoteUser(conn, clear_password);
+}
+
+void MySqlAdapter::sendAuthSwitchRequest(network::Connection* conn,
+                                         const std::string& plugin_name) {
+    std::vector<uint8_t> payload;
+    writeInt1(payload, mysql::EOF_PACKET);  // AuthSwitchRequest marker
+    writeNullString(payload, plugin_name);
+    sendPacket(conn, payload);
+}
+
+bool MySqlAdapter::decodeClearPasswordResponse(const std::string& response,
+                                               std::string& clear_password_out) const {
+    clear_password_out.clear();
+    if (response.empty()) {
+        return true;
+    }
+
+    const size_t null_pos = response.find('\0');
+    if (null_pos == std::string::npos) {
+        clear_password_out = response;
+        return true;
+    }
+
+    clear_password_out.assign(response.data(), null_pos);
+    for (size_t i = null_pos + 1; i < response.size(); ++i) {
+        if (response[i] != '\0') {
+            return false;
+        }
+    }
+    return true;
+}
+
+core::Status MySqlAdapter::authenticateRemoteUser(network::Connection* conn,
+                                                  const std::string& clear_password) {
+    remote_password_ = clear_password;
+    default_db_set_ = false;
+    information_schema_bootstrapped_ = false;
+
+    if (client_) {
+        client_->disconnect();
+        client_.reset();
+    }
+
+    core::ErrorContext auth_ctx;
+    const core::Status status = ensureRemoteClient(&auth_ctx);
+    if (status != core::Status::OK) {
+        sendErrorPacket(conn,
+                        mysql::ErrorCode::ACCESS_DENIED,
+                        "28000",
+                        "Access denied for user '" + username_ + "'");
+        return status;
     }
 
     return sendAuthResult(conn, true);
@@ -1584,16 +1692,25 @@ core::Status MySqlAdapter::handleComInitDb(network::Connection* conn) {
 
     std::string new_db(reinterpret_cast<const char*>(current_packet_.data() + 1),
                        current_packet_.size() - 1);
-    
-    // C3: Validate database exists
-    core::ErrorContext ctx;
-    if (!validateDatabaseExists(new_db, &ctx)) {
-        sendErrorPacket(conn, mysql::ErrorCode::BAD_DB_ERROR, "42000",
-                       "Unknown database '" + new_db + "'");
+
+    std::string selected_database;
+    if (!resolveDatabaseSelection(new_db, selected_database)) {
+        sendErrorPacket(conn,
+                        mysql::ErrorCode::ACCESS_DENIED,
+                        "28000",
+                        "Database switch denied by manager binding context");
         return sendBuffer(conn);
     }
 
-    database_name_ = std::move(new_db);
+    // C3: Validate database exists
+    core::ErrorContext ctx;
+    if (!validateDatabaseExists(selected_database, &ctx)) {
+        sendErrorPacket(conn, mysql::ErrorCode::BAD_DB_ERROR, "42000",
+                       "Unknown database '" + selected_database + "'");
+        return sendBuffer(conn);
+    }
+
+    database_name_ = std::move(selected_database);
     default_db_set_ = false;
     if (client_) {
         client_->disconnect();
@@ -2549,7 +2666,10 @@ void MySqlAdapter::bootstrapInformationSchema(core::ErrorContext* ctx) {
         return;
     }
 
-    std::string db_name = database_name_.empty() ? "default" : database_name_;
+    std::string db_name;
+    if (!resolveDatabaseSelection(database_name_, db_name)) {
+        return;
+    }
     std::string base_schema =
         resolveMySqlSchemaPath(engineDatabase() ? engineDatabase()->catalog_manager() : nullptr,
                                db_name);

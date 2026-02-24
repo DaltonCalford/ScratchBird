@@ -1,3 +1,27 @@
 task_id=ENG-MYSQL-003
 status=blocked
-timestamp_utc=2026-02-24T04:50:37Z
+timestamp_utc=2026-02-24T19:59:45Z
+
+=== command 1 ===
+cwd: /home/dcalford/CliWork
+timeout_s: 20
+rc: 0
+timed_out: False
+duration_s: 0.017
+cmd: test -d /home/dcalford/CliWork/mysql-server && git -C /home/dcalford/CliWork/mysql-server rev-parse --short HEAD
+--- output begin ---
+447eb26e094
+--- output end ---
+
+=== command 2 ===
+cwd: /home/dcalford/CliWork/ScratchBird
+timeout_s: 120
+rc: 2
+timed_out: False
+duration_s: 0.034
+cmd: bash tests/compatibility/mysql/scripts/run_mysql_ctest.sh
+--- output begin ---
+Error: generic sb_isql fallback is not valid for MySQL emulation compare runs.
+The generic client speaks native protocol only and cannot execute MySQL wire-protocol parity.
+Provide sb_my_isql via SCRATCHBIRD_MY_ISQL, or build FDW CLI wrappers in ScratchBird-driver.
+--- output end ---

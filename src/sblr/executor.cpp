@@ -72737,7 +72737,14 @@ namespace scratchbird
                 }
 
                 conn_ctx_->clearSessionVariables();
-                conn_ctx_->set_dialect_tag("SCRATCHBIRD");
+                const std::string active_dialect =
+                    scratchbird::core::IdentifierUtils::toUpper(conn_ctx_->dialect_tag());
+                const bool emulated_session =
+                    !active_dialect.empty() && active_dialect != "SCRATCHBIRD";
+                if (!emulated_session)
+                {
+                    conn_ctx_->set_dialect_tag("SCRATCHBIRD");
+                }
                 std::string schema = conn_ctx_->current_schema();
                 if (schema.empty())
                 {
@@ -72761,8 +72768,17 @@ namespace scratchbird
                 bool default_requested = false;
                 std::string parser_value = readSingleStringValue(default_requested);
 
+                const std::string active_dialect =
+                    scratchbird::core::IdentifierUtils::toUpper(conn_ctx_->dialect_tag());
+                const bool emulated_session =
+                    !active_dialect.empty() && active_dialect != "SCRATCHBIRD";
+
                 if (default_requested || parser_value.empty())
                 {
+                    if (emulated_session)
+                    {
+                        error("SET PARSER DEFAULT is not allowed in emulated sessions");
+                    }
                     conn_ctx_->set_dialect_tag("SCRATCHBIRD");
                     return;
                 }
@@ -72790,6 +72806,11 @@ namespace scratchbird
                     error("Unknown parser: " + parser_value);
                 }
 
+                if (emulated_session &&
+                    scratchbird::core::IdentifierUtils::toUpper(parser_tag) != active_dialect)
+                {
+                    error("SET PARSER cannot change parser in emulated sessions");
+                }
                 conn_ctx_->set_dialect_tag(parser_tag);
                 return;
             }

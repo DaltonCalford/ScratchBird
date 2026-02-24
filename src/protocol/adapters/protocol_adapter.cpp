@@ -129,6 +129,42 @@ ProtocolAdapter::ProtocolAdapter(const ProtocolAdapterConfig& config)
 
 ProtocolAdapter::~ProtocolAdapter() = default;
 
+bool ProtocolAdapter::resolveDatabaseSelection(const std::string& requested_database,
+                                               std::string& selected_database) const {
+    if (config_.enforce_bound_database && !config_.default_database.empty()) {
+        if (!requested_database.empty() &&
+            !equalsDatabaseName(requested_database, config_.default_database)) {
+            return false;
+        }
+        selected_database = config_.default_database;
+        return true;
+    }
+
+    if (!requested_database.empty()) {
+        selected_database = requested_database;
+        return true;
+    }
+    if (!config_.default_database.empty()) {
+        selected_database = config_.default_database;
+        return true;
+    }
+    selected_database = "default";
+    return true;
+}
+
+bool ProtocolAdapter::equalsDatabaseName(const std::string& lhs, const std::string& rhs) {
+    if (lhs.size() != rhs.size()) {
+        return false;
+    }
+    for (size_t i = 0; i < lhs.size(); ++i) {
+        if (std::tolower(static_cast<unsigned char>(lhs[i])) !=
+            std::tolower(static_cast<unsigned char>(rhs[i]))) {
+            return false;
+        }
+    }
+    return true;
+}
+
 // ============================================================================
 // ProtocolHandler Interface
 // ============================================================================

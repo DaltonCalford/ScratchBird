@@ -4,10 +4,10 @@
 - title: Native test baseline for opensearch
 - status: `blocked`
 - gate: `ENG-OPENSEARCH-GATE-02`
-- commands_total: `0`
-- commands_passed: `0`
-- commands_failed: `0`
-- reason: `Dependency blocked: ENG-OPENSEARCH-001`
+- commands_total: `2`
+- commands_passed: `1`
+- commands_failed: `1`
+- reason: `Command failed (timeout): ./gradlew check`
 
 ## Evidence Files
 - `run_manifest.md`

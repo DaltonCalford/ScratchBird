@@ -4,10 +4,10 @@
 - title: Comparison workload execution for postgresql
 - status: `blocked`
 - gate: `ENG-POSTGRESQL-GATE-03`
-- commands_total: `0`
-- commands_passed: `0`
-- commands_failed: `0`
-- reason: `Dependency blocked: SB-006`
+- commands_total: `2`
+- commands_passed: `1`
+- commands_failed: `1`
+- reason: `Command failed: bash tests/compatibility/postgresql/scripts/run_postgresql_ctest.sh`
 
 ## Evidence Files
 - `run_manifest.md`

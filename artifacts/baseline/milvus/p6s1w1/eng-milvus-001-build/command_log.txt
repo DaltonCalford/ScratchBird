@@ -1,13 +1,13 @@
 task_id=ENG-MILVUS-001
 status=blocked
-timestamp_utc=2026-02-24T15:03:55Z
+timestamp_utc=2026-02-24T19:54:20Z
 
 === command 1 ===
 cwd: /home/dcalford/CliWork
-timeout_s: 40
+timeout_s: 1
 rc: 0
 timed_out: False
-duration_s: 0.016
+duration_s: 0.126
 cmd: test -d /home/dcalford/CliWork/milvus && git -C /home/dcalford/CliWork/milvus rev-parse --short HEAD
 --- output begin ---
 7a5fd48259
@@ -15,10 +15,10 @@ cmd: test -d /home/dcalford/CliWork/milvus && git -C /home/dcalford/CliWork/milv
 
 === command 2 ===
 cwd: /home/dcalford/CliWork/milvus
-timeout_s: 1800
-rc: 124
-timed_out: True
-duration_s: 1800.317
+timeout_s: 45
+rc: 2
+timed_out: False
+duration_s: 22.397
 cmd: PATH="$HOME/.local/bin:$PATH" make -j2
 --- output begin ---
 Download milvus-proto repo ...
@@ -54,25 +54,32 @@ os_build=Linux
 
 WARN: rocksdb/6.29.5@milvus/dev: requirement zstd/1.5.2 overridden by your conanfile to zstd/1.5.5 
 WARN: boost/1.83.0: requirement zlib/[>=1.2.11 <2] overridden by your conanfile to zlib/1.2.13 
+WARN: arrow/17.0.0@milvus/dev-2.6: requirement boost/1.85.0 overridden by your conanfile to boost/1.83.0 
+WARN: arrow/17.0.0@milvus/dev-2.6: requirement rapidjson/1.1.0 overridden by your conanfile to rapidjson/cci.20230929 
+WARN: arrow/17.0.0@milvus/dev-2.6: requirement openssl/1.1.1w overridden by your conanfile to openssl/3.1.2 
+WARN: arrow/17.0.0@milvus/dev-2.6: requirement xsimd/9.0.1 overridden by your conanfile to xsimd/9.0.1 
+WARN: arrow/17.0.0@milvus/dev-2.6: requirement zstd/1.5.5 overridden by your conanfile to zstd/1.5.5 
+WARN: arrow/17.0.0@milvus/dev-2.6: requirement re2/20230301 overridden by your conanfile to re2/20230301 
+WARN: thrift/0.17.0: requirement boost/1.85.0 overridden by arrow/17.0.0@milvus/dev-2.6 to boost/1.83.0 
+WARN: thrift/0.17.0: requirement openssl/[>=1.1 <4] overridden by arrow/17.0.0@milvus/dev-2.6 to openssl/3.1.2 
+WARN: thrift/0.17.0: requirement zlib/[>=1.2.11 <2] overridden by arrow/17.0.0@milvus/dev-2.6 to zlib/1.2.13 
+WARN: openssl/3.1.2: requirement zlib/[>=1.2.11 <2] overridden by thrift/0.17.0 to zlib/1.2.13 
+WARN: libevent/2.1.12: requirement openssl/[>=1.1 <4] overridden by thrift/0.17.0 to openssl/3.1.2 
+WARN: aws-sdk-cpp/1.11.352@milvus/dev: requirement openssl/[>=1.1 <4] overridden by arrow/17.0.0@milvus/dev-2.6 to openssl/3.1.2 
+WARN: aws-sdk-cpp/1.11.352@milvus/dev: requirement libcurl/[>=7.78.0 <9] overridden by arrow/17.0.0@milvus/dev-2.6 to libcurl/7.86.0 
+WARN: aws-sdk-cpp/1.11.352@milvus/dev: requirement zlib/[>=1.2.11 <2] overridden by arrow/17.0.0@milvus/dev-2.6 to zlib/1.2.13 
 Build Tag: pkg/v2.6.3-847-g7a5fd48259
-Build Time: Tue Feb 24 14:33:55 UTC 2026
+Build Time: Tue Feb 24 19:53:59 UTC 2026
 Git Commit: 7a5fd48259
 Go Version: go version go1.24.12 linux/amd64
 Building Milvus ...
 ldd: /home/dcalford/CliWork/milvus/internal/core/output/lib/libmilvus_core.so: No such file or directory
 WARN: Cannot find /home/dcalford/CliWork/milvus/internal/core/output/lib/libjemalloc.so
-# github.com/tecbot/gorocksdb
-# [pkg-config --cflags  -- rocksdb]
-Package rocksdb was not found in the pkg-config search path.
-Perhaps you should add the directory containing `rocksdb.pc'
-to the PKG_CONFIG_PATH environment variable
-Package 'rocksdb', required by 'virtual:world', not found
-# github.com/confluentinc/confluent-kafka-go/kafka
-# [pkg-config --cflags  -- rdkafka]
-Package rdkafka was not found in the pkg-config search path.
-Perhaps you should add the directory containing `rdkafka.pc'
-to the PKG_CONFIG_PATH environment variable
-Package 'rdkafka', required by 'virtual:world', not found
+WARN: aws-c-cal/0.6.14: requirement openssl/[>=1.1 <4] overridden by aws-c-io/0.14.7 to openssl/3.1.2 
+WARN: s2n/1.4.16: requirement openssl/[>=1.1 <4] overridden by aws-c-io/0.14.7 to openssl/3.1.2 
+WARN: aws-c-http/0.8.1: requirement aws-c-compression/0.2.17 overridden by aws-crt-cpp/0.26.9 to aws-c-compression/0.2.18 
+WARN: aws-c-http/0.8.1: requirement aws-c-common/0.9.6 overridden by aws-crt-cpp/0.26.9 to aws-c-common/0.9.15 
+WARN: aws-c-http/0.8.1: requirement aws-c-io/0.13.35 overridden by aws-crt-cpp/0.26.9 to aws-c-io/0.14.7 
 # github.com/milvus-io/milvus/internal/util/cgo
 # [pkg-config --cflags  -- milvus_core milvus_core milvus_core]
 Package milvus_core was not found in the pkg-config search path.
@@ -81,6 +88,18 @@ to the PKG_CONFIG_PATH environment variable
 Package 'milvus_core', required by 'virtual:world', not found
 Package 'milvus_core', required by 'virtual:world', not found
 Package 'milvus_core', required by 'virtual:world', not found
+# github.com/confluentinc/confluent-kafka-go/kafka
+# [pkg-config --cflags  -- rdkafka]
+Package rdkafka was not found in the pkg-config search path.
+Perhaps you should add the directory containing `rdkafka.pc'
+to the PKG_CONFIG_PATH environment variable
+Package 'rdkafka', required by 'virtual:world', not found
+# github.com/tecbot/gorocksdb
+# [pkg-config --cflags  -- rocksdb]
+Package rocksdb was not found in the pkg-config search path.
+Perhaps you should add the directory containing `rocksdb.pc'
+to the PKG_CONFIG_PATH environment variable
+Package 'rocksdb', required by 'virtual:world', not found
 # github.com/milvus-io/milvus/internal/storagev2
 # [pkg-config --cflags  -- milvus_core milvus-storage]
 Package milvus_core was not found in the pkg-config search path.
@@ -96,25 +115,6 @@ to the PKG_CONFIG_PATH environment variable
 Package 'jemalloc', required by 'virtual:world', not found
 make: *** [Makefile:103: build-go] Error 1
 make: *** Waiting for unfinished jobs....
-WARN: arrow/17.0.0@milvus/dev-2.6: requirement boost/1.85.0 overridden by your conanfile to boost/1.83.0 
-WARN: arrow/17.0.0@milvus/dev-2.6: requirement rapidjson/1.1.0 overridden by your conanfile to rapidjson/cci.20230929 
-WARN: arrow/17.0.0@milvus/dev-2.6: requirement openssl/1.1.1w overridden by your conanfile to openssl/3.1.2 
-WARN: arrow/17.0.0@milvus/dev-2.6: requirement xsimd/9.0.1 overridden by your conanfile to xsimd/9.0.1 
-WARN: arrow/17.0.0@milvus/dev-2.6: requirement zstd/1.5.5 overridden by your conanfile to zstd/1.5.5 
-WARN: arrow/17.0.0@milvus/dev-2.6: requirement re2/20230301 overridden by your conanfile to re2/20230301 
-WARN: thrift/0.17.0: requirement boost/1.85.0 overridden by arrow/17.0.0@milvus/dev-2.6 to boost/1.83.0 
-WARN: thrift/0.17.0: requirement openssl/[>=1.1 <4] overridden by arrow/17.0.0@milvus/dev-2.6 to openssl/3.1.2 
-WARN: thrift/0.17.0: requirement zlib/[>=1.2.11 <2] overridden by arrow/17.0.0@milvus/dev-2.6 to zlib/1.2.13 
-WARN: openssl/3.1.2: requirement zlib/[>=1.2.11 <2] overridden by thrift/0.17.0 to zlib/1.2.13 
-WARN: libevent/2.1.12: requirement openssl/[>=1.1 <4] overridden by thrift/0.17.0 to openssl/3.1.2 
-WARN: aws-sdk-cpp/1.11.352@milvus/dev: requirement openssl/[>=1.1 <4] overridden by arrow/17.0.0@milvus/dev-2.6 to openssl/3.1.2 
-WARN: aws-sdk-cpp/1.11.352@milvus/dev: requirement libcurl/[>=7.78.0 <9] overridden by arrow/17.0.0@milvus/dev-2.6 to libcurl/7.86.0 
-WARN: aws-sdk-cpp/1.11.352@milvus/dev: requirement zlib/[>=1.2.11 <2] overridden by arrow/17.0.0@milvus/dev-2.6 to zlib/1.2.13 
-WARN: aws-c-cal/0.6.14: requirement openssl/[>=1.1 <4] overridden by aws-c-io/0.14.7 to openssl/3.1.2 
-WARN: s2n/1.4.16: requirement openssl/[>=1.1 <4] overridden by aws-c-io/0.14.7 to openssl/3.1.2 
-WARN: aws-c-http/0.8.1: requirement aws-c-compression/0.2.17 overridden by aws-crt-cpp/0.26.9 to aws-c-compression/0.2.18 
-WARN: aws-c-http/0.8.1: requirement aws-c-common/0.9.6 overridden by aws-crt-cpp/0.26.9 to aws-c-common/0.9.15 
-WARN: aws-c-http/0.8.1: requirement aws-c-io/0.13.35 overridden by aws-crt-cpp/0.26.9 to aws-c-io/0.14.7 
 WARN: libcurl/7.86.0: requirement openssl/[>=1.1 <4] overridden by aws-sdk-cpp/1.11.352@milvus/dev to openssl/3.1.2 
 WARN: libcurl/7.86.0: requirement zlib/[>=1.2.11 <2] overridden by aws-sdk-cpp/1.11.352@milvus/dev to zlib/1.2.13 
 WARN: azure-sdk-for-cpp/1.11.3@milvus/dev: requirement openssl/[>=1.1 <4] overridden by arrow/17.0.0@milvus/dev-2.6 to openssl/3.1.2 
@@ -180,27 +180,71 @@ fmt/9.1.0: WARN: Can't update, no package in remote
 geos/3.12.0: WARN: Can't update, no package in remote
 gflags/2.2.2: WARN: Can't update, no package in remote
 gtest/1.13.0: WARN: Can't update, no package in remote
-hwloc/2.9.3: WARN: Package binary is corrupted, removing: a3349593e7121820a19933a9b26ae7225f82e7d5
-b2/5.2.1: WARN: Can't update, no package in remote
-cmake/3.30.5: WARN: Can't update, no package in remote
+hwloc/2.9.3: WARN: Can't update, no package in remote
+icu/74.2: WARN: Can't update, no package in remote
+jemalloc/5.3.0: WARN: Can't update, no package in remote
+libbacktrace/cci.20210118: WARN: Can't update, no package in remote
+libelf/0.8.13: WARN: Can't update, no package in remote
+libiberty/9.1.0: WARN: Can't update, no package in remote
+libiconv/1.17: WARN: Can't update, no package in remote
+libsodium/cci.20220430: WARN: Can't update, no package in remote
+lz4/1.9.4: WARN: Can't update, no package in remote
+marisa/0.2.6: WARN: Can't update, no package in remote
+nlohmann_json/3.11.3: WARN: Can't update, no package in remote
+opentelemetry-proto/0.19.0: WARN: Can't update, no package in remote
+rapidjson/cci.20230929: WARN: Can't update, no package in remote
+re2/20230301: WARN: Can't update, no package in remote
+roaring/3.0.0: WARN: Can't update, no package in remote
+simde/0.8.2: WARN: Can't update, no package in remote
+snappy/1.1.9: WARN: Can't update, no package in remote
+unordered_dense/4.4.0: WARN: Can't update, no package in remote
+xsimd/9.0.1: WARN: Can't update, no package in remote
+xxhash/0.8.3: WARN: Can't update, no package in remote
+xz_utils/5.4.0: WARN: Can't update, no package in remote
+yaml-cpp/0.7.0: WARN: Can't update, no package in remote
+zlib/1.2.13: WARN: Can't update, no package in remote
+zstd/1.5.5: WARN: Can't update, no package in remote
+aws-c-compression/0.2.18: WARN: Can't update, no package in remote
+aws-c-sdkutils/0.1.15: WARN: Can't update, no package in remote
+aws-checksums/0.1.18: WARN: Can't update, no package in remote
+boost/1.83.0: WARN: Can't update, no package in remote
+libdwarf/20191104: WARN: Can't update, no package in remote
+libunwind/1.7.2: WARN: Can't update, no package in remote
+libxml2/2.13.4: WARN: Can't update, no package in remote
+onetbb/2021.9.0: WARN: Can't update, no package in remote
+openssl/3.1.2: WARN: Can't update, no package in remote
+protobuf/3.21.4: WARN: Can't update, no package in remote
+rocksdb/6.29.5@milvus/dev: WARN: Can't update, no package in remote
+aws-c-cal/0.6.14: WARN: Can't update, no package in remote
+cyrus-sasl/2.1.27: WARN: Can't update, no package in remote
+glog/0.6.0: WARN: Can't update, no package in remote
+googleapis/cci.20221108: WARN: Can't update, no package in remote
+grpc/1.50.1@milvus/dev: WARN: Can't update, no package in remote
+libavrocpp/1.12.1@milvus/dev: WARN: Can't update, no package in remote
+libcurl/7.86.0: WARN: Can't update, no package in remote
+libevent/2.1.12: WARN: Can't update, no package in remote
+s2n/1.4.16: WARN: Can't update, no package in remote
+aws-c-io/0.14.7: WARN: Can't update, no package in remote
+azure-sdk-for-cpp/1.11.3@milvus/dev: WARN: Can't update, no package in remote
+folly/2023.10.30.08@milvus/dev: WARN: Can't update, no package in remote
+google-cloud-cpp/2.5.0@milvus/2.4: WARN: Can't update, no package in remote
+librdkafka/1.9.1: WARN: Can't update, no package in remote
+prometheus-cpp/1.1.0: WARN: Can't update, no package in remote
+thrift/0.17.0: WARN: Can't update, no package in remote
+aws-c-event-stream/0.4.2: WARN: Can't update, no package in remote
+aws-c-http/0.8.1: WARN: Can't update, no package in remote
+opentelemetry-cpp/1.8.1.1@milvus/2.4: WARN: Can't update, no package in remote
+aws-c-auth/0.7.16: WARN: Can't update, no package in remote
+aws-c-mqtt/0.10.3: WARN: Can't update, no package in remote
+aws-c-s3/0.5.5: WARN: Can't update, no package in remote
+aws-crt-cpp/0.26.9: WARN: Can't update, no package in remote
+aws-sdk-cpp/1.11.352@milvus/dev: WARN: Can't update, no package in remote
+arrow/17.0.0@milvus/dev-2.6: WARN: Can't update, no package in remote
 Version ranges solved
     libxml2/* versions found in 'default-conan-local' remote
     Version range '>=2.12.5 <3' required by 'azure-sdk-for-cpp/1.11.3@milvus/dev' resolved to 'libxml2/2.13.4' in remote 'default-conan-local'
     c-ares/* versions found in 'default-conan-local' remote
     Version range '>=1.19.1 <2' required by 'grpc/1.50.1@milvus/dev' resolved to 'c-ares/1.33.0' in remote 'default-conan-local'
-    ninja/* versions found in 'default-conan-local' remote
-    Version range '>=1.10.2 <2' required by 'meson/1.2.2' resolved to 'ninja/1.12.1' in remote 'default-conan-local'
-    Version range '>=1.10.2 <2' required by 'meson/1.2.2' resolved to 'ninja/1.12.1' in remote 'default-conan-local'
-    b2/* versions found in 'default-conan-local' remote
-    Version range '>=5.2 <6' required by 'boost/1.83.0' resolved to 'b2/5.2.1' in remote 'default-conan-local'
-    Version range '>=1.10.2 <2' required by 'meson/1.2.2' resolved to 'ninja/1.12.1' in remote 'default-conan-local'
-    Version range '>=1.10.2 <2' required by 'meson/1.2.2' resolved to 'ninja/1.12.1' in remote 'default-conan-local'
-    cmake/* versions found in 'default-conan-local' remote
-    Version range '>=3.16 <4' required by 'glog/0.6.0' resolved to 'cmake/3.30.5' in remote 'default-conan-local'
-    Version range '>=3.20 <4' required by 'googleapis/cci.20221108' resolved to 'cmake/3.30.5' in remote 'default-conan-local'
-    Version range '>=1.10.2 <2' required by 'meson/1.2.2' resolved to 'ninja/1.12.1' in remote 'default-conan-local'
-    Version range '>=1.10.2 <2' required by 'meson/1.2.2' resolved to 'ninja/1.12.1' in remote 'default-conan-local'
-    Version range '>=3.16 <4' required by 'arrow/17.0.0@milvus/dev-2.6' resolved to 'cmake/3.30.5' in remote 'default-conan-local'
 
 conanfile.py: Installing package
 Requirements
@@ -277,1145 +321,265 @@ Requirements
     zstd/1.5.5 from 'default-conan-local' - Cache
 Packages
     abseil/20230125.3:ca2dd21bf3fe05774d1f7645d2552468636d038f - Cache
-    arrow/17.0.0@milvus/dev-2.6:52e57a97c61b1162bff8883af4c449ee47862aba - Build
-    aws-c-auth/0.7.16:719ac156aaf92d88bb94bdd81bdf2251054a3a07 - Build
-    aws-c-cal/0.6.14:3bbb0466987890b8e2620a02ff908edccca01751 - Build
+    arrow/17.0.0@milvus/dev-2.6:52e57a97c61b1162bff8883af4c449ee47862aba - Cache
+    aws-c-auth/0.7.16:719ac156aaf92d88bb94bdd81bdf2251054a3a07 - Cache
+    aws-c-cal/0.6.14:3bbb0466987890b8e2620a02ff908edccca01751 - Cache
     aws-c-common/0.9.15:fbf48381b5ed802eda707938010818a700da30ed - Cache
-    aws-c-compression/0.2.18:962656808d3b55e58421c7aad7aafbc7ef4e84e4 - Build
-    aws-c-event-stream/0.4.2:0bebe42f47353032e16fa31dd5bf7d91858e580f - Build
-    aws-c-http/0.8.1:95a801bda907cd243a37379f801deb898cbf1da0 - Build
-    aws-c-io/0.14.7:5055a8b0bb07d63da11ebc3e228843aea2d252eb - Build
-    aws-c-mqtt/0.10.3:7780ea0c1285d5640568855a5970c2be40bfc15e - Build
-    aws-c-s3/0.5.5:68a8a0d41e64413efc14ebbe8e87233ea7100f97 - Build
-    aws-c-sdkutils/0.1.15:962656808d3b55e58421c7aad7aafbc7ef4e84e4 - Build
-    aws-checksums/0.1.18:962656808d3b55e58421c7aad7aafbc7ef4e84e4 - Build
-    aws-crt-cpp/0.26.9:8930a45457b228acb0cf068126e215205f3279a5 - Build
-    aws-sdk-cpp/1.11.352@milvus/dev:d7582f7b236983b608e0ce85285901b9a7e21cc7 - Build
-    azure-sdk-for-cpp/1.11.3@milvus/dev:36f60be2408834ddc7da7c9da8814e419a8d70af - Build
+    aws-c-compression/0.2.18:962656808d3b55e58421c7aad7aafbc7ef4e84e4 - Cache
+    aws-c-event-stream/0.4.2:0bebe42f47353032e16fa31dd5bf7d91858e580f - Cache
+    aws-c-http/0.8.1:95a801bda907cd243a37379f801deb898cbf1da0 - Cache
+    aws-c-io/0.14.7:5055a8b0bb07d63da11ebc3e228843aea2d252eb - Cache
+    aws-c-mqtt/0.10.3:7780ea0c1285d5640568855a5970c2be40bfc15e - Cache
+    aws-c-s3/0.5.5:68a8a0d41e64413efc14ebbe8e87233ea7100f97 - Cache
+    aws-c-sdkutils/0.1.15:962656808d3b55e58421c7aad7aafbc7ef4e84e4 - Cache
+    aws-checksums/0.1.18:962656808d3b55e58421c7aad7aafbc7ef4e84e4 - Cache
+    aws-crt-cpp/0.26.9:8930a45457b228acb0cf068126e215205f3279a5 - Cache
+    aws-sdk-cpp/1.11.352@milvus/dev:d7582f7b236983b608e0ce85285901b9a7e21cc7 - Cache
+    azure-sdk-for-cpp/1.11.3@milvus/dev:36f60be2408834ddc7da7c9da8814e419a8d70af - Cache
     benchmark/1.7.0:3f344fa008ce8aa42a3be5e275655674e7a02a8e - Cache
-    boost/1.83.0:fe73bca2a97d1b242772bea155d59b16da907694 - Build
+    boost/1.83.0:fe73bca2a97d1b242772bea155d59b16da907694 - Cache
     bzip2/1.0.8:d2b26eab5d737825f387165f3d8a52545f27d816 - Cache
     c-ares/1.33.0:61cc30836d70dd16286da2dfc84e44b9ee0d8d6d - Cache
     crc32c/1.1.1:ca2dd21bf3fe05774d1f7645d2552468636d038f - Cache
-    cyrus-sasl/2.1.27:82eaa0a9edda9ecfa37b923f798151cf44d4e791 - Build
+    cyrus-sasl/2.1.27:82eaa0a9edda9ecfa37b923f798151cf44d4e791 - Cache
     double-conversion/3.2.1:35813975843f113b380d76942d99d86019cb2cad - Cache
     fmt/9.1.0:5ab84d6acfe1f23c4fae0ab88f26e3a396351ac9 - Cache
-    folly/2023.10.30.08@milvus/dev:fcfa65d39e2e8a3ddc1336dccd58c85b4efa93fa - Build
+    folly/2023.10.30.08@milvus/dev:fcfa65d39e2e8a3ddc1336dccd58c85b4efa93fa - Cache
     geos/3.12.0:1c1acd3fc7e6957fcb8223860e1874a90e9897f5 - Cache
     gflags/2.2.2:a63a3eeeab735203b38b52cd84b0838c9ccd31e6 - Cache
-    glog/0.6.0:8067cd4050649b3c3fcdf4b9813d448ae4e5e462 - Build
-    google-cloud-cpp/2.5.0@milvus/2.4:c6b6d2cb5ec5028c2430c654d291499ff4cdeab8 - Build
-    googleapis/cci.20221108:25a029dcdeddd2b70dfdc4ecde572797c042a491 - Build
-    grpc/1.50.1@milvus/dev:f27a74e30e02b327224e74a5b2a2270f31159144 - Build
+    glog/0.6.0:8067cd4050649b3c3fcdf4b9813d448ae4e5e462 - Cache
+    google-cloud-cpp/2.5.0@milvus/2.4:c6b6d2cb5ec5028c2430c654d291499ff4cdeab8 - Cache
+    googleapis/cci.20221108:25a029dcdeddd2b70dfdc4ecde572797c042a491 - Cache
+    grpc/1.50.1@milvus/dev:f27a74e30e02b327224e74a5b2a2270f31159144 - Cache
     gtest/1.13.0:80d1dea2fb9e2a941e8a9fc2fb71e069fd58b47f - Cache
-    hwloc/2.9.3:a3349593e7121820a19933a9b26ae7225f82e7d5 - Build
-    icu/74.2:32d92dcc529376f1c21ea34fbcd7aea8dccae05f - Build
-    jemalloc/5.3.0:1ce4c9f5aca125c7469566c18ccd83b471070058 - Build
-    libavrocpp/1.12.1@milvus/dev:d16bc454f9f38b242054703c3332919e095c17f2 - Build
-    libbacktrace/cci.20210118:c11224e931af7eb47df7c689b7ad7afc6b151bd9 - Build
-    libcurl/7.86.0:2fbe65619362bb3431dbb264c0d50bf4efa882cb - Build
-    libdwarf/20191104:b1f60984a980f974ff8f2819211830eea5c83f8e - Build
-    libelf/0.8.13:c11224e931af7eb47df7c689b7ad7afc6b151bd9 - Build
-    libevent/2.1.12:9181ce774c601e6c750a6d05327e69eb64f0956c - Build
-    libiberty/9.1.0:c11224e931af7eb47df7c689b7ad7afc6b151bd9 - Build
-    libiconv/1.17:c11224e931af7eb47df7c689b7ad7afc6b151bd9 - Build
-    librdkafka/1.9.1:ba4a4bd46bbc7eb8a31b81c0dbd37490b06a7c93 - Build
-    libsodium/cci.20220430:affb958d7910e8cca6590276bbc9d0860e5b3070 - Build
-    libunwind/1.7.2:fbd4546a98b6d43acd44836b0768cf0a7a4141d1 - Build
-    libxml2/2.13.4:8d2bb45595376dcdb6b19ebc08043c17e3cf0c9b - Build
-    lz4/1.9.4:c11224e931af7eb47df7c689b7ad7afc6b151bd9 - Build
-    marisa/0.2.6:61cc30836d70dd16286da2dfc84e44b9ee0d8d6d - Build
-    nlohmann_json/3.11.3:5ab84d6acfe1f23c4fae0ab88f26e3a396351ac9 - Build
-    onetbb/2021.9.0:ce7eea3a67185772f68b6fd04415374db2afacae - Build
-    openssl/3.1.2:436c2b50d2b6da9a58d7b737931c0901b7691a1b - Build
-    opentelemetry-cpp/1.8.1.1@milvus/2.4:599c2151848e2d104da8a923cfaa73855b3452e5 - Build
-    opentelemetry-proto/0.19.0:5ab84d6acfe1f23c4fae0ab88f26e3a396351ac9 - Build
-    prometheus-cpp/1.1.0:5061273609eddc66b87c9819e222b9765d85489c - Build
-    protobuf/3.21.4:f0a24b515b4c42bed8bf078e0f498aba49fcad12 - Build
-    rapidjson/cci.20230929:5ab84d6acfe1f23c4fae0ab88f26e3a396351ac9 - Build
-    re2/20230301:ca2dd21bf3fe05774d1f7645d2552468636d038f - Build
-    roaring/3.0.0:ab65dcb12f246fe8cf51adb9e64c893c6c281150 - Build
-    rocksdb/6.29.5@milvus/dev:b87f2c51b29f1bdcd5393b9ed5a8baa37480c6cf - Build
-    s2n/1.4.16:e5b3246e1cbbc81bcd33e2729ebbda9c580625f5 - Build
-    simde/0.8.2:5ab84d6acfe1f23c4fae0ab88f26e3a396351ac9 - Build
-    snappy/1.1.9:1d76a34cf342f465b5b45400bc49881b3afa13a3 - Build
-    thrift/0.17.0:8c7af24666ec9d931cbf8d469ef502cfabd3c7c2 - Build
-    unordered_dense/4.4.0:5ab84d6acfe1f23c4fae0ab88f26e3a396351ac9 - Build
-    xsimd/9.0.1:5ab84d6acfe1f23c4fae0ab88f26e3a396351ac9 - Build
-    xxhash/0.8.3:8e36a2043b6a87a94eb74fd8396ff599a125ddfd - Build
-    xz_utils/5.4.0:c11224e931af7eb47df7c689b7ad7afc6b151bd9 - Build
-    yaml-cpp/0.7.0:ca2dd21bf3fe05774d1f7645d2552468636d038f - Build
-    zlib/1.2.13:c11224e931af7eb47df7c689b7ad7afc6b151bd9 - Build
-    zstd/1.5.5:b586fa7105c5039249fce0b0d7010ac818a0f625 - Build
-Build requirements
-    autoconf/2.71 from 'default-conan-local' - Cache
-    automake/1.16.5 from 'default-conan-local' - Cache
-    b2/5.2.1 from 'default-conan-local' - Cache
-    bison/3.8.2 from 'default-conan-local' - Cache
-    cmake/3.30.5 from 'default-conan-local' - Cache
-    flex/2.6.4 from 'default-conan-local' - Cache
-    gnu-config/cci.20210814 from 'default-conan-local' - Cache
-    libtool/2.4.7 from 'default-conan-local' - Cache
-    m4/1.4.19 from 'default-conan-local' - Cache
-    meson/1.2.2 from 'default-conan-local' - Cache
-    ninja/1.12.1 from 'default-conan-local' - Cache
-    pkgconf/1.9.3 from 'default-conan-local' - Cache
-    pkgconf/2.0.3 from 'default-conan-local' - Cache
-    pkgconf/2.1.0 from 'default-conan-local' - Cache
-Build requirements packages
-    autoconf/2.71:5ab84d6acfe1f23c4fae0ab88f26e3a396351ac9 - Cache
-    automake/1.16.5:258f6f05ca54813b3d7180161753df7f9ccf7e1d - Build
-    b2/5.2.1:4db1be536558d833e52e862fd84d64d75c2b3656 - Cache
-    bison/3.8.2:6f94e826086e8e1fd86e5f9548b1602060f3a404 - Build
-    cmake/3.30.5:4db1be536558d833e52e862fd84d64d75c2b3656 - Cache
-    flex/2.6.4:6f94e826086e8e1fd86e5f9548b1602060f3a404 - Build
-    gnu-config/cci.20210814:5ab84d6acfe1f23c4fae0ab88f26e3a396351ac9 - Cache
-    libtool/2.4.7:6dfa3859e3d8560d6ed68d5c9eaaf7d00538129d - Build
-    m4/1.4.19:24647d9fe8ec489125dfbae4b3ebefaf7581674c - Build
-    meson/1.2.2:5ab84d6acfe1f23c4fae0ab88f26e3a396351ac9 - Cache
-    ninja/1.12.1:24647d9fe8ec489125dfbae4b3ebefaf7581674c - Build
-    pkgconf/1.9.3:24647d9fe8ec489125dfbae4b3ebefaf7581674c - Build
-    pkgconf/2.0.3:24647d9fe8ec489125dfbae4b3ebefaf7581674c - Build
-    pkgconf/2.1.0:24647d9fe8ec489125dfbae4b3ebefaf7581674c - Build
+    hwloc/2.9.3:a3349593e7121820a19933a9b26ae7225f82e7d5 - Cache
+    icu/74.2:32d92dcc529376f1c21ea34fbcd7aea8dccae05f - Cache
+    jemalloc/5.3.0:1ce4c9f5aca125c7469566c18ccd83b471070058 - Cache
+    libavrocpp/1.12.1@milvus/dev:d16bc454f9f38b242054703c3332919e095c17f2 - Cache
+    libbacktrace/cci.20210118:c11224e931af7eb47df7c689b7ad7afc6b151bd9 - Cache
+    libcurl/7.86.0:2fbe65619362bb3431dbb264c0d50bf4efa882cb - Cache
+    libdwarf/20191104:b1f60984a980f974ff8f2819211830eea5c83f8e - Cache
+    libelf/0.8.13:c11224e931af7eb47df7c689b7ad7afc6b151bd9 - Cache
+    libevent/2.1.12:9181ce774c601e6c750a6d05327e69eb64f0956c - Cache
+    libiberty/9.1.0:c11224e931af7eb47df7c689b7ad7afc6b151bd9 - Cache
+    libiconv/1.17:c11224e931af7eb47df7c689b7ad7afc6b151bd9 - Cache
+    librdkafka/1.9.1:ba4a4bd46bbc7eb8a31b81c0dbd37490b06a7c93 - Cache
+    libsodium/cci.20220430:affb958d7910e8cca6590276bbc9d0860e5b3070 - Cache
+    libunwind/1.7.2:fbd4546a98b6d43acd44836b0768cf0a7a4141d1 - Cache
+    libxml2/2.13.4:8d2bb45595376dcdb6b19ebc08043c17e3cf0c9b - Cache
+    lz4/1.9.4:c11224e931af7eb47df7c689b7ad7afc6b151bd9 - Cache
+    marisa/0.2.6:61cc30836d70dd16286da2dfc84e44b9ee0d8d6d - Cache
+    nlohmann_json/3.11.3:5ab84d6acfe1f23c4fae0ab88f26e3a396351ac9 - Cache
+    onetbb/2021.9.0:ce7eea3a67185772f68b6fd04415374db2afacae - Cache
+    openssl/3.1.2:436c2b50d2b6da9a58d7b737931c0901b7691a1b - Cache
+    opentelemetry-cpp/1.8.1.1@milvus/2.4:599c2151848e2d104da8a923cfaa73855b3452e5 - Cache
+    opentelemetry-proto/0.19.0:5ab84d6acfe1f23c4fae0ab88f26e3a396351ac9 - Cache
+    prometheus-cpp/1.1.0:5061273609eddc66b87c9819e222b9765d85489c - Cache
+    protobuf/3.21.4:f0a24b515b4c42bed8bf078e0f498aba49fcad12 - Cache
+    rapidjson/cci.20230929:5ab84d6acfe1f23c4fae0ab88f26e3a396351ac9 - Cache
+    re2/20230301:ca2dd21bf3fe05774d1f7645d2552468636d038f - Cache
+    roaring/3.0.0:ab65dcb12f246fe8cf51adb9e64c893c6c281150 - Cache
+    rocksdb/6.29.5@milvus/dev:b87f2c51b29f1bdcd5393b9ed5a8baa37480c6cf - Cache
+    s2n/1.4.16:e5b3246e1cbbc81bcd33e2729ebbda9c580625f5 - Cache
+    simde/0.8.2:5ab84d6acfe1f23c4fae0ab88f26e3a396351ac9 - Cache
+    snappy/1.1.9:1d76a34cf342f465b5b45400bc49881b3afa13a3 - Cache
+    thrift/0.17.0:8c7af24666ec9d931cbf8d469ef502cfabd3c7c2 - Cache
+    unordered_dense/4.4.0:5ab84d6acfe1f23c4fae0ab88f26e3a396351ac9 - Cache
+    xsimd/9.0.1:5ab84d6acfe1f23c4fae0ab88f26e3a396351ac9 - Cache
+    xxhash/0.8.3:8e36a2043b6a87a94eb74fd8396ff599a125ddfd - Cache
+    xz_utils/5.4.0:c11224e931af7eb47df7c689b7ad7afc6b151bd9 - Cache
+    yaml-cpp/0.7.0:ca2dd21bf3fe05774d1f7645d2552468636d038f - Cache
+    zlib/1.2.13:c11224e931af7eb47df7c689b7ad7afc6b151bd9 - Cache
+    zstd/1.5.5:b586fa7105c5039249fce0b0d7010ac818a0f625 - Cache
 
 Installing (downloading, building) binaries...
 abseil/20230125.3: Already installed!
 aws-c-common/0.9.15: Already installed!
-b2/5.2.1: Already installed!
 benchmark/1.7.0: Already installed!
 bzip2/1.0.8: Already installed!
 c-ares/1.33.0: Already installed!
-cmake/3.30.5: Already installed!
-cmake/3.30.5: Appending PATH environment variable: /home/dcalford/.conan/data/cmake/3.30.5/_/_/package/4db1be536558d833e52e862fd84d64d75c2b3656/bin
-cmake/3.30.5: Appending PATH environment variable: /home/dcalford/.conan/data/cmake/3.30.5/_/_/package/4db1be536558d833e52e862fd84d64d75c2b3656/bin
-cmake/3.30.5: Appending PATH environment variable: /home/dcalford/.conan/data/cmake/3.30.5/_/_/package/4db1be536558d833e52e862fd84d64d75c2b3656/bin
 crc32c/1.1.1: Already installed!
 double-conversion/3.2.1: Already installed!
 fmt/9.1.0: Already installed!
 geos/3.12.0: Already installed!
 gflags/2.2.2: Already installed!
-gnu-config/cci.20210814: Already installed!
 gtest/1.13.0: Already installed!
-hwloc/2.9.3: WARN: Build folder is dirty, removing it: /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5
-hwloc/2.9.3: Copying sources to build folder
-hwloc/2.9.3: Building your package in /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5
-hwloc/2.9.3: Generator txt created conanbuildinfo.txt
-hwloc/2.9.3: Calling generate()
-hwloc/2.9.3: WARN: Using the new toolchains and generators without specifying a build profile (e.g: -pr:b=default) is discouraged and might cause failures and unexpected behavior
-hwloc/2.9.3: Aggregating env generators
-hwloc/2.9.3: Calling build()
-hwloc/2.9.3: Calling:
- > "/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/configure" '--prefix=/' '--bindir=${prefix}/bin' '--sbindir=${prefix}/bin' '--libdir=${prefix}/lib' '--includedir=${prefix}/include' '--oldincludedir=${prefix}/include' '--disable-libxml2' '--disable-io' '--disable-cairo' '--enable-shared' '--disable-static' 
+hwloc/2.9.3: Already installed!
+icu/74.2: Already installed!
+jemalloc/5.3.0: Already installed!
+libbacktrace/cci.20210118: Already installed!
+libelf/0.8.13: Already installed!
+libiberty/9.1.0: Already installed!
+libiconv/1.17: Already installed!
+libsodium/cci.20220430: Already installed!
+lz4/1.9.4: Already installed!
+marisa/0.2.6: Already installed!
+marisa/0.2.6: Appending PATH env var with : '/home/dcalford/.conan/data/marisa/0.2.6/_/_/package/61cc30836d70dd16286da2dfc84e44b9ee0d8d6d/bin'
+nlohmann_json/3.11.3: Already installed!
+opentelemetry-proto/0.19.0: Already installed!
+rapidjson/cci.20230929: Already installed!
+re2/20230301: Already installed!
+roaring/3.0.0: Already installed!
+simde/0.8.2: Already installed!
+snappy/1.1.9: Already installed!
+unordered_dense/4.4.0: Already installed!
+xsimd/9.0.1: Already installed!
+xxhash/0.8.3: Already installed!
+xz_utils/5.4.0: Already installed!
+yaml-cpp/0.7.0: Already installed!
+zlib/1.2.13: Already installed!
+zstd/1.5.5: Already installed!
+aws-c-compression/0.2.18: Already installed!
+aws-c-sdkutils/0.1.15: Already installed!
+aws-checksums/0.1.18: Already installed!
+boost/1.83.0: Already installed!
+libdwarf/20191104: Already installed!
+libunwind/1.7.2: Already installed!
+libxml2/2.13.4: Already installed!
+libxml2/2.13.4: Appending PATH environment variable: /home/dcalford/.conan/data/libxml2/2.13.4/_/_/package/8d2bb45595376dcdb6b19ebc08043c17e3cf0c9b/bin
+onetbb/2021.9.0: Already installed!
+openssl/3.1.2: Already installed!
+protobuf/3.21.4: Already installed!
+rocksdb/6.29.5@milvus/dev: Already installed!
+aws-c-cal/0.6.14: Already installed!
+cyrus-sasl/2.1.27: Already installed!
+glog/0.6.0: Already installed!
+googleapis/cci.20221108: Already installed!
+grpc/1.50.1@milvus/dev: Already installed!
+libavrocpp/1.12.1@milvus/dev: Already installed!
+libcurl/7.86.0: Already installed!
+libevent/2.1.12: Already installed!
+s2n/1.4.16: Already installed!
+aws-c-io/0.14.7: Already installed!
+azure-sdk-for-cpp/1.11.3@milvus/dev: Already installed!
+folly/2023.10.30.08@milvus/dev: Already installed!
+google-cloud-cpp/2.5.0@milvus/2.4: Already installed!
+librdkafka/1.9.1: Already installed!
+prometheus-cpp/1.1.0: Already installed!
+thrift/0.17.0: Already installed!
+thrift/0.17.0: Appending PATH env var with : /home/dcalford/.conan/data/thrift/0.17.0/_/_/package/8c7af24666ec9d931cbf8d469ef502cfabd3c7c2/bin
+aws-c-event-stream/0.4.2: Already installed!
+aws-c-http/0.8.1: Already installed!
+opentelemetry-cpp/1.8.1.1@milvus/2.4: Already installed!
+aws-c-auth/0.7.16: Already installed!
+aws-c-mqtt/0.10.3: Already installed!
+aws-c-s3/0.5.5: Already installed!
+aws-crt-cpp/0.26.9: Already installed!
+aws-sdk-cpp/1.11.352@milvus/dev: Already installed!
+arrow/17.0.0@milvus/dev-2.6: Already installed!
+conanfile.py: Generator txt created conanbuildinfo.txt
+conanfile.py: WARN: 
+     ************************************************
+     The 'cmake_find_package' generator is deprecated.
+     Please update your code and remove it.
+     *************************************************
 
-###
-### Configuring hwloc distribution tarball
-### Startup tests
-###
-checking build system type... x86_64-pc-linux-gnu
-checking host system type... x86_64-pc-linux-gnu
-checking target system type... x86_64-pc-linux-gnu
-checking for a BSD-compatible install... /usr/bin/install -c
-checking whether build environment is sane... yes
-checking for a race-free mkdir -p... /usr/bin/mkdir -p
-checking for gawk... gawk
-checking whether make sets $(MAKE)... yes
-checking whether make supports nested variables... yes
-checking whether UID '1001' is supported by ustar format... yes
-checking whether GID '1001' is supported by ustar format... yes
-checking how to create a ustar tar archive... gnutar
-checking whether make supports nested variables... (cached) yes
-checking whether make supports the include directive... yes (GNU style)
-checking for gcc... gcc
-checking whether the C compiler works... yes
-checking for C compiler default output file name... a.out
-checking for suffix of executables... 
-checking whether we are cross compiling... no
-checking for suffix of object files... o
-checking whether the compiler supports GNU C... yes
-checking whether gcc accepts -g... yes
-checking for gcc option to enable C11 features... none needed
-checking whether gcc understands -c and -o together... yes
-checking dependency style of gcc... gcc3
-checking for stdio.h... yes
-checking for stdlib.h... yes
-checking for string.h... yes
-checking for inttypes.h... yes
-checking for stdint.h... yes
-checking for strings.h... yes
-checking for sys/stat.h... yes
-checking for sys/types.h... yes
-checking for unistd.h... yes
-checking for wchar.h... yes
-checking for minix/config.h... no
-checking whether it is safe to define __EXTENSIONS__... yes
-checking whether _XOPEN_SOURCE should be defined... no
-checking for ar... ar
-checking the archiver (ar) interface... ar
-checking how to print strings... printf
-checking for a sed that does not truncate output... /usr/bin/sed
-checking for grep that handles long lines and -e... /usr/bin/grep
-checking for egrep... /usr/bin/grep -E
-checking for fgrep... /usr/bin/grep -F
-checking for ld used by gcc... /usr/bin/ld
-checking if the linker (/usr/bin/ld) is GNU ld... yes
-checking for BSD- or MS-compatible name lister (nm)... /usr/bin/nm -B
-checking the name lister (/usr/bin/nm -B) interface... BSD nm
-checking whether ln -s works... yes
-checking the maximum length of command line arguments... 1572864
-checking how to convert x86_64-pc-linux-gnu file names to x86_64-pc-linux-gnu format... func_convert_file_noop
-checking how to convert x86_64-pc-linux-gnu file names to toolchain format... func_convert_file_noop
-checking for /usr/bin/ld option to reload object files... -r
-checking for file... file
-checking for objdump... objdump
-checking how to recognize dependent libraries... pass_all
-checking for dlltool... no
-checking how to associate runtime and link libraries... printf %s\n
-checking for archiver @FILE support... @
-checking for strip... strip
-checking for ranlib... ranlib
-checking command to parse /usr/bin/nm -B output from gcc object... ok
-checking for sysroot... no
-checking for a working dd... /usr/bin/dd
-checking how to truncate binary pipes... /usr/bin/dd bs=4096 count=1
-checking for mt... mt
-checking if mt is a manifest tool... no
-checking for dlfcn.h... yes
-checking for objdir... .libs
-checking if gcc supports -fno-rtti -fno-exceptions... no
-checking for gcc option to produce PIC... -fPIC -DPIC
-checking if gcc PIC flag -fPIC -DPIC works... yes
-checking if gcc static flag -static works... yes
-checking if gcc supports -c -o file.o... yes
-checking if gcc supports -c -o file.o... (cached) yes
-checking whether the gcc linker (/usr/bin/ld -m elf_x86_64) supports shared libraries... yes
-checking whether -lc should be explicitly linked in... no
-checking dynamic linker characteristics... GNU/Linux ld.so
-checking how to hardcode library paths into programs... immediate
-checking for shl_load... no
-checking for shl_load in -ldld... no
-checking for dlopen... yes
-checking whether a program can dlopen itself... yes
-checking whether a statically linked program can dlopen itself... no
-checking whether stripping libraries is possible... yes
-checking if libtool supports shared libraries... yes
-checking whether to build shared libraries... yes
-checking whether to build static libraries... no
-checking for g++... g++
-checking whether the compiler supports GNU C++... yes
-checking whether g++ accepts -g... yes
-checking for g++ option to enable C++11 features... none needed
-checking dependency style of g++... gcc3
-checking how to run the C++ preprocessor... g++ -E
-checking for ld used by g++... /usr/bin/ld -m elf_x86_64
-checking if the linker (/usr/bin/ld -m elf_x86_64) is GNU ld... yes
-checking whether the g++ linker (/usr/bin/ld -m elf_x86_64) supports shared libraries... yes
-checking for g++ option to produce PIC... -fPIC -DPIC
-checking if g++ PIC flag -fPIC -DPIC works... yes
-checking if g++ static flag -static works... yes
-checking if g++ supports -c -o file.o... yes
-checking if g++ supports -c -o file.o... (cached) yes
-checking whether the g++ linker (/usr/bin/ld -m elf_x86_64) supports shared libraries... yes
-checking dynamic linker characteristics... (cached) GNU/Linux ld.so
-checking how to hardcode library paths into programs... immediate
-checking for gcc... (cached) gcc
-checking whether the compiler supports GNU C... (cached) yes
-checking whether gcc accepts -g... (cached) yes
-checking for gcc option to enable C11 features... (cached) none needed
-checking whether gcc understands -c and -o together... (cached) yes
-checking dependency style of gcc... (cached) gcc3
-checking for gcc options needed to detect all undeclared functions... none needed
-checking for pkg-config... /usr/bin/pkg-config
-checking pkg-config is at least version 0.9.0... yes
-checking how to run the C preprocessor... gcc -E
-checking for X... libraries , headers 
+conanfile.py: Generator cmake_find_package created FindRocksDB.cmake
+conanfile.py: Generator cmake_find_package created FindTBB.cmake
+conanfile.py: Generator cmake_find_package created FindArrow.cmake
+conanfile.py: Generator cmake_find_package created FindGTest.cmake
+conanfile.py: Generator cmake_find_package created Findbenchmark.cmake
+conanfile.py: Generator cmake_find_package created Findyaml-cpp.cmake
+conanfile.py: Generator cmake_find_package created Findmarisa.cmake
+conanfile.py: Generator cmake_find_package created Findprometheus-cpp.cmake
+conanfile.py: Generator cmake_find_package created Findfolly.cmake
+conanfile.py: Generator cmake_find_package created Findgoogle-cloud-cpp.cmake
+conanfile.py: Generator cmake_find_package created Findopentelemetry-cpp.cmake
+conanfile.py: Generator cmake_find_package created FindRdKafka.cmake
+conanfile.py: Generator cmake_find_package created Findroaring.cmake
+conanfile.py: Generator cmake_find_package created Findsimde.cmake
+conanfile.py: Generator cmake_find_package created FindxxHash.cmake
+conanfile.py: Generator cmake_find_package created Findunordered_dense.cmake
+conanfile.py: Generator cmake_find_package created Findgeos.cmake
+conanfile.py: Generator cmake_find_package created FindICU.cmake
+conanfile.py: Generator cmake_find_package created Findlibavrocpp.cmake
+conanfile.py: Generator cmake_find_package created Findzstd.cmake
+conanfile.py: Generator cmake_find_package created Findhwloc.cmake
+conanfile.py: Generator cmake_find_package created Findnlohmann_json.cmake
+conanfile.py: Generator cmake_find_package created Findlz4.cmake
+conanfile.py: Generator cmake_find_package created FindSnappy.cmake
+conanfile.py: Generator cmake_find_package created FindThrift.cmake
+conanfile.py: Generator cmake_find_package created Findjemalloc.cmake
+conanfile.py: Generator cmake_find_package created FindRapidJSON.cmake
+conanfile.py: Generator cmake_find_package created FindAWSSDK.cmake
+conanfile.py: Generator cmake_find_package created Findxsimd.cmake
+conanfile.py: Generator cmake_find_package created Findazure-sdk-for-cpp.cmake
+conanfile.py: Generator cmake_find_package created Findgoogleapis.cmake
+conanfile.py: Generator cmake_find_package created Findglog.cmake
+conanfile.py: Generator cmake_find_package created Findfmt.cmake
+conanfile.py: Generator cmake_find_package created Finddouble-conversion.cmake
+conanfile.py: Generator cmake_find_package created Findlibsodium.cmake
+conanfile.py: Generator cmake_find_package created Findlibdwarf.cmake
+conanfile.py: Generator cmake_find_package created Findlibiberty.cmake
+conanfile.py: Generator cmake_find_package created FindgRPC.cmake
+conanfile.py: Generator cmake_find_package created FindCrc32c.cmake
+conanfile.py: Generator cmake_find_package created Findopentelemetry-proto.cmake
+conanfile.py: Generator cmake_find_package created Findcyrus-sasl.cmake
+conanfile.py: Generator cmake_find_package created FindBoost.cmake
+conanfile.py: Generator cmake_find_package created FindLibevent.cmake
+conanfile.py: Generator cmake_find_package created Findaws-crt-cpp.cmake
+conanfile.py: Generator cmake_find_package created FindCURL.cmake
+conanfile.py: Generator cmake_find_package created Findre2.cmake
+conanfile.py: Generator cmake_find_package created FindLibXml2.cmake
+conanfile.py: Generator cmake_find_package created FindProtobuf.cmake
+conanfile.py: Generator cmake_find_package created Findgflags.cmake
+conanfile.py: Generator cmake_find_package created Findlibunwind.cmake
+conanfile.py: Generator cmake_find_package created Findlibelf.cmake
+conanfile.py: Generator cmake_find_package created Findabsl.cmake
+conanfile.py: Generator cmake_find_package created Findc-ares.cmake
+conanfile.py: Generator cmake_find_package created FindBZip2.cmake
+conanfile.py: Generator cmake_find_package created Findlibbacktrace.cmake
+conanfile.py: Generator cmake_find_package created Findaws-c-mqtt.cmake
+conanfile.py: Generator cmake_find_package created Findaws-c-event-stream.cmake
+conanfile.py: Generator cmake_find_package created Findaws-c-s3.cmake
+conanfile.py: Generator cmake_find_package created FindIconv.cmake
+conanfile.py: Generator cmake_find_package created FindLibLZMA.cmake
+conanfile.py: Generator cmake_find_package created Findaws-c-auth.cmake
+conanfile.py: Generator cmake_find_package created Findaws-checksums.cmake
+conanfile.py: Generator cmake_find_package created Findaws-c-sdkutils.cmake
+conanfile.py: Generator cmake_find_package created Findaws-c-http.cmake
+conanfile.py: Generator cmake_find_package created Findaws-c-io.cmake
+conanfile.py: Generator cmake_find_package created Findaws-c-compression.cmake
+conanfile.py: Generator cmake_find_package created Findaws-c-cal.cmake
+conanfile.py: Generator cmake_find_package created Finds2n.cmake
+conanfile.py: Generator cmake_find_package created FindOpenSSL.cmake
+conanfile.py: Generator cmake_find_package created Findaws-c-common.cmake
+conanfile.py: Generator cmake_find_package created FindZLIB.cmake
+conanfile.py: WARN: 
+     ************************************************
+     The 'cmake' generator is deprecated.
+     Please update your code and remove it.
+     *************************************************
 
-###
-### Configuring hwloc core
-###
-checking hwloc building mode... standalone
-configure: hwloc builddir: /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release
-configure: hwloc srcdir: /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src
-configure: Detected VPATH build
-checking for hwloc version... 2.9.3
-checking if want hwloc maintainer support... disabled
-checking for hwloc directory prefix... (none)
-checking for hwloc symbol prefix... hwloc_
-checking for the C compiler vendor... gnu
-checking size of void *... 8
-checking which OS support to include... Linux
-checking which CPU support to include... x86_64
-checking size of unsigned long... 8
-checking size of unsigned int... 4
-checking for __attribute__... yes
-checking for __attribute__(aligned)... yes
-checking for __attribute__(always_inline)... yes
-checking for __attribute__(cold)... yes
-checking for __attribute__(const)... yes
-checking for __attribute__(deprecated)... yes
-checking for __attribute__(constructor)... yes
-checking for __attribute__(format)... yes
-checking for __attribute__(hot)... yes
-checking for __attribute__(malloc)... yes
-checking for __attribute__(may_alias)... yes
-checking for __attribute__(no_instrument_function)... yes
-checking for __attribute__(nonnull)... yes
-checking for __attribute__(noreturn)... yes
-checking for __attribute__(packed)... yes
-checking for __attribute__(pure)... yes
-checking for __attribute__(sentinel)... yes
-checking for __attribute__(unused)... yes
-checking for __attribute__(warn_unused_result)... yes
-checking for __attribute__(weak_alias)... yes
-checking if gcc supports -fvisibility=hidden... yes
-checking whether to enable symbol visibility... yes (via -fvisibility=hidden)
-configure: WARNING: "-fvisibility=hidden" has been added to the hwloc CFLAGS
-checking whether the C compiler rejects function calls with too many arguments... yes
-checking whether the C compiler rejects function calls with too few arguments... yes
-checking whether to enable "picky" compiler mode... no (default)
-checking for unistd.h... (cached) yes
-checking for dirent.h... yes
-checking for strings.h... (cached) yes
-checking for ctype.h... yes
-checking for strcasecmp... yes
-checking whether strcasecmp is declared... yes
-checking whether function strcasecmp has a complete prototype... yes
-checking for strncasecmp... yes
-checking whether strncasecmp is declared... yes
-checking whether function strncasecmp has a complete prototype... yes
-checking for strftime... yes
-checking for setlocale... yes
-checking for stdint.h... (cached) yes
-checking for sys/mman.h... yes
+conanfile.py: Generator cmake created conanbuildinfo.cmake
+conanfile.py: Aggregating env generators
+conanfile.py: Generated conaninfo.txt
+conanfile.py: Generated graphinfo
+conanfile.py imports(): Copied 193 '.proto' files
+conanfile.py imports(): Copied 3 '.0' files: libdouble-conversion.so.3.2.0, libglog.so.0.6.0, protoc-3.21.4.0
+conanfile.py imports(): Copied 4 '.7' files: libevent_core-2.1.so.7, libevent_openssl-2.1.so.7, libevent_pthreads-2.1.so.7, libevent_extra-2.1.so.7
+conanfile.py imports(): Copied 79 files
+conanfile.py imports(): Copied 6 '.0-dev' files
+conanfile.py imports(): Copied 7 '.1' files
+conanfile.py imports(): Copied 4 '.3' files: libdouble-conversion.so.3, libtbbbind_2_5.so.3, libssl.so.3, libcrypto.so.3
+conanfile.py imports(): Copied 32 '.so' files
+conanfile.py imports(): Copied 2 '.9' files: libtbbbind_2_5.so.3.9, libtbb.so.12.9
+conanfile.py imports(): Copied 1 '.6' file: librocksdb.so.6
+conanfile.py imports(): Copied 1 '.74' file: libicudata.so.74
+conanfile.py imports(): Copied 3 '.2' files: libicudata.so.74.2, libgflags_nothreads.so.2.2.2, libgflags_nothreads.so.2.2
+conanfile.py imports(): Copied 1 '.py' file: event_rpcgen.py
+conanfile.py imports(): Copied 1 '.sh' file: gflags_completions.sh
+conanfile.py imports(): Copied 1 '.4' file: libhwloc.so.15.6.4
+conanfile.py imports(): Copied 1 '.5' file: librocksdb.so.6.29.5
+conanfile.py imports(): Copied 1 '.15' file: libhwloc.so.15
+conanfile.py imports(): Copied 1 '.12' file: libtbb.so.12
 
-**** Linux-specific checks
-checking whether sched_getcpu is declared... yes
-checking whether sched_setaffinity is declared... yes
-checking whether function sched_setaffinity has a complete prototype... yes
-checking for old prototype of sched_setaffinity... no
-checking for working CPU_SET... yes
-checking for working CPU_SET_S... yes
-checking for working syscall with 6 parameters... yes
-checking for libudev.h... yes
-checking for udev_device_new_from_subsystem_sysname in -ludev... yes
-**** end of Linux-specific checks
-
-checking whether pthread_setaffinity_np is declared... yes
-checking whether pthread_getaffinity_np is declared... yes
-checking whether fabsf is declared... yes
-checking for fabsf in -lm... yes
-checking whether modff is declared... yes
-checking for modff in -lm... yes
-checking whether _SC_NPROCESSORS_ONLN is declared... yes
-checking whether _SC_NPROCESSORS_CONF is declared... yes
-checking whether _SC_NPROC_ONLN is declared... no
-checking whether _SC_NPROC_CONF is declared... no
-checking whether _SC_PAGESIZE is declared... yes
-checking whether _SC_PAGE_SIZE is declared... yes
-checking whether _SC_LARGE_PAGESIZE is declared... no
-checking for mach/mach_init.h... no
-checking for mach_init.h... no
-checking for mach/mach_host.h... no
-checking whether strtoull is declared... yes
-checking for ssize_t... yes
-checking whether snprintf is declared... yes
-checking whether _strdup is declared... no
-checking whether _putenv is declared... no
-checking whether snprintf is correct... yes
-checking whether getprogname is declared... no
-checking whether getexecname is declared... no
-checking for program_invocation_name... yes
-checking for __progname... yes
-checking for pthread_t... yes
-checking for bash... /bin/bash
-checking for ffs... yes
-checking whether ffs is declared... yes
-checking whether function ffs has a complete prototype... yes
-checking for ffsl... yes
-checking whether ffsl is declared... yes
-checking whether function ffsl has a complete prototype... yes
-checking for fls... no
-checking for flsl... no
-checking for clz... no
-checking for clzl... no
-checking for openat... yes
-checking for malloc.h... yes
-checking for getpagesize... yes
-checking for memalign... yes
-checking for posix_memalign... yes
-checking for sys/utsname.h... yes
-checking for uname... yes
-checking for pthread_mutex_lock... yes
-checking for valgrind/valgrind.h... yes
-checking whether RUNNING_ON_VALGRIND is declared... yes
-
-**** x86 CPUID configuration
-checking for x86 cpuid... yes
-**** end of x86 CPUID configuration
-
-**** component and plugin-specific configuration
-checking if plugin support is enabled... no
-checking components to build statically...  noos xml synthetic xml_nolibxml linux x86
-checking components to build as plugins... 
-**** end of component and plugin configuration
-checking for diff... /usr/bin/diff
-
-###
-### Configuring hwloc documentation
-###
-checking if this is a developer build... no (doxygen generation is optional)
-checking for doxygen... no
-checking for pdflatex... no
-checking for makeindex... no
-checking for fig2dev... /usr/bin/fig2dev
-checking for gs... /usr/bin/gs
-checking for epstopdf... no
-checking if can build doxygen docs... no
-checking for w3m... no
-checking for lynx... no
-checking if can build top-level README... no
-checking if will build top-level README... no
-checking if will build doxygen docs... no
-checking if will install doxygen docs... yes
-
-###
-### Configuring hwloc command line utilities
-###
-checking for gethostbyname... yes
-checking for connect... yes
-checking for remove... yes
-checking for shmat... yes
-checking for IceConnectionNumber in -lICE... yes
-checking for X11/Xlib.h... yes
-checking for XOpenDisplay in -lX11... yes
-checking for X11/Xutil.h... yes
-checking for X11/keysym.h... yes
-checking for wchar_t... yes
-checking for putwc... yes
-checking for locale.h... yes
-checking for setlocale... (cached) yes
-checking for uselocale... yes
-checking for xlocale.h... no
-checking for langinfo.h... yes
-checking for nl_langinfo... yes
-checking termcap support using ncurses and ... no
-checking termcap support using ncurses and -lncursesw... yes
-checking whether diff accepts -u... yes
-checking whether diff accepts -w... yes
-checking whether bind is declared... yes
-checking for bind in -lsocket... no
-checking for isatty... yes
-checking for tcgetpgrp... yes
-checking for time.h... yes
-checking for clock_gettime... yes
-checking for archivemount... no
-
-###
-### Configuring tests
-###
-checking for pthread_self in -lpthread... yes
-checking for NUMA... no
-checking for numa_available in -lnuma... no
-checking for stdlib.h... (cached) yes
-checking for mkstemp... yes
-checking for infiniband/verbs.h... no
-checking for xmllint... xmllint
-checking for bunzip2... bunzip2
-checking if CXX works... yes
-checking whether diff accepts -u... yes
-
-###
-### Performing final hwloc configuration
-###
-checking that generated files are newer than configure... done
-configure: creating ./config.status
-config.status: creating Makefile
-config.status: creating include/Makefile
-config.status: creating hwloc/Makefile
-config.status: creating doc/Makefile
-config.status: creating doc/examples/Makefile
-config.status: creating doc/doxygen-config.cfg
-config.status: creating utils/Makefile
-config.status: creating utils/hwloc/Makefile
-config.status: creating utils/lstopo/Makefile
-config.status: creating hwloc.pc
-config.status: creating netloc/Makefile
-config.status: creating utils/netloc/infiniband/Makefile
-config.status: creating utils/netloc/draw/Makefile
-config.status: creating utils/netloc/scotch/Makefile
-config.status: creating utils/netloc/mpi/Makefile
-config.status: creating netloc.pc
-config.status: creating netlocscotch.pc
-config.status: creating tests/Makefile
-config.status: creating tests/hwloc/Makefile
-config.status: creating tests/hwloc/linux/Makefile
-config.status: creating tests/hwloc/linux/allowed/Makefile
-config.status: creating tests/hwloc/linux/gather/Makefile
-config.status: creating tests/hwloc/x86/Makefile
-config.status: creating tests/hwloc/x86+linux/Makefile
-config.status: creating tests/hwloc/xml/Makefile
-config.status: creating tests/hwloc/ports/Makefile
-config.status: creating tests/hwloc/rename/Makefile
-config.status: creating tests/hwloc/linux/allowed/test-topology.sh
-config.status: creating tests/hwloc/linux/gather/test-gather-topology.sh
-config.status: creating tests/hwloc/linux/test-topology.sh
-config.status: creating tests/hwloc/x86/test-topology.sh
-config.status: creating tests/hwloc/x86+linux/test-topology.sh
-config.status: creating tests/hwloc/xml/test-topology.sh
-config.status: creating tests/hwloc/wrapper.sh
-config.status: creating utils/hwloc/hwloc-compress-dir
-config.status: creating utils/hwloc/hwloc-gather-topology
-config.status: creating utils/hwloc/test-hwloc-annotate.sh
-config.status: creating utils/hwloc/test-hwloc-calc.sh
-config.status: creating utils/hwloc/test-hwloc-compress-dir.sh
-config.status: creating utils/hwloc/test-hwloc-diffpatch.sh
-config.status: creating utils/hwloc/test-hwloc-distrib.sh
-config.status: creating utils/hwloc/test-hwloc-info.sh
-config.status: creating utils/hwloc/test-build-custom-topology.sh
-config.status: creating utils/hwloc/test-fake-plugin.sh
-config.status: creating utils/hwloc/test-parsing-flags.sh
-config.status: creating utils/hwloc/test-hwloc-dump-hwdata/Makefile
-config.status: creating utils/hwloc/test-hwloc-dump-hwdata/test-hwloc-dump-hwdata.sh
-config.status: creating utils/lstopo/test-lstopo.sh
-config.status: creating utils/lstopo/test-lstopo-shmem.sh
-config.status: creating utils/netloc/infiniband/netloc_ib_gather_raw
-config.status: creating contrib/hwloc-ps.www/Makefile
-config.status: creating contrib/systemd/Makefile
-config.status: creating contrib/completion/Makefile
-config.status: creating contrib/misc/Makefile
-config.status: creating contrib/windows/Makefile
-config.status: creating tests/netloc/Makefile
-config.status: creating tests/netloc/tests.sh
-config.status: creating include/private/autogen/config.h
-config.status: creating include/hwloc/autogen/config.h
-config.status: linking /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/hwloc/topology-solaris.c to tests/hwloc/ports/topology-solaris.c
-config.status: linking /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/hwloc/topology-solaris-chiptype.c to tests/hwloc/ports/topology-solaris-chiptype.c
-config.status: linking /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/hwloc/topology-aix.c to tests/hwloc/ports/topology-aix.c
-config.status: linking /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/hwloc/topology-windows.c to tests/hwloc/ports/topology-windows.c
-config.status: linking /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/hwloc/topology-darwin.c to tests/hwloc/ports/topology-darwin.c
-config.status: linking /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/hwloc/topology-freebsd.c to tests/hwloc/ports/topology-freebsd.c
-config.status: linking /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/hwloc/topology-netbsd.c to tests/hwloc/ports/topology-netbsd.c
-config.status: linking /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/hwloc/topology-hpux.c to tests/hwloc/ports/topology-hpux.c
-config.status: linking /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/hwloc/topology-bgq.c to tests/hwloc/ports/topology-bgq.c
-config.status: linking /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/hwloc/topology-opencl.c to tests/hwloc/ports/topology-opencl.c
-config.status: linking /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/hwloc/topology-cuda.c to tests/hwloc/ports/topology-cuda.c
-config.status: linking /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/hwloc/topology-nvml.c to tests/hwloc/ports/topology-nvml.c
-config.status: linking /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/hwloc/topology-rsmi.c to tests/hwloc/ports/topology-rsmi.c
-config.status: linking /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/hwloc/topology-levelzero.c to tests/hwloc/ports/topology-levelzero.c
-config.status: linking /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/hwloc/topology-gl.c to tests/hwloc/ports/topology-gl.c
-config.status: linking /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/lstopo/lstopo-windows.c to tests/hwloc/ports/lstopo-windows.c
-config.status: linking /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/lstopo/lstopo-android.c to tests/hwloc/ports/lstopo-android.c
-config.status: executing depfiles commands
-config.status: executing libtool commands
-config.status: executing chmoding-scripts commands
-
------------------------------------------------------------------------------
-Hwloc optional build support status (more details can be found above):
-
-Probe / display I/O devices: no
-Graphical output:            no
-XML input / output:          basic
-Netloc functionality:        no
-Plugin support:              no
------------------------------------------------------------------------------
-
-make[1]: warning: -j14 forced in submake: resetting jobserver mode.
-make[1]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release'
-Making all in include
-make[2]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/include'
-make[2]: Nothing to be done for 'all'.
-make[2]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/include'
-Making all in hwloc
-make[2]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/hwloc'
-  CC       topology.lo
-  CC       traversal.lo
-  CC       distances.lo
-  CC       memattrs.lo
-  CC       cpukinds.lo
-  CC       bind.lo
-  CC       bitmap.lo
-  CC       components.lo
-  CC       pci-common.lo
-  CC       diff.lo
-  CC       shmem.lo
-  CC       misc.lo
-  CC       base64.lo
-  CC       topology-noos.lo
-  CC       topology-synthetic.lo
-  CC       topology-xml.lo
-  CC       topology-xml-nolibxml.lo
-  CC       topology-linux.lo
-  CC       topology-hardwired.lo
-  CC       topology-x86.lo
-  CCLD     libhwloc.la
-make[2]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/hwloc'
-Making all in utils
-make[2]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/utils'
-Making all in hwloc
-make[3]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/utils/hwloc'
-Making all in .
-make[4]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/utils/hwloc'
-  CC       hwloc-annotate.o
-  CC       hwloc-bind.o
-  CC       hwloc-calc.o
-  CC       hwloc-diff.o
-  CC       hwloc-info.o
-  CC       hwloc-patch.o
-  CC       hwloc-ps.o
-  CC       common-ps.lo
-  CC       hwloc-distrib.o
-  CC       hwloc-gather-cpuid.o
-  CC       hwloc_dump_hwdata-hwloc-dump-hwdata.o
-  CC       hwloc_dump_hwdata-hwloc-dump-hwdata-knl.o
-Creating hwloc.7 man page...
-Creating hwloc-annotate.1 man page...
-Creating hwloc-bind.1 man page...
-Creating hwloc-calc.1 man page...
-Creating hwloc-compress-dir.1 man page...
-Creating hwloc-diff.1 man page...
-Creating hwloc-distrib.1 man page...
-Creating hwloc-info.1 man page...
-Creating hwloc-patch.1 man page...
-Creating hwloc-gather-topology.1 man page...
-Creating hwloc-ps.1 man page...
-Creating hwloc-gather-cpuid.1 man page...
-Creating hwloc-dump-hwdata.1 man page...
-/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/common-ps.c: In function ‘hwloc_ps_read_process’:
-  CCLD     hwloc-diff
-/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/common-ps.c:118:14: warning: ignoring return value of ‘read’ declared with attribute ‘warn_unused_result’ [-Wunused-result]
-  118 |       (void) read(fd, &status, sizeof(status));
-      |              ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-  CCLD     hwloc-patch
-  CCLD     hwloc-dump-hwdata
-  CCLD     hwloc-gather-cpuid
-/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c: In function ‘hwloc_calc_output’:
-/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:129:45: warning: ‘%s’ directive output may be truncated writing up to 31 bytes into a region of size between 0 and 255 [-Wformat-truncation=]
-  129 |       snprintf(string, sizeof(string), "%s%s%s:%u", prefix, level ? "." : "", type, idx);
-      |                                             ^~                                ~~~~
-In function ‘hwloc_calc_hierarch_output’,
-    inlined from ‘hwloc_calc_hierarch_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:136:7,
-    inlined from ‘hwloc_calc_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:225:5:
-/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:129:40: note: directive argument in the range [0, 4294967294]
-  129 |       snprintf(string, sizeof(string), "%s%s%s:%u", prefix, level ? "." : "", type, idx);
-      |                                        ^~~~~~~~~~~
-In file included from /usr/include/stdio.h:980,
-                 from /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/include/hwloc.h:59,
-                 from /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.h:12,
-                 from /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:10:
-In function ‘snprintf’,
-    inlined from ‘hwloc_calc_hierarch_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:129:7,
-    inlined from ‘hwloc_calc_hierarch_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:136:7,
-    inlined from ‘hwloc_calc_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:225:5:
-/usr/include/x86_64-linux-gnu/bits/stdio2.h:54:10: note: ‘__builtin___snprintf_chk’ output between 4 and 299 bytes into a destination of size 256
-   54 |   return __builtin___snprintf_chk (__s, __n, __USE_FORTIFY_LEVEL - 1,
-      |          ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-   55 |                                    __glibc_objsize (__s), __fmt,
-      |                                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-   56 |                                    __va_arg_pack ());
-      |                                    ~~~~~~~~~~~~~~~~~
-/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c: In function ‘hwloc_calc_output’:
-/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:127:45: warning: ‘%s’ directive output may be truncated writing up to 31 bytes into a region of size between 0 and 255 [-Wformat-truncation=]
-  127 |       snprintf(string, sizeof(string), "%s%s%s:-1", prefix, level ? "." : "", type);
-      |                                             ^~                                ~~~~
-In function ‘snprintf’,
-    inlined from ‘hwloc_calc_hierarch_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:127:7,
-    inlined from ‘hwloc_calc_hierarch_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:136:7,
-    inlined from ‘hwloc_calc_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:225:5:
-/usr/include/x86_64-linux-gnu/bits/stdio2.h:54:10: note: ‘__builtin___snprintf_chk’ output between 5 and 291 bytes into a destination of size 256
-   54 |   return __builtin___snprintf_chk (__s, __n, __USE_FORTIFY_LEVEL - 1,
-      |          ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-   55 |                                    __glibc_objsize (__s), __fmt,
-      |                                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-   56 |                                    __va_arg_pack ());
-      |                                    ~~~~~~~~~~~~~~~~~
-/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c: In function ‘hwloc_calc_output’:
-/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:129:45: warning: ‘%s’ directive output may be truncated writing up to 31 bytes into a region of size between 0 and 255 [-Wformat-truncation=]
-  129 |       snprintf(string, sizeof(string), "%s%s%s:%u", prefix, level ? "." : "", type, idx);
-      |                                             ^~                                ~~~~
-In function ‘hwloc_calc_hierarch_output’,
-    inlined from ‘hwloc_calc_hierarch_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:136:7,
-    inlined from ‘hwloc_calc_hierarch_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:136:7,
-    inlined from ‘hwloc_calc_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:225:5:
-/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:129:40: note: directive argument in the range [0, 4294967294]
-  129 |       snprintf(string, sizeof(string), "%s%s%s:%u", prefix, level ? "." : "", type, idx);
-      |                                        ^~~~~~~~~~~
-In function ‘snprintf’,
-    inlined from ‘hwloc_calc_hierarch_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:129:7,
-    inlined from ‘hwloc_calc_hierarch_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:136:7,
-    inlined from ‘hwloc_calc_hierarch_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:136:7,
-    inlined from ‘hwloc_calc_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:225:5:
-/usr/include/x86_64-linux-gnu/bits/stdio2.h:54:10: note: ‘__builtin___snprintf_chk’ output between 4 and 299 bytes into a destination of size 256
-   54 |   return __builtin___snprintf_chk (__s, __n, __USE_FORTIFY_LEVEL - 1,
-      |          ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-   55 |                                    __glibc_objsize (__s), __fmt,
-      |                                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-   56 |                                    __va_arg_pack ());
-      |                                    ~~~~~~~~~~~~~~~~~
-/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c: In function ‘hwloc_calc_output’:
-/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:127:45: warning: ‘%s’ directive output may be truncated writing up to 31 bytes into a region of size between 0 and 255 [-Wformat-truncation=]
-  127 |       snprintf(string, sizeof(string), "%s%s%s:-1", prefix, level ? "." : "", type);
-      |                                             ^~                                ~~~~
-In function ‘snprintf’,
-    inlined from ‘hwloc_calc_hierarch_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:127:7,
-    inlined from ‘hwloc_calc_hierarch_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:136:7,
-    inlined from ‘hwloc_calc_hierarch_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:136:7,
-    inlined from ‘hwloc_calc_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:225:5:
-/usr/include/x86_64-linux-gnu/bits/stdio2.h:54:10: note: ‘__builtin___snprintf_chk’ output between 5 and 291 bytes into a destination of size 256
-   54 |   return __builtin___snprintf_chk (__s, __n, __USE_FORTIFY_LEVEL - 1,
-      |          ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-   55 |                                    __glibc_objsize (__s), __fmt,
-      |                                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-   56 |                                    __va_arg_pack ());
-      |                                    ~~~~~~~~~~~~~~~~~
-/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c: In function ‘hwloc_calc_output’:
-/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:129:45: warning: ‘%s’ directive output may be truncated writing up to 31 bytes into a region of size between 0 and 255 [-Wformat-truncation=]
-  129 |       snprintf(string, sizeof(string), "%s%s%s:%u", prefix, level ? "." : "", type, idx);
-      |                                             ^~                                ~~~~
-In function ‘hwloc_calc_hierarch_output’,
-    inlined from ‘hwloc_calc_hierarch_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:136:7,
-    inlined from ‘hwloc_calc_hierarch_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:136:7,
-    inlined from ‘hwloc_calc_hierarch_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:136:7,
-    inlined from ‘hwloc_calc_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:225:5:
-/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:129:40: note: directive argument in the range [0, 4294967294]
-  129 |       snprintf(string, sizeof(string), "%s%s%s:%u", prefix, level ? "." : "", type, idx);
-      |                                        ^~~~~~~~~~~
-In function ‘snprintf’,
-    inlined from ‘hwloc_calc_hierarch_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:129:7,
-    inlined from ‘hwloc_calc_hierarch_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:136:7,
-    inlined from ‘hwloc_calc_hierarch_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:136:7,
-    inlined from ‘hwloc_calc_hierarch_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:136:7,
-    inlined from ‘hwloc_calc_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:225:5:
-/usr/include/x86_64-linux-gnu/bits/stdio2.h:54:10: note: ‘__builtin___snprintf_chk’ output between 4 and 299 bytes into a destination of size 256
-   54 |   return __builtin___snprintf_chk (__s, __n, __USE_FORTIFY_LEVEL - 1,
-      |          ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-   55 |                                    __glibc_objsize (__s), __fmt,
-      |                                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-   56 |                                    __va_arg_pack ());
-      |                                    ~~~~~~~~~~~~~~~~~
-/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c: In function ‘hwloc_calc_output’:
-/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:127:45: warning: ‘%s’ directive output may be truncated writing up to 31 bytes into a region of size between 0 and 255 [-Wformat-truncation=]
-  127 |       snprintf(string, sizeof(string), "%s%s%s:-1", prefix, level ? "." : "", type);
-      |                                             ^~                                ~~~~
-In function ‘snprintf’,
-    inlined from ‘hwloc_calc_hierarch_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:127:7,
-    inlined from ‘hwloc_calc_hierarch_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:136:7,
-    inlined from ‘hwloc_calc_hierarch_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:136:7,
-    inlined from ‘hwloc_calc_hierarch_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:136:7,
-    inlined from ‘hwloc_calc_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:225:5:
-/usr/include/x86_64-linux-gnu/bits/stdio2.h:54:10: note: ‘__builtin___snprintf_chk’ output between 5 and 291 bytes into a destination of size 256
-   54 |   return __builtin___snprintf_chk (__s, __n, __USE_FORTIFY_LEVEL - 1,
-      |          ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-   55 |                                    __glibc_objsize (__s), __fmt,
-      |                                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-   56 |                                    __va_arg_pack ());
-      |                                    ~~~~~~~~~~~~~~~~~
-/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c: In function ‘hwloc_calc_output’:
-/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:129:45: warning: ‘%s’ directive output may be truncated writing up to 31 bytes into a region of size between 0 and 255 [-Wformat-truncation=]
-  129 |       snprintf(string, sizeof(string), "%s%s%s:%u", prefix, level ? "." : "", type, idx);
-      |                                             ^~                                ~~~~
-In function ‘hwloc_calc_hierarch_output’,
-    inlined from ‘hwloc_calc_hierarch_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:136:7,
-    inlined from ‘hwloc_calc_hierarch_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:136:7,
-    inlined from ‘hwloc_calc_hierarch_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:136:7,
-    inlined from ‘hwloc_calc_hierarch_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:136:7,
-    inlined from ‘hwloc_calc_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:225:5:
-/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:129:40: note: directive argument in the range [0, 4294967294]
-  129 |       snprintf(string, sizeof(string), "%s%s%s:%u", prefix, level ? "." : "", type, idx);
-      |                                        ^~~~~~~~~~~
-In function ‘snprintf’,
-    inlined from ‘hwloc_calc_hierarch_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:129:7,
-    inlined from ‘hwloc_calc_hierarch_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:136:7,
-    inlined from ‘hwloc_calc_hierarch_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:136:7,
-    inlined from ‘hwloc_calc_hierarch_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:136:7,
-    inlined from ‘hwloc_calc_hierarch_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:136:7,
-    inlined from ‘hwloc_calc_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:225:5:
-/usr/include/x86_64-linux-gnu/bits/stdio2.h:54:10: note: ‘__builtin___snprintf_chk’ output between 4 and 299 bytes into a destination of size 256
-   54 |   return __builtin___snprintf_chk (__s, __n, __USE_FORTIFY_LEVEL - 1,
-      |          ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-   55 |                                    __glibc_objsize (__s), __fmt,
-      |                                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-   56 |                                    __va_arg_pack ());
-      |                                    ~~~~~~~~~~~~~~~~~
-/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c: In function ‘hwloc_calc_output’:
-/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:127:45: warning: ‘%s’ directive output may be truncated writing up to 31 bytes into a region of size between 0 and 255 [-Wformat-truncation=]
-  127 |       snprintf(string, sizeof(string), "%s%s%s:-1", prefix, level ? "." : "", type);
-      |                                             ^~                                ~~~~
-In function ‘snprintf’,
-    inlined from ‘hwloc_calc_hierarch_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:127:7,
-    inlined from ‘hwloc_calc_hierarch_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:136:7,
-    inlined from ‘hwloc_calc_hierarch_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:136:7,
-    inlined from ‘hwloc_calc_hierarch_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:136:7,
-    inlined from ‘hwloc_calc_hierarch_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:136:7,
-    inlined from ‘hwloc_calc_output’ at /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/utils/hwloc/hwloc-calc.c:225:5:
-/usr/include/x86_64-linux-gnu/bits/stdio2.h:54:10: note: ‘__builtin___snprintf_chk’ output between 5 and 291 bytes into a destination of size 256
-   54 |   return __builtin___snprintf_chk (__s, __n, __USE_FORTIFY_LEVEL - 1,
-      |          ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-   55 |                                    __glibc_objsize (__s), __fmt,
-      |                                    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-   56 |                                    __va_arg_pack ());
-      |                                    ~~~~~~~~~~~~~~~~~
-  CCLD     libutils_common.la
-  CCLD     hwloc-distrib
-  CCLD     hwloc-ps
-  CCLD     hwloc-bind
-  CCLD     hwloc-calc
-  CCLD     hwloc-annotate
-  CCLD     hwloc-info
-make[4]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/utils/hwloc'
-Making all in test-hwloc-dump-hwdata
-make[4]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/utils/hwloc/test-hwloc-dump-hwdata'
-make[4]: Nothing to be done for 'all'.
-make[4]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/utils/hwloc/test-hwloc-dump-hwdata'
-make[3]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/utils/hwloc'
-Making all in lstopo
-make[3]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/utils/lstopo'
-  CC       lstopo_no_graphics-lstopo.o
-  CC       lstopo_no_graphics-lstopo-draw.o
-  CC       lstopo_no_graphics-lstopo-tikz.o
-  CC       lstopo_no_graphics-lstopo-fig.o
-  CC       lstopo_no_graphics-lstopo-ascii.o
-  CC       lstopo_no_graphics-lstopo-svg.o
-  CC       lstopo_no_graphics-lstopo-text.o
-  CC       lstopo_no_graphics-lstopo-xml.o
-  CC       lstopo_no_graphics-lstopo-shmem.o
-Creating lstopo-no-graphics.1 man page...
-  CCLD     lstopo-no-graphics
-make[3]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/utils/lstopo'
-make[3]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/utils'
-make[3]: Nothing to be done for 'all-am'.
-make[3]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/utils'
-make[2]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/utils'
-Making all in tests
-make[2]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests'
-Making all in hwloc
-make[3]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc'
-Making all in .
-make[4]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc'
-make[4]: Nothing to be done for 'all-am'.
-make[4]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc'
-Making all in ports
-make[4]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/ports'
-make[4]: Nothing to be done for 'all'.
-make[4]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/ports'
-Making all in xml
-make[4]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/xml'
-make[4]: Nothing to be done for 'all'.
-make[4]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/xml'
-Making all in linux
-make[4]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/linux'
-Making all in .
-make[5]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/linux'
-make[5]: Nothing to be done for 'all-am'.
-make[5]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/linux'
-Making all in allowed
-make[5]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/linux/allowed'
-make[5]: Nothing to be done for 'all'.
-make[5]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/linux/allowed'
-Making all in gather
-make[5]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/linux/gather'
-make[5]: Nothing to be done for 'all'.
-make[5]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/linux/gather'
-make[4]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/linux'
-Making all in x86
-make[4]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/x86'
-make[4]: Nothing to be done for 'all'.
-make[4]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/x86'
-Making all in x86+linux
-make[4]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/x86+linux'
-make[4]: Nothing to be done for 'all'.
-make[4]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/x86+linux'
-make[3]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc'
-make[3]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests'
-make[3]: Nothing to be done for 'all-am'.
-make[3]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests'
-make[2]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests'
-Making all in contrib/systemd
-make[2]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/contrib/systemd'
-Creating hwloc-dump-hwdata.service...
-make[2]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/contrib/systemd'
-Making all in contrib/completion
-make[2]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/contrib/completion'
-make[2]: Nothing to be done for 'all'.
-make[2]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/contrib/completion'
-Making all in contrib/misc
-make[2]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/contrib/misc'
-make[2]: Nothing to be done for 'all'.
-make[2]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/contrib/misc'
-Making all in contrib/hwloc-ps.www
-make[2]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/contrib/hwloc-ps.www'
-make[2]: Nothing to be done for 'all'.
-make[2]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/contrib/hwloc-ps.www'
-Making all in doc
-make[2]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/doc'
-make  all-recursive
-make[3]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/doc'
-Making all in examples
-make[4]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/doc/examples'
-make[4]: Nothing to be done for 'all'.
-make[4]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/doc/examples'
-make[4]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/doc'
-make[4]: Nothing to be done for 'all-am'.
-make[4]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/doc'
-make[3]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/doc'
-make[2]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/doc'
-make[2]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release'
-make[2]: Nothing to be done for 'all-am'.
-make[2]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release'
-make[1]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release'
-hwloc/2.9.3: Package 'a3349593e7121820a19933a9b26ae7225f82e7d5' built
-hwloc/2.9.3: Build folder /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release
-hwloc/2.9.3: Generated conaninfo.txt
-hwloc/2.9.3: Generated conanbuildinfo.txt
-hwloc/2.9.3: Generating the package
-hwloc/2.9.3: Package folder /home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5
-hwloc/2.9.3: Calling package()
-hwloc/2.9.3: Copied 1 file: COPYING
-make[1]: warning: -j14 forced in submake: resetting jobserver mode.
-make[1]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release'
-Making install in include
-make[2]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/include'
-make[3]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/include'
-make[3]: Nothing to be done for 'install-exec-am'.
- /usr/bin/mkdir -p '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//include'
- /usr/bin/mkdir -p '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//include/hwloc'
- /usr/bin/mkdir -p '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//include/hwloc/autogen'
- /usr/bin/install -c -m 644 /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/include/hwloc.h '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//include'
- /usr/bin/install -c -m 644 hwloc/autogen/config.h '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//include/hwloc/autogen'
- /usr/bin/install -c -m 644 /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/include/hwloc/bitmap.h /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/include/hwloc/helper.h /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/include/hwloc/inlines.h /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/include/hwloc/memattrs.h /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/include/hwloc/cpukinds.h /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/include/hwloc/diff.h /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/include/hwloc/shmem.h /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/include/hwloc/distances.h /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/include/hwloc/export.h /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/include/hwloc/openfabrics-verbs.h /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/include/hwloc/opencl.h /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/include/hwloc/cuda.h /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/include/hwloc/cudart.h /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/include/hwloc/nvml.h /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/include/hwloc/rsmi.h /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/include/hwloc/levelzero.h /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/include/hwloc/plugins.h /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/include/hwloc/gl.h /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/include/hwloc/rename.h /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/include/hwloc/deprecated.h /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/include/hwloc/linux.h /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/include/hwloc/linux-libnuma.h /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/include/hwloc/glibc-sched.h '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//include/hwloc'
-make[3]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/include'
-make[2]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/include'
-Making install in hwloc
-make[2]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/hwloc'
-make[3]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/hwloc'
- /usr/bin/mkdir -p '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//lib'
- /usr/bin/mkdir -p '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//share/hwloc'
- /bin/bash ../libtool   --mode=install /usr/bin/install -c   libhwloc.la '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//lib'
- /usr/bin/install -c -m 644 /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/hwloc/hwloc.dtd /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/hwloc/hwloc2.dtd /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/hwloc/hwloc2-diff.dtd '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//share/hwloc'
-libtool: install: /usr/bin/install -c .libs/libhwloc.so.15.6.4 /home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//lib/libhwloc.so.15.6.4
-libtool: install: (cd /home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//lib && { ln -s -f libhwloc.so.15.6.4 libhwloc.so.15 || { rm -f libhwloc.so.15 && ln -s libhwloc.so.15.6.4 libhwloc.so.15; }; })
-libtool: install: (cd /home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//lib && { ln -s -f libhwloc.so.15.6.4 libhwloc.so || { rm -f libhwloc.so && ln -s libhwloc.so.15.6.4 libhwloc.so; }; })
-libtool: install: /usr/bin/install -c .libs/libhwloc.lai /home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//lib/libhwloc.la
-libtool: warning: remember to run 'libtool --finish //lib'
-make  install-exec-hook
-make[4]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/hwloc'
-make[4]: Nothing to be done for 'install-exec-hook'.
-make[4]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/hwloc'
-make[3]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/hwloc'
-make[2]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/hwloc'
-Making install in utils
-make[2]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/utils'
-Making install in hwloc
-make[3]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/utils/hwloc'
-Making install in .
-make[4]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/utils/hwloc'
-make[5]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/utils/hwloc'
- /usr/bin/mkdir -p '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//bin'
- /usr/bin/mkdir -p '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//bin'
- /usr/bin/mkdir -p '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//bin'
- /usr/bin/mkdir -p '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//share/man/man1'
- /usr/bin/mkdir -p '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//share/man/man7'
- /usr/bin/install -c hwloc-compress-dir hwloc-gather-topology '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//bin'
-  /bin/bash ../../libtool   --mode=install /usr/bin/install -c hwloc-annotate hwloc-bind hwloc-calc hwloc-diff hwloc-distrib hwloc-info hwloc-patch hwloc-ps hwloc-gather-cpuid '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//bin'
-  /bin/bash ../../libtool   --mode=install /usr/bin/install -c hwloc-dump-hwdata '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//bin'
- /usr/bin/install -c -m 644 hwloc.7 '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//share/man/man7'
- /usr/bin/install -c -m 644 hwloc-annotate.1 hwloc-bind.1 hwloc-calc.1 hwloc-compress-dir.1 hwloc-diff.1 hwloc-distrib.1 hwloc-info.1 hwloc-patch.1 hwloc-gather-topology.1 hwloc-ps.1 hwloc-gather-cpuid.1 hwloc-dump-hwdata.1 '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//share/man/man1'
-libtool: warning: '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/hwloc/libhwloc.la' has not been installed in '//lib'
-libtool: warning: '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/hwloc/libhwloc.la' has not been installed in '//lib'
-libtool: install: /usr/bin/install -c .libs/hwloc-annotate /home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//bin/hwloc-annotate
-libtool: install: /usr/bin/install -c .libs/hwloc-dump-hwdata /home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//bin/hwloc-dump-hwdata
-libtool: warning: '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/hwloc/libhwloc.la' has not been installed in '//lib'
-libtool: install: /usr/bin/install -c .libs/hwloc-bind /home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//bin/hwloc-bind
-libtool: warning: '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/hwloc/libhwloc.la' has not been installed in '//lib'
-libtool: install: /usr/bin/install -c .libs/hwloc-calc /home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//bin/hwloc-calc
-libtool: warning: '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/hwloc/libhwloc.la' has not been installed in '//lib'
-libtool: install: /usr/bin/install -c .libs/hwloc-diff /home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//bin/hwloc-diff
-libtool: warning: '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/hwloc/libhwloc.la' has not been installed in '//lib'
-libtool: install: /usr/bin/install -c .libs/hwloc-distrib /home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//bin/hwloc-distrib
-libtool: warning: '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/hwloc/libhwloc.la' has not been installed in '//lib'
-libtool: install: /usr/bin/install -c .libs/hwloc-info /home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//bin/hwloc-info
-libtool: warning: '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/hwloc/libhwloc.la' has not been installed in '//lib'
-libtool: install: /usr/bin/install -c .libs/hwloc-patch /home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//bin/hwloc-patch
-libtool: warning: '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/hwloc/libhwloc.la' has not been installed in '//lib'
-libtool: install: /usr/bin/install -c .libs/hwloc-ps /home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//bin/hwloc-ps
-libtool: warning: '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/hwloc/libhwloc.la' has not been installed in '//lib'
-libtool: install: /usr/bin/install -c .libs/hwloc-gather-cpuid /home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//bin/hwloc-gather-cpuid
-make  install-exec-hook
-make[6]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/utils/hwloc'
-/usr/bin/sed -e 's/HWLOC_top_builddir\/utils\/hwloc/bindir/' -e 's/HWLOC_top_builddir\/utils\/lstopo/bindir/' -e '/HWLOC_top_builddir/d' /home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//bin/hwloc-compress-dir > /home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//bin/hwloc-compress-dir.tmp && mv -f /home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//bin/hwloc-compress-dir.tmp /home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//bin/hwloc-compress-dir
-chmod +x /home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//bin/hwloc-compress-dir
-/usr/bin/sed -e 's/HWLOC_top_builddir\/utils\/lstopo/bindir/' -e 's/HWLOC_top_builddir\/utils\/hwloc/bindir/' -e '/HWLOC_top_builddir/d' /home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//bin/hwloc-gather-topology > /home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//bin/hwloc-gather-topology.tmp && mv -f /home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//bin/hwloc-gather-topology.tmp /home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//bin/hwloc-gather-topology
-chmod +x /home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//bin/hwloc-gather-topology
-make[6]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/utils/hwloc'
-make[5]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/utils/hwloc'
-make[4]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/utils/hwloc'
-Making install in test-hwloc-dump-hwdata
-make[4]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/utils/hwloc/test-hwloc-dump-hwdata'
-make[5]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/utils/hwloc/test-hwloc-dump-hwdata'
-make[5]: Nothing to be done for 'install-exec-am'.
-make[5]: Nothing to be done for 'install-data-am'.
-make[5]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/utils/hwloc/test-hwloc-dump-hwdata'
-make[4]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/utils/hwloc/test-hwloc-dump-hwdata'
-make[3]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/utils/hwloc'
-Making install in lstopo
-make[3]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/utils/lstopo'
-make[4]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/utils/lstopo'
- /usr/bin/mkdir -p '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//bin'
- /usr/bin/mkdir -p '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//share/man/man1'
-  /bin/bash ../../libtool   --mode=install /usr/bin/install -c lstopo-no-graphics '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//bin'
- /usr/bin/install -c -m 644 lstopo-no-graphics.1 '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//share/man/man1'
-make  install-data-hook
-make[5]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/utils/lstopo'
-rm -f /home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//share/man/man1/hwloc-ls.1
-cd /home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//share/man/man1 && ln -s lstopo-no-graphics.1 hwloc-ls.1
-rm -f /home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//share/man/man1/lstopo.1
-cd /home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//share/man/man1 && ln -s lstopo-no-graphics.1 lstopo.1
-make[5]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/utils/lstopo'
-libtool: warning: '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/hwloc/libhwloc.la' has not been installed in '//lib'
-libtool: install: /usr/bin/install -c .libs/lstopo-no-graphics /home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//bin/lstopo-no-graphics
-make  install-exec-hook
-make[5]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/utils/lstopo'
-rm -f /home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//bin/hwloc-ls
-cd /home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//bin && ln -s lstopo-no-graphics hwloc-ls
-rm -f /home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//bin/lstopo
-cd /home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//bin && ln -s lstopo-no-graphics lstopo || true
-make[5]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/utils/lstopo'
-make[4]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/utils/lstopo'
-make[3]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/utils/lstopo'
-make[3]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/utils'
-make[4]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/utils'
-make[4]: Nothing to be done for 'install-exec-am'.
-make[4]: Nothing to be done for 'install-data-am'.
-make[4]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/utils'
-make[3]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/utils'
-make[2]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/utils'
-Making install in tests
-make[2]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests'
-Making install in hwloc
-make[3]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc'
-Making install in .
-make[4]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc'
-make[5]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc'
-make[5]: Nothing to be done for 'install-exec-am'.
-make[5]: Nothing to be done for 'install-data-am'.
-make[5]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc'
-make[4]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc'
-Making install in ports
-make[4]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/ports'
-make[5]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/ports'
-make[5]: Nothing to be done for 'install-exec-am'.
-make[5]: Nothing to be done for 'install-data-am'.
-make[5]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/ports'
-make[4]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/ports'
-Making install in xml
-make[4]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/xml'
-make[5]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/xml'
-make[5]: Nothing to be done for 'install-exec-am'.
-make[5]: Nothing to be done for 'install-data-am'.
-make[5]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/xml'
-make[4]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/xml'
-Making install in linux
-make[4]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/linux'
-Making install in .
-make[5]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/linux'
-make[6]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/linux'
-make[6]: Nothing to be done for 'install-exec-am'.
-make[6]: Nothing to be done for 'install-data-am'.
-make[6]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/linux'
-make[5]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/linux'
-Making install in allowed
-make[5]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/linux/allowed'
-make[6]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/linux/allowed'
-make[6]: Nothing to be done for 'install-exec-am'.
-make[6]: Nothing to be done for 'install-data-am'.
-make[6]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/linux/allowed'
-make[5]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/linux/allowed'
-Making install in gather
-make[5]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/linux/gather'
-make[6]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/linux/gather'
-make[6]: Nothing to be done for 'install-exec-am'.
-make[6]: Nothing to be done for 'install-data-am'.
-make[6]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/linux/gather'
-make[5]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/linux/gather'
-make[4]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/linux'
-Making install in x86
-make[4]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/x86'
-make[5]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/x86'
-make[5]: Nothing to be done for 'install-exec-am'.
-make[5]: Nothing to be done for 'install-data-am'.
-make[5]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/x86'
-make[4]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/x86'
-Making install in x86+linux
-make[4]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/x86+linux'
-make[5]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/x86+linux'
-make[5]: Nothing to be done for 'install-exec-am'.
-make[5]: Nothing to be done for 'install-data-am'.
-make[5]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/x86+linux'
-make[4]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc/x86+linux'
-make[3]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests/hwloc'
-make[3]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests'
-make[4]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests'
-make[4]: Nothing to be done for 'install-exec-am'.
-make[4]: Nothing to be done for 'install-data-am'.
-make[4]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests'
-make[3]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests'
-make[2]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/tests'
-Making install in contrib/systemd
-make[2]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/contrib/systemd'
-make[3]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/contrib/systemd'
-make[3]: Nothing to be done for 'install-exec-am'.
- /usr/bin/mkdir -p '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//share/hwloc'
- /usr/bin/install -c -m 644 hwloc-dump-hwdata.service '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//share/hwloc'
-make[3]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/contrib/systemd'
-make[2]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/contrib/systemd'
-Making install in contrib/completion
-make[2]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/contrib/completion'
-make[3]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/contrib/completion'
-make[3]: Nothing to be done for 'install-exec-am'.
- /usr/bin/mkdir -p '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//share/bash-completion/completions'
- /usr/bin/install -c -m 644 /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/contrib/completion/bash/hwloc '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//share/bash-completion/completions'
-make[3]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/contrib/completion'
-make[2]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/contrib/completion'
-Making install in contrib/misc
-make[2]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/contrib/misc'
-make[3]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/contrib/misc'
-make[3]: Nothing to be done for 'install-exec-am'.
- /usr/bin/mkdir -p '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//share/doc/hwloc'
- /usr/bin/install -c -m 644 /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/contrib/misc/dynamic_SVG_example.html '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//share/doc/hwloc'
-make[3]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/contrib/misc'
-make[2]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/contrib/misc'
-Making install in contrib/hwloc-ps.www
-make[2]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/contrib/hwloc-ps.www'
-make[3]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/contrib/hwloc-ps.www'
-make[3]: Nothing to be done for 'install-exec-am'.
- /usr/bin/mkdir -p '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//share/hwloc/hwloc-ps.www'
- /usr/bin/mkdir -p '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//share/hwloc/hwloc-ps.www/assets'
- /usr/bin/install -c -m 644 /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/contrib/hwloc-ps.www/client.js /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/contrib/hwloc-ps.www/package.json /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/contrib/hwloc-ps.www/README '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//share/hwloc/hwloc-ps.www'
- /usr/bin/install -c -m 644 /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/contrib/hwloc-ps.www/assets/index.html /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/contrib/hwloc-ps.www/assets/main.css /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/contrib/hwloc-ps.www/assets/script.js /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/contrib/hwloc-ps.www/assets/style.css '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//share/hwloc/hwloc-ps.www/assets'
-make[3]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/contrib/hwloc-ps.www'
-make[2]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/contrib/hwloc-ps.www'
-Making install in doc
-make[2]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/doc'
-make  install-recursive
-make[3]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/doc'
-Making install in examples
-make[4]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/doc/examples'
-make[5]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/doc/examples'
-make[5]: Nothing to be done for 'install-exec-am'.
-make[5]: Nothing to be done for 'install-data-am'.
-make[5]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/doc/examples'
-make[4]: Leaving directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/doc/examples'
-make[4]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/doc'
-make[5]: Entering directory '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/build-release/doc'
-make[5]: Nothing to be done for 'install-exec-am'.
- /usr/bin/mkdir -p '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//share/man/man3'
- /usr/bin/mkdir -p '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//share/man/man3'
- /usr/bin/mkdir -p '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//share/man/man3'
- /usr/bin/mkdir -p '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//share/man/man3'
- /usr/bin/mkdir -p '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//share/man/man3'
- /usr/bin/mkdir -p '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//share/man/man3'
- /usr/bin/mkdir -p '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//share/man/man3'
- /usr/bin/mkdir -p '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//share/man/man3'
- /usr/bin/mkdir -p '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//share/man/man3'
- /usr/bin/install -c -m 644 /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/doc/doxygen-doc/man/man3/hwlocality_api_error_reporting.3 /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/doc/doxygen-doc/man/man3/hwlocality_api_version.3 /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/doc/doxygen-doc/man/man3/HWLOC_API_VERSION.3 /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/doc/doxygen-doc/man/man3/hwloc_get_api_version.3 '/home/dcalford/.conan/data/hwloc/2.9.3/_/_/package/a3349593e7121820a19933a9b26ae7225f82e7d5//share/man/man3'
- /usr/bin/install -c -m 644 /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/doc/doxygen-doc/man/man3/hwlocality_configuration.3 /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/doc/doxygen-doc/man/man3/HWLOC_TOPOLOGY_FLAG_INCLUDE_DISALLOWED.3 /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/doc/doxygen-doc/man/man3/HWLOC_TOPOLOGY_FLAG_IS_THISSYSTEM.3 /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/doc/doxygen-doc/man/man3/HWLOC_TOPOLOGY_FLAG_THISSYSTEM_ALLOWED_RESOURCES.3 /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/doc/doxygen-doc/man/man3/HWLOC_TOPOLOGY_FLAG_IMPORT_SUPPORT.3 /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/doc/doxygen-doc/man/man3/HWLOC_TOPOLOGY_FLAG_RESTRICT_TO_CPUBINDING.3 /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/doc/doxygen-doc/man/man3/HWLOC_TOPOLOGY_FLAG_RESTRICT_TO_MEMBINDING.3 /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/doc/doxygen-doc/man/man3/HWLOC_TOPOLOGY_FLAG_DONT_CHANGE_BINDING.3 /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/doc/doxygen-doc/man/man3/hwloc_topology_flags_e.3 /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/doc/doxygen-doc/man/man3/hwloc_topology_get_flags.3 /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/doc/doxygen-doc/man/man3/hwloc_topology_set_flags.3 /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/doc/doxygen-doc/man/man3/hwloc_topology_is_thissystem.3 /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/doc/doxygen-doc/man/man3/hwloc_topology_discovery_support.3 /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/doc/doxygen-doc/man/man3/hwloc_topology_cpubind_support.3 /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/doc/doxygen-doc/man/man3/hwloc_topology_membind_support.3 /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/doc/doxygen-doc/man/man3/hwloc_topology_misc_support.3 /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/doc/doxygen-doc/man/man3/hwloc_topology_support.3 /home/dcalford/.conan/data/hwloc/2.9.3/_/_/build/a3349593e7121820a19933a9b26ae7225f82e7d5/src/doc/doxygen-doc/man/man3/hwloc_type_filter_e.3 /home/dcalford/.conan/data/hwloc/2.9.3/_/_/b
-[truncated]
+WARN: **************************************************
+WARN: *** Conan 1 is legacy and on a deprecation path **
+WARN: *********** Please upgrade to Conan 2 ************
+WARN: **************************************************
+~/CliWork/milvus
+~/CliWork/milvus/cmake_build/thirdparty ~/CliWork/milvus
+cargo exists
+not running on mac os, no need to reinstall rust
 --- output end ---

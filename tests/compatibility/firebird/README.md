@@ -52,7 +52,7 @@ The converted tests are organized into 39 categories including:
 
 ## Running Tests
 
-**Prerequisites:** The `sb_fb_isql` client must be built first (see [Plan 06](/docs/planning/PLAN_06_DEDICATED_ISQL_CLIENTS.md)).
+**Prerequisites:** Build CLI clients in the `ScratchBird-driver` repository first. This runner requires `sb_fb_isql` for Firebird wire-protocol parity. Generic `sb_isql` is native-protocol only and is rejected for this lane.
 
 ### CTest (curated subset)
 
@@ -62,7 +62,7 @@ The CTest target runs a small curated subset defined in `config/ctest_list.txt`:
 ctest -R CompatibilityFirebird --test-dir build
 ```
 
-This uses `sb_fb_isql` and creates a fresh ScratchBird database per test under `results/ctest/`.
+This uses `sb_fb_isql` and creates a fresh ScratchBird database per test under `results/ctest/`. If `sb_fb_isql` is unavailable, set `SCRATCHBIRD_FB_ISQL` to a valid wrapper path after building FDW CLI wrappers.
 
 ### Firebird-QA Harness Smoke
 
@@ -76,7 +76,7 @@ This produces `tests/compatibility/results/emulation/firebird/p5s2w2/fb-emu-041-
 
 ### Manual runs
 
-Once `sb_fb_isql` is available:
+Once the Firebird CLI is available:
 
 ```bash
 # Run a single test

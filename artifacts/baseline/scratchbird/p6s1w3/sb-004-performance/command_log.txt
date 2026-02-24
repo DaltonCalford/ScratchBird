@@ -1,3 +1,136 @@
 task_id=SB-004
-status=blocked
-timestamp_utc=2026-02-24T04:26:47Z
+status=done
+timestamp_utc=2026-02-24T15:55:46Z
+
+=== command 1 ===
+cwd: /home/dcalford/CliWork/ScratchBird
+timeout_s: 600
+rc: 0
+timed_out: False
+duration_s: 205.060
+cmd: ctest --test-dir build --output-on-failure -L performance -j2 --timeout 120
+--- output begin ---
+Internal ctest changing into directory: /home/dcalford/CliWork/ScratchBird/build
+Test project /home/dcalford/CliWork/ScratchBird/build
+      Start 3505: COPY_1GB_Test
+      Start 3167: JoinBenchmark.NestedLoopJoin
+ 1/53 Test #3167: JoinBenchmark.NestedLoopJoin .............................................   Passed   20.82 sec
+      Start 3210: TIPPerformanceBenchmark.VisibilityCheckScalability
+ 2/53 Test #3210: TIPPerformanceBenchmark.VisibilityCheckScalability .......................   Passed   14.64 sec
+      Start 3193: AtomicXIDTest.PerformanceBenchmark
+ 3/53 Test #3193: AtomicXIDTest.PerformanceBenchmark .......................................   Passed    5.88 sec
+      Start 3170: SortBenchmark.StringSort
+ 4/53 Test #3170: SortBenchmark.StringSort .................................................   Passed    4.20 sec
+      Start 3207: TIPPerformanceBenchmark.TIPLookupSpeed
+ 5/53 Test #3207: TIPPerformanceBenchmark.TIPLookupSpeed ...................................   Passed    4.37 sec
+      Start 3506: MultiThreadedStress
+ 6/53 Test #3506: MultiThreadedStress ......................................................   Passed    3.04 sec
+      Start 3169: SortBenchmark.IntegerSort
+ 7/53 Test #3169: SortBenchmark.IntegerSort ................................................   Passed    2.27 sec
+      Start 3200: DependencyPerformanceTest.GetDependents100K
+ 8/53 Test #3200: DependencyPerformanceTest.GetDependents100K ..............................   Passed    1.99 sec
+      Start 3195: BTreeCompressionTest.BenchmarkStringKeyCompression
+ 9/53 Test #3195: BTreeCompressionTest.BenchmarkStringKeyCompression .......................   Passed    0.93 sec
+      Start 3194: BTreeCompressionTest.BenchmarkUUIDv7Compression
+10/53 Test #3194: BTreeCompressionTest.BenchmarkUUIDv7Compression ..........................   Passed    0.81 sec
+      Start 3208: TIPPerformanceBenchmark.BTreeSearchWithTIPVisibility
+11/53 Test #3208: TIPPerformanceBenchmark.BTreeSearchWithTIPVisibility .....................   Passed    0.72 sec
+      Start 3162: SequentialScanBenchmark.ProjectionScan
+12/53 Test #3162: SequentialScanBenchmark.ProjectionScan ...................................   Passed    0.72 sec
+      Start 3209: TIPPerformanceBenchmark.ConcurrentTIPAccess
+13/53 Test #3209: TIPPerformanceBenchmark.ConcurrentTIPAccess ..............................   Passed    0.87 sec
+      Start 3201: StoragePerformanceTest.SequentialInsertBenchmark
+14/53 Test #3201: StoragePerformanceTest.SequentialInsertBenchmark .........................   Passed    0.74 sec
+      Start 3196: BTreeCompressionTest.BenchmarkRandomKeyNoCompression
+15/53 Test #3196: BTreeCompressionTest.BenchmarkRandomKeyNoCompression .....................   Passed    0.63 sec
+      Start 3177: MemoryBenchmark.SmallAllocations
+16/53 Test #3177: MemoryBenchmark.SmallAllocations .........................................   Passed    0.40 sec
+      Start 3181: CacheBufferBenchmarkTest.ScanResistanceBenchmark
+17/53 Test #3181: CacheBufferBenchmarkTest.ScanResistanceBenchmark .........................   Passed    0.49 sec
+      Start 3184: ParserBenchmarkTest.SimpleSelectMultipleConstants
+18/53 Test #3184: ParserBenchmarkTest.SimpleSelectMultipleConstants ........................   Passed    0.39 sec
+      Start 3172: IndexBenchmark.BTreeIndexLookup
+19/53 Test #3172: IndexBenchmark.BTreeIndexLookup ..........................................   Passed    0.36 sec
+      Start 3173: IndexBenchmark.BTreeRangeScan
+20/53 Test #3173: IndexBenchmark.BTreeRangeScan ............................................   Passed    0.24 sec
+      Start 3199: DependencyPerformanceTest.GetDependents10K
+21/53 Test #3199: DependencyPerformanceTest.GetDependents10K ...............................   Passed    0.50 sec
+      Start 3185: ParserBenchmarkTest.ArithmeticExpression
+22/53 Test #3185: ParserBenchmarkTest.ArithmeticExpression .................................   Passed    0.44 sec
+      Start 3190: ParserBenchmarkTest.CreateTableSimple
+23/53 Test #3190: ParserBenchmarkTest.CreateTableSimple ....................................   Passed    0.43 sec
+      Start 3186: ParserBenchmarkTest.LogicalExpression
+24/53 Test #3186: ParserBenchmarkTest.LogicalExpression ....................................   Passed    0.44 sec
+      Start 3187: ParserBenchmarkTest.StringExpression
+25/53 Test #3187: ParserBenchmarkTest.StringExpression .....................................   Passed    0.47 sec
+      Start 3166: AggregationBenchmark.GroupBySum
+26/53 Test #3166: AggregationBenchmark.GroupBySum ..........................................   Passed    0.38 sec
+      Start 3191: ParserBenchmarkTest.TransactionStatements
+27/53 Test #3191: ParserBenchmarkTest.TransactionStatements ................................   Passed    0.43 sec
+      Start 3188: ParserBenchmarkTest.CaseExpression
+28/53 Test #3188: ParserBenchmarkTest.CaseExpression .......................................   Passed    0.44 sec
+      Start 3198: DependencyPerformanceTest.GetDependents1K
+29/53 Test #3198: DependencyPerformanceTest.GetDependents1K ................................   Passed    0.36 sec
+      Start 3165: AggregationBenchmark.GroupByCount
+30/53 Test #3165: AggregationBenchmark.GroupByCount ........................................   Passed    0.41 sec
+      Start 3189: ParserBenchmarkTest.CastExpression
+31/53 Test #3189: ParserBenchmarkTest.CastExpression .......................................   Passed    0.42 sec
+      Start 3183: ParserBenchmarkTest.SimpleSelectConstant
+32/53 Test #3183: ParserBenchmarkTest.SimpleSelectConstant .................................   Passed    0.38 sec
+      Start 3192: ParserBenchmarkTest.Summary
+33/53 Test #3192: ParserBenchmarkTest.Summary ..............................................   Passed    0.33 sec
+      Start 3171: IndexBenchmark.HashIndexLookup
+34/53 Test #3171: IndexBenchmark.HashIndexLookup ...........................................   Passed    0.22 sec
+      Start 3180: StringBenchmark.StringComparison
+35/53 Test #3180: StringBenchmark.StringComparison .........................................   Passed    0.23 sec
+      Start 3178: MemoryBenchmark.LargeAllocations
+36/53 Test #3178: MemoryBenchmark.LargeAllocations .........................................   Passed    0.15 sec
+      Start 3160: SequentialScanBenchmark.FullTableScan
+37/53 Test #3160: SequentialScanBenchmark.FullTableScan ....................................   Passed    0.15 sec
+      Start 3161: SequentialScanBenchmark.FilteredScan
+38/53 Test #3161: SequentialScanBenchmark.FilteredScan .....................................   Passed    0.15 sec
+      Start 3168: JoinBenchmark.HashJoin
+39/53 Test #3168: JoinBenchmark.HashJoin ...................................................   Passed    0.09 sec
+      Start 3164: AggregationBenchmark.SimpleAvg
+40/53 Test #3164: AggregationBenchmark.SimpleAvg ...........................................   Passed    0.09 sec
+      Start 3163: AggregationBenchmark.SimpleSum
+41/53 Test #3163: AggregationBenchmark.SimpleSum ...........................................   Passed    0.08 sec
+      Start 3202: StoragePerformanceTest.SequentialScanBenchmark
+42/53 Test #3202: StoragePerformanceTest.SequentialScanBenchmark ...........................   Passed    0.06 sec
+      Start 3179: StringBenchmark.StringConcatenation
+43/53 Test #3179: StringBenchmark.StringConcatenation ......................................   Passed    0.05 sec
+      Start 3205: StoragePerformanceTest.PageFillEfficiencyBenchmark
+44/53 Test #3205: StoragePerformanceTest.PageFillEfficiencyBenchmark .......................   Passed    0.03 sec
+      Start 3175: TransactionBenchmark.SimpleWriteTransaction
+45/53 Test #3175: TransactionBenchmark.SimpleWriteTransaction ..............................   Passed    0.04 sec
+      Start 3176: TransactionBenchmark.MixedReadWriteTransaction
+46/53 Test #3176: TransactionBenchmark.MixedReadWriteTransaction ...........................   Passed    0.03 sec
+      Start 3204: StoragePerformanceTest.MixedWorkloadBenchmark
+47/53 Test #3204: StoragePerformanceTest.MixedWorkloadBenchmark ............................   Passed    0.02 sec
+      Start 3206: StoragePerformanceTest.TransactionOverheadBenchmark
+48/53 Test #3206: StoragePerformanceTest.TransactionOverheadBenchmark ......................   Passed    0.03 sec
+      Start 3203: StoragePerformanceTest.RandomAccessBenchmark
+49/53 Test #3203: StoragePerformanceTest.RandomAccessBenchmark .............................   Passed    0.03 sec
+      Start 3174: TransactionBenchmark.SimpleReadTransaction
+50/53 Test #3174: TransactionBenchmark.SimpleReadTransaction ...............................   Passed    0.03 sec
+      Start 3197: ThroughputTest.MixedReadWrite_Throughput
+51/53 Test #3197: ThroughputTest.MixedReadWrite_Throughput .................................   Passed    0.02 sec
+      Start 3182: FrontDoorModeBenchmarkTest.DirectVsManagerProxyConnectAuthQueryLatency
+52/53 Test #3182: FrontDoorModeBenchmarkTest.DirectVsManagerProxyConnectAuthQueryLatency ...***Skipped   0.02 sec
+53/53 Test #3505: COPY_1GB_Test ............................................................   Passed  204.91 sec
+
+100% tests passed, 0 tests failed out of 53
+
+Label Time Summary:
+copy           = 204.91 sec*proc (1 test)
+integration    = 204.91 sec*proc (1 test)
+ipc            = 204.91 sec*proc (1 test)
+memory         = 204.91 sec*proc (1 test)
+performance    = 276.40 sec*proc (53 tests)
+stress         =   3.04 sec*proc (1 test)
+
+Total Test time (real) = 204.99 sec
+
+The following tests did not run:
+	3182 - FrontDoorModeBenchmarkTest.DirectVsManagerProxyConnectAuthQueryLatency (Skipped)
+--- output end ---

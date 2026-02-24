@@ -1,6 +1,6 @@
 # Run Manifest
 
-- timestamp_utc: `2026-02-24T04:26:47Z`
+- timestamp_utc: `2026-02-24T15:55:46Z`
 - row_id: `12`
 - task_id: `SB-005`
 - workstream: `scratchbird`
@@ -8,15 +8,15 @@
 - owner: `agent-scratchbird`
 - sprint: `P6-S1/W3`
 - gate: `SB-GATE-05`
-- status: `blocked`
+- status: `done`
 - depends_on: `SB-002`
 - parser_emitter_executor_touched_in_cycle: `parser:yes|emitter:yes|executor:yes`
 
 ## Host Snapshot
-- cwd: `/home/dcalford/CliWork`
+- cwd: `/home/dcalford/CliWork/ScratchBird`
 - host_platform: `Linux-6.17.0-14-generic-x86_64-with-glibc2.39`
 - python: `3.12.3 (main, Jan 22 2026, 20:57:42) [GCC 13.3.0]`
-- timestamp_utc: `2026-02-24T04:21:44Z`
+- timestamp_utc: `2026-02-24T15:52:11Z`
 - tool_ant: `Apache Ant(TM) version 1.10.14 compiled on September 25 2023`
 - tool_bazel: `bazel 9.0.0`
 - tool_cargo: `cargo 1.93.0 (083ac5135 2025-12-15)`
@@ -42,4 +42,4 @@ OpenJDK 64-Bit Server VM (build 21.0.10+7-Ubuntu-124.04, mixed mode, sharing)`
 - tool_rustc: `rustc 1.93.0 (254b59607 2026-01-19)`
 
 ## Commands
-- `(none)`
+- 1. cwd=`/home/dcalford/CliWork/ScratchBird` timeout_s=`600` cmd=`ctest --test-dir build --output-on-failure -L protocol -j2 --timeout 120`

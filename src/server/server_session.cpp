@@ -633,6 +633,7 @@ bool ensureCatalogMfaEnrollmentForUser(core::CatalogManager* catalog,
 bool resolveMfaConfig(core::CatalogManager* catalog,
                       const IPCConnection* connection,
                       const std::string& username,
+                      const std::string* auth_database_context,
                       ResolvedMfaAuthConfig& config_out,
                       std::string& error_out) {
     config_out = ResolvedMfaAuthConfig{};
@@ -643,6 +644,10 @@ bool resolveMfaConfig(core::CatalogManager* catalog,
 
     core::CatalogManager::PrincipalResolutionRequest request{};
     request.presented_principal_name = username;
+    if (auth_database_context != nullptr && !auth_database_context->empty()) {
+        request.has_auth_database_context = true;
+        request.auth_database_context = *auth_database_context;
+    }
 
     if (connection) {
         const PeerCredentials peer = connection->getPeerCredentials();
@@ -1615,6 +1620,8 @@ core::Status ServerSession::handleConnect(const protocol::Message& msg, core::Er
         return status;
     }
 
+    auth_database_context_ = database;
+
     const bool manager_bound_connect =
         (client_flags & protocol::CONNECT_FLAG_MANAGER_DBBT) != 0;
     const bool requires_bound_uuid =
@@ -1890,6 +1897,7 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
                                                        peer_credentials_.uid,
                                                        peer_credentials_.gid,
                                                        peer_credentials_.pid);
+                local_provider->setAuthDatabaseContext(auth_database_context_);
             }
         }
     }
@@ -1906,6 +1914,7 @@ core::Status ServerSession::handleAuth(const protocol::Message& msg, core::Error
         if (!resolveMfaConfig(catalog,
                               connection_,
                               effective_username,
+                              &auth_database_context_,
                               mfa_config,
                               mfa_policy_error)) {
             protocol::Message response = protocol::ProtocolCodec::buildAuthResponse(
@@ -2327,7 +2336,12 @@ core::Status ServerSession::handleQuery(const protocol::Message& msg, core::Erro
         auto* catalog = database_ ? database_->catalog_manager() : nullptr;
         ResolvedMfaAuthConfig mfa_config;
         std::string mfa_error;
-        if (!resolveMfaConfig(catalog, connection_, username_, mfa_config, mfa_error)) {
+        if (!resolveMfaConfig(catalog,
+                              connection_,
+                              username_,
+                              &auth_database_context_,
+                              mfa_config,
+                              mfa_error)) {
             sendError("MFA policy resolution failed", "28000", ctx);
             return core::Status::INVALID_AUTHORIZATION;
         }
@@ -2891,6 +2905,7 @@ core::AuthResult ServerSession::authenticate(const std::string& username,
                                                peer_credentials_.uid,
                                                peer_credentials_.gid,
                                                peer_credentials_.pid);
+        local_provider->setAuthDatabaseContext(auth_database_context_);
     }
 
     return provider->authenticate(username, password, user_info, error_msg_out);

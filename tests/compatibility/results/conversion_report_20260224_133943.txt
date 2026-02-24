@@ -1,0 +1,21 @@
+Compatibility Test Conversion Report
+Generated: Tue Feb 24 13:39:43 EST 2026
+
+═══════════════════════════════════════════════════════════
+
+Firebird Tests:    2826 files
+MySQL Tests:       8841 files
+PostgreSQL Tests:  238 files
+
+Total Converted:   11905 files
+
+Parallel Jobs:     8
+
+═══════════════════════════════════════════════════════════
+
+Output Directories:
+  Firebird:    /home/dcalford/CliWork/ScratchBird/tests/compatibility/firebird/converted/
+  MySQL:       /home/dcalford/CliWork/ScratchBird/tests/compatibility/mysql/converted/
+  PostgreSQL:  /home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted/
+
+═══════════════════════════════════════════════════════════

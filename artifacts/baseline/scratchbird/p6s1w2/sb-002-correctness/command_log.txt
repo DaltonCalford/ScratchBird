@@ -1,3 +1,49 @@
 task_id=SB-002
-status=blocked
-timestamp_utc=2026-02-24T04:26:47Z
+status=done
+timestamp_utc=2026-02-24T15:52:14Z
+
+=== command 1 ===
+cwd: /home/dcalford/CliWork/ScratchBird
+timeout_s: 600
+rc: 0
+timed_out: False
+duration_s: 0.818
+cmd: ctest --test-dir build --output-on-failure -R '^BTreePageTest\.Initialization$|^AuthBootstrapClaimTest\.ConcurrentBootstrapClaimsHaveSingleWinner$|^CatalogCharsetCollationExtensionContractTest\.CharsetAliasContracts$' -j2
+--- output begin ---
+Internal ctest changing into directory: /home/dcalford/CliWork/ScratchBird/build
+Test project /home/dcalford/CliWork/ScratchBird/build
+    Start 217: CatalogCharsetCollationExtensionContractTest.CharsetAliasContracts
+    Start  98: AuthBootstrapClaimTest.ConcurrentBootstrapClaimsHaveSingleWinner
+1/3 Test #217: CatalogCharsetCollationExtensionContractTest.CharsetAliasContracts ...   Passed    0.29 sec
+    Start   1: BTreePageTest.Initialization
+2/3 Test   #1: BTreePageTest.Initialization .........................................   Passed    0.02 sec
+3/3 Test  #98: AuthBootstrapClaimTest.ConcurrentBootstrapClaimsHaveSingleWinner .....   Passed    0.66 sec
+
+100% tests passed, 0 tests failed out of 3
+
+Label Time Summary:
+unit    =   0.97 sec*proc (3 tests)
+
+Total Test time (real) =   0.76 sec
+--- output end ---
+
+=== command 2 ===
+cwd: /home/dcalford/CliWork/ScratchBird
+timeout_s: 600
+rc: 0
+timed_out: False
+duration_s: 0.969
+cmd: ctest --test-dir build --output-on-failure -R '^AuthPolicyProtocolParityTest\.StrictScramPolicyAllowsAllProtocolProfiles$' -j2
+--- output begin ---
+Internal ctest changing into directory: /home/dcalford/CliWork/ScratchBird/build
+Test project /home/dcalford/CliWork/ScratchBird/build
+    Start 120: AuthPolicyProtocolParityTest.StrictScramPolicyAllowsAllProtocolProfiles
+1/1 Test #120: AuthPolicyProtocolParityTest.StrictScramPolicyAllowsAllProtocolProfiles ...   Passed    0.85 sec
+
+100% tests passed, 0 tests failed out of 1
+
+Label Time Summary:
+unit    =   0.85 sec*proc (1 test)
+
+Total Test time (real) =   0.92 sec
+--- output end ---

@@ -1,3 +1,851 @@
 task_id=ENG-DUCKDB-002
 status=blocked
-timestamp_utc=2026-02-24T04:31:47Z
+timestamp_utc=2026-02-24T19:51:59Z
+
+=== command 1 ===
+cwd: /home/dcalford/CliWork
+timeout_s: 2
+rc: 0
+timed_out: False
+duration_s: 0.018
+cmd: test -d /home/dcalford/CliWork/duckdb && git -C /home/dcalford/CliWork/duckdb rev-parse --short HEAD
+--- output begin ---
+e2be44ff8f
+--- output end ---
+
+=== command 2 ===
+cwd: /home/dcalford/CliWork/duckdb
+timeout_s: 60
+rc: 124
+timed_out: True
+duration_s: 60.167
+cmd: make -j2 unit
+--- output begin ---
+mkdir -p ./build/debug && \
+cd build/debug && \
+cmake         -DLOCAL_EXTENSION_REPO=""  -DOVERRIDE_GIT_DESCRIBE="" -DDUCKDB_EXPLICIT_VERSION=""  -DDEBUG_MOVE=1 -DCMAKE_BUILD_TYPE=Debug ../.. && \
+cmake --build . --config Debug
+-- git hash e2be44ff8f, version v1.5.0-dev7585, extension folder e2be44ff8f
+-- Extensions will be deployed to: /home/dcalford/CliWork/duckdb/build/debug/repository
+-- Load extension 'core_functions' from '/home/dcalford/CliWork/duckdb/extensions' @ e2be44ff8f
+-- Load extension 'parquet' from '/home/dcalford/CliWork/duckdb/extensions' @ e2be44ff8f
+-- Load extension 'jemalloc' from '/home/dcalford/CliWork/duckdb/extensions' @ e2be44ff8f
+-- Extensions linked into DuckDB: [core_functions, parquet, jemalloc]
+-- Configuring done (2.2s)
+-- Generating done (0.4s)
+-- Build files have been written to: /home/dcalford/CliWork/duckdb/build/debug
+gmake[1]: warning: jobserver unavailable: using -j1.  Add '+' to parent make rule.
+gmake[1]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[2]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[  0%] Built target dummy_static_extension_loader
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[  0%] Built target duckdb_platform_binary
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[  0%] Built target duckdb_platform
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[  6%] Built target duckdb_zstd
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[  7%] Built target duckdb_optimizer
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[  7%] Built target duckdb_optimizer_compressed_materialization
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[  7%] Built target duckdb_optimizer_join_order
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[  7%] Built target duckdb_optimizer_matcher
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[  7%] Built target duckdb_optimizer_pullup
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[  7%] Built target duckdb_optimizer_pushdown
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[  8%] Built target duckdb_optimizer_rules
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[  8%] Built target duckdb_optimizer_statistics_expr
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[  8%] Built target duckdb_optimizer_statistics_op
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[  8%] Built target duckdb_planner
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[  8%] Built target duckdb_planner_expression
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[  8%] Built target duckdb_bind_expression
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[  8%] Built target duckdb_bind_query_node
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[  8%] Built target duckdb_bind_statement
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[  8%] Built target duckdb_bind_tableref
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[  8%] Built target duckdb_expression_binders
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[  8%] Built target duckdb_planner_filter
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[  8%] Built target duckdb_planner_operator
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[  9%] Built target duckdb_planner_subquery
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[  9%] Built target duckdb_parser
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[  9%] Built target duckdb_constraints
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[  9%] Built target duckdb_expression
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[  9%] Built target duckdb_parsed_data
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[  9%] Built target duckdb_query_node
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 10%] Built target duckdb_statement
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 11%] Built target duckdb_parser_tableref
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 11%] Built target duckdb_transformer_constraint
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 11%] Built target duckdb_transformer_expression
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 11%] Built target duckdb_transformer_helpers
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 11%] Built target duckdb_transformer_statement
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 11%] Built target duckdb_transformer_tableref
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 11%] Built target duckdb_function
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 11%] Built target duckdb_func_aggr
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 12%] Built target duckdb_aggr_distr
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 12%] Built target duckdb_func_cast
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 13%] Built target duckdb_union_cast
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 13%] Built target duckdb_variant_cast
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 13%] Built target duckdb_func_pragma
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 13%] Built target duckdb_func_scalar
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 13%] Built target duckdb_func_compressed_materialization
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 13%] Built target duckdb_func_date
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 13%] Built target duckdb_func_generic_main
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 13%] Built target duckdb_func_list_nested
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 13%] Built target duckdb_function_map
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 13%] Built target duckdb_func_ops_main
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 13%] Built target duckdb_func_seq
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 14%] Built target duckdb_func_string_main
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 14%] Built target duckdb_func_string_regexp
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 14%] Built target duckdb_func_struct_main
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 15%] Built target duckdb_func_variant_main
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 15%] Built target duckdb_func_system
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 16%] Built target duckdb_func_geometry
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 16%] Built target duckdb_func_table
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 16%] Built target duckdb_table_func_system
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 16%] Built target duckdb_func_table_version
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 16%] Built target duckdb_arrow_conversion
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 16%] Built target duckdb_func_window
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 16%] Built target duckdb_function_variant
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 17%] Built target duckdb_catalog
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 17%] Built target duckdb_catalog_entries
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 17%] Built target duckdb_catalog_entries_dependency
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 17%] Built target duckdb_catalog_default_entries
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 17%] Built target duckdb_common
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 17%] Built target duckdb_adbc
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 17%] Built target duckdb_adbc_nanoarrow
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 17%] Built target duckdb_common_arrow
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 18%] Built target duckdb_common_arrow_appender
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 18%] Built target duckdb_common_crypto
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 18%] Built target duckdb_common_enums
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 18%] Built target duckdb_common_exception
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 19%] Built target duckdb_common_multi_file
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 19%] Built target duckdb_common_operators
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 19%] Built target duckdb_progress_bar
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 19%] Built target duckdb_common_tree_renderer
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 19%] Built target duckdb_row_operations
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 19%] Built target duckdb_common_serializer
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 19%] Built target duckdb_sort
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 19%] Built target duckdb_common_types
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 19%] Built target duckdb_common_types_column
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 20%] Built target duckdb_common_types_row
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 20%] Built target duckdb_common_variant
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 20%] Built target duckdb_value_operations
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 22%] Built target duckdb_vector_operations
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 23%] Built target duckdb_logging
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 24%] Built target duckdb_execution
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 24%] Built target duckdb_expression_executor
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 25%] Built target duckdb_nested_loop_join
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 25%] Built target duckdb_operator_aggregate
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 26%] Built target duckdb_csv_buffer_manager
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 26%] Built target duckdb_csv_encode
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 26%] Built target duckdb_csv_scanner
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 26%] Built target duckdb_csv_sniffer
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 26%] Built target duckdb_csv_state_machine
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 26%] Built target duckdb_operator_csv_table_function
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 26%] Built target duckdb_csv_util
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 26%] Built target duckdb_operator_filter
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 26%] Built target duckdb_operator_helper
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 26%] Built target duckdb_operator_join
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 27%] Built target duckdb_operator_order
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 27%] Built target duckdb_operator_persistent
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 27%] Built target duckdb_operator_projection
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 27%] Built target duckdb_operator_scan
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 27%] Built target duckdb_operator_schema
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 27%] Built target duckdb_operator_set
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 28%] Built target duckdb_physical_plan
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 28%] Built target duckdb_execution_index
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 28%] Built target duckdb_execution_index_art
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 28%] Built target duckdb_sample
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 28%] Built target duckdb_main
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 28%] Built target duckdb_main_capi
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 28%] Built target duckdb_main_capi_cast
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 29%] Built target duckdb_main_extension
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 29%] Built target duckdb_common_http
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 30%] Built target duckdb_main_relation
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 30%] Built target duckdb_main_secret
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 30%] Built target duckdb_main_settings
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 30%] Built target duckdb_main_buffered_data
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 30%] Built target duckdb_main_chunk_scan_state
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 30%] Built target duckdb_parallel
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 30%] Built target duckdb_storage
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 30%] Built target duckdb_storage_buffer
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 30%] Built target duckdb_storage_checkpoint
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 30%] Built target duckdb_storage_compression
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 30%] Built target duckdb_storage_compression_chimp
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 31%] Built target duckdb_storage_compression_alp
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 31%] Built target duckdb_storage_compression_roaring
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 31%] Built target duckdb_storage_compression_dictionary
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 31%] Built target duckdb_storage_compression_dict_fsst
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 32%] Built target duckdb_storage_metadata
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 32%] Built target duckdb_storage_serialization
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 32%] Built target duckdb_storage_statistics
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 32%] Built target duckdb_storage_table
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 32%] Built target duckdb_storage_table_variant
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 33%] Built target duckdb_transaction
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 35%] Built target duckdb_verification
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 36%] Built target duckdb_fastpforlib
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 36%] Built target duckdb_fmt
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 37%] Built target duckdb_fsst
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 37%] Built target duckdb_hyperloglog
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 38%] Built target duckdb_pg_query
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 42%] Built target duckdb_mbedtls
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 42%] Built target duckdb_miniz
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 47%] Built target duckdb_re2
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 47%] Built target duckdb_skiplistlib
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 47%] Built target duckdb_utf8proc
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 47%] Built target duckdb_yyjson
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 47%] Built target duckdb_static
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 48%] Built target loadable_extension_optimizer_demo_loadable_extension
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 48%] Built target duckdb_core_functions_algebraic
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 48%] Built target duckdb_core_functions_distributive
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 49%] Built target duckdb_core_functions_holistic
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 49%] Built target duckdb_core_functions_nested
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 49%] Built target duckdb_core_functions_regression
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 49%] Built target duckdb_core_functions_array
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 49%] Built target duckdb_core_functions_bit
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 50%] Built target duckdb_core_functions_blob
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 50%] Built target duckdb_core_functions_date
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 50%] Built target duckdb_core_functions_debug
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 50%] Built target duckdb_core_functions_enum
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 50%] Built target duckdb_core_functions_generic
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 50%] Built target duckdb_core_functions_list
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 50%] Built target duckdb_core_functions_map
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 50%] Built target duckdb_core_functions_math
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 51%] Built target duckdb_core_functions_operators
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 51%] Built target duckdb_core_functions_random
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 51%] Built target duckdb_core_functions_string
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 51%] Built target duckdb_core_functions_struct
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 51%] Built target duckdb_core_functions_union
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 52%] Built target core_functions_loadable_extension
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 52%] Built target duckdb_parquet_decoders
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 52%] Built target duckdb_parquet_readers
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 53%] Built target duckdb_parquet_reader_variant
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 53%] Built target duckdb_parquet_writers
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 53%] Built target duckdb_parquet_writer_variant
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 62%] Built target parquet_loadable_extension
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 62%] Built target loadable_extension_demo_loadable_extension
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 62%] repository
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 62%] Built target duckdb_local_extension_repo
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 62%] Built target core_functions_extension
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 72%] Built target parquet_extension
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 84%] Built target jemalloc
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 84%] Built target jemalloc_extension
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 85%] Built target duckdb_generated_extension_loader
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 85%] Built target duckdb
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 86%] Built target duckdb_linenoise
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 89%] Built target shell
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 89%] Built target test_persistence
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 94%] Built target test_api
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 94%] Built target test_sql_adbc
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 94%] Built target test_sql_capi
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 94%] Built target test_api_udf_function
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 94%] Built target test_appender
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 94%] Built target test_arrow_roundtrip
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 94%] Built target test_catalog
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 95%] Built target test_common
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 95%] Built target test_logging
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 95%] Built target test_memory_leak
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 95%] Built target test_parallel_csv
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 95%] Built target test_secrets
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 95%] Built target test_optimizer
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 95%] Built target test_serialization
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 95%] Built target test_filter
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 95%] Built target test_table_function
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 95%] Built target test_index
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 95%] Built target test_sql_interquery_parallelism
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 96%] Built target test_pivot
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 97%] Built target test_sql_storage
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 97%] Built target test_sql_storage_catalog
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 97%] Built target test_ossfuzz
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 98%] Built target test_mbedtls
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 98%] Built target test_encryption
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 98%] Built target test_extensions
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 99%] Built target test_helpers
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[ 99%] Built target test_sqlite
+gmake[3]: Entering directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[3]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+[100%] Built target unittest
+gmake[2]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+gmake[1]: Leaving directory '/home/dcalford/CliWork/duckdb/build/debug'
+build/debug/test/unittest
+
+[0/4336] (0%): ADBC - Select 42
+[1/4336] (0%): ADBC - non-empty query without actual statements
+[2/4336] (0%): ADBC - Test ingestion
+[3/4336] (0%): ADBC - Test ingestion - Incorrect column count
+[4/4336] (0%): ADBC - Test ingestion - Temporary Table
+[5/4336] (0%): ADBC - Test ingestion - Temporary Table - Schema Set
+[6/4336] (0%): ADBC - Test ingestion - Target Catalog
+[7/4336] (0%): ADBC - Test ingestion - Target Catalog and Schema
+[8/4336] (0%): ADBC - Test ingestion - Temporary Table - Catalog Set
+[9/4336] (0%): ADBC - Test ingestion - Temporary Table - Schema After Temporary
+[10/4336] (0%): ADBC - Test ingestion - Quoted Table and Schema
+[11/4336] (0%): ADBC - Test Ingestion - Funky identifiers
+[12/4336] (0%): ADBC - Test ingestion - Lineitem
+[13/4336] (0%): ADBC - Pivot
+[14/4336] (0%): Test Null Error/Database
+[15/4336] (0%): Test Invalid Path
+[16/4336] (0%): ADBC - Statement reuse
+[17/4336] (0%): Error Release
+[18/4336] (0%): Test Not-Implemented Partition Functions
+[19/4336] (0%): Test ADBC ConnectionGetInfo
+[20/4336] (0%): Test ADBC Statement Bind (unhappy)
+[21/4336] (0%): Test ADBC Statement Bind
+[22/4336] (0%): Test ADBC Statement with Zero Parameters
+[23/4336] (0%): Test ADBC Transactions
+[24/4336] (0%): Test ADBC Transaction Errors
+[25/4336] (0%): Test ADBC ConnectionGetTableSchema
+[26/4336] (0%): Test ADBC Prepared Statement - Prepare nop
+[27/4336] (0%): Test AdbcConnectionGetTableTypes
+[28/4336] (0%): ADBC - Empty sql (unhappy)
+[29/4336] (0%): Test Segfault Option Set
+[30/4336] (0%): Test AdbcConnectionGetObjects
+[31/4336] (0%): Test ADBC 1.1.0 Ingestion Modes
+[32/4336] (0%): Test ADBC 1.1.0 rows_affected
+[33/4336] (0%): Test ADBC URI option
+[34/4336] (0%): Test Aggregate Functions C API
+[35/4336] (0%): Test String Aggregate Function
+[36/4336] (0%): Test Aggregate Function Overloads C API
+[37/4336] (0%): Test Catalog Interface in C API
+[38/4336] (0%): Test Custom Configuration Options in C API
+[39/4336] (0%): Test Copy Functions in C API
+[40/4336] (0%): Test Custom Type Registration
+[41/4336] (0%): Test Custom Type Function
+[42/4336] (0%): Test File System in C API
+[43/4336] (0%): Test Scalar Functions C API
+[44/4336] (1%): Test Scalar Functions - strings & extra_info
+[45/4336] (1%): Test Scalar Functions - variadic number of input parameters
+[46/4336] (1%): Test Scalar Functions - variadic number of ANY parameters
+[47/4336] (1%): Test Scalar Function Overloads C API
+[48/4336] (1%): Test Scalar Function with Bind Info
+[49/4336] (1%): Test volatile scalar function with bind in WHERE clause
+[50/4336] (1%): Test Scalar Functions - LIST
+[51/4336] (1%): Test Scalar Functions - Local State
+[52/4336] (1%): Test Table Functions C API
+[53/4336] (1%): Test Table Function errors in C API
+[54/4336] (1%): Test Table Function register errors in C API
+[55/4336] (1%): Test Table Function named parameters in C API
+[56/4336] (1%): Table function client context return
+[57/4336] (1%): Basic test of C API
+[58/4336] (1%): Test different types of C API
+[59/4336] (1%): decompose timetz with duckdb_from_time_tz
+[60/4336] (1%): create time_tz value
+[61/4336] (1%): Test errors in C API
+[62/4336] (1%): Test C API config
+[63/4336] (1%): Issue #2058: Cleanup after execution of invalid SQL statement causes segmentation fault
+[64/4336] (1%): Decimal -> Double casting issue
+[65/4336] (1%): Test custom_user_agent config
+[66/4336] (1%): Test unsupported types in the deprecated C API
+[67/4336] (1%): Test creating DUCKDB_ERROR_INTERNAL error data
+[68/4336] (1%): Test logical type creation with unsupported types
+[69/4336] (1%): Test INVALID, ANY and SQLNULL
+[70/4336] (1%): Test LIST and ARRAY with INVALID and ANY
+[71/4336] (1%): Test STRUCT with INVALID and ANY
+[72/4336] (1%): Test data chunk creation with INVALID and ANY types
+[73/4336] (1%): Test scalar functions with INVALID and ANY types
+[74/4336] (1%): Test table functions with INVALID and ANY types
+[75/4336] (1%): Test casting columns in AppendDataChunk in C API
+[76/4336] (1%): Test casting error in AppendDataChunk in C API
+[77/4336] (1%): Test casting timestamps in AppendDataChunk in C API
+[78/4336] (1%): Simple In-Memory DB Start Up and Shutdown
+[79/4336] (1%): Multiple In-Memory DB Start Up and Shutdown
+[80/4336] (1%): On Disk DB File Name Case Preserved
+[81/4336] (1%): Test appending into DECIMAL in C API
+[82/4336] (1%): Test NULL struct Appender
+[83/4336] (1%): Test appender statements in C API
+[84/4336] (1%): Test append DEFAULT in C API
+[85/4336] (1%): Test append timestamp in C API
+[86/4336] (1%): Test append duckdb_value values in C API
+[87/4336] (2%): Test append to different catalog in C API
+[88/4336] (2%): Test appending with an active column list in the C API
+[89/4336] (2%): Test appending default value to data chunk in the C API
+[90/4336] (2%): Test UPSERT using the C API
+[91/4336] (2%): Test the appender with parallel appends and multiple data types in the C API
+[92/4336] (2%): Test clear appender data in C API
+[93/4336] (2%): Test arrow in C API
+[94/4336] (2%): Test C-API Arrow conversion functions
+[95/4336] (2%): Test table_info incorrect 'is_valid' value for 'dflt_value' column
+[96/4336] (2%): Test Logical Types C API
+[97/4336] (2%): Test DataChunk C API
+[98/4336] (2%): Test DataChunk varchar result fetch in C API
+[99/4336] (2%): Test DataChunk result fetch in C API
+[100/4336] (2%): Test duckdb_result_return_type
+[101/4336] (2%): Test DataChunk populate ListVector in C API
+[102/4336] (2%): Test DataChunk populate ArrayVector in C API
+[103/4336] (2%): Test PK violation in the C API appender
+[104/4336] (2%): Test DataChunk write BLOB
+[105/4336] (2%): Test DataChunk write BIGNUM
+[106/4336] (2%): Test duckdb_valid_utf8_check
+[107/4336] (2%): Test writing invalid UTF-8 to VARCHAR vector in data chunk
+[108/4336] (2%): Test invalid UTF-8 on uninitialized VARCHAR vector assigns NULL
+[109/4336] (2%): Test writing embedded nulls to VARCHAR vector
+[110/4336] (2%): Test vector assign null truncation vs length version
+[111/4336] (2%): Test BLOB vector bypasses UTF-8 validation
+[112/4336] (2%): Test unsafe string assignment to VARCHAR vector
+[113/4336] (2%): Test extract statements in C API
+[114/4336] (2%): Test invalid PRAGMA in C API
+[115/4336] (2%): Test the database instance cache in the C API with a null path
+[116/4336] (2%): Test the database instance cache in the C API with an empty path
+[117/4336] (2%): Test the database instance cache in the C API with a memory path
+[118/4336] (2%): Test the database instance cache with case-insensitive FS
+[119/4336] (2%): Test a custom log storage in the CAPI with extra data
+[120/4336] (2%): Test logging silent exceptions using a custom log storage in the CAPI
+[121/4336] (2%): Test a concurrent custom log storage in the CAPI
+[122/4336] (2%): Test pending statements in C API
+[123/4336] (2%): Test prepared statements in C API
+[124/4336] (2%): Test duckdb_prepared_statement return value APIs
+[125/4336] (2%): Test duckdb_param_type and duckdb_param_logical_type
+[126/4336] (2%): Test prepared statements with named parameters in C API
+[127/4336] (2%): Maintain prepared statement types
+[128/4336] (2%): Test duckdb_parameter_name
+[129/4336] (2%): Prepared streaming result
+[130/4336] (2%): Test STRING LITERAL parameter type
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+unittest is a Catch v2.13.7 host application.
+Run with -? for options
+
+-------------------------------------------------------------------------------
+Test STRING LITERAL parameter type
+-------------------------------------------------------------------------------
+/home/dcalford/CliWork/duckdb/test/api/capi/test_capi_prepared.cpp:664
+...............................................................................
+
+/home/dcalford/CliWork/duckdb/test/api/capi/test_capi_prepared.cpp:664: FAILED:
+due to a fatal error condition:
+  SIGTERM - Termination request signal
+
+===============================================================================
+test cases:     131 |     130 passed | 1 failed
+assertions: 1064747 | 1064746 passed | 1 failed
+
+make: *** [Makefile:394: unittest] Terminated
+--- output end ---

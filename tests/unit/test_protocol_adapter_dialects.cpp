@@ -75,6 +75,10 @@ public:
     AuthMethod configuredAuthMethod() const {
         return T::getConfig().auth_method;
     }
+
+    bool resolveDatabaseSelection(const std::string& requested, std::string& selected) const {
+        return T::resolveDatabaseSelection(requested, selected);
+    }
 };
 
 void cleanupDb(const std::string& name) {
@@ -180,6 +184,42 @@ TEST(ProtocolAdapterDialectsAuthParity, LegacyAuthMethodsNeedExplicitConfig) {
     cfg.database_path = dbPath("test_auth_parity_legacy_native.sbdb").string();
     AdapterHarness<NativeAdapter> native_adapter(cfg);
     EXPECT_EQ(native_adapter.configuredAuthMethod(), AuthMethod::PASSWORD);
+}
+
+TEST(ProtocolAdapterDialectsBinding, EnforcedBoundDatabaseRejectsSwitchAcrossAdapters) {
+    cleanupDb("test_bound_pg.sbdb");
+    cleanupDb("test_bound_mysql.sbdb");
+    cleanupDb("test_bound_fb.sbdb");
+
+    ProtocolAdapterConfig pg_cfg;
+    pg_cfg.database_path = dbPath("test_bound_pg.sbdb").string();
+    pg_cfg.enforce_bound_database = true;
+    pg_cfg.default_database = "tenant_a";
+    AdapterHarness<PostgresqlAdapter> pg_adapter(pg_cfg);
+
+    ProtocolAdapterConfig mysql_cfg;
+    mysql_cfg.database_path = dbPath("test_bound_mysql.sbdb").string();
+    mysql_cfg.enforce_bound_database = true;
+    mysql_cfg.default_database = "tenant_a";
+    AdapterHarness<MySqlAdapter> mysql_adapter(mysql_cfg);
+
+    ProtocolAdapterConfig fb_cfg;
+    fb_cfg.database_path = dbPath("test_bound_fb.sbdb").string();
+    fb_cfg.enforce_bound_database = true;
+    fb_cfg.default_database = "tenant_a";
+    AdapterHarness<FirebirdAdapter> fb_adapter(fb_cfg);
+
+    std::string selected;
+    EXPECT_FALSE(pg_adapter.resolveDatabaseSelection("tenant_b", selected));
+    EXPECT_FALSE(mysql_adapter.resolveDatabaseSelection("tenant_b", selected));
+    EXPECT_FALSE(fb_adapter.resolveDatabaseSelection("tenant_b", selected));
+
+    EXPECT_TRUE(pg_adapter.resolveDatabaseSelection("TENANT_A", selected));
+    EXPECT_EQ(selected, "tenant_a");
+    EXPECT_TRUE(mysql_adapter.resolveDatabaseSelection("", selected));
+    EXPECT_EQ(selected, "tenant_a");
+    EXPECT_TRUE(fb_adapter.resolveDatabaseSelection("tenant_a", selected));
+    EXPECT_EQ(selected, "tenant_a");
 }
 
 // ============================================================================

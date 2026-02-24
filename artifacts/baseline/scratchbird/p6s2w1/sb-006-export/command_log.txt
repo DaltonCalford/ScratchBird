@@ -1,3 +1,14 @@
 task_id=SB-006
-status=blocked
-timestamp_utc=2026-02-24T04:26:47Z
+status=done
+timestamp_utc=2026-02-24T15:55:46Z
+
+=== command 1 ===
+cwd: /home/dcalford/CliWork/ScratchBird
+timeout_s: 20
+rc: 0
+timed_out: False
+duration_s: 0.034
+cmd: python3 -c "import pathlib; root=pathlib.Path('artifacts/baseline/scratchbird'); root.mkdir(parents=True, exist_ok=True); print(root)"
+--- output begin ---
+artifacts/baseline/scratchbird
+--- output end ---

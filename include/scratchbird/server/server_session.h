@@ -293,6 +293,7 @@ private:
 
     std::string username_;                          // Authenticated username
     std::string client_info_;                       // Client connection info
+    std::string auth_database_context_;             // CONNECT database for auth tuple scoping
     PeerCredentials peer_credentials_{};            // Peer identity for local IPC
     bool peer_credentials_available_ = false;
     core::ID session_id_uuid_{};                    // Catalog session UUID

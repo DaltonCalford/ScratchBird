@@ -317,6 +317,7 @@ private:
     // ========================================================================
 
     core::Status handleHandshakeResponse(network::Connection* conn);
+    core::Status handleAuthSwitchResponse(network::Connection* conn);
     core::Status handleCommand(network::Connection* conn);
     core::Status handleComQuery(network::Connection* conn);
     core::Status handleComInitDb(network::Connection* conn);
@@ -336,6 +337,8 @@ private:
     // ========================================================================
 
     void sendHandshakePacket(network::Connection* conn);
+    void sendAuthSwitchRequest(network::Connection* conn,
+                               const std::string& plugin_name);
     void sendOkPacket(network::Connection* conn, uint64_t affected_rows = 0,
                       uint64_t last_insert_id = 0, const std::string& info = "");
     void sendEofPacket(network::Connection* conn);
@@ -393,6 +396,10 @@ private:
                                uint16_t& error_code,
                                std::string& sqlstate);
     uint16_t mysqlCharsetForType(WireType type) const;
+    bool decodeClearPasswordResponse(const std::string& response,
+                                     std::string& clear_password_out) const;
+    core::Status authenticateRemoteUser(network::Connection* conn,
+                                        const std::string& clear_password);
 
 protected:
     // ========================================================================

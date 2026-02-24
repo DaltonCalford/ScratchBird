@@ -1,3 +1,27 @@
 task_id=SB-005
-status=blocked
-timestamp_utc=2026-02-24T04:26:47Z
+status=done
+timestamp_utc=2026-02-24T15:55:46Z
+
+=== command 1 ===
+cwd: /home/dcalford/CliWork/ScratchBird
+timeout_s: 600
+rc: 0
+timed_out: False
+duration_s: 0.267
+cmd: ctest --test-dir build --output-on-failure -L protocol -j2 --timeout 120
+--- output begin ---
+Internal ctest changing into directory: /home/dcalford/CliWork/ScratchBird/build
+Test project /home/dcalford/CliWork/ScratchBird/build
+    Start 3501: WireProtocolTests
+1/1 Test #3501: WireProtocolTests ................   Passed    0.12 sec
+
+100% tests passed, 0 tests failed out of 1
+
+Label Time Summary:
+integration    =   0.12 sec*proc (1 test)
+protocol       =   0.12 sec*proc (1 test)
+server         =   0.12 sec*proc (1 test)
+wire           =   0.12 sec*proc (1 test)
+
+Total Test time (real) =   0.19 sec
+--- output end ---

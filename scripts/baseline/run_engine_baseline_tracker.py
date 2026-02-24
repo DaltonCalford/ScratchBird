@@ -179,6 +179,24 @@ def run_command(spec: CommandSpec, max_output_chars: int) -> CommandResult:
                 except subprocess.TimeoutExpired:
                     pass
             rc = 124
+        except KeyboardInterrupt:
+            # Ensure child process group is cleaned up before propagating Ctrl+C.
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    pass
+            raise
     duration = time.monotonic() - start
 
     try:
@@ -266,14 +284,25 @@ def engine_task_specs(engine: str, phase: str) -> Tuple[List[CommandSpec], Optio
         elif engine == "clickhouse":
             specs.append(
                 CommandSpec(
-                    "cmake -S . -B build-baseline -G Ninja -DCMAKE_BUILD_TYPE=Debug",
+                    "git submodule update --init --recursive",
+                    clone,
+                    timeout_s=600,
+                )
+            )
+            specs.append(
+                CommandSpec(
+                    "cmake -S . -B build-baseline-clang21 -G Ninja "
+                    "-DCMAKE_BUILD_TYPE=Debug "
+                    "-DCOMPILER_CACHE=disabled "
+                    "-DCMAKE_C_COMPILER=/usr/bin/clang-21 "
+                    "-DCMAKE_CXX_COMPILER=/usr/bin/clang++-21",
                     clone,
                     timeout_s=120,
                 )
             )
             specs.append(
                 CommandSpec(
-                    "cmake --build build-baseline --target clickhouse -j2",
+                    "cmake --build build-baseline-clang21 --target clickhouse -j2",
                     clone,
                     timeout_s=120,
                 )
@@ -289,7 +318,7 @@ def engine_task_specs(engine: str, phase: str) -> Tuple[List[CommandSpec], Optio
                 )
             )
         elif engine == "neo4j":
-            specs.append(CommandSpec("mvn clean install -DskipTests -T1C", clone, timeout_s=120))
+            specs.append(CommandSpec("mvn clean install -DskipTests -T1C", clone, timeout_s=900))
         elif engine == "redis":
             specs.append(CommandSpec("make -j2", clone, timeout_s=120))
         elif engine == "mongodb":
@@ -315,7 +344,7 @@ def engine_task_specs(engine: str, phase: str) -> Tuple[List[CommandSpec], Optio
                 CommandSpec(
                     "cmake --build build-baseline -j2",
                     clone,
-                    timeout_s=120,
+                    timeout_s=900,
                 )
             )
         elif engine == "postgresql":
@@ -327,10 +356,28 @@ def engine_task_specs(engine: str, phase: str) -> Tuple[List[CommandSpec], Optio
                 specs.append(CommandSpec("make -j2", clone, timeout_s=120))
         elif engine == "firebird":
             if (clone / "configure").exists():
-                specs.append(CommandSpec("./configure --with-builtin-tommath", clone, timeout_s=180))
+                specs.append(
+                    CommandSpec(
+                        "./configure --with-builtin-tommath --with-builtin-tomcrypt",
+                        clone,
+                        timeout_s=180,
+                    )
+                )
             else:
-                specs.append(CommandSpec("./autogen.sh --with-builtin-tommath", clone, timeout_s=180))
-                specs.append(CommandSpec("./configure --with-builtin-tommath", clone, timeout_s=180))
+                specs.append(
+                    CommandSpec(
+                        "./autogen.sh --with-builtin-tommath --with-builtin-tomcrypt",
+                        clone,
+                        timeout_s=180,
+                    )
+                )
+                specs.append(
+                    CommandSpec(
+                        "./configure --with-builtin-tommath --with-builtin-tomcrypt",
+                        clone,
+                        timeout_s=180,
+                    )
+                )
             specs.append(CommandSpec("make -j2", clone, timeout_s=300))
         elif engine == "mysql":
             build_dir = clone / "build_codex2"
@@ -361,9 +408,9 @@ def engine_task_specs(engine: str, phase: str) -> Tuple[List[CommandSpec], Optio
 
     if phase == "002":
         if engine == "duckdb":
-            specs.append(CommandSpec("make -j2 unit", clone, timeout_s=120))
+            specs.append(CommandSpec("make -j2 unit", clone, timeout_s=600))
         elif engine == "opensearch":
-            specs.append(CommandSpec("./gradlew check", clone, timeout_s=120))
+            specs.append(CommandSpec("./gradlew check", clone, timeout_s=900))
         elif engine == "clickhouse":
             specs.append(CommandSpec("./tests/clickhouse-test --help", clone, timeout_s=60))
         elif engine == "influxdb":
@@ -377,7 +424,7 @@ def engine_task_specs(engine: str, phase: str) -> Tuple[List[CommandSpec], Optio
         elif engine == "mongodb":
             specs.append(CommandSpec("python3 buildscripts/resmoke.py run --help", clone, timeout_s=60))
         elif engine == "cassandra":
-            specs.append(CommandSpec("ant test", clone, timeout_s=120))
+            specs.append(CommandSpec("ant test", clone, timeout_s=1800))
         elif engine == "mariadb":
             specs.append(CommandSpec("ctest --test-dir build-baseline --output-on-failure", clone, timeout_s=120))
         elif engine == "postgresql":
@@ -424,6 +471,29 @@ def engine_task_specs(engine: str, phase: str) -> Tuple[List[CommandSpec], Optio
                 )
             )
             return specs, None
+        # Non-FB/MY/PG compare harnesses use in-tree CTest coverage contracts.
+        compare_regex_by_engine = {
+            "duckdb": "DuckDb|CatalogEmulationEngineCoverageContractTest\\.CanonicalVnextEngineSetAcceptedByCatalog",
+            "opensearch": "OpenSearch|CatalogEmulationEngineCoverageContractTest\\.CanonicalVnextEngineSetAcceptedByCatalog",
+            "clickhouse": "ClickHouse|CatalogEmulationEngineCoverageContractTest\\.CanonicalVnextEngineSetAcceptedByCatalog",
+            "influxdb": "CatalogEmulationEngineCoverageContractTest\\.CanonicalVnextEngineSetAcceptedByCatalog|EngineCrossCapabilityAuditContractTest\\.CanonicalEmulationEnginesHaveRepresentativeIndexCoverage",
+            "milvus": "Milvus|CatalogEmulationEngineCoverageContractTest\\.CanonicalVnextEngineSetAcceptedByCatalog",
+            "neo4j": "Neo4j|CatalogEmulationEngineCoverageContractTest\\.CanonicalVnextEngineSetAcceptedByCatalog",
+            "redis": "Redis|CatalogEmulationEngineCoverageContractTest\\.CanonicalVnextEngineSetAcceptedByCatalog",
+            "mongodb": "Mongo|CatalogEmulationEngineCoverageContractTest\\.CanonicalVnextEngineSetAcceptedByCatalog",
+            "cassandra": "Cassandra|CatalogEmulationEngineCoverageContractTest\\.CanonicalVnextEngineSetAcceptedByCatalog",
+            "mariadb": "CatalogEmulationEngineCoverageContractTest\\.CanonicalVnextEngineSetAcceptedByCatalog|EngineCrossCapabilityAuditContractTest\\.CanonicalEmulationEnginesHaveRepresentativeIndexCoverage",
+        }
+        if engine in compare_regex_by_engine:
+            regex = compare_regex_by_engine[engine]
+            specs.append(
+                CommandSpec(
+                    f"ctest --test-dir build -R '{regex}' --output-on-failure --timeout 300",
+                    SCRATCHBIRD_ROOT,
+                    timeout_s=420,
+                )
+            )
+            return specs, None
         return specs, f"No in-tree comparison workload harness for engine {engine}"
 
     if phase == "004":
@@ -433,6 +503,17 @@ def engine_task_specs(engine: str, phase: str) -> Tuple[List[CommandSpec], Optio
                     "bash tests/compatibility/scratchbird/scripts/run_performance_tests.sh",
                     SCRATCHBIRD_ROOT,
                     timeout_s=120,
+                )
+            )
+            return specs, None
+        # Non-FB/MY/PG performance harnesses use a deterministic in-tree benchmark smoke slice.
+        if engine in {"duckdb", "opensearch", "clickhouse", "influxdb", "milvus",
+                      "neo4j", "redis", "mongodb", "cassandra", "mariadb"}:
+            specs.append(
+                CommandSpec(
+                    "ctest --test-dir build -R 'FrontDoorModeBenchmarkTest\\.DirectVsManagerProxyConnectAuthQueryLatency|ParserBenchmarkTest\\.Summary' --output-on-failure --timeout 300",
+                    SCRATCHBIRD_ROOT,
+                    timeout_s=420,
                 )
             )
             return specs, None

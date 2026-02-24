@@ -7,7 +7,7 @@
 - commands_total: `2`
 - commands_passed: `1`
 - commands_failed: `1`
-- reason: `Command failed: make test`
+- reason: `Command failed (timeout): make test`
 
 ## Evidence Files
 - `run_manifest.md`

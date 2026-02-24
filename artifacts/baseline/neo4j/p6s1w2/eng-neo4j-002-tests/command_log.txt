@@ -1,3 +1,1384 @@
 task_id=ENG-NEO4J-002
 status=blocked
-timestamp_utc=2026-02-24T04:35:41Z
+timestamp_utc=2026-02-24T19:52:12Z
+
+=== command 1 ===
+cwd: /home/dcalford/CliWork
+timeout_s: 2
+rc: 0
+timed_out: False
+duration_s: 0.035
+cmd: test -d /home/dcalford/CliWork/neo4j && git -C /home/dcalford/CliWork/neo4j rev-parse --short HEAD
+--- output begin ---
+c68156edf24
+--- output end ---
+
+=== command 2 ===
+cwd: /home/dcalford/CliWork/neo4j
+timeout_s: 12
+rc: 124
+timed_out: True
+duration_s: 12.477
+cmd: mvn test -DskipITs -T1C
+--- output begin ---
+[[1;34mINFO[m] Scanning for projects...
+[[1;34mINFO[m] ------------------------------------------------------------------------
+[[1;34mINFO[m] Detecting the operating system and CPU architecture
+[[1;34mINFO[m] ------------------------------------------------------------------------
+[[1;34mINFO[m] os.detected.name: linux
+[[1;34mINFO[m] os.detected.arch: x86_64
+[[1;34mINFO[m] os.detected.bitness: 64
+[[1;34mINFO[m] os.detected.version: 6.17
+[[1;34mINFO[m] os.detected.version.major: 6
+[[1;34mINFO[m] os.detected.version.minor: 17
+[[1;34mINFO[m] os.detected.release: neon
+[[1;34mINFO[m] os.detected.release.version: 24.04
+[[1;34mINFO[m] os.detected.release.like.neon: true
+[[1;34mINFO[m] os.detected.release.like.ubuntu: true
+[[1;34mINFO[m] os.detected.release.like.debian: true
+[[1;34mINFO[m] os.detected.classifier: linux-x86_64
+[[1;34mINFO[m] [1m------------------------------------------------------------------------[m
+[[1;34mINFO[m] [1mReactor Build Order:[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] Neo4j - Parent                                                     [pom]
+[[1;34mINFO[m] Neo4j - Annotation processors                                      [jar]
+[[1;34mINFO[m] Neo4j - Arrow Bill of Materials                                    [pom]
+[[1;34mINFO[m] Zstandard                                                          [jar]
+[[1;34mINFO[m] Neo4j - GQL status                                                 [jar]
+[[1;34mINFO[m] Neo4j - Common                                                     [jar]
+[[1;34mINFO[m] Neo4j - Unsafe Access                                              [jar]
+[[1;34mINFO[m] Neo4j - Native                                                     [jar]
+[[1;34mINFO[m] Neo4j - Concurrent                                                 [jar]
+[[1;34mINFO[m] Neo4j - IO                                                         [jar]
+[[1;34mINFO[m] Neo4j - Token API                                                  [jar]
+[[1;34mINFO[m] Neo4j - Resource interface                                         [jar]
+[[1;34mINFO[m] Neo4j - Collections                                                [jar]
+[[1;34mINFO[m] Neo4j - Graph Database API                                         [jar]
+[[1;34mINFO[m] Neo4j - Exceptions                                                 [jar]
+[[1;34mINFO[m] Neo4j - Testing Utils Parent                                       [pom]
+[[1;34mINFO[m] Neo4j - Test utilities                                             [jar]
+[[1;34mINFO[m] Neo4j - Value                                                      [jar]
+[[1;34mINFO[m] Neo4j - Random Value Test Utils                                    [jar]
+[[1;34mINFO[m] Neo4j - Test IO utilities                                          [jar]
+[[1;34mINFO[m] Neo4j - Logging                                                    [jar]
+[[1;34mINFO[m] Neo4j - Test logging utilities                                     [jar]
+[[1;34mINFO[m] Neo4j - Configuration                                              [jar]
+[[1;34mINFO[m] Neo4j - Locking                                                    [jar]
+[[1;34mINFO[m] Neo4j - Schema                                                     [jar]
+[[1;34mINFO[m] Neo4j - Procedure API                                              [jar]
+[[1;34mINFO[m] Neo4j - Layout                                                     [jar]
+[[1;34mINFO[m] Neo4j - Native index                                               [jar]
+[[1;34mINFO[m] Neo4j - gbptree-tests                                              [jar]
+[[1;34mINFO[m] Neo4j - ID Generator                                               [jar]
+[[1;34mINFO[m] Neo4j - Import API                                                 [jar]
+[[1;34mINFO[m] Neo4j - Monitoring                                                 [jar]
+[[1;34mINFO[m] Neo4j - Diagnostics                                                [jar]
+[[1;34mINFO[m] Neo4j - Kernel API                                                 [jar]
+[[1;34mINFO[m] Neo4j - Cloud                                                      [jar]
+[[1;34mINFO[m] Neo4j - CSV reading and parsing                                    [jar]
+[[1;34mINFO[m] Neo4j - Storage Engine Implementation utilities                    [jar]
+[[1;34mINFO[m] Neo4j - Import Utilities                                           [jar]
+[[1;34mINFO[m] Neo4j - Storage Engine Test Utilities                              [jar]
+[[1;34mINFO[m] Neo4j - Write-Ahead Log                                            [jar]
+[[1;34mINFO[m] Neo4j - Write-Ahead Logging Test Utilities                         [jar]
+[[1;34mINFO[m] Neo4j - Test Batch Import utilities                                [jar]
+[[1;34mINFO[m] Neo4j - Database Layout API utilities                              [jar]
+[[1;34mINFO[m] Neo4j - Test kernel API utilities                                  [jar]
+[[1;34mINFO[m] Neo4j - Native Spatial Index                                       [jar]
+[[1;34mINFO[m] Neo4j - Lucene Index                                               [jar]
+[[1;34mINFO[m] Neo4j - Fulltext index                                             [jar]
+[[1;34mINFO[m] Neo4j - Graph Database Kernel                                      [jar]
+[[1;34mINFO[m] Neo4j - Graph Database Kernel Test Utils                           [jar]
+[[1;34mINFO[m] Neo4j - Record storage engine                                      [jar]
+[[1;34mINFO[m] Neo4j - Command Line                                               [jar]
+[[1;34mINFO[m] Neo4j - Database Management System                                 [jar]
+[[1;34mINFO[m] Neo4j - Security                                                   [jar]
+[[1;34mINFO[m] Neo4j - Community Cypher Build                                     [pom]
+[[1;34mINFO[m] openCypher Front End Parent                                        [pom]
+[[1;34mINFO[m] openCypher Test Utils                                              [jar]
+[[1;34mINFO[m] openCypher Utils                                                   [jar]
+[[1;34mINFO[m] Neo4j - Cypher Configuration                                       [jar]
+[[1;34mINFO[m] Neo4j - Code Generator                                             [jar]
+[[1;34mINFO[m] openCypher Expressions                                             [jar]
+[[1;34mINFO[m] openCypher AST for the Cypher Query Language                       [jar]
+[[1;34mINFO[m] Neo4j - Notifications                                              [jar]
+[[1;34mINFO[m] Cypher Parsers Parent                                              [pom]
+[[1;34mINFO[m] Cypher Parser Common Parent                                        [pom]
+[[1;34mINFO[m] Cypher Parser Common                                               [jar]
+[[1;34mINFO[m] Cypher 5 JavaCC Parser Parent                                      [pom]
+[[1;34mINFO[m] Neo4j - Cypher AST factory                                         [jar]
+[[1;34mINFO[m] Neo4j - Cypher JavaCC based parser                                 [jar]
+[[1;34mINFO[m] Neo4j - Neo4j/OpenCypher AST factory                               [jar]
+[[1;34mINFO[m] Cypher ANTLR Common                                                [jar]
+[[1;34mINFO[m] Cypher 5 ANTLR Parser Parent                                       [pom]
+[[1;34mINFO[m] Cypher 5 ANTLR based parser                                        [jar]
+[[1;34mINFO[m] Cypher 5 ANTLR parser listener                                     [jar]
+[[1;34mINFO[m] Cypher Parser AST Common                                           [jar]
+[[1;34mINFO[m] Cypher ANTLR AST Common                                            [jar]
+[[1;34mINFO[m] Neo4j - Cypher Macros                                              [jar]
+[[1;34mINFO[m] Cypher ANTLR Completion License                                    [jar]
+[[1;34mINFO[m] Neo4j - Neo4j CST factory                                          [jar]
+[[1;34mINFO[m] Cypher 25 ANTLR Parser Parent                                      [pom]
+[[1;34mINFO[m] Cypher 25 ANTLR based parser                                       [jar]
+[[1;34mINFO[m] Cypher 25 ANTLR parser listener                                    [jar]
+[[1;34mINFO[m] Neo4j - Neo4j CST factory                                          [jar]
+[[1;34mINFO[m] Cypher Parser Factory                                              [jar]
+[[1;34mINFO[m] openCypher Rewriting                                               [jar]
+[[1;34mINFO[m] Neo4j - Cypher AST generator                                       [jar]
+[[1;34mINFO[m] openCypher Front End                                               [jar]
+[[1;34mINFO[m] Neo4j - Cypher Intermediate Representation                         [jar]
+[[1;34mINFO[m] Neo4j - Cypher Logical Plans                                       [jar]
+[[1;34mINFO[m] Neo4j - Cypher Logical Plan Builder                                [jar]
+[[1;34mINFO[m] Neo4j - Cypher Planner SPI                                         [jar]
+[[1;34mINFO[m] Neo4j - Cypher Runtime Utilities                                   [jar]
+[[1;34mINFO[m] Neo4j - Graph Algorithms                                           [jar]
+[[1;34mINFO[m] Neo4j - Cypher Interpreted Runtime                                 [jar]
+[[1;34mINFO[m] Neo4j - Cypher Expression Evaluator                                [jar]
+[[1;34mINFO[m] Neo4j - Cypher Cache                                               [jar]
+[[1;34mINFO[m] Neo4j - Cypher Rendering                                           [jar]
+[[1;34mINFO[m] Neo4j - Cypher Graph Counts                                        [jar]
+[[1;34mINFO[m] Neo4j - Cypher Planner                                             [jar]
+[[1;34mINFO[m] Neo4j - Cypher Physical Planning                                   [jar]
+[[1;34mINFO[m] Neo4j - Cypher Slotted Runtime                                     [jar]
+[[1;34mINFO[m] Neo4j - Cypher                                                     [jar]
+[[1;34mINFO[m] Neo4j - SSL                                                        [jar]
+[[1;34mINFO[m] Neo4j - Server API                                                 [jar]
+[[1;34mINFO[m] Neo4j - Bolt Protocol Version 1                                    [jar]
+[[1;34mINFO[m] Neo4j - Fabric Parent                                              [pom]
+[[1;34mINFO[m] Neo4j - Fabric                                                     [jar]
+[[1;34mINFO[m] Neo4j - Query Router                                               [jar]
+[[1;34mINFO[m] Neo4j - Capabilities                                               [jar]
+[[1;34mINFO[m] Neo4j - Community Procedures                                       [jar]
+[[1;34mINFO[m] Neo4j - Data Collector                                             [jar]
+[[1;34mINFO[m] Neo4j - Consistency Checker                                        [jar]
+[[1;34mINFO[m] Neo4j - Import Command Line Tool                                   [jar]
+[[1;34mINFO[m] Neo4j - Server                                                     [jar]
+[[1;34mINFO[m] Neo4j - SLF4J Provider                                             [jar]
+[[1;34mINFO[m] Neo4j - User data collector                                        [jar]
+[[1;34mINFO[m] Neo4j - Community                                                  [jar]
+[[1;34mINFO[m] Neo4j - Procedure Compiler Core                                    [jar]
+[[1;34mINFO[m] Neo4j - Community Integration Tests                                [pom]
+[[1;34mINFO[m] Neo4j - Community Integration Test Support                         [jar]
+[[1;34mINFO[m] neo4j-server-test-utils                                            [jar]
+[[1;34mINFO[m] Neo4j - Test Harness                                               [jar]
+[[1;34mINFO[m] Neo4j - Procedure Compiler Parent POM                              [pom]
+[[1;34mINFO[m] Neo4j - Procedure Compiler Integration Tests                       [jar]
+[[1;34mINFO[m] Neo4j - Graph Database Kernel Test                                 [jar]
+[[1;34mINFO[m] Neo4j - Community (Bill of Materials)                              [pom]
+[[1;34mINFO[m] Neo4j - Record Storage Engine Integration Tests                    [jar]
+[[1;34mINFO[m] Neo4j - Community Kernel Integration Tests                         [jar]
+[[1;34mINFO[m] Neo4j - Community Index Integration Tests                          [jar]
+[[1;34mINFO[m] Neo4j - Community Import Integration Tests                         [jar]
+[[1;34mINFO[m] Neo4j - Community DBMS Integration Tests                           [jar]
+[[1;34mINFO[m] Neo4j - Community Graph Algorithms Integration Tests               [jar]
+[[1;34mINFO[m] Neo4j - Community Bolt Integration Tests                           [jar]
+[[1;34mINFO[m] Neo4j - Community Generic Integration Tests                        [jar]
+[[1;34mINFO[m] Neo4j - Community Fabric Integration Tests                         [jar]
+[[1;34mINFO[m] Neo4j - Community Security Integration Tests                       [jar]
+[[1;34mINFO[m] Neo4j - Integration Tests without deep reflection into JDK internals [jar]
+[[1;34mINFO[m] Neo4j - SLF4J Provider Integration Tests                           [jar]
+[[1;34mINFO[m] Neo4j - Query API Integration Tests                                [jar]
+[[1;34mINFO[m] Neo4j - Cypher Testing                                             [jar]
+[[1;34mINFO[m] Neo4j - Community Cypher Integration Tests                         [jar]
+[[1;34mINFO[m] Neo4j - Test proxy                                                 [jar]
+[[1;34mINFO[m] Neo4j - Push To Cloud - Admin command                              [jar]
+[[1;34mINFO[m] Neo4j - Boot                                                       [jar]
+[[1;34mINFO[m] Neo4j - GenAI Plugin                                               [jar]
+[[1;34mINFO[m] Cypher Parser Tests                                                [jar]
+[[1;34mINFO[m] Cypher ANTLR4 Parser Listener Generator Plugin            [maven-plugin]
+[[1;34mINFO[m] Cypher v5 ANTLR Literal Interpreter                                [jar]
+[[1;34mINFO[m] Neo4j - Cypher Literal Interpreter                                 [jar]
+[[1;34mINFO[m] Cypher Parser Tests                                                [jar]
+[[1;34mINFO[m] Neo4j - Cypher Specification Suite Tools                           [jar]
+[[1;34mINFO[m] Neo4j - Cypher Compatibility Specification Suite                   [jar]
+[[1;34mINFO[m] Neo4j - Cypher Logical Plan Generator                              [jar]
+[[1;34mINFO[m] Neo4j - Cypher Runtime Acceptance                                  [jar]
+[[1;34mINFO[m] Neo4j - Cypher Shell Parent                                        [pom]
+[[1;34mINFO[m] Neo4j - Cypher Shell                                               [jar]
+[[1;34mINFO[m] Neo4j - Cypher Shell Integration Test                              [jar]
+[[1;34mINFO[m] Neo4j - Cypher Shell Integration Test 2                            [jar]
+[[1;34mINFO[m] Neo4j - Community Build                                            [pom]
+[[1;34mINFO[m] Neo4j - Server Assembler                                           [pom]
+[[1;34mINFO[m] Neo4j - Community Server Assembler                                 [pom]
+[[1;34mINFO[m] Neo4j - Packaging Build                                            [pom]
+[[1;34mINFO[m] 
+[[1;34mINFO[m] Using the MultiThreadedBuilder implementation with a thread count of 14
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--------------------------< [0;36morg.neo4j:parent[0;1m >--------------------------[m
+[[1;34mINFO[m] [1mBuilding Neo4j - Parent 5.26.0                                   [1/161][m
+[[1;34mINFO[m] [1m--------------------------------[ pom ]---------------------------------[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(default)[m @ [36mparent[0;1m ---[m
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.DependencyConvergence passed
+[[1;34mINFO[m] Rule 1: org.apache.maven.enforcer.rules.EvaluateBeanshell passed
+[[1;34mINFO[m] Rule 2: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 3: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 4: org.apache.maven.enforcer.rules.version.RequireMavenVersion passed
+[[1;34mINFO[m] Rule 5: org.apache.maven.plugins.enforcer.RestrictImports passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(ban-test-dependencies-in-compile)[m @ [36mparent[0;1m ---[m
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mproperties-maven-plugin:1.2.1:set-system-properties[m [1m(default)[m @ [36mparent[0;1m ---[m
+[[1;34mINFO[m] Set 1 system property
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m-----------------------< [0;36morg.neo4j:annotations[0;1m >------------------------[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1mBuilding Neo4j - Annotation processors 5.26.0                    [2/161][m
+[[1;34mINFO[m] [1m------------------------< [0;36morg.neo4j:arrow-bom[0;1m >-------------------------[m
+[[1;34mINFO[m] [1m--------------------------------[ jar ]---------------------------------[m
+[[1;34mINFO[m] [1mBuilding Neo4j - Arrow Bill of Materials 5.26.0                  [3/161][m
+[[1;34mINFO[m] [1m--------------------------------[ pom ]---------------------------------[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m----------------< [0;36morg.neo4j.licensing-proxy:zstd-proxy[0;1m >----------------[m
+[[1;34mINFO[m] [1m-----------------------< [0;36morg.neo4j:neo4j-native[0;1m >-----------------------[m
+[[1;34mINFO[m] [1mBuilding Zstandard 5.26.0                                        [4/161][m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1mBuilding Neo4j - Native 5.26.0                                   [5/161][m
+[[1;34mINFO[m] [1m----------------------< [0;36morg.neo4j:testing-parent[0;1m >----------------------[m
+[[1;34mINFO[m] [1mBuilding Neo4j - Testing Utils Parent 5.26.0                     [6/161][m
+[[1;34mINFO[m] [1m--------------------------------[ pom ]---------------------------------[m
+[[1;34mINFO[m] [1m--------------------------------[ jar ]---------------------------------[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--------------------------------[ jar ]---------------------------------[m
+[[1;34mINFO[m] [1m-------------------< [0;36morg.neo4j:neo4j-spatial-index[0;1m >--------------------[m
+[[1;34mINFO[m] [1mBuilding Neo4j - Native Spatial Index 5.26.0                     [7/161][m
+[[1;34mINFO[m] [1m--------------------------------[ jar ]---------------------------------[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] 
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m-------------------< [0;36morg.neo4j:neo4j-fabric-parent[0;1m >--------------------[m
+[[1;34mINFO[m] [1m---------------< [0;36morg.neo4j:community-integration-tests[0;1m >----------------[m
+[[1;34mINFO[m] [1mBuilding Neo4j - Community Integration Tests 5.26.0              [9/161][m
+[[1;34mINFO[m] [1m--------------------------------[ pom ]---------------------------------[m
+[[1;34mINFO[m] [1m----------------------< [0;36morg.neo4j:cypher-parent[0;1m >-----------------------[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1mBuilding Neo4j - Fabric Parent 5.26.0                            [8/161][m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m-------------------< [0;36morg.neo4j:cypher-shell-parent[0;1m >--------------------[m
+[[1;34mINFO[m] [1m------------------< [0;36morg.neo4j.build:community-build[0;1m >-------------------[m
+[[1;34mINFO[m] [1mBuilding Neo4j - Community Cypher Build 5.26.0                  [10/161][m
+[[1;34mINFO[m] [1mBuilding Neo4j - Community Build 5.26.0                         [12/161][m
+[[1;34mINFO[m] [1mBuilding Neo4j - Cypher Shell Parent 5.26.0                     [11/161][m
+[[1;34mINFO[m] [1m--------------------------------[ pom ]---------------------------------[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--------------------------------[ pom ]---------------------------------[m
+[[1;34mINFO[m] [1m----------------< [0;36morg.neo4j:procedure-compiler-parent[0;1m >-----------------[m
+[[1;34mINFO[m] [1m------------------< [0;36morg.neo4j.build:packaging-build[0;1m >-------------------[m
+[[1;34mINFO[m] [1m--------------------------------[ pom ]---------------------------------[m
+[[1;34mINFO[m] [1m--------------------------------[ pom ]---------------------------------[m
+[[1;34mINFO[m] [1mBuilding Neo4j - Procedure Compiler Parent POM 5.26.0           [13/161][m
+[[1;34mINFO[m] [1mBuilding Neo4j - Packaging Build 5.26.0                         [14/161][m
+[[1;34mINFO[m] [1m--------------------------------[ pom ]---------------------------------[m
+[[1;34mINFO[m] [1m--------------------------------[ pom ]---------------------------------[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(default)[m @ [36mpackaging-build[0;1m ---[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(default)[m @ [36mcommunity-build[0;1m ---[m
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(default)[m @ [36mcypher-shell-parent[0;1m ---[m
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.DependencyConvergence passed
+[[1;34mINFO[m] Rule 1: org.apache.maven.enforcer.rules.EvaluateBeanshell passed
+[[1;34mINFO[m] Rule 2: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 3: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 5: org.apache.maven.plugins.enforcer.RestrictImports passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(ban-test-dependencies-in-compile)[m @ [36mpackaging-build[0;1m ---[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(default)[m @ [36mprocedure-compiler-parent[0;1m ---[m
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(default)[m @ [36mcypher-parent[0;1m ---[m
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mproperties-maven-plugin:1.2.1:set-system-properties[m [1m(default)[m @ [36mpackaging-build[0;1m ---[m
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.DependencyConvergence passed
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.DependencyConvergence passed
+[[1;34mINFO[m] Rule 1: org.apache.maven.enforcer.rules.EvaluateBeanshell passed
+[[1;34mINFO[m] Rule 2: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 3: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 1: org.apache.maven.enforcer.rules.EvaluateBeanshell passed
+[[1;34mINFO[m] Rule 2: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 3: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 5: org.apache.maven.plugins.enforcer.RestrictImports passed
+[[1;34mINFO[m] Rule 5: org.apache.maven.plugins.enforcer.RestrictImports passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(ban-test-dependencies-in-compile)[m @ [36mcommunity-build[0;1m ---[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(ban-test-dependencies-in-compile)[m @ [36mcypher-shell-parent[0;1m ---[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(default)[m @ [36mcommunity-integration-tests[0;1m ---[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(default)[m @ [36mtesting-parent[0;1m ---[m
+[[1;34mINFO[m] Set 1 system property
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(default)[m @ [36mneo4j-fabric-parent[0;1m ---[m
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mproperties-maven-plugin:1.2.1:set-system-properties[m [1m(default)[m @ [36mcommunity-build[0;1m ---[m
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.DependencyConvergence passed
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.DependencyConvergence passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mproperties-maven-plugin:1.2.1:set-system-properties[m [1m(default)[m @ [36mcypher-shell-parent[0;1m ---[m
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.DependencyConvergence passed
+[[1;34mINFO[m] Rule 1: org.apache.maven.enforcer.rules.EvaluateBeanshell passed
+[[1;34mINFO[m] Rule 2: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 3: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 5: org.apache.maven.plugins.enforcer.RestrictImports passed
+[[1;34mINFO[m] Set 1 system property
+[[1;34mINFO[m] Set 1 system property
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.DependencyConvergence passed
+[[1;34mINFO[m] Rule 1: org.apache.maven.enforcer.rules.EvaluateBeanshell passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(ban-test-dependencies-in-compile)[m @ [36mprocedure-compiler-parent[0;1m ---[m
+[[1;33mWARNING[m] *****************************************************************
+[[1;33mWARNING[m] * Your build is requesting parallel execution, but this         *
+[[1;33mWARNING[m] * project contains the following plugin(s) that have goals not  *
+[[1;33mWARNING[m] * marked as thread-safe to support parallel execution.          *
+[[1;33mWARNING[m] * While this /may/ work fine, please look for plugin updates    *
+[[1;33mWARNING[m] * and/or request plugins be made thread-safe.                   *
+[[1;33mWARNING[m] * If reporting an issue, report it against the plugin in        *
+[[1;33mWARNING[m] * question, not against Apache Maven.                           *
+[[1;33mWARNING[m] *****************************************************************
+[[1;34mINFO[m] Rule 1: org.apache.maven.enforcer.rules.EvaluateBeanshell passed
+[[1;34mINFO[m] Rule 1: org.apache.maven.enforcer.rules.EvaluateBeanshell passed
+[[1;34mINFO[m] Rule 2: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;33mWARNING[m] The following plugins are not marked as thread-safe in Neo4j - Native Spatial Index:
+[[1;34mINFO[m] Rule 2: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.DependencyConvergence passed
+[[1;33mWARNING[m] *****************************************************************
+[[1;34mINFO[m] Rule 2: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 3: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;33mWARNING[m] * Your build is requesting parallel execution, but this         *
+[[1;33mWARNING[m] * project contains the following plugin(s) that have goals not  *
+[[1;33mWARNING[m]   org.codehaus.mojo:license-maven-plugin:2.4.0
+[[1;34mINFO[m] Rule 3: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;33mWARNING[m] 
+[[1;33mWARNING[m] Enable debug to see precisely which goals are not marked as thread-safe.
+[[1;33mWARNING[m] *****************************************************************
+[[1;34mINFO[m] Rule 1: org.apache.maven.enforcer.rules.EvaluateBeanshell passed
+[[1;33mWARNING[m] * marked as thread-safe to support parallel execution.          *
+[[1;34mINFO[m] Rule 2: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 3: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 5: org.apache.maven.plugins.enforcer.RestrictImports passed
+[[1;34mINFO[m] Rule 5: org.apache.maven.plugins.enforcer.RestrictImports passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(ban-test-dependencies-in-compile)[m @ [36mneo4j-fabric-parent[0;1m ---[m
+[[1;34mINFO[m] Rule 5: org.apache.maven.plugins.enforcer.RestrictImports passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mproperties-maven-plugin:1.2.1:set-system-properties[m [1m(default)[m @ [36mtesting-parent[0;1m ---[m
+[[1;33mWARNING[m] *****************************************************************
+[[1;33mWARNING[m] * Your build is requesting parallel execution, but this         *
+[[1;33mWARNING[m] * project contains the following plugin(s) that have goals not  *
+[[1;33mWARNING[m] * marked as thread-safe to support parallel execution.          *
+[[1;33mWARNING[m] * While this /may/ work fine, please look for plugin updates    *
+[[1;33mWARNING[m] * and/or request plugins be made thread-safe.                   *
+[[1;33mWARNING[m] * If reporting an issue, report it against the plugin in        *
+[[1;33mWARNING[m] * question, not against Apache Maven.                           *
+[[1;33mWARNING[m] *****************************************************************
+[[1;33mWARNING[m] The following plugins are not marked as thread-safe in Neo4j - Native:
+[[1;34mINFO[m] Rule 3: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Set 1 system property
+[[1;33mWARNING[m]   org.codehaus.mojo:license-maven-plugin:2.4.0
+[[1;33mWARNING[m] 
+[[1;33mWARNING[m] Enable debug to see precisely which goals are not marked as thread-safe.
+[[1;33mWARNING[m] *****************************************************************
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(ban-test-dependencies-in-compile)[m @ [36mcypher-parent[0;1m ---[m
+[[1;33mWARNING[m] * While this /may/ work fine, please look for plugin updates    *
+[[1;34mINFO[m] Rule 5: org.apache.maven.plugins.enforcer.RestrictImports passed
+[[1;33mWARNING[m] * and/or request plugins be made thread-safe.                   *
+[[1;33mWARNING[m] * If reporting an issue, report it against the plugin in        *
+[[1;33mWARNING[m] * question, not against Apache Maven.                           *
+[[1;33mWARNING[m] *****************************************************************
+[[1;34mINFO[m] 
+[[1;33mWARNING[m] The following plugins are not marked as thread-safe in Neo4j - Annotation processors:
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(ban-test-dependencies-in-compile)[m @ [36mcommunity-integration-tests[0;1m ---[m
+[[1;33mWARNING[m]   org.codehaus.mojo:license-maven-plugin:2.4.0
+[[1;33mWARNING[m] 
+[[1;33mWARNING[m] Enable debug to see precisely which goals are not marked as thread-safe.
+[[1;33mWARNING[m] *****************************************************************
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mproperties-maven-plugin:1.2.1:set-system-properties[m [1m(default)[m @ [36mprocedure-compiler-parent[0;1m ---[m
+[[1;34mINFO[m] Set 1 system property
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(default)[m @ [36mzstd-proxy[0;1m ---[m
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mproperties-maven-plugin:1.2.1:set-system-properties[m [1m(default)[m @ [36mneo4j-fabric-parent[0;1m ---[m
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[[1;34mINFO[m] Set 1 system property
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mproperties-maven-plugin:1.2.1:set-system-properties[m [1m(default)[m @ [36mcommunity-integration-tests[0;1m ---[m
+[[1;34mINFO[m] [1m--- [0;32mproperties-maven-plugin:1.2.1:set-system-properties[m [1m(default)[m @ [36mcypher-parent[0;1m ---[m
+[[1;34mINFO[m] Set 1 system property
+[[1;34mINFO[m] Set 1 system property
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mscala-maven-plugin:4.9.2:add-source[m [1m(scala-compile)[m @ [36mcypher-parent[0;1m ---[m
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.DependencyConvergence passed
+[[1;34mINFO[m] Rule 1: org.apache.maven.enforcer.rules.EvaluateBeanshell passed
+[[1;34mINFO[m] Rule 2: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 3: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 5: org.apache.maven.plugins.enforcer.RestrictImports passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(ban-test-dependencies-in-compile)[m @ [36mzstd-proxy[0;1m ---[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(default)[m @ [36mneo4j-spatial-index[0;1m ---[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(default)[m @ [36mneo4j-native[0;1m ---[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(default)[m @ [36mannotations[0;1m ---[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(default)[m @ [36marrow-bom[0;1m ---[m
+[[1;34mINFO[m] Add Source directory: /home/dcalford/CliWork/neo4j/community/cypher/src/main/scala
+[[1;34mINFO[m] Add Test Source directory: /home/dcalford/CliWork/neo4j/community/cypher/src/test/scala
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mscala-maven-plugin:4.9.2:compile[m [1m(scala-compile)[m @ [36mcypher-parent[0;1m ---[m
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.DependencyConvergence passed
+[[1;34mINFO[m] Rule 1: org.apache.maven.enforcer.rules.EvaluateBeanshell passed
+[[1;34mINFO[m] Rule 2: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 3: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.DependencyConvergence passed
+[[1;34mINFO[m] Rule 1: org.apache.maven.enforcer.rules.EvaluateBeanshell passed
+[[1;34mINFO[m] Rule 2: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.DependencyConvergence passed
+[[1;34mINFO[m] Rule 3: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 1: org.apache.maven.enforcer.rules.EvaluateBeanshell passed
+[[1;34mINFO[m] Rule 2: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 3: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mlicense-maven-plugin:4.5:check[m [1m(check-licenses)[m @ [36mzstd-proxy[0;1m ---[m
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.DependencyConvergence passed
+[[1;34mINFO[m] Rule 1: org.apache.maven.enforcer.rules.EvaluateBeanshell passed
+[[1;34mINFO[m] Rule 2: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 3: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 5: org.apache.maven.plugins.enforcer.RestrictImports passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(ban-test-dependencies-in-compile)[m @ [36marrow-bom[0;1m ---[m
+[[1;34mINFO[m] No sources to compile
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mscala-maven-plugin:4.9.2:testCompile[m [1m(scala-test-compile)[m @ [36mcypher-parent[0;1m ---[m
+[[1;34mINFO[m] Rule 5: org.apache.maven.plugins.enforcer.RestrictImports passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(ban-test-dependencies-in-compile)[m @ [36mneo4j-native[0;1m ---[m
+[[1;34mINFO[m] Rule 5: org.apache.maven.plugins.enforcer.RestrictImports passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(ban-test-dependencies-in-compile)[m @ [36mannotations[0;1m ---[m
+[[1;34mINFO[m] Rule 5: org.apache.maven.plugins.enforcer.RestrictImports passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(ban-test-dependencies-in-compile)[m @ [36mneo4j-spatial-index[0;1m ---[m
+[[1;34mINFO[m] No sources to compile
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m------------------< [0;36morg.neo4j:neo4j-front-end-parent[0;1m >------------------[m
+[[1;34mINFO[m] [1mBuilding openCypher Front End Parent 5.26.0                     [15/161][m
+[[1;34mINFO[m] [1m--------------------------------[ pom ]---------------------------------[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(default)[m @ [36mneo4j-front-end-parent[0;1m ---[m
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mproperties-maven-plugin:1.2.1:set-system-properties[m [1m(default)[m @ [36mneo4j-spatial-index[0;1m ---[m
+[[1;34mINFO[m] Set 1 system property
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mlicense-maven-plugin:4.5:check[m [1m(check-licenses)[m @ [36mneo4j-spatial-index[0;1m ---[m
+[[1;34mINFO[m] Checking licenses...
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.DependencyConvergence passed
+[[1;34mINFO[m] Checking licenses...
+[[1;34mINFO[m] Rule 1: org.apache.maven.enforcer.rules.EvaluateBeanshell passed
+[[1;34mINFO[m] Rule 2: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 3: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 5: org.apache.maven.plugins.enforcer.RestrictImports passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(ban-test-dependencies-in-compile)[m @ [36mneo4j-front-end-parent[0;1m ---[m
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mproperties-maven-plugin:1.2.1:set-system-properties[m [1m(default)[m @ [36mneo4j-native[0;1m ---[m
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mproperties-maven-plugin:1.2.1:set-system-properties[m [1m(default)[m @ [36mneo4j-front-end-parent[0;1m ---[m
+[[1;34mINFO[m] Set 1 system property
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mlicense-maven-plugin:4.5:check[m [1m(check-licenses)[m @ [36mneo4j-native[0;1m ---[m
+[[1;34mINFO[m] Set 1 system property
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mscala-maven-plugin:4.9.2:add-source[m [1m(scala-compile)[m @ [36mneo4j-front-end-parent[0;1m ---[m
+[[1;34mINFO[m] Add Source directory: /home/dcalford/CliWork/neo4j/community/cypher/front-end/src/main/scala
+[[1;34mINFO[m] Add Test Source directory: /home/dcalford/CliWork/neo4j/community/cypher/front-end/src/test/scala
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mscala-maven-plugin:4.9.2:compile[m [1m(scala-compile)[m @ [36mneo4j-front-end-parent[0;1m ---[m
+[[1;34mINFO[m] Checking licenses...
+[[1;34mINFO[m] No sources to compile
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mscala-maven-plugin:4.9.2:testCompile[m [1m(scala-test-compile)[m @ [36mneo4j-front-end-parent[0;1m ---[m
+[[1;34mINFO[m] No sources to compile
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] 
+[[1;34mINFO[m] 
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mproperties-maven-plugin:1.2.1:set-system-properties[m [1m(default)[m @ [36mannotations[0;1m ---[m
+[[1;34mINFO[m] [1m---------------------< [0;36morg.neo4j:neo4j-test-util[0;1m >----------------------[m
+[[1;34mINFO[m] [1m--------------< [0;36morg.neo4j:neo4j-cypher-ast-factory-tests[0;1m >--------------[m
+[[1;34mINFO[m] [1m-------------------< [0;36morg.neo4j:cypher-parser-parent[0;1m >-------------------[m
+[[1;34mINFO[m] [1mBuilding Cypher Parser Tests 5.26.0                             [17/161][m
+[[1;34mINFO[m] [1mBuilding openCypher Test Utils 5.26.0                           [16/161][m
+[[1;34mINFO[m] [1m--------------------------------[ jar ]---------------------------------[m
+[[1;34mINFO[m] [1mBuilding Cypher Parsers Parent 5.26.0                           [18/161][m
+[[1;34mINFO[m] [1m--------------------------------[ jar ]---------------------------------[m
+[[1;34mINFO[m] [1m--------------------------------[ pom ]---------------------------------[m
+[[1;34mINFO[m] Set 1 system property
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mlicense-maven-plugin:4.5:check[m [1m(check-licenses)[m @ [36mannotations[0;1m ---[m
+[[1;34mINFO[m] Checking licenses...
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(default)[m @ [36mcypher-parser-parent[0;1m ---[m
+[[1;33mWARNING[m] *****************************************************************
+[[1;33mWARNING[m] * Your build is requesting parallel execution, but this         *
+[[1;33mWARNING[m] * project contains the following plugin(s) that have goals not  *
+[[1;33mWARNING[m] * marked as thread-safe to support parallel execution.          *
+[[1;33mWARNING[m] * While this /may/ work fine, please look for plugin updates    *
+[[1;33mWARNING[m] * and/or request plugins be made thread-safe.                   *
+[[1;33mWARNING[m] * If reporting an issue, report it against the plugin in        *
+[[1;33mWARNING[m] * question, not against Apache Maven.                           *
+[[1;33mWARNING[m] *****************************************************************
+[[1;33mWARNING[m] The following plugins are not marked as thread-safe in openCypher Test Utils:
+[[1;33mWARNING[m]   org.codehaus.mojo:license-maven-plugin:2.4.0
+[[1;33mWARNING[m] 
+[[1;33mWARNING[m] Enable debug to see precisely which goals are not marked as thread-safe.
+[[1;33mWARNING[m] *****************************************************************
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(default)[m @ [36mneo4j-cypher-ast-factory-tests[0;1m ---[m
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.DependencyConvergence passed
+[[1;34mINFO[m] Rule 1: org.apache.maven.enforcer.rules.EvaluateBeanshell passed
+[[1;34mINFO[m] Rule 2: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 3: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 5: org.apache.maven.plugins.enforcer.RestrictImports passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(ban-test-dependencies-in-compile)[m @ [36mcypher-parser-parent[0;1m ---[m
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.DependencyConvergence passed
+[[1;34mINFO[m] Rule 1: org.apache.maven.enforcer.rules.EvaluateBeanshell passed
+[[1;34mINFO[m] Rule 2: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 3: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 5: org.apache.maven.plugins.enforcer.RestrictImports passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(ban-test-dependencies-in-compile)[m @ [36mneo4j-cypher-ast-factory-tests[0;1m ---[m
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mproperties-maven-plugin:1.2.1:set-system-properties[m [1m(default)[m @ [36marrow-bom[0;1m ---[m
+[[1;34mINFO[m] Set 1 system property
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mproperties-maven-plugin:1.2.1:set-system-properties[m [1m(default)[m @ [36mcypher-parser-parent[0;1m ---[m
+[[1;34mINFO[m] Set 1 system property
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mscala-maven-plugin:4.9.2:add-source[m [1m(scala-compile)[m @ [36mcypher-parser-parent[0;1m ---[m
+[[1;34mINFO[m] Add Source directory: /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/src/main/scala
+[[1;34mINFO[m] Add Test Source directory: /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/src/test/scala
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mscala-maven-plugin:4.9.2:compile[m [1m(scala-compile)[m @ [36mcypher-parser-parent[0;1m ---[m
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mproperties-maven-plugin:1.2.1:set-system-properties[m [1m(default)[m @ [36mneo4j-cypher-ast-factory-tests[0;1m ---[m
+[[1;34mINFO[m] No sources to compile
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mscala-maven-plugin:4.9.2:testCompile[m [1m(scala-test-compile)[m @ [36mcypher-parser-parent[0;1m ---[m
+[[1;34mINFO[m] Set 1 system property
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-resources-plugin:3.3.1:resources[m [1m(default-resources)[m @ [36mneo4j-cypher-ast-factory-tests[0;1m ---[m
+[[1;34mINFO[m] No sources to compile
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m---------------< [0;36morg.neo4j:cypher-parser-common-parent[0;1m >----------------[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1mBuilding Cypher Parser Common Parent 5.26.0                     [19/161][m
+[[1;34mINFO[m] [1m--------------------------------[ pom ]---------------------------------[m
+[[1;34mINFO[m] [1m-----------------< [0;36morg.neo4j:cypher-v5-parser-parent[0;1m >------------------[m
+[[1;34mINFO[m] [1mBuilding Cypher 5 ANTLR Parser Parent 5.26.0                    [20/161][m
+[[1;34mINFO[m] [1m--------------------------------[ pom ]---------------------------------[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m-----------------< [0;36morg.neo4j:cypher-v25-parser-parent[0;1m >-----------------[m
+[[1;34mINFO[m] [1mBuilding Cypher 25 ANTLR Parser Parent 5.26.0                   [21/161][m
+[[1;34mINFO[m] [1m--------------------------------[ pom ]---------------------------------[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--------------< [0;36morg.neo4j:cypher-v5-javacc-parser-parent[0;1m >--------------[m
+[[1;34mINFO[m] [1mBuilding Cypher 5 JavaCC Parser Parent 5.26.0                   [22/161][m
+[[1;34mINFO[m] [1m--------------------------------[ pom ]---------------------------------[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(default)[m @ [36mcypher-v25-parser-parent[0;1m ---[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(default)[m @ [36mcypher-parser-common-parent[0;1m ---[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(default)[m @ [36mcypher-v5-parser-parent[0;1m ---[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(default)[m @ [36mcypher-v5-javacc-parser-parent[0;1m ---[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(default)[m @ [36mneo4j-test-util[0;1m ---[m
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.DependencyConvergence passed
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.DependencyConvergence passed
+[[1;34mINFO[m] Rule 1: org.apache.maven.enforcer.rules.EvaluateBeanshell passed
+[[1;34mINFO[m] Rule 2: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 3: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 5: org.apache.maven.plugins.enforcer.RestrictImports passed
+[[1;34mINFO[m] Rule 1: org.apache.maven.enforcer.rules.EvaluateBeanshell passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] Rule 2: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(ban-test-dependencies-in-compile)[m @ [36mcypher-v5-parser-parent[0;1m ---[m
+[[1;34mINFO[m] Rule 3: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 5: org.apache.maven.plugins.enforcer.RestrictImports passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(ban-test-dependencies-in-compile)[m @ [36mcypher-v25-parser-parent[0;1m ---[m
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.DependencyConvergence passed
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.DependencyConvergence passed
+[[1;34mINFO[m] Rule 1: org.apache.maven.enforcer.rules.EvaluateBeanshell passed
+[[1;34mINFO[m] Rule 2: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 3: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 5: org.apache.maven.plugins.enforcer.RestrictImports passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(ban-test-dependencies-in-compile)[m @ [36mcypher-parser-common-parent[0;1m ---[m
+[[1;34mINFO[m] Rule 1: org.apache.maven.enforcer.rules.EvaluateBeanshell passed
+[[1;34mINFO[m] Rule 2: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 3: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 5: org.apache.maven.plugins.enforcer.RestrictImports passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(ban-test-dependencies-in-compile)[m @ [36mcypher-v5-javacc-parser-parent[0;1m ---[m
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.DependencyConvergence passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mproperties-maven-plugin:1.2.1:set-system-properties[m [1m(default)[m @ [36mcypher-v5-parser-parent[0;1m ---[m
+[[1;34mINFO[m] skip non existing resourceDirectory /home/dcalford/CliWork/neo4j/community/cypher/front-end/neo4j-ast-factory/src/main/resources
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[[1;34mINFO[m] skip non existing resourceDirectory /home/dcalford/CliWork/neo4j/community/cypher/front-end/neo4j-ast-factory/src/main/resources/META-INF
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mproperties-maven-plugin:1.2.1:set-system-properties[m [1m(default)[m @ [36mcypher-v25-parser-parent[0;1m ---[m
+[[1;34mINFO[m] Set 1 system property
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mscala-maven-plugin:4.9.2:add-source[m [1m(scala-compile)[m @ [36mcypher-v5-parser-parent[0;1m ---[m
+[[1;34mINFO[m] Set 1 system property
+[[1;34mINFO[m] Rule 1: org.apache.maven.enforcer.rules.EvaluateBeanshell passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mscala-maven-plugin:4.9.2:add-source[m [1m(scala-compile)[m @ [36mcypher-v25-parser-parent[0;1m ---[m
+[[1;34mINFO[m] Rule 2: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 3: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Add Source directory: /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/v5/src/main/scala
+[[1;34mINFO[m] Add Source directory: /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/v25/src/main/scala
+[[1;34mINFO[m] Add Test Source directory: /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/v5/src/test/scala
+[[1;34mINFO[m] Add Test Source directory: /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/v25/src/test/scala
+[[1;34mINFO[m] 
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mscala-maven-plugin:4.9.2:compile[m [1m(scala-compile)[m @ [36mcypher-v25-parser-parent[0;1m ---[m
+[[1;34mINFO[m] [1m--- [0;32mscala-maven-plugin:4.9.2:compile[m [1m(scala-compile)[m @ [36mcypher-v5-parser-parent[0;1m ---[m
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mproperties-maven-plugin:1.2.1:set-system-properties[m [1m(default)[m @ [36mcypher-parser-common-parent[0;1m ---[m
+[[1;34mINFO[m] Set 1 system property
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mscala-maven-plugin:4.9.2:add-source[m [1m(scala-compile)[m @ [36mcypher-parser-common-parent[0;1m ---[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mproperties-maven-plugin:1.2.1:set-system-properties[m [1m(default)[m @ [36mcypher-v5-javacc-parser-parent[0;1m ---[m
+[[1;34mINFO[m] Rule 5: org.apache.maven.plugins.enforcer.RestrictImports passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mproperties-maven-plugin:1.2.1:set-system-properties[m [1m(default)[m @ [36mneo4j-test-util[0;1m ---[m
+[[1;34mINFO[m] Set 1 system property
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mscala-maven-plugin:4.9.2:add-source[m [1m(scala-compile)[m @ [36mcypher-v5-javacc-parser-parent[0;1m ---[m
+[[1;34mINFO[m] Add Source directory: /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/common/src/main/scala
+[[1;34mINFO[m] Add Test Source directory: /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/common/src/test/scala
+[[1;34mINFO[m] Set 1 system property
+[[1;34mINFO[m] 
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mscala-maven-plugin:4.9.2:compile[m [1m(scala-compile)[m @ [36mcypher-parser-common-parent[0;1m ---[m
+[[1;34mINFO[m] [1m--- [0;32mlicense-maven-plugin:4.5:check[m [1m(check-licenses)[m @ [36mneo4j-test-util[0;1m ---[m
+[[1;34mINFO[m] Add Source directory: /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/v5-javacc/src/main/scala
+[[1;34mINFO[m] Add Test Source directory: /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/v5-javacc/src/test/scala
+[[1;34mINFO[m] Copying 4 resources from  to target/classes/META-INF
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mscala-maven-plugin:4.9.2:compile[m [1m(scala-compile)[m @ [36mcypher-v5-javacc-parser-parent[0;1m ---[m
+[[1;34mINFO[m] No sources to compile
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mscala-maven-plugin:4.9.2:testCompile[m [1m(scala-test-compile)[m @ [36mcypher-v25-parser-parent[0;1m ---[m
+[[1;34mINFO[m] No sources to compile
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mscala-maven-plugin:4.9.2:testCompile[m [1m(scala-test-compile)[m @ [36mcypher-v5-parser-parent[0;1m ---[m
+[[1;34mINFO[m] Checking licenses...
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mscala-maven-plugin:4.9.2:add-source[m [1m(scala-compile)[m @ [36mneo4j-cypher-ast-factory-tests[0;1m ---[m
+[[1;34mINFO[m] Add Source directory: /home/dcalford/CliWork/neo4j/community/cypher/front-end/neo4j-ast-factory/src/main/scala
+[[1;34mINFO[m] Add Test Source directory: /home/dcalford/CliWork/neo4j/community/cypher/front-end/neo4j-ast-factory/src/test/scala
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mscala-maven-plugin:4.9.2:compile[m [1m(scala-compile)[m @ [36mneo4j-cypher-ast-factory-tests[0;1m ---[m
+[[1;34mINFO[m] No sources to compile
+[[1;34mINFO[m] No sources to compile
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mscala-maven-plugin:4.9.2:testCompile[m [1m(scala-test-compile)[m @ [36mcypher-v5-javacc-parser-parent[0;1m ---[m
+[[1;34mINFO[m] No sources to compile
+[[1;34mINFO[m] No sources to compile
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mscala-maven-plugin:4.9.2:testCompile[m [1m(scala-test-compile)[m @ [36mcypher-parser-common-parent[0;1m ---[m
+[[1;34mINFO[m] No sources to compile
+[[1;34mINFO[m] No sources to compile
+[[1;34mINFO[m] No sources to compile
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-compiler-plugin:3.13.0:compile[m [1m(default-compile)[m @ [36mneo4j-cypher-ast-factory-tests[0;1m ---[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m-------------------< [0;36morg.neo4j:cypher-antlr-common[0;1m >--------------------[m
+[[1;34mINFO[m] [1m-------------< [0;36morg.neo4j:cypher-antlr-completion-license[0;1m >--------------[m
+[[1;34mINFO[m] [1mBuilding Cypher ANTLR Common 5.26.0                             [23/161][m
+[[1;34mINFO[m] [1mBuilding Cypher ANTLR Completion License 5.26.0                 [24/161][m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--------------------------------[ jar ]---------------------------------[m
+[[1;34mINFO[m] [1m------------< [0;36morg.neo4j:antlr-parser-listener-maven-plugin[0;1m >------------[m
+[[1;34mINFO[m] [1m--------------------------------[ jar ]---------------------------------[m
+[[1;34mINFO[m] [1mBuilding Cypher ANTLR4 Parser Listener Generator Plugin 5.26.0  [25/161][m
+[[1;34mINFO[m] [1m----------------------------[ maven-plugin ]----------------------------[m
+[[1;33mWARNING[m] *****************************************************************
+[[1;33mWARNING[m] * Your build is requesting parallel execution, but this         *
+[[1;33mWARNING[m] * project contains the following plugin(s) that have goals not  *
+[[1;33mWARNING[m] * marked as thread-safe to support parallel execution.          *
+[[1;33mWARNING[m] * While this /may/ work fine, please look for plugin updates    *
+[[1;33mWARNING[m] * and/or request plugins be made thread-safe.                   *
+[[1;33mWARNING[m] * If reporting an issue, report it against the plugin in        *
+[[1;33mWARNING[m] * question, not against Apache Maven.                           *
+[[1;33mWARNING[m] *****************************************************************
+[[1;33mWARNING[m] The following plugins are not marked as thread-safe in Cypher ANTLR Completion License:
+[[1;33mWARNING[m]   org.codehaus.mojo:license-maven-plugin:2.4.0
+[[1;33mWARNING[m] 
+[[1;33mWARNING[m] Enable debug to see precisely which goals are not marked as thread-safe.
+[[1;33mWARNING[m] *****************************************************************
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(default)[m @ [36mcypher-antlr-completion-license[0;1m ---[m
+[[1;33mWARNING[m] *****************************************************************
+[[1;33mWARNING[m] * Your build is requesting parallel execution, but this         *
+[[1;33mWARNING[m] * project contains the following plugin(s) that have goals not  *
+[[1;33mWARNING[m] * marked as thread-safe to support parallel execution.          *
+[[1;33mWARNING[m] * While this /may/ work fine, please look for plugin updates    *
+[[1;33mWARNING[m] * and/or request plugins be made thread-safe.                   *
+[[1;33mWARNING[m] * If reporting an issue, report it against the plugin in        *
+[[1;33mWARNING[m] * question, not against Apache Maven.                           *
+[[1;33mWARNING[m] *****************************************************************
+[[1;33mWARNING[m] The following plugins are not marked as thread-safe in Cypher ANTLR Common:
+[[1;33mWARNING[m]   org.codehaus.mojo:license-maven-plugin:2.4.0
+[[1;33mWARNING[m] 
+[[1;33mWARNING[m] Enable debug to see precisely which goals are not marked as thread-safe.
+[[1;33mWARNING[m] *****************************************************************
+[[1;33mWARNING[m] *****************************************************************
+[[1;33mWARNING[m] * Your build is requesting parallel execution, but this         *
+[[1;33mWARNING[m] * project contains the following plugin(s) that have goals not  *
+[[1;33mWARNING[m] * marked as thread-safe to support parallel execution.          *
+[[1;33mWARNING[m] * While this /may/ work fine, please look for plugin updates    *
+[[1;33mWARNING[m] * and/or request plugins be made thread-safe.                   *
+[[1;33mWARNING[m] * If reporting an issue, report it against the plugin in        *
+[[1;33mWARNING[m] * question, not against Apache Maven.                           *
+[[1;33mWARNING[m] *****************************************************************
+[[1;33mWARNING[m] The following plugins are not marked as thread-safe in Cypher ANTLR4 Parser Listener Generator Plugin:
+[[1;33mWARNING[m]   org.codehaus.mojo:license-maven-plugin:2.4.0
+[[1;33mWARNING[m] 
+[[1;33mWARNING[m] Enable debug to see precisely which goals are not marked as thread-safe.
+[[1;33mWARNING[m] *****************************************************************
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(default)[m @ [36mcypher-antlr-common[0;1m ---[m
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.DependencyConvergence passed
+[[1;34mINFO[m] Rule 1: org.apache.maven.enforcer.rules.EvaluateBeanshell passed
+[[1;34mINFO[m] Rule 2: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 3: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 5: org.apache.maven.plugins.enforcer.RestrictImports passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(ban-test-dependencies-in-compile)[m @ [36mcypher-antlr-completion-license[0;1m ---[m
+[[1;34mINFO[m] No sources to compile
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-resources-plugin:3.3.1:testResources[m [1m(default-testResources)[m @ [36mneo4j-cypher-ast-factory-tests[0;1m ---[m
+[[1;34mINFO[m] skip non existing resourceDirectory /home/dcalford/CliWork/neo4j/community/cypher/front-end/neo4j-ast-factory/src/test/resources
+[[1;34mINFO[m] Copying 4 resources from  to target/test-classes/META-INF
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mscala-maven-plugin:4.9.2:testCompile[m [1m(scala-test-compile)[m @ [36mneo4j-cypher-ast-factory-tests[0;1m ---[m
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mproperties-maven-plugin:1.2.1:set-system-properties[m [1m(default)[m @ [36mcypher-antlr-completion-license[0;1m ---[m
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.DependencyConvergence passed
+[[1;34mINFO[m] Set 1 system property
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mlicense-maven-plugin:4.5:check[m [1m(check-licenses)[m @ [36mcypher-antlr-completion-license[0;1m ---[m
+[[1;34mINFO[m] Rule 1: org.apache.maven.enforcer.rules.EvaluateBeanshell passed
+[[1;34mINFO[m] Rule 2: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 3: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] No sources to compile
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-compiler-plugin:3.13.0:testCompile[m [1m(default-testCompile)[m @ [36mneo4j-cypher-ast-factory-tests[0;1m ---[m
+[[1;34mINFO[m] Checking licenses...
+[[1;34mINFO[m] Rule 5: org.apache.maven.plugins.enforcer.RestrictImports passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(ban-test-dependencies-in-compile)[m @ [36mcypher-antlr-common[0;1m ---[m
+[[1;34mINFO[m] No sources to compile
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-surefire-plugin:3.5.1:test[m [1m(default-test)[m @ [36mneo4j-cypher-ast-factory-tests[0;1m ---[m
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mproperties-maven-plugin:1.2.1:set-system-properties[m [1m(default)[m @ [36mcypher-antlr-common[0;1m ---[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mproperties-maven-plugin:1.2.1:set-system-properties[m [1m(default)[m @ [36mzstd-proxy[0;1m ---[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mlicense-maven-plugin:2.4.0:update-project-license[m [1m(update-project-license)[m @ [36mneo4j-native[0;1m ---[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] 
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mlicense-maven-plugin:2.4.0:update-project-license[m [1m(update-project-license)[m @ [36mcypher-antlr-completion-license[0;1m ---[m
+[[1;34mINFO[m] [1m--- [0;32mlicense-maven-plugin:2.4.0:update-project-license[m [1m(update-project-license)[m @ [36mneo4j-spatial-index[0;1m ---[m
+[[1;34mINFO[m] [1m--- [0;32mlicense-maven-plugin:2.4.0:update-project-license[m [1m(update-project-license)[m @ [36mneo4j-test-util[0;1m ---[m
+[[1;34mINFO[m] [1m--- [0;32mlicense-maven-plugin:2.4.0:update-project-license[m [1m(update-project-license)[m @ [36mannotations[0;1m ---[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(default)[m @ [36mantlr-parser-listener-maven-plugin[0;1m ---[m
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.DependencyConvergence passed
+[[1;34mINFO[m] Rule 1: org.apache.maven.enforcer.rules.EvaluateBeanshell passed
+[[1;34mINFO[m] Rule 2: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 3: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 5: org.apache.maven.plugins.enforcer.RestrictImports passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(ban-test-dependencies-in-compile)[m @ [36mantlr-parser-listener-maven-plugin[0;1m ---[m
+[[1;34mINFO[m] Tests will run in random order. To reproduce ordering use flag -Dsurefire.runOrder.random.seed=503310255999165
+[[1;34mINFO[m] Set 1 system property
+[[1;34mINFO[m] Set 1 system property
+[[1;34mINFO[m] 
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mlicense-maven-plugin:4.5:check[m [1m(check-licenses)[m @ [36mcypher-antlr-common[0;1m ---[m
+[[1;34mINFO[m] [1m--- [0;32mmaven-resources-plugin:3.3.1:resources[m [1m(default-resources)[m @ [36mzstd-proxy[0;1m ---[m
+[[1;34mINFO[m] skip non existing resourceDirectory /home/dcalford/CliWork/neo4j/community/zstd-proxy/src/main/resources
+[[1;34mINFO[m] skip non existing resourceDirectory /home/dcalford/CliWork/neo4j/community/zstd-proxy/src/main/resources/META-INF
+[[1;34mINFO[m] Copying 2 resources from  to target/classes/META-INF
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-compiler-plugin:3.13.0:compile[m [1m(default-compile)[m @ [36mzstd-proxy[0;1m ---[m
+[[1;34mINFO[m] Checking licenses...
+[[1;34mINFO[m] Adding a license repository jar:file:/home/dcalford/.m2/repository/org/codehaus/mojo/license-maven-plugin/2.4.0/license-maven-plugin-2.4.0.jar!/META-INF/licenses
+[[1;34mINFO[m] Adding a license repository jar:file:/home/dcalford/.m2/repository/org/codehaus/mojo/license-maven-plugin/2.4.0/license-maven-plugin-2.4.0.jar!/META-INF/licenses
+[[1;34mINFO[m] Adding a license repository jar:file:/home/dcalford/.m2/repository/org/codehaus/mojo/license-maven-plugin/2.4.0/license-maven-plugin-2.4.0.jar!/META-INF/licenses
+[[1;34mINFO[m] adding extra resolver classpath://license
+[[1;34mINFO[m] Adding a license repository jar:file:/home/dcalford/.m2/repository/org/codehaus/mojo/license-maven-plugin/2.4.0/license-maven-plugin-2.4.0.jar!/META-INF/licenses
+[[1;34mINFO[m] adding extra resolver classpath://license
+[[1;34mINFO[m] Adding a license repository jar:file:/home/dcalford/.m2/repository/org/codehaus/mojo/license-maven-plugin/2.4.0/license-maven-plugin-2.4.0.jar!/META-INF/licenses
+[[1;34mINFO[m] adding extra resolver classpath://license
+[[1;34mINFO[m] Adding a license repository jar:file:/home/dcalford/.m2/repository/org/neo4j/build/resources/2024-07.1/resources-2024-07.1.jar!/license
+[[1;34mINFO[m] adding extra resolver classpath://license
+[[1;34mINFO[m] Adding a license repository jar:file:/home/dcalford/.m2/repository/org/neo4j/build/resources/2024-07.1/resources-2024-07.1.jar!/license
+[[1;34mINFO[m] adding extra resolver classpath://license
+[[1;34mINFO[m] Adding a license repository jar:file:/home/dcalford/.m2/repository/org/neo4j/build/resources/2024-07.1/resources-2024-07.1.jar!/license
+[[1;34mINFO[m] Adding a license repository jar:file:/home/dcalford/.m2/repository/org/neo4j/build/resources/2024-07.1/resources-2024-07.1.jar!/license
+[[1;34mINFO[m] Adding a license repository jar:file:/home/dcalford/.m2/repository/org/neo4j/build/resources/2024-07.1/resources-2024-07.1.jar!/license
+[[1;34mINFO[m] No sources to compile
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mlicensing-maven-plugin:1.7.11:check[m [1m(list-all-licenses)[m @ [36mzstd-proxy[0;1m ---[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mlicense-maven-plugin:2.4.0:update-project-license[m [1m(update-project-license)[m @ [36mcypher-antlr-common[0;1m ---[m
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mproperties-maven-plugin:1.2.1:set-system-properties[m [1m(default)[m @ [36mantlr-parser-listener-maven-plugin[0;1m ---[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-resources-plugin:3.3.1:resources[m [1m(default-resources)[m @ [36mcypher-antlr-completion-license[0;1m ---[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-resources-plugin:3.3.1:resources[m [1m(default-resources)[m @ [36mneo4j-native[0;1m ---[m
+[[1;34mINFO[m] [1m--- [0;32mmaven-resources-plugin:3.3.1:resources[m [1m(default-resources)[m @ [36mannotations[0;1m ---[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-resources-plugin:3.3.1:resources[m [1m(default-resources)[m @ [36mneo4j-spatial-index[0;1m ---[m
+[[1;34mINFO[m] [1m--- [0;32mmaven-resources-plugin:3.3.1:resources[m [1m(default-resources)[m @ [36mneo4j-test-util[0;1m ---[m
+[[1;34mINFO[m] Set 1 system property
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mlicense-maven-plugin:4.5:check[m [1m(check-licenses)[m @ [36mantlr-parser-listener-maven-plugin[0;1m ---[m
+[[1;34mINFO[m] skip non existing resourceDirectory /home/dcalford/CliWork/neo4j/community/spatial-index/src/main/resources
+[[1;34mINFO[m] skip non existing resourceDirectory /home/dcalford/CliWork/neo4j/community/spatial-index/src/main/resources/META-INF
+[[1;34mINFO[m] Adding a license repository jar:file:/home/dcalford/.m2/repository/org/codehaus/mojo/license-maven-plugin/2.4.0/license-maven-plugin-2.4.0.jar!/META-INF/licenses
+[[1;34mINFO[m] adding extra resolver classpath://license
+[[1;34mINFO[m] Adding a license repository jar:file:/home/dcalford/.m2/repository/org/neo4j/build/resources/2024-07.1/resources-2024-07.1.jar!/license
+[[1;34mINFO[m] skip non existing resourceDirectory /home/dcalford/CliWork/neo4j/community/cypher/front-end/test-util/src/main/resources
+[[1;34mINFO[m] skip non existing resourceDirectory /home/dcalford/CliWork/neo4j/community/cypher/front-end/test-util/src/main/resources/META-INF
+[[1;34mINFO[m] skip non existing resourceDirectory /home/dcalford/CliWork/neo4j/community/native/src/main/resources
+[[1;34mINFO[m] Copying 3 resources from  to target/classes/META-INF
+[[1;34mINFO[m] Copying 1 resource from src/main/resources to target/classes
+[[1;34mINFO[m] skip non existing resourceDirectory /home/dcalford/CliWork/neo4j/community/native/src/main/resources/META-INF
+[[1;34mINFO[m] Copying 1 resource from src/main/resources to target/classes
+[[1;34mINFO[m] skip non existing resourceDirectory /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/common/antlr-completion-license/src/main/resources/META-INF
+[[1;34mINFO[m] Copying 3 resources from  to target/classes/META-INF
+[[1;34mINFO[m] Copying 1 resource from target/generated-sources/license to target/classes
+[[1;34mINFO[m] Copying 3 resources from  to target/classes/META-INF
+[[1;34mINFO[m] Copying 1 resource from src/main/resources/META-INF to target/classes/META-INF
+[[1;34mINFO[m] Copying 3 resources from  to target/classes/META-INF
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-compiler-plugin:3.13.0:compile[m [1m(default-compile)[m @ [36mneo4j-spatial-index[0;1m ---[m
+[[1;34mINFO[m] Copying 1 resource from target/generated-sources/license to target/classes
+[[1;34mINFO[m] Copying 3 resources from  to target/classes/META-INF
+[[1;34mINFO[m] Copying 1 resource from target/generated-sources/license to target/classes
+[[1;34mINFO[m] Copying 1 resource from target/generated-sources/license to target/classes
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mscala-maven-plugin:4.9.2:add-source[m [1m(scala-compile)[m @ [36mneo4j-test-util[0;1m ---[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-resources-plugin:3.3.1:resources[m [1m(default-resources)[m @ [36mcypher-antlr-common[0;1m ---[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-compiler-plugin:3.13.0:compile[m [1m(default-compile)[m @ [36mneo4j-native[0;1m ---[m
+[[1;34mINFO[m] [1m--- [0;32mscala-maven-plugin:4.9.2:add-source[m [1m(scala-compile)[m @ [36mcypher-antlr-completion-license[0;1m ---[m
+[[1;34mINFO[m] Copying 1 resource from target/generated-sources/license to target/classes
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-compiler-plugin:3.13.0:compile[m [1m(default-compile)[m @ [36mannotations[0;1m ---[m
+[[1;34mINFO[m] Add Source directory: /home/dcalford/CliWork/neo4j/community/cypher/front-end/test-util/src/main/scala
+[[1;34mINFO[m] Add Test Source directory: /home/dcalford/CliWork/neo4j/community/cypher/front-end/test-util/src/test/scala
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mscala-maven-plugin:4.9.2:compile[m [1m(scala-compile)[m @ [36mneo4j-test-util[0;1m ---[m
+[[1;34mINFO[m] Add Source directory: /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/common/antlr-completion-license/src/main/scala
+[[1;34mINFO[m] Add Test Source directory: /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/common/antlr-completion-license/src/test/scala
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mscala-maven-plugin:4.9.2:compile[m [1m(scala-compile)[m @ [36mcypher-antlr-completion-license[0;1m ---[m
+[[1;34mINFO[m] skip non existing resourceDirectory /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/common/antlr-common/src/main/resources
+[[1;34mINFO[m] skip non existing resourceDirectory /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/common/antlr-common/src/main/resources/META-INF
+[[1;34mINFO[m] Checking licenses...
+[[1;34mINFO[m] Copying 3 resources from  to target/classes/META-INF
+[[1;34mINFO[m] Copying 1 resource from target/generated-sources/license to target/classes
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-compiler-plugin:3.13.0:compile[m [1m(default-compile)[m @ [36mcypher-antlr-common[0;1m ---[m
+[[1;34mINFO[m] No sources to compile
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-compiler-plugin:3.13.0:compile[m [1m(default-compile)[m @ [36mcypher-antlr-completion-license[0;1m ---[m
+[[1;34mINFO[m] No sources to compile
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mlicensing-maven-plugin:1.7.11:check[m [1m(list-all-licenses)[m @ [36mcypher-antlr-completion-license[0;1m ---[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mlicense-maven-plugin:2.4.0:update-project-license[m [1m(update-project-license)[m @ [36mantlr-parser-listener-maven-plugin[0;1m ---[m
+[[1;34mINFO[m] Adding a license repository jar:file:/home/dcalford/.m2/repository/org/codehaus/mojo/license-maven-plugin/2.4.0/license-maven-plugin-2.4.0.jar!/META-INF/licenses
+[[1;34mINFO[m] adding extra resolver classpath://license
+[[1;34mINFO[m] Adding a license repository jar:file:/home/dcalford/.m2/repository/org/neo4j/build/resources/2024-07.1/resources-2024-07.1.jar!/license
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-resources-plugin:3.3.1:resources[m [1m(default-resources)[m @ [36mantlr-parser-listener-maven-plugin[0;1m ---[m
+[[1;34mINFO[m] skip non existing resourceDirectory /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/common/antlr-parser-listener-maven-plugin/src/main/resources
+[[1;34mINFO[m] skip non existing resourceDirectory /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/common/antlr-parser-listener-maven-plugin/src/main/resources/META-INF
+[[1;34mINFO[m] Nothing to compile - all classes are up to date
+[[1;34mINFO[m] 
+[[1;34mINFO[m] Copying 3 resources from  to target/classes/META-INF
+[[1;34mINFO[m] [1m--- [0;32mmaven-compiler-plugin:3.13.0:compile[m [1m(default-compile)[m @ [36mneo4j-test-util[0;1m ---[m
+[[1;34mINFO[m] Copying 1 resource from target/generated-sources/license to target/classes
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mscala-maven-plugin:4.9.2:add-source[m [1m(scala-compile)[m @ [36mantlr-parser-listener-maven-plugin[0;1m ---[m
+[[1;34mINFO[m] Add Source directory: /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/common/antlr-parser-listener-maven-plugin/src/main/scala
+[[1;34mINFO[m] Add Test Source directory: /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/common/antlr-parser-listener-maven-plugin/src/test/scala
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mscala-maven-plugin:4.9.2:compile[m [1m(scala-compile)[m @ [36mantlr-parser-listener-maven-plugin[0;1m ---[m
+[[1;34mINFO[m] Nothing to compile - all classes are up to date.
+[[1;34mINFO[m] Nothing to compile - all classes are up to date.
+[[1;34mINFO[m] Nothing to compile - all classes are up to date.
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mlicensing-maven-plugin:1.7.11:check[m [1m(list-all-licenses)[m @ [36mneo4j-spatial-index[0;1m ---[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mlicensing-maven-plugin:1.7.11:check[m [1m(list-all-licenses)[m @ [36mneo4j-native[0;1m ---[m
+[[1;34mINFO[m] [1m--- [0;32mlicensing-maven-plugin:1.7.11:check[m [1m(list-all-licenses)[m @ [36mcypher-antlr-common[0;1m ---[m
+[[1;34mINFO[m] Nothing to compile - all classes are up to date.
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mlicensing-maven-plugin:1.7.11:check[m [1m(list-all-licenses)[m @ [36mannotations[0;1m ---[m
+[[1;34mINFO[m] Nothing to compile - all classes are up to date.
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mlicensing-maven-plugin:1.7.11:check[m [1m(list-all-licenses)[m @ [36mneo4j-test-util[0;1m ---[m
+[[1;34mINFO[m] Nothing to compile - all classes are up to date
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-compiler-plugin:3.13.0:compile[m [1m(default-compile)[m @ [36mantlr-parser-listener-maven-plugin[0;1m ---[m
+[[1;34mINFO[m] Nothing to compile - all classes are up to date.
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mlicensing-maven-plugin:1.7.11:check[m [1m(list-all-licenses)[m @ [36mantlr-parser-listener-maven-plugin[0;1m ---[m
+Security framework of XStream not explicitly initialized, using predefined black list on your own risk.
+Security framework of XStream not explicitly initialized, using predefined black list on your own risk.
+Security framework of XStream not explicitly initialized, using predefined black list on your own risk.
+Security framework of XStream not explicitly initialized, using predefined black list on your own risk.
+Security framework of XStream not explicitly initialized, using predefined black list on your own risk.
+Security framework of XStream not explicitly initialized, using predefined black list on your own risk.
+Security framework of XStream not explicitly initialized, using predefined black list on your own risk.
+Security framework of XStream not explicitly initialized, using predefined black list on your own risk.
+[[1;34mINFO[m] File confirmed: /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/common/antlr-completion-license/target/../NOTICE.txt
+[[1;34mINFO[m] File confirmed: /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/common/antlr-common/target/../NOTICE.txt
+[[1;34mINFO[m] File confirmed: /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/common/antlr-parser-listener-maven-plugin/target/../NOTICE.txt
+[[1;34mINFO[m] File confirmed: /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/common/antlr-completion-license/target/../LICENSES.txt
+[[1;34mINFO[m] File confirmed: /home/dcalford/CliWork/neo4j/community/zstd-proxy/target/../NOTICE.txt
+[[1;34mINFO[m] 
+[[1;34mINFO[m] File confirmed: /home/dcalford/CliWork/neo4j/community/spatial-index/target/../NOTICE.txt
+[[1;34mINFO[m] [1m--- [0;32mmaven-resources-plugin:3.3.1:testResources[m [1m(default-testResources)[m @ [36mcypher-antlr-completion-license[0;1m ---[m
+[[1;34mINFO[m] File confirmed: /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/common/antlr-common/target/../LICENSES.txt
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-resources-plugin:3.3.1:testResources[m [1m(default-testResources)[m @ [36mcypher-antlr-common[0;1m ---[m
+[[1;34mINFO[m] File confirmed: /home/dcalford/CliWork/neo4j/community/spatial-index/target/../LICENSES.txt
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-resources-plugin:3.3.1:testResources[m [1m(default-testResources)[m @ [36mneo4j-spatial-index[0;1m ---[m
+[[1;34mINFO[m] skip non existing resourceDirectory /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/common/antlr-common/src/test/resources
+[[1;34mINFO[m] skip non existing resourceDirectory /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/common/antlr-completion-license/src/test/resources
+[[1;34mINFO[m] Copying 3 resources from  to target/test-classes/META-INF
+[[1;34mINFO[m] File confirmed: /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/common/antlr-parser-listener-maven-plugin/target/../LICENSES.txt
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-plugin-plugin:3.8.2:descriptor[m [1m(default-descriptor)[m @ [36mantlr-parser-listener-maven-plugin[0;1m ---[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mscala-maven-plugin:4.9.2:testCompile[m [1m(scala-test-compile)[m @ [36mcypher-antlr-common[0;1m ---[m
+[[1;34mINFO[m] Copying 3 resources from  to target/test-classes/META-INF
+[[1;34mINFO[m] skip non existing resourceDirectory /home/dcalford/CliWork/neo4j/community/spatial-index/src/test/resources
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mscala-maven-plugin:4.9.2:testCompile[m [1m(scala-test-compile)[m @ [36mcypher-antlr-completion-license[0;1m ---[m
+[[1;34mINFO[m] File confirmed: /home/dcalford/CliWork/neo4j/community/zstd-proxy/target/../LICENSES.txt
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-resources-plugin:3.3.1:testResources[m [1m(default-testResources)[m @ [36mzstd-proxy[0;1m ---[m
+[[1;34mINFO[m] Copying 3 resources from  to target/test-classes/META-INF
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-compiler-plugin:3.13.0:testCompile[m [1m(default-testCompile)[m @ [36mneo4j-spatial-index[0;1m ---[m
+[[1;34mINFO[m] File confirmed: /home/dcalford/CliWork/neo4j/community/native/target/../NOTICE.txt
+[[1;34mINFO[m] File confirmed: /home/dcalford/CliWork/neo4j/annotations/target/../NOTICE.txt
+[[1;34mINFO[m] File confirmed: /home/dcalford/CliWork/neo4j/community/native/target/../LICENSES.txt
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-resources-plugin:3.3.1:testResources[m [1m(default-testResources)[m @ [36mneo4j-native[0;1m ---[m
+[[1;34mINFO[m] File confirmed: /home/dcalford/CliWork/neo4j/annotations/target/../LICENSES.txt
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-resources-plugin:3.3.1:testResources[m [1m(default-testResources)[m @ [36mannotations[0;1m ---[m
+[[1;34mINFO[m] File confirmed: /home/dcalford/CliWork/neo4j/community/cypher/front-end/test-util/target/../NOTICE.txt
+[[1;34mINFO[m] File confirmed: /home/dcalford/CliWork/neo4j/community/cypher/front-end/test-util/target/../LICENSES.txt
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-resources-plugin:3.3.1:testResources[m [1m(default-testResources)[m @ [36mneo4j-test-util[0;1m ---[m
+[[1;34mINFO[m] skip non existing resourceDirectory /home/dcalford/CliWork/neo4j/community/zstd-proxy/src/test/resources
+[[1;34mINFO[m] skip non existing resourceDirectory /home/dcalford/CliWork/neo4j/community/cypher/front-end/test-util/src/test/resources
+[[1;34mINFO[m] skip non existing resourceDirectory /home/dcalford/CliWork/neo4j/community/native/src/test/resources
+[[1;34mINFO[m] Copying 3 resources from  to target/test-classes/META-INF
+[[1;34mINFO[m] Copying 3 resources from  to target/test-classes/META-INF
+[[1;34mINFO[m] Copying 2 resources from  to target/test-classes/META-INF
+[[1;34mINFO[m] Copying 22 resources from src/test/resources to target/test-classes
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mscala-maven-plugin:4.9.2:testCompile[m [1m(scala-test-compile)[m @ [36mneo4j-test-util[0;1m ---[m
+[[1;34mINFO[m] Using 'UTF-8' encoding to read mojo source files.
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-compiler-plugin:3.13.0:testCompile[m [1m(default-testCompile)[m @ [36mneo4j-native[0;1m ---[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-compiler-plugin:3.13.0:testCompile[m [1m(default-testCompile)[m @ [36mzstd-proxy[0;1m ---[m
+[[1;34mINFO[m] Copying 3 resources from  to target/test-classes/META-INF
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-compiler-plugin:3.13.0:testCompile[m [1m(default-testCompile)[m @ [36mannotations[0;1m ---[m
+[[1;34mINFO[m] Not compiling test sources
+[[1;34mINFO[m] No sources to compile
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-compiler-plugin:3.13.0:testCompile[m [1m(default-testCompile)[m @ [36mcypher-antlr-common[0;1m ---[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-compiler-plugin:3.13.0:testCompile[m [1m(default-testCompile)[m @ [36mcypher-antlr-completion-license[0;1m ---[m
+[[1;34mINFO[m] No sources to compile
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-surefire-plugin:3.5.1:test[m [1m(default-test)[m @ [36mzstd-proxy[0;1m ---[m
+[[1;34mINFO[m] No sources to compile
+[[1;34mINFO[m] No sources to compile
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-surefire-plugin:3.5.1:test[m [1m(default-test)[m @ [36mcypher-antlr-completion-license[0;1m ---[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-surefire-plugin:3.5.1:test[m [1m(default-test)[m @ [36mcypher-antlr-common[0;1m ---[m
+[[1;34mINFO[m] Tests are skipped.
+[[1;34mINFO[m] Nothing to compile - all classes are up to date
+[[1;34mINFO[m] Tests will run in random order. To reproduce ordering use flag -Dsurefire.runOrder.random.seed=503312259344950
+[[1;34mINFO[m] Tests will run in random order. To reproduce ordering use flag -Dsurefire.runOrder.random.seed=503312259465461
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-compiler-plugin:3.13.0:testCompile[m [1m(default-testCompile)[m @ [36mneo4j-test-util[0;1m ---[m
+[[1;34mINFO[m] Nothing to compile - all classes are up to date.
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-surefire-plugin:3.5.1:test[m [1m(default-test)[m @ [36mneo4j-native[0;1m ---[m
+[[1;34mINFO[m] Nothing to compile - all classes are up to date.
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-surefire-plugin:3.5.1:test[m [1m(default-test)[m @ [36mneo4j-spatial-index[0;1m ---[m
+[[1;34mINFO[m] Nothing to compile - all classes are up to date.
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-surefire-plugin:3.5.1:test[m [1m(default-test)[m @ [36mannotations[0;1m ---[m
+[[1;34mINFO[m] Tests will run in random order. To reproduce ordering use flag -Dsurefire.runOrder.random.seed=503312266261611
+[[1;34mINFO[m] Tests will run in random order. To reproduce ordering use flag -Dsurefire.runOrder.random.seed=503312267641042
+[[1;34mINFO[m] Tests will run in random order. To reproduce ordering use flag -Dsurefire.runOrder.random.seed=503312268688375
+[[1;34mINFO[m] 
+[[1;34mINFO[m] Nothing to compile - all classes are up to date.
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m-----------------< [0;36morg.neo4j:cypher-v25-antlr-parser[0;1m >------------------[m
+[[1;34mINFO[m] [1mBuilding Cypher 25 ANTLR based parser 5.26.0                    [26/161][m
+[[1;34mINFO[m] [1m------------------< [0;36morg.neo4j:cypher-v5-antlr-parser[0;1m >------------------[m
+[[1;34mINFO[m] [1mBuilding Cypher 5 ANTLR based parser 5.26.0                     [27/161][m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--------------------------------[ jar ]---------------------------------[m
+[[1;34mINFO[m] [1m--- [0;32mmaven-surefire-plugin:3.5.1:test[m [1m(default-test)[m @ [36mneo4j-test-util[0;1m ---[m
+[[1;34mINFO[m] [1m--------------------------------[ jar ]---------------------------------[m
+[[1;34mINFO[m] Tests will run in random order. To reproduce ordering use flag -Dsurefire.runOrder.random.seed=503312278194115
+[[1;34mINFO[m] Using auto detected provider org.apache.maven.surefire.junitplatform.JUnitPlatformProvider
+[[1;34mINFO[m] Using auto detected provider org.apache.maven.surefire.junitplatform.JUnitPlatformProvider
+[[1;34mINFO[m] Using auto detected provider org.apache.maven.surefire.junitplatform.JUnitPlatformProvider
+[[1;34mINFO[m] Using auto detected provider org.apache.maven.surefire.junitplatform.JUnitPlatformProvider
+[[1;33mWARNING[m] *****************************************************************
+[[1;33mWARNING[m] * Your build is requesting parallel execution, but this         *
+[[1;33mWARNING[m] * project contains the following plugin(s) that have goals not  *
+[[1;33mWARNING[m] * marked as thread-safe to support parallel execution.          *
+[[1;33mWARNING[m] * While this /may/ work fine, please look for plugin updates    *
+[[1;33mWARNING[m] * and/or request plugins be made thread-safe.                   *
+[[1;33mWARNING[m] * If reporting an issue, report it against the plugin in        *
+[[1;33mWARNING[m] * question, not against Apache Maven.                           *
+[[1;33mWARNING[m] *****************************************************************
+[[1;33mWARNING[m] The following plugins are not marked as thread-safe in Cypher 25 ANTLR based parser:
+[[1;33mWARNING[m]   org.codehaus.mojo:license-maven-plugin:2.4.0
+[[1;33mWARNING[m] 
+[[1;33mWARNING[m] Enable debug to see precisely which goals are not marked as thread-safe.
+[[1;33mWARNING[m] *****************************************************************
+[[1;33mWARNING[m] *****************************************************************
+[[1;33mWARNING[m] * Your build is requesting parallel execution, but this         *
+[[1;33mWARNING[m] * project contains the following plugin(s) that have goals not  *
+[[1;33mWARNING[m] * marked as thread-safe to support parallel execution.          *
+[[1;33mWARNING[m] * While this /may/ work fine, please look for plugin updates    *
+[[1;33mWARNING[m] * and/or request plugins be made thread-safe.                   *
+[[1;33mWARNING[m] * If reporting an issue, report it against the plugin in        *
+[[1;33mWARNING[m] * question, not against Apache Maven.                           *
+[[1;33mWARNING[m] *****************************************************************
+[[1;33mWARNING[m] The following plugins are not marked as thread-safe in Cypher 5 ANTLR based parser:
+[[1;33mWARNING[m]   org.codehaus.mojo:license-maven-plugin:2.4.0
+[[1;33mWARNING[m] 
+[[1;33mWARNING[m] Enable debug to see precisely which goals are not marked as thread-safe.
+[[1;33mWARNING[m] *****************************************************************
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(default)[m @ [36mcypher-v25-antlr-parser[0;1m ---[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(default)[m @ [36mcypher-v5-antlr-parser[0;1m ---[m
+[[1;34mINFO[m] Rule 0: org.apache.maven.plugins.enforcer.RestrictImports passed
+[[1;34mINFO[m] Rule 0: org.apache.maven.plugins.enforcer.RestrictImports passed
+[[1;34mINFO[m] Rule 1: org.apache.maven.enforcer.rules.dependency.DependencyConvergence passed
+[[1;34mINFO[m] Rule 2: org.apache.maven.enforcer.rules.EvaluateBeanshell passed
+[[1;34mINFO[m] Rule 3: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 4: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(ban-test-dependencies-in-compile)[m @ [36mcypher-v5-antlr-parser[0;1m ---[m
+[[1;34mINFO[m] Rule 1: org.apache.maven.enforcer.rules.dependency.DependencyConvergence passed
+[[1;34mINFO[m] Rule 2: org.apache.maven.enforcer.rules.EvaluateBeanshell passed
+[[1;34mINFO[m] Rule 3: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 4: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(ban-test-dependencies-in-compile)[m @ [36mcypher-v25-antlr-parser[0;1m ---[m
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mproperties-maven-plugin:1.2.1:set-system-properties[m [1m(default)[m @ [36mcypher-v5-antlr-parser[0;1m ---[m
+[[1;34mINFO[m] Set 1 system property
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-antrun-plugin:3.1.0:run[m [1m(copy-generated-antlr)[m @ [36mcypher-v5-antlr-parser[0;1m ---[m
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mproperties-maven-plugin:1.2.1:set-system-properties[m [1m(default)[m @ [36mcypher-v25-antlr-parser[0;1m ---[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] -------------------------------------------------------
+[[1;34mINFO[m] 
+[[1;34mINFO[m] -------------------------------------------------------
+[[1;34mINFO[m]  T E S T S
+[[1;34mINFO[m] -------------------------------------------------------
+[[1;34mINFO[m] 
+[[1;34mINFO[m] 
+[[1;34mINFO[m] -------------------------------------------------------
+[[1;34mINFO[m]  T E S T S
+[[1;34mINFO[m] -------------------------------------------------------
+[[1;34mINFO[m] -------------------------------------------------------
+[[1;34mINFO[m]  T E S T S
+[[1;34mINFO[m]  T E S T S
+[[1;34mINFO[m] -------------------------------------------------------
+[[1;34mINFO[m] -------------------------------------------------------
+[[1;34mINFO[m] Set 1 system property
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-antrun-plugin:3.1.0:run[m [1m(copy-generated-antlr)[m @ [36mcypher-v25-antlr-parser[0;1m ---[m
+[[1;34mINFO[m] Executing tasks
+[[1;34mINFO[m] Executing tasks
+[[1;34mINFO[m]    [delete] Deleting directory /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/v25/parser/target/old-generated-antlr
+[[1;34mINFO[m]    [delete] Deleting directory /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/v5/parser/target/old-generated-antlr
+[[1;34mINFO[m]      [copy] Copying 3 files to /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/v5/parser/target/old-generated-antlr
+[[1;34mINFO[m]      [copy] Copying 3 files to /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/v25/parser/target/old-generated-antlr
+[[1;34mINFO[m] Executed tasks
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mantlr4-maven-plugin:4.13.2:antlr4[m [1m(antlr)[m @ [36mcypher-v5-antlr-parser[0;1m ---[m
+[[1;34mINFO[m] Executed tasks
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mantlr4-maven-plugin:4.13.2:antlr4[m [1m(antlr)[m @ [36mcypher-v25-antlr-parser[0;1m ---[m
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+[[1;34mINFO[m] No grammars to process
+[[1;34mINFO[m] ANTLR 4: Processing source directory /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/v25/parser/src/main/antlr4
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mlicense-maven-plugin:4.5:format[m [1m(check-licenses)[m @ [36mcypher-v25-antlr-parser[0;1m ---[m
+[[1;34mINFO[m] No grammars to process
+[[1;34mINFO[m] ANTLR 4: Processing source directory /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/v5/parser/src/main/antlr4
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mlicense-maven-plugin:4.5:format[m [1m(check-licenses)[m @ [36mcypher-v5-antlr-parser[0;1m ---[m
+WARNING: Using incubator modules: jdk.incubator.vector
+[[1;34mINFO[m] Updating license headers...
+[[1;34mINFO[m] Updating license headers...
+WARNING: Using incubator modules: jdk.incubator.vector
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mlicense-maven-plugin:4.5:check[m [1m(check-licenses)[m @ [36mcypher-v5-antlr-parser[0;1m ---[m
+[[1;34mINFO[m] Checking licenses...
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mlicense-maven-plugin:4.5:check[m [1m(check-licenses)[m @ [36mcypher-v25-antlr-parser[0;1m ---[m
+[[1;34mINFO[m] Checking licenses...
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mlicense-maven-plugin:2.4.0:update-project-license[m [1m(update-project-license)[m @ [36mcypher-v5-antlr-parser[0;1m ---[m
+[[1;34mINFO[m] Adding a license repository jar:file:/home/dcalford/.m2/repository/org/codehaus/mojo/license-maven-plugin/2.4.0/license-maven-plugin-2.4.0.jar!/META-INF/licenses
+[[1;34mINFO[m] adding extra resolver classpath://license
+[[1;34mINFO[m] Adding a license repository jar:file:/home/dcalford/.m2/repository/org/neo4j/build/resources/2024-07.1/resources-2024-07.1.jar!/license
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-resources-plugin:3.3.1:resources[m [1m(default-resources)[m @ [36mcypher-v5-antlr-parser[0;1m ---[m
+[[1;34mINFO[m] skip non existing resourceDirectory /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/v5/parser/src/main/resources
+[[1;34mINFO[m] skip non existing resourceDirectory /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/v5/parser/src/main/resources/META-INF
+[[1;34mINFO[m] Copying 4 resources from  to target/classes/META-INF
+[[1;34mINFO[m] Copying 1 resource from target/generated-sources/license to target/classes
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-compiler-plugin:3.13.0:compile[m [1m(default-compile)[m @ [36mcypher-v5-antlr-parser[0;1m ---[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mlicense-maven-plugin:2.4.0:update-project-license[m [1m(update-project-license)[m @ [36mcypher-v25-antlr-parser[0;1m ---[m
+[[1;34mINFO[m] Adding a license repository jar:file:/home/dcalford/.m2/repository/org/codehaus/mojo/license-maven-plugin/2.4.0/license-maven-plugin-2.4.0.jar!/META-INF/licenses
+[[1;34mINFO[m] adding extra resolver classpath://license
+[[1;34mINFO[m] Adding a license repository jar:file:/home/dcalford/.m2/repository/org/neo4j/build/resources/2024-07.1/resources-2024-07.1.jar!/license
+[[1;34mINFO[m] Nothing to compile - all classes are up to date.
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mlicensing-maven-plugin:1.7.11:check[m [1m(list-all-licenses)[m @ [36mcypher-v5-antlr-parser[0;1m ---[m
+Security framework of XStream not explicitly initialized, using predefined black list on your own risk.
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-resources-plugin:3.3.1:resources[m [1m(default-resources)[m @ [36mcypher-v25-antlr-parser[0;1m ---[m
+[[1;34mINFO[m] skip non existing resourceDirectory /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/v25/parser/src/main/resources
+[[1;34mINFO[m] skip non existing resourceDirectory /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/v25/parser/src/main/resources/META-INF
+[[1;34mINFO[m] Copying 4 resources from  to target/classes/META-INF
+[[1;34mINFO[m] Copying 1 resource from target/generated-sources/license to target/classes
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-compiler-plugin:3.13.0:compile[m [1m(default-compile)[m @ [36mcypher-v25-antlr-parser[0;1m ---[m
+[[1;34mINFO[m] Nothing to compile - all classes are up to date.
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mlicensing-maven-plugin:1.7.11:check[m [1m(list-all-licenses)[m @ [36mcypher-v25-antlr-parser[0;1m ---[m
+Security framework of XStream not explicitly initialized, using predefined black list on your own risk.
+[[1;34mINFO[m] File confirmed: /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/v5/parser/target/../NOTICE.txt
+[[1;34mINFO[m] File confirmed: /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/v5/parser/target/../LICENSES.txt
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-resources-plugin:3.3.1:testResources[m [1m(default-testResources)[m @ [36mcypher-v5-antlr-parser[0;1m ---[m
+[[1;34mINFO[m] skip non existing resourceDirectory /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/v5/parser/src/test/resources
+[[1;34mINFO[m] Copying 4 resources from  to target/test-classes/META-INF
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mscala-maven-plugin:4.9.2:testCompile[m [1m(scala-test-compile)[m @ [36mcypher-v5-antlr-parser[0;1m ---[m
+[[1;34mINFO[m] Not compiling test sources
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-compiler-plugin:3.13.0:testCompile[m [1m(default-testCompile)[m @ [36mcypher-v5-antlr-parser[0;1m ---[m
+[[1;34mINFO[m] No sources to compile
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-surefire-plugin:3.5.1:test[m [1m(default-test)[m @ [36mcypher-v5-antlr-parser[0;1m ---[m
+[[1;34mINFO[m] File confirmed: /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/v25/parser/target/../NOTICE.txt
+[[1;34mINFO[m] File confirmed: /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/v25/parser/target/../LICENSES.txt
+[[1;34mINFO[m] Tests will run in random order. To reproduce ordering use flag -Dsurefire.runOrder.random.seed=503313710568955
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-resources-plugin:3.3.1:testResources[m [1m(default-testResources)[m @ [36mcypher-v25-antlr-parser[0;1m ---[m
+[[1;34mINFO[m] skip non existing resourceDirectory /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/v25/parser/src/test/resources
+[[1;34mINFO[m] Copying 4 resources from  to target/test-classes/META-INF
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mscala-maven-plugin:4.9.2:testCompile[m [1m(scala-test-compile)[m @ [36mcypher-v25-antlr-parser[0;1m ---[m
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m----------------< [0;36morg.neo4j:cypher-v5-parser-listener[0;1m >-----------------[m
+[[1;34mINFO[m] [1mBuilding Cypher 5 ANTLR parser listener 5.26.0                  [28/161][m
+[[1;34mINFO[m] [1m--------------------------------[ jar ]---------------------------------[m
+[[1;34mINFO[m] Not compiling test sources
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-compiler-plugin:3.13.0:testCompile[m [1m(default-testCompile)[m @ [36mcypher-v25-antlr-parser[0;1m ---[m
+[[1;33mWARNING[m] *****************************************************************
+[[1;33mWARNING[m] * Your build is requesting parallel execution, but this         *
+[[1;33mWARNING[m] * project contains the following plugin(s) that have goals not  *
+[[1;33mWARNING[m] * marked as thread-safe to support parallel execution.          *
+[[1;33mWARNING[m] * While this /may/ work fine, please look for plugin updates    *
+[[1;33mWARNING[m] * and/or request plugins be made thread-safe.                   *
+[[1;33mWARNING[m] * If reporting an issue, report it against the plugin in        *
+[[1;33mWARNING[m] * question, not against Apache Maven.                           *
+[[1;33mWARNING[m] *****************************************************************
+[[1;33mWARNING[m] The following plugins are not marked as thread-safe in Cypher 5 ANTLR parser listener:
+[[1;33mWARNING[m]   org.codehaus.mojo:license-maven-plugin:2.4.0
+[[1;33mWARNING[m] 
+[[1;33mWARNING[m] Enable debug to see precisely which goals are not marked as thread-safe.
+[[1;33mWARNING[m] *****************************************************************
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(default)[m @ [36mcypher-v5-parser-listener[0;1m ---[m
+[[1;34mINFO[m] Nothing to compile - all classes are up to date.
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-surefire-plugin:3.5.1:test[m [1m(default-test)[m @ [36mcypher-v25-antlr-parser[0;1m ---[m
+[[1;34mINFO[m] Tests will run in random order. To reproduce ordering use flag -Dsurefire.runOrder.random.seed=503313800927376
+[[1;34mINFO[m] Using auto detected provider org.apache.maven.surefire.junitplatform.JUnitPlatformProvider
+[[1;34mINFO[m] 
+[[1;34mINFO[m] -------------------------------------------------------
+[[1;34mINFO[m]  T E S T S
+[[1;34mINFO[m] -------------------------------------------------------
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.DependencyConvergence passed
+[[1;34mINFO[m] Rule 1: org.apache.maven.enforcer.rules.EvaluateBeanshell passed
+[[1;34mINFO[m] Rule 2: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 3: org.apache.maven.enforcer.rules.files.RequireFilesDontExist passed
+[[1;34mINFO[m] Rule 5: org.apache.maven.plugins.enforcer.RestrictImports passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-enforcer-plugin:3.5.0:enforce[m [1m(ban-test-dependencies-in-compile)[m @ [36mcypher-v5-parser-listener[0;1m ---[m
+[[1;34mINFO[m] Rule 0: org.apache.maven.enforcer.rules.dependency.BannedDependencies passed
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mproperties-maven-plugin:1.2.1:set-system-properties[m [1m(default)[m @ [36mcypher-v5-parser-listener[0;1m ---[m
+[[1;34mINFO[m] Set 1 system property
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mlicense-maven-plugin:4.5:check[m [1m(check-licenses)[m @ [36mcypher-v5-parser-listener[0;1m ---[m
+[[1;34mINFO[m] Checking licenses...
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mlicense-maven-plugin:2.4.0:update-project-license[m [1m(update-project-license)[m @ [36mcypher-v5-parser-listener[0;1m ---[m
+[[1;34mINFO[m] Adding a license repository jar:file:/home/dcalford/.m2/repository/org/codehaus/mojo/license-maven-plugin/2.4.0/license-maven-plugin-2.4.0.jar!/META-INF/licenses
+[[1;34mINFO[m] adding extra resolver classpath://license
+[[1;34mINFO[m] Adding a license repository jar:file:/home/dcalford/.m2/repository/org/neo4j/build/resources/2024-07.1/resources-2024-07.1.jar!/license
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-resources-plugin:3.3.1:resources[m [1m(default-resources)[m @ [36mcypher-v5-parser-listener[0;1m ---[m
+[[1;34mINFO[m] skip non existing resourceDirectory /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/v5/antlr-parser-listener/src/main/resources
+[[1;34mINFO[m] skip non existing resourceDirectory /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/v5/antlr-parser-listener/src/main/resources/META-INF
+[[1;34mINFO[m] Copying 3 resources from  to target/classes/META-INF
+[[1;34mINFO[m] Copying 1 resource from target/generated-sources/license to target/classes
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-compiler-plugin:3.13.0:compile[m [1m(default-compile)[m @ [36mcypher-v5-parser-listener[0;1m ---[m
+[[1;34mINFO[m] Nothing to compile - all classes are up to date.
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mlicensing-maven-plugin:1.7.11:check[m [1m(list-all-licenses)[m @ [36mcypher-v5-parser-listener[0;1m ---[m
+Security framework of XStream not explicitly initialized, using predefined black list on your own risk.
+[[1;34mINFO[m] File confirmed: /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/v5/antlr-parser-listener/target/../NOTICE.txt
+[[1;34mINFO[m] File confirmed: /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/v5/antlr-parser-listener/target/../LICENSES.txt
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-resources-plugin:3.3.1:testResources[m [1m(default-testResources)[m @ [36mcypher-v5-parser-listener[0;1m ---[m
+[[1;34mINFO[m] skip non existing resourceDirectory /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/v5/antlr-parser-listener/src/test/resources
+[[1;34mINFO[m] Copying 3 resources from  to target/test-classes/META-INF
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mscala-maven-plugin:4.9.2:testCompile[m [1m(scala-test-compile)[m @ [36mcypher-v5-parser-listener[0;1m ---[m
+[[1;34mINFO[m] Not compiling test sources
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-compiler-plugin:3.13.0:testCompile[m [1m(default-testCompile)[m @ [36mcypher-v5-parser-listener[0;1m ---[m
+[[1;34mINFO[m] No sources to compile
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-surefire-plugin:3.5.1:test[m [1m(default-test)[m @ [36mcypher-v5-parser-listener[0;1m ---[m
+[[1;34mINFO[m] Tests will run in random order. To reproduce ordering use flag -Dsurefire.runOrder.random.seed=503314234564285
+[[1;34mINFO[m] java-annotations mojo extractor found 1 mojo descriptor.
+[[1;34mINFO[m] java-javadoc mojo extractor found 0 mojo descriptor.
+[[1;34mINFO[m] ant mojo extractor found 0 mojo descriptor.
+[[1;34mINFO[m] bsh mojo extractor found 0 mojo descriptor.
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-resources-plugin:3.3.1:testResources[m [1m(default-testResources)[m @ [36mantlr-parser-listener-maven-plugin[0;1m ---[m
+[[1;34mINFO[m] skip non existing resourceDirectory /home/dcalford/CliWork/neo4j/community/cypher/front-end/parser/common/antlr-parser-listener-maven-plugin/src/test/resources
+[[1;34mINFO[m] Copying 3 resources from  to target/test-classes/META-INF
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mscala-maven-plugin:4.9.2:testCompile[m [1m(scala-test-compile)[m @ [36mantlr-parser-listener-maven-plugin[0;1m ---[m
+[[1;34mINFO[m] No sources to compile
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-compiler-plugin:3.13.0:testCompile[m [1m(default-testCompile)[m @ [36mantlr-parser-listener-maven-plugin[0;1m ---[m
+[[1;34mINFO[m] No sources to compile
+[[1;34mINFO[m] 
+[[1;34mINFO[m] [1m--- [0;32mmaven-surefire-plugin:3.5.1:test[m [1m(default-test)[m @ [36mantlr-parser-listener-maven-plugin[0;1m ---[m
+[[1;34mINFO[m] Tests will run in random order. To reproduce ordering use flag -Dsurefire.runOrder.random.seed=503314722582009
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+[[1;34mINFO[m] Running org.neo4j.gis.spatial.index.[1mEnvelopeTest[m
+[[1;34mINFO[m] Running org.neo4j.gis.spatial.index.curves.[1mSpaceFillingCurveConfigurationTest[m
+[[1;34mINFO[m] Running org.neo4j.internal.nativeimpl.[1mAbsentNativeAccessTest[m
+[[1;34mINFO[m] Running org.neo4j.annotations.service.[1mServiceAnnotationProcessorTest[m
+[[1;34mINFO[m] Running org.neo4j.internal.nativeimpl.[1mNativeAccessProviderTest[m
+[[1;34mINFO[m] Running org.neo4j.internal.nativeimpl.[1mLinuxNativeAccessTest[m
+[[1;34mINFO[m] Running org.neo4j.gis.spatial.index.curves.[1mSpaceFillingCurveTest[m
+[[1;34mINFO[m] [1;32mTests run: [0;1;32m3[m, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.445 s -- in org.neo4j.internal.nativeimpl.[1mAbsentNativeAccessTest[m
+[[1;34mINFO[m] Running org.neo4j.annotations.api.[1mPublicApiAnnotationProcessorTest[m
+[[1;34mINFO[m] [1;32mTests run: [0;1;32m4[m, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.901 s -- in org.neo4j.gis.spatial.index.curves.[1mSpaceFillingCurveConfigurationTest[m
+[[1;34mINFO[m] [1;32mTests run: [0;1;32m5[m, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.342 s -- in org.neo4j.gis.spatial.index.[1mEnvelopeTest[m
+--- output end ---

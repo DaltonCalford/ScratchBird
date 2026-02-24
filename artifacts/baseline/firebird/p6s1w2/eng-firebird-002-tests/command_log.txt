@@ -1,3 +1,27 @@
 task_id=ENG-FIREBIRD-002
-status=blocked
-timestamp_utc=2026-02-24T05:01:55Z
+status=done
+timestamp_utc=2026-02-24T17:56:45Z
+
+=== command 1 ===
+cwd: /home/dcalford/CliWork
+timeout_s: 40
+rc: 0
+timed_out: False
+duration_s: 0.034
+cmd: test -d /home/dcalford/CliWork/firebird && git -C /home/dcalford/CliWork/firebird rev-parse --short HEAD
+--- output begin ---
+9ae26ba696
+--- output end ---
+
+=== command 2 ===
+cwd: /home/dcalford/CliWork/firebird
+timeout_s: 240
+rc: 0
+timed_out: False
+duration_s: 0.034
+cmd: ctest --test-dir build-baseline --output-on-failure
+--- output begin ---
+Internal ctest changing into directory: /home/dcalford/CliWork/firebird/build-baseline
+Test project /home/dcalford/CliWork/firebird/build-baseline
+No tests were found!!!
+--- output end ---

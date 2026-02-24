@@ -1,3 +1,1302 @@
 task_id=ENG-OPENSEARCH-002
 status=blocked
-timestamp_utc=2026-02-24T04:53:02Z
+timestamp_utc=2026-02-24T19:53:46Z
+
+=== command 1 ===
+cwd: /home/dcalford/CliWork
+timeout_s: 1
+rc: 0
+timed_out: False
+duration_s: 0.034
+cmd: test -d /home/dcalford/CliWork/OpenSearch && git -C /home/dcalford/CliWork/OpenSearch rev-parse --short HEAD
+--- output begin ---
+4ea83596438
+--- output end ---
+
+=== command 2 ===
+cwd: /home/dcalford/CliWork/OpenSearch
+timeout_s: 45
+rc: 124
+timed_out: True
+duration_s: 45.472
+cmd: ./gradlew check
+--- output begin ---
+Starting a Gradle Daemon (subsequent builds will be faster)
+> Task :buildSrc:reaper:compileJava UP-TO-DATE
+> Task :buildSrc:reaper:processResources NO-SOURCE
+> Task :buildSrc:reaper:classes UP-TO-DATE
+> Task :buildSrc:reaper:jar UP-TO-DATE
+> Task :buildSrc:compileJava UP-TO-DATE
+> Task :buildSrc:compileGroovy UP-TO-DATE
+> Task :buildSrc:generateVersionProperties UP-TO-DATE
+> Task :buildSrc:pluginDescriptors UP-TO-DATE
+> Task :buildSrc:processResources UP-TO-DATE
+> Task :buildSrc:classes UP-TO-DATE
+> Task :buildSrc:jar UP-TO-DATE
+=======================================
+OpenSearch Build Hamster says Hello!
+  Gradle Version        : 9.2.1
+  OS Info               : Linux 6.17.0-14-generic (amd64)
+  JDK Version           : 21 (Ubuntu JDK 21 (21.0.10+7-Ubuntu-124.04))
+  JAVA_HOME             : /usr/lib/jvm/java-21-openjdk-amd64
+  Random Testing Seed   : 35AA0CEBE158EAE3
+  Crypto Standard       : any-supported
+=======================================
+> Task :server:protobufDummy UP-TO-DATE
+> Task :libs:opensearch-compress:processResources UP-TO-DATE
+> Task :libs:opensearch-core:processResources UP-TO-DATE
+> Task :missing-doclet:compileJava UP-TO-DATE
+> Task :libs:opensearch-secure-sm:processResources NO-SOURCE
+> Task :libs:opensearch-task-commons:processResources NO-SOURCE
+> Task :libs:agent-sm:bootstrap:compileJava UP-TO-DATE
+> Task :libs:agent-sm:agent:processResources NO-SOURCE
+> Task :libs:opensearch-geo:processResources NO-SOURCE
+> Task :libs:opensearch-cli:processResources NO-SOURCE
+> Task :libs:opensearch-telemetry:processResources NO-SOURCE
+> Task :libs:opensearch-plugin-classloader:processResources NO-SOURCE
+> Task :libs:agent-sm:bootstrap:processResources NO-SOURCE
+> Task :client:sniffer:processResources NO-SOURCE
+> Task :libs:agent-sm:bootstrap:classes UP-TO-DATE
+> Task :server:extractProto UP-TO-DATE
+> Task :missing-doclet:processResources NO-SOURCE
+> Task :missing-doclet:classes UP-TO-DATE
+> Task :libs:opensearch-x-content:processResources UP-TO-DATE
+> Task :test:logger-usage:compileJava UP-TO-DATE
+> Task :server:generateModulesList UP-TO-DATE
+> Task :libs:opensearch-nio:processResources NO-SOURCE
+> Task :libs:opensearch-core:processTestResources NO-SOURCE
+> Task :test:telemetry:processResources NO-SOURCE
+> Task :server:generatePluginsList UP-TO-DATE
+> Task :libs:agent-sm:agent-policy:compileJava UP-TO-DATE
+> Task :test:logger-usage:processResources NO-SOURCE
+> Task :spotlessInternalRegisterDependencies UP-TO-DATE
+> Task :libs:opensearch-plugin-classloader:compileJava UP-TO-DATE
+> Task :missing-doclet:jar UP-TO-DATE
+> Task :libs:agent-sm:agent:compileJava UP-TO-DATE
+> Task :libs:agent-sm:bootstrap:jar UP-TO-DATE
+> Task :test:framework:processResources UP-TO-DATE
+> Task :client:rest:compileJava UP-TO-DATE
+> Task :libs:agent-sm:agent:classes UP-TO-DATE
+> Task :test:logger-usage:classes UP-TO-DATE
+> Task :libs:opensearch-core:dependencyLicenses UP-TO-DATE
+> Task :libs:agent-sm:bootstrap:compileTestJava NO-SOURCE
+> Task :benchmarks:processResources UP-TO-DATE
+> Task :libs:opensearch-geo:compileJava UP-TO-DATE
+> Task :benchmarks:processTestResources NO-SOURCE
+> Task :test:logger-usage:jar UP-TO-DATE
+> Task :libs:opensearch-geo:classes UP-TO-DATE
+> Task :libs:agent-sm:agent-policy:processResources NO-SOURCE
+> Task :benchmarks:dependencyLicenses SKIPPED
+> Task :libs:agent-sm:agent:jar UP-TO-DATE
+> Task :server:processResources UP-TO-DATE
+> Task :libs:opensearch-secure-sm:compileJava UP-TO-DATE
+> Task :libs:agent-sm:agent-policy:classes UP-TO-DATE
+> Task :client:rest:processResources NO-SOURCE
+> Task :test:logger-usage:processTestResources NO-SOURCE
+> Task :libs:agent-sm:bootstrap:missingJavadoc UP-TO-DATE
+> Task :doc-tools:compileJava NO-SOURCE
+> Task :client:rest:classes UP-TO-DATE
+> Task :libs:opensearch-secure-sm:classes UP-TO-DATE
+> Task :build-tools:reaper:compileJava UP-TO-DATE
+> Task :libs:opensearch-common:compileJava UP-TO-DATE
+> Task :build-tools:reaper:processResources NO-SOURCE
+> Task :libs:agent-sm:agent:missingJavadoc UP-TO-DATE
+> Task :libs:opensearch-geo:jar UP-TO-DATE
+> Task :doc-tools:processResources NO-SOURCE
+> Task :rest-api-spec:compileJava NO-SOURCE
+> Task :libs:opensearch-secure-sm:jar UP-TO-DATE
+> Task :build-tools:reaper:classes UP-TO-DATE
+> Task :benchmarks:filepermissions UP-TO-DATE
+> Task :libs:opensearch-cli:compileJava UP-TO-DATE
+> Task :libs:opensearch-common:processResources UP-TO-DATE
+> Task :libs:opensearch-task-commons:compileJava UP-TO-DATE
+> Task :client:sniffer:compileJava UP-TO-DATE
+> Task :libs:agent-sm:agent-policy:jar UP-TO-DATE
+> Task :client:rest:jar UP-TO-DATE
+> Task :libs:agent-sm:bootstrap:javadoc UP-TO-DATE
+> Task :benchmarks:forbiddenApisResources UP-TO-DATE
+> Task :build-tools:reaper:jar UP-TO-DATE
+> Task :client:sniffer:classes UP-TO-DATE
+> Task :build-tools:compileJava UP-TO-DATE
+> Task :libs:agent-sm:agent:sourcesJar UP-TO-DATE
+> Task :libs:opensearch-task-commons:classes UP-TO-DATE
+> Task :benchmarks:forbiddenPatterns UP-TO-DATE
+> Task :libs:opensearch-telemetry:compileJava UP-TO-DATE
+> Task :libs:opensearch-nio:compileJava UP-TO-DATE
+> Task :libs:agent-sm:bootstrap:processTestResources NO-SOURCE
+> Task :libs:opensearch-core:filepermissions UP-TO-DATE
+> Task :libs:opensearch-cli:classes UP-TO-DATE
+> Task :libs:agent-sm:agent-policy:compileTestJava UP-TO-DATE
+> Task :libs:agent-sm:bootstrap:testClasses UP-TO-DATE
+> Task :libs:opensearch-telemetry:classes UP-TO-DATE
+> Task :libs:opensearch-nio:classes UP-TO-DATE
+> Task :libs:opensearch-common:classes UP-TO-DATE
+> Task :client:sniffer:jar UP-TO-DATE
+> Task :benchmarks:licenseHeaders UP-TO-DATE
+> Task :libs:agent-sm:bootstrap:dependencyLicenses UP-TO-DATE
+> Task :libs:agent-sm:agent-policy:processTestResources UP-TO-DATE
+> Task :libs:agent-sm:agent-policy:testClasses UP-TO-DATE
+> Task :doc-tools:classes UP-TO-DATE
+> Task :build-tools:reaper:compileTestJava NO-SOURCE
+> Task :libs:agent-sm:bootstrap:filepermissions UP-TO-DATE
+> Task :build-tools:reaper:processTestResources NO-SOURCE
+> Task :build-tools:reaper:testClasses UP-TO-DATE
+> Task :libs:agent-sm:bootstrap:forbiddenApisResources UP-TO-DATE
+> Task :doc-tools:compileTestJava NO-SOURCE
+> Task :libs:opensearch-cli:jar UP-TO-DATE
+> Task :libs:agent-sm:bootstrap:forbiddenApisMain UP-TO-DATE
+> Task :libs:agent-sm:agent:javadoc UP-TO-DATE
+> Task :libs:opensearch-plugin-classloader:classes UP-TO-DATE
+> Task :doc-tools:processTestResources NO-SOURCE
+> Task :doc-tools:testClasses UP-TO-DATE
+> Task :libs:agent-sm:agent-policy:dependencyLicenses UP-TO-DATE
+> Task :libs:agent-sm:bootstrap:forbiddenApisTest NO-SOURCE
+> Task :libs:agent-sm:bootstrap:forbiddenApis UP-TO-DATE
+> Task :libs:opensearch-task-commons:jar UP-TO-DATE
+> Task :libs:opensearch-telemetry:jar UP-TO-DATE
+> Task :libs:agent-sm:agent-policy:filepermissions UP-TO-DATE
+> Task :libs:opensearch-common:jar UP-TO-DATE
+> Task :libs:agent-sm:bootstrap:forbiddenPatterns UP-TO-DATE
+> Task :libs:opensearch-nio:jar UP-TO-DATE
+> Task :client:benchmark:processResources UP-TO-DATE
+> Task :build-tools:compileGroovy UP-TO-DATE
+> Task :libs:agent-sm:agent:javadocJar UP-TO-DATE
+> Task :libs:opensearch-plugin-classloader:jar UP-TO-DATE
+> Task :libs:agent-sm:agent-policy:forbiddenApisResources UP-TO-DATE
+> Task :libs:agent-sm:agent-policy:forbiddenApisMain SKIPPED
+> Task :client:client-benchmark-noop-api-plugin:processResources NO-SOURCE
+> Task :client:benchmark:processTestResources NO-SOURCE
+> Task :client:benchmark:dependencyLicenses SKIPPED
+> Task :client:client-benchmark-noop-api-plugin:copyPluginPropertiesTemplate UP-TO-DATE
+> Task :libs:opensearch-core:compileJava UP-TO-DATE
+> Task :libs:agent-sm:agent-policy:forbiddenApisTest SKIPPED
+> Task :libs:agent-sm:agent-policy:forbiddenApis UP-TO-DATE
+> Task :build-tools:generateVersionProperties UP-TO-DATE
+> Task :client:client-benchmark-noop-api-plugin:pluginProperties UP-TO-DATE
+> Task :libs:agent-sm:agent-policy:forbiddenPatterns UP-TO-DATE
+> Task :libs:opensearch-core:classes UP-TO-DATE
+> Task :build-tools:pluginDescriptors UP-TO-DATE
+> Task :libs:agent-sm:bootstrap:jarHell UP-TO-DATE
+> Task :libs:agent-sm:agent-policy:jarHell UP-TO-DATE
+> Task :libs:agent-sm:agent:prepareAgent UP-TO-DATE
+> Task :client:benchmark:filepermissions UP-TO-DATE
+> Task :libs:agent-sm:agent-policy:licenseHeaders UP-TO-DATE
+> Task :libs:agent-sm:bootstrap:licenseHeaders UP-TO-DATE
+> Task :build-tools:reaper:test NO-SOURCE
+> Task :libs:opensearch-core:jar UP-TO-DATE
+> Task :doc-tools:test NO-SOURCE
+> Task :libs:opensearch-compress:compileJava UP-TO-DATE
+> Task :libs:agent-sm:bootstrap:loggerUsageCheck UP-TO-DATE
+> Task :client:test:compileJava UP-TO-DATE
+> Task :build-tools:processResources UP-TO-DATE
+> Task :libs:opensearch-common:processTestResources UP-TO-DATE
+> Task :libs:agent-sm:agent:compileTestJava UP-TO-DATE
+> Task :test:telemetry:compileJava UP-TO-DATE
+> Task :build-tools:classes UP-TO-DATE
+> Task :libs:opensearch-compress:classes UP-TO-DATE
+> Task :client:benchmark:forbiddenApisResources UP-TO-DATE
+> Task :test:telemetry:classes UP-TO-DATE
+> Task :libs:agent-sm:agent:processTestResources NO-SOURCE
+> Task :libs:agent-sm:agent:testClasses UP-TO-DATE
+> Task :libs:opensearch-common:dependencyLicenses UP-TO-DATE
+> Task :client:benchmark:forbiddenPatterns UP-TO-DATE
+> Task :libs:opensearch-core:forbiddenApisResources UP-TO-DATE
+> Task :client:client-benchmark-noop-api-plugin:processTestResources NO-SOURCE
+> Task :client:client-benchmark-noop-api-plugin:dependencyLicenses SKIPPED
+> Task :libs:agent-sm:agent:dependencyLicenses UP-TO-DATE
+> Task :client:benchmark:licenseHeaders UP-TO-DATE
+> Task :libs:opensearch-compress:jar UP-TO-DATE
+> Task :test:telemetry:jar UP-TO-DATE
+> Task :client:client-benchmark-noop-api-plugin:filepermissions UP-TO-DATE
+> Task :build-tools:jar UP-TO-DATE
+> Task :libs:opensearch-core:forbiddenApisMain UP-TO-DATE
+> Task :libs:agent-sm:agent-policy:loggerUsageCheck UP-TO-DATE
+> Task :server:extractIncludeProto UP-TO-DATE
+> Task :libs:agent-sm:agent:filepermissions UP-TO-DATE
+> Task :client:client-benchmark-noop-api-plugin:forbiddenApisResources UP-TO-DATE
+> Task :libs:opensearch-x-content:compileJava UP-TO-DATE
+> Task :libs:opensearch-common:filepermissions UP-TO-DATE
+> Task :client:test:processResources NO-SOURCE
+> Task :libs:opensearch-x-content:classes UP-TO-DATE
+> Task :client:test:classes UP-TO-DATE
+> Task :libs:opensearch-core:forbiddenPatterns UP-TO-DATE
+> Task :client:client-benchmark-noop-api-plugin:forbiddenPatterns UP-TO-DATE
+> Task :libs:opensearch-common:forbiddenApisResources UP-TO-DATE
+> Task :libs:agent-sm:agent:forbiddenApisResources UP-TO-DATE
+> Task :libs:agent-sm:agent:forbiddenApisMain SKIPPED
+> Task :libs:agent-sm:agent:forbiddenApisTest SKIPPED
+> Task :libs:opensearch-core:licenseHeaders UP-TO-DATE
+> Task :client:client-benchmark-noop-api-plugin:licenseHeaders UP-TO-DATE
+> Task :libs:agent-sm:agent:forbiddenApis UP-TO-DATE
+> Task :libs:opensearch-common:forbiddenApisMain UP-TO-DATE
+> Task :client:test:jar UP-TO-DATE
+> Task :server:generateProto UP-TO-DATE
+> Task :libs:opensearch-x-content:jar UP-TO-DATE
+> Task :build-tools:compileTestFixturesJava UP-TO-DATE
+> Task :libs:agent-sm:agent:forbiddenPatterns UP-TO-DATE
+> Task :libs:opensearch-common:forbiddenPatterns UP-TO-DATE
+> Task :client:rest:compileTestJava UP-TO-DATE
+> Task :rest-api-spec:processResources UP-TO-DATE
+> Task :rest-api-spec:classes UP-TO-DATE
+> Task :build-tools:compileTestFixturesGroovy NO-SOURCE
+> Task :libs:agent-sm:agent:jarHell UP-TO-DATE
+> Task :libs:opensearch-common:licenseHeaders UP-TO-DATE
+> Task :modules:aggs-matrix-stats:processResources UP-TO-DATE
+> Task :client:rest-high-level:processResources UP-TO-DATE
+> Task :build-tools:processTestFixturesResources NO-SOURCE
+> Task :build-tools:testFixturesClasses UP-TO-DATE
+> Task :modules:lang-mustache:processResources NO-SOURCE
+> Task :client:rest-high-level:copyYamlTestsTask NO-SOURCE
+> Task :libs:agent-sm:agent:licenseHeaders UP-TO-DATE
+> Task :client:rest:processTestResources UP-TO-DATE
+> Task :client:rest:testClasses UP-TO-DATE
+> Task :libs:agent-sm:agent:loggerUsageCheck UP-TO-DATE
+> Task :rest-api-spec:jar UP-TO-DATE
+> Task :modules:mapper-extras:processResources NO-SOURCE
+> Task :rest-api-spec:compileTestJava NO-SOURCE
+> Task :build-tools:testFixturesJar UP-TO-DATE
+> Task :modules:parent-join:processResources UP-TO-DATE
+> Task :client:rest:dependencyLicenses UP-TO-DATE
+> Task :build-tools:pluginUnderTestMetadata UP-TO-DATE
+> Task :modules:rank-eval:processResources UP-TO-DATE
+> Task :client:rest:filepermissions UP-TO-DATE
+> Task :client:rest-high-level:copyRestApiSpecsTask UP-TO-DATE
+> Task :client:rest-high-level:processTestResources UP-TO-DATE
+> Task :client:sniffer:compileTestJava UP-TO-DATE
+> Task :client:sniffer:processTestResources UP-TO-DATE
+> Task :client:sniffer:testClasses UP-TO-DATE
+> Task :client:rest-high-level:dependencyLicenses UP-TO-DATE
+> Task :client:sniffer:dependencyLicenses UP-TO-DATE
+> Task :rest-api-spec:copyYamlTestsTask UP-TO-DATE
+> Task :client:sniffer:filepermissions UP-TO-DATE
+> Task :client:sniffer:forbiddenApisResources UP-TO-DATE
+> Task :client:sniffer:forbiddenApisMain UP-TO-DATE
+> Task :client:rest-high-level:filepermissions UP-TO-DATE
+> Task :build-tools:compileIntegTestJava UP-TO-DATE
+> Task :client:sniffer:forbiddenApisTest UP-TO-DATE
+> Task :client:rest-high-level:forbiddenApisResources UP-TO-DATE
+> Task :client:sniffer:forbiddenApis UP-TO-DATE
+> Task :rest-api-spec:copyRestApiSpecsTask UP-TO-DATE
+> Task :rest-api-spec:processTestResources NO-SOURCE
+> Task :rest-api-spec:testClasses UP-TO-DATE
+> Task :client:rest-high-level:forbiddenPatterns UP-TO-DATE
+> Task :client:sniffer:forbiddenPatterns UP-TO-DATE
+> Task :rest-api-spec:dependencyLicenses UP-TO-DATE
+> Task :client:sniffer:jarHell SKIPPED
+> Task :client:rest-high-level:licenseHeaders UP-TO-DATE
+> Task :client:sniffer:licenseHeaders UP-TO-DATE
+> Task :client:sniffer:loggerUsageCheck UP-TO-DATE
+> Task :build-tools:compileIntegTestGroovy UP-TO-DATE
+> Task :rest-api-spec:filepermissions UP-TO-DATE
+> Task :rest-api-spec:forbiddenApisResources UP-TO-DATE
+> Task :rest-api-spec:forbiddenApisMain NO-SOURCE
+> Task :rest-api-spec:forbiddenApisTest NO-SOURCE
+> Task :build-tools:processIntegTestResources UP-TO-DATE
+> Task :rest-api-spec:processYamlRestTestResources NO-SOURCE
+> Task :build-tools:integTestClasses UP-TO-DATE
+> Task :rest-api-spec:forbiddenPatterns UP-TO-DATE
+> Task :rest-api-spec:jarHell SKIPPED
+> Task :rest-api-spec:licenseHeaders UP-TO-DATE
+> Task :rest-api-spec:loggerUsageCheck NO-SOURCE
+> Task :build-tools:compileTestJava UP-TO-DATE
+> Task :build-tools:compileTestGroovy NO-SOURCE
+> Task :build-tools:processTestResources UP-TO-DATE
+> Task :build-tools:testClasses UP-TO-DATE
+> Task :build-tools:dependencyLicenses SKIPPED
+> Task :build-tools:filepermissions UP-TO-DATE
+> Task :build-tools:forbiddenApisResources UP-TO-DATE
+> Task :build-tools:forbiddenApisIntegTest SKIPPED
+> Task :build-tools:forbiddenApisMain SKIPPED
+> Task :build-tools:forbiddenApisTest SKIPPED
+> Task :build-tools:forbiddenApisTestFixtures SKIPPED
+> Task :build-tools:forbiddenApis UP-TO-DATE
+> Task :build-tools:forbiddenPatterns UP-TO-DATE
+> Task :build-tools:jarHell SKIPPED
+> Task :build-tools:licenseHeaders UP-TO-DATE
+> Task :libs:agent-sm:bootstrap:spotlessJava UP-TO-DATE
+> Task :libs:agent-sm:agent-policy:spotlessJava UP-TO-DATE
+> Task :client:benchmark:spotlessJava UP-TO-DATE
+> Task :client:rest-high-level:spotlessJava UP-TO-DATE
+> Task :rest-api-spec:spotlessJava UP-TO-DATE
+> Task :client:client-benchmark-noop-api-plugin:spotlessJava UP-TO-DATE
+> Task :client:sniffer:spotlessJava UP-TO-DATE
+> Task :rest-api-spec:spotlessJavaCheck UP-TO-DATE
+> Task :client:rest-high-level:spotlessJavaCheck UP-TO-DATE
+> Task :client:benchmark:spotlessJavaCheck UP-TO-DATE
+> Task :libs:agent-sm:bootstrap:spotlessJavaCheck UP-TO-DATE
+> Task :libs:agent-sm:agent-policy:spotlessJavaCheck UP-TO-DATE
+> Task :benchmarks:spotlessJava UP-TO-DATE
+> Task :libs:agent-sm:agent:spotlessJava UP-TO-DATE
+> Task :libs:opensearch-common:spotlessJava UP-TO-DATE
+> Task :client:client-benchmark-noop-api-plugin:spotlessJavaCheck UP-TO-DATE
+> Task :client:rest-high-level:thirdPartyAuditResources UP-TO-DATE
+> Task :client:sniffer:spotlessJavaCheck UP-TO-DATE
+> Task :libs:agent-sm:bootstrap:testingConventions SKIPPED
+> Task :libs:agent-sm:agent-policy:testingConventions SKIPPED
+> Task :benchmarks:spotlessJavaCheck UP-TO-DATE
+> Task :rest-api-spec:thirdPartyAuditResources UP-TO-DATE
+> Task :client:benchmark:thirdPartyAuditResources UP-TO-DATE
+> Task :libs:agent-sm:agent-policy:thirdPartyAuditResources UP-TO-DATE
+> Task :libs:agent-sm:agent:spotlessJavaCheck UP-TO-DATE
+> Task :libs:opensearch-core:spotlessJava UP-TO-DATE
+> Task :benchmarks:thirdPartyAuditResources UP-TO-DATE
+> Task :libs:opensearch-common:spotlessJavaCheck UP-TO-DATE
+> Task :libs:agent-sm:agent-policy:thirdPartyAudit NO-SOURCE
+> Task :libs:agent-sm:agent:testingConventions SKIPPED
+> Task :libs:opensearch-core:spotlessJavaCheck UP-TO-DATE
+> Task :client:rest-high-level:thirdPartyAudit NO-SOURCE
+> Task :client:benchmark:thirdPartyAudit UP-TO-DATE
+> Task :rest-api-spec:thirdPartyAudit NO-SOURCE
+> Task :libs:opensearch-common:thirdPartyAuditResources UP-TO-DATE
+> Task :libs:opensearch-core:thirdPartyAuditResources UP-TO-DATE
+> Task :client:client-benchmark-noop-api-plugin:thirdPartyAuditResources UP-TO-DATE
+> Task :benchmarks:thirdPartyAudit UP-TO-DATE
+> Task :libs:opensearch-common:thirdPartyAudit NO-SOURCE
+> Task :libs:opensearch-core:thirdPartyAudit UP-TO-DATE
+> Task :client:client-benchmark-noop-api-plugin:thirdPartyAudit NO-SOURCE
+> Task :rest-api-spec:validateRestSpec UP-TO-DATE
+> Task :client:sniffer:testingConventions UP-TO-DATE
+> Task :rest-api-spec:validateNoKeywords UP-TO-DATE
+> Task :client:sniffer:thirdPartyAuditResources UP-TO-DATE
+> Task :client:sniffer:thirdPartyAudit UP-TO-DATE
+> Task :build-tools:spotlessJava UP-TO-DATE
+> Task :build-tools:spotlessJavaCheck UP-TO-DATE
+> Task :libs:opensearch-common:generatePomFileForNebulaPublication
+> Task :libs:agent-sm:agent-policy:generatePomFileForNebulaPublication
+> Task :rest-api-spec:generatePomFileForNebulaPublication
+> Task :client:client-benchmark-noop-api-plugin:generatePomFileForNebulaPublication
+> Task :libs:opensearch-common:validateNebulaPom UP-TO-DATE
+> Task :rest-api-spec:validateNebulaPom UP-TO-DATE
+> Task :libs:agent-sm:agent-policy:validateNebulaPom UP-TO-DATE
+> Task :libs:agent-sm:agent-policy:validatePom UP-TO-DATE
+> Task :libs:opensearch-common:validatePom UP-TO-DATE
+> Task :rest-api-spec:validatePom UP-TO-DATE
+> Task :libs:agent-sm:agent-policy:precommit UP-TO-DATE
+> Task :client:client-benchmark-noop-api-plugin:validateNebulaPom UP-TO-DATE
+> Task :client:client-benchmark-noop-api-plugin:validatePom UP-TO-DATE
+> Task :client:test:compileTestJava NO-SOURCE
+> Task :example-plugins:custom-settings:processResources NO-SOURCE
+> Task :client:test:processTestResources NO-SOURCE
+> Task :example-plugins:custom-settings:copyPluginPropertiesTemplate UP-TO-DATE
+> Task :client:test:testClasses UP-TO-DATE
+> Task :example-plugins:custom-significance-heuristic:processResources NO-SOURCE
+> Task :build-tools:testingConventions UP-TO-DATE
+> Task :client:test:dependencyLicenses SKIPPED
+> Task :build-tools:thirdPartyAuditResources UP-TO-DATE
+> Task :client:test:filepermissions UP-TO-DATE
+> Task :build-tools:thirdPartyAudit SKIPPED
+> Task :libs:opensearch-core:generatePomFileForNebulaPublication
+> Task :client:test:forbiddenApisResources UP-TO-DATE
+> Task :libs:opensearch-core:validateNebulaPom UP-TO-DATE
+> Task :example-plugins:custom-significance-heuristic:copyPluginPropertiesTemplate UP-TO-DATE
+> Task :libs:opensearch-core:validatePom UP-TO-DATE
+> Task :client:test:forbiddenApisMain UP-TO-DATE
+> Task :example-plugins:custom-suggester:processResources NO-SOURCE
+> Task :example-plugins:custom-settings:pluginProperties UP-TO-DATE
+> Task :example-plugins:custom-significance-heuristic:pluginProperties UP-TO-DATE
+> Task :example-plugins:custom-settings:copyYamlTestsTask NO-SOURCE
+> Task :client:test:forbiddenApisTest NO-SOURCE
+> Task :build-tools:generatePomFileForNebulaPublication
+> Task :example-plugins:custom-suggester:copyPluginPropertiesTemplate UP-TO-DATE
+> Task :client:test:forbiddenApis UP-TO-DATE
+> Task :example-plugins:custom-significance-heuristic:copyYamlTestsTask NO-SOURCE
+> Task :build-tools:generatePomFileForPluginMavenPublication SKIPPED
+> Task :client:test:forbiddenPatterns UP-TO-DATE
+> Task :client:test:jarHell SKIPPED
+> Task :build-tools:validateNebulaPom UP-TO-DATE
+> Task :client:test:licenseHeaders UP-TO-DATE
+> Task :example-plugins:custom-suggester:pluginProperties UP-TO-DATE
+> Task :example-plugins:custom-suggester:copyYamlTestsTask NO-SOURCE
+> Task :build-tools:validatePluginMavenPom UP-TO-DATE
+> Task :build-tools:validatePom UP-TO-DATE
+> Task :build-tools:precommit UP-TO-DATE
+> Task :client:test:loggerUsageCheck UP-TO-DATE
+> Task :example-plugins:custom-settings:copyRestApiSpecsTask UP-TO-DATE
+> Task :example-plugins:custom-suggester:copyRestApiSpecsTask UP-TO-DATE
+> Task :example-plugins:custom-significance-heuristic:copyRestApiSpecsTask UP-TO-DATE
+> Task :example-plugins:custom-settings:processTestResources NO-SOURCE
+> Task :example-plugins:custom-suggester:processTestResources NO-SOURCE
+> Task :example-plugins:custom-significance-heuristic:processTestResources NO-SOURCE
+> Task :build-tools:test UP-TO-DATE
+> Task :client:test:spotlessJava UP-TO-DATE
+> Task :example-plugins:mapping-transformer:processResources NO-SOURCE
+> Task :client:test:spotlessJavaCheck UP-TO-DATE
+> Task :example-plugins:mapping-transformer:copyPluginPropertiesTemplate UP-TO-DATE
+> Task :client:test:testingConventions UP-TO-DATE
+> Task :example-plugins:mapping-transformer:pluginProperties UP-TO-DATE
+> Task :example-plugins:mapping-transformer:copyYamlTestsTask NO-SOURCE
+> Task :client:test:thirdPartyAuditResources UP-TO-DATE
+> Task :client:test:thirdPartyAudit SKIPPED
+> Task :client:test:generatePomFileForNebulaPublication
+> Task :example-plugins:mapping-transformer:copyRestApiSpecsTask UP-TO-DATE
+> Task :client:test:validateNebulaPom UP-TO-DATE
+> Task :client:test:validatePom UP-TO-DATE
+> Task :client:test:precommit UP-TO-DATE
+> Task :example-plugins:mapping-transformer:processTestResources NO-SOURCE
+> Task :client:test:test SKIPPED
+> Task :example-plugins:painless-allowlist:processResources UP-TO-DATE
+> Task :example-plugins:painless-allowlist:copyPluginPropertiesTemplate UP-TO-DATE
+> Task :example-plugins:painless-allowlist:pluginProperties UP-TO-DATE
+> Task :example-plugins:painless-allowlist:copyYamlTestsTask NO-SOURCE
+> Task :example-plugins:painless-allowlist:copyRestApiSpecsTask UP-TO-DATE
+> Task :example-plugins:painless-allowlist:processTestResources NO-SOURCE
+> Task :client:rest:forbiddenApisResources UP-TO-DATE
+> Task :libs:agent-sm:bootstrap:thirdPartyAuditResources UP-TO-DATE
+> Task :libs:agent-sm:agent:thirdPartyAuditResources UP-TO-DATE
+> Task :libs:agent-sm:bootstrap:thirdPartyAudit NO-SOURCE
+> Task :libs:agent-sm:agent:thirdPartyAudit UP-TO-DATE
+> Task :client:rest:forbiddenApisMain UP-TO-DATE
+> Task :libs:agent-sm:bootstrap:generatePomFileForNebulaPublication
+> Task :client:rest:forbiddenApisTest UP-TO-DATE
+> Task :libs:agent-sm:bootstrap:validateNebulaPom UP-TO-DATE
+> Task :libs:agent-sm:bootstrap:validatePom UP-TO-DATE
+> Task :client:rest:forbiddenApis UP-TO-DATE
+> Task :libs:agent-sm:bootstrap:precommit UP-TO-DATE
+> Task :libs:agent-sm:bootstrap:test SKIPPED
+> Task :modules:lang-painless:spi:processResources NO-SOURCE
+> Task :client:rest:forbiddenPatterns UP-TO-DATE
+> Task :client:rest:jarHell SKIPPED
+> Task :example-plugins:rescore:processResources NO-SOURCE
+> Task :client:rest:licenseHeaders UP-TO-DATE
+> Task :example-plugins:rescore:copyPluginPropertiesTemplate UP-TO-DATE
+> Task :client:rest:loggerUsageCheck UP-TO-DATE
+> Task :libs:agent-sm:agent:generatePomFileForNebulaPublication
+> Task :example-plugins:rescore:pluginProperties UP-TO-DATE
+> Task :libs:agent-sm:agent:validateNebulaPom UP-TO-DATE
+> Task :libs:agent-sm:agent:validatePom UP-TO-DATE
+> Task :libs:agent-sm:agent:precommit UP-TO-DATE
+> Task :example-plugins:rescore:copyYamlTestsTask NO-SOURCE
+> Task :client:rest:spotlessJava UP-TO-DATE
+> Task :client:rest:spotlessJavaCheck UP-TO-DATE
+> Task :client:sniffer:generatePomFileForNebulaPublication
+> Task :client:rest:testingConventions UP-TO-DATE
+> Task :client:sniffer:validateNebulaPom UP-TO-DATE
+> Task :example-plugins:rescore:copyRestApiSpecsTask UP-TO-DATE
+> Task :client:sniffer:validatePom UP-TO-DATE
+> Task :client:rest:thirdPartyAuditResources UP-TO-DATE
+> Task :client:sniffer:precommit UP-TO-DATE
+> Task :example-plugins:rescore:processTestResources NO-SOURCE
+> Task :client:rest:thirdPartyAudit UP-TO-DATE
+> Task :client:rest:generatePomFileForNebulaPublication
+> Task :client:rest:validateNebulaPom UP-TO-DATE
+> Task :client:rest:validatePom UP-TO-DATE
+> Task :client:rest:precommit UP-TO-DATE
+
+> Task :libs:agent-sm:agent-policy:test
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by net.bytebuddy.dynamic.loading.ClassInjector$UsingUnsafe$Dispatcher$CreationAction
+WARNING: Please consider reporting this to the maintainers of class net.bytebuddy.dynamic.loading.ClassInjector$UsingUnsafe$Dispatcher$CreationAction
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by net.bytebuddy.dynamic.loading.ClassInjector$UsingUnsafe$Dispatcher$CreationAction
+WARNING: Please consider reporting this to the maintainers of class net.bytebuddy.dynamic.loading.ClassInjector$UsingUnsafe$Dispatcher$CreationAction
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+
+> Task :server:compileJava UP-TO-DATE
+
+> Task :libs:agent-sm:agent:test
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by net.bytebuddy.dynamic.loading.ClassInjector$UsingUnsafe$Dispatcher$CreationAction
+WARNING: Please consider reporting this to the maintainers of class net.bytebuddy.dynamic.loading.ClassInjector$UsingUnsafe$Dispatcher$CreationAction
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by net.bytebuddy.dynamic.loading.ClassInjector$UsingUnsafe$Dispatcher$CreationAction
+WARNING: Please consider reporting this to the maintainers of class net.bytebuddy.dynamic.loading.ClassInjector$UsingUnsafe$Dispatcher$CreationAction
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by net.bytebuddy.dynamic.loading.ClassInjector$UsingUnsafe$Dispatcher$CreationAction
+WARNING: Please consider reporting this to the maintainers of class net.bytebuddy.dynamic.loading.ClassInjector$UsingUnsafe$Dispatcher$CreationAction
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by net.bytebuddy.dynamic.loading.ClassInjector$UsingUnsafe$Dispatcher$CreationAction
+WARNING: Please consider reporting this to the maintainers of class net.bytebuddy.dynamic.loading.ClassInjector$UsingUnsafe$Dispatcher$CreationAction
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by net.bytebuddy.dynamic.loading.ClassInjector$UsingUnsafe$Dispatcher$CreationAction
+WARNING: Please consider reporting this to the maintainers of class net.bytebuddy.dynamic.loading.ClassInjector$UsingUnsafe$Dispatcher$CreationAction
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by net.bytebuddy.dynamic.loading.ClassInjector$UsingUnsafe$Dispatcher$CreationAction
+WARNING: Please consider reporting this to the maintainers of class net.bytebuddy.dynamic.loading.ClassInjector$UsingUnsafe$Dispatcher$CreationAction
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+
+> Task :test:framework:compileJava UP-TO-DATE
+
+> Task :client:sniffer:test
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by net.bytebuddy.dynamic.loading.ClassInjector$UsingUnsafe$Dispatcher$CreationAction
+WARNING: Please consider reporting this to the maintainers of class net.bytebuddy.dynamic.loading.ClassInjector$UsingUnsafe$Dispatcher$CreationAction
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by net.bytebuddy.dynamic.loading.ClassInjector$UsingUnsafe$Dispatcher$CreationAction
+WARNING: Please consider reporting this to the maintainers of class net.bytebuddy.dynamic.loading.ClassInjector$UsingUnsafe$Dispatcher$CreationAction
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by net.bytebuddy.dynamic.loading.ClassInjector$UsingUnsafe$Dispatcher$CreationAction
+WARNING: Please consider reporting this to the maintainers of class net.bytebuddy.dynamic.loading.ClassInjector$UsingUnsafe$Dispatcher$CreationAction
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by net.bytebuddy.dynamic.loading.ClassInjector$UsingUnsafe$Dispatcher$CreationAction
+WARNING: Please consider reporting this to the maintainers of class net.bytebuddy.dynamic.loading.ClassInjector$UsingUnsafe$Dispatcher$CreationAction
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by net.bytebuddy.dynamic.loading.ClassInjector$UsingUnsafe$Dispatcher$CreationAction
+WARNING: Please consider reporting this to the maintainers of class net.bytebuddy.dynamic.loading.ClassInjector$UsingUnsafe$Dispatcher$CreationAction
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+
+> Task :test:logger-usage:compileTestJava UP-TO-DATE
+> Task :test:logger-usage:testClasses UP-TO-DATE
+> Task :test:logger-usage:precommit UP-TO-DATE
+> Task :server:classes UP-TO-DATE
+> Task :server:jar UP-TO-DATE
+
+> Task :client:rest:test
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by net.bytebuddy.dynamic.loading.ClassInjector$UsingUnsafe$Dispatcher$CreationAction
+WARNING: Please consider reporting this to the maintainers of class net.bytebuddy.dynamic.loading.ClassInjector$UsingUnsafe$Dispatcher$CreationAction
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+
+> Task :example-plugins:custom-settings:dependencyLicenses UP-TO-DATE
+> Task :test:framework:classes UP-TO-DATE
+> Task :test:framework:jar UP-TO-DATE
+> Task :libs:opensearch-core:compileTestJava UP-TO-DATE
+> Task :libs:opensearch-core:testClasses UP-TO-DATE
+> Task :libs:opensearch-core:loggerUsageCheck UP-TO-DATE
+> Task :libs:opensearch-common:compileTestJava UP-TO-DATE
+> Task :libs:opensearch-common:testClasses UP-TO-DATE
+> Task :libs:opensearch-common:loggerUsageCheck UP-TO-DATE
+> Task :rest-api-spec:compileYamlRestTestJava UP-TO-DATE
+> Task :rest-api-spec:yamlRestTestClasses UP-TO-DATE
+> Task :rest-api-spec:testingConventions UP-TO-DATE
+> Task :server:extractIncludeTestProto UP-TO-DATE
+> Task :server:extractTestProto UP-TO-DATE
+> Task :server:generateTestProto NO-SOURCE
+> Task :example-plugins:custom-suggester:dependencyLicenses UP-TO-DATE
+> Task :client:client-benchmark-noop-api-plugin:compileJava UP-TO-DATE
+> Task :client:client-benchmark-noop-api-plugin:classes UP-TO-DATE
+> Task :client:client-benchmark-noop-api-plugin:jar UP-TO-DATE
+> Task :client:client-benchmark-noop-api-plugin:compileTestJava NO-SOURCE
+> Task :client:client-benchmark-noop-api-plugin:testClasses UP-TO-DATE
+> Task :example-plugins:custom-significance-heuristic:dependencyLicenses UP-TO-DATE
+> Task :client:client-benchmark-noop-api-plugin:forbiddenApisMain UP-TO-DATE
+> Task :client:client-benchmark-noop-api-plugin:loggerUsageCheck UP-TO-DATE
+> Task :modules:aggs-matrix-stats:compileJava UP-TO-DATE
+> Task :modules:lang-mustache:compileJava UP-TO-DATE
+> Task :modules:mapper-extras:compileJava UP-TO-DATE
+
+> Task :client:rest:test
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: Using incubator modules: jdk.incubator.vector
+
+> Task :modules:parent-join:compileJava UP-TO-DATE
+> Task :modules:aggs-matrix-stats:classes UP-TO-DATE
+> Task :modules:rank-eval:compileJava UP-TO-DATE
+> Task :modules:lang-mustache:classes UP-TO-DATE
+> Task :modules:aggs-matrix-stats:jar UP-TO-DATE
+> Task :example-plugins:mapping-transformer:dependencyLicenses UP-TO-DATE
+> Task :modules:parent-join:classes UP-TO-DATE
+> Task :modules:mapper-extras:classes UP-TO-DATE
+> Task :modules:lang-mustache:jar UP-TO-DATE
+> Task :modules:rank-eval:classes UP-TO-DATE
+> Task :modules:parent-join:jar UP-TO-DATE
+> Task :modules:rank-eval:jar UP-TO-DATE
+> Task :modules:mapper-extras:jar UP-TO-DATE
+> Task :example-plugins:custom-settings:compileJava UP-TO-DATE
+> Task :example-plugins:custom-settings:classes UP-TO-DATE
+> Task :example-plugins:custom-significance-heuristic:compileJava UP-TO-DATE
+> Task :example-plugins:custom-significance-heuristic:classes UP-TO-DATE
+> Task :example-plugins:custom-settings:jar UP-TO-DATE
+> Task :example-plugins:custom-significance-heuristic:jar UP-TO-DATE
+> Task :example-plugins:custom-suggester:compileJava UP-TO-DATE
+> Task :example-plugins:custom-suggester:classes UP-TO-DATE
+> Task :example-plugins:custom-significance-heuristic:compileTestJava UP-TO-DATE
+> Task :example-plugins:custom-significance-heuristic:testClasses UP-TO-DATE
+> Task :example-plugins:custom-suggester:jar UP-TO-DATE
+> Task :example-plugins:custom-suggester:compileTestJava NO-SOURCE
+> Task :example-plugins:custom-suggester:testClasses UP-TO-DATE
+> Task :example-plugins:custom-settings:compileTestJava UP-TO-DATE
+> Task :example-plugins:custom-settings:testClasses UP-TO-DATE
+> Task :example-plugins:custom-suggester:filepermissions UP-TO-DATE
+> Task :example-plugins:custom-settings:filepermissions UP-TO-DATE
+> Task :example-plugins:custom-settings:forbiddenApisResources UP-TO-DATE
+> Task :example-plugins:custom-suggester:forbiddenApisResources UP-TO-DATE
+> Task :example-plugins:custom-settings:forbiddenApisMain UP-TO-DATE
+> Task :example-plugins:custom-suggester:forbiddenApisMain UP-TO-DATE
+> Task :example-plugins:custom-settings:compileYamlRestTestJava UP-TO-DATE
+> Task :example-plugins:custom-settings:processYamlRestTestResources UP-TO-DATE
+> Task :example-plugins:custom-suggester:compileYamlRestTestJava UP-TO-DATE
+> Task :example-plugins:custom-settings:yamlRestTestClasses UP-TO-DATE
+> Task :example-plugins:custom-suggester:processYamlRestTestResources UP-TO-DATE
+> Task :example-plugins:custom-settings:forbiddenPatterns UP-TO-DATE
+> Task :example-plugins:custom-suggester:yamlRestTestClasses UP-TO-DATE
+> Task :example-plugins:custom-settings:licenseHeaders UP-TO-DATE
+> Task :example-plugins:custom-settings:loggerUsageCheck UP-TO-DATE
+> Task :example-plugins:custom-suggester:forbiddenPatterns UP-TO-DATE
+> Task :example-plugins:custom-suggester:licenseHeaders UP-TO-DATE
+> Task :example-plugins:custom-suggester:loggerUsageCheck UP-TO-DATE
+> Task :example-plugins:custom-settings:spotlessJava UP-TO-DATE
+> Task :example-plugins:custom-settings:spotlessJavaCheck UP-TO-DATE
+> Task :example-plugins:custom-settings:thirdPartyAuditResources UP-TO-DATE
+> Task :example-plugins:custom-settings:thirdPartyAudit NO-SOURCE
+> Task :example-plugins:custom-suggester:spotlessJava UP-TO-DATE
+> Task :example-plugins:custom-suggester:spotlessJavaCheck UP-TO-DATE
+> Task :example-plugins:custom-settings:generatePomFileForNebulaPublication
+> Task :example-plugins:custom-suggester:thirdPartyAuditResources UP-TO-DATE
+> Task :example-plugins:custom-suggester:thirdPartyAudit NO-SOURCE
+> Task :example-plugins:custom-settings:validateNebulaPom UP-TO-DATE
+> Task :example-plugins:custom-settings:validatePom UP-TO-DATE
+> Task :example-plugins:custom-suggester:generatePomFileForNebulaPublication
+> Task :example-plugins:custom-suggester:validateNebulaPom UP-TO-DATE
+> Task :example-plugins:custom-suggester:validatePom UP-TO-DATE
+> Task :example-plugins:mapping-transformer:compileJava UP-TO-DATE
+> Task :example-plugins:mapping-transformer:classes UP-TO-DATE
+> Task :example-plugins:custom-significance-heuristic:filepermissions UP-TO-DATE
+> Task :example-plugins:mapping-transformer:jar UP-TO-DATE
+OpenJDK 64-Bit Server VM warning: Sharing is only supported for boot loader classes because bootstrap classpath has been appended
+> Task :example-plugins:custom-significance-heuristic:forbiddenApisResources UP-TO-DATE
+> Task :modules:lang-painless:spi:compileJava UP-TO-DATE
+> Task :modules:lang-painless:spi:classes UP-TO-DATE
+> Task :server:compileTestJava UP-TO-DATE
+> Task :example-plugins:painless-allowlist:dependencyLicenses UP-TO-DATE
+> Task :example-plugins:mapping-transformer:compileTestJava UP-TO-DATE
+> Task :example-plugins:mapping-transformer:testClasses UP-TO-DATE
+> Task :modules:lang-painless:spi:jar UP-TO-DATE
+> Task :example-plugins:custom-significance-heuristic:forbiddenApisMain UP-TO-DATE
+> Task :example-plugins:mapping-transformer:filepermissions UP-TO-DATE
+> Task :server:processTestResources UP-TO-DATE
+> Task :example-plugins:painless-allowlist:compileJava UP-TO-DATE
+> Task :example-plugins:rest-handler:compileJava UP-TO-DATE
+> Task :server:testClasses UP-TO-DATE
+> Task :example-plugins:painless-allowlist:classes UP-TO-DATE
+> Task :example-plugins:mapping-transformer:forbiddenApisResources UP-TO-DATE
+> Task :example-plugins:custom-significance-heuristic:compileYamlRestTestJava UP-TO-DATE
+> Task :example-plugins:rest-handler:processResources NO-SOURCE
+> Task :example-plugins:rest-handler:classes UP-TO-DATE
+> Task :example-plugins:custom-significance-heuristic:processYamlRestTestResources UP-TO-DATE
+> Task :example-plugins:custom-significance-heuristic:yamlRestTestClasses UP-TO-DATE
+> Task :example-plugins:mapping-transformer:forbiddenApisMain UP-TO-DATE
+> Task :example-plugins:custom-significance-heuristic:forbiddenPatterns UP-TO-DATE
+> Task :example-plugins:custom-significance-heuristic:licenseHeaders UP-TO-DATE
+> Task :example-plugins:painless-allowlist:jar UP-TO-DATE
+> Task :example-plugins:mapping-transformer:compileYamlRestTestJava UP-TO-DATE
+> Task :server:dependencyLicenses UP-TO-DATE
+> Task :example-plugins:painless-allowlist:compileTestJava NO-SOURCE
+> Task :example-plugins:rest-handler:jar UP-TO-DATE
+> Task :example-plugins:custom-significance-heuristic:loggerUsageCheck UP-TO-DATE
+> Task :example-plugins:painless-allowlist:testClasses UP-TO-DATE
+> Task :example-plugins:mapping-transformer:processYamlRestTestResources UP-TO-DATE
+> Task :example-plugins:mapping-transformer:yamlRestTestClasses UP-TO-DATE
+> Task :example-plugins:painless-allowlist:filepermissions UP-TO-DATE
+> Task :server:extractIncludeInternalClusterTestProto UP-TO-DATE
+> Task :example-plugins:mapping-transformer:forbiddenPatterns UP-TO-DATE
+> Task :example-plugins:rest-handler:compileTestJava NO-SOURCE
+> Task :server:extractInternalClusterTestProto UP-TO-DATE
+> Task :example-plugins:painless-allowlist:forbiddenApisResources UP-TO-DATE
+> Task :example-plugins:rest-handler:copyPluginPropertiesTemplate UP-TO-DATE
+> Task :server:generateInternalClusterTestProto NO-SOURCE
+> Task :example-plugins:mapping-transformer:licenseHeaders UP-TO-DATE
+> Task :example-plugins:custom-significance-heuristic:spotlessJava UP-TO-DATE
+> Task :example-plugins:custom-significance-heuristic:spotlessJavaCheck UP-TO-DATE
+> Task :example-plugins:rest-handler:pluginProperties UP-TO-DATE
+> Task :example-plugins:painless-allowlist:forbiddenApisMain UP-TO-DATE
+> Task :example-plugins:rest-handler:copyYamlTestsTask NO-SOURCE
+> Task :example-plugins:mapping-transformer:loggerUsageCheck UP-TO-DATE
+> Task :example-plugins:custom-significance-heuristic:thirdPartyAuditResources UP-TO-DATE
+> Task :example-plugins:custom-significance-heuristic:thirdPartyAudit NO-SOURCE
+> Task :example-plugins:painless-allowlist:compileYamlRestTestJava UP-TO-DATE
+> Task :example-plugins:painless-allowlist:processYamlRestTestResources UP-TO-DATE
+> Task :example-plugins:painless-allowlist:yamlRestTestClasses UP-TO-DATE
+> Task :example-plugins:custom-significance-heuristic:generatePomFileForNebulaPublication
+> Task :example-plugins:painless-allowlist:forbiddenPatterns UP-TO-DATE
+> Task :example-plugins:mapping-transformer:spotlessJava UP-TO-DATE
+> Task :example-plugins:mapping-transformer:spotlessJavaCheck UP-TO-DATE
+> Task :example-plugins:painless-allowlist:licenseHeaders UP-TO-DATE
+> Task :example-plugins:mapping-transformer:thirdPartyAuditResources UP-TO-DATE
+> Task :example-plugins:custom-significance-heuristic:validateNebulaPom UP-TO-DATE
+> Task :example-plugins:custom-significance-heuristic:validatePom UP-TO-DATE
+> Task :example-plugins:painless-allowlist:loggerUsageCheck UP-TO-DATE
+> Task :example-plugins:mapping-transformer:thirdPartyAudit NO-SOURCE
+> Task :example-plugins:mapping-transformer:generatePomFileForNebulaPublication
+> Task :example-plugins:mapping-transformer:validateNebulaPom UP-TO-DATE
+> Task :example-plugins:rest-handler:copyRestApiSpecsTask UP-TO-DATE
+> Task :example-plugins:mapping-transformer:validatePom UP-TO-DATE
+> Task :example-plugins:script-expert-scoring:compileJava UP-TO-DATE
+> Task :example-plugins:painless-allowlist:spotlessJava UP-TO-DATE
+> Task :example-plugins:painless-allowlist:spotlessJavaCheck UP-TO-DATE
+> Task :example-plugins:script-expert-scoring:processResources NO-SOURCE
+> Task :example-plugins:rest-handler:processTestResources NO-SOURCE
+> Task :example-plugins:painless-allowlist:thirdPartyAuditResources UP-TO-DATE
+> Task :example-plugins:rest-handler:testClasses UP-TO-DATE
+> Task :example-plugins:script-expert-scoring:classes UP-TO-DATE
+> Task :example-plugins:painless-allowlist:thirdPartyAudit NO-SOURCE
+> Task :example-plugins:rest-handler:dependencyLicenses UP-TO-DATE
+> Task :example-plugins:painless-allowlist:generatePomFileForNebulaPublication
+> Task :example-plugins:rest-handler:filepermissions UP-TO-DATE
+> Task :example-plugins:painless-allowlist:validateNebulaPom UP-TO-DATE
+> Task :example-plugins:painless-allowlist:validatePom UP-TO-DATE
+> Task :example-plugins:script-expert-scoring:jar UP-TO-DATE
+> Task :example-plugins:stream-transport-example:processResources NO-SOURCE
+> Task :example-plugins:script-expert-scoring:compileTestJava NO-SOURCE
+> Task :example-plugins:stream-transport-example:copyPluginPropertiesTemplate UP-TO-DATE
+> Task :plugins:arrow-flight-rpc:compileJava UP-TO-DATE
+
+> Task :client:rest:test
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by net.bytebuddy.dynamic.loading.ClassInjector$UsingUnsafe$Dispatcher$CreationAction
+WARNING: Please consider reporting this to the maintainers of class net.bytebuddy.dynamic.loading.ClassInjector$UsingUnsafe$Dispatcher$CreationAction
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by net.bytebuddy.dynamic.loading.ClassInjector$UsingUnsafe$Dispatcher$CreationAction
+WARNING: Please consider reporting this to the maintainers of class net.bytebuddy.dynamic.loading.ClassInjector$UsingUnsafe$Dispatcher$CreationAction
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by net.bytebuddy.dynamic.loading.ClassInjector$UsingUnsafe$Dispatcher$CreationAction
+WARNING: Please consider reporting this to the maintainers of class net.bytebuddy.dynamic.loading.ClassInjector$UsingUnsafe$Dispatcher$CreationAction
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+WARNING: Using incubator modules: jdk.incubator.vector
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by net.bytebuddy.dynamic.loading.ClassInjector$UsingUnsafe$Dispatcher$CreationAction
+WARNING: Please consider reporting this to the maintainers of class net.bytebuddy.dynamic.loading.ClassInjector$UsingUnsafe$Dispatcher$CreationAction
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+
+> Task :example-plugins:rest-handler:compileJavaRestTestJava UP-TO-DATE
+> Task :example-plugins:script-expert-scoring:copyPluginPropertiesTemplate UP-TO-DATE
+> Task :example-plugins:stream-transport-example:pluginProperties UP-TO-DATE
+> Task :example-plugins:rest-handler:forbiddenApisResources UP-TO-DATE
+> Task :plugins:arrow-flight-rpc:processResources NO-SOURCE
+> Task :plugins:arrow-flight-rpc:classes UP-TO-DATE
+> Task :example-plugins:script-expert-scoring:pluginProperties UP-TO-DATE
+> Task :example-plugins:rest-handler:processJavaRestTestResources NO-SOURCE
+> Task :example-plugins:rest-handler:javaRestTestClasses UP-TO-DATE
+> Task :plugins:arrow-flight-rpc:jar UP-TO-DATE
+> Task :example-plugins:script-expert-scoring:copyYamlTestsTask NO-SOURCE
+> Task :example-plugins:stream-transport-example:compileJava UP-TO-DATE
+> Task :example-plugins:stream-transport-example:classes UP-TO-DATE
+> Task :example-plugins:rest-handler:forbiddenApisMain UP-TO-DATE
+> Task :example-plugins:stream-transport-example:compileTestJava NO-SOURCE
+> Task :example-plugins:system-ingest-processor:compileJava UP-TO-DATE
+> Task :server:filepermissions UP-TO-DATE
+> Task :example-plugins:system-ingest-processor:processResources NO-SOURCE
+> Task :example-plugins:system-ingest-processor:classes UP-TO-DATE
+> Task :example-plugins:stream-transport-example:processTestResources NO-SOURCE
+> Task :example-plugins:stream-transport-example:testClasses UP-TO-DATE
+> Task :example-plugins:rest-handler:compileYamlRestTestJava UP-TO-DATE
+> Task :example-plugins:script-expert-scoring:copyRestApiSpecsTask UP-TO-DATE
+> Task :example-plugins:script-expert-scoring:processTestResources NO-SOURCE
+> Task :example-plugins:script-expert-scoring:testClasses UP-TO-DATE
+> Task :example-plugins:stream-transport-example:dependencyLicenses UP-TO-DATE
+> Task :example-plugins:rest-handler:processYamlRestTestResources UP-TO-DATE
+> Task :example-plugins:system-ingest-processor:jar UP-TO-DATE
+> Task :example-plugins:rest-handler:yamlRestTestClasses UP-TO-DATE
+> Task :example-plugins:script-expert-scoring:dependencyLicenses UP-TO-DATE
+> Task :example-plugins:rest-handler:forbiddenPatterns UP-TO-DATE
+> Task :example-plugins:rest-handler:licenseHeaders UP-TO-DATE
+> Task :example-plugins:rescore:dependencyLicenses UP-TO-DATE
+> Task :example-plugins:rest-handler:loggerUsageCheck UP-TO-DATE
+> Task :example-plugins:script-expert-scoring:filepermissions UP-TO-DATE
+> Task :example-plugins:script-expert-scoring:forbiddenApisResources UP-TO-DATE
+> Task :example-plugins:system-ingest-processor:compileTestJava UP-TO-DATE
+> Task :example-plugins:rescore:compileJava UP-TO-DATE
+> Task :example-plugins:rescore:classes UP-TO-DATE
+> Task :example-plugins:rest-handler:spotlessJava UP-TO-DATE
+> Task :example-plugins:rest-handler:spotlessJavaCheck UP-TO-DATE
+> Task :example-plugins:system-ingest-processor:copyPluginPropertiesTemplate UP-TO-DATE
+> Task :example-plugins:script-expert-scoring:forbiddenApisMain UP-TO-DATE
+> Task :example-plugins:rest-handler:thirdPartyAuditResources UP-TO-DATE
+> Task :example-plugins:rest-handler:thirdPartyAudit NO-SOURCE
+> Task :example-plugins:system-ingest-processor:pluginProperties UP-TO-DATE
+> Task :example-plugins:rest-handler:generatePomFileForNebulaPublication
+> Task :example-plugins:system-ingest-processor:copyYamlTestsTask NO-SOURCE
+> Task :example-plugins:script-expert-scoring:compileYamlRestTestJava UP-TO-DATE
+> Task :example-plugins:rest-handler:validateNebulaPom UP-TO-DATE
+> Task :example-plugins:rest-handler:validatePom UP-TO-DATE
+> Task :example-plugins:script-expert-scoring:processYamlRestTestResources UP-TO-DATE
+> Task :example-plugins:script-expert-scoring:yamlRestTestClasses UP-TO-DATE
+> Task :example-plugins:script-expert-scoring:forbiddenPatterns UP-TO-DATE
+> Task :example-plugins:script-expert-scoring:licenseHeaders UP-TO-DATE
+> Task :example-plugins:system-ingest-processor:copyRestApiSpecsTask UP-TO-DATE
+> Task :example-plugins:script-expert-scoring:loggerUsageCheck UP-TO-DATE
+> Task :example-plugins:system-ingest-processor:processTestResources NO-SOURCE
+> Task :example-plugins:system-ingest-processor:testClasses UP-TO-DATE
+> Task :example-plugins:stream-transport-example:filepermissions UP-TO-DATE
+> Task :example-plugins:system-ingest-processor:dependencyLicenses UP-TO-DATE
+> Task :server:compileInternalClusterTestJava UP-TO-DATE
+> Task :example-plugins:script-expert-scoring:spotlessJava UP-TO-DATE
+> Task :example-plugins:script-expert-scoring:spotlessJavaCheck UP-TO-DATE
+> Task :example-plugins:rescore:jar UP-TO-DATE
+> Task :example-plugins:script-expert-scoring:thirdPartyAuditResources UP-TO-DATE
+> Task :server:forbiddenApisResources UP-TO-DATE
+> Task :example-plugins:system-ingest-processor:filepermissions UP-TO-DATE
+> Task :example-plugins:script-expert-scoring:thirdPartyAudit NO-SOURCE
+> Task :modules:lang-painless:compileJava UP-TO-DATE
+> Task :server:processInternalClusterTestResources UP-TO-DATE
+> Task :server:internalClusterTestClasses UP-TO-DATE
+> Task :example-plugins:stream-transport-example:compileInternalClusterTestJava UP-TO-DATE
+> Task :example-plugins:script-expert-scoring:generatePomFileForNebulaPublication
+> Task :example-plugins:system-ingest-processor:forbiddenApisResources UP-TO-DATE
+> Task :example-plugins:stream-transport-example:forbiddenApisResources UP-TO-DATE
+> Task :example-plugins:rescore:compileTestJava UP-TO-DATE
+> Task :example-plugins:rescore:testClasses UP-TO-DATE
+> Task :server:forbiddenApisInternalClusterTest UP-TO-DATE
+> Task :example-plugins:system-search-processor:compileJava UP-TO-DATE
+> Task :example-plugins:stream-transport-example:processInternalClusterTestResources NO-SOURCE
+> Task :example-plugins:stream-transport-example:internalClusterTestClasses UP-TO-DATE
+> Task :example-plugins:script-expert-scoring:validateNebulaPom UP-TO-DATE
+> Task :example-plugins:script-expert-scoring:validatePom UP-TO-DATE
+> Task :example-plugins:system-ingest-processor:forbiddenApisMain UP-TO-DATE
+> Task :example-plugins:rescore:filepermissions UP-TO-DATE
+> Task :example-plugins:system-search-processor:processResources NO-SOURCE
+> Task :example-plugins:system-search-processor:classes UP-TO-DATE
+> Task :example-plugins:stream-transport-example:forbiddenApisMain UP-TO-DATE
+> Task :modules:lang-painless:processResources UP-TO-DATE
+> Task :modules:lang-painless:classes UP-TO-DATE
+> Task :server:forbiddenApisMain UP-TO-DATE
+> Task :example-plugins:rescore:forbiddenApisResources UP-TO-DATE
+> Task :example-plugins:stream-transport-example:forbiddenPatterns UP-TO-DATE
+> Task :example-plugins:system-search-processor:jar UP-TO-DATE
+> Task :example-plugins:system-ingest-processor:compileYamlRestTestJava UP-TO-DATE
+> Task :modules:lang-painless:jar UP-TO-DATE
+> Task :example-plugins:stream-transport-example:licenseHeaders UP-TO-DATE
+> Task :example-plugins:system-ingest-processor:processYamlRestTestResources UP-TO-DATE
+> Task :example-plugins:system-ingest-processor:yamlRestTestClasses UP-TO-DATE
+> Task :example-plugins:rescore:forbiddenApisMain UP-TO-DATE
+> Task :server:forbiddenApisTest UP-TO-DATE
+> Task :server:forbiddenApis UP-TO-DATE
+> Task :libs:opensearch-agent-sm:compileJava NO-SOURCE
+> Task :example-plugins:stream-transport-example:loggerUsageCheck UP-TO-DATE
+> Task :example-plugins:system-ingest-processor:forbiddenPatterns UP-TO-DATE
+> Task :example-plugins:system-search-processor:compileTestJava UP-TO-DATE
+> Task :example-plugins:rescore:compileYamlRestTestJava UP-TO-DATE
+> Task :libs:opensearch-agent-sm:processResources NO-SOURCE
+> Task :libs:opensearch-agent-sm:classes UP-TO-DATE
+> Task :example-plugins:rescore:processYamlRestTestResources UP-TO-DATE
+> Task :example-plugins:rescore:yamlRestTestClasses UP-TO-DATE
+> Task :libs:opensearch-agent-sm:compileTestJava NO-SOURCE
+> Task :example-plugins:rescore:forbiddenPatterns UP-TO-DATE
+> Task :libs:opensearch-agent-sm:processTestResources NO-SOURCE
+> Task :libs:opensearch-agent-sm:testClasses UP-TO-DATE
+> Task :example-plugins:system-ingest-processor:licenseHeaders UP-TO-DATE
+> Task :example-plugins:system-search-processor:copyPluginPropertiesTemplate UP-TO-DATE
+> Task :example-plugins:stream-transport-example:spotlessJava UP-TO-DATE
+> Task :example-plugins:stream-transport-example:spotlessJavaCheck UP-TO-DATE
+> Task :example-plugins:rescore:licenseHeaders UP-TO-DATE
+> Task :example-plugins:system-ingest-processor:loggerUsageCheck UP-TO-DATE
+> Task :example-plugins:system-search-processor:pluginProperties UP-TO-DATE
+> Task :example-plugins:rescore:loggerUsageCheck UP-TO-DATE
+> Task :example-plugins:stream-transport-example:thirdPartyAuditResources UP-TO-DATE
+> Task :libs:opensearch-agent-sm:dependencyLicenses UP-TO-DATE
+> Task :example-plugins:stream-transport-example:thirdPartyAudit NO-SOURCE
+> Task :example-plugins:system-search-processor:copyYamlTestsTask NO-SOURCE
+> Task :libs:opensearch-cli:compileTestJava UP-TO-DATE
+> Task :libs:opensearch-agent-sm:filepermissions NO-SOURCE
+> Task :libs:opensearch-cli:processTestResources NO-SOURCE
+> Task :example-plugins:stream-transport-example:generatePomFileForNebulaPublication
+> Task :libs:opensearch-cli:testClasses UP-TO-DATE
+> Task :libs:opensearch-agent-sm:forbiddenApisResources UP-TO-DATE
+> Task :example-plugins:system-search-processor:copyRestApiSpecsTask UP-TO-DATE
+> Task :example-plugins:system-ingest-processor:spotlessJava UP-TO-DATE
+> Task :example-plugins:system-ingest-processor:spotlessJavaCheck UP-TO-DATE
+> Task :libs:opensearch-agent-sm:forbiddenApisMain NO-SOURCE
+> Task :example-plugins:stream-transport-example:validateNebulaPom UP-TO-DATE
+> Task :libs:opensearch-cli:dependencyLicenses UP-TO-DATE
+> Task :example-plugins:system-search-processor:processTestResources NO-SOURCE
+> Task :example-plugins:stream-transport-example:validatePom UP-TO-DATE
+> Task :example-plugins:system-search-processor:testClasses UP-TO-DATE
+> Task :example-plugins:system-ingest-processor:thirdPartyAuditResources UP-TO-DATE
+> Task :libs:opensearch-agent-sm:forbiddenApisTest NO-SOURCE
+> Task :example-plugins:rescore:spotlessJava UP-TO-DATE
+> Task :libs:opensearch-agent-sm:forbiddenApis UP-TO-DATE
+> Task :example-plugins:rescore:spotlessJavaCheck UP-TO-DATE
+> Task :libs:opensearch-agent-sm:forbiddenPatterns NO-SOURCE
+> Task :example-plugins:system-ingest-processor:thirdPartyAudit NO-SOURCE
+> Task :example-plugins:system-search-processor:dependencyLicenses UP-TO-DATE
+> Task :example-plugins:rescore:thirdPartyAuditResources UP-TO-DATE
+> Task :libs:opensearch-cli:filepermissions UP-TO-DATE
+> Task :libs:opensearch-agent-sm:jarHell UP-TO-DATE
+> Task :example-plugins:rescore:thirdPartyAudit NO-SOURCE
+> Task :libs:opensearch-agent-sm:licenseHeaders NO-SOURCE
+> Task :server:forbiddenPatterns UP-TO-DATE
+> Task :libs:opensearch-cli:forbiddenApisResources UP-TO-DATE
+> Task :libs:opensearch-compress:compileTestJava UP-TO-DATE
+> Task :example-plugins:system-search-processor:filepermissions UP-TO-DATE
+> Task :example-plugins:system-ingest-processor:generatePomFileForNebulaPublication
+> Task :example-plugins:rescore:generatePomFileForNebulaPublication
+> Task :libs:opensearch-agent-sm:loggerUsageCheck NO-SOURCE
+> Task :libs:opensearch-compress:processTestResources NO-SOURCE
+> Task :libs:opensearch-compress:testClasses UP-TO-DATE
+> Task :example-plugins:system-search-processor:forbiddenApisResources UP-TO-DATE
+> Task :example-plugins:rescore:validateNebulaPom UP-TO-DATE
+> Task :example-plugins:rescore:validatePom UP-TO-DATE
+> Task :libs:opensearch-cli:forbiddenApisMain UP-TO-DATE
+> Task :example-plugins:system-ingest-processor:validateNebulaPom UP-TO-DATE
+> Task :example-plugins:system-ingest-processor:validatePom UP-TO-DATE
+> Task :server:jarHell UP-TO-DATE
+> Task :libs:opensearch-cli:forbiddenPatterns UP-TO-DATE
+> Task :example-plugins:system-search-processor:forbiddenApisMain UP-TO-DATE
+> Task :libs:opensearch-compress:dependencyLicenses UP-TO-DATE
+> Task :libs:opensearch-agent-sm:spotlessJava UP-TO-DATE
+> Task :libs:opensearch-agent-sm:spotlessJavaCheck UP-TO-DATE
+> Task :libs:opensearch-agent-sm:testingConventions SKIPPED
+> Task :libs:opensearch-dissect:compileJava UP-TO-DATE
+> Task :libs:opensearch-cli:licenseHeaders UP-TO-DATE
+> Task :libs:opensearch-dissect:processResources NO-SOURCE
+> Task :libs:opensearch-agent-sm:thirdPartyAuditResources UP-TO-DATE
+> Task :libs:opensearch-compress:filepermissions UP-TO-DATE
+> Task :libs:opensearch-geo:compileTestJava UP-TO-DATE
+> Task :libs:opensearch-cli:loggerUsageCheck UP-TO-DATE
+> Task :libs:opensearch-dissect:classes UP-TO-DATE
+> Task :libs:opensearch-compress:forbiddenApisResources UP-TO-DATE
+> Task :libs:opensearch-geo:processTestResources NO-SOURCE
+> Task :libs:opensearch-agent-sm:thirdPartyAudit NO-SOURCE
+> Task :libs:opensearch-geo:testClasses UP-TO-DATE
+> Task :example-plugins:system-search-processor:compileYamlRestTestJava UP-TO-DATE
+> Task :libs:opensearch-geo:dependencyLicenses UP-TO-DATE
+> Task :libs:opensearch-compress:forbiddenApisMain UP-TO-DATE
+> Task :example-plugins:system-search-processor:processYamlRestTestResources UP-TO-DATE
+> Task :libs:opensearch-agent-sm:generatePomFileForNebulaPublication
+> Task :example-plugins:system-search-processor:yamlRestTestClasses UP-TO-DATE
+> Task :libs:opensearch-compress:forbiddenPatterns UP-TO-DATE
+> Task :libs:opensearch-dissect:jar UP-TO-DATE
+> Task :libs:opensearch-geo:filepermissions UP-TO-DATE
+> Task :libs:opensearch-agent-sm:validateNebulaPom UP-TO-DATE
+> Task :libs:opensearch-agent-sm:validatePom UP-TO-DATE
+> Task :libs:opensearch-compress:licenseHeaders UP-TO-DATE
+> Task :example-plugins:system-search-processor:forbiddenPatterns UP-TO-DATE
+> Task :libs:opensearch-agent-sm:precommit UP-TO-DATE
+> Task :libs:opensearch-agent-sm:test SKIPPED
+> Task :server:licenseHeaders UP-TO-DATE
+> Task :libs:opensearch-geo:forbiddenApisResources UP-TO-DATE
+> Task :libs:opensearch-cli:spotlessJava UP-TO-DATE
+> Task :libs:opensearch-cli:spotlessJavaCheck UP-TO-DATE
+> Task :example-plugins:system-search-processor:licenseHeaders UP-TO-DATE
+> Task :libs:opensearch-geo:forbiddenApisMain UP-TO-DATE
+> Task :libs:opensearch-dissect:compileTestJava UP-TO-DATE
+> Task :libs:opensearch-geo:forbiddenPatterns UP-TO-DATE
+> Task :libs:opensearch-dissect:processTestResources UP-TO-DATE
+> Task :example-plugins:system-search-processor:loggerUsageCheck UP-TO-DATE
+> Task :libs:opensearch-dissect:testClasses UP-TO-DATE
+> Task :server:loggerUsageCheck UP-TO-DATE
+> Task :libs:opensearch-cli:thirdPartyAuditResources UP-TO-DATE
+> Task :libs:opensearch-compress:loggerUsageCheck UP-TO-DATE
+> Task :libs:opensearch-grok:compileJava UP-TO-DATE
+> Task :libs:opensearch-cli:thirdPartyAudit UP-TO-DATE
+> Task :libs:opensearch-geo:licenseHeaders UP-TO-DATE
+> Task :libs:opensearch-geo:loggerUsageCheck UP-TO-DATE
+> Task :libs:opensearch-dissect:dependencyLicenses UP-TO-DATE
+> Task :libs:opensearch-dissect:filepermissions UP-TO-DATE
+> Task :libs:opensearch-grok:processResources UP-TO-DATE
+> Task :libs:opensearch-dissect:forbiddenApisResources UP-TO-DATE
+> Task :libs:opensearch-grok:classes UP-TO-DATE
+> Task :libs:opensearch-cli:generatePomFileForNebulaPublication
+> Task :libs:opensearch-dissect:forbiddenApisMain UP-TO-DATE
+> Task :example-plugins:system-search-processor:spotlessJava UP-TO-DATE
+> Task :libs:opensearch-compress:spotlessJava UP-TO-DATE
+> Task :libs:opensearch-cli:validateNebulaPom UP-TO-DATE
+> Task :libs:opensearch-cli:validatePom UP-TO-DATE
+> Task :example-plugins:system-search-processor:spotlessJavaCheck UP-TO-DATE
+> Task :libs:opensearch-compress:spotlessJavaCheck UP-TO-DATE
+> Task :libs:opensearch-dissect:forbiddenPatterns UP-TO-DATE
+> Task :libs:opensearch-geo:spotlessJava UP-TO-DATE
+> Task :libs:opensearch-compress:thirdPartyAuditResources UP-TO-DATE
+> Task :libs:opensearch-geo:spotlessJavaCheck UP-TO-DATE
+> Task :example-plugins:system-search-processor:thirdPartyAuditResources UP-TO-DATE
+> Task :libs:opensearch-dissect:licenseHeaders UP-TO-DATE
+> Task :libs:opensearch-dissect:loggerUsageCheck UP-TO-DATE
+> Task :example-plugins:system-search-processor:thirdPartyAudit NO-SOURCE
+> Task :libs:opensearch-compress:thirdPartyAudit UP-TO-DATE
+> Task :libs:opensearch-geo:thirdPartyAuditResources UP-TO-DATE
+> Task :libs:opensearch-geo:thirdPartyAudit NO-SOURCE
+> Task :libs:opensearch-grok:jar UP-TO-DATE
+> Task :libs:opensearch-netty4:compileJava UP-TO-DATE
+> Task :libs:opensearch-geo:generatePomFileForNebulaPublication
+> Task :libs:opensearch-netty4:processResources NO-SOURCE
+> Task :example-plugins:system-search-processor:generatePomFileForNebulaPublication
+> Task :libs:opensearch-netty4:classes UP-TO-DATE
+> Task :libs:opensearch-compress:generatePomFileForNebulaPublication
+> Task :libs:opensearch-dissect:spotlessJava UP-TO-DATE
+> Task :libs:opensearch-dissect:spotlessJavaCheck UP-TO-DATE
+> Task :libs:opensearch-geo:validateNebulaPom UP-TO-DATE
+> Task :example-plugins:system-search-processor:validateNebulaPom UP-TO-DATE
+> Task :libs:opensearch-dissect:thirdPartyAuditResources UP-TO-DATE
+> Task :libs:opensearch-geo:validatePom UP-TO-DATE
+> Task :example-plugins:system-search-processor:validatePom UP-TO-DATE
+> Task :libs:opensearch-compress:validateNebulaPom UP-TO-DATE
+> Task :libs:opensearch-compress:validatePom UP-TO-DATE
+
+> Task :client:rest:test
+WARNING: A terminally deprecated method in sun.misc.Unsafe has been called
+WARNING: sun.misc.Unsafe::objectFieldOffset has been called by net.bytebuddy.dynamic.loading.ClassInjector$UsingUnsafe$Dispatcher$CreationAction
+WARNING: Please consider reporting this to the maintainers of class net.bytebuddy.dynamic.loading.ClassInjector$UsingUnsafe$Dispatcher$CreationAction
+WARNING: sun.misc.Unsafe::objectFieldOffset will be removed in a future release
+
+> Task :libs:opensearch-dissect:thirdPartyAudit NO-SOURCE
+> Task :libs:opensearch-grok:compileTestJava UP-TO-DATE
+> Task :libs:opensearch-dissect:generatePomFileForNebulaPublication
+> Task :libs:opensearch-netty4:jar UP-TO-DATE
+> Task :libs:opensearch-secure-sm:compileTestJava UP-TO-DATE
+> Task :libs:opensearch-grok:processTestResources NO-SOURCE
+> Task :libs:opensearch-grok:testClasses UP-TO-DATE
+> Task :libs:opensearch-plugin-classloader:compileTestJava NO-SOURCE
+> Task :libs:opensearch-dissect:validateNebulaPom UP-TO-DATE
+> Task :libs:opensearch-dissect:validatePom UP-TO-DATE
+> Task :libs:opensearch-nio:compileTestJava UP-TO-DATE
+> Task :libs:opensearch-secure-sm:processTestResources NO-SOURCE
+> Task :libs:opensearch-plugin-classloader:processTestResources NO-SOURCE
+> Task :libs:opensearch-secure-sm:testClasses UP-TO-DATE
+> Task :libs:opensearch-plugin-classloader:testClasses UP-TO-DATE
+> Task :libs:opensearch-grok:dependencyLicenses UP-TO-DATE
+> Task :libs:opensearch-nio:processTestResources UP-TO-DATE
+> Task :libs:opensearch-nio:testClasses UP-TO-DATE
+> Task :libs:opensearch-plugin-classloader:dependencyLicenses UP-TO-DATE
+> Task :libs:opensearch-secure-sm:dependencyLicenses UP-TO-DATE
+> Task :libs:opensearch-grok:filepermissions UP-TO-DATE
+> Task :libs:opensearch-nio:dependencyLicenses UP-TO-DATE
+> Task :libs:opensearch-plugin-classloader:filepermissions UP-TO-DATE
+> Task :libs:opensearch-netty4:compileTestJava UP-TO-DATE
+> Task :libs:opensearch-nio:filepermissions UP-TO-DATE
+> Task :libs:opensearch-netty4:processTestResources NO-SOURCE
+> Task :libs:opensearch-netty4:testClasses UP-TO-DATE
+> Task :libs:opensearch-grok:forbiddenApisResources UP-TO-DATE
+> Task :libs:opensearch-plugin-classloader:forbiddenApisResources UP-TO-DATE
+> Task :libs:opensearch-ssl-config:compileJava UP-TO-DATE
+> Task :libs:opensearch-plugin-classloader:forbiddenApisMain SKIPPED
+> Task :libs:opensearch-plugin-classloader:forbiddenApisTest NO-SOURCE
+> Task :libs:opensearch-plugin-classloader:forbiddenApis UP-TO-DATE
+> Task :libs:opensearch-nio:forbiddenApisResources UP-TO-DATE
+> Task :libs:opensearch-ssl-config:processResources NO-SOURCE
+> Task :libs:opensearch-grok:forbiddenApisMain UP-TO-DATE
+> Task :libs:opensearch-plugin-classloader:forbiddenPatterns UP-TO-DATE
+> Task :libs:opensearch-plugin-classloader:jarHell SKIPPED
+> Task :libs:opensearch-ssl-config:classes UP-TO-DATE
+> Task :libs:opensearch-nio:forbiddenApisMain UP-TO-DATE
+> Task :libs:opensearch-nio:forbiddenPatterns UP-TO-DATE
+> Task :libs:opensearch-grok:forbiddenPatterns UP-TO-DATE
+> Task :libs:opensearch-plugin-classloader:licenseHeaders UP-TO-DATE
+> Task :libs:opensearch-nio:licenseHeaders UP-TO-DATE
+> Task :libs:opensearch-grok:licenseHeaders UP-TO-DATE
+> Task :libs:opensearch-plugin-classloader:loggerUsageCheck UP-TO-DATE
+> Task :libs:opensearch-nio:loggerUsageCheck UP-TO-DATE
+> Task :libs:opensearch-grok:loggerUsageCheck UP-TO-DATE
+> Task :libs:opensearch-ssl-config:jar UP-TO-DATE
+> Task :libs:opensearch-nio:spotlessJava UP-TO-DATE
+> Task :libs:opensearch-nio:spotlessJavaCheck UP-TO-DATE
+> Task :server:spotlessJava UP-TO-DATE
+> Task :server:spotlessJavaCheck UP-TO-DATE
+> Task :libs:opensearch-secure-sm:filepermissions UP-TO-DATE
+> Task :libs:opensearch-netty4:dependencyLicenses UP-TO-DATE
+> Task :libs:opensearch-plugin-classloader:spotlessJava UP-TO-DATE
+> Task :libs:opensearch-nio:thirdPartyAuditResources UP-TO-DATE
+> Task :libs:opensearch-plugin-classloader:spotlessJavaCheck UP-TO-DATE
+> Task :libs:opensearch-grok:spotlessJava UP-TO-DATE
+> Task :libs:opensearch-grok:spotlessJavaCheck UP-TO-DATE
+> Task :libs:opensearch-ssl-config:compileTestJava UP-TO-DATE
+> Task :libs:opensearch-nio:thirdPartyAudit NO-SOURCE
+> Task :libs:opensearch-grok:thirdPartyAuditResources UP-TO-DATE
+> Task :libs:opensearch-netty4:filepermissions UP-TO-DATE
+> Task :libs:opensearch-plugin-classloader:testingConventions UP-TO-DATE
+> Task :libs:opensearch-nio:generatePomFileForNebulaPublication
+> Task :libs:opensearch-secure-sm:forbiddenApisResources UP-TO-DATE
+> Task :libs:opensearch-grok:thirdPartyAudit UP-TO-DATE
+> Task :libs:opensearch-secure-sm:forbiddenApisMain UP-TO-DATE
+> Task :libs:opensearch-netty4:forbiddenApisResources UP-TO-DATE
+> Task :libs:opensearch-plugin-classloader:thirdPartyAuditResources UP-TO-DATE
+> Task :libs:opensearch-secure-sm:forbiddenPatterns UP-TO-DATE
+> Task :libs:opensearch-plugin-classloader:thirdPartyAudit NO-SOURCE
+> Task :libs:opensearch-nio:validateNebulaPom UP-TO-DATE
+> Task :libs:opensearch-nio:validatePom UP-TO-DATE
+> Task :libs:opensearch-netty4:forbiddenApisMain UP-TO-DATE
+> Task :libs:opensearch-grok:generatePomFileForNebulaPublication
+> Task :libs:opensearch-secure-sm:licenseHeaders UP-TO-DATE
+> Task :libs:opensearch-plugin-classloader:generatePomFileForNebulaPublication
+> Task :libs:opensearch-ssl-config:processTestResources UP-TO-DATE
+> Task :libs:opensearch-ssl-config:testClasses UP-TO-DATE
+> Task :libs:opensearch-secure-sm:loggerUsageCheck UP-TO-DATE
+> Task :libs:opensearch-plugin-classloader:validateNebulaPom UP-TO-DATE
+> Task :libs:opensearch-netty4:forbiddenPatterns UP-TO-DATE
+> Task :libs:opensearch-plugin-classloader:validatePom UP-TO-DATE
+> Task :libs:opensearch-grok:validateNebulaPom UP-TO-DATE
+> Task :libs:opensearch-grok:validatePom UP-TO-DATE
+> Task :libs:opensearch-plugin-classloader:precommit UP-TO-DATE
+> Task :libs:opensearch-plugin-classloader:test SKIPPED
+> Task :libs:opensearch-ssl-config:dependencyLicenses UP-TO-DATE
+> Task :libs:opensearch-netty4:licenseHeaders UP-TO-DATE
+> Task :libs:opensearch-task-commons:compileTestJava UP-TO-DATE
+OpenJDK 64-Bit Server VM warning: Sharing is only supported for boot loader classes because bootstrap classpath has been appended
+> Task :libs:opensearch-secure-sm:spotlessJava UP-TO-DATE
+> Task :libs:opensearch-secure-sm:spotlessJavaCheck UP-TO-DATE
+> Task :libs:opensearch-ssl-config:filepermissions UP-TO-DATE
+> Task :libs:opensearch-telemetry:compileTestJava UP-TO-DATE
+> Task :libs:opensearch-netty4:loggerUsageCheck UP-TO-DATE
+> Task :libs:opensearch-task-commons:processTestResources NO-SOURCE
+> Task :libs:opensearch-task-commons:testClasses UP-TO-DATE
+> Task :libs:opensearch-secure-sm:thirdPartyAuditResources UP-TO-DATE
+> Task :libs:opensearch-telemetry:processTestResources NO-SOURCE
+> Task :libs:opensearch-telemetry:testClasses UP-TO-DATE
+> Task :libs:opensearch-ssl-config:forbiddenApisResources UP-TO-DATE
+> Task :libs:opensearch-secure-sm:thirdPartyAudit NO-SOURCE
+> Task :libs:opensearch-ssl-config:forbiddenApisMain UP-TO-DATE
+> Task :libs:opensearch-task-commons:dependencyLicenses UP-TO-DATE
+> Task :libs:opensearch-ssl-config:forbiddenPatterns UP-TO-DATE
+> Task :libs:opensearch-x-content:compileTestJava UP-TO-DATE
+> Task :libs:opensearch-task-commons:filepermissions UP-TO-DATE
+> Task :libs:opensearch-ssl-config:licenseHeaders UP-TO-DATE
+> Task :libs:opensearch-telemetry:dependencyLicenses UP-TO-DATE
+> Task :libs:opensearch-ssl-config:loggerUsageCheck UP-TO-DATE
+> Task :libs:opensearch-secure-sm:generatePomFileForNebulaPublication
+> Task :libs:opensearch-x-content:processTestResources UP-TO-DATE
+> Task :libs:opensearch-x-content:testClasses UP-TO-DATE
+> Task :libs:opensearch-task-commons:forbiddenApisResources UP-TO-DATE
+> Task :libs:opensearch-telemetry:filepermissions UP-TO-DATE
+> Task :libs:opensearch-netty4:spotlessJava UP-TO-DATE
+> Task :libs:opensearch-telemetry:forbiddenApisResources UP-TO-DATE
+> Task :libs:opensearch-task-commons:forbiddenApisMain UP-TO-DATE
+> Task :libs:opensearch-netty4:spotlessJavaCheck UP-TO-DATE
+> Task :libs:opensearch-secure-sm:validateNebulaPom UP-TO-DATE
+> Task :libs:opensearch-secure-sm:validatePom UP-TO-DATE
+> Task :libs:opensearch-netty4:thirdPartyAuditResources UP-TO-DATE
+> Task :libs:opensearch-x-content:dependencyLicenses UP-TO-DATE
+> Task :libs:opensearch-telemetry:forbiddenApisMain UP-TO-DATE
+> Task :libs:opensearch-netty4:thirdPartyAudit UP-TO-DATE
+> Task :libs:opensearch-task-commons:forbiddenPatterns UP-TO-DATE
+> Task :libs:opensearch-x-content:filepermissions UP-TO-DATE
+> Task :libs:opensearch-ssl-config:spotlessJava UP-TO-DATE
+> Task :libs:opensearch-ssl-config:spotlessJavaCheck UP-TO-DATE
+> Task :libs:opensearch-netty4:generatePomFileForNebulaPublication
+> Task :libs:opensearch-telemetry:forbiddenPatterns UP-TO-DATE
+> Task :libs:opensearch-ssl-config:thirdPartyAuditResources UP-TO-DATE
+> Task :libs:opensearch-telemetry:licenseHeaders UP-TO-DATE
+> Task :libs:opensearch-task-commons:licenseHeaders UP-TO-DATE
+> Task :libs:opensearch-netty4:validateNebulaPom UP-TO-DATE
+> Task :libs:opensearch-netty4:validatePom UP-TO-DATE
+> Task :libs:opensearch-x-content:forbiddenApisResources UP-TO-DATE
+> Task :libs:opensearch-telemetry:loggerUsageCheck UP-TO-DATE
+> Task :libs:opensearch-ssl-config:thirdPartyAudit UP-TO-DATE
+> Task :modules:aggs-matrix-stats:compileTestJava UP-TO-DATE
+> Task :libs:opensearch-x-content:forbiddenApisMain UP-TO-DATE
+> Task :libs:opensearch-ssl-config:generatePomFileForNebulaPublication
+> Task :libs:opensearch-task-commons:loggerUsageCheck UP-TO-DATE
+> Task :libs:opensearch-x-content:forbiddenPatterns UP-TO-DATE
+> Task :modules:aggs-matrix-stats:copyPluginPropertiesTemplate UP-TO-DATE
+> Task :libs:opensearch-ssl-config:validateNebulaPom UP-TO-DATE
+> Task :server:testingConventions UP-TO-DATE
+> Task :libs:opensearch-ssl-config:validatePom UP-TO-DATE
+> Task :server:thirdPartyAuditResources UP-TO-DATE
+> Task :libs:opensearch-x-content:licenseHeaders UP-TO-DATE
+> Task :modules:aggs-matrix-stats:pluginProperties UP-TO-DATE
+> Task :libs:opensearch-telemetry:spotlessJava UP-TO-DATE
+> Task :libs:opensearch-telemetry:spotlessJavaCheck UP-TO-DATE
+> Task :libs:opensearch-task-commons:spotlessJava UP-TO-DATE
+> Task :modules:aggs-matrix-stats:copyYamlTestsTask NO-SOURCE
+> Task :libs:opensearch-task-commons:spotlessJavaCheck UP-TO-DATE
+> Task :libs:opensearch-x-content:loggerUsageCheck UP-TO-DATE
+> Task :server:thirdPartyAudit UP-TO-DATE
+> Task :libs:opensearch-telemetry:thirdPartyAuditResources UP-TO-DATE
+> Task :libs:opensearch-task-commons:thirdPartyAuditResources UP-TO-DATE
+> Task :libs:opensearch-telemetry:thirdPartyAudit NO-SOURCE
+> Task :libs:opensearch-task-commons:thirdPartyAudit NO-SOURCE
+> Task :libs:opensearch-task-commons:generatePomFileForNebulaPublication
+> Task :libs:opensearch-telemetry:generatePomFileForNebulaPublication
+> Task :modules:aggs-matrix-stats:copyRestApiSpecsTask UP-TO-DATE
+> Task :modules:autotagging-commons:common:compileJava UP-TO-DATE
+> Task :modules:analysis-common:compileJava UP-TO-DATE
+> Task :libs:opensearch-x-content:spotlessJava UP-TO-DATE
+> Task :libs:opensearch-core:forbiddenApisTest UP-TO-DATE
+> Task :libs:opensearch-core:forbiddenApis UP-TO-DATE
+> Task :libs:opensearch-common:forbiddenApisTest UP-TO-DATE
+> Task :libs:opensearch-common:forbiddenApis UP-TO-DATE
+> Task :client:client-benchmark-noop-api-plugin:forbiddenApisTest NO-SOURCE
+> Task :client:client-benchmark-noop-api-plugin:forbiddenApis UP-TO-DATE
+> Task :rest-api-spec:forbiddenApisYamlRestTest UP-TO-DATE
+> Task :rest-api-spec:forbiddenApis UP-TO-DATE
+> Task :rest-api-spec:precommit UP-TO-DATE
+> Task :rest-api-spec:test SKIPPED
+> Task :example-plugins:custom-settings:forbiddenApisTest UP-TO-DATE
+> Task :example-plugins:custom-suggester:forbiddenApisTest NO-SOURCE
+> Task :client:client-benchmark-noop-api-plugin:jarHell UP-TO-DATE
+> Task :example-plugins:custom-significance-heuristic:forbiddenApisTest UP-TO-DATE
+> Task :libs:opensearch-core:jarHell UP-TO-DATE
+> Task :libs:opensearch-common:jarHell UP-TO-DATE
+> Task :example-plugins:custom-settings:forbiddenApisYamlRestTest UP-TO-DATE
+> Task :example-plugins:custom-settings:forbiddenApis UP-TO-DATE
+> Task :example-plugins:custom-suggester:forbiddenApisYamlRestTest UP-TO-DATE
+> Task :example-plugins:custom-suggester:forbiddenApis UP-TO-DATE
+> Task :example-plugins:custom-significance-heuristic:forbiddenApisYamlRestTest UP-TO-DATE
+> Task :client:client-benchmark-noop-api-plugin:testingConventions UP-TO-DATE
+> Task :client:client-benchmark-noop-api-plugin:precommit UP-TO-DATE
+> Task :example-plugins:custom-significance-heuristic:forbiddenApis UP-TO-DATE
+> Task :client:client-benchmark-noop-api-plugin:test SKIPPED
+> Task :example-plugins:custom-settings:jarHell UP-TO-DATE
+> Task :example-plugins:custom-suggester:jarHell UP-TO-DATE
+> Task :libs:opensearch-common:testingConventions UP-TO-DATE
+> Task :libs:opensearch-common:precommit UP-TO-DATE
+> Task :libs:opensearch-core:testingConventions UP-TO-DATE
+> Task :libs:opensearch-core:precommit UP-TO-DATE
+> Task :example-plugins:custom-significance-heuristic:jarHell UP-TO-DATE
+> Task :example-plugins:mapping-transformer:forbiddenApisTest UP-TO-DATE
+> Task :example-plugins:custom-settings:testingConventions UP-TO-DATE
+> Task :example-plugins:custom-settings:precommit UP-TO-DATE
+> Task :example-plugins:custom-suggester:testingConventions UP-TO-DATE
+> Task :example-plugins:custom-suggester:precommit UP-TO-DATE
+> Task :example-plugins:custom-suggester:test SKIPPED
+> Task :example-plugins:custom-significance-heuristic:testingConventions UP-TO-DATE
+> Task :benchmarks:generatePomFileForNebulaPublication
+> Task :example-plugins:custom-significance-heuristic:precommit UP-TO-DATE
+> Task :example-plugins:mapping-transformer:forbiddenApisYamlRestTest UP-TO-DATE
+> Task :example-plugins:mapping-transformer:forbiddenApis UP-TO-DATE
+> Task :example-plugins:painless-allowlist:forbiddenApisTest NO-SOURCE
+> Task :example-plugins:mapping-transformer:jarHell UP-TO-DATE
+> Task :example-plugins:painless-allowlist:forbiddenApisYamlRestTest UP-TO-DATE
+> Task :example-plugins:painless-allowlist:forbiddenApis UP-TO-DATE
+> Task :example-plugins:painless-allowlist:jarHell UP-TO-DATE
+> Task :example-plugins:mapping-transformer:testingConventions UP-TO-DATE
+> Task :example-plugins:mapping-transformer:precommit UP-TO-DATE
+> Task :example-plugins:painless-allowlist:testingConventions UP-TO-DATE
+> Task :example-plugins:painless-allowlist:precommit UP-TO-DATE
+> Task :example-plugins:painless-allowlist:test SKIPPED
+> Task :client:benchmark:generatePomFileForNebulaPublication
+> Task :example-plugins:rescore:forbiddenApisTest UP-TO-DATE
+> Task :client:benchmark:compileJava UP-TO-DATE
+> Task :client:benchmark:classes UP-TO-DATE
+> Task :client:benchmark:compileTestJava NO-SOURCE
+> Task :client:benchmark:testClasses UP-TO-DATE
+> Task :example-plugins:rescore:forbiddenApisYamlRestTest UP-TO-DATE
+> Task :example-plugins:rescore:forbiddenApis UP-TO-DATE
+> Task :client:benchmark:forbiddenApisMain UP-TO-DATE
+> Task :client:benchmark:forbiddenApisTest NO-SOURCE
+> Task :client:benchmark:forbiddenApis UP-TO-DATE
+> Task :example-plugins:rescore:jarHell UP-TO-DATE
+> Task :client:benchmark:jarHell UP-TO-DATE
+> Task :client:benchmark:loggerUsageCheck UP-TO-DATE
+> Task :example-plugins:rescore:testingConventions UP-TO-DATE
+> Task :example-plugins:rescore:precommit UP-TO-DATE
+> Task :client:benchmark:testingConventions UP-TO-DATE
+> Task :client:rest-high-level:generatePomFileForNebulaPublication
+> Task :client:benchmark:validateNebulaPom UP-TO-DATE
+> Task :client:benchmark:validatePom UP-TO-DATE
+> Task :client:benchmark:precommit UP-TO-DATE
+> Task :client:benchmark:test SKIPPED
+> Task :client:rest-high-level:compileJava UP-TO-DATE
+> Task :client:rest-high-level:classes UP-TO-DATE
+
+> Task :client:rest:test
+WARNING: Using incubator modules: jdk.incubator.vector
+
+> Task :example-plugins:rest-handler:forbiddenApisJavaRestTest UP-TO-DATE
+> Task :example-plugins:rest-handler:forbiddenApisTest NO-SOURCE
+--- output end ---

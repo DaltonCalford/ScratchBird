@@ -1,3 +1,222 @@
 task_id=ENG-MARIADB-002
-status=blocked
-timestamp_utc=2026-02-24T04:45:30Z
+status=done
+timestamp_utc=2026-02-24T17:56:45Z
+
+=== command 1 ===
+cwd: /home/dcalford/CliWork
+timeout_s: 40
+rc: 0
+timed_out: False
+duration_s: 0.035
+cmd: test -d /home/dcalford/CliWork/server && git -C /home/dcalford/CliWork/server rev-parse --short HEAD
+--- output begin ---
+21a0714a118
+--- output end ---
+
+=== command 2 ===
+cwd: /home/dcalford/CliWork/server
+timeout_s: 240
+rc: 0
+timed_out: False
+duration_s: 231.614
+cmd: ctest --test-dir build-baseline --output-on-failure
+--- output begin ---
+Internal ctest changing into directory: /home/dcalford/CliWork/server/build-baseline
+Test project /home/dcalford/CliWork/server/build-baseline
+      Start  1: strings
+ 1/96 Test  #1: strings ..........................   Passed    0.03 sec
+      Start  2: json
+ 2/96 Test  #2: json .............................   Passed    0.00 sec
+      Start  3: simple
+ 3/96 Test  #3: simple ...........................   Passed    0.14 sec
+      Start  4: skip
+ 4/96 Test  #4: skip .............................   Passed    0.01 sec
+      Start  5: todo
+ 5/96 Test  #5: todo .............................   Passed    0.00 sec
+      Start  6: skip_all
+ 6/96 Test  #6: skip_all .........................   Passed    0.00 sec
+      Start  7: no_plan
+ 7/96 Test  #7: no_plan ..........................   Passed    0.00 sec
+      Start  8: base64
+ 8/96 Test  #8: base64 ...........................   Passed    0.01 sec
+      Start  9: bitmap
+ 9/96 Test  #9: bitmap ...........................   Passed    0.10 sec
+      Start 10: byte_order
+10/96 Test #10: byte_order .......................   Passed    0.00 sec
+      Start 11: crc32
+11/96 Test #11: crc32 ............................   Passed    0.53 sec
+      Start 12: dynamic_array
+12/96 Test #12: dynamic_array ....................   Passed    0.01 sec
+      Start 13: dynstring
+13/96 Test #13: dynstring ........................   Passed    0.01 sec
+      Start 14: lf
+14/96 Test #14: lf ...............................   Passed    1.84 sec
+      Start 15: my_atomic
+15/96 Test #15: my_atomic ........................   Passed    0.18 sec
+      Start 16: my_getopt
+16/96 Test #16: my_getopt ........................   Passed    0.01 sec
+      Start 17: my_malloc
+17/96 Test #17: my_malloc ........................   Passed    0.00 sec
+      Start 18: my_rdtsc
+18/96 Test #18: my_rdtsc .........................   Passed    0.01 sec
+      Start 19: my_tzinfo
+19/96 Test #19: my_tzinfo ........................   Passed    0.00 sec
+      Start 20: queues
+20/96 Test #20: queues ...........................   Passed    0.01 sec
+      Start 21: stack_allocation
+21/96 Test #21: stack_allocation .................   Passed    0.01 sec
+      Start 22: stacktrace
+22/96 Test #22: stacktrace .......................   Passed    0.06 sec
+      Start 23: waiting_threads
+23/96 Test #23: waiting_threads ..................   Passed  213.12 sec
+      Start 24: my_vsnprintf
+24/96 Test #24: my_vsnprintf .....................   Passed    0.01 sec
+      Start 25: aes
+25/96 Test #25: aes ..............................   Passed    0.01 sec
+      Start 26: ma_dyncol
+26/96 Test #26: ma_dyncol ........................   Passed    0.01 sec
+      Start 27: my_decimal
+27/96 Test #27: my_decimal .......................   Passed    0.00 sec
+      Start 28: json_lib
+28/96 Test #28: json_lib .........................   Passed    0.00 sec
+      Start 29: json_normalize
+29/96 Test #29: json_normalize ...................   Passed    0.00 sec
+      Start 30: my_apc
+30/96 Test #30: my_apc ...........................   Passed    7.53 sec
+      Start 31: explain_filename
+31/96 Test #31: explain_filename .................   Passed    0.04 sec
+      Start 32: mf_iocache
+32/96 Test #32: mf_iocache .......................   Passed    0.01 sec
+      Start 33: my_json_writer
+33/96 Test #33: my_json_writer ...................   Passed    0.03 sec
+      Start 34: bulk1
+34/96 Test #34: bulk1 ............................   Passed    0.00 sec
+      Start 35: performance
+35/96 Test #35: performance ......................   Passed    0.00 sec
+      Start 36: basic-t
+36/96 Test #36: basic-t ..........................   Passed    0.00 sec
+      Start 37: fetch
+37/96 Test #37: fetch ............................   Passed    0.00 sec
+      Start 38: charset
+38/96 Test #38: charset ..........................   Passed    0.00 sec
+      Start 39: logs
+39/96 Test #39: logs .............................   Passed    0.00 sec
+      Start 40: cursor
+40/96 Test #40: cursor ...........................   Passed    0.00 sec
+      Start 41: errors
+41/96 Test #41: errors ...........................   Passed    0.00 sec
+      Start 42: view
+42/96 Test #42: view .............................   Passed    0.00 sec
+      Start 43: ps
+43/96 Test #43: ps ...............................   Passed    0.00 sec
+      Start 44: ps_bugs
+44/96 Test #44: ps_bugs ..........................   Passed    0.00 sec
+      Start 45: sp
+45/96 Test #45: sp ...............................   Passed    0.00 sec
+      Start 46: result
+46/96 Test #46: result ...........................   Passed    0.00 sec
+      Start 47: connection
+47/96 Test #47: connection .......................   Passed    0.00 sec
+      Start 48: misc
+48/96 Test #48: misc .............................   Passed    0.00 sec
+      Start 49: ps_new
+49/96 Test #49: ps_new ...........................   Passed    0.00 sec
+      Start 50: thread
+50/96 Test #50: thread ...........................   Passed    0.00 sec
+      Start 51: features-10_2
+51/96 Test #51: features-10_2 ....................   Passed    0.00 sec
+      Start 52: dyncol
+52/96 Test #52: dyncol ...........................   Passed    0.00 sec
+      Start 53: async
+53/96 Test #53: async ............................   Passed    0.00 sec
+      Start 54: innodb_rbt
+54/96 Test #54: innodb_rbt .......................   Passed    0.00 sec
+      Start 55: innodb_fts
+55/96 Test #55: innodb_fts .......................   Passed    0.00 sec
+      Start 56: innodb_ahi
+56/96 Test #56: innodb_ahi .......................   Passed    0.00 sec
+      Start 57: innodb_sync
+57/96 Test #57: innodb_sync ......................   Passed    1.97 sec
+      Start 58: ma_control_file
+58/96 Test #58: ma_control_file ..................   Passed    0.08 sec
+      Start 59: trnman
+59/96 Test #59: trnman ...........................   Passed    0.12 sec
+      Start 60: ma_test_loghandler
+60/96 Test #60: ma_test_loghandler ...............   Passed    0.25 sec
+      Start 61: ma_test_loghandler_multigroup
+61/96 Test #61: ma_test_loghandler_multigroup ....   Passed    0.02 sec
+      Start 62: ma_test_loghandler_multithread
+62/96 Test #62: ma_test_loghandler_multithread ...   Passed    0.21 sec
+      Start 63: ma_test_loghandler_pagecache
+63/96 Test #63: ma_test_loghandler_pagecache .....   Passed    0.06 sec
+      Start 64: ma_test_loghandler_long
+64/96 Test #64: ma_test_loghandler_long ..........   Passed    0.06 sec
+      Start 65: ma_test_loghandler_noflush
+65/96 Test #65: ma_test_loghandler_noflush .......   Passed    0.05 sec
+      Start 66: ma_test_loghandler_first_lsn
+66/96 Test #66: ma_test_loghandler_first_lsn .....   Passed    0.05 sec
+      Start 67: ma_test_loghandler_max_lsn
+67/96 Test #67: ma_test_loghandler_max_lsn .......   Passed    0.13 sec
+      Start 68: ma_test_loghandler_purge
+68/96 Test #68: ma_test_loghandler_purge .........   Passed    0.16 sec
+      Start 69: ma_test_loghandler_readonly
+69/96 Test #69: ma_test_loghandler_readonly ......   Passed    0.02 sec
+      Start 70: ma_test_loghandler_nologs
+70/96 Test #70: ma_test_loghandler_nologs ........   Passed    0.13 sec
+      Start 71: ma_pagecache_single_1k
+71/96 Test #71: ma_pagecache_single_1k ...........   Passed    0.08 sec
+      Start 72: ma_pagecache_single_8k
+72/96 Test #72: ma_pagecache_single_8k ...........   Passed    0.01 sec
+      Start 73: ma_pagecache_single_64k
+73/96 Test #73: ma_pagecache_single_64k ..........   Passed    0.00 sec
+      Start 74: ma_pagecache_consist_1k
+74/96 Test #74: ma_pagecache_consist_1k ..........   Passed    0.01 sec
+      Start 75: ma_pagecache_consist_64k
+75/96 Test #75: ma_pagecache_consist_64k .........   Passed    0.01 sec
+      Start 76: ma_pagecache_consist_1kHC
+76/96 Test #76: ma_pagecache_consist_1kHC ........   Passed    0.01 sec
+      Start 77: ma_pagecache_consist_64kHC
+77/96 Test #77: ma_pagecache_consist_64kHC .......   Passed    0.01 sec
+      Start 78: ma_pagecache_consist_1kRD
+78/96 Test #78: ma_pagecache_consist_1kRD ........   Passed    0.18 sec
+      Start 79: ma_pagecache_consist_64kRD
+79/96 Test #79: ma_pagecache_consist_64kRD .......   Passed    1.49 sec
+      Start 80: ma_pagecache_consist_1kWR
+80/96 Test #80: ma_pagecache_consist_1kWR ........   Passed    0.32 sec
+      Start 81: ma_pagecache_consist_64kWR
+81/96 Test #81: ma_pagecache_consist_64kWR .......   Passed    2.08 sec
+      Start 82: ma_pagecache_rwconsist_1k
+82/96 Test #82: ma_pagecache_rwconsist_1k ........   Passed    0.01 sec
+      Start 83: ma_pagecache_rwconsist2_1k
+83/96 Test #83: ma_pagecache_rwconsist2_1k .......   Passed    0.01 sec
+      Start 84: pfs_instr_class
+84/96 Test #84: pfs_instr_class ..................   Passed    0.00 sec
+      Start 85: pfs_instr_class-oom
+85/96 Test #85: pfs_instr_class-oom ..............   Passed    0.00 sec
+      Start 86: pfs_instr
+86/96 Test #86: pfs_instr ........................   Passed    0.00 sec
+      Start 87: pfs_instr-oom
+87/96 Test #87: pfs_instr-oom ....................   Passed    0.01 sec
+      Start 88: pfs_account-oom
+88/96 Test #88: pfs_account-oom ..................   Passed    0.00 sec
+      Start 89: pfs_host-oom
+89/96 Test #89: pfs_host-oom .....................   Passed    0.01 sec
+      Start 90: pfs_user-oom
+90/96 Test #90: pfs_user-oom .....................   Passed    0.01 sec
+      Start 91: pfs_noop
+91/96 Test #91: pfs_noop .........................   Passed    0.00 sec
+      Start 92: pfs
+92/96 Test #92: pfs ..............................   Passed    0.01 sec
+      Start 93: pfs_misc
+93/96 Test #93: pfs_misc .........................   Passed    0.01 sec
+      Start 94: ed25519
+94/96 Test #94: ed25519 ..........................   Passed    0.00 sec
+      Start 95: dbug
+95/96 Test #95: dbug .............................   Passed    0.05 sec
+      Start 96: import_util
+96/96 Test #96: import_util ......................   Passed    0.00 sec
+
+100% tests passed, 0 tests failed out of 96
+
+Total Test time (real) = 231.52 sec
+--- output end ---

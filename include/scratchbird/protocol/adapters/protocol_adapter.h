@@ -390,6 +390,9 @@ protected:
 protected:
     core::Database* engineDatabase() { return shared_database_ ? shared_database_ : database_.get(); }
     const core::Database* engineDatabase() const { return shared_database_ ? shared_database_ : database_.get(); }
+    bool resolveDatabaseSelection(const std::string& requested_database,
+                                  std::string& selected_database) const;
+    static bool equalsDatabaseName(const std::string& lhs, const std::string& rhs);
 
     ProtocolAdapterConfig config_;
     ProtocolState state_ = ProtocolState::INITIAL;

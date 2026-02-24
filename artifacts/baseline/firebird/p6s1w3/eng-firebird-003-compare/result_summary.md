@@ -4,10 +4,10 @@
 - title: Comparison workload execution for firebird
 - status: `blocked`
 - gate: `ENG-FIREBIRD-GATE-03`
-- commands_total: `0`
-- commands_passed: `0`
-- commands_failed: `0`
-- reason: `Dependency blocked: ENG-FIREBIRD-002, SB-006`
+- commands_total: `2`
+- commands_passed: `1`
+- commands_failed: `1`
+- reason: `Command failed: bash tests/compatibility/firebird/scripts/run_firebird_ctest.sh`
 
 ## Evidence Files
 - `run_manifest.md`

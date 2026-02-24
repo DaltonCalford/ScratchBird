@@ -27,6 +27,15 @@ Scope: Unblock `ENGINE_BASELINE_COMPARISON_TRACKER_2026-02-22.csv` blocked root 
    - Cassandra `ant artifacts` requires Go `>= 1.23.1` for docs generation unless doc generation is skipped.
    - Firebird configure requires `tommath` dev headers unless built with builtin tommath option.
    - MongoDB Bazel lane requires a resolvable C/C++ toolchain (`@@bazel_tools//tools/cpp:toolchain_type`), otherwise `bazel build install-mongod` fails at analysis phase.
+   - Firebird build lane also requires `libtool` in path when building bundled `libtommath` (`make[4]: libtool: No such file or directory`).
+   - Compatibility compare lanes require converted test trees under:
+     - `tests/compatibility/firebird/converted`
+     - `tests/compatibility/mysql/converted`
+     - `tests/compatibility/postgresql/converted`
+   - `ScratchBird-driver` FDW wrapper clients (`sb_pg_isql`, `sb_my_isql`, `sb_fb_isql`) are gated by missing adapter/link dependencies in this tree:
+     - `sb_my_isql` unresolved `scratchbird::fdw::MySQLAdapter::*`
+     - `sb_fb_isql` unresolved engine symbols (`Database`, `Executor`, `FirebirdQueryCompiler`, `CatalogManager`)
+   - PostgreSQL compare lane using generic `sb_isql` fallback currently fails with transport policy mismatch on port `5432` (`TLS is required for inet_listener/managed transport`).
 
 ## 2) Minimal Linux package checklist (Debian/Ubuntu)
 Run as privileged user:
@@ -35,6 +44,7 @@ Run as privileged user:
 sudo apt-get update
 sudo apt-get install -y \
   build-essential \
+  libtool \
   maven \
   bison \
   libsnappy-dev \
@@ -56,6 +66,7 @@ Notes:
 6. `protobuf-compiler` is required for InfluxDB codegen (`protoc`).
 7. `docker.io` is required by OpenSearch distribution docker tasks.
 8. `libtommath-dev` satisfies Firebird configure dependency.
+9. `libtool` is required for Firebird bundled library build stage.
 
 ## 3) User-local tools (no root required)
 ```bash
@@ -148,3 +159,6 @@ PY
 1. Neo4j/MariaDB/Milvus/Mongo root blockers should move from missing-tool failures to real build/test results.
 2. Timeout-only gates should reduce after extended command budgets.
 3. Remaining blockers should be true build/test or dependency chain blockers, not harness/tooling artifacts.
+4. Compare gates are now past missing-asset setup and blocked on runtime parity/transport constraints:
+   - Firebird/MySQL: curated SQL failures in converted test subset.
+   - PostgreSQL: TLS transport requirement mismatch for current endpoint and no working FDW wrapper binary in this tree.

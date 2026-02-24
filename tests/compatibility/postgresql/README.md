@@ -49,9 +49,9 @@ PostgreSQL tests cover comprehensive SQL functionality:
 
 ## Running Tests
 
-**Prerequisites:** The `sb_pg_isql` client must be built first (see [Plan 06](/docs/planning/PLAN_06_DEDICATED_ISQL_CLIENTS.md)).
+**Prerequisites:** Build CLI clients in the `ScratchBird-driver` repository first. This runner requires `sb_pg_isql` for PostgreSQL wire-protocol parity. Generic `sb_isql` is native-protocol only and is rejected for this lane.
 
-Once `sb_pg_isql` is available:
+Once the PostgreSQL CLI is available:
 
 ```bash
 # Run a single test
@@ -73,6 +73,8 @@ CTest wrapper (opt-in):
 # Uses config/ctest_list.txt and writes to results/ctest/<timestamp>
 SCRATCHBIRD_PG_COMPAT_RUN=1 ctest -R CompatibilityPostgreSQL --test-dir build
 ```
+
+If `sb_pg_isql` is unavailable, set `SCRATCHBIRD_PG_ISQL` to a valid `sb_pg_isql` path after building FDW CLI wrappers; generic `sb_isql` fallback is intentionally blocked.
 
 ## Test Format
 

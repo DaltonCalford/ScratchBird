@@ -87,7 +87,6 @@ std::string resolvePostgresqlSchemaPath(core::CatalogManager* catalog,
 
 PostgresqlAdapter::PostgresqlAdapter(const ProtocolAdapterConfig& config)
     : ProtocolAdapter(config) {
-
     // Initialize default server parameters
     initializeServerParameters();
 
@@ -148,7 +147,17 @@ core::Status PostgresqlAdapter::connectRemoteClient(core::ErrorContext* ctx) {
         return core::Status::OK;
     }
 
-    client_config_.database_name = database_name_.empty() ? "default" : database_name_;
+    std::string selected_database;
+    if (!resolveDatabaseSelection(database_name_, selected_database)) {
+        if (ctx) {
+            ctx->set(core::Status::INVALID_AUTHORIZATION,
+                     "Database switch denied by manager binding context",
+                     __FILE__, __LINE__, __func__);
+        }
+        return core::Status::INVALID_AUTHORIZATION;
+    }
+    database_name_ = selected_database;
+    client_config_.database_name = selected_database;
     if (!config_.engine_endpoint.empty()) {
         client_config_.ipc_method = server::IPCMethod::AUTO;
         client_config_.socket_path = config_.engine_endpoint;
@@ -162,6 +171,9 @@ core::Status PostgresqlAdapter::connectRemoteClient(core::ErrorContext* ctx) {
     client_config_.write_timeout_ms = config_.write_timeout_ms;
     client_config_.auto_commit = true;
     client_config_.auto_start_server = false;
+    client_config_.connect_client_flags = config_.connect_client_flags;
+    client_config_.has_bound_db_uuid = config_.has_bound_db_uuid;
+    client_config_.bound_db_uuid = config_.bound_db_uuid;
     client_config_.username = username_.empty() ? "BOOTSTRAP" : username_;
 
     client_ = std::make_unique<client::Connection>();
@@ -182,7 +194,7 @@ core::Status PostgresqlAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
 
     // Set search_path to emulated schema (if it exists or can be created)
     if (!search_path_set_) {
-        std::string db_name = database_name_.empty() ? std::string("default") : database_name_;
+        std::string db_name = database_name_;
         std::string schema_name = buildPostgresqlSchemaPath(db_name);
         auto execute_set = [&](const std::string& target) -> core::Status {
             std::string set_path = "SET search_path TO '" + escapeLiteral(target) + "'";
@@ -619,10 +631,19 @@ core::Status PostgresqlAdapter::handleStartupMessage(network::Connection* conn) 
         }
     }
 
-    // Default database to username if not specified
+    // Default database to username if not specified by client input
     if (database_name_.empty()) {
         database_name_ = username_;
     }
+
+    std::string selected_database;
+    if (!resolveDatabaseSelection(database_name_, selected_database)) {
+        sendErrorResponse(conn, "FATAL", "28000",
+                          "Database switch denied by manager binding context");
+        return core::Status::INVALID_AUTHORIZATION;
+    }
+    database_name_ = std::move(selected_database);
+    client_parameters_["database"] = database_name_;
 
     // Request authentication
     if (config_.require_authentication) {
@@ -1738,7 +1759,11 @@ core::Status PostgresqlAdapter::compileQuery(const std::string& sql,
     }
 
     sblr::PostgreSQLQueryCompiler compiler(engineDatabase());
-    std::string db_name = database_name_.empty() ? std::string("default") : database_name_;
+    std::string db_name;
+    if (!resolveDatabaseSelection(database_name_, db_name)) {
+        error_out = "Database switch denied by manager binding context";
+        return core::Status::INVALID_AUTHORIZATION;
+    }
     compiler.setDefaultSchema(
         resolvePostgresqlSchemaPath(engineDatabase() ? engineDatabase()->catalog_manager() : nullptr,
                                     db_name));

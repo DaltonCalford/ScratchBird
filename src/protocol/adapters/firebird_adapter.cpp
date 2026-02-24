@@ -401,7 +401,6 @@ FirebirdStatement::BlrField columnToBlrField(const ProtocolCodec::ColumnInfo& co
 
 FirebirdAdapter::FirebirdAdapter(const ProtocolAdapterConfig& config)
     : ProtocolAdapter(config) {
-
     // Generate initial handles
     std::random_device rd;
     std::mt19937 gen(rd());
@@ -1369,7 +1368,17 @@ core::Status FirebirdAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
         return core::Status::OK;
     }
 
-    client_config_.database_name = database_name_.empty() ? "default" : database_name_;
+    std::string selected_database;
+    if (!resolveDatabaseSelection(database_name_, selected_database)) {
+        if (ctx) {
+            ctx->set(core::Status::INVALID_AUTHORIZATION,
+                     "Database switch denied by manager binding context",
+                     __FILE__, __LINE__, __func__);
+        }
+        return core::Status::INVALID_AUTHORIZATION;
+    }
+    database_name_ = selected_database;
+    client_config_.database_name = selected_database;
     if (!config_.engine_endpoint.empty()) {
         client_config_.ipc_method = server::IPCMethod::AUTO;
         client_config_.socket_path = config_.engine_endpoint;
@@ -1383,6 +1392,9 @@ core::Status FirebirdAdapter::ensureRemoteClient(core::ErrorContext* ctx) {
     client_config_.write_timeout_ms = config_.write_timeout_ms;
     client_config_.auto_commit = true;
     client_config_.auto_start_server = false;
+    client_config_.connect_client_flags = config_.connect_client_flags;
+    client_config_.has_bound_db_uuid = config_.has_bound_db_uuid;
+    client_config_.bound_db_uuid = config_.bound_db_uuid;
     if (!username_.empty()) {
         client_config_.username = username_;
         client_config_.password = remote_password_;
@@ -1607,7 +1619,15 @@ core::Status FirebirdAdapter::handleAttach(network::Connection* conn) {
     std::vector<uint8_t> dpb = readBuffer(current_packet_.data(), offset, current_packet_.size());
     parseDpb(dpb);
 
-    database_name_ = db_path;
+    std::string selected_database;
+    if (!resolveDatabaseSelection(db_path, selected_database)) {
+        sendErrorResponse(conn,
+                          firebird::ErrorCode::isc_login,
+                          "Database switch denied by manager binding context");
+        return sendBuffer(conn);
+    }
+
+    database_name_ = std::move(selected_database);
     client_.reset();
     client_config_.database_name = database_name_;
     if (!config_.engine_endpoint.empty()) {
@@ -1621,6 +1641,9 @@ core::Status FirebirdAdapter::handleAttach(network::Connection* conn) {
     client_config_.username = username_.empty() ? "BOOTSTRAP" : username_;
     client_config_.password = remote_password_;
     client_config_.auto_start_server = false;
+    client_config_.connect_client_flags = config_.connect_client_flags;
+    client_config_.has_bound_db_uuid = config_.has_bound_db_uuid;
+    client_config_.bound_db_uuid = config_.bound_db_uuid;
 
     core::ErrorContext auth_ctx;
     core::Status auth_status = ensureRemoteClient(&auth_ctx);

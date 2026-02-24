@@ -1,13 +1,13 @@
 task_id=ENG-MONGODB-001
 status=blocked
-timestamp_utc=2026-02-24T15:31:20Z
+timestamp_utc=2026-02-24T19:54:23Z
 
 === command 1 ===
 cwd: /home/dcalford/CliWork
-timeout_s: 40
+timeout_s: 1
 rc: 0
 timed_out: False
-duration_s: 0.230
+duration_s: 0.034
 cmd: test -d /home/dcalford/CliWork/mongo && git -C /home/dcalford/CliWork/mongo rev-parse --short HEAD
 --- output begin ---
 b3e1d387194
@@ -15,10 +15,10 @@ b3e1d387194
 
 === command 2 ===
 cwd: /home/dcalford/CliWork/mongo
-timeout_s: 360
+timeout_s: 9
 rc: 0
 timed_out: False
-duration_s: 0.628
+duration_s: 0.116
 cmd: python3 buildscripts/install_bazel.py
 --- output begin ---
 Downloaded file /home/dcalford/.local/bin/buildozer already exists, validating...
@@ -32,14 +32,14 @@ Symlink /home/dcalford/.local/bin/bazel already exists, skipping symlink creatio
 
 === command 3 ===
 cwd: /home/dcalford/CliWork/mongo
-timeout_s: 1800
+timeout_s: 45
 rc: 1
 timed_out: False
-duration_s: 10.287
+duration_s: 1.974
 cmd: bazel build install-mongod
 --- output begin ---
 [0;32mINFO:[0m running wrapper hook...
-INFO: auto_header build generated: 4.096 s
+INFO: auto_header build generated: 760.6 ms
 Computing main repo mapping: 
 Loading: 
 Loading: 0 packages loaded
@@ -50,7 +50,7 @@ ERROR: /home/dcalford/CliWork/mongo/src/mongo/db/BUILD.bazel:2763:16: While reso
 To debug, rerun with --toolchain_resolution_debug='@@bazel_tools//tools/cpp:toolchain_type'
 If platforms or toolchains are a new concept for you, we'd encourage reading https://bazel.build/concepts/platforms-intro.
 ERROR: Analysis of target '//:install-mongod' failed; build aborted: Analysis failed
-INFO: Elapsed time: 1.847s, Critical Path: 0.04s
+INFO: Elapsed time: 0.219s, Critical Path: 0.01s
 INFO: 1 process: 1 internal.
 ERROR: Build did NOT complete successfully
 --- output end ---

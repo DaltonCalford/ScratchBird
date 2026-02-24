@@ -1,13 +1,13 @@
 task_id=ENG-CLICKHOUSE-001
 status=blocked
-timestamp_utc=2026-02-24T04:32:24Z
+timestamp_utc=2026-02-24T19:53:58Z
 
 === command 1 ===
 cwd: /home/dcalford/CliWork
-timeout_s: 20
+timeout_s: 1
 rc: 0
 timed_out: False
-duration_s: 0.019
+duration_s: 0.285
 cmd: test -d /home/dcalford/CliWork/ClickHouse && git -C /home/dcalford/CliWork/ClickHouse rev-parse --short HEAD
 --- output begin ---
 b1cd56a7fc5
@@ -15,23 +15,34 @@ b1cd56a7fc5
 
 === command 2 ===
 cwd: /home/dcalford/CliWork/ClickHouse
-timeout_s: 120
-rc: 1
+timeout_s: 30
+rc: 0
 timed_out: False
-duration_s: 0.056
-cmd: cmake -S . -B build-baseline -G Ninja -DCMAKE_BUILD_TYPE=Debug
+duration_s: 5.670
+cmd: git submodule update --init --recursive
+--- output begin ---
+
+--- output end ---
+
+=== command 3 ===
+cwd: /home/dcalford/CliWork/ClickHouse
+timeout_s: 6
+rc: 124
+timed_out: True
+duration_s: 6.031
+cmd: cmake -S . -B build-baseline-clang21 -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCOMPILER_CACHE=disabled -DCMAKE_C_COMPILER=/usr/bin/clang-21 -DCMAKE_CXX_COMPILER=/usr/bin/clang++-21
 --- output begin ---
 -- Using compiler:
-clang version 15.0.0 (https://github.com/apple/llvm-project.git e98989b1092ff3a72610a5be6251b010b06282f7)
+Ubuntu clang version 21.1.8 (++20251221032922+2078da43e25a-1~exp1~20251221153059.70)
 Target: x86_64-unknown-linux-gnu
 Thread model: posix
-InstalledDir: /opt/swift/usr/bin
-CMake Error at cmake/tools.cmake:18 (message):
-  Compilation with Clang version 15.0.0 is unsupported, the minimum required
-  version is 21.
-Call Stack (most recent call first):
-  CMakeLists.txt:36 (include)
-
-
--- Configuring incomplete, errors occurred!
+InstalledDir: /usr/lib/llvm-21/bin
+-- Using linker: /usr/bin/ld.lld-21
+-- Using archiver: /usr/bin/llvm-ar-21
+-- Using ranlib: /usr/bin/llvm-ranlib-21
+-- Using install-name-tool: /usr/bin/llvm-install-name-tool-21
+-- Using objcopy: /usr/bin/llvm-objcopy-21
+-- Using strip: /usr/bin/llvm-strip-21
+-- Using *ccache: no (disabled via configuration)
+-- Git HEAD commit hash: b1cd56a7fc5f77031ebd4dad9e57c214e246ae66
 --- output end ---

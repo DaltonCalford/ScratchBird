@@ -1,3 +1,63 @@
 task_id=SB-003
-status=blocked
-timestamp_utc=2026-02-24T04:26:47Z
+status=done
+timestamp_utc=2026-02-24T15:52:21Z
+
+=== command 1 ===
+cwd: /home/dcalford/CliWork/ScratchBird
+timeout_s: 600
+rc: 0
+timed_out: False
+duration_s: 6.082
+cmd: ctest --test-dir build --output-on-failure -L stress -j2 --timeout 120
+--- output begin ---
+Internal ctest changing into directory: /home/dcalford/CliWork/ScratchBird/build
+Test project /home/dcalford/CliWork/ScratchBird/build
+      Start 3148: BTreeCompressionTest.LargeScaleStressTest
+      Start 3506: MultiThreadedStress
+ 1/16 Test #3506: MultiThreadedStress ......................................   Passed    2.85 sec
+      Start 3535: BufferPoolExhaustion
+ 2/16 Test #3148: BTreeCompressionTest.LargeScaleStressTest ................   Passed    4.42 sec
+      Start 3152: PageManagerOverflowTest.StressTestManyExtensions
+ 3/16 Test #3535: BufferPoolExhaustion .....................................   Passed    2.08 sec
+      Start 3151: HeapPageMemoryTest.StressTestManyPins
+ 4/16 Test #3152: PageManagerOverflowTest.StressTestManyExtensions .........   Passed    0.75 sec
+      Start 3150: GroupCommitTest.HighConcurrencyStress
+ 5/16 Test #3151: HeapPageMemoryTest.StressTestManyPins ....................   Passed    0.40 sec
+      Start 3149: CatalogMGAComplianceTest.CombinedAlterDropCreateStress
+ 6/16 Test #3150: GroupCommitTest.HighConcurrencyStress ....................   Passed    0.43 sec
+      Start 3519: ColumnstoreLoadSimple
+ 7/16 Test #3149: CatalogMGAComplianceTest.CombinedAlterDropCreateStress ...   Passed    0.29 sec
+      Start 3154: StorageStressTest.Insert10000Tuples
+ 8/16 Test #3154: StorageStressTest.Insert10000Tuples ......................   Passed    0.08 sec
+      Start 3159: StorageStressTest.ConcurrentAccessPattern
+ 9/16 Test #3159: StorageStressTest.ConcurrentAccessPattern ................   Passed    0.03 sec
+      Start 3157: StorageStressTest.LargeDatabaseGrowth
+10/16 Test #3157: StorageStressTest.LargeDatabaseGrowth ....................   Passed    0.03 sec
+      Start 3155: StorageStressTest.RandomDeletePattern
+11/16 Test #3155: StorageStressTest.RandomDeletePattern ....................   Passed    0.03 sec
+      Start 3153: StorageCriticalFixesTest.HeapPage_StressTestMemoryLeak
+12/16 Test #3153: StorageCriticalFixesTest.HeapPage_StressTestMemoryLeak ...   Passed    0.03 sec
+      Start 3158: StorageStressTest.TransactionIDStress
+13/16 Test #3158: StorageStressTest.TransactionIDStress ....................   Passed    0.03 sec
+      Start 3156: StorageStressTest.FragmentationHandling
+14/16 Test #3156: StorageStressTest.FragmentationHandling ..................   Passed    0.02 sec
+      Start 3507: AuthRateLimitStress
+15/16 Test #3507: AuthRateLimitStress ......................................   Passed    0.02 sec
+16/16 Test #3519: ColumnstoreLoadSimple ....................................   Passed    0.36 sec
+
+100% tests passed, 0 tests failed out of 16
+
+Label Time Summary:
+buffer_pool    =   2.08 sec*proc (1 test)
+columnstore    =   0.36 sec*proc (1 test)
+integration    =   2.08 sec*proc (1 test)
+load           =   0.36 sec*proc (1 test)
+memory         =   2.08 sec*proc (1 test)
+performance    =   2.85 sec*proc (1 test)
+phase7         =   0.36 sec*proc (1 test)
+security       =   0.02 sec*proc (1 test)
+simple         =   0.36 sec*proc (1 test)
+stress         =  11.86 sec*proc (16 tests)
+
+Total Test time (real) =   6.05 sec
+--- output end ---

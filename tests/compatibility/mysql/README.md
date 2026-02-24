@@ -53,14 +53,14 @@ The converted tests are organized into 59 suites including:
 
 ## Running Tests
 
-**Prerequisites:** The `sb_my_isql` client must be built first (see [Plan 06](/docs/planning/PLAN_06_DEDICATED_ISQL_CLIENTS.md)).
+**Prerequisites:** Build CLI clients in the `ScratchBird-driver` repository first. This runner requires `sb_my_isql` for MySQL wire-protocol parity. Generic `sb_isql` is native-protocol only and is rejected for this lane.
 
 **Refresh vendored MySQL tests:**
 ```bash
 ./tests/compatibility/scripts/update_test_repos.sh
 ```
 
-Once `sb_my_isql` is available:
+Once the MySQL CLI is available:
 
 ```bash
 # Run a single test
@@ -81,6 +81,8 @@ CTest wrapper (opt-in):
 # Uses config/ctest_list.txt and writes to results/ctest/<timestamp>
 SCRATCHBIRD_MY_COMPAT_RUN=1 ctest -R CompatibilityMySQL --test-dir build
 ```
+
+If `sb_my_isql` is unavailable, set `SCRATCHBIRD_MY_ISQL` to a valid `sb_my_isql` path after building FDW CLI wrappers; generic `sb_isql` fallback is intentionally blocked.
 
 ## Test Format
 

@@ -7,7 +7,7 @@
 - commands_total: `2`
 - commands_passed: `1`
 - commands_failed: `1`
-- reason: `Command failed (timeout): PATH="$HOME/.local/bin:$PATH" make -j2`
+- reason: `Command failed: PATH="$HOME/.local/bin:$PATH" make -j2`
 
 ## Evidence Files
 - `run_manifest.md`

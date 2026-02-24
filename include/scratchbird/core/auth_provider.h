@@ -368,11 +368,28 @@ public:
      */
     void clearPeerIdentityContext();
 
+    /**
+     * Set optional auth database context for principal tuple resolution.
+     *
+     * When populated, authentication resolves principal accounts using the
+     * provided auth_database context so emulated engines can scope identities
+     * per emulated database.
+     */
+    void setAuthDatabaseContext(const std::string& auth_database_context);
+
+    /**
+     * Clear per-request auth database context.
+     */
+    void clearAuthDatabaseContext();
+
 private:
+    const std::string* authDatabaseContextPtr() const;
+
     class CatalogManager* catalog_;
     class LoginAttemptTracker* login_tracker_;  // P0-2: Brute-force protection
     class AuditLogger* audit_logger_;           // P0-3: Security audit logging (non-owning)
     PeerIdentityContext peer_identity_context_{};
+    std::string auth_database_context_;
 };
 
 /**

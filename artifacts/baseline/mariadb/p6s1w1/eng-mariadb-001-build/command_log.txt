@@ -1,13 +1,13 @@
 task_id=ENG-MARIADB-001
-status=blocked
-timestamp_utc=2026-02-24T04:45:30Z
+status=done
+timestamp_utc=2026-02-24T17:17:00Z
 
 === command 1 ===
 cwd: /home/dcalford/CliWork
-timeout_s: 20
+timeout_s: 40
 rc: 0
 timed_out: False
-duration_s: 0.036
+duration_s: 0.018
 cmd: test -d /home/dcalford/CliWork/server && git -C /home/dcalford/CliWork/server rev-parse --short HEAD
 --- output begin ---
 21a0714a118
@@ -15,10 +15,10 @@ cmd: test -d /home/dcalford/CliWork/server && git -C /home/dcalford/CliWork/serv
 
 === command 2 ===
 cwd: /home/dcalford/CliWork/server
-timeout_s: 120
-rc: 1
+timeout_s: 240
+rc: 0
 timed_out: False
-duration_s: 0.934
+duration_s: 1.368
 cmd: cmake -S . -B build-baseline -G Ninja
 --- output begin ---
 -- Running cmake version 3.30.5
@@ -27,14 +27,1434 @@ cmd: cmake -S . -B build-baseline -G Ninja
 -- Wsrep-lib version: 1.0.0
 == Configuring MariaDB Connector/C
 -- SYSTEM_LIBS: /usr/lib/x86_64-linux-gnu/libz.so;dl;m;dl;m;/usr/lib/x86_64-linux-gnu/libssl.so;/usr/lib/x86_64-linux-gnu/libcrypto.so;/usr/lib/x86_64-linux-gnu/libz.so
--- Dynamic column API support: ON
 WARNING: Package(s) not found: pyopenssl
--- Could NOT find LZO (missing: LZO_LIBRARIES LZO_INCLUDE_DIRS) 
--- Could NOT find Snappy (missing: SNAPPY_LIBRARIES SNAPPY_INCLUDE_DIRS) 
-CMake Error at sql/CMakeLists.txt:410 (MESSAGE):
-  Bison (GNU parser generator) is required to build MySQL.Please install
-  bison.
+-- Configuring done (1.0s)
+-- Generating done (0.3s)
+-- Build files have been written to: /home/dcalford/CliWork/server/build-baseline
+--- output end ---
 
-
--- Configuring incomplete, errors occurred!
+=== command 3 ===
+cwd: /home/dcalford/CliWork/server
+timeout_s: 1800
+rc: 0
+timed_out: False
+duration_s: 1224.033
+cmd: cmake --build build-baseline -j2
+--- output begin ---
+[1/1717] cd /home/dcalford/CliWork/server/build-baseline && /usr/bin/cmake -DCOMPILER=/usr/bin/cc -DSOURCE_DIR=/home/dcalford/CliWork/server -DBINARY_DIR=/home/dcalford/CliWork/server/build-baseline "-DABI_HEADERS=/home/dcalford/CliWork/server/include/mysql/plugin_audit.h;/home/dcalford/CliWork/server/include/mysql/plugin_ftparser.h;/home/dcalford/CliWork/server/include/mysql/psi/psi_abi_v1.h;/home/dcalford/CliWork/server/include/mysql/psi/psi_abi_v2.h;/home/dcalford/CliWork/server/include/mysql/client_plugin.h;/home/dcalford/CliWork/server/include/mysql/plugin_auth.h;/home/dcalford/CliWork/server/include/mysql/plugin_password_validation.h;/home/dcalford/CliWork/server/include/mysql/plugin_encryption.h;/home/dcalford/CliWork/server/include/mysql/plugin_data_type.h;/home/dcalford/CliWork/server/include/mysql/plugin_function.h" -P /home/dcalford/CliWork/server/cmake/do_abi_check.cmake
+[2/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdblib.dir/rocksdb/utilities/transactions/optimistic_transaction.cc.o
+[3/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdblib.dir/rocksdb/utilities/transactions/lock/point/point_lock_manager.cc.o
+[4/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdblib.dir/rocksdb/utilities/transactions/optimistic_transaction_db_impl.cc.o
+[5/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdblib.dir/rocksdb/utilities/transactions/pessimistic_transaction.cc.o
+[6/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdblib.dir/rocksdb/utilities/transactions/snapshot_checker.cc.o
+[7/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdblib.dir/rocksdb/utilities/transactions/pessimistic_transaction_db.cc.o
+[8/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdblib.dir/rocksdb/utilities/transactions/transaction_db_mutex_impl.cc.o
+[9/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdblib.dir/rocksdb/utilities/transactions/transaction_util.cc.o
+[10/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdblib.dir/rocksdb/utilities/transactions/transaction_base.cc.o
+[11/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdblib.dir/rocksdb/utilities/transactions/write_prepared_txn.cc.o
+[12/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdblib.dir/rocksdb/utilities/transactions/write_prepared_txn_db.cc.o
+[13/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdblib.dir/rocksdb/utilities/transactions/write_unprepared_txn.cc.o
+[14/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdblib.dir/rocksdb/utilities/transactions/write_unprepared_txn_db.cc.o
+[15/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdblib.dir/rocksdb/utilities/wal_filter.cc.o
+[16/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdblib.dir/rocksdb/utilities/ttl/db_ttl_impl.cc.o
+[17/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdblib.dir/rocksdb/utilities/write_batch_with_index/write_batch_with_index.cc.o
+[18/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdblib.dir/rocksdb/util/murmurhash.cc.o
+[19/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdblib.dir/rocksdb/util/random.cc.o
+[20/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdblib.dir/rocksdb/utilities/write_batch_with_index/write_batch_with_index_internal.cc.o
+[21/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdblib.dir/rocksdb/util/rate_limiter.cc.o
+[22/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdblib.dir/rocksdb/util/ribbon_config.cc.o
+[23/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdblib.dir/rocksdb/util/slice.cc.o
+[24/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdblib.dir/rocksdb/util/status.cc.o
+[25/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdblib.dir/rocksdb/util/regex.cc.o
+[26/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdblib.dir/rocksdb/util/string_util.cc.o
+[27/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdblib.dir/rocksdb/util/thread_local.cc.o
+[28/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdblib.dir/rocksdb/util/xxhash.cc.o
+[29/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdblib.dir/rocksdb/util/threadpool_imp.cc.o
+[30/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdblib.dir/rocksdb/port/port_posix.cc.o
+[31/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdblib.dir/rocksdb/env/env_posix.cc.o
+[32/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdblib.dir/rocksdb/env/io_posix.cc.o
+[33/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdblib.dir/build_version.cc.o
+[34/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdblib.dir/rocksdb/env/fs_posix.cc.o
+[35/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdb_tools.dir/rocksdb/tools/ldb_tool.cc.o
+[36/1717] Linking CXX static library storage/rocksdb/librocksdblib.a
+[37/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdb_tools.dir/rocksdb/tools/sst_dump_tool.cc.o
+[38/1717] Building CXX object storage/rocksdb/CMakeFiles/sst_dump.dir/rocksdb/tools/sst_dump.cc.o
+[39/1717] Linking CXX executable storage/rocksdb/sst_dump
+[40/1717] Building C object plugin/auth_ed25519/CMakeFiles/ref10.dir/ref10/fe_0.c.o
+[41/1717] Building C object plugin/auth_ed25519/CMakeFiles/ref10.dir/ref10/fe_1.c.o
+[42/1717] Building C object plugin/auth_ed25519/CMakeFiles/ref10.dir/ref10/fe_add.c.o
+[43/1717] Building C object plugin/auth_ed25519/CMakeFiles/ref10.dir/ref10/fe_cmov.c.o
+[44/1717] Building C object plugin/auth_ed25519/CMakeFiles/ref10.dir/ref10/fe_copy.c.o
+[45/1717] Building C object plugin/auth_ed25519/CMakeFiles/ref10.dir/ref10/fe_frombytes.c.o
+[46/1717] Building C object plugin/auth_ed25519/CMakeFiles/ref10.dir/ref10/fe_invert.c.o
+[47/1717] Building C object plugin/auth_ed25519/CMakeFiles/ref10.dir/ref10/fe_isnegative.c.o
+[48/1717] Building C object plugin/auth_ed25519/CMakeFiles/ref10.dir/ref10/fe_isnonzero.c.o
+[49/1717] Building C object plugin/auth_ed25519/CMakeFiles/ref10.dir/ref10/fe_mul.c.o
+[50/1717] Building C object plugin/auth_ed25519/CMakeFiles/ref10.dir/ref10/fe_neg.c.o
+[51/1717] Building C object plugin/auth_ed25519/CMakeFiles/ref10.dir/ref10/fe_pow22523.c.o
+[52/1717] Building C object plugin/auth_ed25519/CMakeFiles/ref10.dir/ref10/fe_sq.c.o
+[53/1717] Building C object plugin/auth_ed25519/CMakeFiles/ref10.dir/ref10/fe_sq2.c.o
+[54/1717] Building C object plugin/auth_ed25519/CMakeFiles/ref10.dir/ref10/fe_sub.c.o
+[55/1717] Building C object plugin/auth_ed25519/CMakeFiles/ref10.dir/ref10/fe_tobytes.c.o
+[56/1717] Building C object plugin/auth_ed25519/CMakeFiles/ref10.dir/ref10/ge_add.c.o
+[57/1717] Building C object plugin/auth_ed25519/CMakeFiles/ref10.dir/ref10/ge_double_scalarmult.c.o
+[58/1717] Building C object plugin/auth_ed25519/CMakeFiles/ref10.dir/ref10/ge_frombytes.c.o
+[59/1717] Building C object plugin/auth_ed25519/CMakeFiles/ref10.dir/ref10/ge_madd.c.o
+[60/1717] Building C object plugin/auth_ed25519/CMakeFiles/ref10.dir/ref10/ge_msub.c.o
+[61/1717] Building C object plugin/auth_ed25519/CMakeFiles/ref10.dir/ref10/ge_p1p1_to_p2.c.o
+[62/1717] Building C object plugin/auth_ed25519/CMakeFiles/ref10.dir/ref10/ge_p1p1_to_p3.c.o
+[63/1717] Building C object plugin/auth_ed25519/CMakeFiles/ref10.dir/ref10/ge_p2_0.c.o
+[64/1717] Building C object plugin/auth_ed25519/CMakeFiles/ref10.dir/ref10/ge_p2_dbl.c.o
+[65/1717] Building C object plugin/auth_ed25519/CMakeFiles/ref10.dir/ref10/ge_p3_0.c.o
+[66/1717] Building C object plugin/auth_ed25519/CMakeFiles/ref10.dir/ref10/ge_p3_dbl.c.o
+[67/1717] Building C object plugin/auth_ed25519/CMakeFiles/ref10.dir/ref10/ge_p3_to_cached.c.o
+[68/1717] Building C object plugin/auth_ed25519/CMakeFiles/ref10.dir/ref10/ge_p3_to_p2.c.o
+[69/1717] Building C object plugin/auth_ed25519/CMakeFiles/ref10.dir/ref10/ge_p3_tobytes.c.o
+[70/1717] Building C object plugin/auth_ed25519/CMakeFiles/ref10.dir/ref10/ge_precomp_0.c.o
+[71/1717] Building C object plugin/auth_ed25519/CMakeFiles/ref10.dir/ref10/ge_scalarmult_base.c.o
+[72/1717] Building C object plugin/auth_ed25519/CMakeFiles/ref10.dir/ref10/ge_sub.c.o
+[73/1717] Building C object plugin/auth_ed25519/CMakeFiles/ref10.dir/ref10/ge_tobytes.c.o
+[74/1717] Building C object plugin/auth_ed25519/CMakeFiles/ref10.dir/ref10/keypair.c.o
+[75/1717] Building C object plugin/auth_ed25519/CMakeFiles/ref10.dir/ref10/open.c.o
+[76/1717] Building C object plugin/auth_ed25519/CMakeFiles/ref10.dir/ref10/sc_muladd.c.o
+[77/1717] Building C object plugin/auth_ed25519/CMakeFiles/ref10.dir/ref10/sc_reduce.c.o
+[78/1717] Building C object plugin/auth_ed25519/CMakeFiles/ref10.dir/ref10/sign.c.o
+[79/1717] Building C object plugin/auth_ed25519/CMakeFiles/ref10.dir/ref10/verify.c.o
+[80/1717] Linking C static library plugin/auth_ed25519/libref10.a
+[81/1717] Building CXX object plugin/handler_socket/CMakeFiles/hsclient.dir/libhsclient/config.cpp.o
+[82/1717] Building CXX object plugin/handler_socket/CMakeFiles/hsclient.dir/libhsclient/escape.cpp.o
+[83/1717] Building CXX object plugin/handler_socket/CMakeFiles/hsclient.dir/libhsclient/fatal.cpp.o
+[84/1717] Building CXX object plugin/handler_socket/CMakeFiles/hsclient.dir/libhsclient/hstcpcli.cpp.o
+[85/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdb_tools.dir/rocksdb/tools/ldb_cmd.cc.o
+[86/1717] Linking CXX static library storage/rocksdb/librocksdb_tools.a
+[87/1717] Building CXX object plugin/handler_socket/CMakeFiles/hsclient.dir/libhsclient/socket.cpp.o
+[88/1717] Generating dbug-t
+[89/1717] Building C object strings/CMakeFiles/uca-dump.dir/uca-dump.c.o
+[90/1717] Building CXX object plugin/handler_socket/CMakeFiles/hsclient.dir/libhsclient/string_util.cpp.o
+[91/1717] Linking C executable strings/uca-dump
+[92/1717] Linking CXX static library plugin/handler_socket/libhsclient.a
+[93/1717] Generating ctype-uca1400data.h
+[94/1717] Building C object vio/CMakeFiles/vio.dir/vio.c.o
+[95/1717] Building C object unittest/strings/CMakeFiles/json-t.dir/json-t.c.o
+[96/1717] Building C object unittest/strings/CMakeFiles/strings-t.dir/strings-t.c.o
+[97/1717] Building C object unittest/mysys/CMakeFiles/base64-t.dir/base64-t.c.o
+[98/1717] Building C object unittest/mysys/CMakeFiles/byte_order-t.dir/byte_order-t.c.o
+[99/1717] Building C object unittest/mysys/CMakeFiles/crc32-t.dir/crc32-t.c.o
+[100/1717] Building C object unittest/mysys/CMakeFiles/bitmap-t.dir/bitmap-t.c.o
+[101/1717] Building C object unittest/mysys/CMakeFiles/dynstring-t.dir/dynstring-t.c.o
+[102/1717] Building C object unittest/mysys/CMakeFiles/dynamic_array-t.dir/dynamic_array-t.c.o
+[103/1717] Building C object unittest/mysys/CMakeFiles/my_atomic-t.dir/my_atomic-t.c.o
+[104/1717] Building C object unittest/mysys/CMakeFiles/lf-t.dir/lf-t.c.o
+[105/1717] Building C object unittest/mysys/CMakeFiles/my_malloc-t.dir/my_malloc-t.c.o
+[106/1717] Building C object unittest/mysys/CMakeFiles/my_getopt-t.dir/my_getopt-t.c.o
+[107/1717] Building C object unittest/mysys/CMakeFiles/my_tzinfo-t.dir/my_tzinfo-t.c.o
+[108/1717] Building C object unittest/mysys/CMakeFiles/queues-t.dir/queues-t.c.o
+[109/1717] Building C object unittest/mysys/CMakeFiles/stack_allocation-t.dir/stack_allocation-t.c.o
+[110/1717] Building C object unittest/mysys/CMakeFiles/my_rdtsc-t.dir/my_rdtsc-t.c.o
+[111/1717] Building C object unittest/mysys/CMakeFiles/stacktrace-t.dir/stacktrace-t.c.o
+[112/1717] Building C object unittest/mysys/CMakeFiles/my_vsnprintf-t.dir/my_vsnprintf-t.c.o
+[113/1717] Building C object unittest/mysys/CMakeFiles/waiting_threads-t.dir/waiting_threads-t.c.o
+[114/1717] Building C object unittest/mysys/CMakeFiles/aes-t.dir/aes-t.c.o
+[115/1717] Building C object unittest/mysys/CMakeFiles/ma_dyncol-t.dir/ma_dyncol-t.c.o
+[116/1717] Building C object unittest/json_lib/CMakeFiles/json_lib-t.dir/json_lib-t.c.o
+[117/1717] Building CXX object unittest/my_decimal/CMakeFiles/my_decimal-t.dir/my_decimal-t.cc.o
+[118/1717] Building C object unittest/json_lib/CMakeFiles/json_normalize-t.dir/json_normalize-t.c.o
+[119/1717] Building C object plugin/auth_ed25519/CMakeFiles/ed25519-t.dir/ed25519-t.c.o
+[120/1717] Building C object dbug/CMakeFiles/dbug.dir/dbug.c.o
+[121/1717] Building C object dbug/CMakeFiles/tests.dir/tests.c.o
+[122/1717] Building CXX object unittest/sql/CMakeFiles/my_apc-t.dir/my_apc-t.cc.o
+[123/1717] Building C object dbug/CMakeFiles/factorial.dir/my_main.c.o
+[124/1717] Building C object dbug/CMakeFiles/factorial.dir/factorial.c.o
+[125/1717] Building C object strings/CMakeFiles/strings.dir/bchange.c.o
+[126/1717] Building C object strings/CMakeFiles/strings.dir/bmove_upp.c.o
+[127/1717] Building C object strings/CMakeFiles/strings.dir/ctype-bin.c.o
+[128/1717] Building C object strings/CMakeFiles/strings.dir/ctype-big5.c.o
+[129/1717] Building C object strings/CMakeFiles/strings.dir/ctype-czech.c.o
+[130/1717] Building C object strings/CMakeFiles/strings.dir/ctype-cp932.c.o
+[131/1717] Building C object strings/CMakeFiles/strings.dir/ctype-euc_kr.c.o
+[132/1717] Building C object strings/CMakeFiles/strings.dir/ctype-extra.c.o
+[133/1717] Building C object strings/CMakeFiles/strings.dir/ctype-eucjpms.c.o
+[134/1717] Building C object strings/CMakeFiles/strings.dir/ctype-gb2312.c.o
+[135/1717] Building C object strings/CMakeFiles/strings.dir/ctype-latin1.c.o
+[136/1717] Building C object strings/CMakeFiles/strings.dir/ctype-gbk.c.o
+[137/1717] Building C object strings/CMakeFiles/strings.dir/ctype-mb.c.o
+[138/1717] Building C object strings/CMakeFiles/strings.dir/ctype-simple.c.o
+[139/1717] Building C object strings/CMakeFiles/strings.dir/ctype-sjis.c.o
+[140/1717] Building C object strings/CMakeFiles/strings.dir/ctype-tis620.c.o
+[141/1717] Building C object strings/CMakeFiles/strings.dir/ctype-uca0900.c.o
+[142/1717] Building C object strings/CMakeFiles/strings.dir/ctype-uca1400.c.o
+[143/1717] Building C object strings/CMakeFiles/strings.dir/ctype-ucs2.c.o
+[144/1717] Building C object strings/CMakeFiles/strings.dir/ctype-ujis.c.o
+[145/1717] Building C object strings/CMakeFiles/strings.dir/ctype-uca.c.o
+[146/1717] Building C object strings/CMakeFiles/strings.dir/ctype-win1250ch.c.o
+[147/1717] Building C object strings/CMakeFiles/strings.dir/ctype.c.o
+[148/1717] Building C object strings/CMakeFiles/strings.dir/ctype-utf8.c.o
+[149/1717] Building C object strings/CMakeFiles/strings.dir/decimal.c.o
+[150/1717] Building C object strings/CMakeFiles/strings.dir/int2str.c.o
+[151/1717] Building C object strings/CMakeFiles/strings.dir/ctype-unidata.c.o
+[152/1717] Building C object strings/CMakeFiles/strings.dir/is_prefix.c.o
+[153/1717] Building C object strings/CMakeFiles/strings.dir/llstr.c.o
+[154/1717] Building C object strings/CMakeFiles/strings.dir/longlong2str.c.o
+[155/1717] Building C object strings/CMakeFiles/strings.dir/my_strtoll10.c.o
+[156/1717] Building C object strings/CMakeFiles/strings.dir/dtoa.c.o
+[157/1717] Building C object strings/CMakeFiles/strings.dir/str2int.c.o
+[158/1717] Building C object strings/CMakeFiles/strings.dir/strcend.c.o
+[159/1717] Building C object strings/CMakeFiles/strings.dir/strend.c.o
+[160/1717] Building C object strings/CMakeFiles/strings.dir/my_vsnprintf.c.o
+[161/1717] Building C object strings/CMakeFiles/strings.dir/strfill.c.o
+[162/1717] Building C object strings/CMakeFiles/strings.dir/strmake.c.o
+[163/1717] Building C object strings/CMakeFiles/strings.dir/strmov.c.o
+[164/1717] Building C object strings/CMakeFiles/strings.dir/strnmov.c.o
+[165/1717] Building C object strings/CMakeFiles/strings.dir/strxmov.c.o
+[166/1717] Building C object strings/CMakeFiles/strings.dir/strxnmov.c.o
+[167/1717] Building C object strings/CMakeFiles/strings.dir/strmov_overlapp.c.o
+[168/1717] Building C object strings/CMakeFiles/strings.dir/xml.c.o
+[169/1717] Building C object strings/CMakeFiles/strings.dir/my_strchr.c.o
+[170/1717] Building C object strings/CMakeFiles/strings.dir/strcont.c.o
+[171/1717] Building C object strings/CMakeFiles/strings.dir/strappend.c.o
+[172/1717] Building C object strings/CMakeFiles/strings.dir/json_normalize.c.o
+[173/1717] Building C object strings/CMakeFiles/strings.dir/hasher-mysql5x.c.o
+[174/1717] Building C object strings/CMakeFiles/strings.dir/hasher-base31.c.o
+[175/1717] Building C object strings/CMakeFiles/strings.dir/json_lib.c.o
+[176/1717] Building C object strings/CMakeFiles/strings.dir/hasher-crc32c.c.o
+[177/1717] Building C object vio/CMakeFiles/vio.dir/viosocket.c.o
+[178/1717] Building C object vio/CMakeFiles/vio.dir/viossl.c.o
+[179/1717] Building C object vio/CMakeFiles/vio.dir/viopipe.c.o
+[180/1717] Building C object vio/CMakeFiles/vio.dir/viosslfactories.c.o
+[181/1717] Linking C static library vio/libvio.a
+[182/1717] Building C object mysys/CMakeFiles/mysys.dir/array.c.o
+[183/1717] Building C object mysys/CMakeFiles/mysys.dir/charset-def.c.o
+[184/1717] Building C object strings/CMakeFiles/strings.dir/hasher-xxh.c.o
+[185/1717] Building C object mysys/CMakeFiles/mysys.dir/my_default.c.o
+[186/1717] Building C object mysys/CMakeFiles/mysys.dir/charset.c.o
+[187/1717] Building C object mysys/CMakeFiles/mysys.dir/get_password.c.o
+[188/1717] Building C object mysys/CMakeFiles/mysys.dir/errors.c.o
+[189/1717] Building C object mysys/CMakeFiles/mysys.dir/list.c.o
+[190/1717] Building C object mysys/CMakeFiles/mysys.dir/hash.c.o
+[191/1717] Building C object mysys/CMakeFiles/mysys.dir/mf_cache.c.o
+[192/1717] Building C object mysys/CMakeFiles/mysys.dir/mf_fn_ext.c.o
+[193/1717] Building C object mysys/CMakeFiles/mysys.dir/mf_dirname.c.o
+[194/1717] Building C object mysys/CMakeFiles/mysys.dir/mf_format.c.o
+[195/1717] Building C object mysys/CMakeFiles/mysys.dir/mf_getdate.c.o
+[196/1717] Building C object mysys/CMakeFiles/mysys.dir/mf_iocache2.c.o
+[197/1717] Building C object mysys/CMakeFiles/mysys.dir/mf_iocache.c.o
+[198/1717] Building C object mysys/CMakeFiles/mysys.dir/mf_keycaches.c.o
+[199/1717] Building C object mysys/CMakeFiles/mysys.dir/mf_loadpath.c.o
+[200/1717] Building C object mysys/CMakeFiles/mysys.dir/mf_pack.c.o
+[201/1717] Building C object mysys/CMakeFiles/mysys.dir/mf_path.c.o
+[202/1717] Building C object mysys/CMakeFiles/mysys.dir/mf_keycache.c.o
+[203/1717] Building C object mysys/CMakeFiles/mysys.dir/mf_qsort.c.o
+[204/1717] Building C object mysys/CMakeFiles/mysys.dir/mf_radix.c.o
+[205/1717] Building C object mysys/CMakeFiles/mysys.dir/mf_qsort2.c.o
+[206/1717] Building C object mysys/CMakeFiles/mysys.dir/mf_same.c.o
+[207/1717] Building C object mysys/CMakeFiles/mysys.dir/mf_sort.c.o
+[208/1717] Building C object mysys/CMakeFiles/mysys.dir/mf_soundex.c.o
+[209/1717] Building C object mysys/CMakeFiles/mysys.dir/mf_arr_appstr.c.o
+[210/1717] Building C object mysys/CMakeFiles/mysys.dir/mf_tempdir.c.o
+[211/1717] Building C object mysys/CMakeFiles/mysys.dir/mf_tempfile.c.o
+[212/1717] Building C object mysys/CMakeFiles/mysys.dir/mf_unixpath.c.o
+[213/1717] Building C object mysys/CMakeFiles/mysys.dir/mf_wcomp.c.o
+[214/1717] Building C object mysys/CMakeFiles/mysys.dir/mulalloc.c.o
+[215/1717] Building C object mysys/CMakeFiles/mysys.dir/my_access.c.o
+[216/1717] Building C object mysys/CMakeFiles/mysys.dir/my_bit.c.o
+[217/1717] Building C object mysys/CMakeFiles/mysys.dir/my_alloc.c.o
+[218/1717] Building C object mysys/CMakeFiles/mysys.dir/my_chsize.c.o
+[219/1717] Building C object mysys/CMakeFiles/mysys.dir/my_bitmap.c.o
+[220/1717] Building C object mysys/CMakeFiles/mysys.dir/my_compress.c.o
+[221/1717] Building C object mysys/CMakeFiles/mysys.dir/my_copy.c.o
+[222/1717] Building C object mysys/CMakeFiles/mysys.dir/my_create.c.o
+[223/1717] Building C object mysys/CMakeFiles/mysys.dir/my_delete.c.o
+[224/1717] Building C object mysys/CMakeFiles/mysys.dir/my_div.c.o
+[225/1717] Building C object mysys/CMakeFiles/mysys.dir/my_file.c.o
+[226/1717] Building C object mysys/CMakeFiles/mysys.dir/my_error.c.o
+[227/1717] Building C object mysys/CMakeFiles/mysys.dir/my_fstream.c.o
+[228/1717] Building C object mysys/CMakeFiles/mysys.dir/my_fopen.c.o
+[229/1717] Building C object mysys/CMakeFiles/mysys.dir/my_getexe.c.o
+[230/1717] Building C object mysys/CMakeFiles/mysys.dir/my_gethwaddr.c.o
+[231/1717] Building C object mysys/CMakeFiles/mysys.dir/my_getsystime.c.o
+[232/1717] Building C object mysys/CMakeFiles/mysys.dir/my_getwd.c.o
+[233/1717] Building C object mysys/CMakeFiles/mysys.dir/my_getopt.c.o
+[234/1717] Building C object mysys/CMakeFiles/mysys.dir/my_compare.c.o
+[235/1717] Building C object mysys/CMakeFiles/mysys.dir/my_lib.c.o
+[236/1717] Building C object mysys/CMakeFiles/mysys.dir/my_init.c.o
+[237/1717] Building C object mysys/CMakeFiles/mysys.dir/my_lock.c.o
+[238/1717] Building C object mysys/CMakeFiles/mysys.dir/my_malloc.c.o
+[239/1717] Building C object mysys/CMakeFiles/mysys.dir/my_mess.c.o
+[240/1717] Building C object mysys/CMakeFiles/mysys.dir/my_mkdir.c.o
+[241/1717] Building C object mysys/CMakeFiles/mysys.dir/my_mmap.c.o
+[242/1717] Building C object mysys/CMakeFiles/mysys.dir/my_once.c.o
+[243/1717] Building C object mysys/CMakeFiles/mysys.dir/my_open.c.o
+[244/1717] Building C object mysys/CMakeFiles/mysys.dir/my_pread.c.o
+[245/1717] Building C object mysys/CMakeFiles/mysys.dir/my_pthread.c.o
+[246/1717] Building C object mysys/CMakeFiles/mysys.dir/my_quick.c.o
+[247/1717] Building C object mysys/CMakeFiles/mysys.dir/my_read.c.o
+[248/1717] Building C object mysys/CMakeFiles/mysys.dir/my_redel.c.o
+[249/1717] Building C object mysys/CMakeFiles/mysys.dir/my_rename.c.o
+[250/1717] Building C object mysys/CMakeFiles/mysys.dir/my_seek.c.o
+[251/1717] Building C object mysys/CMakeFiles/mysys.dir/my_sleep.c.o
+[252/1717] Building C object mysys/CMakeFiles/mysys.dir/my_static.c.o
+[253/1717] Building C object mysys/CMakeFiles/mysys.dir/my_symlink.c.o
+[254/1717] Building C object mysys/CMakeFiles/mysys.dir/my_symlink2.c.o
+[255/1717] Building C object mysys/CMakeFiles/mysys.dir/my_sync.c.o
+[256/1717] Building C object mysys/CMakeFiles/mysys.dir/my_basename.c.o
+[257/1717] Building C object mysys/CMakeFiles/mysys.dir/my_thr_init.c.o
+[258/1717] Building C object mysys/CMakeFiles/mysys.dir/my_write.c.o
+[259/1717] Building C object mysys/CMakeFiles/mysys.dir/ptr_cmp.c.o
+[260/1717] Building C object mysys/CMakeFiles/mysys.dir/queues.c.o
+[261/1717] Building C object mysys/CMakeFiles/mysys.dir/stacktrace.c.o
+[262/1717] Building C object mysys/CMakeFiles/mysys.dir/string.c.o
+[263/1717] Building C object mysys/CMakeFiles/mysys.dir/thr_mutex.c.o
+[264/1717] Building C object mysys/CMakeFiles/mysys.dir/thr_rwlock.c.o
+[265/1717] Building C object mysys/CMakeFiles/mysys.dir/thr_lock.c.o
+[266/1717] Building C object mysys/CMakeFiles/mysys.dir/my_stack.c.o
+[267/1717] Building C object mysys/CMakeFiles/mysys.dir/thr_timer.c.o
+[268/1717] Building C object mysys/CMakeFiles/mysys.dir/typelib.c.o
+[269/1717] Building C object mysys/CMakeFiles/mysys.dir/tree.c.o
+[270/1717] Building C object mysys/CMakeFiles/mysys.dir/my_memmem.c.o
+[271/1717] Building C object mysys/CMakeFiles/mysys.dir/base64.c.o
+[272/1717] Building C object mysys/CMakeFiles/mysys.dir/guess_malloc_library.c.o
+[273/1717] Building C object mysys/CMakeFiles/mysys.dir/my_getpagesize.c.o
+[274/1717] Building C object mysys/CMakeFiles/mysys.dir/lf_dynarray.c.o
+[275/1717] Building C object mysys/CMakeFiles/mysys.dir/lf_alloc-pin.c.o
+[276/1717] Building C object mysys/CMakeFiles/mysys.dir/safemalloc.c.o
+[277/1717] Building CXX object mysys/CMakeFiles/mysys.dir/lf_hash.cc.o
+[278/1717] Building CXX object mysys/CMakeFiles/mysys.dir/my_new.cc.o
+[279/1717] Building C object mysys/CMakeFiles/mysys.dir/my_getncpus.c.o
+[280/1717] Building C object mysys/CMakeFiles/mysys.dir/my_safehash.c.o
+[281/1717] Building C object mysys/CMakeFiles/mysys.dir/my_chmod.c.o
+[282/1717] Building C object mysys/CMakeFiles/mysys.dir/my_rnd.c.o
+[283/1717] Building C object mysys/CMakeFiles/mysys.dir/wqueue.c.o
+[284/1717] Building C object mysys/CMakeFiles/mysys.dir/my_uuid.c.o
+[285/1717] Building C object mysys/CMakeFiles/mysys.dir/waiting_threads.c.o
+[286/1717] Building C object mysys/CMakeFiles/mysys.dir/__/sql-common/my_time.c.o
+[287/1717] Building C object mysys/CMakeFiles/mysys.dir/ma_dyncol.c.o
+[288/1717] Building C object mysys/CMakeFiles/mysys.dir/psi_noop.c.o
+[289/1717] Building C object mysys/CMakeFiles/mysys.dir/my_rdtsc.c.o
+[290/1717] Building C object mysys/CMakeFiles/mysys.dir/my_atomic_writes.c.o
+[291/1717] Building C object mysys/CMakeFiles/mysys.dir/my_likely.c.o
+[292/1717] Building C object mysys/CMakeFiles/mysys.dir/my_largepage.c.o
+[293/1717] Building C object mysys/CMakeFiles/mysys.dir/my_cpu.c.o
+[294/1717] Building C object mysys/CMakeFiles/mysys.dir/my_dlerror.c.o
+[295/1717] Building C object mysys/CMakeFiles/mysys.dir/file_logger.c.o
+[296/1717] Building CXX object mysys/CMakeFiles/mysys.dir/crc32/crc32c.cc.o
+[297/1717] Building CXX object mysys/CMakeFiles/mysys.dir/my_timezone.cc.o
+[298/1717] Building CXX object mysys/CMakeFiles/mysys.dir/my_thread_name.cc.o
+[299/1717] Building CXX object mysys/CMakeFiles/mysys.dir/my_compr_int.cc.o
+[300/1717] Building C object mysys/CMakeFiles/mysys.dir/my_virtual_mem.c.o
+[301/1717] Building C object mysys/CMakeFiles/mysys.dir/crc32/crc32_x86.c.o
+[302/1717] Building CXX object mysys/CMakeFiles/mysys.dir/crc32/crc32c_amd64.cc.o
+[303/1717] Building CXX object mysys/CMakeFiles/mysys.dir/crc32ieee.cc.o
+[304/1717] Building C object mysys/CMakeFiles/mysys.dir/my_addr_resolve.c.o
+[305/1717] Building CXX object mysys/CMakeFiles/mysys.dir/crc32/crc32c_x86.cc.o
+[306/1717] Building C object mysys/CMakeFiles/mysys.dir/my_setuser.c.o
+[307/1717] Building C object mysys/CMakeFiles/mysys.dir/my_lockmem.c.o
+[308/1717] Linking CXX static library mysys/libmysys.a
+[309/1717] Linking CXX static library strings/libstrings.a
+[310/1717] Linking CXX static library dbug/libdbug.a
+[311/1717] Linking CXX executable unittest/strings/strings-t
+[312/1717] Building C object mysys/CMakeFiles/thr_lock.dir/thr_lock.c.o
+[313/1717] Linking CXX executable unittest/strings/json-t
+[314/1717] Linking CXX executable unittest/mysys/base64-t
+[315/1717] Linking CXX executable unittest/mysys/byte_order-t
+[316/1717] Linking CXX executable unittest/mysys/bitmap-t
+[317/1717] Linking CXX executable unittest/mysys/crc32-t
+[318/1717] Linking CXX executable unittest/mysys/dynamic_array-t
+[319/1717] Linking CXX executable unittest/mysys/dynstring-t
+[320/1717] Linking CXX executable unittest/mysys/lf-t
+[321/1717] Linking CXX executable unittest/mysys/my_atomic-t
+[322/1717] Linking CXX executable unittest/mysys/my_getopt-t
+[323/1717] Linking CXX executable unittest/mysys/my_rdtsc-t
+[324/1717] Linking CXX executable unittest/mysys/my_malloc-t
+[325/1717] Linking CXX executable unittest/mysys/my_tzinfo-t
+[326/1717] Linking CXX executable unittest/mysys/queues-t
+[327/1717] Linking CXX executable unittest/mysys/stack_allocation-t
+[328/1717] Linking CXX executable unittest/mysys/stacktrace-t
+[329/1717] Linking CXX executable unittest/mysys/waiting_threads-t
+[330/1717] Linking CXX executable unittest/mysys/my_vsnprintf-t
+[331/1717] Linking CXX executable unittest/mysys/ma_dyncol-t
+[332/1717] Linking CXX executable unittest/my_decimal/my_decimal-t
+[333/1717] Linking CXX executable unittest/json_lib/json_lib-t
+[334/1717] Linking CXX executable unittest/json_lib/json_normalize-t
+[335/1717] Linking CXX executable dbug/tests
+[336/1717] Linking CXX executable unittest/sql/my_apc-t
+[337/1717] Linking CXX executable dbug/factorial
+[338/1717] Generating example1.r
+[339/1717] Generating example2.r
+[340/1717] Generating example3.r
+[341/1717] Generating factorial.r
+[342/1717] Generating main.r
+[343/1717] Generating output1.r, output2.r, output3.r, output4.r, output5.r
+[344/1717] Linking CXX executable mysys/thr_lock
+[345/1717] Generating user.ps
+troff: fatal error: unable to open macro file for -m argument 'm'
+[346/1717] Generating user.t
+troff: fatal error: unable to open macro file for -m argument 'm'
+[347/1717] Building C object mysys/CMakeFiles/thr_timer.dir/thr_timer.c.o
+[348/1717] Linking CXX executable mysys/thr_timer
+[349/1717] Building C object mysys/CMakeFiles/test_hash.dir/hash.c.o
+[350/1717] Linking CXX executable mysys/test_hash
+[351/1717] Building CXX object mysys_ssl/CMakeFiles/mysys_ssl.dir/my_sha1.cc.o
+[352/1717] Building CXX object mysys_ssl/CMakeFiles/mysys_ssl.dir/my_sha224.cc.o
+[353/1717] Building CXX object mysys_ssl/CMakeFiles/mysys_ssl.dir/my_sha256.cc.o
+[354/1717] Building CXX object mysys_ssl/CMakeFiles/mysys_ssl.dir/my_sha384.cc.o
+[355/1717] Building CXX object mysys_ssl/CMakeFiles/mysys_ssl.dir/my_sha512.cc.o
+[356/1717] Building CXX object mysys_ssl/CMakeFiles/mysys_ssl.dir/my_md5.cc.o
+[357/1717] Building C object mysys_ssl/CMakeFiles/mysys_ssl.dir/openssl.c.o
+[358/1717] Building CXX object mysys_ssl/CMakeFiles/mysys_ssl.dir/my_crypt.cc.o
+[359/1717] Linking CXX static library mysys_ssl/libmysys_ssl.a
+[360/1717] Linking CXX executable unittest/mysys/aes-t
+[361/1717] Building CXX object client/CMakeFiles/import_util.dir/import_util.cc.o
+[362/1717] Linking CXX executable plugin/auth_ed25519/ed25519-t
+[363/1717] Linking CXX static library client/libimport_util.a
+[364/1717] Building CXX object client/CMakeFiles/mariadb-conv.dir/mariadb-conv.cc.o
+[365/1717] Building CXX object client/CMakeFiles/mariadb-conv.dir/__/sql/sql_string.cc.o
+[366/1717] Linking CXX executable client/mariadb-conv
+[367/1717] Building CXX object unittest/client/CMakeFiles/import_util-t.dir/import_util-t.cc.o
+[368/1717] Linking CXX executable unittest/client/import_util-t
+[369/1717] Building C object extra/CMakeFiles/my_print_defaults.dir/my_print_defaults.c.o
+[370/1717] Building C object extra/CMakeFiles/comp_err.dir/comp_err.c.o
+[371/1717] Linking CXX executable extra/my_print_defaults
+[372/1717] Linking CXX executable extra/comp_err
+[373/1717] Building C object extra/CMakeFiles/resolveip.dir/resolveip.c.o
+[374/1717] Linking CXX executable extra/resolveip
+[375/1717] Building C object extra/CMakeFiles/resolve_stack_dump.dir/resolve_stack_dump.c.o
+[376/1717] Linking CXX executable extra/resolve_stack_dump
+[377/1717] Building C object extra/CMakeFiles/replace.dir/replace.c.o
+[378/1717] Linking CXX executable extra/replace
+[379/1717] Building C object extra/CMakeFiles/mariadb-waitpid.dir/mysql_waitpid.c.o
+[380/1717] Building C object extra/CMakeFiles/mariadbd-safe-helper.dir/mysqld_safe_helper.c.o
+[381/1717] Linking CXX executable extra/mariadb-waitpid
+[382/1717] Generating ../include/mysqld_error.h.tmp
+[383/1717] Linking CXX executable extra/mariadbd-safe-helper
+[384/1717] Building CXX object unittest/sql/CMakeFiles/mf_iocache-t.dir/mf_iocache-t.cc.o
+[385/1717] Building C object storage/archive/CMakeFiles/archive.dir/azio.c.o
+[386/1717] Building CXX object unittest/sql/CMakeFiles/mf_iocache-t.dir/__/__/sql/mf_iocache_encr.cc.o
+[387/1717] Linking CXX executable unittest/sql/mf_iocache-t
+[388/1717] Building CXX object storage/archive/CMakeFiles/archive.dir/ha_archive.cc.o
+[389/1717] Building CXX object storage/blackhole/CMakeFiles/blackhole.dir/ha_blackhole.cc.o
+[390/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/connect.cc.o
+[391/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/ha_connect.cc.o
+[392/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/mycat.cc.o
+/home/dcalford/CliWork/server/storage/connect/mycat.cc: In member function ‘TABDEF* MYCAT::MakeTableDesc(PGLOBAL, PTABLE, LPCSTR)’:
+/home/dcalford/CliWork/server/storage/connect/mycat.cc:516:7: warning: this statement may fall through [-Wimplicit-fallthrough=]
+  516 |       if (MongoEnabled()) {
+      |       ^~
+/home/dcalford/CliWork/server/storage/connect/mycat.cc:522:5: note: here
+  522 |     default:
+      |     ^~~~~~~
+[393/1717] Building C object storage/connect/CMakeFiles/connect.dir/fmdlex.c.o
+[394/1717] Building C object storage/connect/CMakeFiles/connect.dir/osutil.c.o
+[395/1717] Building C object storage/connect/CMakeFiles/connect.dir/rcmsg.c.o
+[396/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/user_connect.cc.o
+[397/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/array.cpp.o
+[398/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/blkfil.cpp.o
+[399/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/colblk.cpp.o
+[400/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/csort.cpp.o
+In file included from /home/dcalford/CliWork/server/storage/connect/csort.cpp:58:
+In static member function ‘static size_t CSORT::Cmpnum(int)’,
+    inlined from ‘int CSORT::Qsort(PGLOBAL, int)’ at /home/dcalford/CliWork/server/storage/connect/csort.cpp:118:28:
+/home/dcalford/CliWork/server/storage/connect/csort.h:75:32: warning: array subscript 200001 is above array bounds of ‘size_t [1000]’ {aka ‘long unsigned int [1000]’} [-Warray-bounds=]
+   75 |     {return (n < Limit) ? Cpn[n]
+      |                           ~~~~~^
+/home/dcalford/CliWork/server/storage/connect/csort.cpp: In member function ‘int CSORT::Qsort(PGLOBAL, int)’:
+/home/dcalford/CliWork/server/storage/connect/csort.cpp:75:8: note: while referencing ‘CSORT::Cpn’
+   75 | size_t CSORT::Cpn[1000] = {0};          /* Precalculated cmpnum values */
+      |        ^~~~~
+[401/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/filamap.cpp.o
+[402/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/filamdbf.cpp.o
+[403/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/filamfix.cpp.o
+[404/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/filamgz.cpp.o
+[405/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/filamtxt.cpp.o
+[406/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/filter.cpp.o
+/home/dcalford/CliWork/server/storage/connect/filter.cpp: In member function ‘virtual void FILTER::Prints(PGLOBAL, char*, uint)’:
+/home/dcalford/CliWork/server/storage/connect/filter.cpp:1558:20: warning: ‘char* __builtin_strncat(char*, const char*, long unsigned int)’ output may be truncated copying between 0 and 100 bytes from a string of length 100 [-Wstringop-truncation]
+ 1558 |             strncat(bxp->Cold, bcp->Cold, FLEN-strlen(bxp->Cold));
+      |                    ^
+[407/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/json.cpp.o
+/home/dcalford/CliWork/server/storage/connect/json.cpp: In member function ‘char* JVALUE::GetString(PGLOBAL, char*)’:
+/home/dcalford/CliWork/server/storage/connect/json.cpp:1692:48: warning: function may return address of local variable [-Wreturn-local-addr]
+ 1692 |   return (p == buf) ? (char*)PlugDup(g, buf) : p;
+      |                                                ^
+/home/dcalford/CliWork/server/storage/connect/json.cpp:1664:9: note: declared here
+ 1664 |   char  buf[32];
+      |         ^~~
+[408/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/maputil.cpp.o
+[409/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/myconn.cpp.o
+[410/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/myutil.cpp.o
+[411/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/plgdbutl.cpp.o
+[412/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/plugutil.cpp.o
+[413/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/jsonudf.cpp.o
+[414/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/tabcol.cpp.o
+[415/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/reldef.cpp.o
+[416/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/tabdos.cpp.o
+[417/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/tabfix.cpp.o
+[418/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/tabfmt.cpp.o
+[419/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/tabext.cpp.o
+[420/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/tabjson.cpp.o
+[421/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/tabmul.cpp.o
+[422/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/table.cpp.o
+[423/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/taboccur.cpp.o
+[424/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/tabpivot.cpp.o
+[425/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/tabsys.cpp.o
+[426/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/tabmysql.cpp.o
+[427/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/tabtbl.cpp.o
+[428/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/tabvir.cpp.o
+[429/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/tabxcl.cpp.o
+[430/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/tabutil.cpp.o
+[431/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/valblk.cpp.o
+[432/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/xindex.cpp.o
+[433/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/xobject.cpp.o
+[434/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/inihandl.cpp.o
+[435/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/bson.cpp.o
+/home/dcalford/CliWork/server/storage/connect/bson.cpp: In member function ‘char* BJSON::GetString(PBVAL, char*)’:
+/home/dcalford/CliWork/server/storage/connect/bson.cpp:1571:46: warning: function may return address of local variable [-Wreturn-local-addr]
+ 1571 |   return (p == buf) ? (PSZ)PlugDup(G, buf) : p;
+      |                                              ^
+/home/dcalford/CliWork/server/storage/connect/bson.cpp:1540:9: note: declared here
+ 1540 |   char  buf[32];
+      |         ^~~
+[436/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/value.cpp.o
+[437/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/tabbson.cpp.o
+[438/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/bsonudf.cpp.o
+[439/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/tabvct.cpp.o
+[440/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/filamvct.cpp.o
+[441/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/libdoc.cpp.o
+[442/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/plgxml.cpp.o
+[443/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/tabxml.cpp.o
+[444/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/odbconn.cpp.o
+[445/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/javaconn.cpp.o
+[446/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/jdbconn.cpp.o
+[447/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/tabodbc.cpp.o
+[448/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/jmgfam.cpp.o
+[449/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/jmgoconn.cpp.o
+[450/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/mongo.cpp.o
+[451/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/tabjmg.cpp.o
+[452/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/filamzip.cpp.o
+[453/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/tabzip.cpp.o
+[454/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/tabjdbc.cpp.o
+[455/1717] Building C object storage/connect/CMakeFiles/connect.dir/ioapi.c.o
+[456/1717] Building C object storage/connect/CMakeFiles/connect.dir/unzip.c.o
+[457/1717] Building C object storage/connect/CMakeFiles/connect.dir/zip.c.o
+[458/1717] Building CXX object storage/connect/CMakeFiles/connect.dir/tabrest.cpp.o
+[459/1717] Building CXX object storage/csv/CMakeFiles/csv.dir/transparent_file.cc.o
+[460/1717] Building CXX object storage/csv/CMakeFiles/csv.dir/ha_tina.cc.o
+[461/1717] Linking CXX static library storage/csv/libcsv.a
+[462/1717] Building CXX object storage/example/CMakeFiles/example.dir/ha_example.cc.o
+[463/1717] Building CXX object storage/federated/CMakeFiles/federated.dir/ha_federated.cc.o
+[464/1717] Building CXX object storage/federatedx/CMakeFiles/federatedx.dir/ha_federatedx.cc.o
+[465/1717] Building CXX object storage/federatedx/CMakeFiles/federatedx.dir/federatedx_io.cc.o
+[466/1717] Building CXX object storage/federatedx/CMakeFiles/federatedx.dir/federatedx_io_null.cc.o
+[467/1717] Building CXX object storage/federatedx/CMakeFiles/federatedx.dir/federatedx_txn.cc.o
+[468/1717] Building C object storage/heap/CMakeFiles/heap.dir/_check.c.o
+[469/1717] Building C object storage/heap/CMakeFiles/heap.dir/_rectest.c.o
+[470/1717] Building C object storage/heap/CMakeFiles/heap.dir/hp_block.c.o
+[471/1717] Building C object storage/heap/CMakeFiles/heap.dir/hp_clear.c.o
+[472/1717] Building C object storage/heap/CMakeFiles/heap.dir/hp_close.c.o
+[473/1717] Building C object storage/heap/CMakeFiles/heap.dir/hp_create.c.o
+[474/1717] Building CXX object storage/federatedx/CMakeFiles/federatedx.dir/federatedx_io_mysql.cc.o
+[475/1717] Building C object storage/heap/CMakeFiles/heap.dir/hp_delete.c.o
+[476/1717] Building C object storage/heap/CMakeFiles/heap.dir/hp_extra.c.o
+[477/1717] Building C object storage/heap/CMakeFiles/heap.dir/hp_hash.c.o
+[478/1717] Building C object storage/heap/CMakeFiles/heap.dir/hp_info.c.o
+[479/1717] Building C object storage/heap/CMakeFiles/heap.dir/hp_open.c.o
+[480/1717] Building CXX object storage/heap/CMakeFiles/heap.dir/ha_heap.cc.o
+[481/1717] Building C object storage/heap/CMakeFiles/heap.dir/hp_panic.c.o
+[482/1717] Building C object storage/heap/CMakeFiles/heap.dir/hp_rename.c.o
+[483/1717] Building C object storage/heap/CMakeFiles/heap.dir/hp_rfirst.c.o
+[484/1717] Building C object storage/heap/CMakeFiles/heap.dir/hp_rkey.c.o
+[485/1717] Building C object storage/heap/CMakeFiles/heap.dir/hp_rlast.c.o
+[486/1717] Building C object storage/heap/CMakeFiles/heap.dir/hp_rnext.c.o
+[487/1717] Building C object storage/heap/CMakeFiles/heap.dir/hp_rrnd.c.o
+[488/1717] Building C object storage/heap/CMakeFiles/heap.dir/hp_rprev.c.o
+[489/1717] Building C object storage/heap/CMakeFiles/heap.dir/hp_rsame.c.o
+[490/1717] Building C object storage/heap/CMakeFiles/heap.dir/hp_scan.c.o
+[491/1717] Building C object storage/heap/CMakeFiles/heap.dir/hp_static.c.o
+[492/1717] Building C object storage/heap/CMakeFiles/heap.dir/hp_update.c.o
+[493/1717] Building C object storage/heap/CMakeFiles/heap.dir/hp_write.c.o
+[494/1717] Building C object storage/heap/CMakeFiles/hp_test1.dir/hp_test1.c.o
+[495/1717] Linking CXX static library storage/heap/libheap.a
+[496/1717] Linking CXX executable storage/heap/hp_test1
+[497/1717] Building C object storage/heap/CMakeFiles/hp_test2.dir/hp_test2.c.o
+[498/1717] Linking CXX executable storage/heap/hp_test2
+[499/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/btr/btr0bulk.cc.o
+[500/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/btr/btr0btr.cc.o
+[501/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/btr/btr0pcur.cc.o
+[502/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/btr/btr0cur.cc.o
+[503/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/btr/btr0sea.cc.o
+[504/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/buf/buf0buddy.cc.o
+[505/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/buf/buf0buf.cc.o
+[506/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/buf/buf0dblwr.cc.o
+[507/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/buf/buf0checksum.cc.o
+[508/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/buf/buf0dump.cc.o
+[509/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/buf/buf0lru.cc.o
+[510/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/buf/buf0flu.cc.o
+[511/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/buf/buf0rea.cc.o
+[512/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/data/data0type.cc.o
+[513/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/data/data0data.cc.o
+[514/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/dict/dict0boot.cc.o
+[515/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/dict/dict0crea.cc.o
+[516/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/dict/dict0load.cc.o
+[517/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/dict/dict0dict.cc.o
+[518/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/dict/dict0mem.cc.o
+[519/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/dict/dict0stats.cc.o
+[520/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/dict/dict0stats_bg.cc.o
+[521/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/dict/drop.cc.o
+[522/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/eval/eval0eval.cc.o
+[523/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/eval/eval0proc.cc.o
+[524/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/fil/fil0pagecompress.cc.o
+[525/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/fil/fil0fil.cc.o
+[526/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/fil/fil0crypt.cc.o
+[527/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/fsp/fsp0file.cc.o
+[528/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/fsp/fsp0fsp.cc.o
+[529/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/fsp/fsp0space.cc.o
+[530/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/fsp/fsp0sysspace.cc.o
+[531/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/fsp/fsp_binlog.cc.o
+[532/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/ha/ha0storage.cc.o
+[533/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/fut/fut0lst.cc.o
+[534/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/fts/fts0ast.cc.o
+[535/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/fts/fts0blex.cc.o
+[536/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/fts/fts0fts.cc.o
+[537/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/fts/fts0config.cc.o
+[538/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/fts/fts0pars.cc.o
+[539/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/fts/fts0opt.cc.o
+[540/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/fts/fts0sql.cc.o
+[541/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/fts/fts0que.cc.o
+[542/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/fts/fts0tlex.cc.o
+[543/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/gis/gis0geo.cc.o
+[544/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/gis/gis0rtree.cc.o
+[545/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/fts/fts0plugin.cc.o
+[546/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/gis/gis0sea.cc.o
+[547/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/handler/handler0alter.cc.o
+[548/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/handler/ha_innodb.cc.o
+[549/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/handler/innodb_binlog.cc.o
+[550/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/handler/i_s.cc.o
+[551/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/lock/lock0iter.cc.o
+[552/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/ibuf/ibuf0ibuf.cc.o
+[553/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/lock/lock0prdt.cc.o
+[554/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/log/log0log.cc.o
+[555/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/lock/lock0lock.cc.o
+[556/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/log/log0crypt.cc.o
+[557/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/log/log0recv.cc.o
+[558/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/mem/mem0mem.cc.o
+[559/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/log/log0sync.cc.o
+[560/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/mtr/mtr0mtr.cc.o
+[561/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/os/os0file.cc.o
+[562/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/page/page0cur.cc.o
+[563/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/page/page0page.cc.o
+[564/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/pars/lexyy.cc.o
+[565/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/page/page0zip.cc.o
+[566/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/pars/pars0grm.cc.o
+[567/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/pars/pars0opt.cc.o
+[568/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/pars/pars0pars.cc.o
+[569/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/pars/pars0sym.cc.o
+[570/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/que/que0que.cc.o
+[571/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/read/read0read.cc.o
+[572/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/rem/rem0cmp.cc.o
+[573/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/row/row0ext.cc.o
+[574/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/rem/rem0rec.cc.o
+[575/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/row/row0ftsort.cc.o
+[576/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/row/row0import.cc.o
+[577/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/row/row0ins.cc.o
+[578/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/row/row0merge.cc.o
+[579/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/row/row0mysql.cc.o
+[580/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/row/row0purge.cc.o
+[581/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/row/row0log.cc.o
+[582/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/row/row0row.cc.o
+[583/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/row/row0uins.cc.o
+[584/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/row/row0sel.cc.o
+[585/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/row/row0umod.cc.o
+[586/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/row/row0undo.cc.o
+[587/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/row/row0quiesce.cc.o
+[588/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/row/row0upd.cc.o
+[589/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/row/row0vers.cc.o
+[590/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/srv/srv0mon.cc.o
+[591/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/srv/srv0srv.cc.o
+[592/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/srv/srv0start.cc.o
+[593/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/sync/srw_lock.cc.o
+[594/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/trx/trx0i_s.cc.o
+[595/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/trx/trx0purge.cc.o
+[596/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/trx/trx0rec.cc.o
+[597/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/trx/trx0roll.cc.o
+[598/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/trx/trx0rseg.cc.o
+[599/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/trx/trx0sys.cc.o
+[600/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/trx/trx0undo.cc.o
+[601/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/ut/ut0dbg.cc.o
+[602/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/ut/ut0list.cc.o
+[603/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/ut/ut0mem.cc.o
+[604/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/trx/trx0trx.cc.o
+[605/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/ut/ut0new.cc.o
+[606/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/ut/ut0rnd.cc.o
+[607/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/ut/ut0rbt.cc.o
+[608/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/ut/ut0vec.cc.o
+[609/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/ut/ut0wqueue.cc.o
+[610/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/sync/cache.cc.o
+[611/1717] Building CXX object extra/mariabackup/CMakeFiles/mbstream.dir/ds_buffer.cc.o
+[612/1717] Building CXX object storage/innobase/CMakeFiles/innobase.dir/ut/ut0ut.cc.o
+[613/1717] Linking CXX static library storage/innobase/libinnobase.a
+[614/1717] Building CXX object extra/mariabackup/CMakeFiles/mbstream.dir/ds_stdout.cc.o
+[615/1717] Building CXX object extra/mariabackup/CMakeFiles/mbstream.dir/datasink.cc.o
+[616/1717] Building CXX object extra/mariabackup/CMakeFiles/mbstream.dir/xbstream.cc.o
+[617/1717] Building CXX object extra/mariabackup/CMakeFiles/mbstream.dir/ds_local.cc.o
+[618/1717] Building CXX object extra/mariabackup/CMakeFiles/mbstream.dir/xbstream_read.cc.o
+[619/1717] Building CXX object extra/mariabackup/CMakeFiles/mbstream.dir/xbstream_write.cc.o
+[620/1717] Linking CXX executable extra/mariabackup/mbstream
+[621/1717] Building CXX object storage/innobase/unittest/CMakeFiles/innodb_rbt-t.dir/innodb_rbt-t.cc.o
+[622/1717] Building CXX object storage/innobase/unittest/CMakeFiles/innodb_rbt-t.dir/__/ut/ut0rbt.cc.o
+[623/1717] Linking CXX executable storage/innobase/unittest/innodb_rbt-t
+[624/1717] Building CXX object storage/innobase/unittest/CMakeFiles/innodb_fts-t.dir/innodb_fts-t.cc.o
+[625/1717] Linking CXX executable storage/innobase/unittest/innodb_fts-t
+[626/1717] Building CXX object storage/innobase/unittest/CMakeFiles/innodb_sync-t.dir/innodb_sync-t.cc.o
+[627/1717] Building CXX object storage/innobase/unittest/CMakeFiles/innodb_sync-t.dir/__/sync/srw_lock.cc.o
+[628/1717] Linking CXX executable storage/innobase/unittest/innodb_sync-t
+[629/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_init.c.o
+[630/1717] Building CXX object storage/innobase/unittest/CMakeFiles/innodb_ahi-t.dir/innodb_ahi-t.cc.o
+[631/1717] Linking CXX executable storage/innobase/unittest/innodb_ahi-t
+[632/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_extra.c.o
+[633/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_info.c.o
+[634/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_open.c.o
+[635/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_rkey.c.o
+[636/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_rnext_same.c.o
+[637/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_rnext.c.o
+[638/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_page.c.o
+[639/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_key_recover.c.o
+[640/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_search.c.o
+[641/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_key.c.o
+[642/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_locking.c.o
+[643/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_rrnd.c.o
+[644/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_state.c.o
+[645/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_scan.c.o
+[646/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_cache.c.o
+[647/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_statrec.c.o
+[648/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_packrec.c.o
+[649/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_dynrec.c.o
+[650/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_bitmap.c.o
+[651/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_update.c.o
+[652/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_blockrec.c.o
+[653/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_write.c.o
+[654/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_unique.c.o
+[655/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_rprev.c.o
+[656/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_rfirst.c.o
+[657/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_delete.c.o
+[658/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_rlast.c.o
+[659/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_rsamepos.c.o
+[660/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_rsame.c.o
+[661/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_panic.c.o
+[662/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_close.c.o
+[663/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_range.c.o
+[664/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_dbug.c.o
+[665/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_checksum.c.o
+[666/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_create.c.o
+[667/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_changed.c.o
+[668/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_static.c.o
+[669/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_delete_all.c.o
+[670/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_delete_table.c.o
+[671/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_rename.c.o
+[672/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_keycache.c.o
+[673/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_preload.c.o
+[674/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_ft_parser.c.o
+[675/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_ft_update.c.o
+[676/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_ft_boolean_search.c.o
+[677/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_ft_nlq_search.c.o
+[678/1717] Building C object storage/maria/CMakeFiles/aria.dir/ft_maria.c.o
+[679/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_sort.c.o
+[680/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_check.c.o
+[681/1717] Building C object storage/maria/CMakeFiles/aria.dir/trnman.c.o
+[682/1717] Building C object storage/maria/CMakeFiles/aria.dir/lockman.c.o
+[683/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_rt_index.c.o
+[684/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_rt_key.c.o
+[685/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_rt_mbr.c.o
+[686/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_rt_split.c.o
+[687/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_sp_key.c.o
+[688/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_control_file.c.o
+[689/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_loghandler.c.o
+[690/1717] Building CXX object storage/maria/CMakeFiles/aria.dir/ha_maria.cc.o
+[691/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_pagecaches.c.o
+[692/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_checkpoint.c.o
+[693/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_pagecache.c.o
+[694/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_commit.c.o
+[695/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_pagecrc.c.o
+[696/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_recovery_util.c.o
+[697/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_servicethread.c.o
+[698/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_norec.c.o
+[699/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_recovery.c.o
+[700/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_crypt.c.o
+[701/1717] Building C object storage/maria/CMakeFiles/aria.dir/ma_backup.c.o
+[702/1717] Building C object storage/maria/CMakeFiles/aria_ftdump.dir/aria_ftdump.c.o
+[703/1717] Building C object storage/maria/CMakeFiles/aria_read_log.dir/aria_read_log.c.o
+[704/1717] Building C object storage/maria/CMakeFiles/aria_dump_log.dir/aria_dump_log.c.o
+[705/1717] Building C object storage/maria/CMakeFiles/aria_chk.dir/aria_chk.c.o
+[706/1717] Building C object storage/maria/CMakeFiles/aria_dump_log.dir/unittest/ma_loghandler_examples.c.o
+[707/1717] Building C object storage/maria/CMakeFiles/ma_test1.dir/ma_test1.c.o
+[708/1717] Building C object storage/maria/CMakeFiles/aria_pack.dir/aria_pack.c.o
+[709/1717] Building C object storage/maria/CMakeFiles/ma_test2.dir/ma_test2.c.o
+[710/1717] Building C object storage/maria/CMakeFiles/ma_test3.dir/ma_test3.c.o
+[711/1717] Building C object storage/maria/CMakeFiles/ma_rt_test.dir/ma_rt_test.c.o
+[712/1717] Building C object storage/maria/CMakeFiles/ma_sp_test.dir/ma_sp_test.c.o
+[713/1717] Building C object storage/maria/CMakeFiles/test_ma_backup.dir/test_ma_backup.c.o
+[714/1717] Building C object storage/maria/CMakeFiles/s3.dir/s3_func.c.o
+[715/1717] Building C object storage/maria/CMakeFiles/s3.dir/libmarias3/src/debug.c.o
+[716/1717] Building C object storage/maria/CMakeFiles/s3.dir/libmarias3/src/error.c.o
+[717/1717] Building C object storage/maria/CMakeFiles/s3.dir/libmarias3/src/marias3.c.o
+[718/1717] Building C object storage/maria/CMakeFiles/s3.dir/libmarias3/src/request.c.o
+[719/1717] Building C object storage/maria/CMakeFiles/s3.dir/libmarias3/src/response.c.o
+[720/1717] Building C object storage/maria/CMakeFiles/s3.dir/libmarias3/src/sha256.c.o
+[721/1717] Building C object storage/maria/CMakeFiles/s3.dir/libmarias3/src/sha256-internal.c.o
+[722/1717] Building C object storage/maria/CMakeFiles/s3.dir/libmarias3/src/xml.c.o
+[723/1717] Building C object storage/maria/CMakeFiles/s3.dir/libmarias3/src/assume_role.c.o
+[724/1717] Building CXX object storage/maria/CMakeFiles/aria_s3_copy.dir/aria_s3_copy.cc.o
+[725/1717] Building C object storage/maria/CMakeFiles/aria_s3_copy.dir/s3_func.c.o
+[726/1717] Building C object storage/maria/CMakeFiles/aria_s3_copy.dir/libmarias3/src/debug.c.o
+[727/1717] Building C object storage/maria/CMakeFiles/aria_s3_copy.dir/libmarias3/src/error.c.o
+[728/1717] Building C object storage/maria/CMakeFiles/aria_s3_copy.dir/libmarias3/src/marias3.c.o
+[729/1717] Building C object storage/maria/CMakeFiles/aria_s3_copy.dir/libmarias3/src/request.c.o
+[730/1717] Building C object storage/maria/CMakeFiles/aria_s3_copy.dir/libmarias3/src/response.c.o
+[731/1717] Building C object storage/maria/CMakeFiles/aria_s3_copy.dir/libmarias3/src/sha256.c.o
+[732/1717] Building C object storage/maria/CMakeFiles/aria_s3_copy.dir/libmarias3/src/sha256-internal.c.o
+[733/1717] Building C object storage/maria/CMakeFiles/aria_s3_copy.dir/libmarias3/src/xml.c.o
+[734/1717] Building C object storage/maria/CMakeFiles/aria_s3_copy.dir/libmarias3/src/assume_role.c.o
+[735/1717] Building CXX object storage/maria/CMakeFiles/s3.dir/ha_s3.cc.o
+[736/1717] Building C object storage/maria/unittest/CMakeFiles/trnman-t.dir/trnman-t.c.o
+[737/1717] Building C object storage/maria/unittest/CMakeFiles/ma_control_file-t.dir/ma_control_file-t.c.o
+[738/1717] Building C object storage/maria/unittest/CMakeFiles/ma_test_loghandler-t.dir/ma_maria_log_cleanup.c.o
+[739/1717] Building C object storage/maria/unittest/CMakeFiles/ma_test_loghandler-t.dir/ma_test_loghandler-t.c.o
+[740/1717] Building C object storage/maria/unittest/CMakeFiles/ma_test_loghandler-t.dir/ma_loghandler_examples.c.o
+[741/1717] Building C object storage/maria/unittest/CMakeFiles/ma_test_loghandler_multigroup-t.dir/ma_maria_log_cleanup.c.o
+[742/1717] Building C object storage/maria/unittest/CMakeFiles/ma_test_loghandler_multigroup-t.dir/ma_loghandler_examples.c.o
+[743/1717] Building C object storage/maria/unittest/CMakeFiles/ma_test_loghandler_multigroup-t.dir/ma_test_loghandler_multigroup-t.c.o
+[744/1717] Building C object storage/maria/unittest/CMakeFiles/ma_test_loghandler_multigroup-t.dir/sequence_storage.c.o
+[745/1717] Building C object storage/maria/unittest/CMakeFiles/ma_test_loghandler_multithread-t.dir/ma_test_loghandler_multithread-t.c.o
+[746/1717] Building C object storage/maria/unittest/CMakeFiles/ma_test_loghandler_multithread-t.dir/ma_maria_log_cleanup.c.o
+[747/1717] Building C object storage/maria/unittest/CMakeFiles/ma_test_loghandler_multithread-t.dir/ma_loghandler_examples.c.o
+[748/1717] Building C object storage/maria/unittest/CMakeFiles/ma_test_loghandler_pagecache-t.dir/ma_maria_log_cleanup.c.o
+[749/1717] Building C object storage/maria/unittest/CMakeFiles/ma_test_loghandler_pagecache-t.dir/ma_test_loghandler_pagecache-t.c.o
+[750/1717] Building C object storage/maria/unittest/CMakeFiles/ma_test_loghandler_pagecache-t.dir/ma_loghandler_examples.c.o
+[751/1717] Building C object storage/maria/unittest/CMakeFiles/ma_test_loghandler_long-t.dir/ma_maria_log_cleanup.c.o
+[752/1717] Building C object storage/maria/unittest/CMakeFiles/ma_test_loghandler_long-t.dir/ma_test_loghandler-t.c.o
+[753/1717] Building C object storage/maria/unittest/CMakeFiles/ma_test_loghandler_long-t.dir/ma_loghandler_examples.c.o
+[754/1717] Building C object storage/maria/unittest/CMakeFiles/ma_test_loghandler_noflush-t.dir/ma_test_loghandler_noflush-t.c.o
+[755/1717] Building C object storage/maria/unittest/CMakeFiles/ma_test_loghandler_noflush-t.dir/ma_maria_log_cleanup.c.o
+[756/1717] Building C object storage/maria/unittest/CMakeFiles/ma_test_loghandler_noflush-t.dir/ma_loghandler_examples.c.o
+[757/1717] Building C object storage/maria/unittest/CMakeFiles/ma_test_loghandler_first_lsn-t.dir/ma_test_loghandler_first_lsn-t.c.o
+[758/1717] Building C object storage/maria/unittest/CMakeFiles/ma_test_loghandler_first_lsn-t.dir/ma_maria_log_cleanup.c.o
+[759/1717] Building C object storage/maria/unittest/CMakeFiles/ma_test_loghandler_first_lsn-t.dir/ma_loghandler_examples.c.o
+[760/1717] Building C object storage/maria/unittest/CMakeFiles/ma_test_loghandler_max_lsn-t.dir/ma_test_loghandler_max_lsn-t.c.o
+[761/1717] Building C object storage/maria/unittest/CMakeFiles/ma_test_loghandler_max_lsn-t.dir/ma_maria_log_cleanup.c.o
+[762/1717] Building C object storage/maria/unittest/CMakeFiles/ma_test_loghandler_max_lsn-t.dir/ma_loghandler_examples.c.o
+[763/1717] Building C object storage/maria/unittest/CMakeFiles/ma_test_loghandler_purge-t.dir/ma_maria_log_cleanup.c.o
+[764/1717] Building C object storage/maria/unittest/CMakeFiles/ma_test_loghandler_purge-t.dir/ma_test_loghandler_purge-t.c.o
+[765/1717] Building C object storage/maria/unittest/CMakeFiles/ma_test_loghandler_purge-t.dir/ma_loghandler_examples.c.o
+[766/1717] Building C object storage/maria/unittest/CMakeFiles/ma_test_loghandler_readonly-t.dir/ma_maria_log_cleanup.c.o
+[767/1717] Building C object storage/maria/unittest/CMakeFiles/ma_test_loghandler_readonly-t.dir/ma_test_loghandler_multigroup-t.c.o
+[768/1717] Building C object storage/maria/unittest/CMakeFiles/ma_test_loghandler_readonly-t.dir/ma_loghandler_examples.c.o
+[769/1717] Building C object storage/maria/unittest/CMakeFiles/ma_test_loghandler_readonly-t.dir/sequence_storage.c.o
+[770/1717] Building C object storage/maria/unittest/CMakeFiles/ma_test_loghandler_nologs-t.dir/ma_maria_log_cleanup.c.o
+[771/1717] Building C object storage/maria/unittest/CMakeFiles/ma_test_loghandler_nologs-t.dir/ma_test_loghandler_nologs-t.c.o
+[772/1717] Building C object storage/maria/unittest/CMakeFiles/ma_test_loghandler_nologs-t.dir/ma_loghandler_examples.c.o
+[773/1717] Building C object storage/maria/unittest/CMakeFiles/ma_pagecache_single_1k-t.dir/test_file.c.o
+[774/1717] Building C object storage/maria/unittest/CMakeFiles/ma_pagecache_single_1k-t.dir/ma_pagecache_single.c.o
+[775/1717] Building C object storage/maria/unittest/CMakeFiles/ma_pagecache_single_8k-t.dir/test_file.c.o
+[776/1717] Building C object storage/maria/unittest/CMakeFiles/ma_pagecache_single_8k-t.dir/ma_pagecache_single.c.o
+[777/1717] Building C object storage/maria/unittest/CMakeFiles/ma_pagecache_single_64k-t.dir/test_file.c.o
+[778/1717] Building C object storage/maria/unittest/CMakeFiles/ma_pagecache_single_64k-t.dir/ma_pagecache_single.c.o
+[779/1717] Building C object storage/maria/unittest/CMakeFiles/ma_pagecache_consist_1k-t.dir/test_file.c.o
+[780/1717] Building C object storage/maria/unittest/CMakeFiles/ma_pagecache_consist_1k-t.dir/ma_pagecache_consist.c.o
+[781/1717] Building C object storage/maria/unittest/CMakeFiles/ma_pagecache_consist_64k-t.dir/test_file.c.o
+[782/1717] Building C object storage/maria/unittest/CMakeFiles/ma_pagecache_consist_64k-t.dir/ma_pagecache_consist.c.o
+[783/1717] Building C object storage/maria/unittest/CMakeFiles/ma_pagecache_consist_1kHC-t.dir/test_file.c.o
+[784/1717] Building C object storage/maria/unittest/CMakeFiles/ma_pagecache_consist_1kHC-t.dir/ma_pagecache_consist.c.o
+[785/1717] Building C object storage/maria/unittest/CMakeFiles/ma_pagecache_consist_64kHC-t.dir/test_file.c.o
+[786/1717] Building C object storage/maria/unittest/CMakeFiles/ma_pagecache_consist_64kHC-t.dir/ma_pagecache_consist.c.o
+[787/1717] Building C object storage/maria/unittest/CMakeFiles/ma_pagecache_consist_1kRD-t.dir/test_file.c.o
+[788/1717] Building C object storage/maria/unittest/CMakeFiles/ma_pagecache_consist_1kRD-t.dir/ma_pagecache_consist.c.o
+[789/1717] Building C object storage/maria/unittest/CMakeFiles/ma_pagecache_consist_64kRD-t.dir/test_file.c.o
+[790/1717] Building C object storage/maria/unittest/CMakeFiles/ma_pagecache_consist_64kRD-t.dir/ma_pagecache_consist.c.o
+[791/1717] Building C object storage/maria/unittest/CMakeFiles/ma_pagecache_consist_1kWR-t.dir/test_file.c.o
+[792/1717] Building C object storage/maria/unittest/CMakeFiles/ma_pagecache_consist_1kWR-t.dir/ma_pagecache_consist.c.o
+[793/1717] Building C object storage/maria/unittest/CMakeFiles/ma_pagecache_consist_64kWR-t.dir/test_file.c.o
+[794/1717] Building C object storage/maria/unittest/CMakeFiles/ma_pagecache_consist_64kWR-t.dir/ma_pagecache_consist.c.o
+[795/1717] Building C object storage/maria/unittest/CMakeFiles/ma_pagecache_rwconsist_1k-t.dir/ma_pagecache_rwconsist.c.o
+[796/1717] Building C object storage/maria/unittest/CMakeFiles/ma_pagecache_rwconsist2_1k-t.dir/ma_pagecache_rwconsist2.c.o
+[797/1717] Building CXX object storage/mroonga/CMakeFiles/mroonga.dir/mrn_table.cpp.o
+[798/1717] Building CXX object storage/mroonga/CMakeFiles/mroonga.dir/udf/mrn_udf_last_insert_grn_id.cpp.o
+[799/1717] Building CXX object storage/mroonga/CMakeFiles/mroonga.dir/ha_mroonga.cpp.o
+[800/1717] Building CXX object storage/mroonga/CMakeFiles/mroonga.dir/udf/mrn_udf_snippet.cpp.o
+[801/1717] Building CXX object storage/mroonga/CMakeFiles/mroonga.dir/udf/mrn_udf_snippet_html.cpp.o
+[802/1717] Building CXX object storage/mroonga/CMakeFiles/mroonga.dir/udf/mrn_udf_command.cpp.o
+[803/1717] Building CXX object storage/mroonga/CMakeFiles/mroonga.dir/udf/mrn_udf_escape.cpp.o
+[804/1717] Building CXX object storage/mroonga/CMakeFiles/mroonga.dir/udf/mrn_udf_normalize.cpp.o
+[805/1717] Building CXX object storage/mroonga/CMakeFiles/mroonga.dir/udf/mrn_udf_highlight_html.cpp.o
+[806/1717] Building CXX object storage/mroonga/CMakeFiles/mroonga.dir/lib/mrn_match_escalation_threshold_scope.cpp.o
+[807/1717] Building CXX object storage/mroonga/CMakeFiles/mroonga.dir/udf/mrn_udf_query_expand.cpp.o
+[808/1717] Building CXX object storage/mroonga/CMakeFiles/mroonga.dir/lib/mrn_smart_grn_obj.cpp.o
+[809/1717] Building CXX object storage/mroonga/CMakeFiles/mroonga.dir/lib/mrn_path_mapper.cpp.o
+[810/1717] Building CXX object storage/mroonga/CMakeFiles/mroonga.dir/lib/mrn_index_table_name.cpp.o
+[811/1717] Building CXX object storage/mroonga/CMakeFiles/mroonga.dir/lib/mrn_index_column_name.cpp.o
+[812/1717] Building CXX object storage/mroonga/CMakeFiles/mroonga.dir/lib/mrn_debug_column_access.cpp.o
+[813/1717] Building CXX object storage/mroonga/CMakeFiles/mroonga.dir/lib/mrn_auto_increment_value_lock.cpp.o
+[814/1717] Building CXX object storage/mroonga/CMakeFiles/mroonga.dir/lib/mrn_external_lock.cpp.o
+[815/1717] Building CXX object storage/mroonga/CMakeFiles/mroonga.dir/lib/mrn_multiple_column_key_codec.cpp.o
+[816/1717] Building CXX object storage/mroonga/CMakeFiles/mroonga.dir/lib/mrn_field_normalizer.cpp.o
+[817/1717] Building CXX object storage/mroonga/CMakeFiles/mroonga.dir/lib/mrn_encoding.cpp.o
+[818/1717] Building CXX object storage/mroonga/CMakeFiles/mroonga.dir/lib/mrn_parameters_parser.cpp.o
+[819/1717] Building CXX object storage/mroonga/CMakeFiles/mroonga.dir/lib/mrn_lock.cpp.o
+[820/1717] Building CXX object storage/mroonga/CMakeFiles/mroonga.dir/lib/mrn_condition_converter.cpp.o
+[821/1717] Building CXX object storage/mroonga/CMakeFiles/mroonga.dir/lib/mrn_time_converter.cpp.o
+[822/1717] Building CXX object storage/mroonga/CMakeFiles/mroonga.dir/lib/mrn_database_manager.cpp.o
+[823/1717] Building CXX object storage/mroonga/CMakeFiles/mroonga.dir/lib/mrn_value_decoder.cpp.o
+[824/1717] Building CXX object storage/mroonga/CMakeFiles/mroonga.dir/lib/mrn_database_repairer.cpp.o
+[825/1717] Building CXX object storage/mroonga/CMakeFiles/mroonga.dir/lib/mrn_context_pool.cpp.o
+[826/1717] Building CXX object storage/mroonga/CMakeFiles/mroonga.dir/lib/mrn_operations.cpp.o
+[827/1717] Building CXX object storage/mroonga/CMakeFiles/mroonga.dir/lib/mrn_operation.cpp.o
+[828/1717] Building CXX object storage/mroonga/CMakeFiles/mroonga.dir/lib/mrn_database.cpp.o
+[829/1717] Building CXX object storage/mroonga/CMakeFiles/mroonga.dir/lib/mrn_column_name.cpp.o
+[830/1717] Building CXX object storage/mroonga/CMakeFiles/mroonga.dir/lib/mrn_count_skip_checker.cpp.o
+[831/1717] Building CXX object storage/mroonga/CMakeFiles/mroonga.dir/lib/mrn_query_parser.cpp.o
+[832/1717] Building CXX object storage/mroonga/CMakeFiles/mroonga.dir/lib/mrn_smart_bitmap.cpp.o
+[833/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/ft_boolean_search.c.o
+[834/1717] Building CXX object storage/mroonga/CMakeFiles/mroonga.dir/lib/mrn_table_fields_offset_mover.cpp.o
+[835/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/ft_nlq_search.c.o
+[836/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/ft_static.c.o
+[837/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/ft_parser.c.o
+[838/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/ft_myisam.c.o
+[839/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/ft_stopwords.c.o
+[840/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/ft_update.c.o
+[841/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/mi_cache.c.o
+[842/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/mi_changed.c.o
+[843/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/mi_check.c.o
+[844/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/mi_checksum.c.o
+[845/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/mi_close.c.o
+[846/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/mi_create.c.o
+[847/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/mi_dbug.c.o
+[848/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/mi_delete.c.o
+[849/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/mi_delete_all.c.o
+[850/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/mi_delete_table.c.o
+[851/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/mi_dynrec.c.o
+[852/1717] Building CXX object storage/myisam/CMakeFiles/myisam.dir/ha_myisam.cc.o
+[853/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/mi_extra.c.o
+[854/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/mi_info.c.o
+[855/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/mi_keycache.c.o
+[856/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/mi_key.c.o
+[857/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/mi_locking.c.o
+[858/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/mi_log.c.o
+[859/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/mi_open.c.o
+[860/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/mi_packrec.c.o
+[861/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/mi_page.c.o
+[862/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/mi_panic.c.o
+[863/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/mi_preload.c.o
+[864/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/mi_range.c.o
+[865/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/mi_rename.c.o
+[866/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/mi_rfirst.c.o
+[867/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/mi_rlast.c.o
+[868/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/mi_rnext.c.o
+[869/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/mi_rnext_same.c.o
+[870/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/mi_rrnd.c.o
+[871/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/mi_rprev.c.o
+[872/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/mi_rsame.c.o
+[873/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/mi_rsamepos.c.o
+[874/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/mi_scan.c.o
+[875/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/mi_static.c.o
+[876/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/mi_statrec.c.o
+[877/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/mi_unique.c.o
+[878/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/mi_search.c.o
+[879/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/mi_update.c.o
+[880/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/mi_write.c.o
+[881/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/rt_index.c.o
+[882/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/rt_key.c.o
+[883/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/rt_split.c.o
+[884/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/rt_mbr.c.o
+[885/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/sort.c.o
+[886/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/sp_key.c.o
+[887/1717] Building C object storage/myisam/CMakeFiles/myisam.dir/mi_rkey.c.o
+[888/1717] Linking CXX static library storage/myisam/libmyisam.a
+[889/1717] Building C object storage/myisam/CMakeFiles/myisam_ftdump.dir/myisam_ftdump.c.o
+[890/1717] Linking CXX static library storage/maria/libaria.a
+[891/1717] Linking CXX executable storage/myisam/myisam_ftdump
+[892/1717] Linking CXX executable storage/maria/aria_ftdump
+[893/1717] Linking CXX executable storage/maria/aria_chk
+[894/1717] Linking CXX executable storage/maria/aria_read_log
+[895/1717] Linking CXX executable storage/maria/aria_dump_log
+[896/1717] Linking CXX executable storage/maria/aria_pack
+[897/1717] Linking CXX executable storage/maria/ma_test1
+[898/1717] Linking CXX executable storage/maria/ma_test2
+[899/1717] Linking CXX executable storage/maria/ma_test3
+[900/1717] Linking CXX executable storage/maria/ma_rt_test
+[901/1717] Linking CXX executable storage/maria/ma_sp_test
+[902/1717] Linking CXX executable storage/maria/test_ma_backup
+[903/1717] Linking CXX executable storage/maria/aria_s3_copy
+[904/1717] Linking CXX executable storage/maria/unittest/ma_control_file-t
+[905/1717] Linking CXX executable storage/maria/unittest/trnman-t
+[906/1717] Linking CXX executable storage/maria/unittest/ma_test_loghandler-t
+[907/1717] Linking CXX executable storage/maria/unittest/ma_test_loghandler_multigroup-t
+[908/1717] Linking CXX executable storage/maria/unittest/ma_test_loghandler_multithread-t
+[909/1717] Linking CXX executable storage/maria/unittest/ma_test_loghandler_pagecache-t
+[910/1717] Linking CXX executable storage/maria/unittest/ma_test_loghandler_long-t
+[911/1717] Linking CXX executable storage/maria/unittest/ma_test_loghandler_noflush-t
+[912/1717] Linking CXX executable storage/maria/unittest/ma_test_loghandler_first_lsn-t
+[913/1717] Linking CXX executable storage/maria/unittest/ma_test_loghandler_max_lsn-t
+[914/1717] Linking CXX executable storage/maria/unittest/ma_test_loghandler_purge-t
+[915/1717] Linking CXX executable storage/maria/unittest/ma_test_loghandler_readonly-t
+[916/1717] Linking CXX executable storage/maria/unittest/ma_test_loghandler_nologs-t
+[917/1717] Linking CXX executable storage/maria/unittest/ma_pagecache_single_1k-t
+[918/1717] Linking CXX executable storage/maria/unittest/ma_pagecache_single_8k-t
+[919/1717] Linking CXX executable storage/maria/unittest/ma_pagecache_single_64k-t
+[920/1717] Linking CXX executable storage/maria/unittest/ma_pagecache_consist_1k-t
+[921/1717] Linking CXX executable storage/maria/unittest/ma_pagecache_consist_64k-t
+[922/1717] Linking CXX executable storage/maria/unittest/ma_pagecache_consist_1kHC-t
+[923/1717] Linking CXX executable storage/maria/unittest/ma_pagecache_consist_64kHC-t
+[924/1717] Linking CXX executable storage/maria/unittest/ma_pagecache_consist_1kRD-t
+[925/1717] Linking CXX executable storage/maria/unittest/ma_pagecache_consist_64kRD-t
+[926/1717] Linking CXX executable storage/maria/unittest/ma_pagecache_consist_1kWR-t
+[927/1717] Linking CXX executable storage/maria/unittest/ma_pagecache_consist_64kWR-t
+[928/1717] Linking CXX executable storage/maria/unittest/ma_pagecache_rwconsist_1k-t
+[929/1717] Linking CXX executable storage/maria/unittest/ma_pagecache_rwconsist2_1k-t
+[930/1717] Building C object storage/myisam/CMakeFiles/myisamlog.dir/myisamlog.c.o
+[931/1717] Building C object storage/myisam/CMakeFiles/myisamchk.dir/myisamchk.c.o
+[932/1717] Linking CXX executable storage/myisam/myisamlog
+[933/1717] Linking CXX executable storage/myisam/myisamchk
+[934/1717] Building C object storage/myisam/CMakeFiles/mi_test1.dir/mi_test1.c.o
+[935/1717] Linking CXX executable storage/myisam/mi_test1
+[936/1717] Building C object storage/myisam/CMakeFiles/myisampack.dir/myisampack.c.o
+[937/1717] Building C object storage/myisam/CMakeFiles/mi_test2.dir/mi_test2.c.o
+[938/1717] Linking CXX executable storage/myisam/myisampack
+[939/1717] Linking CXX executable storage/myisam/mi_test2
+[940/1717] Building C object storage/myisam/CMakeFiles/sp_test.dir/sp_test.c.o
+[941/1717] Building C object storage/myisam/CMakeFiles/mi_test3.dir/mi_test3.c.o
+[942/1717] Linking CXX executable storage/myisam/sp_test
+[943/1717] Linking CXX executable storage/myisam/mi_test3
+[944/1717] Building C object storage/myisammrg/CMakeFiles/myisammrg.dir/myrg_close.c.o
+[945/1717] Building C object storage/myisam/CMakeFiles/rt_test.dir/rt_test.c.o
+[946/1717] Building C object storage/myisammrg/CMakeFiles/myisammrg.dir/myrg_create.c.o
+[947/1717] Linking CXX executable storage/myisam/rt_test
+[948/1717] Building C object storage/myisammrg/CMakeFiles/myisammrg.dir/myrg_delete.c.o
+[949/1717] Building C object storage/myisammrg/CMakeFiles/myisammrg.dir/myrg_extra.c.o
+[950/1717] Building C object storage/myisammrg/CMakeFiles/myisammrg.dir/myrg_info.c.o
+[951/1717] Building C object storage/myisammrg/CMakeFiles/myisammrg.dir/myrg_locking.c.o
+[952/1717] Building C object storage/myisammrg/CMakeFiles/myisammrg.dir/myrg_open.c.o
+[953/1717] Building C object storage/myisammrg/CMakeFiles/myisammrg.dir/myrg_panic.c.o
+[954/1717] Building C object storage/myisammrg/CMakeFiles/myisammrg.dir/myrg_queue.c.o
+[955/1717] Building C object storage/myisammrg/CMakeFiles/myisammrg.dir/myrg_range.c.o
+[956/1717] Building C object storage/myisammrg/CMakeFiles/myisammrg.dir/myrg_rfirst.c.o
+[957/1717] Building C object storage/myisammrg/CMakeFiles/myisammrg.dir/myrg_rkey.c.o
+[958/1717] Building C object storage/myisammrg/CMakeFiles/myisammrg.dir/myrg_rlast.c.o
+[959/1717] Building C object storage/myisammrg/CMakeFiles/myisammrg.dir/myrg_rnext.c.o
+[960/1717] Building C object storage/myisammrg/CMakeFiles/myisammrg.dir/myrg_rnext_same.c.o
+[961/1717] Building C object storage/myisammrg/CMakeFiles/myisammrg.dir/myrg_rprev.c.o
+[962/1717] Building C object storage/myisammrg/CMakeFiles/myisammrg.dir/myrg_rrnd.c.o
+[963/1717] Building C object storage/myisammrg/CMakeFiles/myisammrg.dir/myrg_rsame.c.o
+[964/1717] Building C object storage/myisammrg/CMakeFiles/myisammrg.dir/myrg_static.c.o
+[965/1717] Building C object storage/myisammrg/CMakeFiles/myisammrg.dir/myrg_update.c.o
+[966/1717] Building C object storage/myisammrg/CMakeFiles/myisammrg.dir/myrg_write.c.o
+[967/1717] Building C object storage/myisammrg/CMakeFiles/myisammrg.dir/myrg_records.c.o
+[968/1717] Building CXX object storage/myisammrg/CMakeFiles/myisammrg.dir/ha_myisammrg.cc.o
+[969/1717] Linking CXX static library storage/myisammrg/libmyisammrg.a
+[970/1717] Building CXX object storage/perfschema/unittest/CMakeFiles/pfs_server_stubs.dir/pfs_server_stubs.cc.o
+[971/1717] Linking CXX static library storage/perfschema/unittest/libpfs_server_stubs.a
+[972/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdb.dir/rdb_mariadb_server_port.cc.o
+[973/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdb.dir/rdb_i_s.cc.o
+[974/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdb.dir/rdb_io_watchdog.cc.o
+[975/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdb.dir/rdb_mutex_wrapper.cc.o
+[976/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdb.dir/ha_rocksdb.cc.o
+[977/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdb.dir/rdb_index_merge.cc.o
+[978/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdb.dir/properties_collector.cc.o
+[979/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdb.dir/rdb_cf_manager.cc.o
+[980/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdb.dir/rdb_utils.cc.o
+[981/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdb.dir/rdb_datadic.cc.o
+[982/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdb.dir/rdb_psi.cc.o
+[983/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdb.dir/rdb_threads.cc.o
+[984/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdb.dir/rdb_converter.cc.o
+[985/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdb.dir/rdb_sst_info.cc.o
+[986/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdb_aux_lib.dir/event_listener.cc.o
+[987/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdb_aux_lib.dir/rdb_cf_options.cc.o
+[988/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdb_aux_lib.dir/rdb_perf_context.cc.o
+[989/1717] Building CXX object storage/rocksdb/CMakeFiles/mariadb-ldb.dir/tools/mysql_ldb.cc.o
+[990/1717] Building CXX object storage/rocksdb/CMakeFiles/rocksdb_aux_lib.dir/nosql_access.cc.o
+[991/1717] Linking CXX static library storage/rocksdb/librocksdb_aux_lib.a
+[992/1717] Building CXX object storage/sequence/CMakeFiles/sequence.dir/sequence.cc.o
+[993/1717] Linking CXX static library storage/sequence/libsequence.a
+[994/1717] Linking CXX executable storage/rocksdb/mariadb-ldb
+[995/1717] Building CXX object storage/sphinx/CMakeFiles/sphinx.dir/snippets_udf.cc.o
+[996/1717] Building CXX object storage/sphinx/CMakeFiles/sphinx.dir/ha_sphinx.cc.o
+[997/1717] Building CXX object storage/spider/CMakeFiles/spider.dir/spd_param.cc.o
+[998/1717] Building CXX object storage/spider/CMakeFiles/spider.dir/spd_sys_table.cc.o
+[999/1717] Building CXX object storage/spider/CMakeFiles/spider.dir/spd_trx.cc.o
+[1000/1717] Building CXX object storage/spider/CMakeFiles/spider.dir/spd_conn.cc.o
+[1001/1717] Building CXX object storage/spider/CMakeFiles/spider.dir/spd_db_conn.cc.o
+[1002/1717] Building CXX object storage/spider/CMakeFiles/spider.dir/spd_direct_sql.cc.o
+[1003/1717] Building CXX object storage/spider/CMakeFiles/spider.dir/spd_udf.cc.o
+[1004/1717] Building CXX object storage/spider/CMakeFiles/spider.dir/spd_table.cc.o
+[1005/1717] Building CXX object storage/spider/CMakeFiles/spider.dir/spd_ping_table.cc.o
+[1006/1717] Building CXX object storage/spider/CMakeFiles/spider.dir/spd_copy_tables.cc.o
+[1007/1717] Building CXX object storage/spider/CMakeFiles/spider.dir/spd_i_s.cc.o
+[1008/1717] Building CXX object storage/spider/CMakeFiles/spider.dir/spd_malloc.cc.o
+[1009/1717] Building CXX object storage/spider/CMakeFiles/spider.dir/ha_spider.cc.o
+[1010/1717] Building CXX object storage/spider/CMakeFiles/spider.dir/spd_db_mysql.cc.o
+[1011/1717] Building CXX object storage/spider/CMakeFiles/spider.dir/spd_group_by_handler.cc.o
+[1012/1717] Building CXX object storage/spider/CMakeFiles/spider.dir/spd_db_include.cc.o
+[1013/1717] Building CXX object storage/test_sql_discovery/CMakeFiles/test_sql_discovery.dir/test_sql_discovery.cc.o
+[1014/1717] Building CXX object storage/videx/CMakeFiles/videx.dir/videx_utils.cc.o
+[1015/1717] Building C object plugin/audit_null/CMakeFiles/audit_null.dir/audit_null.c.o
+[1016/1717] Building C object plugin/auth_ed25519/CMakeFiles/auth_ed25519.dir/server_ed25519.c.o
+[1017/1717] Building C object plugin/auth_ed25519/CMakeFiles/auth_ed25519.dir/ref10/fe_0.c.o
+[1018/1717] Building C object plugin/auth_ed25519/CMakeFiles/auth_ed25519.dir/ref10/fe_1.c.o
+[1019/1717] Building C object plugin/auth_ed25519/CMakeFiles/auth_ed25519.dir/ref10/fe_add.c.o
+[1020/1717] Building C object plugin/auth_ed25519/CMakeFiles/auth_ed25519.dir/ref10/fe_cmov.c.o
+[1021/1717] Building C object plugin/auth_ed25519/CMakeFiles/auth_ed25519.dir/ref10/fe_copy.c.o
+[1022/1717] Building C object plugin/auth_ed25519/CMakeFiles/auth_ed25519.dir/ref10/fe_frombytes.c.o
+[1023/1717] Building C object plugin/auth_ed25519/CMakeFiles/auth_ed25519.dir/ref10/fe_invert.c.o
+[1024/1717] Building C object plugin/auth_ed25519/CMakeFiles/auth_ed25519.dir/ref10/fe_isnegative.c.o
+[1025/1717] Building C object plugin/auth_ed25519/CMakeFiles/auth_ed25519.dir/ref10/fe_isnonzero.c.o
+[1026/1717] Building C object plugin/auth_ed25519/CMakeFiles/auth_ed25519.dir/ref10/fe_mul.c.o
+[1027/1717] Building C object plugin/auth_ed25519/CMakeFiles/auth_ed25519.dir/ref10/fe_neg.c.o
+[1028/1717] Building C object plugin/auth_ed25519/CMakeFiles/auth_ed25519.dir/ref10/fe_pow22523.c.o
+[1029/1717] Building C object plugin/auth_ed25519/CMakeFiles/auth_ed25519.dir/ref10/fe_sq.c.o
+[1030/1717] Building C object plugin/auth_ed25519/CMakeFiles/auth_ed25519.dir/ref10/fe_sq2.c.o
+[1031/1717] Building C object plugin/auth_ed25519/CMakeFiles/auth_ed25519.dir/ref10/fe_sub.c.o
+[1032/1717] Building C object plugin/auth_ed25519/CMakeFiles/auth_ed25519.dir/ref10/fe_tobytes.c.o
+[1033/1717] Building C object plugin/auth_ed25519/CMakeFiles/auth_ed25519.dir/ref10/ge_add.c.o
+[1034/1717] Building C object plugin/auth_ed25519/CMakeFiles/auth_ed25519.dir/ref10/ge_double_scalarmult.c.o
+[1035/1717] Building C object plugin/auth_ed25519/CMakeFiles/auth_ed25519.dir/ref10/ge_frombytes.c.o
+[1036/1717] Building C object plugin/auth_ed25519/CMakeFiles/auth_ed25519.dir/ref10/ge_madd.c.o
+[1037/1717] Building C object plugin/auth_ed25519/CMakeFiles/auth_ed25519.dir/ref10/ge_msub.c.o
+[1038/1717] Building C object plugin/auth_ed25519/CMakeFiles/auth_ed25519.dir/ref10/ge_p1p1_to_p2.c.o
+[1039/1717] Building C object plugin/auth_ed25519/CMakeFiles/auth_ed25519.dir/ref10/ge_p1p1_to_p3.c.o
+[1040/1717] Building C object plugin/auth_ed25519/CMakeFiles/auth_ed25519.dir/ref10/ge_p2_0.c.o
+[1041/1717] Building C object plugin/auth_ed25519/CMakeFiles/auth_ed25519.dir/ref10/ge_p2_dbl.c.o
+[1042/1717] Building C object plugin/auth_ed25519/CMakeFiles/auth_ed25519.dir/ref10/ge_p3_0.c.o
+[1043/1717] Building C object plugin/auth_ed25519/CMakeFiles/auth_ed25519.dir/ref10/ge_p3_dbl.c.o
+[1044/1717] Building C object plugin/auth_ed25519/CMakeFiles/auth_ed25519.dir/ref10/ge_p3_to_cached.c.o
+[1045/1717] Building C object plugin/auth_ed25519/CMakeFiles/auth_ed25519.dir/ref10/ge_p3_to_p2.c.o
+[1046/1717] Building C object plugin/auth_ed25519/CMakeFiles/auth_ed25519.dir/ref10/ge_p3_tobytes.c.o
+[1047/1717] Building C object plugin/auth_ed25519/CMakeFiles/auth_ed25519.dir/ref10/ge_precomp_0.c.o
+[1048/1717] Building C object plugin/auth_ed25519/CMakeFiles/auth_ed25519.dir/ref10/ge_scalarmult_base.c.o
+[1049/1717] Building C object plugin/auth_ed25519/CMakeFiles/auth_ed25519.dir/ref10/ge_sub.c.o
+[1050/1717] Building C object plugin/auth_ed25519/CMakeFiles/auth_ed25519.dir/ref10/ge_tobytes.c.o
+[1051/1717] Building C object plugin/auth_ed25519/CMakeFiles/auth_ed25519.dir/ref10/keypair.c.o
+[1052/1717] Building C object plugin/auth_ed25519/CMakeFiles/auth_ed25519.dir/ref10/open.c.o
+[1053/1717] Building C object plugin/auth_ed25519/CMakeFiles/auth_ed25519.dir/ref10/sc_muladd.c.o
+[1054/1717] Building C object plugin/auth_ed25519/CMakeFiles/auth_ed25519.dir/ref10/sc_reduce.c.o
+[1055/1717] Building C object plugin/auth_ed25519/CMakeFiles/auth_ed25519.dir/ref10/sign.c.o
+[1056/1717] Building C object plugin/auth_ed25519/CMakeFiles/auth_ed25519.dir/ref10/verify.c.o
+[1057/1717] Building CXX object storage/videx/CMakeFiles/videx.dir/ha_videx.cc.o
+[1058/1717] Building C object plugin/auth_examples/CMakeFiles/dialog_examples.dir/dialog_examples.c.o
+[1059/1717] Building C object plugin/auth_examples/CMakeFiles/auth_test_plugin.dir/test_plugin.c.o
+[1060/1717] Building C object plugin/auth_examples/CMakeFiles/qa_auth_interface.dir/qa_auth_interface.c.o
+[1061/1717] Building C object plugin/auth_examples/CMakeFiles/qa_auth_server.dir/qa_auth_server.c.o
+[1062/1717] Building C object plugin/auth_examples/CMakeFiles/qa_auth_client.dir/qa_auth_client.c.o
+[1063/1717] Building C object plugin/auth_examples/CMakeFiles/auth_0x0100.dir/auth_0x0100.c.o
+[1064/1717] Building C object plugin/auth_mysql_sha2/CMakeFiles/auth_mysql_sha2.dir/mysql_sha2.c.o
+[1065/1717] Building C object plugin/auth_mysql_sha2/CMakeFiles/auth_mysql_sha2.dir/sha256crypt.c.o
+[1066/1717] Building C object plugin/auth_mysql_sha2/CMakeFiles/auth_mysql_sha2.dir/openssl1-compat.c.o
+[1067/1717] Building C object plugin/auth_mysql_sha2/CMakeFiles/auth_mysql_sha2.dir/ssl_stuff.c.o
+[1068/1717] Building C object plugin/auth_socket/CMakeFiles/auth_socket.dir/auth_socket.c.o
+[1069/1717] Linking C static library plugin/auth_socket/libauth_socket.a
+[1070/1717] Building CXX object plugin/auth_parsec/CMakeFiles/auth_parsec.dir/server_parsec.cc.o
+[1071/1717] Building CXX object plugin/debug_key_management/CMakeFiles/debug_key_management.dir/debug_key_management_plugin.cc.o
+[1072/1717] Building CXX object plugin/daemon_example/CMakeFiles/daemon_example.dir/daemon_example.cc.o
+[1073/1717] Building CXX object plugin/example_key_management/CMakeFiles/example_key_management.dir/example_key_management_plugin.cc.o
+[1074/1717] Building CXX object plugin/disks/CMakeFiles/disks.dir/information_schema_disks.cc.o
+[1075/1717] Building CXX object plugin/feedback/CMakeFiles/feedback.dir/feedback.cc.o
+[1076/1717] Building CXX object plugin/feedback/CMakeFiles/feedback.dir/sender_thread.cc.o
+[1077/1717] Building CXX object plugin/feedback/CMakeFiles/feedback.dir/url_base.cc.o
+[1078/1717] Building CXX object plugin/feedback/CMakeFiles/feedback.dir/url_http.cc.o
+[1079/1717] Building CXX object plugin/file_key_management/CMakeFiles/file_key_management.dir/file_key_management_plugin.cc.o
+[1080/1717] Building CXX object plugin/file_key_management/CMakeFiles/file_key_management.dir/parser.cc.o
+[1081/1717] Building C object plugin/fulltext/CMakeFiles/ftexample.dir/plugin_example.c.o
+[1082/1717] Building CXX object plugin/feedback/CMakeFiles/feedback.dir/utils.cc.o
+[1083/1717] Linking CXX static library plugin/feedback/libfeedback.a
+[1084/1717] Building CXX object plugin/func_test/CMakeFiles/func_test.dir/plugin.cc.o
+[1085/1717] Building CXX object plugin/handler_socket/CMakeFiles/handlersocket.dir/handlersocket/database.cpp.o
+[1086/1717] Building CXX object plugin/handler_socket/CMakeFiles/handlersocket.dir/handlersocket/handlersocket.cpp.o
+[1087/1717] Building CXX object plugin/handler_socket/CMakeFiles/handlersocket.dir/handlersocket/hstcpsvr_worker.cpp.o
+[1088/1717] Building CXX object plugin/handler_socket/CMakeFiles/handlersocket.dir/handlersocket/hstcpsvr.cpp.o
+[1089/1717] Building CXX object plugin/hashicorp_key_management/CMakeFiles/hashicorp_key_management.dir/hashicorp_key_management_plugin.cc.o
+[1090/1717] Building CXX object plugin/locale_info/CMakeFiles/locales.dir/locale_info.cc.o
+[1091/1717] Building C object plugin/password_reuse_check/CMakeFiles/password_reuse_check.dir/password_reuse_check.c.o
+[1092/1717] Building C object plugin/provider_bzip2/CMakeFiles/provider_bzip2.dir/plugin.c.o
+[1093/1717] Building C object plugin/provider_lz4/CMakeFiles/provider_lz4.dir/plugin.c.o
+[1094/1717] Building C object plugin/provider_lzma/CMakeFiles/provider_lzma.dir/plugin.c.o
+[1095/1717] Building C object plugin/provider_lzo/CMakeFiles/provider_lzo.dir/plugin.c.o
+[1096/1717] Building C object plugin/provider_snappy/CMakeFiles/provider_snappy.dir/plugin.c.o
+[1097/1717] Building CXX object plugin/metadata_lock_info/CMakeFiles/metadata_lock_info.dir/metadata_lock_info.cc.o
+[1098/1717] Building CXX object plugin/qc_info/CMakeFiles/query_cache_info.dir/qc_info.cc.o
+[1099/1717] Building CXX object plugin/query_response_time/CMakeFiles/query_response_time.dir/query_response_time.cc.o
+[1100/1717] Building CXX object plugin/server_audit/CMakeFiles/server_audit.dir/server_audit.cc.o
+[1101/1717] Building C object plugin/simple_password_check/CMakeFiles/simple_password_check.dir/simple_password_check.c.o
+[1102/1717] Building C object plugin/sql_errlog/CMakeFiles/sql_errlog.dir/sql_errlog.c.o
+[1103/1717] Building C object plugin/test_sql_service/CMakeFiles/test_sql_service.dir/test_sql_service.c.o
+[1104/1717] Building CXX object plugin/query_response_time/CMakeFiles/query_response_time.dir/plugin.cc.o
+[1105/1717] Building CXX object plugin/type_cursor/CMakeFiles/type_cursor.dir/plugin.cc.o
+[1106/1717] Linking CXX static library plugin/type_cursor/libtype_cursor.a
+[1107/1717] Building CXX object plugin/type_assoc_array/CMakeFiles/type_assoc_array.dir/sql_type_assoc_array.cc.o
+[1108/1717] Building CXX object plugin/type_geom/CMakeFiles/type_geom.dir/plugin.cc.o
+[1109/1717] Linking CXX static library plugin/type_assoc_array/libtype_assoc_array.a
+[1110/1717] Linking CXX static library plugin/type_geom/libtype_geom.a
+[1111/1717] Building CXX object plugin/type_inet/CMakeFiles/type_inet.dir/item_inetfunc.cc.o
+[1112/1717] Building CXX object plugin/type_inet/CMakeFiles/type_inet.dir/plugin.cc.o
+[1113/1717] Building CXX object plugin/type_mysql_json/CMakeFiles/type_mysql_json.dir/mysql_json.cc.o
+[1114/1717] Building CXX object plugin/type_mysql_json/CMakeFiles/type_mysql_json.dir/type.cc.o
+[1115/1717] Building CXX object plugin/type_mysql_timestamp/CMakeFiles/type_mysql_timestamp.dir/plugin.cc.o
+[1116/1717] Building CXX object plugin/type_inet/CMakeFiles/type_inet.dir/sql_type_inet.cc.o
+[1117/1717] Linking CXX static library plugin/type_inet/libtype_inet.a
+[1118/1717] Building CXX object plugin/type_test/CMakeFiles/type_test.dir/plugin.cc.o
+[1119/1717] Building CXX object plugin/type_uuid/CMakeFiles/type_uuid.dir/item_uuidfunc.cc.o
+[1120/1717] Building CXX object plugin/type_uuid/CMakeFiles/type_uuid.dir/plugin.cc.o
+[1121/1717] Linking CXX static library plugin/type_uuid/libtype_uuid.a
+[1122/1717] Building CXX object plugin/type_xmltype/CMakeFiles/type_xmltype.dir/plugin.cc.o
+[1123/1717] Building CXX object plugin/user_variables/CMakeFiles/user_variables.dir/user_variables.cc.o
+[1124/1717] Linking CXX static library plugin/user_variables/libuser_variables.a
+[1125/1717] Building CXX object plugin/type_xmltype/CMakeFiles/type_xmltype.dir/sql_type_xmltype.cc.o
+[1126/1717] Linking CXX static library plugin/type_xmltype/libtype_xmltype.a
+[1127/1717] Building CXX object plugin/userstat/CMakeFiles/userstat.dir/userstat.cc.o
+[1128/1717] Linking CXX static library plugin/userstat/libuserstat.a
+[1129/1717] Building CXX object plugin/versioning/CMakeFiles/test_versioning.dir/versioning.cc.o
+[1130/1717] Building CXX object client/CMakeFiles/mariadb.dir/completion_hash.cc.o
+[1131/1717] Building CXX object plugin/wsrep_info/CMakeFiles/wsrep_info.dir/plugin.cc.o
+[1132/1717] Building CXX object client/CMakeFiles/mariadb.dir/readline.cc.o
+[1133/1717] Building CXX object client/CMakeFiles/mariadb.dir/mysql.cc.o
+[1134/1717] Building CXX object client/CMakeFiles/mariadb.dir/__/sql/sql_string.cc.o
+[1135/1717] Linking CXX executable client/mariadb
+[1136/1717] Building CXX object client/CMakeFiles/mariadb-test.dir/__/sql/sql_string.cc.o
+[1137/1717] Building C object client/CMakeFiles/mariadb-check.dir/mysqlcheck.c.o
+[1138/1717] Linking CXX executable client/mariadb-check
+[1139/1717] Building CXX object client/CMakeFiles/mariadb-dump.dir/mysqldump.cc.o
+[1140/1717] Building C object client/CMakeFiles/mariadb-dump.dir/__/sql-common/my_user.c.o
+[1141/1717] Building CXX object client/CMakeFiles/mariadb-test.dir/mysqltest.cc.o
+[1142/1717] Building CXX object client/CMakeFiles/mariadb-dump.dir/connection_pool.cc.o
+[1143/1717] Linking CXX executable client/mariadb-dump
+[1144/1717] Linking CXX executable client/mariadb-test
+[1145/1717] Building C object client/CMakeFiles/mariadb-show.dir/mysqlshow.c.o
+[1146/1717] Linking CXX executable client/mariadb-show
+[1147/1717] Building C object client/CMakeFiles/mariadb-plugin.dir/mysql_plugin.c.o
+[1148/1717] Linking CXX executable client/mariadb-plugin
+[1149/1717] Building CXX object client/CMakeFiles/mariadb-import.dir/mysqlimport.cc.o
+[1150/1717] Linking CXX executable client/mariadb-import
+[1151/1717] Building CXX object client/CMakeFiles/mariadb-binlog.dir/mysqlbinlog-engine.cc.o
+[1152/1717] Building CXX object client/CMakeFiles/mariadb-admin.dir/mysqladmin.cc.o
+[1153/1717] Building C object client/CMakeFiles/mariadb-admin.dir/__/sql/password.c.o
+[1154/1717] Linking CXX executable client/mariadb-admin
+[1155/1717] Building C object client/CMakeFiles/mariadb-slap.dir/mysqlslap.c.o
+[1156/1717] Linking CXX executable client/mariadb-slap
+[1157/1717] Building C object client/CMakeFiles/async_example.dir/async_example.c.o
+[1158/1717] Linking CXX executable client/async_example
+[1159/1717] Building C object extra/CMakeFiles/perror.dir/perror.c.o
+[1160/1717] Linking CXX executable extra/perror
+[1161/1717] Building CXX object extra/CMakeFiles/innochecksum.dir/innochecksum.cc.o
+[1162/1717] Building CXX object extra/CMakeFiles/innochecksum.dir/__/storage/innobase/buf/buf0checksum.cc.o
+[1163/1717] Building CXX object extra/CMakeFiles/innochecksum.dir/__/storage/innobase/ut/ut0ut.cc.o
+[1164/1717] Building CXX object client/CMakeFiles/mariadb-binlog.dir/mysqlbinlog.cc.o
+[1165/1717] Linking CXX executable client/mariadb-binlog
+[1166/1717] Building CXX object extra/CMakeFiles/innochecksum.dir/__/storage/innobase/page/page0zip.cc.o
+[1167/1717] Building CXX object extra/CMakeFiles/innochecksum.dir/__/storage/innobase/buf/buf0buf.cc.o
+[1168/1717] Building C object libservices/CMakeFiles/mysqlservices.dir/base64_service.c.o
+[1169/1717] Building C object libservices/CMakeFiles/mysqlservices.dir/debug_sync_service.c.o
+[1170/1717] Building C object libservices/CMakeFiles/mysqlservices.dir/encryption_scheme_service.c.o
+[1171/1717] Building C object libservices/CMakeFiles/mysqlservices.dir/encryption_service.c.o
+[1172/1717] Building C object libservices/CMakeFiles/mysqlservices.dir/kill_statement_service.c.o
+[1173/1717] Building C object libservices/CMakeFiles/mysqlservices.dir/logger_service.c.o
+[1174/1717] Building C object libservices/CMakeFiles/mysqlservices.dir/my_crypt_service.c.o
+[1175/1717] Building C object libservices/CMakeFiles/mysqlservices.dir/my_md5_service.c.o
+[1176/1717] Building C object libservices/CMakeFiles/mysqlservices.dir/my_print_error_service.c.o
+[1177/1717] Building C object libservices/CMakeFiles/mysqlservices.dir/print_check_msg_service.c.o
+[1178/1717] Building C object libservices/CMakeFiles/mysqlservices.dir/my_sha1_service.c.o
+[1179/1717] Building C object libservices/CMakeFiles/mysqlservices.dir/my_sha2_service.c.o
+[1180/1717] Building C object libservices/CMakeFiles/mysqlservices.dir/my_snprintf_service.c.o
+[1181/1717] Building C object libservices/CMakeFiles/mysqlservices.dir/progress_report_service.c.o
+[1182/1717] Building C object libservices/CMakeFiles/mysqlservices.dir/thd_alloc_service.c.o
+[1183/1717] Building C object libservices/CMakeFiles/mysqlservices.dir/thd_autoinc_service.c.o
+[1184/1717] Building C object libservices/CMakeFiles/mysqlservices.dir/thd_error_context_service.c.o
+[1185/1717] Building CXX object extra/CMakeFiles/innochecksum.dir/__/storage/innobase/fil/fil0crypt.cc.o
+[1186/1717] Building C object libservices/CMakeFiles/mysqlservices.dir/thd_rnd_service.c.o
+[1187/1717] Building C object libservices/CMakeFiles/mysqlservices.dir/thd_specifics_service.c.o
+[1188/1717] Building C object libservices/CMakeFiles/mysqlservices.dir/thd_timezone_service.c.o
+[1189/1717] Building C object libservices/CMakeFiles/mysqlservices.dir/thd_wait_service.c.o
+[1190/1717] Building C object libservices/CMakeFiles/mysqlservices.dir/wsrep_service.c.o
+[1191/1717] Building C object libservices/CMakeFiles/mysqlservices.dir/json_service.c.o
+[1192/1717] Building C object libservices/CMakeFiles/mysqlservices.dir/sql_service.c.o
+[1193/1717] Building C object libservices/CMakeFiles/mysqlservices.dir/provider_service_bzip2.c.o
+[1194/1717] Linking CXX executable extra/innochecksum
+[1195/1717] Building C object libservices/CMakeFiles/mysqlservices.dir/provider_service_lzma.c.o
+[1196/1717] Building C object libservices/CMakeFiles/mysqlservices.dir/provider_service_lz4.c.o
+[1197/1717] Building C object libservices/CMakeFiles/mysqlservices.dir/provider_service_lzo.c.o
+[1198/1717] Building C object libservices/CMakeFiles/mysqlservices.dir/provider_service_snappy.c.o
+[1199/1717] Linking C static library libservices/libmysqlservices.a
+[1200/1717] Linking CXX shared module storage/archive/ha_archive.so
+[1201/1717] Linking CXX shared module storage/blackhole/ha_blackhole.so
+[1202/1717] Linking CXX shared module storage/connect/ha_connect.so
+[1203/1717] Linking CXX shared module storage/example/ha_example.so
+[1204/1717] Linking CXX shared module storage/federated/ha_federated.so
+[1205/1717] Linking CXX shared module storage/federatedx/ha_federatedx.so
+[1206/1717] Linking CXX shared module storage/maria/ha_s3.so
+[1207/1717] Linking CXX shared module storage/mroonga/ha_mroonga.so
+[1208/1717] Linking CXX shared module storage/rocksdb/ha_rocksdb.so
+[1209/1717] Linking CXX shared module storage/sphinx/ha_sphinx.so
+[1210/1717] Linking CXX shared module storage/spider/ha_spider.so
+[1211/1717] Linking CXX shared module storage/test_sql_discovery/ha_test_sql_discovery.so
+[1212/1717] Linking CXX shared module storage/videx/ha_videx.so
+[1213/1717] Linking C shared module plugin/audit_null/adt_null.so
+[1214/1717] Linking C shared module plugin/auth_ed25519/auth_ed25519.so
+[1215/1717] Linking C shared module plugin/auth_examples/dialog_examples.so
+[1216/1717] Linking C shared module plugin/auth_examples/auth_test_plugin.so
+[1217/1717] Linking C shared module plugin/auth_examples/qa_auth_interface.so
+[1218/1717] Linking C shared module plugin/auth_examples/qa_auth_server.so
+[1219/1717] Linking C shared module plugin/auth_examples/qa_auth_client.so
+[1220/1717] Linking C shared module plugin/auth_examples/auth_0x0100.so
+[1221/1717] Linking C shared module plugin/auth_mysql_sha2/auth_mysql_sha2.so
+[1222/1717] Linking CXX shared module plugin/auth_parsec/auth_parsec.so
+[1223/1717] Linking CXX shared module plugin/daemon_example/libdaemon_example.so
+[1224/1717] Linking CXX shared module plugin/debug_key_management/debug_key_management.so
+[1225/1717] Linking CXX shared module plugin/disks/disks.so
+[1226/1717] Linking CXX shared module plugin/example_key_management/example_key_management.so
+[1227/1717] Linking CXX shared module plugin/file_key_management/file_key_management.so
+[1228/1717] Linking C shared module plugin/fulltext/mypluglib.so
+[1229/1717] Linking CXX shared module plugin/func_test/func_test.so
+[1230/1717] Linking CXX shared module plugin/handler_socket/handlersocket.so
+[1231/1717] Linking CXX shared module plugin/hashicorp_key_management/hashicorp_key_management.so
+[1232/1717] Linking CXX shared module plugin/locale_info/locales.so
+[1233/1717] Linking CXX shared module plugin/metadata_lock_info/metadata_lock_info.so
+[1234/1717] Linking C shared module plugin/password_reuse_check/password_reuse_check.so
+[1235/1717] Linking C shared module plugin/provider_bzip2/provider_bzip2.so
+[1236/1717] Linking C shared module plugin/provider_lz4/provider_lz4.so
+[1237/1717] Linking C shared module plugin/provider_lzma/provider_lzma.so
+[1238/1717] Linking C shared module plugin/provider_lzo/provider_lzo.so
+[1239/1717] Linking C shared module plugin/provider_snappy/provider_snappy.so
+[1240/1717] Linking CXX shared module plugin/qc_info/query_cache_info.so
+[1241/1717] Linking CXX shared module plugin/query_response_time/query_response_time.so
+[1242/1717] Linking CXX shared module plugin/server_audit/server_audit.so
+[1243/1717] Linking C shared module plugin/simple_password_check/simple_password_check.so
+[1244/1717] Linking C shared module plugin/sql_errlog/sql_errlog.so
+[1245/1717] Linking C shared module plugin/test_sql_service/test_sql_service.so
+[1246/1717] Linking CXX shared module plugin/type_mysql_json/type_mysql_json.so
+[1247/1717] Linking CXX shared module plugin/type_mysql_timestamp/type_mysql_timestamp.so
+[1248/1717] Linking CXX shared module plugin/type_test/type_test.so
+[1249/1717] Linking CXX shared module plugin/versioning/test_versioning.so
+[1250/1717] Linking CXX shared module plugin/wsrep_info/wsrep_info.so
+[1251/1717] Building C object tests/CMakeFiles/bug25714.dir/bug25714.c.o
+[1252/1717] Linking CXX executable tests/bug25714
+[1253/1717] Building C object tests/CMakeFiles/mariadb-client-test.dir/mysql_client_test.c.o
+[1254/1717] Linking CXX executable tests/mariadb-client-test
+[1255/1717] Building CXX object sql/CMakeFiles/wsrep_provider.dir/wsrep_client_service.cc.o
+[1256/1717] Building CXX object sql/CMakeFiles/wsrep_provider.dir/wsrep_high_priority_service.cc.o
+[1257/1717] Building CXX object sql/CMakeFiles/wsrep_provider.dir/wsrep_server_service.cc.o
+[1258/1717] Building CXX object sql/CMakeFiles/wsrep_provider.dir/wsrep_storage_service.cc.o
+[1259/1717] Building CXX object sql/CMakeFiles/wsrep_provider.dir/wsrep_event_service.cc.o
+[1260/1717] Building CXX object sql/CMakeFiles/wsrep_provider.dir/wsrep_status.cc.o
+[1261/1717] Building CXX object sql/CMakeFiles/wsrep_provider.dir/wsrep_server_state.cc.o
+[1262/1717] Building CXX object sql/CMakeFiles/wsrep_provider.dir/wsrep_allowlist_service.cc.o
+[1263/1717] Building CXX object sql/CMakeFiles/wsrep_provider.dir/wsrep_utils.cc.o
+[1264/1717] Building CXX object sql/CMakeFiles/wsrep_provider.dir/wsrep_xid.cc.o
+[1265/1717] Building CXX object sql/CMakeFiles/wsrep_provider.dir/wsrep_check_opts.cc.o
+[1266/1717] Building CXX object sql/CMakeFiles/wsrep_provider.dir/wsrep_notify.cc.o
+[1267/1717] Building CXX object sql/CMakeFiles/wsrep_provider.dir/wsrep_mysqld.cc.o
+[1268/1717] Building CXX object sql/CMakeFiles/wsrep_provider.dir/wsrep_sst.cc.o
+[1269/1717] Building CXX object sql/CMakeFiles/wsrep_provider.dir/wsrep_var.cc.o
+[1270/1717] Building CXX object sql/CMakeFiles/wsrep_provider.dir/wsrep_binlog.cc.o
+[1271/1717] Building CXX object sql/CMakeFiles/wsrep_provider.dir/wsrep_applier.cc.o
+[1272/1717] Building CXX object sql/CMakeFiles/wsrep_provider.dir/wsrep_thd.cc.o
+[1273/1717] Building CXX object sql/CMakeFiles/wsrep_provider.dir/wsrep_schema.cc.o
+[1274/1717] Building CXX object sql/CMakeFiles/wsrep_provider.dir/wsrep_plugin.cc.o
+[1275/1717] Building CXX object sql/CMakeFiles/wsrep_provider.dir/service_wsrep.cc.o
+[1276/1717] Linking CXX static library sql/libwsrep_provider.a
+[1277/1717] Building CXX object sql/CMakeFiles/wsrep.dir/wsrep_client_service.cc.o
+[1278/1717] Building CXX object sql/CMakeFiles/wsrep.dir/wsrep_high_priority_service.cc.o
+[1279/1717] Building CXX object sql/CMakeFiles/wsrep.dir/wsrep_server_service.cc.o
+[1280/1717] Building CXX object sql/CMakeFiles/wsrep.dir/wsrep_storage_service.cc.o
+[1281/1717] Building CXX object sql/CMakeFiles/wsrep.dir/wsrep_server_state.cc.o
+[1282/1717] Building CXX object sql/CMakeFiles/wsrep.dir/wsrep_event_service.cc.o
+[1283/1717] Building CXX object sql/CMakeFiles/wsrep.dir/wsrep_status.cc.o
+[1284/1717] Building CXX object sql/CMakeFiles/wsrep.dir/wsrep_allowlist_service.cc.o
+[1285/1717] Building CXX object sql/CMakeFiles/wsrep.dir/wsrep_utils.cc.o
+[1286/1717] Building CXX object sql/CMakeFiles/wsrep.dir/wsrep_xid.cc.o
+[1287/1717] Building CXX object sql/CMakeFiles/wsrep.dir/wsrep_check_opts.cc.o
+[1288/1717] Building CXX object sql/CMakeFiles/wsrep.dir/wsrep_notify.cc.o
+[1289/1717] Building CXX object sql/CMakeFiles/wsrep.dir/wsrep_mysqld.cc.o
+[1290/1717] Building CXX object sql/CMakeFiles/wsrep.dir/wsrep_sst.cc.o
+[1291/1717] Building CXX object sql/CMakeFiles/wsrep.dir/wsrep_var.cc.o
+[1292/1717] Building CXX object sql/CMakeFiles/wsrep.dir/wsrep_binlog.cc.o
+[1293/1717] Building CXX object sql/CMakeFiles/wsrep.dir/wsrep_applier.cc.o
+[1294/1717] Building CXX object sql/CMakeFiles/wsrep.dir/wsrep_thd.cc.o
+[1295/1717] Building CXX object sql/CMakeFiles/wsrep.dir/wsrep_schema.cc.o
+[1296/1717] Building CXX object sql/CMakeFiles/wsrep.dir/wsrep_plugin.cc.o
+[1297/1717] Building CXX object sql/CMakeFiles/wsrep.dir/service_wsrep.cc.o
+[1298/1717] Linking CXX static library sql/libwsrep.a
+[1299/1717] Building CXX object sql/CMakeFiles/thread_pool_info.dir/thread_pool_info.cc.o
+[1300/1717] Linking CXX static library sql/libthread_pool_info.a
+[1301/1717] Building CXX object sql/CMakeFiles/sql_sequence.dir/ha_sequence.cc.o
+[1302/1717] Linking CXX static library sql/libsql_sequence.a
+[1303/1717] Building CXX object sql/CMakeFiles/partition.dir/ha_partition.cc.o
+[1304/1717] Linking CXX static library sql/libpartition.a
+[1305/1717] Building CXX object sql/CMakeFiles/gen_lex_hash.dir/gen_lex_hash.cc.o
+[1306/1717] Linking CXX executable sql/gen_lex_hash
+[1307/1717] Building CXX object sql/CMakeFiles/mariadb-tzinfo-to-sql.dir/tztime.cc.o
+[1308/1717] Linking CXX executable sql/mariadb-tzinfo-to-sql
+[1309/1717] Building C object sql/CMakeFiles/udf_example.dir/udf_example.c.o
+[1310/1717] Linking CXX shared module sql/udf_example.so
+[1311/1717] Building CXX object sql/CMakeFiles/online_alter_log.dir/online_alter.cc.o
+[1312/1717] Linking CXX static library sql/libonline_alter_log.a
+[1313/1717] Building CXX object mysql-test/lib/My/SafeProcess/CMakeFiles/my_safe_process.dir/safe_process.cc.o
+[1314/1717] Linking CXX executable mysql-test/lib/My/SafeProcess/my_safe_process
+[1315/1717] Building C object mysql-test/lib/My/SafeProcess/CMakeFiles/wsrep_check_version.dir/wsrep_check_version.c.o
+[1316/1717] Linking C executable mysql-test/lib/My/SafeProcess/wsrep_check_version
+[1317/1717] Building C object scripts/CMakeFiles/comp_sql.dir/comp_sql.c.o
+[1318/1717] Building yy_mariadb.yy and yy_oracle.yy from sql_yacc.yy
+[1319/1717] Building CXX object scripts/CMakeFiles/comp_sql.dir/__/sql/sql_bootstrap.cc.o
+[1320/1717] [BISON][gen_mariadb_cc_hh] Building parser with bison 3.8.2
+[1321/1717] [BISON][gen_oracle_cc_hh] Building parser with bison 3.8.2
+[1322/1717] Linking CXX executable scripts/comp_sql
+[1323/1717] Generating mariadb_fix_privilege_tables_sql.c
+[1324/1717] Building C object client/CMakeFiles/mariadb-upgrade.dir/mysql_upgrade.c.o
+[1325/1717] Linking CXX executable client/mariadb-upgrade
+[1326/1717] Building CXX object sql/CMakeFiles/gen_lex_token.dir/gen_lex_token.cc.o
+[1327/1717] Linking CXX executable sql/gen_lex_token
+[1328/1717] Generating lex_token.h
+[1329/1717] Generating lex_hash.h
+[1330/1717] Building CXX object unittest/sql/CMakeFiles/explain_filename-t.dir/dummy_builtins.cc.o
+[1331/1717] Building CXX object unittest/sql/CMakeFiles/my_json_writer-t.dir/my_json_writer-t.cc.o
+[1332/1717] Building CXX object unittest/sql/CMakeFiles/my_json_writer-t.dir/dummy_builtins.cc.o
+[1333/1717] Building CXX object unittest/sql/CMakeFiles/explain_filename-t.dir/explain_filename-t.cc.o
+[1334/1717] Building CXX object extra/mariabackup/CMakeFiles/mariadb-backup.dir/innobackupex.cc.o
+[1335/1717] Building CXX object extra/mariabackup/CMakeFiles/mariadb-backup.dir/datasink.cc.o
+[1336/1717] Building CXX object extra/mariabackup/CMakeFiles/mariadb-backup.dir/ds_buffer.cc.o
+[1337/1717] Building CXX object extra/mariabackup/CMakeFiles/mariadb-backup.dir/ds_compress.cc.o
+[1338/1717] Building CXX object extra/mariabackup/CMakeFiles/mariadb-backup.dir/ds_local.cc.o
+[1339/1717] Building CXX object extra/mariabackup/CMakeFiles/mariadb-backup.dir/ds_stdout.cc.o
+[1340/1717] Building CXX object extra/mariabackup/CMakeFiles/mariadb-backup.dir/ds_tmpfile.cc.o
+[1341/1717] Building CXX object extra/mariabackup/CMakeFiles/mariadb-backup.dir/ds_xbstream.cc.o
+[1342/1717] Building CXX object extra/mariabackup/CMakeFiles/mariadb-backup.dir/fil_cur.cc.o
+[1343/1717] Building C object extra/mariabackup/CMakeFiles/mariadb-backup.dir/quicklz/quicklz.c.o
+[1344/1717] Building CXX object extra/mariabackup/CMakeFiles/mariadb-backup.dir/xtrabackup.cc.o
+[1345/1717] Building CXX object extra/mariabackup/CMakeFiles/mariadb-backup.dir/read_filt.cc.o
+[1346/1717] Building CXX object extra/mariabackup/CMakeFiles/mariadb-backup.dir/write_filt.cc.o
+[1347/1717] Building CXX object extra/mariabackup/CMakeFiles/mariadb-backup.dir/xbstream_write.cc.o
+[1348/1717] Building CXX object extra/mariabackup/CMakeFiles/mariadb-backup.dir/wsrep.cc.o
+[1349/1717] Building CXX object extra/mariabackup/CMakeFiles/mariadb-backup.dir/backup_mysql.cc.o
+[1350/1717] Building CXX object extra/mariabackup/CMakeFiles/mariadb-backup.dir/backup_copy.cc.o
+[1351/1717] Building CXX object extra/mariabackup/CMakeFiles/mariadb-backup.dir/__/__/sql/sql_builtin.cc.o
+[1352/1717] Building CXX object extra/mariabackup/CMakeFiles/mariadb-backup.dir/encryption_plugin.cc.o
+[1353/1717] Building CXX object extra/mariabackup/CMakeFiles/mariadb-backup.dir/thread_pool.cc.o
+[1354/1717] Building CXX object extra/mariabackup/CMakeFiles/mariadb-backup.dir/aria_backup_client.cc.o
+[1355/1717] Building CXX object extra/mariabackup/CMakeFiles/mariadb-backup.dir/ddl_log.cc.o
+[1356/1717] Building CXX object extra/mariabackup/CMakeFiles/mariadb-backup.dir/common_engine.cc.o
+[1357/1717] Building C object extra/mariabackup/CMakeFiles/mariadb-backup.dir/__/__/libmysqld/libmysql.c.o
+[1358/1717] Building CXX object extra/mariabackup/CMakeFiles/mariadb-backup.dir/__/__/sql/net_serv.cc.o
+[1359/1717] Building CXX object storage/perfschema/CMakeFiles/perfschema.dir/cursor_by_account.cc.o
+[1360/1717] Building CXX object storage/perfschema/CMakeFiles/perfschema.dir/cursor_by_host.cc.o
+[1361/1717] Building CXX object storage/perfschema/CMakeFiles/perfschema.dir/cursor_by_thread.cc.o
+[1362/1717] Building CXX object storage/perfschema/CMakeFiles/perfschema.dir/cursor_by_user.cc.o
+[1363/1717] Building CXX object storage/perfschema/CMakeFiles/perfschema.dir/mysqld_thd_manager.cc.o
+[1364/1717] Building CXX object storage/perfschema/CMakeFiles/perfschema.dir/ha_perfschema.cc.o
+/home/dcalford/CliWork/server/storage/perfschema/ha_perfschema.cc: In member function ‘virtual int ha_perfschema::delete_table(const char*)’:
+/home/dcalford/CliWork/server/storage/perfschema/ha_perfschema.cc:471:8: warning: writing 1 byte into a region of size 0 [-Wstringop-overflow=]
+  471 |   *ptr = '\0';
+      |   ~~~~~^~~~~~
+/home/dcalford/CliWork/server/storage/perfschema/ha_perfschema.cc:453:8: note: at offset -1 into destination object ‘table_path’ of size 513
+  453 |   char table_path[FN_REFLEN+1];
+      |        ^~~~~~~~~~
+[1365/1717] Building CXX object storage/perfschema/CMakeFiles/perfschema.dir/pfs_account.cc.o
+[1366/1717] Building CXX object storage/perfschema/CMakeFiles/perfschema.dir/pfs.cc.o
+[1367/1717] Building CXX object storage/perfschema/CMakeFiles/perfschema.dir/pfs_autosize.cc.o
+[1368/1717] Building CXX object storage/perfschema/CMakeFiles/perfschema.dir/pfs_builtin_memory.cc.o
+[1369/1717] Building CXX object storage/perfschema/CMakeFiles/perfschema.dir/pfs_column_values.cc.o
+[1370/1717] Building CXX object storage/perfschema/CMakeFiles/perfschema.dir/pfs_buffer_container.cc.o
+[1371/1717] B
+[truncated]
 --- output end ---

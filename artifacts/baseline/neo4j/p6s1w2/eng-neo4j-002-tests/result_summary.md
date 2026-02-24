@@ -4,10 +4,10 @@
 - title: Native test baseline for neo4j
 - status: `blocked`
 - gate: `ENG-NEO4J-GATE-02`
-- commands_total: `0`
-- commands_passed: `0`
-- commands_failed: `0`
-- reason: `Dependency blocked: ENG-NEO4J-001`
+- commands_total: `2`
+- commands_passed: `1`
+- commands_failed: `1`
+- reason: `Command failed (timeout): mvn test -DskipITs -T1C`
 
 ## Evidence Files
 - `run_manifest.md`

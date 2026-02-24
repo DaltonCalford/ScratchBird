@@ -1,3 +1,27 @@
 task_id=ENG-POSTGRESQL-003
 status=blocked
-timestamp_utc=2026-02-24T04:45:30Z
+timestamp_utc=2026-02-24T19:59:45Z
+
+=== command 1 ===
+cwd: /home/dcalford/CliWork
+timeout_s: 20
+rc: 0
+timed_out: False
+duration_s: 0.018
+cmd: test -d /home/dcalford/CliWork/postgresql && git -C /home/dcalford/CliWork/postgresql rev-parse --short HEAD
+--- output begin ---
+c67bef3f325
+--- output end ---
+
+=== command 2 ===
+cwd: /home/dcalford/CliWork/ScratchBird
+timeout_s: 120
+rc: 2
+timed_out: False
+duration_s: 0.034
+cmd: bash tests/compatibility/postgresql/scripts/run_postgresql_ctest.sh
+--- output begin ---
+Error: generic sb_isql fallback is not valid for PostgreSQL emulation compare runs.
+The generic client speaks native protocol only and cannot execute PostgreSQL wire-protocol parity.
+Provide sb_pg_isql via SCRATCHBIRD_PG_ISQL, or build FDW CLI wrappers in ScratchBird-driver.
+--- output end ---

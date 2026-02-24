@@ -776,6 +776,26 @@ TEST_F(QueryCompilerV3Test, ExecuteSetCurrentSchemaSupportsToAndDefault) {
     EXPECT_NE(reset_schema_value.find("public"), std::string::npos);
 }
 
+TEST_F(QueryCompilerV3Test, EmulatedSessionResetAllKeepsDialectTag) {
+    connection_ctx_->set_dialect_tag("MYSQL");
+
+    auto reset_all = compileAndExecute("RESET ALL");
+    ASSERT_TRUE(reset_all.success()) << "RESET ALL failed: " << reset_all.error();
+    EXPECT_EQ(connection_ctx_->dialect_tag(), "MYSQL");
+}
+
+TEST_F(QueryCompilerV3Test, EmulatedSessionRejectsSetParserDefaultOrSwitch) {
+    connection_ctx_->set_dialect_tag("MYSQL");
+
+    auto reset_parser = compileAndExecute("SET PARSER DEFAULT");
+    ASSERT_FALSE(reset_parser.success());
+    EXPECT_EQ(connection_ctx_->dialect_tag(), "MYSQL");
+
+    auto set_parser_native = compileAndExecute("SET PARSER SCRATCHBIRD");
+    ASSERT_FALSE(set_parser_native.success());
+    EXPECT_EQ(connection_ctx_->dialect_tag(), "MYSQL");
+}
+
 TEST_F(QueryCompilerV3Test, ExecuteCastUsingHex) {
     auto result = compileAndExecute(
         "SELECT CAST(CAST('48656c6c6f' AS BLOB USING hex) AS VARCHAR USING hex)");

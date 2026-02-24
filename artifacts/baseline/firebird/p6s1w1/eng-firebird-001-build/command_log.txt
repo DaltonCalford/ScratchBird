@@ -1,13 +1,13 @@
 task_id=ENG-FIREBIRD-001
-status=blocked
-timestamp_utc=2026-02-24T05:01:55Z
+status=done
+timestamp_utc=2026-02-24T17:49:18Z
 
 === command 1 ===
 cwd: /home/dcalford/CliWork
-timeout_s: 20
+timeout_s: 60
 rc: 0
 timed_out: False
-duration_s: 0.020
+duration_s: 0.018
 cmd: test -d /home/dcalford/CliWork/firebird && git -C /home/dcalford/CliWork/firebird rev-parse --short HEAD
 --- output begin ---
 9ae26ba696
@@ -15,11 +15,11 @@ cmd: test -d /home/dcalford/CliWork/firebird && git -C /home/dcalford/CliWork/fi
 
 === command 2 ===
 cwd: /home/dcalford/CliWork/firebird
-timeout_s: 180
-rc: 1
+timeout_s: 540
+rc: 0
 timed_out: False
-duration_s: 2.664
-cmd: ./configure
+duration_s: 7.233
+cmd: ./configure --with-builtin-tommath --with-builtin-tomcrypt
 --- output begin ---
 checking whether make sets $(MAKE)... yes
 checking build system type... x86_64-pc-linux-gnu
@@ -198,6 +198,744 @@ checking whether SOCK_CLOEXEC is declared... yes
 checking for zlib.h... yes
 checking for unicode/ucnv.h... yes
 checking for main in -licuuc... yes
-checking for tommath.h... no
-configure: error: Include file for tommath not found - please install development tommath package or use --with-builtin-tommath
+checking for tgetent in -lcurses... yes
+checking for library containing dlopen... none required
+checking for main in -lm... yes
+checking for library containing inet_aton... none required
+checking for main in -lsupc++... yes
+checking for main in -lgcc_eh... yes
+checking whether the C++ compiler understands noexcept... yes
+checking for gettimeofday... yes
+checking if gettimeofday accepts second (timezone) argument... yes
+checking for time... yes
+checking for times... yes
+checking for nanosleep... yes
+checking for library containing gethostname... none required
+checking for library containing gethostbyname... none required
+checking for library containing connect... none required
+checking for strcasecmp... yes
+checking for stricmp... no
+checking for strncasecmp... yes
+checking for strnicmp... no
+checking for library containing dirname... none required
+checking for dirname... yes
+checking for sigaction... yes
+checking for setitimer... yes
+checking for snprintf... yes
+checking for vsnprintf... yes
+checking for swab... yes
+checking for _swab... no
+checking for getpagesize... yes
+checking for fork... yes
+checking for vfork... yes
+checking for working mmap... yes
+checking for pid_t... yes
+checking for working fork... yes
+checking for working vfork... (cached) yes
+checking whether setpgrp requires zero arguments... yes
+checking for setpgid... yes
+checking whether getpgrp requires zero arguments... yes
+checking for flock... yes
+checking for dladdr... yes
+checking for initgroups... yes
+checking for getpagesize... (cached) yes
+checking for pread... yes
+checking for pwrite... yes
+checking for getcwd... yes
+checking for getwd... yes
+checking for setmntent... yes
+checking for getmntent... yes
+checking if getmntent needs second argument... no
+checking for setrlimit... yes
+checking for getrlimit... yes
+checking for tcgetattr... yes
+checking for strdup... yes
+checking for mkstemp... yes
+checking for pthread_keycreate... no
+checking for pthread_key_create... yes
+checking for llrint... yes
+checking for localtime_r... yes
+checking for gmtime_r... yes
+checking for ctime_r... yes
+checking for fchmod... yes
+checking for semtimedop... yes
+checking for fegetenv... yes
+checking for strerror_r... yes
+checking for qsort_r... yes
+checking for fdatasync... yes
+checking for fsync... yes
+checking for poll... yes
+checking for dlinfo... yes
+checking if dlinfo supports RTLD_DI_LINKMAP... yes
+checking if dlinfo supports RTLD_DI_ORIGIN... yes
+checking for library containing clock_gettime... none required
+checking for clock_gettime... yes
+checking for pthread_mutexattr_setprotocol... yes
+checking for pthread_mutexattr_setrobust... yes
+checking for pthread_mutex_consistent... yes
+checking for pthread_mutex_timedlock... yes
+checking for pthread_rwlockattr_setkind... no
+checking for pthread_cancel... yes
+checking for pthread_atfork... yes
+checking for sigset... yes
+checking for fallocate... yes
+checking for accept4... yes
+checking for library containing sem_init... none required
+checking for sem_timedwait... yes
+checking for sem_init... yes
+checking for working sem_init()... yes
+checking for library containing iconv_open... none required
+checking for library containing libiconv_open... no
+checking whether byte ordering is bigendian... no
+checking for working volatile... yes
+checking for off_t... yes
+checking for size_t... yes
+checking for uid_t in sys/types.h... yes
+checking for special C compiler options needed for large files... no
+checking for _FILE_OFFSET_BITS value needed for large files... no
+checking for native large file support... yes
+checking size of void *... 8
+checking size of long... 8
+checking size of size_t... 8
+checking for socklen_t... yes
+checking for struct dirent.d_type... yes
+checking alignment of union { long long x; void* y; }... 8
+checking alignment of double... 8
+checking correctness of comparing 64-bit integers... success
+checking for /proc/self/exe... yes
+configure: creating ./config.status
+Creating Debug directories
+Creating Release directories
+files are identical
+config.status: creating gen/Debug/firebird/firebird.conf
+config.status: creating gen/Debug/firebird/plugins.conf
+config.status: creating gen/Debug/firebird/databases.conf
+config.status: creating gen/Debug/firebird/fbtrace.conf
+config.status: creating gen/Debug/firebird/replication.conf
+config.status: creating gen/Debug/firebird/intl/fbintl.conf
+config.status: creating gen/Release/firebird/firebird.conf
+config.status: creating gen/Release/firebird/plugins.conf
+config.status: creating gen/Release/firebird/databases.conf
+config.status: creating gen/Release/firebird/fbtrace.conf
+config.status: creating gen/Release/firebird/replication.conf
+config.status: creating gen/Release/firebird/intl/fbintl.conf
+config.status: creating gen/Release/firebird/bin/fb_config
+config.status: creating gen/Release/firebird/bin/posixLibrary.sh
+config.status: creating gen/Release/firebird/bin/install.sh
+config.status: creating gen/Release/firebird/bin/FirebirdUninstall.sh
+config.status: creating gen/Release/firebird/bin/changeServerMode.sh
+config.status: creating gen/Release/firebird/bin/registerDatabase.sh
+config.status: creating gen/vers.sh
+config.status: creating gen/install/makeInstallImage.sh
+config.status: creating gen/install/misc/firebird.init.d.generic
+config.status: creating gen/install/misc/firebird.init.d.mandrake
+config.status: creating gen/install/misc/firebird.init.d.suse
+config.status: creating gen/install/misc/firebird.init.d.debian
+config.status: creating gen/install/misc/firebird.init.d.gentoo
+config.status: creating gen/install/misc/firebird.init.d.slackware
+config.status: creating gen/install/misc/rc.config.firebird
+config.status: creating gen/install/misc/firebird.service
+config.status: creating gen/Release/firebird/bin/linuxLibrary.sh
+config.status: creating gen/make.rules
+config.status: creating gen/make.defaults
+config.status: creating gen/make.platform
+config.status: creating gen/darwin.defaults
+config.status: creating gen/make.shared.variables
+config.status: creating gen/make.shared.targets
+config.status: creating gen/Makefile
+config.status: creating gen/examples/Makefile.examples
+config.status: creating gen/Makefile.plugins_examples
+config.status: creating gen/Makefile.install
+config.status: creating Makefile
+config.status: creating gen/Makefile.extern.editline
+config.status: creating src/include/gen/autoconfig.auto
+config.status: src/include/gen/autoconfig.auto is unchanged
+config.status: executing libtool commands
+
+
+The Firebird6 package has been configured with the following options:
+
+                    Raw devices : enabled
+                   Service name : gds_db
+                   Service port : 3050
+                   GPRE modules : c_cxx.cpp
+
+                    Install Dir : /usr/local/firebird
+--- output end ---
+
+=== command 3 ===
+cwd: /home/dcalford/CliWork/firebird
+timeout_s: 900
+rc: 0
+timed_out: False
+duration_s: 534.972
+cmd: make -j2
+--- output begin ---
+make -C gen firebird
+make[1]: Entering directory '/home/dcalford/CliWork/firebird/gen'
+make TARGET?=Release master_process
+make[2]: Entering directory '/home/dcalford/CliWork/firebird/gen'
+ln -sf /home/dcalford/CliWork/firebird/src/include/gen/autoconfig.auto /home/dcalford/CliWork/firebird/src/include/gen/autoconfig.h
+make updateBuildNum
+make[3]: Entering directory '/home/dcalford/CliWork/firebird/gen'
+(cd /home/dcalford/CliWork/firebird; ./src/misc/writeBuildNum.sh rebuildHeader)
+files are identical
+make[3]: Leaving directory '/home/dcalford/CliWork/firebird/gen'
+make export_lists
+make[3]: Entering directory '/home/dcalford/CliWork/firebird/gen'
+make[3]: Nothing to be done for 'export_lists'.
+make[3]: Leaving directory '/home/dcalford/CliWork/firebird/gen'
+make external
+make[3]: Entering directory '/home/dcalford/CliWork/firebird/gen'
+CC="gcc" CFLAGS="" AR="ar" make -C /home/dcalford/CliWork/firebird/extern/btyacc
+make[4]: Entering directory '/home/dcalford/CliWork/firebird/extern/btyacc'
+make[4]: Nothing to be done for 'all'.
+make[4]: Leaving directory '/home/dcalford/CliWork/firebird/extern/btyacc'
+mkdir -p /home/dcalford/CliWork/firebird/gen/Release/cloop
+cd /home/dcalford/CliWork/firebird/gen/Release/cloop && \
+cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER="g++" -DCLOOP_BUILD_TESTS=OFF -DCMAKE_CXX_FLAGS="-static-libstdc++" -DCMAKE_EXE_LINKER_FLAGS="-static-libstdc++" /home/dcalford/CliWork/firebird/extern/cloop
+-- Configuring done (0.0s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/dcalford/CliWork/firebird/gen/Release/cloop
+cd /home/dcalford/CliWork/firebird/gen/Release/cloop && \
+cmake --build .
+gmake[4]: Entering directory '/home/dcalford/CliWork/firebird/gen/Release/cloop'
+gmake[4]: warning: jobserver unavailable: using -j1.  Add '+' to parent make rule.
+gmake[5]: Entering directory '/home/dcalford/CliWork/firebird/gen/Release/cloop'
+gmake[6]: Entering directory '/home/dcalford/CliWork/firebird/gen/Release/cloop'
+gmake[6]: Leaving directory '/home/dcalford/CliWork/firebird/gen/Release/cloop'
+[100%] Built target cloop
+gmake[5]: Leaving directory '/home/dcalford/CliWork/firebird/gen/Release/cloop'
+gmake[4]: Leaving directory '/home/dcalford/CliWork/firebird/gen/Release/cloop'
+CC="gcc" CFLAGS="" AR="ar" make -C /home/dcalford/CliWork/firebird/extern/decNumber
+make[4]: Entering directory '/home/dcalford/CliWork/firebird/extern/decNumber'
+make[4]: 'libdecFloat.a' is up to date.
+make[4]: Leaving directory '/home/dcalford/CliWork/firebird/extern/decNumber'
+ln -sf /home/dcalford/CliWork/firebird/extern/decNumber/libdecFloat.a /home/dcalford/CliWork/firebird/temp/Release
+CXX="g++" CXXFLAGS=" -O3 -g -fPIC" AR="ar" make -C /home/dcalford/CliWork/firebird/extern/re2
+make[4]: Entering directory '/home/dcalford/CliWork/firebird/extern/re2'
+make[4]: Nothing to be done for 'all'.
+make[4]: Leaving directory '/home/dcalford/CliWork/firebird/extern/re2'
+ln -sf /home/dcalford/CliWork/firebird/extern/re2/obj/libre2.a /home/dcalford/CliWork/firebird/temp/Release
+make libcds
+make[4]: Entering directory '/home/dcalford/CliWork/firebird/gen'
+mkdir -p /home/dcalford/CliWork/firebird/extern/libcds/lib/Release
+cd /home/dcalford/CliWork/firebird/extern/libcds/lib/Release; \
+cmake -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER="g++" -DCMAKE_CXX_FLAGS=-fPIC /home/dcalford/CliWork/firebird/extern/libcds
+CMake Warning (dev) at CMakeLists.txt:24 (set):
+  implicitly converting 'string' to 'STRING' type.
+This warning is for project developers.  Use -Wno-dev to suppress it.
+
+-- Binary output path: /home/dcalford/CliWork/firebird/extern/libcds/lib/Release/bin
+C++ std: -std=c++11 (default)
+Build type -- Release
+Compiler version: GNU 13.3.0
+System: Linux version: 6.17.0-14-generic
+Target architecture: x86_64
+Compiler flags: -fPIC -O3 -DNDEBUG -std=c++11;-mcx16 -Wall;-Wextra;-pedantic
+Exe flags: 
+-- Configuring done (0.0s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/dcalford/CliWork/firebird/extern/libcds/lib/Release
+AR="ar" make -C /home/dcalford/CliWork/firebird/extern/libcds/lib/Release
+make[5]: Entering directory '/home/dcalford/CliWork/firebird/extern/libcds/lib/Release'
+make[6]: Entering directory '/home/dcalford/CliWork/firebird/extern/libcds/lib/Release'
+make[7]: Entering directory '/home/dcalford/CliWork/firebird/extern/libcds/lib/Release'
+make[7]: Entering directory '/home/dcalford/CliWork/firebird/extern/libcds/lib/Release'
+make[7]: Leaving directory '/home/dcalford/CliWork/firebird/extern/libcds/lib/Release'
+make[7]: Leaving directory '/home/dcalford/CliWork/firebird/extern/libcds/lib/Release'
+[ 50%] Built target cds
+[100%] Built target cds-s
+make[6]: Leaving directory '/home/dcalford/CliWork/firebird/extern/libcds/lib/Release'
+make[5]: Leaving directory '/home/dcalford/CliWork/firebird/extern/libcds/lib/Release'
+ln -sf /home/dcalford/CliWork/firebird/extern/libcds/lib/Release/bin/libcds-s.a /home/dcalford/CliWork/firebird/temp/Release/libcds.a
+make[4]: Leaving directory '/home/dcalford/CliWork/firebird/gen'
+CC="gcc" CFLAGS="" AR="ar" make -C /home/dcalford/CliWork/firebird/extern/libtommath -f makefile.shared GCC="gcc"
+make[4]: Entering directory '/home/dcalford/CliWork/firebird/extern/libtommath'
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bncore.o bncore.c
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_init.o bn_mp_init.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bncore.c  -fPIC -DPIC -o .libs/bncore.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_init.c  -fPIC -DPIC -o .libs/bn_mp_init.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bncore.c -o bncore.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_init.c -o bn_mp_init.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_clear.o bn_mp_clear.c
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_exch.o bn_mp_exch.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_clear.c  -fPIC -DPIC -o .libs/bn_mp_clear.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_exch.c  -fPIC -DPIC -o .libs/bn_mp_exch.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_clear.c -o bn_mp_clear.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_exch.c -o bn_mp_exch.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_grow.o bn_mp_grow.c
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_shrink.o bn_mp_shrink.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_grow.c  -fPIC -DPIC -o .libs/bn_mp_grow.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_shrink.c  -fPIC -DPIC -o .libs/bn_mp_shrink.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_shrink.c -o bn_mp_shrink.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_grow.c -o bn_mp_grow.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_clamp.o bn_mp_clamp.c
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_zero.o bn_mp_zero.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_clamp.c  -fPIC -DPIC -o .libs/bn_mp_clamp.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_zero.c  -fPIC -DPIC -o .libs/bn_mp_zero.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_clamp.c -o bn_mp_clamp.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_zero.c -o bn_mp_zero.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_set.o bn_mp_set.c
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_set_int.o bn_mp_set_int.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_set.c  -fPIC -DPIC -o .libs/bn_mp_set.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_set_int.c  -fPIC -DPIC -o .libs/bn_mp_set_int.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_set.c -o bn_mp_set.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_set_int.c -o bn_mp_set_int.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_init_size.o bn_mp_init_size.c
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_copy.o bn_mp_copy.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_copy.c  -fPIC -DPIC -o .libs/bn_mp_copy.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_init_size.c  -fPIC -DPIC -o .libs/bn_mp_init_size.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_init_size.c -o bn_mp_init_size.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_copy.c -o bn_mp_copy.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_init_copy.o bn_mp_init_copy.c
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_abs.o bn_mp_abs.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_init_copy.c  -fPIC -DPIC -o .libs/bn_mp_init_copy.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_abs.c  -fPIC -DPIC -o .libs/bn_mp_abs.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_init_copy.c -o bn_mp_init_copy.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_abs.c -o bn_mp_abs.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_neg.o bn_mp_neg.c
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_cmp_mag.o bn_mp_cmp_mag.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_neg.c  -fPIC -DPIC -o .libs/bn_mp_neg.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_cmp_mag.c  -fPIC -DPIC -o .libs/bn_mp_cmp_mag.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_neg.c -o bn_mp_neg.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_cmp_mag.c -o bn_mp_cmp_mag.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_cmp.o bn_mp_cmp.c
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_cmp_d.o bn_mp_cmp_d.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_cmp.c  -fPIC -DPIC -o .libs/bn_mp_cmp.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_cmp_d.c  -fPIC -DPIC -o .libs/bn_mp_cmp_d.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_cmp.c -o bn_mp_cmp.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_cmp_d.c -o bn_mp_cmp_d.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_rshd.o bn_mp_rshd.c
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_lshd.o bn_mp_lshd.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_rshd.c  -fPIC -DPIC -o .libs/bn_mp_rshd.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_lshd.c  -fPIC -DPIC -o .libs/bn_mp_lshd.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_rshd.c -o bn_mp_rshd.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_lshd.c -o bn_mp_lshd.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_mod_2d.o bn_mp_mod_2d.c
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_div_2d.o bn_mp_div_2d.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_mod_2d.c  -fPIC -DPIC -o .libs/bn_mp_mod_2d.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_div_2d.c  -fPIC -DPIC -o .libs/bn_mp_div_2d.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_mod_2d.c -o bn_mp_mod_2d.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_div_2d.c -o bn_mp_div_2d.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_mul_2d.o bn_mp_mul_2d.c
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_div_2.o bn_mp_div_2.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_div_2.c  -fPIC -DPIC -o .libs/bn_mp_div_2.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_mul_2d.c  -fPIC -DPIC -o .libs/bn_mp_mul_2d.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_mul_2d.c -o bn_mp_mul_2d.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_div_2.c -o bn_mp_div_2.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_mul_2.o bn_mp_mul_2.c
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_s_mp_add.o bn_s_mp_add.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_s_mp_add.c  -fPIC -DPIC -o .libs/bn_s_mp_add.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_mul_2.c  -fPIC -DPIC -o .libs/bn_mp_mul_2.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_mul_2.c -o bn_mp_mul_2.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_s_mp_add.c -o bn_s_mp_add.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_s_mp_sub.o bn_s_mp_sub.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_s_mp_sub.c  -fPIC -DPIC -o .libs/bn_s_mp_sub.o
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_fast_s_mp_mul_digs.o bn_fast_s_mp_mul_digs.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_fast_s_mp_mul_digs.c  -fPIC -DPIC -o .libs/bn_fast_s_mp_mul_digs.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_s_mp_sub.c -o bn_s_mp_sub.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_s_mp_mul_digs.o bn_s_mp_mul_digs.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_fast_s_mp_mul_digs.c -o bn_fast_s_mp_mul_digs.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_s_mp_mul_digs.c  -fPIC -DPIC -o .libs/bn_s_mp_mul_digs.o
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_fast_s_mp_mul_high_digs.o bn_fast_s_mp_mul_high_digs.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_s_mp_mul_digs.c -o bn_s_mp_mul_digs.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_fast_s_mp_mul_high_digs.c  -fPIC -DPIC -o .libs/bn_fast_s_mp_mul_high_digs.o
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_s_mp_mul_high_digs.o bn_s_mp_mul_high_digs.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_fast_s_mp_mul_high_digs.c -o bn_fast_s_mp_mul_high_digs.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_s_mp_mul_high_digs.c  -fPIC -DPIC -o .libs/bn_s_mp_mul_high_digs.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_s_mp_mul_high_digs.c -o bn_s_mp_mul_high_digs.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_fast_s_mp_sqr.o bn_fast_s_mp_sqr.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_fast_s_mp_sqr.c  -fPIC -DPIC -o .libs/bn_fast_s_mp_sqr.o
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_s_mp_sqr.o bn_s_mp_sqr.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_s_mp_sqr.c  -fPIC -DPIC -o .libs/bn_s_mp_sqr.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_fast_s_mp_sqr.c -o bn_fast_s_mp_sqr.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_s_mp_sqr.c -o bn_s_mp_sqr.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_add.o bn_mp_add.c
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_sub.o bn_mp_sub.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_add.c  -fPIC -DPIC -o .libs/bn_mp_add.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_sub.c  -fPIC -DPIC -o .libs/bn_mp_sub.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_add.c -o bn_mp_add.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_sub.c -o bn_mp_sub.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_karatsuba_mul.o bn_mp_karatsuba_mul.c
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_mul.o bn_mp_mul.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_karatsuba_mul.c  -fPIC -DPIC -o .libs/bn_mp_karatsuba_mul.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_mul.c  -fPIC -DPIC -o .libs/bn_mp_mul.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_mul.c -o bn_mp_mul.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_karatsuba_mul.c -o bn_mp_karatsuba_mul.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_karatsuba_sqr.o bn_mp_karatsuba_sqr.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_karatsuba_sqr.c  -fPIC -DPIC -o .libs/bn_mp_karatsuba_sqr.o
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_sqr.o bn_mp_sqr.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_karatsuba_sqr.c -o bn_mp_karatsuba_sqr.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_sqr.c  -fPIC -DPIC -o .libs/bn_mp_sqr.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_sqr.c -o bn_mp_sqr.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_div.o bn_mp_div.c
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_mod.o bn_mp_mod.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_div.c  -fPIC -DPIC -o .libs/bn_mp_div.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_mod.c  -fPIC -DPIC -o .libs/bn_mp_mod.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_mod.c -o bn_mp_mod.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_add_d.o bn_mp_add_d.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_div.c -o bn_mp_div.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_add_d.c  -fPIC -DPIC -o .libs/bn_mp_add_d.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_add_d.c -o bn_mp_add_d.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_sub_d.o bn_mp_sub_d.c
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_mul_d.o bn_mp_mul_d.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_sub_d.c  -fPIC -DPIC -o .libs/bn_mp_sub_d.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_mul_d.c  -fPIC -DPIC -o .libs/bn_mp_mul_d.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_sub_d.c -o bn_mp_sub_d.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_mul_d.c -o bn_mp_mul_d.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_div_d.o bn_mp_div_d.c
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_mod_d.o bn_mp_mod_d.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_mod_d.c  -fPIC -DPIC -o .libs/bn_mp_mod_d.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_div_d.c  -fPIC -DPIC -o .libs/bn_mp_div_d.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_mod_d.c -o bn_mp_mod_d.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_expt_d.o bn_mp_expt_d.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_div_d.c -o bn_mp_div_d.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_expt_d.c  -fPIC -DPIC -o .libs/bn_mp_expt_d.o
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_addmod.o bn_mp_addmod.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_expt_d.c -o bn_mp_expt_d.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_addmod.c  -fPIC -DPIC -o .libs/bn_mp_addmod.o
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_submod.o bn_mp_submod.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_addmod.c -o bn_mp_addmod.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_submod.c  -fPIC -DPIC -o .libs/bn_mp_submod.o
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_mulmod.o bn_mp_mulmod.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_submod.c -o bn_mp_submod.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_mulmod.c  -fPIC -DPIC -o .libs/bn_mp_mulmod.o
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_sqrmod.o bn_mp_sqrmod.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_mulmod.c -o bn_mp_mulmod.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_sqrmod.c  -fPIC -DPIC -o .libs/bn_mp_sqrmod.o
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_gcd.o bn_mp_gcd.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_sqrmod.c -o bn_mp_sqrmod.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_gcd.c  -fPIC -DPIC -o .libs/bn_mp_gcd.o
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_lcm.o bn_mp_lcm.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_gcd.c -o bn_mp_gcd.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_lcm.c  -fPIC -DPIC -o .libs/bn_mp_lcm.o
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_fast_mp_invmod.o bn_fast_mp_invmod.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_lcm.c -o bn_mp_lcm.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_fast_mp_invmod.c  -fPIC -DPIC -o .libs/bn_fast_mp_invmod.o
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_invmod.o bn_mp_invmod.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_fast_mp_invmod.c -o bn_fast_mp_invmod.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_invmod.c  -fPIC -DPIC -o .libs/bn_mp_invmod.o
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_reduce.o bn_mp_reduce.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_invmod.c -o bn_mp_invmod.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_reduce.c  -fPIC -DPIC -o .libs/bn_mp_reduce.o
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_montgomery_setup.o bn_mp_montgomery_setup.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_reduce.c -o bn_mp_reduce.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_montgomery_setup.c  -fPIC -DPIC -o .libs/bn_mp_montgomery_setup.o
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_fast_mp_montgomery_reduce.o bn_fast_mp_montgomery_reduce.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_montgomery_setup.c -o bn_mp_montgomery_setup.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_fast_mp_montgomery_reduce.c  -fPIC -DPIC -o .libs/bn_fast_mp_montgomery_reduce.o
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_montgomery_reduce.o bn_mp_montgomery_reduce.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_montgomery_reduce.c  -fPIC -DPIC -o .libs/bn_mp_montgomery_reduce.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_fast_mp_montgomery_reduce.c -o bn_fast_mp_montgomery_reduce.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_montgomery_reduce.c -o bn_mp_montgomery_reduce.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_exptmod_fast.o bn_mp_exptmod_fast.c
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_exptmod.o bn_mp_exptmod.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_exptmod_fast.c  -fPIC -DPIC -o .libs/bn_mp_exptmod_fast.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_exptmod.c  -fPIC -DPIC -o .libs/bn_mp_exptmod.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_exptmod.c -o bn_mp_exptmod.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_2expt.o bn_mp_2expt.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_exptmod_fast.c -o bn_mp_exptmod_fast.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_2expt.c  -fPIC -DPIC -o .libs/bn_mp_2expt.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_2expt.c -o bn_mp_2expt.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_n_root.o bn_mp_n_root.c
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_jacobi.o bn_mp_jacobi.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_n_root.c  -fPIC -DPIC -o .libs/bn_mp_n_root.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_jacobi.c  -fPIC -DPIC -o .libs/bn_mp_jacobi.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_jacobi.c -o bn_mp_jacobi.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_n_root.c -o bn_mp_n_root.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_reverse.o bn_reverse.c
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_count_bits.o bn_mp_count_bits.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_reverse.c  -fPIC -DPIC -o .libs/bn_reverse.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_count_bits.c  -fPIC -DPIC -o .libs/bn_mp_count_bits.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_reverse.c -o bn_reverse.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_count_bits.c -o bn_mp_count_bits.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_read_unsigned_bin.o bn_mp_read_unsigned_bin.c
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_read_signed_bin.o bn_mp_read_signed_bin.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_read_unsigned_bin.c  -fPIC -DPIC -o .libs/bn_mp_read_unsigned_bin.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_read_signed_bin.c  -fPIC -DPIC -o .libs/bn_mp_read_signed_bin.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_read_signed_bin.c -o bn_mp_read_signed_bin.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_read_unsigned_bin.c -o bn_mp_read_unsigned_bin.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_to_unsigned_bin.o bn_mp_to_unsigned_bin.c
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_to_signed_bin.o bn_mp_to_signed_bin.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_to_unsigned_bin.c  -fPIC -DPIC -o .libs/bn_mp_to_unsigned_bin.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_to_signed_bin.c  -fPIC -DPIC -o .libs/bn_mp_to_signed_bin.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_to_unsigned_bin.c -o bn_mp_to_unsigned_bin.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_to_signed_bin.c -o bn_mp_to_signed_bin.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_unsigned_bin_size.o bn_mp_unsigned_bin_size.c
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_signed_bin_size.o bn_mp_signed_bin_size.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_unsigned_bin_size.c  -fPIC -DPIC -o .libs/bn_mp_unsigned_bin_size.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_signed_bin_size.c  -fPIC -DPIC -o .libs/bn_mp_signed_bin_size.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_signed_bin_size.c -o bn_mp_signed_bin_size.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_unsigned_bin_size.c -o bn_mp_unsigned_bin_size.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_xor.o bn_mp_xor.c
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_and.o bn_mp_and.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_xor.c  -fPIC -DPIC -o .libs/bn_mp_xor.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_and.c  -fPIC -DPIC -o .libs/bn_mp_and.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_xor.c -o bn_mp_xor.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_and.c -o bn_mp_and.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_or.o bn_mp_or.c
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_rand.o bn_mp_rand.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_or.c  -fPIC -DPIC -o .libs/bn_mp_or.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_rand.c  -fPIC -DPIC -o .libs/bn_mp_rand.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_rand.c -o bn_mp_rand.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_or.c -o bn_mp_or.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_montgomery_calc_normalization.o bn_mp_montgomery_calc_normalization.c
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_prime_is_divisible.o bn_mp_prime_is_divisible.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_montgomery_calc_normalization.c  -fPIC -DPIC -o .libs/bn_mp_montgomery_calc_normalization.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_prime_is_divisible.c  -fPIC -DPIC -o .libs/bn_mp_prime_is_divisible.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_prime_is_divisible.c -o bn_mp_prime_is_divisible.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_montgomery_calc_normalization.c -o bn_mp_montgomery_calc_normalization.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_prime_tab.o bn_prime_tab.c
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_prime_fermat.o bn_mp_prime_fermat.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_prime_tab.c  -fPIC -DPIC -o .libs/bn_prime_tab.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_prime_fermat.c  -fPIC -DPIC -o .libs/bn_mp_prime_fermat.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_prime_tab.c -o bn_prime_tab.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_prime_fermat.c -o bn_mp_prime_fermat.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_prime_miller_rabin.o bn_mp_prime_miller_rabin.c
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_prime_is_prime.o bn_mp_prime_is_prime.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_prime_miller_rabin.c  -fPIC -DPIC -o .libs/bn_mp_prime_miller_rabin.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_prime_is_prime.c  -fPIC -DPIC -o .libs/bn_mp_prime_is_prime.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_prime_miller_rabin.c -o bn_mp_prime_miller_rabin.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_prime_is_prime.c -o bn_mp_prime_is_prime.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_prime_next_prime.o bn_mp_prime_next_prime.c
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_dr_reduce.o bn_mp_dr_reduce.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_prime_next_prime.c  -fPIC -DPIC -o .libs/bn_mp_prime_next_prime.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_dr_reduce.c  -fPIC -DPIC -o .libs/bn_mp_dr_reduce.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_dr_reduce.c -o bn_mp_dr_reduce.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_prime_next_prime.c -o bn_mp_prime_next_prime.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_dr_is_modulus.o bn_mp_dr_is_modulus.c
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_dr_setup.o bn_mp_dr_setup.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_dr_is_modulus.c  -fPIC -DPIC -o .libs/bn_mp_dr_is_modulus.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_dr_setup.c  -fPIC -DPIC -o .libs/bn_mp_dr_setup.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_dr_is_modulus.c -o bn_mp_dr_is_modulus.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_dr_setup.c -o bn_mp_dr_setup.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_reduce_setup.o bn_mp_reduce_setup.c
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_toom_mul.o bn_mp_toom_mul.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_reduce_setup.c  -fPIC -DPIC -o .libs/bn_mp_reduce_setup.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_toom_mul.c  -fPIC -DPIC -o .libs/bn_mp_toom_mul.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_reduce_setup.c -o bn_mp_reduce_setup.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_toom_mul.c -o bn_mp_toom_mul.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_toom_sqr.o bn_mp_toom_sqr.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_toom_sqr.c  -fPIC -DPIC -o .libs/bn_mp_toom_sqr.o
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_div_3.o bn_mp_div_3.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_toom_sqr.c -o bn_mp_toom_sqr.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_div_3.c  -fPIC -DPIC -o .libs/bn_mp_div_3.o
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_s_mp_exptmod.o bn_s_mp_exptmod.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_div_3.c -o bn_mp_div_3.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_s_mp_exptmod.c  -fPIC -DPIC -o .libs/bn_s_mp_exptmod.o
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_reduce_2k.o bn_mp_reduce_2k.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_reduce_2k.c  -fPIC -DPIC -o .libs/bn_mp_reduce_2k.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_reduce_2k.c -o bn_mp_reduce_2k.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_s_mp_exptmod.c -o bn_s_mp_exptmod.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_reduce_is_2k.o bn_mp_reduce_is_2k.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_reduce_is_2k.c  -fPIC -DPIC -o .libs/bn_mp_reduce_is_2k.o
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_reduce_2k_setup.o bn_mp_reduce_2k_setup.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_reduce_is_2k.c -o bn_mp_reduce_is_2k.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_reduce_2k_setup.c  -fPIC -DPIC -o .libs/bn_mp_reduce_2k_setup.o
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_reduce_2k_l.o bn_mp_reduce_2k_l.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_reduce_2k_setup.c -o bn_mp_reduce_2k_setup.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_reduce_2k_l.c  -fPIC -DPIC -o .libs/bn_mp_reduce_2k_l.o
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_reduce_is_2k_l.o bn_mp_reduce_is_2k_l.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_reduce_2k_l.c -o bn_mp_reduce_2k_l.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_reduce_is_2k_l.c  -fPIC -DPIC -o .libs/bn_mp_reduce_is_2k_l.o
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_reduce_2k_setup_l.o bn_mp_reduce_2k_setup_l.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_reduce_is_2k_l.c -o bn_mp_reduce_is_2k_l.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_reduce_2k_setup_l.c  -fPIC -DPIC -o .libs/bn_mp_reduce_2k_setup_l.o
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_radix_smap.o bn_mp_radix_smap.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_reduce_2k_setup_l.c -o bn_mp_reduce_2k_setup_l.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_radix_smap.c  -fPIC -DPIC -o .libs/bn_mp_radix_smap.o
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_read_radix.o bn_mp_read_radix.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_radix_smap.c -o bn_mp_radix_smap.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_read_radix.c  -fPIC -DPIC -o .libs/bn_mp_read_radix.o
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_toradix.o bn_mp_toradix.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_read_radix.c -o bn_mp_read_radix.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_toradix.c  -fPIC -DPIC -o .libs/bn_mp_toradix.o
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_radix_size.o bn_mp_radix_size.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_toradix.c -o bn_mp_toradix.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_radix_size.c  -fPIC -DPIC -o .libs/bn_mp_radix_size.o
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_fread.o bn_mp_fread.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_fread.c  -fPIC -DPIC -o .libs/bn_mp_fread.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_radix_size.c -o bn_mp_radix_size.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_fwrite.o bn_mp_fwrite.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_fread.c -o bn_mp_fread.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_fwrite.c  -fPIC -DPIC -o .libs/bn_mp_fwrite.o
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_cnt_lsb.o bn_mp_cnt_lsb.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_fwrite.c -o bn_mp_fwrite.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_cnt_lsb.c  -fPIC -DPIC -o .libs/bn_mp_cnt_lsb.o
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_error.o bn_error.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_cnt_lsb.c -o bn_mp_cnt_lsb.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_error.c  -fPIC -DPIC -o .libs/bn_error.o
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_init_multi.o bn_mp_init_multi.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_error.c -o bn_error.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_init_multi.c  -fPIC -DPIC -o .libs/bn_mp_init_multi.o
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_clear_multi.o bn_mp_clear_multi.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_init_multi.c -o bn_mp_init_multi.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_clear_multi.c  -fPIC -DPIC -o .libs/bn_mp_clear_multi.o
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_exteuclid.o bn_mp_exteuclid.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_clear_multi.c -o bn_mp_clear_multi.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_exteuclid.c  -fPIC -DPIC -o .libs/bn_mp_exteuclid.o
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_toradix_n.o bn_mp_toradix_n.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_exteuclid.c -o bn_mp_exteuclid.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_toradix_n.c  -fPIC -DPIC -o .libs/bn_mp_toradix_n.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_toradix_n.c -o bn_mp_toradix_n.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_prime_random_ex.o bn_mp_prime_random_ex.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_prime_random_ex.c  -fPIC -DPIC -o .libs/bn_mp_prime_random_ex.o
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_get_int.o bn_mp_get_int.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_prime_random_ex.c -o bn_mp_prime_random_ex.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_get_int.c  -fPIC -DPIC -o .libs/bn_mp_get_int.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_get_int.c -o bn_mp_get_int.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_sqrt.o bn_mp_sqrt.c
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_is_square.o bn_mp_is_square.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_sqrt.c  -fPIC -DPIC -o .libs/bn_mp_sqrt.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_is_square.c  -fPIC -DPIC -o .libs/bn_mp_is_square.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_sqrt.c -o bn_mp_sqrt.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_is_square.c -o bn_mp_is_square.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_init_set.o bn_mp_init_set.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_init_set.c  -fPIC -DPIC -o .libs/bn_mp_init_set.o
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_init_set_int.o bn_mp_init_set_int.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_init_set.c -o bn_mp_init_set.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_init_set_int.c  -fPIC -DPIC -o .libs/bn_mp_init_set_int.o
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_invmod_slow.o bn_mp_invmod_slow.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_init_set_int.c -o bn_mp_init_set_int.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_invmod_slow.c  -fPIC -DPIC -o .libs/bn_mp_invmod_slow.o
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_prime_rabin_miller_trials.o bn_mp_prime_rabin_miller_trials.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_prime_rabin_miller_trials.c  -fPIC -DPIC -o .libs/bn_mp_prime_rabin_miller_trials.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_invmod_slow.c -o bn_mp_invmod_slow.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_prime_rabin_miller_trials.c -o bn_mp_prime_rabin_miller_trials.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_to_signed_bin_n.o bn_mp_to_signed_bin_n.c
+libtool --mode=compile --tag=CC gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer   -c -o bn_mp_to_unsigned_bin_n.o bn_mp_to_unsigned_bin_n.c
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_to_unsigned_bin_n.c  -fPIC -DPIC -o .libs/bn_mp_to_unsigned_bin_n.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_to_signed_bin_n.c  -fPIC -DPIC -o .libs/bn_mp_to_signed_bin_n.o
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_to_unsigned_bin_n.c -o bn_mp_to_unsigned_bin_n.o >/dev/null 2>&1
+libtool: compile:  gcc -I./ -Wall -W -Wshadow -Wsign-compare -O3 -funroll-loops -fomit-frame-pointer -c bn_mp_to_signed_bin_n.c -o bn_mp_to_signed_bin_n.o >/dev/null 2>&1
+libtool --mode=link --tag=CC gcc *.lo -o libtommath.la -rpath /usr/lib -version-info 0:41 
+libtool: link: gcc -shared  -fPIC -DPIC  .libs/bn_error.o .libs/bn_fast_mp_invmod.o .libs/bn_fast_mp_montgomery_reduce.o .libs/bn_fast_s_mp_mul_digs.o .libs/bn_fast_s_mp_mul_high_digs.o .libs/bn_fast_s_mp_sqr.o .libs/bn_mp_2expt.o .libs/bn_mp_abs.o .libs/bn_mp_add.o .libs/bn_mp_add_d.o .libs/bn_mp_addmod.o .libs/bn_mp_and.o .libs/bn_mp_clamp.o .libs/bn_mp_clear.o .libs/bn_mp_clear_multi.o .libs/bn_mp_cmp.o .libs/bn_mp_cmp_d.o .libs/bn_mp_cmp_mag.o .libs/bn_mp_cnt_lsb.o .libs/bn_mp_copy.o .libs/bn_mp_count_bits.o .libs/bn_mp_div.o .libs/bn_mp_div_2.o .libs/bn_mp_div_2d.o .libs/bn_mp_div_3.o .libs/bn_mp_div_d.o .libs/bn_mp_dr_is_modulus.o .libs/bn_mp_dr_reduce.o .libs/bn_mp_dr_setup.o .libs/bn_mp_exch.o .libs/bn_mp_expt_d.o .libs/bn_mp_exptmod.o .libs/bn_mp_exptmod_fast.o .libs/bn_mp_exteuclid.o .libs/bn_mp_fread.o .libs/bn_mp_fwrite.o .libs/bn_mp_gcd.o .libs/bn_mp_get_int.o .libs/bn_mp_grow.o .libs/bn_mp_init.o .libs/bn_mp_init_copy.o .libs/bn_mp_init_multi.o .libs/bn_mp_init_set.o .libs/bn_mp_init_set_int.o .libs/bn_mp_init_size.o .libs/bn_mp_invmod.o .libs/bn_mp_invmod_slow.o .libs/bn_mp_is_square.o .libs/bn_mp_jacobi.o .libs/bn_mp_karatsuba_mul.o .libs/bn_mp_karatsuba_sqr.o .libs/bn_mp_lcm.o .libs/bn_mp_lshd.o .libs/bn_mp_mod.o .libs/bn_mp_mod_2d.o .libs/bn_mp_mod_d.o .libs/bn_mp_montgomery_calc_normalization.o .libs/bn_mp_montgomery_reduce.o .libs/bn_mp_montgomery_setup.o .libs/bn_mp_mul.o .libs/bn_mp_mul_2.o .libs/bn_mp_mul_2d.o .libs/bn_mp_mul_d.o .libs/bn_mp_mulmod.o .libs/bn_mp_n_root.o .libs/bn_mp_neg.o .libs/bn_mp_or.o .libs/bn_mp_prime_fermat.o .libs/bn_mp_prime_is_divisible.o .libs/bn_mp_prime_is_prime.o .libs/bn_mp_prime_miller_rabin.o .libs/bn_mp_prime_next_prime.o .libs/bn_mp_prime_rabin_miller_trials.o .libs/bn_mp_prime_random_ex.o .libs/bn_mp_radix_size.o .libs/bn_mp_radix_smap.o .libs/bn_mp_rand.o .libs/bn_mp_read_radix.o .libs/bn_mp_read_signed_bin.o .libs/bn_mp_read_unsigned_bin.o .libs/bn_mp_reduce.o .libs/bn_mp_reduce_2k.o .libs/bn_mp_reduce_2k_l.o .libs/bn_mp_reduce_2k_setup.o .libs/bn_mp_reduce_2k_setup_l.o .libs/bn_mp_reduce_is_2k.o .libs/bn_mp_reduce_is_2k_l.o .libs/bn_mp_reduce_setup.o .libs/bn_mp_rshd.o .libs/bn_mp_set.o .libs/bn_mp_set_int.o .libs/bn_mp_shrink.o .libs/bn_mp_signed_bin_size.o .libs/bn_mp_sqr.o .libs/bn_mp_sqrmod.o .libs/bn_mp_sqrt.o .libs/bn_mp_sub.o .libs/bn_mp_sub_d.o .libs/bn_mp_submod.o .libs/bn_mp_to_signed_bin.o .libs/bn_mp_to_signed_bin_n.o .libs/bn_mp_to_unsigned_bin.o .libs/bn_mp_to_unsigned_bin_n.o .libs/bn_mp_toom_mul.o .libs/bn_mp_toom_sqr.o .libs/bn_mp_toradix.o .libs/bn_mp_toradix_n.o .libs/bn_mp_unsigned_bin_size.o .libs/bn_mp_xor.o .libs/bn_mp_zero.o .libs/bn_prime_tab.o .libs/bn_reverse.o .libs/bn_s_mp_add.o .libs/bn_s_mp_exptmod.o .libs/bn_s_mp_mul_digs.o .libs/bn_s_mp_mul_high_digs.o .libs/bn_s_mp_sqr.o .libs/bn_s_mp_sub.o .libs/bncore.o      -Wl,-soname -Wl,libtommath.so.0 -o .libs/libtommath.so.0.0.41
+libtool: link: (cd ".libs" && rm -f "libtommath.so.0" && ln -s "libtommath.so.0.0.41" "libtommath.so.0")
+libtool: link: (cd ".libs" && rm -f "libtommath.so" && ln -s "libtommath.so.0.0.41" "libtommath.so")
+libtool: link: ar cr .libs/libtommath.a  bn_error.o bn_fast_mp_invmod.o bn_fast_mp_montgomery_reduce.o bn_fast_s_mp_mul_digs.o bn_fast_s_mp_mul_high_digs.o bn_fast_s_mp_sqr.o bn_mp_2expt.o bn_mp_abs.o bn_mp_add.o bn_mp_add_d.o bn_mp_addmod.o bn_mp_and.o bn_mp_clamp.o bn_mp_clear.o bn_mp_clear_multi.o bn_mp_cmp.o bn_mp_cmp_d.o bn_mp_cmp_mag.o bn_mp_cnt_lsb.o bn_mp_copy.o bn_mp_count_bits.o bn_mp_div.o bn_mp_div_2.o bn_mp_div_2d.o bn_mp_div_3.o bn_mp_div_d.o bn_mp_dr_is_modulus.o bn_mp_dr_reduce.o bn_mp_dr_setup.o bn_mp_exch.o bn_mp_expt_d.o bn_mp_exptmod.o bn_mp_exptmod_fast.o bn_mp_exteuclid.o bn_mp_fread.o bn_mp_fwrite.o bn_mp_gcd.o bn_mp_get_int.o bn_mp_grow.o bn_mp_init.o bn_mp_init_copy.o bn_mp_init_multi.o bn_mp_init_set.o bn_mp_init_set_int.o bn_mp_init_size.o bn_mp_invmod.o bn_mp_invmod_slow.o bn_mp_is_square.o bn_mp_jacobi.o bn_mp_karatsuba_mul.o bn_mp_karatsuba_sqr.o bn_mp_lcm.o bn_mp_lshd.o bn_mp_mod.o bn_mp_mod_2d.o bn_mp_mod_d.o bn_mp_montgomery_calc_normalization.o bn_mp_montgomery_reduce.o bn_mp_montgomery_setup.o bn_mp_mul.o bn_mp_mul_2.o bn_mp_mul_2d.o bn_mp_mul_d.o bn_mp_mulmod.o bn_mp_n_root.o bn_mp_neg.o bn_mp_or.o bn_mp_prime_fermat.o bn_mp_prime_is_divisible.o bn_mp_prime_is_prime.o bn_mp_prime_miller_rabin.o bn_mp_prime_next_prime.o bn_mp_prime_rabin_miller_trials.o bn_mp_prime_random_ex.o bn_mp_radix_size.o bn_mp_radix_smap.o bn_mp_rand.o bn_mp_read_radix.o bn_mp_read_signed_bin.o bn_mp_read_unsigned_bin.o bn_mp_reduce.o bn_mp_reduce_2k.o bn_mp_reduce_2k_l.o bn_mp_reduce_2k_setup.o bn_mp_reduce_2k_setup_l.o bn_mp_reduce_is_2k.o bn_mp_reduce_is_2k_l.o bn_mp_reduce_setup.o bn_mp_rshd.o bn_mp_set.o bn_mp_set_int.o bn_mp_shrink.o bn_mp_signed_bin_size.o bn_mp_sqr.o bn_mp_sqrmod.o bn_mp_sqrt.o bn_mp_sub.o bn_mp_sub_d.o bn_mp_submod.o bn_mp_to_signed_bin.o bn_mp_to_signed_bin_n.o bn_mp_to_unsigned_bin.o bn_mp_to_unsigned_bin_n.o bn_mp_toom_mul.o bn_mp_toom_sqr.o bn_mp_toradix.o bn_mp_toradix_n.o bn_mp_unsigned_bin_size.o bn_mp_xor.o bn_mp_zero.o bn_prime_tab.o bn_reverse.o bn_s_mp_add.o bn_s_mp_exptmod.o bn_s_mp_mul_digs.o bn_s_mp_mul_high_digs.o bn_s_mp_sqr.o bn_s_mp_sub.o bncore.o
+libtool: link: ranlib .libs/libtommath.a
+libtool: link: ( cd ".libs" && rm -f "libtommath.la" && ln -s "../libtommath.la" "libtommath.la" )
+make[4]: Leaving directory '/home/dcalford/CliWork/firebird/extern/libtommath'
+ln -sf /home/dcalford/CliWork/firebird/extern/libtommath/.libs/libtommath.so.0 /home/dcalford/CliWork/firebird/gen/Release/firebird/lib
+ln -sf /home/dcalford/CliWork/firebird/extern/libtommath/.libs/libtommath.so /home/dcalford/CliWork/firebird/gen/Release/firebird/lib
+CC="gcc" CFLAGS=" -I../libtommath" make -C /home/dcalford/CliWork/firebird/extern/libtomcrypt -f makefile.shared GCC="gcc" LTC_LDFLAGS='-L/home/dcalford/CliWork/firebird/gen/Release/firebird/lib -Wl,-rpath,/lib'
+make[4]: Entering directory '/home/dcalford/CliWork/firebird/extern/libtomcrypt'
+libtool --mode=compile --tag=CC gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\"  -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread  -o src/ciphers/aes/aes.o -c src/ciphers/aes/aes.c
+libtool --mode=compile --tag=CC gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\"  -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread  -DENCRYPT_ONLY -c src/ciphers/aes/aes.c -o src/ciphers/aes/aes_enc.o
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -DENCRYPT_ONLY -c src/ciphers/aes/aes.c  -fPIC -DPIC -o src/ciphers/aes/.libs/aes_enc.o
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/ciphers/aes/aes.c  -fPIC -DPIC -o src/ciphers/aes/.libs/aes.o
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -DENCRYPT_ONLY -c src/ciphers/aes/aes.c -o src/ciphers/aes/aes_enc.o >/dev/null 2>&1
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/ciphers/aes/aes.c -o src/ciphers/aes/aes.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\"  -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread  -o src/ciphers/anubis.o -c src/ciphers/anubis.c
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/ciphers/anubis.c  -fPIC -DPIC -o src/ciphers/.libs/anubis.o
+libtool --mode=compile --tag=CC gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\"  -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread  -o src/ciphers/blowfish.o -c src/ciphers/blowfish.c
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/ciphers/blowfish.c  -fPIC -DPIC -o src/ciphers/.libs/blowfish.o
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/ciphers/anubis.c -o src/ciphers/anubis.o >/dev/null 2>&1
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/ciphers/blowfish.c -o src/ciphers/blowfish.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\"  -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread  -o src/ciphers/camellia.o -c src/ciphers/camellia.c
+libtool --mode=compile --tag=CC gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\"  -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread  -o src/ciphers/cast5.o -c src/ciphers/cast5.c
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/ciphers/camellia.c  -fPIC -DPIC -o src/ciphers/.libs/camellia.o
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/ciphers/cast5.c  -fPIC -DPIC -o src/ciphers/.libs/cast5.o
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/ciphers/camellia.c -o src/ciphers/camellia.o >/dev/null 2>&1
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/ciphers/cast5.c -o src/ciphers/cast5.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\"  -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread  -o src/ciphers/des.o -c src/ciphers/des.c
+libtool --mode=compile --tag=CC gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\"  -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread  -o src/ciphers/kasumi.o -c src/ciphers/kasumi.c
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/ciphers/des.c  -fPIC -DPIC -o src/ciphers/.libs/des.o
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/ciphers/kasumi.c  -fPIC -DPIC -o src/ciphers/.libs/kasumi.o
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/ciphers/des.c -o src/ciphers/des.o >/dev/null 2>&1
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/ciphers/kasumi.c -o src/ciphers/kasumi.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\"  -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread  -o src/ciphers/khazad.o -c src/ciphers/khazad.c
+libtool --mode=compile --tag=CC gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\"  -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread  -o src/ciphers/kseed.o -c src/ciphers/kseed.c
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/ciphers/khazad.c  -fPIC -DPIC -o src/ciphers/.libs/khazad.o
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/ciphers/kseed.c  -fPIC -DPIC -o src/ciphers/.libs/kseed.o
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/ciphers/kseed.c -o src/ciphers/kseed.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\"  -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread  -o src/ciphers/multi2.o -c src/ciphers/multi2.c
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/ciphers/multi2.c  -fPIC -DPIC -o src/ciphers/.libs/multi2.o
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/ciphers/khazad.c -o src/ciphers/khazad.o >/dev/null 2>&1
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/ciphers/multi2.c -o src/ciphers/multi2.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\"  -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread  -o src/ciphers/noekeon.o -c src/ciphers/noekeon.c
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/ciphers/noekeon.c  -fPIC -DPIC -o src/ciphers/.libs/noekeon.o
+libtool --mode=compile --tag=CC gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\"  -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread  -o src/ciphers/rc2.o -c src/ciphers/rc2.c
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/ciphers/noekeon.c -o src/ciphers/noekeon.o >/dev/null 2>&1
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/ciphers/rc2.c  -fPIC -DPIC -o src/ciphers/.libs/rc2.o
+libtool --mode=compile --tag=CC gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\"  -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread  -o src/ciphers/rc5.o -c src/ciphers/rc5.c
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/ciphers/rc2.c -o src/ciphers/rc2.o >/dev/null 2>&1
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/ciphers/rc5.c  -fPIC -DPIC -o src/ciphers/.libs/rc5.o
+libtool --mode=compile --tag=CC gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\"  -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread  -o src/ciphers/rc6.o -c src/ciphers/rc6.c
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/ciphers/rc6.c  -fPIC -DPIC -o src/ciphers/.libs/rc6.o
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/ciphers/rc5.c -o src/ciphers/rc5.o >/dev/null 2>&1
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/ciphers/rc6.c -o src/ciphers/rc6.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\"  -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread  -o src/ciphers/safer/safer.o -c src/ciphers/safer/safer.c
+libtool --mode=compile --tag=CC gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\"  -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread  -o src/ciphers/safer/saferp.o -c src/ciphers/safer/saferp.c
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/ciphers/safer/safer.c  -fPIC -DPIC -o src/ciphers/safer/.libs/safer.o
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/ciphers/safer/saferp.c  -fPIC -DPIC -o src/ciphers/safer/.libs/saferp.o
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/ciphers/safer/safer.c -o src/ciphers/safer/safer.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\"  -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread  -o src/ciphers/skipjack.o -c src/ciphers/skipjack.c
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/ciphers/skipjack.c  -fPIC -DPIC -o src/ciphers/.libs/skipjack.o
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/ciphers/skipjack.c -o src/ciphers/skipjack.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\"  -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread  -o src/ciphers/twofish/twofish.o -c src/ciphers/twofish/twofish.c
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/ciphers/twofish/twofish.c  -fPIC -DPIC -o src/ciphers/twofish/.libs/twofish.o
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/ciphers/twofish/twofish.c -o src/ciphers/twofish/twofish.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\"  -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread  -o src/ciphers/xtea.o -c src/ciphers/xtea.c
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/ciphers/safer/saferp.c -o src/ciphers/safer/saferp.o >/dev/null 2>&1
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/ciphers/xtea.c  -fPIC -DPIC -o src/ciphers/.libs/xtea.o
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/ciphers/xtea.c -o src/ciphers/xtea.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\"  -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread  -o src/encauth/ccm/ccm_add_aad.o -c src/encauth/ccm/ccm_add_aad.c
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/encauth/ccm/ccm_add_aad.c  -fPIC -DPIC -o src/encauth/ccm/.libs/ccm_add_aad.o
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/encauth/ccm/ccm_add_aad.c -o src/encauth/ccm/ccm_add_aad.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\"  -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread  -o src/encauth/ccm/ccm_add_nonce.o -c src/encauth/ccm/ccm_add_nonce.c
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/encauth/ccm/ccm_add_nonce.c  -fPIC -DPIC -o src/encauth/ccm/.libs/ccm_add_nonce.o
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/encauth/ccm/ccm_add_nonce.c -o src/encauth/ccm/ccm_add_nonce.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\"  -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread  -o src/encauth/ccm/ccm_done.o -c src/encauth/ccm/ccm_done.c
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/encauth/ccm/ccm_done.c  -fPIC -DPIC -o src/encauth/ccm/.libs/ccm_done.o
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/encauth/ccm/ccm_done.c -o src/encauth/ccm/ccm_done.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\"  -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread  -o src/encauth/ccm/ccm_init.o -c src/encauth/ccm/ccm_init.c
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/encauth/ccm/ccm_init.c  -fPIC -DPIC -o src/encauth/ccm/.libs/ccm_init.o
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/encauth/ccm/ccm_init.c -o src/encauth/ccm/ccm_init.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\"  -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread  -o src/encauth/ccm/ccm_memory.o -c src/encauth/ccm/ccm_memory.c
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/encauth/ccm/ccm_memory.c  -fPIC -DPIC -o src/encauth/ccm/.libs/ccm_memory.o
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/encauth/ccm/ccm_memory.c -o src/encauth/ccm/ccm_memory.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\"  -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread  -o src/encauth/ccm/ccm_process.o -c src/encauth/ccm/ccm_process.c
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/encauth/ccm/ccm_process.c  -fPIC -DPIC -o src/encauth/ccm/.libs/ccm_process.o
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/encauth/ccm/ccm_process.c -o src/encauth/ccm/ccm_process.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\"  -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread  -o src/encauth/ccm/ccm_reset.o -c src/encauth/ccm/ccm_reset.c
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/encauth/ccm/ccm_reset.c  -fPIC -DPIC -o src/encauth/ccm/.libs/ccm_reset.o
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/encauth/ccm/ccm_reset.c -o src/encauth/ccm/ccm_reset.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\"  -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread  -o src/encauth/ccm/ccm_test.o -c src/encauth/ccm/ccm_test.c
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/encauth/ccm/ccm_test.c  -fPIC -DPIC -o src/encauth/ccm/.libs/ccm_test.o
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/encauth/ccm/ccm_test.c -o src/encauth/ccm/ccm_test.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\"  -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread  -o src/encauth/chachapoly/chacha20poly1305_add_aad.o -c src/encauth/chachapoly/chacha20poly1305_add_aad.c
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/encauth/chachapoly/chacha20poly1305_add_aad.c  -fPIC -DPIC -o src/encauth/chachapoly/.libs/chacha20poly1305_add_aad.o
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/encauth/chachapoly/chacha20poly1305_add_aad.c -o src/encauth/chachapoly/chacha20poly1305_add_aad.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\"  -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread  -o src/encauth/chachapoly/chacha20poly1305_decrypt.o -c src/encauth/chachapoly/chacha20poly1305_decrypt.c
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/encauth/chachapoly/chacha20poly1305_decrypt.c  -fPIC -DPIC -o src/encauth/chachapoly/.libs/chacha20poly1305_decrypt.o
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/encauth/chachapoly/chacha20poly1305_decrypt.c -o src/encauth/chachapoly/chacha20poly1305_decrypt.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\"  -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread  -o src/encauth/chachapoly/chacha20poly1305_done.o -c src/encauth/chachapoly/chacha20poly1305_done.c
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/encauth/chachapoly/chacha20poly1305_done.c  -fPIC -DPIC -o src/encauth/chachapoly/.libs/chacha20poly1305_done.o
+libtool --mode=compile --tag=CC gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\"  -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread  -o src/encauth/chachapoly/chacha20poly1305_encrypt.o -c src/encauth/chachapoly/chacha20poly1305_encrypt.c
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/encauth/chachapoly/chacha20poly1305_done.c -o src/encauth/chachapoly/chacha20poly1305_done.o >/dev/null 2>&1
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/encauth/chachapoly/chacha20poly1305_encrypt.c  -fPIC -DPIC -o src/encauth/chachapoly/.libs/chacha20poly1305_encrypt.o
+libtool --mode=compile --tag=CC gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\"  -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread  -o src/encauth/chachapoly/chacha20poly1305_init.o -c src/encauth/chachapoly/chacha20poly1305_init.c
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/encauth/chachapoly/chacha20poly1305_encrypt.c -o src/encauth/chachapoly/chacha20poly1305_encrypt.o >/dev/null 2>&1
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/encauth/chachapoly/chacha20poly1305_init.c  -fPIC -DPIC -o src/encauth/chachapoly/.libs/chacha20poly1305_init.o
+libtool --mode=compile --tag=CC gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\"  -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread  -o src/encauth/chachapoly/chacha20poly1305_memory.o -c src/encauth/chachapoly/chacha20poly1305_memory.c
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/encauth/chachapoly/chacha20poly1305_init.c -o src/encauth/chachapoly/chacha20poly1305_init.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\"  -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread  -o src/encauth/chachapoly/chacha20poly1305_setiv.o -c src/encauth/chachapoly/chacha20poly1305_setiv.c
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/encauth/chachapoly/chacha20poly1305_memory.c  -fPIC -DPIC -o src/encauth/chachapoly/.libs/chacha20poly1305_memory.o
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/encauth/chachapoly/chacha20poly1305_memory.c -o src/encauth/chachapoly/chacha20poly1305_memory.o >/dev/null 2>&1
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/encauth/chachapoly/chacha20poly1305_setiv.c  -fPIC -DPIC -o src/encauth/chachapoly/.libs/chacha20poly1305_setiv.o
+libtool --mode=compile --tag=CC gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\"  -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread  -o src/encauth/chachapoly/chacha20poly1305_setiv_rfc7905.o -c src/encauth/chachapoly/chacha20poly1305_setiv_rfc7905.c
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/encauth/chachapoly/chacha20poly1305_setiv.c -o src/encauth/chachapoly/chacha20poly1305_setiv.o >/dev/null 2>&1
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/encauth/chachapoly/chacha20poly1305_setiv_rfc7905.c  -fPIC -DPIC -o src/encauth/chachapoly/.libs/chacha20poly1305_setiv_rfc7905.o
+libtool --mode=compile --tag=CC gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\"  -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread  -o src/encauth/chachapoly/chacha20poly1305_test.o -c src/encauth/chachapoly/chacha20poly1305_test.c
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/encauth/chachapoly/chacha20poly1305_setiv_rfc7905.c -o src/encauth/chachapoly/chacha20poly1305_setiv_rfc7905.o >/dev/null 2>&1
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/encauth/chachapoly/chacha20poly1305_test.c  -fPIC -DPIC -o src/encauth/chachapoly/.libs/chacha20poly1305_test.o
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/encauth/chachapoly/chacha20poly1305_test.c -o src/encauth/chachapoly/chacha20poly1305_test.o >/dev/null 2>&1
+libtool --mode=compile --tag=CC gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\"  -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread  -o src/encauth/eax/eax_addheader.o -c src/encauth/eax/eax_addheader.c
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/encauth/eax/eax_addheader.c  -fPIC -DPIC -o src/encauth/eax/.libs/eax_addheader.o
+libtool --mode=compile --tag=CC gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\"  -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread  -o src/encauth/eax/eax_decrypt.o -c src/encauth/eax/eax_decrypt.c
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/encauth/eax/eax_addheader.c -o src/encauth/eax/eax_addheader.o >/dev/null 2>&1
+libtool: compile:  gcc -I./src/headers/ -Wall -Wsign-compare -Wshadow -DLTC_SOURCE -Wextra -Wsystem-headers -Wbad-function-cast -Wcast-align -Wstrict-prototypes -Wpointer-arith -Wdeclaration-after-statement -Wwrite-strings -Wno-type-limits -O3 -funroll-loops -fomit-frame-pointer -DGIT_VERSION=\"1.18.2\" -I../libtommath -DLTC_PTHREAD -DUSE_LTM -DLTM_DESC -pthread -c src/enc
+[truncated]
 --- output end ---

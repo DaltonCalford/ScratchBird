@@ -281,6 +281,7 @@ bool attemptMatchesScopeAndBucket(const CatalogManager::AuthAttemptLogCatalogInf
 
 bool resolveCatalogAuthContext(CatalogManager* catalog,
                                const std::string& username,
+                               const std::string* auth_database_context,
                                CatalogAuthContext& out) {
     out = CatalogAuthContext{};
     if (!catalog || username.empty()) {
@@ -289,6 +290,10 @@ bool resolveCatalogAuthContext(CatalogManager* catalog,
 
     CatalogManager::PrincipalResolutionRequest request{};
     request.presented_principal_name = username;
+    if (auth_database_context != nullptr && !auth_database_context->empty()) {
+        request.has_auth_database_context = true;
+        request.auth_database_context = *auth_database_context;
+    }
 
     ErrorContext ctx;
     CatalogManager::PrincipalAccountCatalogInfo account;
@@ -301,25 +306,44 @@ bool resolveCatalogAuthContext(CatalogManager* catalog,
             return false;
         }
 
+        const bool has_auth_database_context =
+            auth_database_context != nullptr && !auth_database_context->empty();
         const CatalogManager::PrincipalAccountCatalogInfo* fallback = nullptr;
+        uint8_t fallback_auth_rank = 2;
         for (const auto& row : accounts) {
             if (!equalsIgnoreCaseAscii(row.principal_name, username)) {
                 continue;
             }
+            uint8_t auth_rank = 0;
+            if (row.has_auth_database) {
+                if (!has_auth_database_context ||
+                    !equalsIgnoreCaseAscii(row.auth_database, *auth_database_context)) {
+                    continue;
+                }
+                auth_rank = 0;
+            } else {
+                auth_rank = has_auth_database_context ? 1 : 0;
+            }
+
             if (row.source_scope_kind != CatalogManager::SourceScopeKind::ANY) {
-                if (fallback == nullptr) {
+                if (fallback == nullptr || auth_rank < fallback_auth_rank) {
                     fallback = &row;
+                    fallback_auth_rank = auth_rank;
                 }
                 continue;
             }
             if (row.has_source_scope_value || !row.source_scope_value.empty()) {
-                if (fallback == nullptr) {
+                if (fallback == nullptr || auth_rank < fallback_auth_rank) {
                     fallback = &row;
+                    fallback_auth_rank = auth_rank;
                 }
                 continue;
             }
             fallback = &row;
-            break;
+            fallback_auth_rank = auth_rank;
+            if (fallback_auth_rank == 0) {
+                break;
+            }
         }
         if (fallback == nullptr) {
             return false;
@@ -1076,6 +1100,21 @@ void LocalAuthProvider::clearPeerIdentityContext()
     peer_identity_context_ = PeerIdentityContext{};
 }
 
+void LocalAuthProvider::setAuthDatabaseContext(const std::string& auth_database_context)
+{
+    auth_database_context_ = auth_database_context;
+}
+
+void LocalAuthProvider::clearAuthDatabaseContext()
+{
+    auth_database_context_.clear();
+}
+
+const std::string* LocalAuthProvider::authDatabaseContextPtr() const
+{
+    return auth_database_context_.empty() ? nullptr : &auth_database_context_;
+}
+
 AuthResult LocalAuthProvider::authenticate(
     const std::string& username,
     const std::string& password,
@@ -1087,7 +1126,7 @@ AuthResult LocalAuthProvider::authenticate(
 
     CatalogAuthContext catalog_auth_ctx;
     const bool has_catalog_auth_ctx =
-        resolveCatalogAuthContext(catalog_, username, catalog_auth_ctx);
+        resolveCatalogAuthContext(catalog_, username, authDatabaseContextPtr(), catalog_auth_ctx);
     const AuthAttemptScope auth_scope =
         makeAuthAttemptScope(peer_identity_context_, AuthRateBucket::GENERAL);
 
@@ -1453,7 +1492,7 @@ AuthResult LocalAuthProvider::authenticateMd5(
 
     CatalogAuthContext catalog_auth_ctx;
     const bool has_catalog_auth_ctx =
-        resolveCatalogAuthContext(catalog_, username, catalog_auth_ctx);
+        resolveCatalogAuthContext(catalog_, username, authDatabaseContextPtr(), catalog_auth_ctx);
     const AuthAttemptScope auth_scope =
         makeAuthAttemptScope(peer_identity_context_, AuthRateBucket::GENERAL);
 
@@ -1607,7 +1646,7 @@ AuthResult LocalAuthProvider::beginScramAuth(
 {
     CatalogAuthContext catalog_auth_ctx;
     const bool has_catalog_auth_ctx =
-        resolveCatalogAuthContext(catalog_, username, catalog_auth_ctx);
+        resolveCatalogAuthContext(catalog_, username, authDatabaseContextPtr(), catalog_auth_ctx);
     const AuthAttemptScope auth_scope =
         makeAuthAttemptScope(peer_identity_context_, AuthRateBucket::SCRAM_BEGIN);
     if (has_catalog_auth_ctx) {
@@ -1756,7 +1795,7 @@ AuthResult LocalAuthProvider::finishScramAuth(
 {
     CatalogAuthContext catalog_auth_ctx;
     const bool has_catalog_auth_ctx =
-        resolveCatalogAuthContext(catalog_, state.username, catalog_auth_ctx);
+        resolveCatalogAuthContext(catalog_, state.username, authDatabaseContextPtr(), catalog_auth_ctx);
     const AuthAttemptScope auth_scope =
         makeAuthAttemptScope(peer_identity_context_, AuthRateBucket::SCRAM_FINISH);
 
@@ -1911,7 +1950,7 @@ AuthResult LocalAuthProvider::authenticateToken(
 {
     CatalogAuthContext catalog_auth_ctx;
     const bool has_catalog_auth_ctx =
-        resolveCatalogAuthContext(catalog_, username, catalog_auth_ctx);
+        resolveCatalogAuthContext(catalog_, username, authDatabaseContextPtr(), catalog_auth_ctx);
     const AuthAttemptScope auth_scope =
         makeAuthAttemptScope(peer_identity_context_, AuthRateBucket::GENERAL);
     if (has_catalog_auth_ctx) {
@@ -2089,7 +2128,7 @@ AuthResult LocalAuthProvider::authenticatePeer(
 
     CatalogAuthContext catalog_auth_ctx;
     const bool has_catalog_auth_ctx =
-        resolveCatalogAuthContext(catalog_, username, catalog_auth_ctx);
+        resolveCatalogAuthContext(catalog_, username, authDatabaseContextPtr(), catalog_auth_ctx);
     if (has_catalog_auth_ctx) {
         uint32_t remaining_minutes = 0;
         if (isCatalogAccountLocked(catalog_, catalog_auth_ctx, auth_scope, remaining_minutes)) {
@@ -2131,6 +2170,11 @@ AuthResult LocalAuthProvider::authenticatePeer(
 
     CatalogManager::PrincipalResolutionRequest req{};
     req.presented_principal_name = db_user.username;
+    if (const std::string* auth_db_context = authDatabaseContextPtr();
+        auth_db_context != nullptr) {
+        req.has_auth_database_context = true;
+        req.auth_database_context = *auth_db_context;
+    }
     req.has_peer_uid = true;
     req.peer_uid = peer_uid;
     req.has_peer_gid = true;
@@ -2257,7 +2301,7 @@ bool LocalAuthProvider::getUserGroups(
 void LocalAuthProvider::clearLoginAttempts(const std::string& username)
 {
     CatalogAuthContext catalog_auth_ctx;
-    if (resolveCatalogAuthContext(catalog_, username, catalog_auth_ctx)) {
+    if (resolveCatalogAuthContext(catalog_, username, authDatabaseContextPtr(), catalog_auth_ctx)) {
         std::vector<CatalogManager::AuthAttemptLogCatalogInfo> attempts;
         ErrorContext ctx;
         if (catalog_->listAuthAttemptLogCatalogEntries(
@@ -2286,7 +2330,7 @@ void LocalAuthProvider::clearLoginAttempts(const std::string& username)
 uint32_t LocalAuthProvider::getFailedAttemptCount(const std::string& username)
 {
     CatalogAuthContext catalog_auth_ctx;
-    if (resolveCatalogAuthContext(catalog_, username, catalog_auth_ctx)) {
+    if (resolveCatalogAuthContext(catalog_, username, authDatabaseContextPtr(), catalog_auth_ctx)) {
         std::vector<CatalogManager::AuthAttemptLogCatalogInfo> attempts;
         ErrorContext ctx;
         if (catalog_->listAuthAttemptLogCatalogEntries(

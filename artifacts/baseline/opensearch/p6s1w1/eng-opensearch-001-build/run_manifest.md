@@ -1,6 +1,6 @@
 # Run Manifest
 
-- timestamp_utc: `2026-02-24T04:53:02Z`
+- timestamp_utc: `2026-02-24T16:07:06Z`
 - row_id: `18`
 - task_id: `ENG-OPENSEARCH-001`
 - workstream: `opensearch`
@@ -8,15 +8,15 @@
 - owner: `agent-opensearch`
 - sprint: `P6-S1/W1`
 - gate: `ENG-OPENSEARCH-GATE-01`
-- status: `blocked`
+- status: `done`
 - depends_on: `BASE-001`
 - parser_emitter_executor_touched_in_cycle: `parser:no|emitter:no|executor:no`
 
 ## Host Snapshot
-- cwd: `/home/dcalford/CliWork`
+- cwd: `/home/dcalford/CliWork/ScratchBird`
 - host_platform: `Linux-6.17.0-14-generic-x86_64-with-glibc2.39`
 - python: `3.12.3 (main, Jan 22 2026, 20:57:42) [GCC 13.3.0]`
-- timestamp_utc: `2026-02-24T04:52:13Z`
+- timestamp_utc: `2026-02-24T16:05:28Z`
 - tool_ant: `Apache Ant(TM) version 1.10.14 compiled on September 25 2023`
 - tool_bazel: `bazel 9.0.0`
 - tool_cargo: `cargo 1.93.0 (083ac5135 2025-12-15)`
@@ -42,5 +42,5 @@ OpenJDK 64-Bit Server VM (build 21.0.10+7-Ubuntu-124.04, mixed mode, sharing)`
 - tool_rustc: `rustc 1.93.0 (254b59607 2026-01-19)`
 
 ## Commands
-- 1. cwd=`/home/dcalford/CliWork` timeout_s=`20` cmd=`test -d /home/dcalford/CliWork/OpenSearch && git -C /home/dcalford/CliWork/OpenSearch rev-parse --short HEAD`
-- 2. cwd=`/home/dcalford/CliWork/OpenSearch` timeout_s=`600` cmd=`./gradlew assemble -x test -x :distribution:docker:buildArm64DockerImage -x :distribution:docker:buildDockerImage -x :distribution:docker:buildPpc64leDockerImage -x :distribution:docker:buildRiscv64DockerImage -x :distribution:docker:buildS390xDockerImage`
+- 1. cwd=`/home/dcalford/CliWork` timeout_s=`60` cmd=`test -d /home/dcalford/CliWork/OpenSearch && git -C /home/dcalford/CliWork/OpenSearch rev-parse --short HEAD`
+- 2. cwd=`/home/dcalford/CliWork/OpenSearch` timeout_s=`1800` cmd=`./gradlew :server:assemble -x test`

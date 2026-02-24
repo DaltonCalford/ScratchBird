@@ -1,13 +1,13 @@
 task_id=ENG-CASSANDRA-002
 status=blocked
-timestamp_utc=2026-02-24T05:01:52Z
+timestamp_utc=2026-02-24T19:55:53Z
 
 === command 1 ===
 cwd: /home/dcalford/CliWork
-timeout_s: 20
+timeout_s: 1
 rc: 0
 timed_out: False
-duration_s: 0.019
+duration_s: 0.035
 cmd: test -d /home/dcalford/CliWork/cassandra && git -C /home/dcalford/CliWork/cassandra rev-parse --short HEAD
 --- output begin ---
 816524a077
@@ -15,10 +15,10 @@ cmd: test -d /home/dcalford/CliWork/cassandra && git -C /home/dcalford/CliWork/c
 
 === command 2 ===
 cwd: /home/dcalford/CliWork/cassandra
-timeout_s: 120
+timeout_s: 90
 rc: 124
 timed_out: True
-duration_s: 120.099
+duration_s: 90.367
 cmd: ant test
 --- output begin ---
 Buildfile: /home/dcalford/CliWork/cassandra/build.xml
@@ -39,9 +39,6 @@ resolver-init:
 [resolver:resolve] Resolving artifacts
 
 write-poms:
-     [copy] Copying 1 file to /home/dcalford/CliWork/cassandra/build
-     [copy] Copying 1 file to /home/dcalford/CliWork/cassandra/build
-     [copy] Copying 1 file to /home/dcalford/CliWork/cassandra/build
 
 _build-accord:
      [exec] > Task :buildSrc:extractPluginRequests UP-TO-DATE
@@ -58,11 +55,11 @@ _build-accord:
      [exec] /home/dcalford/CliWork/cassandra/modules/accord/accord-core/src/main/java/accord/utils/async/AsyncChains.java:467: warning: [removal] finalize() in Object has been deprecated and marked for removal
      [exec]         protected void finalize()
      [exec]                        ^
+     [exec] 
+     [exec] > Task :accord-core:compileJava
      [exec] Note: Some input files use unchecked or unsafe operations.
      [exec] Note: Recompile with -Xlint:unchecked for details.
      [exec] 1 warning
-     [exec] 
-     [exec] > Task :accord-core:compileJava
      [exec] 
      [exec] > Task :accord-core:processResources NO-SOURCE
      [exec] > Task :accord-core:classes
@@ -102,7 +99,7 @@ _build-accord:
      [exec] > Task :accord-core:publishMavenJavaPublicationToMavenLocal
      [exec] > Task :accord-core:publishToMavenLocal
      [exec] 
-     [exec] BUILD SUCCESSFUL in 4s
+     [exec] BUILD SUCCESSFUL in 9s
      [exec] 25 actionable tasks: 18 executed, 7 up-to-date
 
 _build_subprojects:
@@ -207,50 +204,25 @@ _build-test:
      [echo] Non default JDK version used: 21
 
 _check-test-names:
-[check-test-names] 00:00:02.313 [main] INFO org.reflections.Reflections -- Reflections took 604 ms to scan 4 urls, producing 1389 keys and 16895 values
-[check-test-names] 00:00:04.455 [main] INFO org.reflections.Reflections -- Reflections took 577 ms to scan 4 urls, producing 1389 keys and 16895 values
+[check-test-names] 14:54:39.605 [main] INFO org.reflections.Reflections -- Reflections took 831 ms to scan 4 urls, producing 1389 keys and 16895 values
+[check-test-names] 14:54:42.396 [main] INFO org.reflections.Reflections -- Reflections took 673 ms to scan 4 urls, producing 1389 keys and 16895 values
 
 test:
-    [mkdir] Created dir: /home/dcalford/CliWork/cassandra/build/test/cassandra
-    [mkdir] Created dir: /home/dcalford/CliWork/cassandra/build/test/output
-    [mkdir] Created dir: /home/dcalford/CliWork/cassandra/build/tmp
 [junit-timeout] Testsuite: org.apache.cassandra.audit.AuditLogEntryTest-_jdk21
 [junit-timeout] OpenJDK 64-Bit Server VM warning: Sharing is only supported for boot loader classes because bootstrap classpath has been appended
-[junit-timeout] Testsuite: org.apache.cassandra.audit.AuditLogEntryTest-_jdk21 Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 1.546 sec
+[junit-timeout] Testsuite: org.apache.cassandra.audit.AuditLogEntryTest-_jdk21 Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 2.101 sec
 [junit-timeout] 
    [delete] Deleting directory /home/dcalford/CliWork/cassandra/build/test/cassandra/commitlog
    [delete] Deleting directory /home/dcalford/CliWork/cassandra/build/test/cassandra/data
    [delete] Deleting directory /home/dcalford/CliWork/cassandra/build/test/cassandra/saved_caches
    [delete] Deleting directory /home/dcalford/CliWork/cassandra/build/test/cassandra/hints
 [junit-timeout] Testsuite: org.apache.cassandra.audit.AuditLogFilterTest-_jdk21
-[junit-timeout] Testsuite: org.apache.cassandra.audit.AuditLogFilterTest-_jdk21 Tests run: 11, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.219 sec
+[junit-timeout] Testsuite: org.apache.cassandra.audit.AuditLogFilterTest-_jdk21 Tests run: 11, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.302 sec
 [junit-timeout] 
 [junit-timeout] Testsuite: org.apache.cassandra.audit.AuditLogOptionsTest-_jdk21
-[junit-timeout] Testsuite: org.apache.cassandra.audit.AuditLogOptionsTest-_jdk21 Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.094 sec
+[junit-timeout] Testsuite: org.apache.cassandra.audit.AuditLogOptionsTest-_jdk21 Tests run: 2, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 0.113 sec
 [junit-timeout] 
 [junit-timeout] Testsuite: org.apache.cassandra.audit.AuditLoggerAuthTest-_jdk21
-[junit-timeout] WARNING: A terminally deprecated method in java.lang.System has been called
-[junit-timeout] WARNING: System::setSecurityManager has been called by org.apache.cassandra.security.ThreadAwareSecurityManager (file:/home/dcalford/CliWork/cassandra/build/apache-cassandra-5.1-SNAPSHOT.jar)
-[junit-timeout] WARNING: Please consider reporting this to the maintainers of org.apache.cassandra.security.ThreadAwareSecurityManager
-[junit-timeout] WARNING: System::setSecurityManager will be removed in a future release
-[junit-timeout] Testsuite: org.apache.cassandra.audit.AuditLoggerAuthTest-_jdk21 Tests run: 15, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 74.913 sec
-[junit-timeout] 
-   [delete] Deleting directory /home/dcalford/CliWork/cassandra/build/test/cassandra/commitlog
-   [delete] Deleting directory /home/dcalford/CliWork/cassandra/build/test/cassandra/data
-   [delete] Deleting directory /home/dcalford/CliWork/cassandra/build/test/cassandra/saved_caches
-   [delete] Deleting directory /home/dcalford/CliWork/cassandra/build/test/cassandra/hints
-[junit-timeout] Testsuite: org.apache.cassandra.audit.AuditLoggerCleanupTest-_jdk21
-[junit-timeout] WARNING: A terminally deprecated method in java.lang.System has been called
-[junit-timeout] WARNING: System::setSecurityManager has been called by org.apache.cassandra.security.ThreadAwareSecurityManager (file:/home/dcalford/CliWork/cassandra/build/apache-cassandra-5.1-SNAPSHOT.jar)
-[junit-timeout] WARNING: Please consider reporting this to the maintainers of org.apache.cassandra.security.ThreadAwareSecurityManager
-[junit-timeout] WARNING: System::setSecurityManager will be removed in a future release
-[junit-timeout] Testsuite: org.apache.cassandra.audit.AuditLoggerCleanupTest-_jdk21 Tests run: 1, Failures: 0, Errors: 0, Skipped: 0, Time elapsed: 20.989 sec
-[junit-timeout] 
-   [delete] Deleting directory /home/dcalford/CliWork/cassandra/build/test/cassandra/commitlog
-   [delete] Deleting directory /home/dcalford/CliWork/cassandra/build/test/cassandra/data
-   [delete] Deleting directory /home/dcalford/CliWork/cassandra/build/test/cassandra/saved_caches
-   [delete] Deleting directory /home/dcalford/CliWork/cassandra/build/test/cassandra/hints
-[junit-timeout] Testsuite: org.apache.cassandra.audit.AuditLoggerTest-_jdk21
 [junit-timeout] WARNING: A terminally deprecated method in java.lang.System has been called
 [junit-timeout] WARNING: System::setSecurityManager has been called by org.apache.cassandra.security.ThreadAwareSecurityManager (file:/home/dcalford/CliWork/cassandra/build/apache-cassandra-5.1-SNAPSHOT.jar)
 [junit-timeout] WARNING: Please consider reporting this to the maintainers of org.apache.cassandra.security.ThreadAwareSecurityManager

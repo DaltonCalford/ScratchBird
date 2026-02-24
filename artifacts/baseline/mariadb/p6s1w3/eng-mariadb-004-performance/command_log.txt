@@ -1,3 +1,40 @@
 task_id=ENG-MARIADB-004
-status=blocked
-timestamp_utc=2026-02-24T04:45:30Z
+status=done
+timestamp_utc=2026-02-24T18:55:57Z
+
+=== command 1 ===
+cwd: /home/dcalford/CliWork
+timeout_s: 30
+rc: 0
+timed_out: False
+duration_s: 0.034
+cmd: test -d /home/dcalford/CliWork/server && git -C /home/dcalford/CliWork/server rev-parse --short HEAD
+--- output begin ---
+21a0714a118
+--- output end ---
+
+=== command 2 ===
+cwd: /home/dcalford/CliWork/ScratchBird
+timeout_s: 630
+rc: 0
+timed_out: False
+duration_s: 0.417
+cmd: ctest --test-dir build -R 'FrontDoorModeBenchmarkTest\.DirectVsManagerProxyConnectAuthQueryLatency|ParserBenchmarkTest\.Summary' --output-on-failure --timeout 300
+--- output begin ---
+Internal ctest changing into directory: /home/dcalford/CliWork/ScratchBird/build
+Test project /home/dcalford/CliWork/ScratchBird/build
+    Start 3182: FrontDoorModeBenchmarkTest.DirectVsManagerProxyConnectAuthQueryLatency
+1/2 Test #3182: FrontDoorModeBenchmarkTest.DirectVsManagerProxyConnectAuthQueryLatency ...***Skipped   0.02 sec
+    Start 3192: ParserBenchmarkTest.Summary
+2/2 Test #3192: ParserBenchmarkTest.Summary ..............................................   Passed    0.27 sec
+
+100% tests passed, 0 tests failed out of 2
+
+Label Time Summary:
+performance    =   0.29 sec*proc (2 tests)
+
+Total Test time (real) =   0.37 sec
+
+The following tests did not run:
+	3182 - FrontDoorModeBenchmarkTest.DirectVsManagerProxyConnectAuthQueryLatency (Skipped)
+--- output end ---
