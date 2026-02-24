@@ -1,0 +1,958 @@
+task_id=ENG-INFLUXDB-001
+status=blocked
+timestamp_utc=2026-02-24T04:35:33Z
+
+=== command 1 ===
+cwd: /home/dcalford/CliWork
+timeout_s: 20
+rc: 0
+timed_out: False
+duration_s: 0.016
+cmd: test -d /home/dcalford/CliWork/influxdb && git -C /home/dcalford/CliWork/influxdb rev-parse --short HEAD
+--- output begin ---
+3c69b91bad
+--- output end ---
+
+=== command 2 ===
+cwd: /home/dcalford/CliWork/influxdb
+timeout_s: 600
+rc: 101
+timed_out: False
+duration_s: 189.624
+cmd: cargo build --workspace --locked
+--- output begin ---
+    Updating git submodule `https://github.com/apache/datafusion-testing.git`
+    Updating git submodule `https://github.com/apache/parquet-testing.git`
+    Updating git submodule `https://github.com/apache/arrow-testing`
+    Updating crates.io index
+    Updating git repository `https://github.com/influxdata/influxdb3_core`
+    Updating git repository `https://github.com/influxdata/datafusion-udf-wasm.git`
+ Downloading crates ...
+  Downloaded ambient-authority v0.0.2
+  Downloaded anstyle-query v1.1.5
+  Downloaded bitcode_derive v0.6.9
+  Downloaded fastrand v2.3.0
+  Downloaded errno v0.3.14
+  Downloaded embedded-io v0.6.1
+  Downloaded dyn-clone v1.0.20
+  Downloaded arrayref v0.3.9
+  Downloaded alloc-stdlib v0.2.2
+  Downloaded crc-catalog v2.4.0
+  Downloaded adler2 v2.0.1
+  Downloaded atomic-waker v1.1.2
+  Downloaded futures-core v0.3.31
+  Downloaded cranelift-srcgen v0.127.3
+  Downloaded atoi v2.0.0
+  Downloaded fs-set-times v0.20.3
+  Downloaded assert_matches v1.5.0
+  Downloaded cap-time-ext v3.4.5
+  Downloaded arrow-csv v56.2.0
+  Downloaded cfg_aliases v0.2.1
+  Downloaded crossbeam-queue v0.3.12
+  Downloaded fixedbitset v0.5.7
+  Downloaded crc v3.4.0
+  Downloaded colorchoice v1.0.4
+  Downloaded cranelift-native v0.127.3
+  Downloaded clap_lex v0.7.7
+  Downloaded equivalent v1.0.2
+  Downloaded id-arena v2.3.0
+  Downloaded http-body v1.0.1
+  Downloaded const-random-macro v0.1.16
+  Downloaded const-random v0.1.18
+  Downloaded darling_macro v0.21.3
+  Downloaded cranelift-codegen-shared v0.127.3
+  Downloaded cap-net-ext v3.4.5
+  Downloaded leb128fmt v0.1.0
+  Downloaded arrayvec v0.7.6
+  Downloaded anstyle-parse v0.2.7
+  Downloaded anstyle v1.0.13
+  Downloaded alloc-no-stdlib v2.0.4
+  Downloaded integer-encoding v3.0.4
+  Downloaded ident_case v1.0.1
+  Downloaded home v0.5.12
+  Downloaded futures-sink v0.3.31
+  Downloaded futures-io v0.3.31
+  Downloaded cranelift-bitset v0.127.3
+  Downloaded cargo-platform v0.1.9
+  Downloaded cap-rand v3.4.5
+  Downloaded bit-set v0.8.0
+  Downloaded async-trait v0.1.89
+  Downloaded is_terminal_polyfill v1.70.2
+  Downloaded maybe-owned v0.3.4
+  Downloaded matchers v0.2.0
+  Downloaded lazy_static v1.5.0
+  Downloaded cranelift-control v0.127.3
+  Downloaded constant_time_eq v0.4.2
+  Downloaded heck v0.5.0
+  Downloaded cobs v0.3.0
+  Downloaded cargo_metadata v0.19.2
+  Downloaded cap-fs-ext v3.4.5
+  Downloaded bloom2 v0.5.1
+  Downloaded axum-core v0.5.6
+  Downloaded embedded-io v0.4.0
+  Downloaded crunchy v0.2.4
+  Downloaded byteorder v1.5.0
+  Downloaded bimap v0.6.3
+  Downloaded concurrent-queue v2.5.0
+  Downloaded cranelift-entity v0.127.3
+  Downloaded cranelift-bforest v0.127.3
+  Downloaded hostname v0.4.2
+  Downloaded murmur3 v0.5.2
+  Downloaded ahash v0.8.12
+  Downloaded multimap v0.10.1
+  Downloaded futures-task v0.3.31
+  Downloaded bit-vec v0.8.0
+  Downloaded base64ct v1.8.3
+  Downloaded backon v1.6.0
+  Downloaded anstream v0.6.21
+  Downloaded arrow-string v56.2.0
+  Downloaded arrow-row v56.2.0
+  Downloaded arbitrary v1.4.2
+  Downloaded arrow-ord v56.2.0
+  Downloaded anyhow v1.0.100
+  Downloaded num-conv v0.2.0
+  Downloaded multer v3.1.0
+  Downloaded cranelift-assembler-x64-meta v0.127.3
+  Downloaded addr2line v0.25.1
+  Downloaded openssl-probe v0.2.1
+  Downloaded allocator-api2 v0.2.21
+  Downloaded clap v4.5.54
+  Downloaded parking v2.2.1
+  Downloaded num-complex v0.4.6
+  Downloaded memfd v0.6.5
+  Downloaded arrow-data v56.2.0
+  Downloaded arrow-arith v56.2.0
+  Downloaded num_cpus v1.17.0
+  Downloaded num-iter v0.1.45
+  Downloaded non-empty-string v0.2.6
+  Downloaded cranelift-assembler-x64 v0.127.3
+  Downloaded const-oid v0.9.6
+  Downloaded cap-std v3.4.5
+  Downloaded bytemuck v1.24.0
+  Downloaded delegate v0.8.0
+  Downloaded blake2 v0.10.6
+  Downloaded humantime-serde v1.1.1
+  Downloaded httpdate v1.0.3
+  Downloaded console v0.15.11
+  Downloaded clap_derive v4.5.49
+  Downloaded camino v1.2.2
+  Downloaded bitflags v2.10.0
+  Downloaded num v0.4.3
+  Downloaded futures-macro v0.3.31
+  Downloaded fnv v1.0.7
+  Downloaded bzip2 v0.6.1
+  Downloaded bzip2 v0.5.2
+  Downloaded futures-channel v0.3.31
+  Downloaded fallible-iterator v0.3.0
+  Downloaded cranelift-frontend v0.127.3
+  Downloaded foldhash v0.1.5
+  Downloaded dotenvy v0.15.7
+  Downloaded deranged v0.5.5
+  Downloaded md-5 v0.10.6
+  Downloaded lru-slab v0.1.2
+  Downloaded memoffset v0.9.1
+  Downloaded ordered-float v2.10.1
+  Downloaded dashmap v6.1.0
+  Downloaded cron v0.15.0
+  Downloaded pest_generator v2.8.5
+  Downloaded arrow v56.2.0
+  Downloaded comfy-table v7.1.2
+  Downloaded once_cell v1.21.3
+  Downloaded ar_archive_writer v0.5.1
+  Downloaded pest_derive v2.8.5
+  Downloaded pem-rfc7468 v0.7.0
+  Downloaded parking_lot v0.12.5
+  Downloaded pin-utils v0.1.0
+  Downloaded lexical-core v1.0.6
+  Downloaded ipnet v2.11.0
+  Downloaded cranelift-isle v0.127.3
+  Downloaded cap-primitives v3.4.5
+  Downloaded bumpalo v3.19.1
+  Downloaded jobserver v0.1.34
+  Downloaded indoc v2.0.7
+  Downloaded phf_shared v0.12.1
+  Downloaded cc v1.2.54
+  Downloaded owo-colors v4.2.3
+  Downloaded num-rational v0.4.2
+  Downloaded miniz_oxide v0.8.9
+  Downloaded base64 v0.22.1
+  Downloaded find-msvc-tools v0.1.8
+  Downloaded futures-executor v0.3.31
+  Downloaded arrow-select v56.2.0
+  Downloaded backtrace v0.3.76
+  Downloaded bitcode v0.6.9
+  Downloaded powerfmt v0.2.0
+  Downloaded humantime v2.3.0
+  Downloaded io-lifetimes v2.0.4
+  Downloaded pkg-config v0.3.32
+  Downloaded pkcs8 v0.10.2
+  Downloaded parking_lot_core v0.9.12
+  Downloaded hashlink v0.10.0
+  Downloaded allocator-api2 v0.4.0
+  Downloaded arrow-json v56.2.0
+  Downloaded arrow-buffer v56.2.0
+  Downloaded glob v0.3.3
+  Downloaded csv-core v0.1.13
+  Downloaded pulley-macros v40.0.3
+  Downloaded pin-project-internal v1.1.10
+  Downloaded hyper-timeout v0.5.2
+  Downloaded cranelift-codegen-meta v0.127.3
+  Downloaded arrow-schema v56.2.0
+  Downloaded pyo3-macros v0.27.2
+  Downloaded quick-error v1.2.3
+  Downloaded psm v0.1.29
+  Downloaded async-compression v0.4.19
+  Downloaded aho-corasick v1.1.4
+  Downloaded pbjson v0.9.0
+  Downloaded pyo3-build-config v0.27.2
+  Downloaded filetime v0.2.27
+  Downloaded crc32fast v1.5.0
+  Downloaded arrow-ipc v56.2.0
+  Downloaded prost-build v0.13.5
+  Downloaded prost v0.14.3
+  Downloaded rustc_version v0.4.1
+  Downloaded ref-cast v1.0.25
+  Downloaded recursive-proc-macro-impl v0.1.1
+  Downloaded rand_xorshift v0.4.0
+  Downloaded pin-project v1.1.10
+  Downloaded nu-ansi-term v0.50.3
+  Downloaded hyper-rustls v0.27.7
+  Downloaded flatbuffers v25.12.19
+  Downloaded event-listener v5.4.1
+  Downloaded crossbeam-utils v0.8.21
+  Downloaded ordered-float v5.1.0
+  Downloaded mime v0.3.17
+  Downloaded lock_api v0.4.14
+  Downloaded either v1.15.0
+  Downloaded darling v0.21.3
+  Downloaded arrow-flight v56.2.0
+  Downloaded pbjson v0.7.0
+  Downloaded prost-derive v0.13.5
+  Downloaded prost-derive v0.14.3
+  Downloaded prost v0.13.5
+  Downloaded pkcs1 v0.7.5
+  Downloaded arrow-cast v56.2.0
+  Downloaded httparse v1.10.1
+  Downloaded io-extras v0.18.4
+  Downloaded ref-cast-impl v1.0.25
+  Downloaded http-body-util v0.1.3
+  Downloaded iana-time-zone v0.1.64
+  Downloaded recursive v0.1.1
+  Downloaded rustls-pemfile v2.2.0
+  Downloaded pbjson-build v0.9.0
+  Downloaded pbjson-build v0.7.0
+  Downloaded paste v1.0.15
+  Downloaded rustc-hash v2.1.1
+  Downloaded rustc-demangle v0.1.27
+  Downloaded matchit v0.8.4
+  Downloaded lz4_flex v0.11.5
+  Downloaded rustix-linux-procfs v0.1.1
+  Downloaded prettyplease v0.2.37
+  Downloaded rustls-native-certs v0.8.3
+  Downloaded pulley-interpreter v40.0.3
+  Downloaded rustversion v1.0.22
+  Downloaded axum v0.8.8
+  Downloaded phf v0.12.1
+  Downloaded nom v8.0.0
+  Downloaded croaring v2.5.2
+  Downloaded quinn-udp v0.5.14
+  Downloaded clap_builder v4.5.54
+  Downloaded rmp v0.8.15
+  Downloaded signature v2.2.0
+  Downloaded sha1 v0.10.6
+  Downloaded same-file v1.0.6
+  Downloaded rustls-pki-types v1.14.0
+  Downloaded pyo3-ffi v0.27.2
+  Downloaded lexical-parse-integer v1.0.6
+  Downloaded rmp-serde v1.3.1
+  Downloaded pest v2.8.5
+  Downloaded siphasher v1.0.2
+  Downloaded half v2.7.1
+  Downloaded getrandom v0.3.4
+  Downloaded libbz2-rs-sys v0.2.2
+  Downloaded serde_urlencoded v0.7.1
+  Downloaded indexmap v1.9.3
+  Downloaded strsim v0.11.1
+  Downloaded simd-adler32 v0.3.8
+  Downloaded semver v1.0.27
+  Downloaded scopeguard v1.2.0
+  Downloaded slab v0.4.11
+  Downloaded stringprep v0.1.5
+  Downloaded brotli-decompressor v5.0.0
+  Downloaded thiserror-impl v1.0.69
+  Downloaded thiserror v2.0.18
+  Downloaded flume v0.11.1
+  Downloaded futures v0.3.31
+  Downloaded quinn v0.11.9
+  Downloaded darling_core v0.21.3
+  Downloaded tikv-jemallocator v0.5.4
+  Downloaded tempfile v3.24.0
+  Downloaded target-lexicon v0.13.4
+  Downloaded sync_wrapper v1.0.2
+  Downloaded sqlx-macros v0.8.6
+  Downloaded spin v0.9.8
+  Downloaded snap v1.1.1
+  Downloaded snafu-derive v0.8.9
+  Downloaded serde_with_macros v3.16.1
+  Downloaded rusty-fork v0.3.1
+  Downloaded rand_chacha v0.9.0
+  Downloaded threadpool v1.8.1
+  Downloaded sqlparser_derive v0.3.0
+  Downloaded spki v0.7.3
+  Downloaded secrecy v0.8.0
+  Downloaded rand_core v0.9.5
+  Downloaded pest_meta v2.8.5
+  Downloaded simdutf8 v0.1.5
+  Downloaded pyo3-macros-backend v0.27.2
+  Downloaded tracing-serde v0.2.0
+  Downloaded tower-layer v0.3.3
+  Downloaded tinyvec_macros v0.1.1
+  Downloaded time-core v0.1.8
+  Downloaded lexical-write-integer v1.0.6
+  Downloaded similar v2.7.0
+  Downloaded rsa v0.9.10
+  Downloaded strum v0.26.3
+  Downloaded socket2 v0.5.10
+  Downloaded blake3 v1.8.3
+  Downloaded utf-8 v0.7.6
+  Downloaded tiny-keccak v2.0.2
+  Downloaded tikv-jemalloc-ctl v0.5.4
+  Downloaded unindent v0.2.4
+  Downloaded time-macros v0.2.27
+  Downloaded serde_derive v1.0.228
+  Downloaded prost-types v0.13.5
+  Downloaded der v0.7.10
+  Downloaded tracing-log v0.2.0
+  Downloaded tonic-reflection v0.13.1
+  Downloaded tonic-build v0.13.1
+  Downloaded seq-macro v0.3.6
+  Downloaded sqlx-mysql v0.8.6
+  Downloaded tar v0.4.44
+  Downloaded stacker v0.1.22
+  Downloaded tower-service v0.3.3
+  Downloaded tokio-stream v0.1.18
+  Downloaded try-lock v0.2.5
+  Downloaded sqlx-sqlite v0.8.6
+  Downloaded tokio-rustls v0.26.4
+  Downloaded thrift v0.17.0
+  Downloaded thread_local v1.1.9
+  Downloaded sqlx-macros-core v0.8.6
+  Downloaded signal-hook-registry v1.4.8
+  Downloaded unarray v0.1.4
+  Downloaded arrow-array v56.2.0
+  Downloaded snafu v0.8.9
+  Downloaded rand v0.9.2
+  Downloaded postcard v1.1.3
+  Downloaded crossbeam-channel v0.5.15
+  Downloaded webpki-roots v0.26.11
+  Downloaded wasmtime-internal-winch v40.0.3
+  Downloaded wasmtime-internal-jit-icache-coherence v40.0.3
+  Downloaded wasmtime-internal-jit-debug v40.0.3
+  Downloaded wasmtime-internal-component-util v40.0.3
+  Downloaded want v0.3.1
+  Downloaded wasmtime-internal-slab v40.0.3
+  Downloaded wasmtime-internal-math v40.0.3
+  Downloaded futures-intrusive v0.5.0
+  Downloaded ureq-proto v0.5.3
+  Downloaded wasmtime-internal-unwinder v40.0.3
+  Downloaded wasmtime-internal-fiber v40.0.3
+  Downloaded utf8parse v0.2.2
+  Downloaded prost-types v0.14.3
+  Downloaded pbjson-types v0.7.0
+  Downloaded thiserror-impl v2.0.18
+  Downloaded termcolor v1.4.1
+  Downloaded system-interface v0.27.3
+  Downloaded strum_macros v0.26.4
+  Downloaded unicode-xid v0.2.6
+  Downloaded tracing-core v0.1.36
+  Downloaded ryu v1.0.22
+  Downloaded reqwest v0.12.28
+  Downloaded tokio-rustls v0.25.0
+  Downloaded wasmtime-internal-versioned-export-macros v40.0.3
+  Downloaded wait-timeout v0.2.1
+  Downloaded wasmtime-internal-wit-bindgen v40.0.3
+  Downloaded flate2 v1.1.8
+  Downloaded hashbrown v0.12.3
+  Downloaded http v1.4.0
+  Downloaded zstd v0.13.3
+  Downloaded zstd-safe v7.2.4
+  Downloaded zmij v1.0.17
+  Downloaded hyper-util v0.1.19
+  Downloaded zeroize v1.8.2
+  Downloaded sqlx-postgres v0.8.6
+  Downloaded lexical-write-float v1.0.6
+  Downloaded lexical-util v1.0.7
+  Downloaded xz2 v0.1.7
+  Downloaded thiserror v1.0.69
+  Downloaded rustls-webpki v0.102.8
+  Downloaded sqlx v0.8.6
+  Downloaded quick-xml v0.38.4
+  Downloaded ucd-trie v0.1.7
+  Downloaded walkdir v2.5.0
+  Downloaded whoami v1.6.1
+  Downloaded wasmtime-wasi-io v40.0.3
+  Downloaded indexmap v2.13.0
+  Downloaded tower-http v0.6.8
+  Downloaded unicode-properties v0.1.4
+  Downloaded ureq v3.1.4
+  Downloaded rustls-webpki v0.103.9
+  Downloaded sharded-slab v0.1.7
+  Downloaded schemars v1.2.0
+  Downloaded tinyvec v1.10.0
+  Downloaded prometheus v0.14.0
+  Downloaded quinn-proto v0.11.13
+  Downloaded unicode-bidi v0.3.18
+  Downloaded tracing-attributes v0.1.31
+  Downloaded insta v1.46.1
+  Downloaded wasm-encoder v0.243.0
+  Downloaded wasmtime-wasi-http v40.0.3
+  Downloaded crossterm v0.28.1
+  Downloaded syn v1.0.109
+  Downloaded schemars v0.9.0
+  Downloaded twox-hash v2.1.2
+  Downloaded wasmprinter v0.243.0
+  Downloaded iri-string v0.7.10
+  Downloaded uuid v1.20.0
+  Downloaded time v0.3.47
+  Downloaded rustls v0.22.4
+  Downloaded num-bigint-dig v0.8.6
+  Downloaded itertools v0.13.0
+  Downloaded regex-syntax v0.8.8
+  Downloaded wasmtime-wasi v40.0.3
+  Downloaded wasmtime-internal-cranelift v40.0.3
+  Downloaded sqlparser v0.58.0
+  Downloaded hashbrown v0.16.1
+  Downloaded hashbrown v0.15.5
+  Downloaded futures-util v0.3.31
+  Downloaded wit-parser v0.243.0
+  Downloaded wasmtime-environ v40.0.3
+  Downloaded zlib-rs v0.5.5
+  Downloaded itertools v0.14.0
+  Downloaded rustix v1.1.3
+  Downloaded hashbrown v0.14.5
+  Downloaded wasmparser v0.243.0
+  Downloaded hyper v1.8.1
+  Downloaded tonic v0.13.1
+  Downloaded regalloc2 v0.13.5
+  Downloaded hkdf v0.12.4
+  Downloaded unicode-width v0.2.2
+  Downloaded tower v0.5.3
+  Downloaded sqlx-core v0.8.6
+  Downloaded rustls v0.23.36
+  Downloaded rustix v0.38.44
+  Downloaded unicode-segmentation v1.12.0
+  Downloaded zerocopy v0.8.34
+  Downloaded lexical-parse-float v1.0.6
+  Downloaded bzip2-sys v0.1.13+1.0.8
+  Downloaded h2 v0.4.13
+  Downloaded regex v1.12.2
+  Downloaded croaring-sys v4.5.1
+  Downloaded tokio-util v0.7.18
+  Downloaded zerocopy-derive v0.8.34
+  Downloaded brotli v8.0.2
+  Downloaded unicode-normalization v0.1.25
+  Downloaded regex-automata v0.4.13
+  Downloaded serde_with v3.16.1
+  Downloaded parquet v56.2.0
+  Downloaded winnow v0.6.26
+  Downloaded chrono-tz v0.10.4
+  Downloaded lzma-sys v0.1.20
+  Downloaded petgraph v0.7.1
+  Downloaded proptest v1.9.0
+  Downloaded winch-codegen v40.0.3
+  Downloaded object_store v0.12.5
+  Downloaded sysinfo v0.37.2
+  Downloaded gimli v0.32.3
+  Downloaded tracing-subscriber v0.3.22
+  Downloaded sysinfo v0.38.0
+  Downloaded vcpkg v0.2.15
+  Downloaded webpki-roots v1.0.5
+  Downloaded wasmtime-internal-component-macro v40.0.3
+  Downloaded petgraph v0.8.3
+  Downloaded object v0.37.3
+  Downloaded cranelift-codegen v0.127.3
+  Downloaded zstd-sys v2.0.16+zstd.1.5.7
+  Downloaded tikv-jemalloc-sys v0.5.4+5.3.0-patched
+  Downloaded wasmtime v40.0.3
+  Downloaded tracing v0.1.44
+  Downloaded pyo3 v0.27.2
+  Downloaded glam v0.31.0
+  Downloaded csv v1.4.0
+  Downloaded linux-raw-sys v0.4.15
+  Downloaded encoding_rs v0.8.35
+  Downloaded linux-raw-sys v0.11.0
+  Downloaded libsqlite3-sys v0.30.1
+   Compiling proc-macro2 v1.0.106
+   Compiling quote v1.0.44
+   Compiling unicode-ident v1.0.22
+   Compiling libc v0.2.180
+   Compiling serde_core v1.0.228
+   Compiling serde v1.0.228
+   Compiling cfg-if v1.0.4
+   Compiling memchr v2.7.6
+   Compiling bytes v1.11.1
+   Compiling once_cell v1.21.3
+   Compiling find-msvc-tools v0.1.8
+   Compiling shlex v1.3.0
+   Compiling itoa v1.0.17
+   Compiling hashbrown v0.16.1
+   Compiling scopeguard v1.2.0
+   Compiling autocfg v1.5.0
+   Compiling libm v0.2.16
+   Compiling parking_lot_core v0.9.12
+   Compiling log v0.4.29
+   Compiling bitflags v2.10.0
+   Compiling equivalent v1.0.2
+   Compiling getrandom v0.3.4
+   Compiling zmij v1.0.17
+   Compiling version_check v0.9.5
+   Compiling pin-project-lite v0.2.16
+   Compiling futures-core v0.3.31
+   Compiling zerocopy v0.8.34
+   Compiling futures-sink v0.3.31
+   Compiling num-traits v0.2.19
+   Compiling slab v0.4.11
+   Compiling futures-channel v0.3.31
+   Compiling heck v0.5.0
+   Compiling pin-utils v0.1.0
+   Compiling futures-io v0.3.31
+   Compiling futures-task v0.3.31
+   Compiling tracing-core v0.1.36
+   Compiling zeroize v1.8.2
+   Compiling base64 v0.22.1
+   Compiling subtle v2.6.1
+   Compiling iana-time-zone v0.1.64
+   Compiling untrusted v0.9.0
+   Compiling pkg-config v0.3.32
+   Compiling percent-encoding v2.3.2
+   Compiling rustls-pki-types v1.14.0
+   Compiling http v1.4.0
+   Compiling stable_deref_trait v1.2.1
+   Compiling ahash v0.8.12
+   Compiling siphasher v1.0.2
+   Compiling fnv v1.0.7
+   Compiling syn v2.0.114
+   Compiling rustls v0.23.36
+   Compiling chrono-tz v0.10.4
+   Compiling thiserror v2.0.18
+   Compiling typenum v1.19.0
+   Compiling generic-array v0.14.7
+   Compiling phf_shared v0.12.1
+   Compiling writeable v0.6.2
+   Compiling litemap v0.8.1
+   Compiling jobserver v0.1.34
+   Compiling errno v0.3.14
+   Compiling socket2 v0.6.2
+   Compiling mio v1.1.1
+   Compiling getrandom v0.2.17
+   Compiling phf v0.12.1
+   Compiling signal-hook-registry v1.4.8
+   Compiling httparse v1.10.1
+   Compiling icu_normalizer_data v2.1.1
+   Compiling icu_properties_data v2.1.2
+   Compiling ryu v1.0.22
+   Compiling cc v1.2.54
+   Compiling ipnet v2.11.0
+   Compiling serde_json v1.0.149
+   Compiling http-body v1.0.1
+   Compiling tower-service v0.3.3
+   Compiling allocator-api2 v0.2.21
+   Compiling form_urlencoded v1.2.2
+   Compiling utf8_iter v1.0.4
+   Compiling atomic-waker v1.1.2
+   Compiling regex-syntax v0.8.8
+   Compiling aho-corasick v1.1.4
+   Compiling try-lock v0.2.5
+   Compiling httpdate v1.0.3
+   Compiling rustversion v1.0.22
+   Compiling want v0.3.1
+   Compiling lexical-util v1.0.7
+   Compiling sync_wrapper v1.0.2
+   Compiling tower-layer v0.3.3
+   Compiling object v0.37.3
+   Compiling lock_api v0.4.14
+   Compiling zstd-safe v7.2.4
+   Compiling num-integer v0.1.46
+   Compiling num-complex v0.4.6
+   Compiling atoi v2.0.0
+   Compiling strum v0.26.3
+   Compiling unicode-width v0.2.2
+   Compiling http-body-util v0.1.3
+   Compiling openssl-probe v0.2.1
+   Compiling num-bigint v0.4.6
+   Compiling num-iter v0.1.45
+   Compiling crypto-common v0.1.7
+   Compiling block-buffer v0.10.4
+   Compiling lexical-parse-integer v1.0.6
+   Compiling lexical-write-integer v1.0.6
+   Compiling rustls-native-certs v0.8.3
+   Compiling webpki-roots v1.0.5
+   Compiling adler2 v2.0.1
+   Compiling indexmap v2.13.0
+   Compiling semver v1.0.27
+   Compiling digest v0.10.7
+   Compiling lexical-parse-float v1.0.6
+   Compiling lexical-write-float v1.0.6
+   Compiling simd-adler32 v0.3.8
+   Compiling crc32fast v1.5.0
+   Compiling rustc_version v0.4.1
+   Compiling md-5 v0.10.6
+   Compiling lexical-core v1.0.6
+   Compiling miniz_oxide v0.8.9
+   Compiling zlib-rs v0.5.5
+   Compiling rustix v1.1.3
+   Compiling ring v0.17.14
+   Compiling zstd-sys v2.0.16+zstd.1.5.7
+   Compiling flatbuffers v25.12.19
+   Compiling rand_core v0.9.5
+   Compiling iri-string v0.7.10
+   Compiling linux-raw-sys v0.11.0
+   Compiling num-rational v0.4.2
+   Compiling regex-automata v0.4.13
+   Compiling twox-hash v2.1.2
+   Compiling lz4_flex v0.11.5
+   Compiling byteorder v1.5.0
+   Compiling num v0.4.3
+   Compiling simdutf8 v0.1.5
+   Compiling csv-core v0.1.13
+   Compiling humantime v2.3.0
+   Compiling paste v1.0.15
+   Compiling same-file v1.0.6
+   Compiling csv v1.4.0
+   Compiling rustls-pemfile v2.2.0
+   Compiling alloc-no-stdlib v2.0.4
+   Compiling walkdir v2.5.0
+   Compiling rustix v0.38.44
+   Compiling alloc-stdlib v0.2.2
+   Compiling synstructure v0.13.2
+   Compiling stacker v0.1.22
+   Compiling num_cpus v1.17.0
+   Compiling linux-raw-sys v0.4.15
+   Compiling snap v1.1.1
+   Compiling threadpool v1.8.1
+   Compiling brotli-decompressor v5.0.0
+   Compiling ordered-float v2.10.1
+   Compiling foldhash v0.1.5
+   Compiling integer-encoding v3.0.4
+   Compiling seq-macro v0.3.6
+   Compiling thrift v0.17.0
+   Compiling crossbeam-utils v0.8.21
+   Compiling anyhow v1.0.100
+   Compiling flate2 v1.1.8
+   Compiling ar_archive_writer v0.5.1
+   Compiling brotli v8.0.2
+   Compiling fastrand v2.3.0
+   Compiling cpufeatures v0.2.17
+   Compiling datafusion-doc v50.3.0 (https://github.com/influxdata/arrow-datafusion.git?rev=5f35b8287ea793772c7d89d412908af84af0d901#5f35b828)
+   Compiling sha2 v0.10.9
+   Compiling hex v0.4.3
+   Compiling uuid v1.20.0
+   Compiling bigdecimal v0.4.10
+   Compiling serde_derive v1.0.228
+   Compiling zerocopy-derive v0.8.34
+   Compiling tokio-macros v2.6.0
+   Compiling futures-macro v0.3.31
+   Compiling tracing-attributes v0.1.31
+   Compiling zerofrom-derive v0.1.6
+   Compiling yoke-derive v0.8.1
+   Compiling zerovec-derive v0.11.2
+   Compiling displaydoc v0.2.5
+   Compiling futures-util v0.3.31
+   Compiling thiserror-impl v2.0.18
+   Compiling regex v1.12.2
+   Compiling tracing v0.1.44
+   Compiling strum_macros v0.26.4
+   Compiling zerofrom v0.1.6
+   Compiling async-trait v0.1.89
+   Compiling yoke v0.8.1
+   Compiling psm v0.1.29
+   Compiling zerovec v0.11.5
+   Compiling rustls-webpki v0.103.9
+   Compiling zerotrie v0.2.3
+   Compiling tinystr v0.8.2
+   Compiling potential_utf v0.1.4
+   Compiling icu_collections v2.1.1
+   Compiling icu_locale_core v2.1.1
+   Compiling recursive-proc-macro-impl v0.1.1
+   Compiling sqlparser_derive v0.3.0
+   Compiling recursive v0.1.1
+   Compiling tempfile v3.24.0
+   Compiling sqlparser v0.58.0
+   Compiling webpki-roots v0.26.11
+   Compiling rand_core v0.6.4
+   Compiling wasmparser v0.243.0
+   Compiling arrayvec v0.7.6
+   Compiling concurrent-queue v2.5.0
+   Compiling parking v2.2.1
+   Compiling crc-catalog v2.4.0
+   Compiling icu_provider v2.1.1
+   Compiling event-listener v5.4.1
+   Compiling crc v3.4.0
+   Compiling crossbeam-queue v0.3.12
+   Compiling tinyvec_macros v0.1.1
+   Compiling icu_properties v2.1.2
+   Compiling vcpkg v0.2.15
+   Compiling smallvec v1.15.1
+   Compiling either v1.15.0
+   Compiling chrono v0.4.43
+   Compiling futures-executor v0.3.31
+   Compiling serde_urlencoded v0.7.1
+   Compiling futures v0.3.31
+   Compiling itertools v0.14.0
+   Compiling icu_normalizer v2.1.1
+   Compiling arrow-schema v56.2.0
+   Compiling quick-xml v0.38.4
+   Compiling half v2.7.1
+   Compiling parking_lot v0.12.5
+   Compiling tokio v1.49.0
+   Compiling idna_adapter v1.2.1
+   Compiling ppv-lite86 v0.2.21
+   Compiling idna v1.1.0
+   Compiling arrow-buffer v56.2.0
+   Compiling rand_chacha v0.9.0
+   Compiling url v2.5.8
+   Compiling rand v0.9.2
+   Compiling arrow-data v56.2.0
+   Compiling hashbrown v0.14.5
+   Compiling crossterm v0.28.1
+   Compiling hashbrown v0.15.5
+   Compiling prost-derive v0.13.5
+   Compiling comfy-table v7.1.2
+   Compiling rand_chacha v0.3.1
+   Compiling rand v0.8.5
+   Compiling libsqlite3-sys v0.30.1
+   Compiling tinyvec v1.10.0
+   Compiling unicode-normalization v0.1.25
+   Compiling futures-intrusive v0.5.0
+   Compiling prost v0.13.5
+   Compiling hmac v0.12.1
+   Compiling unicode-properties v0.1.4
+   Compiling prost-types v0.13.5
+   Compiling hashlink v0.10.0
+   Compiling unicode-bidi v0.3.18
+   Compiling hkdf v0.12.4
+   Compiling spin v0.9.8
+   Compiling whoami v1.6.1
+   Compiling dotenvy v0.15.7
+   Compiling stringprep v0.1.5
+   Compiling home v0.5.12
+   Compiling strsim v0.11.1
+   Compiling flume v0.11.1
+   Compiling mime v0.3.17
+   Compiling ucd-trie v0.1.7
+   Compiling pest v2.8.5
+   Compiling axum-core v0.5.6
+   Compiling pin-project-internal v1.1.10
+   Compiling matchit v0.8.4
+   Compiling utf8parse v0.2.2
+   Compiling anstyle-parse v0.2.7
+   Compiling tokio-util v0.7.18
+   Compiling tokio-rustls v0.26.4
+   Compiling tokio-stream v0.1.18
+   Compiling socket2 v0.5.10
+   Compiling sqlx-core v0.8.6
+   Compiling pest_meta v2.8.5
+   Compiling h2 v0.4.13
+   Compiling tower v0.5.3
+   Compiling pin-project v1.1.10
+   Compiling is_terminal_polyfill v1.70.2
+   Compiling arrow-array v56.2.0
+   Compiling zstd v0.13.3
+   Compiling tower-http v0.6.8
+   Compiling axum v0.8.8
+   Compiling colorchoice v1.0.4
+   Compiling anstyle-query v1.1.5
+   Compiling anstyle v1.0.13
+   Compiling pest_generator v2.8.5
+   Compiling anstream v0.6.21
+   Compiling wait-timeout v0.2.1
+   Compiling clap_lex v0.7.7
+   Compiling arrow-select v56.2.0
+   Compiling arrow-arith v56.2.0
+   Compiling arrow-row v56.2.0
+   Compiling hyper v1.8.1
+   Compiling arrow-cast v56.2.0
+   Compiling arrow-ipc v56.2.0
+   Compiling arrow-ord v56.2.0
+   Compiling arrow-string v56.2.0
+   Compiling hyper-util v0.1.19
+   Compiling hyper-rustls v0.27.7
+   Compiling arrow-csv v56.2.0
+   Compiling arrow-json v56.2.0
+   Compiling reqwest v0.12.28
+   Compiling arrow v56.2.0
+   Compiling object_store v0.12.5
+   Compiling sqlx-sqlite v0.8.6
+   Compiling sqlx-postgres v0.8.6
+   Compiling hyper-timeout v0.5.2
+   Compiling bit-vec v0.8.0
+   Compiling tonic v0.13.1
+   Compiling quick-error v1.2.3
+   Compiling rusty-fork v0.3.1
+   Compiling bit-set v0.8.0
+   Compiling pest_derive v2.8.5
+   Compiling clap_builder v4.5.54
+   Compiling clap_derive v4.5.49
+   Compiling rand_xorshift v0.4.0
+   Compiling console v0.15.11
+   Compiling tracing-log v0.2.0
+   Compiling similar v2.7.0
+   Compiling unarray v0.1.4
+   Compiling proptest v1.9.0
+   Compiling clap v4.5.54
+   Compiling fixedbitset v0.5.7
+   Compiling dashmap v6.1.0
+   Compiling petgraph v0.8.3
+   Compiling blake3 v1.8.3
+   Compiling insta v1.46.1
+   Compiling parquet v56.2.0
+   Compiling unicode-segmentation v1.12.0
+   Compiling bzip2-sys v0.1.13+1.0.8
+   Compiling lzma-sys v0.1.20
+   Compiling arrayref v0.3.9
+   Compiling constant_time_eq v0.4.2
+   Compiling blake2 v0.10.6
+   Compiling datafusion-common-runtime v50.3.0 (https://github.com/influxdata/arrow-datafusion.git?rev=5f35b8287ea793772c7d89d412908af84af0d901#5f35b828)
+   Compiling libbz2-rs-sys v0.2.2
+   Compiling prettyplease v0.2.37
+   Compiling glob v0.3.3
+   Compiling bzip2 v0.5.2
+   Compiling bzip2 v0.6.1
+   Compiling petgraph v0.7.1
+   Compiling snafu-derive v0.8.9
+   Compiling multimap v0.10.1
+   Compiling prost-derive v0.14.3
+   Compiling itertools v0.13.0
+   Compiling target-lexicon v0.13.4
+   Compiling prost-build v0.13.5
+   Compiling pbjson-build v0.7.0
+   Compiling base64 v0.21.7
+   Compiling prost v0.14.3
+   Compiling snafu v0.8.9
+   Compiling tonic-build v0.13.1
+   Compiling prost-types v0.14.3
+   Compiling pbjson v0.7.0
+   Compiling pbjson v0.9.0
+   Compiling nom v8.0.0
+   Compiling io-lifetimes v2.0.4
+   Compiling croaring-sys v4.5.1
+   Compiling pbjson-types v0.7.0
+   Compiling sqlx-macros-core v0.8.6
+   Compiling io-extras v0.18.4
+   Compiling pbjson-build v0.9.0
+   Compiling wasmtime-internal-versioned-export-macros v40.0.3
+   Compiling ambient-authority v0.0.2
+   Compiling allocator-api2 v0.4.0
+   Compiling cap-primitives v3.4.5
+   Compiling fs-set-times v0.20.3
+   Compiling generated_types v0.1.0 (https://github.com/influxdata/influxdb3_core?rev=349d802bf9a54ab5876399ab013502eeb0d52a6b#349d802b)
+   Compiling rustix-linux-procfs v0.1.1
+   Compiling ordered-float v5.1.0
+   Compiling murmur3 v0.5.2
+   Compiling maybe-owned v0.3.4
+   Compiling cranelift-bitset v0.127.3
+   Compiling sqlx-macros v0.8.6
+   Compiling cap-std v3.4.5
+   Compiling id-arena v2.3.0
+   Compiling datafusion-common v50.3.0 (https://github.com/influxdata/arrow-datafusion.git?rev=5f35b8287ea793772c7d89d412908af84af0d901#5f35b828)
+   Compiling unicode-xid v0.2.6
+   Compiling gimli v0.32.3
+error: failed to run custom build command for `generated_types v0.1.0 (https://github.com/influxdata/influxdb3_core?rev=349d802bf9a54ab5876399ab013502eeb0d52a6b#349d802b)`
+
+Caused by:
+  process didn't exit successfully: `/home/dcalford/CliWork/influxdb/target/debug/build/generated_types-e5864596ad07137d/build-script-build` (exit status: 1)
+  --- stdout
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/authz/v1/authz.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/authz/pusher/v1/pusher.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/bulk_ingest/v1/service.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/catalog_cache/v1/value.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/catalog_storage/v1/service.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/catalog/v1/parquet_file.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/catalog/v1/partition_identifier.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/catalog/v1/service.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/catalog/v2/service.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/column_type/v1/type.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/common/v1/common.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/compactor/v1/service.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/delete/v1/service.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/gossip/v1/compaction.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/gossip/v1/parquet_file.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/gossip/v1/query_exec_metadata.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/gossip/v1/namespace.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/gossip/v1/schema.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/gossip/v1/schema_sync.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/gossip/v1/sort_keys.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/ingester/v1/parquet_metadata.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/ingester/v1/persist.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/ingester/v1/write.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/namespace/v1/service.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/object_store/v1/service.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/partition_template/v1/template.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/predicate/v1/predicate.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/querier/v1/flight.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/querier/v1/query_log.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/google/longrunning/operations.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/google/rpc/error_details.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/google/rpc/status.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/grpc/health/v1/service.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/pbdata/v1/influxdb_pb_data_protocol.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/schema/v1/service.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/skipped_compaction/v1/skipped_compaction.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/platform/errors/errors.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/platform/storage/predicate.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/platform/storage/service.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/platform/storage/source.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/platform/storage/storage_common.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/platform/storage/test.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/table/v1/service.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/wal/v1/wal.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/authz/v1/authz.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/authz/pusher/v1/pusher.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/bulk_ingest/v1/service.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/catalog_cache/v1/value.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/catalog_storage/v1/service.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/catalog/v1/parquet_file.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/catalog/v1/partition_identifier.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/catalog/v1/service.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/catalog/v2/service.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/column_type/v1/type.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/common/v1/common.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/compactor/v1/service.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/delete/v1/service.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/gossip/v1/compaction.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/gossip/v1/parquet_file.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/gossip/v1/query_exec_metadata.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/gossip/v1/namespace.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/gossip/v1/schema.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/gossip/v1/schema_sync.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/gossip/v1/sort_keys.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/ingester/v1/parquet_metadata.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/ingester/v1/persist.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/ingester/v1/write.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/namespace/v1/service.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/object_store/v1/service.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/partition_template/v1/template.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/predicate/v1/predicate.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/querier/v1/flight.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/querier/v1/query_log.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/google/longrunning/operations.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/google/rpc/error_details.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/google/rpc/status.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/grpc/health/v1/service.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/pbdata/v1/influxdb_pb_data_protocol.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/schema/v1/service.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/skipped_compaction/v1/skipped_compaction.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/platform/errors/errors.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/platform/storage/predicate.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/platform/storage/service.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/platform/storage/source.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/platform/storage/storage_common.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/platform/storage/test.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/table/v1/service.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos/influxdata/iox/wal/v1/wal.proto
+  cargo:rerun-if-changed=/home/dcalford/.cargo/git/checkouts/influxdb3_core-2ede6fca005e1dcf/349d802/generated_types/protos
+
+  --- stderr
+  Error: Custom { kind: NotFound, error: "Could not find `protoc`. If `protoc` is installed, try setting the `PROTOC` environment variable to the path of the `protoc` binary. To install it on Debian, run `apt-get install protobuf-compiler`. It is also available at https://github.com/protocolbuffers/protobuf/releases  For more information: https://docs.rs/prost-build/#sourcing-protoc" }
+warning: build failed, waiting for other jobs to finish...
+--- output end ---

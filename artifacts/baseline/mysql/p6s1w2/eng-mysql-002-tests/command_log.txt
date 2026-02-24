@@ -1,0 +1,48 @@
+task_id=ENG-MYSQL-002
+status=blocked
+timestamp_utc=2026-02-24T04:50:37Z
+
+=== command 1 ===
+cwd: /home/dcalford/CliWork
+timeout_s: 20
+rc: 0
+timed_out: False
+duration_s: 0.017
+cmd: test -d /home/dcalford/CliWork/mysql-server && git -C /home/dcalford/CliWork/mysql-server rev-parse --short HEAD
+--- output begin ---
+447eb26e094
+--- output end ---
+
+=== command 2 ===
+cwd: /home/dcalford/CliWork/mysql-server
+timeout_s: 300
+rc: 124
+timed_out: True
+duration_s: 300.050
+cmd: cd build_codex2/mysql-test && perl mysql-test-run.pl --suite=main --do-test=select --force
+--- output begin ---
+Logging: /home/dcalford/CliWork/mysql-server/mysql-test/mysql-test-run.pl  --suite=main --do-test=select --force
+MySQL Version 9.6.0
+Checking supported features
+Using suite(s): main
+Collecting tests
+Checking leftover processes
+Removing old var directory
+Creating var directory '/home/dcalford/CliWork/mysql-server/build_codex2/mysql-test/var'
+Installing system database
+Using parallel: 1
+ports_per_thread:30
+
+==============================================================================
+                  TEST NAME                       RESULT  TIME (ms) COMMENT
+------------------------------------------------------------------------------
+[  6%] main.select_distinct_debug                [ skipped ]  Test needs debug binaries.
+[ 13%] main.select_count                         [ pass ]   1052
+[ 20%] main.select_for_update                    [ pass ]   5896
+[ 26%] main.select_all                           [ pass ]  45911
+[ 33%] main.select_all_bka                       [ pass ]  44264
+[ 40%] main.select_all_bka_nobnl                 [ pass ]  43497
+[ 46%] main.select_found                         [ pass ]   4163
+[ 53%] main.select_icp_mrr                       [ pass ]  43922
+[ 60%] main.select_icp_mrr_bka                   [ pass ]  44062
+--- output end ---

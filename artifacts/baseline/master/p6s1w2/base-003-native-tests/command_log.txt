@@ -1,0 +1,43 @@
+task_id=BASE-003
+status=done
+timestamp_utc=2026-02-24T03:58:20Z
+
+=== command 1 ===
+cwd: /home/dcalford/CliWork/ScratchBird
+timeout_s: 90
+rc: 0
+timed_out: False
+duration_s: 0.033
+cmd: python3 tests/compatibility/scripts/generate_test_manifests.py
+--- output begin ---
+WARNING: Directory not found: /home/dcalford/CliWork/ScratchBird/tests/compatibility/firebird/converted
+WARNING: Directory not found: /home/dcalford/CliWork/ScratchBird/tests/compatibility/mysql/converted
+WARNING: Directory not found: /home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/converted
+
+═══════════════════════════════════════════════════════════
+  Generating Test Manifests
+═══════════════════════════════════════════════════════════
+
+Processing firebird...
+  ✓ 0 tests in 0 categories
+  📄 Manifest saved to: /home/dcalford/CliWork/ScratchBird/tests/compatibility/firebird/config/test_manifest.json
+
+Processing mysql...
+  ✓ 0 tests in 0 categories
+  📄 Manifest saved to: /home/dcalford/CliWork/ScratchBird/tests/compatibility/mysql/config/test_manifest.json
+
+Processing postgresql...
+  ✓ 0 tests in 0 categories
+  📄 Manifest saved to: /home/dcalford/CliWork/ScratchBird/tests/compatibility/postgresql/config/test_manifest.json
+
+═══════════════════════════════════════════════════════════
+  Summary
+═══════════════════════════════════════════════════════════
+
+Firebird          0 tests in   0 categories
+Mysql             0 tests in   0 categories
+Postgresql        0 tests in   0 categories
+Total             0 tests
+
+✓ All manifests generated successfully!
+--- output end ---

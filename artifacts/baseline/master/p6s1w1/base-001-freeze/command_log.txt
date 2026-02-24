@@ -1,0 +1,47 @@
+task_id=BASE-001
+status=done
+timestamp_utc=2026-02-24T03:58:20Z
+
+=== command 1 ===
+cwd: /home/dcalford/CliWork
+timeout_s: 10
+rc: 0
+timed_out: False
+duration_s: 0.014
+cmd: date -u +%Y-%m-%dT%H:%M:%SZ
+--- output begin ---
+2026-02-24T03:58:20Z
+--- output end ---
+
+=== command 2 ===
+cwd: /home/dcalford/CliWork
+timeout_s: 10
+rc: 0
+timed_out: False
+duration_s: 0.020
+cmd: uname -a
+--- output begin ---
+Linux daltonkeellaptop 6.17.0-14-generic #14~24.04.1-Ubuntu SMP PREEMPT_DYNAMIC Thu Jan 15 15:52:10 UTC 2 x86_64 x86_64 x86_64 GNU/Linux
+--- output end ---
+
+=== command 3 ===
+cwd: /home/dcalford/CliWork
+timeout_s: 20
+rc: 0
+timed_out: False
+duration_s: 0.018
+cmd: for t in cmake ninja make gcc g++ perl python3 java gradle ant cargo go rustc pytest psql; do command -v $t >/dev/null || exit 1; done
+--- output begin ---
+
+--- output end ---
+
+=== command 4 ===
+cwd: /home/dcalford/CliWork
+timeout_s: 20
+rc: 0
+timed_out: False
+duration_s: 0.017
+cmd: for p in /home/dcalford/CliWork/duckdb /home/dcalford/CliWork/OpenSearch /home/dcalford/CliWork/ClickHouse /home/dcalford/CliWork/influxdb /home/dcalford/CliWork/milvus /home/dcalford/CliWork/neo4j /home/dcalford/CliWork/redis /home/dcalford/CliWork/mongo /home/dcalford/CliWork/cassandra /home/dcalford/CliWork/server /home/dcalford/CliWork/postgresql /home/dcalford/CliWork/firebird /home/dcalford/CliWork/mysql-server; do test -d "$p" || exit 1; done
+--- output begin ---
+
+--- output end ---

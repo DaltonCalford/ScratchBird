@@ -1,0 +1,25 @@
+task_id=ENG-NEO4J-001
+status=blocked
+timestamp_utc=2026-02-24T04:35:41Z
+
+=== command 1 ===
+cwd: /home/dcalford/CliWork
+timeout_s: 20
+rc: 0
+timed_out: False
+duration_s: 0.018
+cmd: test -d /home/dcalford/CliWork/neo4j && git -C /home/dcalford/CliWork/neo4j rev-parse --short HEAD
+--- output begin ---
+c68156edf24
+--- output end ---
+
+=== command 2 ===
+cwd: /home/dcalford/CliWork/neo4j
+timeout_s: 120
+rc: 127
+timed_out: False
+duration_s: 0.017
+cmd: mvn clean install -DskipTests -T1C
+--- output begin ---
+bash: line 1: mvn: command not found
+--- output end ---

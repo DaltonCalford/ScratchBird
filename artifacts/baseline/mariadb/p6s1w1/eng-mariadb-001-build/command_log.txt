@@ -1,0 +1,40 @@
+task_id=ENG-MARIADB-001
+status=blocked
+timestamp_utc=2026-02-24T04:45:30Z
+
+=== command 1 ===
+cwd: /home/dcalford/CliWork
+timeout_s: 20
+rc: 0
+timed_out: False
+duration_s: 0.036
+cmd: test -d /home/dcalford/CliWork/server && git -C /home/dcalford/CliWork/server rev-parse --short HEAD
+--- output begin ---
+21a0714a118
+--- output end ---
+
+=== command 2 ===
+cwd: /home/dcalford/CliWork/server
+timeout_s: 120
+rc: 1
+timed_out: False
+duration_s: 0.934
+cmd: cmake -S . -B build-baseline -G Ninja
+--- output begin ---
+-- Running cmake version 3.30.5
+-- MariaDB 12.3.1
+-- Updating submodules
+-- Wsrep-lib version: 1.0.0
+== Configuring MariaDB Connector/C
+-- SYSTEM_LIBS: /usr/lib/x86_64-linux-gnu/libz.so;dl;m;dl;m;/usr/lib/x86_64-linux-gnu/libssl.so;/usr/lib/x86_64-linux-gnu/libcrypto.so;/usr/lib/x86_64-linux-gnu/libz.so
+-- Dynamic column API support: ON
+WARNING: Package(s) not found: pyopenssl
+-- Could NOT find LZO (missing: LZO_LIBRARIES LZO_INCLUDE_DIRS) 
+-- Could NOT find Snappy (missing: SNAPPY_LIBRARIES SNAPPY_INCLUDE_DIRS) 
+CMake Error at sql/CMakeLists.txt:410 (MESSAGE):
+  Bison (GNU parser generator) is required to build MySQL.Please install
+  bison.
+
+
+-- Configuring incomplete, errors occurred!
+--- output end ---

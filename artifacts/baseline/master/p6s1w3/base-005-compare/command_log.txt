@@ -1,0 +1,14 @@
+task_id=BASE-005
+status=done
+timestamp_utc=2026-02-24T03:58:20Z
+
+=== command 1 ===
+cwd: /home/dcalford/CliWork/ScratchBird
+timeout_s: 20
+rc: 0
+timed_out: False
+duration_s: 0.024
+cmd: test -d artifacts/baseline && find artifacts/baseline -maxdepth 4 -type f | wc -l
+--- output begin ---
+86
+--- output end ---

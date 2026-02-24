@@ -1,0 +1,329 @@
+task_id=SB-001
+status=blocked
+timestamp_utc=2026-02-24T04:26:47Z
+
+=== command 1 ===
+cwd: /home/dcalford/CliWork/ScratchBird
+timeout_s: 90
+rc: 0
+timed_out: False
+duration_s: 0.463
+cmd: cmake -S . -B build_baseline/sb_cfg_01 -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DSCRATCHBIRD_WITH_COMPILER=ON -DBUILD_TESTING=ON -DSCRATCHBIRD_ENABLE_FORK_RUNTIME=ON -DSCRATCHBIRD_ENABLE_SYSTEMD_RUNTIME=OFF
+--- output begin ---
+-- ScratchBird Database Engine - Planning Phase
+-- See ProjectPlan/ directory for specifications
+-- Runtime feature gates: systemd=OFF, fork=ON
+-- Using the multi-header code from /home/dcalford/CliWork/ScratchBird/build_baseline/sb_cfg_01/_deps/json-src/include/
+-- nlohmann/json library: ENABLED (FetchContent)
+-- CTest maximum test time: 3600s (1 hour)
+-- CTest parallel level: 14
+-- LZ4 compression support: ENABLED
+-- ZSTD compression support: ENABLED
+-- GEOS spatial library: ENABLED (3.12.1)
+-- PROJ coordinate system library: ENABLED (9.4.0)
+CMake Warning at CMakeLists.txt:257 (message):
+  clang-format not found.  'make format' target will not be available.
+
+
+-- libcrypt found: Password hashing enabled
+-- OpenSSL found: Using secure random for password salts
+-- libxml2 found: Full XML/XPath support enabled
+-- Security library: OpenSSL found, full TLS/SSL support enabled
+-- Security library: scratchbird_security (TLS, auth, HBA, audit)
+-- Network library: scratchbird_network (socket, event loop, thread pool, connections)
+-- Server library: scratchbird_server (IPC + session management)
+-- Protocol library: scratchbird_protocol (wire protocol)
+-- Pool library: scratchbird_pool (connection pooling, statement/result caching)
+-- FDW library: scratchbird_fdw (PostgreSQL, MySQL, Firebird adapters)
+-- UDR library: scratchbird_udr (Remote Engine UDR Connectors)
+-- IPC library: scratchbird_ipc (IPC Contract v1.1 + SBWP Server)
+-- Testing library: scratchbird_testing (protocol, auth, load, security, benchmarks)
+-- Server executable: sb_server
+-- Manager executable: sb_manager
+-- Listener executables: sb_listener_native/pg/mysql/fb
+-- Parser agent executables: sb_parser_native/pg/mysql/fb
+-- Using global test timeout: 3600s
+-- TSAN tests disabled (set SCRATCHBIRD_ENABLE_TSAN=ON to enable)
+-- Configuring done (0.3s)
+-- Generating done (0.1s)
+-- Build files have been written to: /home/dcalford/CliWork/ScratchBird/build_baseline/sb_cfg_01
+--- output end ---
+
+=== command 2 ===
+cwd: /home/dcalford/CliWork/ScratchBird
+timeout_s: 90
+rc: 0
+timed_out: False
+duration_s: 0.457
+cmd: cmake -S . -B build_baseline/sb_cfg_02 -G Ninja -DCMAKE_BUILD_TYPE=Debug -DSCRATCHBIRD_WITH_COMPILER=ON -DBUILD_TESTING=ON -DSCRATCHBIRD_ENABLE_FORK_RUNTIME=ON -DSCRATCHBIRD_ENABLE_SYSTEMD_RUNTIME=OFF
+--- output begin ---
+-- ScratchBird Database Engine - Planning Phase
+-- See ProjectPlan/ directory for specifications
+-- Runtime feature gates: systemd=OFF, fork=ON
+-- Using the multi-header code from /home/dcalford/CliWork/ScratchBird/build_baseline/sb_cfg_02/_deps/json-src/include/
+-- nlohmann/json library: ENABLED (FetchContent)
+-- CTest maximum test time: 3600s (1 hour)
+-- CTest parallel level: 14
+-- LZ4 compression support: ENABLED
+-- ZSTD compression support: ENABLED
+-- GEOS spatial library: ENABLED (3.12.1)
+-- PROJ coordinate system library: ENABLED (9.4.0)
+CMake Warning at CMakeLists.txt:257 (message):
+  clang-format not found.  'make format' target will not be available.
+
+
+-- libcrypt found: Password hashing enabled
+-- OpenSSL found: Using secure random for password salts
+-- libxml2 found: Full XML/XPath support enabled
+-- Security library: OpenSSL found, full TLS/SSL support enabled
+-- Security library: scratchbird_security (TLS, auth, HBA, audit)
+-- Network library: scratchbird_network (socket, event loop, thread pool, connections)
+-- Server library: scratchbird_server (IPC + session management)
+-- Protocol library: scratchbird_protocol (wire protocol)
+-- Pool library: scratchbird_pool (connection pooling, statement/result caching)
+-- FDW library: scratchbird_fdw (PostgreSQL, MySQL, Firebird adapters)
+-- UDR library: scratchbird_udr (Remote Engine UDR Connectors)
+-- IPC library: scratchbird_ipc (IPC Contract v1.1 + SBWP Server)
+-- Testing library: scratchbird_testing (protocol, auth, load, security, benchmarks)
+-- Server executable: sb_server
+-- Manager executable: sb_manager
+-- Listener executables: sb_listener_native/pg/mysql/fb
+-- Parser agent executables: sb_parser_native/pg/mysql/fb
+-- Using global test timeout: 3600s
+-- TSAN tests disabled (set SCRATCHBIRD_ENABLE_TSAN=ON to enable)
+-- Configuring done (0.3s)
+-- Generating done (0.1s)
+-- Build files have been written to: /home/dcalford/CliWork/ScratchBird/build_baseline/sb_cfg_02
+--- output end ---
+
+=== command 3 ===
+cwd: /home/dcalford/CliWork/ScratchBird
+timeout_s: 90
+rc: 0
+timed_out: False
+duration_s: 0.466
+cmd: cmake -S . -B build_baseline/sb_cfg_03 -G Ninja -DCMAKE_BUILD_TYPE=RelWithDebInfo -DSCRATCHBIRD_WITH_COMPILER=OFF -DBUILD_TESTING=ON -DSCRATCHBIRD_ENABLE_FORK_RUNTIME=ON -DSCRATCHBIRD_ENABLE_SYSTEMD_RUNTIME=OFF
+--- output begin ---
+-- ScratchBird Database Engine - Planning Phase
+-- See ProjectPlan/ directory for specifications
+-- Runtime feature gates: systemd=OFF, fork=ON
+-- Using the multi-header code from /home/dcalford/CliWork/ScratchBird/build_baseline/sb_cfg_03/_deps/json-src/include/
+-- nlohmann/json library: ENABLED (FetchContent)
+-- CTest maximum test time: 3600s (1 hour)
+-- CTest parallel level: 14
+-- LZ4 compression support: ENABLED
+-- ZSTD compression support: ENABLED
+-- GEOS spatial library: ENABLED (3.12.1)
+-- PROJ coordinate system library: ENABLED (9.4.0)
+CMake Warning at CMakeLists.txt:257 (message):
+  clang-format not found.  'make format' target will not be available.
+
+
+-- libcrypt found: Password hashing enabled
+-- OpenSSL found: Using secure random for password salts
+-- libxml2 found: Full XML/XPath support enabled
+-- Security library: OpenSSL found, full TLS/SSL support enabled
+-- Security library: scratchbird_security (TLS, auth, HBA, audit)
+-- Network library: scratchbird_network (socket, event loop, thread pool, connections)
+-- Server library: scratchbird_server (IPC + session management)
+-- Protocol library: scratchbird_protocol (wire protocol)
+-- Pool library: scratchbird_pool (connection pooling, statement/result caching)
+-- FDW library: scratchbird_fdw (PostgreSQL, MySQL, Firebird adapters)
+-- UDR library: scratchbird_udr (Remote Engine UDR Connectors)
+-- IPC library: scratchbird_ipc (IPC Contract v1.1 + SBWP Server)
+-- Testing library: scratchbird_testing (protocol, auth, load, security, benchmarks)
+-- Server executable: sb_server
+-- Manager executable: sb_manager
+-- Listener executables: sb_listener_native/pg/mysql/fb
+-- Parser agent executables: sb_parser_native/pg/mysql/fb
+-- Using global test timeout: 3600s
+-- TSAN tests disabled (set SCRATCHBIRD_ENABLE_TSAN=ON to enable)
+-- Configuring done (0.3s)
+-- Generating done (0.1s)
+-- Build files have been written to: /home/dcalford/CliWork/ScratchBird/build_baseline/sb_cfg_03
+--- output end ---
+
+=== command 4 ===
+cwd: /home/dcalford/CliWork/ScratchBird
+timeout_s: 300
+rc: 124
+timed_out: True
+duration_s: 300.007
+cmd: cmake --build build_baseline/sb_cfg_01 --target scratchbird_tests -j2
+--- output begin ---
+[0/2] Re-checking globbed directories...
+[1/355] Building CXX object src/CMakeFiles/scratchbird_pool.dir/pool/statement_cache.cpp.o
+[2/355] Linking CXX static library src/libscratchbird_pool.a
+[3/355] Building CXX object src/CMakeFiles/scratchbird_udr.dir/udr/connection_pool.cpp.o
+[4/355] Building CXX object src/CMakeFiles/scratchbird_udr.dir/udr/firebird_udr.cpp.o
+[5/355] Building CXX object src/CMakeFiles/scratchbird_udr.dir/udr/mysql_udr.cpp.o
+/home/dcalford/CliWork/ScratchBird/src/udr/mysql_udr.cpp: In member function ‘std::vector<unsigned char> scratchbird::udr::MySQLConnection::scrambleNativePassword(const std::string&, const std::vector<unsigned char>&)’:
+/home/dcalford/CliWork/ScratchBird/src/udr/mysql_udr.cpp:368:14: warning: ‘int SHA1_Init(SHA_CTX*)’ is deprecated: Since OpenSSL 3.0 [-Wdeprecated-declarations]
+  368 |     SHA1_Init(&ctx);
+      |     ~~~~~~~~~^~~~~~
+In file included from /usr/include/openssl/x509.h:41,
+                 from /usr/include/openssl/ssl.h:31,
+                 from /home/dcalford/CliWork/ScratchBird/src/udr/mysql_udr.cpp:24:
+/usr/include/openssl/sha.h:49:27: note: declared here
+   49 | OSSL_DEPRECATEDIN_3_0 int SHA1_Init(SHA_CTX *c);
+      |                           ^~~~~~~~~
+/home/dcalford/CliWork/ScratchBird/src/udr/mysql_udr.cpp:369:16: warning: ‘int SHA1_Update(SHA_CTX*, const void*, size_t)’ is deprecated: Since OpenSSL 3.0 [-Wdeprecated-declarations]
+  369 |     SHA1_Update(&ctx, scramble.data(), scramble.size());
+      |     ~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/usr/include/openssl/sha.h:50:27: note: declared here
+   50 | OSSL_DEPRECATEDIN_3_0 int SHA1_Update(SHA_CTX *c, const void *data, size_t len);
+      |                           ^~~~~~~~~~~
+/home/dcalford/CliWork/ScratchBird/src/udr/mysql_udr.cpp:370:16: warning: ‘int SHA1_Update(SHA_CTX*, const void*, size_t)’ is deprecated: Since OpenSSL 3.0 [-Wdeprecated-declarations]
+  370 |     SHA1_Update(&ctx, hash2, SHA_DIGEST_LENGTH);
+      |     ~~~~~~~~~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+/usr/include/openssl/sha.h:50:27: note: declared here
+   50 | OSSL_DEPRECATEDIN_3_0 int SHA1_Update(SHA_CTX *c, const void *data, size_t len);
+      |                           ^~~~~~~~~~~
+/home/dcalford/CliWork/ScratchBird/src/udr/mysql_udr.cpp:371:15: warning: ‘int SHA1_Final(unsigned char*, SHA_CTX*)’ is deprecated: Since OpenSSL 3.0 [-Wdeprecated-declarations]
+  371 |     SHA1_Final(hash3, &ctx);
+      |     ~~~~~~~~~~^~~~~~~~~~~~~
+/usr/include/openssl/sha.h:51:27: note: declared here
+   51 | OSSL_DEPRECATEDIN_3_0 int SHA1_Final(unsigned char *md, SHA_CTX *c);
+      |                           ^~~~~~~~~~
+[6/355] Building CXX object src/CMakeFiles/scratchbird_udr.dir/udr/postgresql_udr.cpp.o
+/home/dcalford/CliWork/ScratchBird/src/udr/postgresql_udr.cpp: In member function ‘std::string scratchbird::udr::PostgreSQLConnection::md5Hash(const std::string&)’:
+/home/dcalford/CliWork/ScratchBird/src/udr/postgresql_udr.cpp:422:8: warning: ‘unsigned char* MD5(const unsigned char*, size_t, unsigned char*)’ is deprecated: Since OpenSSL 3.0 [-Wdeprecated-declarations]
+  422 |     MD5((unsigned char*)input.data(), input.size(), digest);
+      |     ~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+In file included from /home/dcalford/CliWork/ScratchBird/src/udr/postgresql_udr.cpp:27:
+/usr/include/openssl/md5.h:52:38: note: declared here
+   52 | OSSL_DEPRECATEDIN_3_0 unsigned char *MD5(const unsigned char *d, size_t n,
+      |                                      ^~~
+[7/355] Building CXX object src/CMakeFiles/scratchbird_udr.dir/udr/scram_auth.cpp.o
+[8/355] Building CXX object src/CMakeFiles/scratchbird_udr.dir/udr/scratchbird_udr.cpp.o
+[9/355] Building CXX object src/CMakeFiles/scratchbird_udr.dir/udr/type_mapping.cpp.o
+[10/355] Building CXX object src/CMakeFiles/scratchbird_udr.dir/udr/udr_connector.cpp.o
+[11/355] Linking CXX static library src/libscratchbird_udr.a
+[12/355] Building CXX object src/CMakeFiles/scratchbird_ipc.dir/ipc/external_agents/copy_flow_control.cpp.o
+[13/355] Building CXX object src/CMakeFiles/scratchbird_ipc.dir/ipc/external_agents/engine_ipc_session_handler.cpp.o
+[14/355] Building CXX object src/CMakeFiles/scratchbird_ipc.dir/ipc/external_agents/firebird_parser_agent.cpp.o
+[15/355] Building CXX object src/CMakeFiles/scratchbird_ipc.dir/ipc/external_agents/mysql_parser_agent.cpp.o
+[16/355] Building CXX object src/CMakeFiles/scratchbird_ipc.dir/ipc/external_agents/postgresql_parser_agent.cpp.o
+[17/355] Building CXX object src/CMakeFiles/scratchbird_ipc.dir/ipc/ipc_contract_v1_1.cpp.o
+[18/355] Building CXX object src/CMakeFiles/scratchbird_ipc.dir/ipc/ipc_error_mapper.cpp.o
+[19/355] Building CXX object src/CMakeFiles/scratchbird_ipc.dir/ipc/ipc_server.cpp.o
+[20/355] Building CXX object src/CMakeFiles/scratchbird_ipc.dir/ipc/parser_agent.cpp.o
+[21/355] Building CXX object src/CMakeFiles/scratchbird_ipc.dir/ipc/unix_socket_channel.cpp.o
+[22/355] Building CXX object src/CMakeFiles/scratchbird_ipc.dir/ipc/unix_socket_channel_win32.cpp.o
+[23/355] Linking CXX static library src/libscratchbird_ipc.a
+[24/355] Building CXX object src/CMakeFiles/sb_manager.dir/server/sb_manager_main.cpp.o
+[25/355] Building CXX object _deps/googletest-build/googletest/CMakeFiles/gtest.dir/src/gtest-all.cc.o
+[26/355] Linking CXX static library lib/libgtest.a
+[27/355] Building CXX object _deps/googletest-build/googletest/CMakeFiles/gtest_main.dir/src/gtest_main.cc.o
+[28/355] Linking CXX static library lib/libgtest_main.a
+[29/355] Building CXX object src/CMakeFiles/scratchbird_sblr.dir/sblr/executor.cpp.o
+/home/dcalford/CliWork/ScratchBird/src/sblr/executor.cpp: In function ‘std::string scratchbird::sblr::{anonymous}::computePgMd5StoredHash(const std::string&, const std::string&)’:
+/home/dcalford/CliWork/ScratchBird/src/sblr/executor.cpp:69609:20: warning: ‘unsigned char* MD5(const unsigned char*, std::size_t, unsigned char*)’ is deprecated: Since OpenSSL 3.0 [-Wdeprecated-declarations]
+69609 |                 MD5(reinterpret_cast<const unsigned char*>(input.data()), input.size(), hash);
+      |                 ~~~^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+In file included from /home/dcalford/CliWork/ScratchBird/src/sblr/executor.cpp:126:
+/usr/include/openssl/md5.h:52:38: note: declared here
+   52 | OSSL_DEPRECATEDIN_3_0 unsigned char *MD5(const unsigned char *d, size_t n,
+      |                                      ^~~
+[30/355] Linking CXX static library src/libscratchbird_sblr.a
+[31/355] Linking CXX static library src/libscratchbird_compiler.a
+[32/355] Linking CXX static library src/libscratchbird_protocol.a
+[33/355] Linking CXX static library src/libscratchbird_server.a
+[34/355] Linking CXX executable src/sb_manager
+[35/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/benchmark/test_cache_buffer_benchmark.cpp.o
+[36/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/benchmark/benchmark_suite.cpp.o
+[37/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/benchmark/test_front_door_mode_benchmark.cpp.o
+[38/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/btree_page_test.cpp.o
+[39/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/benchmark/test_parser_v3_benchmark.cpp.o
+[40/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/domains/test_advanced_domain.cpp.o
+[41/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/domains/test_domain_manager.cpp.o
+[42/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/domains/test_domain_validation_frozen.cpp.o
+[43/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/domains/test_domain_persistence.cpp.o
+[44/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/domains/test_enum_domain.cpp.o
+[45/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/domains/test_record_domain.cpp.o
+[46/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/domains/test_set_domain.cpp.o
+[47/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/domains/test_system_domain_registry.cpp.o
+[48/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/domains/test_variant_domain.cpp.o
+[49/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/gin/test_gin_basic.cpp.o
+[50/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/gin/test_gin_phase3.cpp.o
+[51/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/gin/test_gin_phase4.cpp.o
+[52/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/gin/test_gin_phase6.cpp.o
+[53/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/gin/test_gin_phase5.cpp.o
+[54/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/gin/test_gin_posting_tree.cpp.o
+[55/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_alpha_101.cpp.o
+[56/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/job_scheduler_test.cpp.o
+[57/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_arithmetic_overflow.cpp.o
+[58/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_audit_logger.cpp.o
+[59/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_atomic_xid_allocation.cpp.o
+[60/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_auth_mfa_challenge_flow.cpp.o
+[61/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_auth_policy_protocol_parity.cpp.o
+[62/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_auth_bootstrap_claim.cpp.o
+[63/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_bitmap_index_gc.cpp.o
+[64/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_backup_tablespace_manifest.cpp.o
+[65/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_brin_index.cpp.o
+[66/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_btree_compression.cpp.o
+[67/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_btree_delete_parent_update.cpp.o
+[68/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_btree_gc.cpp.o
+[69/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_btree_gc_compaction.cpp.o
+[70/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_btree_iterator.cpp.o
+[71/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_btree_mga_compliance.cpp.o
+[72/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_btree_rightmost_simple.cpp.o
+[73/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_btree_rightmost_child.cpp.o
+[74/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_bytecode_opcodes.cpp.o
+[75/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_buffer_pool_concurrency.cpp.o
+[76/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_cache_unit.cpp.o
+[77/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_charset_collation_extension_contract.cpp.o
+[78/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_cluster_clock_extension_contract.cpp.o
+[79/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_cluster_fabric_extension_contract.cpp.o
+[80/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_domain_extension_contract.cpp.o
+[81/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_emulation_engine_coverage_contract.cpp.o
+[82/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_database_bootstrap.cpp.o
+[83/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_engine_specific_extension_contract.cpp.o
+[84/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_extension_publication_subscription_contract.cpp.o
+[85/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_family_matrix_contract.cpp.o
+[86/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_family_migration_backfill.cpp.o
+[87/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_incident_healing_alert_extension_contract.cpp.o
+[88/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_full_extract.cpp.o
+[89/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_index_metadata_extension_contract.cpp.o
+[90/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_index_metrics_extension_contract.cpp.o
+[91/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_index_migration_backfill.cpp.o
+[92/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_manager.cpp.o
+[93/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_mga_compliance.cpp.o
+[94/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_olap_cube_extension_contract.cpp.o
+[95/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_parentage_and_name_uniqueness.cpp.o
+[96/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_parser_capability_contract.cpp.o
+[97/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_permissions_persistence.cpp.o
+[98/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_persistence_phase_b.cpp.o
+[99/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_relation_extension_contract.cpp.o
+[100/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_remote_connector_extension_contract.cpp.o
+[101/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_rename_move.cpp.o
+[102/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_replication_runtime_conflict_extension_contract.cpp.o
+[103/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_resource_timezone_extension_contract.cpp.o
+[104/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_routing_admission_extension_contract.cpp.o
+[105/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_runtime_context_extension_contract.cpp.o
+[106/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_sblr_artifact_extension_contract.cpp.o
+[107/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_scheduler_extension_contract.cpp.o
+[108/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_security_acl_abac_graph_token_quota_settings_contract.cpp.o
+[109/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_security_auth_provider_rule_chain_contract.cpp.o
+[110/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_security_crypto_baseline_key_lifecycle_contract.cpp.o
+[111/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_security_extension_contract.cpp.o
+[112/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_security_identity_account_contract.cpp.o
+[113/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_security_mfa_policy_enrollment_recovery_contract.cpp.o
+[114/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_sharding_extension_contract.cpp.o
+[115/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_storage_extension_contract.cpp.o
+[116/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_text_search_extension_contract.cpp.o
+[117/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_type_schema_contract.cpp.o
+[118/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_catalog_virtual_overlay_conformance_contract.cpp.o
+[119/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_charset.cpp.o
+[120/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_charset_catalog.cpp.o
+[121/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_charset_loader.cpp.o
+[122/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_clock_control.cpp.o
+[123/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_clock_sweep.cpp.o
+[124/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_code_dependencies.cpp.o
+[125/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_compression.cpp.o
+[126/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_concurrent_transactions.cpp.o
+[127/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_compression_interop.cpp.o
+[128/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_config.cpp.o
+[129/355] Building CXX object tests/CMakeFiles/scratchbird_tests.dir/unit/test_conditional_functions.cpp.o
+ninja: build stopped: interrupted by user.
+--- output end ---

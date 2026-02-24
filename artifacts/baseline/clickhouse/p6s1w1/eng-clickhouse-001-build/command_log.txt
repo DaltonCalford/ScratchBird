@@ -1,0 +1,37 @@
+task_id=ENG-CLICKHOUSE-001
+status=blocked
+timestamp_utc=2026-02-24T04:32:24Z
+
+=== command 1 ===
+cwd: /home/dcalford/CliWork
+timeout_s: 20
+rc: 0
+timed_out: False
+duration_s: 0.019
+cmd: test -d /home/dcalford/CliWork/ClickHouse && git -C /home/dcalford/CliWork/ClickHouse rev-parse --short HEAD
+--- output begin ---
+b1cd56a7fc5
+--- output end ---
+
+=== command 2 ===
+cwd: /home/dcalford/CliWork/ClickHouse
+timeout_s: 120
+rc: 1
+timed_out: False
+duration_s: 0.056
+cmd: cmake -S . -B build-baseline -G Ninja -DCMAKE_BUILD_TYPE=Debug
+--- output begin ---
+-- Using compiler:
+clang version 15.0.0 (https://github.com/apple/llvm-project.git e98989b1092ff3a72610a5be6251b010b06282f7)
+Target: x86_64-unknown-linux-gnu
+Thread model: posix
+InstalledDir: /opt/swift/usr/bin
+CMake Error at cmake/tools.cmake:18 (message):
+  Compilation with Clang version 15.0.0 is unsupported, the minimum required
+  version is 21.
+Call Stack (most recent call first):
+  CMakeLists.txt:36 (include)
+
+
+-- Configuring incomplete, errors occurred!
+--- output end ---

@@ -1,0 +1,96 @@
+task_id=BASE-004
+status=done
+timestamp_utc=2026-02-24T03:58:20Z
+
+=== command 1 ===
+cwd: /home/dcalford/CliWork/ScratchBird
+timeout_s: 30
+rc: 0
+timed_out: False
+duration_s: 0.155
+cmd: ctest --test-dir build --print-labels
+--- output begin ---
+Internal ctest changing into directory: /home/dcalford/CliWork/ScratchBird/build
+Test project /home/dcalford/CliWork/ScratchBird/build
+All Labels:
+  audit
+  bitpack
+  brin
+  buffer_pool
+  check
+  columnstore
+  compliance
+  composite
+  comprehensive
+  concurrency
+  constraints
+  copy
+  dictionary
+  dml
+  domain
+  e2e
+  encryption
+  enforcement
+  engine
+  exception
+  foreign_key
+  fulltext
+  gc
+  gin
+  gist
+  governance
+  harness
+  hnsw
+  index
+  integration
+  integrity
+  ipc
+  isolated
+  load
+  masking
+  memory
+  mga
+  mvcc
+  network
+  page
+  performance
+  phase1
+  phase2
+  phase3
+  phase4
+  phase5
+  phase7
+  plan01
+  portability
+  predicate
+  protocol
+  quality
+  quarantine
+  range_operators
+  range_types
+  rebuild
+  referential_integrity
+  rle
+  rls
+  robustness
+  rtree
+  safety
+  security
+  sequential
+  server
+  session
+  shadow
+  simple
+  storage
+  stress
+  task14
+  task15
+  task16
+  temporal_range_types
+  thread
+  uniqueness
+  unit
+  validation
+  versioning
+  wire
+--- output end ---

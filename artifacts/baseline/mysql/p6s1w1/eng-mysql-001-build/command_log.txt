@@ -1,0 +1,25 @@
+task_id=ENG-MYSQL-001
+status=done
+timestamp_utc=2026-02-24T04:12:46Z
+
+=== command 1 ===
+cwd: /home/dcalford/CliWork
+timeout_s: 20
+rc: 0
+timed_out: False
+duration_s: 0.019
+cmd: test -d /home/dcalford/CliWork/mysql-server && git -C /home/dcalford/CliWork/mysql-server rev-parse --short HEAD
+--- output begin ---
+447eb26e094
+--- output end ---
+
+=== command 2 ===
+cwd: /home/dcalford/CliWork/mysql-server
+timeout_s: 120
+rc: 0
+timed_out: False
+duration_s: 0.138
+cmd: cmake --build build_codex2 --target mysqld -j2
+--- output begin ---
+ninja: no work to do.
+--- output end ---

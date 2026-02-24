@@ -1,0 +1,42 @@
+task_id=ENG-MONGODB-001
+status=blocked
+timestamp_utc=2026-02-24T04:43:57Z
+
+=== command 1 ===
+cwd: /home/dcalford/CliWork
+timeout_s: 20
+rc: 0
+timed_out: False
+duration_s: 0.026
+cmd: test -d /home/dcalford/CliWork/mongo && git -C /home/dcalford/CliWork/mongo rev-parse --short HEAD
+--- output begin ---
+b3e1d387194
+--- output end ---
+
+=== command 2 ===
+cwd: /home/dcalford/CliWork/mongo
+timeout_s: 180
+rc: 0
+timed_out: False
+duration_s: 0.076
+cmd: python3 buildscripts/install_bazel.py
+--- output begin ---
+Downloaded file /home/dcalford/.local/bin/buildozer already exists, validating...
+Validating against hard coded sha256: 3305e287b3fcc68b9a35fd8515ee617452cd4e018f9e6886b6c7cdbcba8710d4
+Downloading bazelisk...
+Downloaded file /home/dcalford/.local/bin/bazelisk already exists, validating...
+Validating against hard coded sha256: 6539c12842ad76966f3d493e8f80d67caa84ec4a000e220d5459833c967c12bc
+Downloaded bazelisk to /home/dcalford/.local/bin/bazelisk
+Symlink /home/dcalford/.local/bin/bazel already exists, skipping symlink creation
+--- output end ---
+
+=== command 3 ===
+cwd: /home/dcalford/CliWork/mongo
+timeout_s: 300
+rc: 124
+timed_out: True
+duration_s: 310.101
+cmd: bazel build install-mongod
+--- output begin ---
+
+--- output end ---
