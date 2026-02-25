@@ -4,7 +4,7 @@ Last updated: 2026-02-25
 
 ## Scope
 - Register emulated-engine compatibility lanes in full `ctest`.
-- Ensure compatibility runners execute dedicated protocol clients only (`sb_fb_isql`, `sb_my_isql`, `sb_pg_isql`).
+- Ensure compatibility runners execute protocol-accurate clients (`sb_my_isql`, `sb_pg_isql`, and Firebird-compatible `isql-fb`/`sb_fb_isql`).
 - Record current execution and blockers for direct downloadable verification.
 
 ## CTest Registration (in-tree)
@@ -16,7 +16,7 @@ Last updated: 2026-02-25
 
 ## Current Execution Result
 - `ctest --test-dir build -R '^Compatibility(Firebird|MySQL|PostgreSQL)$' --output-on-failure`
-  - `CompatibilityFirebird`: passed (`5.41 sec`)
+  - `CompatibilityFirebird`: passed (`5.18 sec`)
   - `CompatibilityMySQL`: skipped (`SKIP_RETURN_CODE=77`, endpoint/auth precheck)
   - `CompatibilityPostgreSQL`: skipped (`SKIP_RETURN_CODE=77`, endpoint/auth precheck)
 - `ctest --test-dir build -R '^CompatibilityEmulationEvidence$' --output-on-failure`
@@ -34,9 +34,11 @@ Last updated: 2026-02-25
 - Current state:
   - `sb_my_isql`: buildable
   - `sb_pg_isql`: buildable
-  - `sb_fb_isql`: still blocked by engine/static-link dependency closure (compiler/optimizer/spatial/xml/security archives and external libs)
+  - `sb_fb_isql`: buildable after engine/static-link closure in driver CMake
+  - Forcing `sb_fb_isql` in curated Firebird compatibility currently exposes parser gap:
+    - `functional/dml/join_02.sql` -> `Error: V3 SELECT join missing ON/USING condition`
 
 ## Status
 - CTest integration is implemented and discoverable in full test enumeration.
-- Firebird lane is executable today via Firebird-protocol clients (`sb_fb_isql` when available, or native `isql-fb` fallback).
+- Firebird lane is executable via Firebird-protocol clients; runner currently prefers native `isql-fb` for stable upstream parity unless `SCRATCHBIRD_FB_ISQL` is explicitly set.
 - Full MySQL/PostgreSQL lane closure requires endpoint/auth profiles that match the wrappers' supported auth negotiation paths.

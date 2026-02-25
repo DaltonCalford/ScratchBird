@@ -176,15 +176,15 @@ def resolve_firebird_cli_binary(workspace_root: Path) -> Tuple[Path, str]:
         ]
     )
 
-    for candidate in candidates:
-        if candidate.exists() and os.access(candidate, os.X_OK):
-            return candidate, "firebird"
-
     system_isql = shutil.which("isql-fb") or shutil.which("isql")
     if system_isql:
         system_path = Path(system_isql)
         if system_path.exists() and os.access(system_path, os.X_OK):
             return system_path, "firebird_native"
+
+    for candidate in candidates:
+        if candidate.exists() and os.access(candidate, os.X_OK):
+            return candidate, "firebird"
 
     # Generic sb_isql is intentionally not accepted for Firebird wire parity.
     generic_candidates = [

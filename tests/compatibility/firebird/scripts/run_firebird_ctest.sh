@@ -17,11 +17,11 @@ if [[ ! -x "$DEFAULT_ISQL" ]]; then
     DRIVER_FB_ISQL="${DRIVER_DIR}/build/tracks/alpha/drivers/cli/sb_fb_isql"
     DRIVER_GENERIC_ISQL="${DRIVER_DIR}/build/tracks/alpha/drivers/cli/sb_isql"
     SYSTEM_FB_ISQL="$(command -v isql-fb 2>/dev/null || true)"
-    if [[ -x "$DRIVER_FB_ISQL" ]]; then
-      DEFAULT_ISQL="$DRIVER_FB_ISQL"
-    elif [[ -n "$SYSTEM_FB_ISQL" ]]; then
+    if [[ -n "$SYSTEM_FB_ISQL" ]]; then
       DEFAULT_ISQL="$SYSTEM_FB_ISQL"
       ISQL_MODE="native_firebird"
+    elif [[ -x "$DRIVER_FB_ISQL" ]]; then
+      DEFAULT_ISQL="$DRIVER_FB_ISQL"
     elif [[ -x "$DRIVER_GENERIC_ISQL" ]]; then
       DEFAULT_ISQL="$DRIVER_GENERIC_ISQL"
       ISQL_FLAVOR="generic"
