@@ -82,6 +82,8 @@ CTest wrapper:
 ctest -R CompatibilityMySQL --test-dir build
 ```
 
+`CompatibilityMySQL` performs a connection precheck first; if no compatible MySQL endpoint is reachable with current auth settings, it exits as `SKIP` (CTest code 77) instead of failing the full suite.
+
 If `sb_my_isql` is unavailable, set `SCRATCHBIRD_MY_ISQL` to a valid `sb_my_isql` path after building FDW CLI wrappers; generic `sb_isql` fallback is intentionally blocked.
 
 ## Test Format

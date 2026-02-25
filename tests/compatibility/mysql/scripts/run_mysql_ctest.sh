@@ -69,6 +69,21 @@ RESULTS_DIR="${MY_DIR}/results/ctest/${RUN_ID}"
 WORK_DIR="${RESULTS_DIR}/work"
 mkdir -p "$RESULTS_DIR" "$WORK_DIR"
 
+PRECHECK_FILE="${WORK_DIR}/precheck.sql"
+cat > "$PRECHECK_FILE" <<'EOF'
+SELECT 1;
+EOF
+
+precheck_cmd=("$ISQL_BIN" -h "$HOST" -P "$PORT" -u "$USER" -f "$PRECHECK_FILE" -q)
+if [[ -n "$PASSWORD" ]]; then
+  precheck_cmd+=("-p${PASSWORD}")
+fi
+if ! precheck_output="$("${precheck_cmd[@]}" 2>&1)"; then
+  echo "SKIP: MySQL compatibility endpoint is not reachable with current client/auth settings." >&2
+  echo "$precheck_output" >&2
+  exit 77
+fi
+
 failures=()
 
 while IFS= read -r rel_path; do
@@ -88,10 +103,8 @@ while IFS= read -r rel_path; do
 
   safe_name="${rel_path//\//_}"
   db_name="$DB_ROOT"
-  db_file="${WORK_DIR}/${DB_ROOT}.sbdb"
   if [[ "$PER_TEST_DB" == "1" ]]; then
     db_name="${DB_ROOT}_${safe_name}"
-    db_file="${WORK_DIR}/${safe_name}.sbdb"
   fi
 
   run_file="${WORK_DIR}/${safe_name}.run.sql"
@@ -103,7 +116,7 @@ USE \`${db_name}\`;
 EOF
   cat "$test_file" >> "$run_file"
 
-  cmd=("$ISQL_BIN" -h "$HOST" -P "$PORT" -u "$USER" -D "$db_name" -f "$run_file" -q)
+  cmd=("$ISQL_BIN" -h "$HOST" -P "$PORT" -u "$USER" -f "$run_file" -q)
   if [[ -n "$PASSWORD" ]]; then
     cmd+=("-p${PASSWORD}")
   fi

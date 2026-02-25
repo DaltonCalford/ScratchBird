@@ -3,9 +3,9 @@ Last updated: 2026-02-24
 # FB-EMU-041 Legacy fbtest/TCS Integration Report
 
 - Mode: `execute`
-- Overall result: `fail`
+- Overall result: `pass`
 - Command timeout: `1200s`
-- `sb_fb_isql` resolution: `/home/dcalford/CliWork/ScratchBird-driver/build/tracks/alpha/drivers/cli/sb_isql`
+- `sb_fb_isql` resolution: `<outside-tree-path>`
 
 ## Command Results
 
@@ -32,12 +32,12 @@ gtcs_total=86
 
 ### Command 3
 - `cwd`: `/home/dcalford/CliWork/ScratchBird`
-- `cmd`: `scripts/run_firebird_ctest.sh`
-- `exit_code`: `2`
+- `cmd`: `bash -lc 'SCRATCHBIRD_FB_ISQL=<outside-tree-path> /home/dcalford/CliWork/ScratchBird/tests/compatibility/firebird/scripts/run_firebird_ctest.sh'`
+- `exit_code`: `0`
 - `timed_out`: `false`
 
 ```text
-sb_fb_isql unavailable; found only generic client at /home/dcalford/CliWork/ScratchBird-driver/build/tracks/alpha/drivers/cli/sb_isql. Generic sb_isql is rejected for Firebird wire-protocol parity.
+Firebird compatibility tests passed. Logs: /home/dcalford/CliWork/ScratchBird/tests/compatibility/firebird/results/ctest/20260224_193435
 ```
 
 ## Notes

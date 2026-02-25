@@ -174,7 +174,7 @@ Tests are executed using CLI clients built from the `ScratchBird-driver` reposit
 - **sb_pg_isql** - PostgreSQL protocol client (port 5432)
 - **sb_isql** - ScratchBird native client (port 3092)
 
-Compatibility lanes require the dedicated protocol clients (`sb_fb_isql`, `sb_my_isql`, `sb_pg_isql`).
+Compatibility lanes require protocol-accurate clients (`sb_my_isql`, `sb_pg_isql`, and `sb_fb_isql` or native `isql-fb` for Firebird).
 Generic `sb_isql` is intentionally rejected for emulated protocol parity runs.
 
 ## Test Manifests

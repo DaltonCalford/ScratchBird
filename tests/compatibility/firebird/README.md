@@ -52,7 +52,7 @@ The converted tests are organized into 39 categories including:
 
 ## Running Tests
 
-**Prerequisites:** Build CLI clients in the `ScratchBird-driver` repository first. This runner requires `sb_fb_isql` for Firebird wire-protocol parity. Generic `sb_isql` is native-protocol only and is rejected for this lane.
+**Prerequisites:** Preferred client is `sb_fb_isql` from the `ScratchBird-driver` repository. Native `isql-fb` is also accepted as a Firebird protocol fallback. Generic `sb_isql` is native-protocol only and is rejected for this lane.
 
 ### CTest (curated subset)
 
@@ -62,7 +62,7 @@ The CTest target runs a small curated subset defined in `config/ctest_list.txt`:
 ctest -R CompatibilityFirebird --test-dir build
 ```
 
-This uses `sb_fb_isql` and creates a fresh ScratchBird database per test under `results/ctest/`. If `sb_fb_isql` is unavailable, set `SCRATCHBIRD_FB_ISQL` to a valid wrapper path after building FDW CLI wrappers.
+This uses a Firebird protocol client and creates a fresh ScratchBird database per test under `results/ctest/`. If `sb_fb_isql` is unavailable, set `SCRATCHBIRD_FB_ISQL` to `isql-fb` or another Firebird-compatible client path.
 
 ### Firebird-QA Harness Smoke
 

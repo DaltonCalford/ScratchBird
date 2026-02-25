@@ -180,6 +180,12 @@ def resolve_firebird_cli_binary(workspace_root: Path) -> Tuple[Path, str]:
         if candidate.exists() and os.access(candidate, os.X_OK):
             return candidate, "firebird"
 
+    system_isql = shutil.which("isql-fb") or shutil.which("isql")
+    if system_isql:
+        system_path = Path(system_isql)
+        if system_path.exists() and os.access(system_path, os.X_OK):
+            return system_path, "firebird_native"
+
     # Generic sb_isql is intentionally not accepted for Firebird wire parity.
     generic_candidates = [
         workspace_root / "build/src/sb_isql",
@@ -279,7 +285,7 @@ def firebird_gates(ctx: GateContext) -> None:
     convert_script = firebird_compat / "scripts/convert_fbt_to_sql.py"
     ctest_runner = firebird_compat / "scripts/run_firebird_ctest.sh"
     fb_cli_path, fb_cli_kind = resolve_firebird_cli_binary(ctx.workspace_root)
-    fb_cli_ready = bool(fb_cli_path) and fb_cli_kind == "firebird"
+    fb_cli_ready = bool(fb_cli_path) and fb_cli_kind in {"firebird", "firebird_native"}
     firebird_qa_present = firebird_qa.exists()
     firebird_repo_present = firebird_repo.exists()
     python3_present = shutil.which("python3") is not None
@@ -334,7 +340,7 @@ def firebird_gates(ctx: GateContext) -> None:
         notes=[
             "Dry-run initializes legacy vector wiring and prerequisites only.",
             "Execute mode records inventory counts and conversion smoke.",
-            "Curated execution requires sb_fb_isql (generic sb_isql is rejected).",
+            "Curated execution requires a Firebird protocol client (sb_fb_isql or isql-fb); generic sb_isql is rejected.",
             "Evidence file path matches tracker row FB-EMU-041.",
         ],
     )

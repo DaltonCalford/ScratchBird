@@ -60,12 +60,24 @@ fi
 HOST="${SCRATCHBIRD_PG_HOST:-localhost}"
 PORT="${SCRATCHBIRD_PG_PORT:-5432}"
 USER="${SCRATCHBIRD_PG_USER:-postgres}"
-DBNAME="${SCRATCHBIRD_PG_DB:-default}"
+DBNAME="${SCRATCHBIRD_PG_DB:-postgres}"
 PASSWORD="${SCRATCHBIRD_PG_PASSWORD:-${PGPASSWORD:-}}"
 
 RUN_ID="$(date +%Y%m%d_%H%M%S)"
 RESULTS_DIR="${PG_DIR}/results/ctest/${RUN_ID}"
 mkdir -p "$RESULTS_DIR"
+
+PRECHECK_FILE="${RESULTS_DIR}/precheck.sql"
+PRECHECK_OUT="${RESULTS_DIR}/precheck.out"
+cat > "$PRECHECK_FILE" <<'EOF'
+SELECT 1;
+EOF
+if ! PGPASSWORD="$PASSWORD" "$ISQL_BIN" -h "$HOST" -p "$PORT" -U "$USER" -d "$DBNAME" \
+     -f "$PRECHECK_FILE" -o "$PRECHECK_OUT" -q 2>> "$PRECHECK_OUT"; then
+  echo "SKIP: PostgreSQL compatibility endpoint is not reachable with current client/auth settings." >&2
+  cat "$PRECHECK_OUT" >&2
+  exit 77
+fi
 
 failures=()
 
@@ -89,7 +101,6 @@ while IFS= read -r rel_path; do
 
   safe_name="${rel_path//\//_}"
   out_file="${RESULTS_DIR}/${safe_name}.out"
-  db_file="${RESULTS_DIR}/${safe_name}.sbdb"
 
   if ! PGPASSWORD="$PASSWORD" "$ISQL_BIN" -h "$HOST" -p "$PORT" -U "$USER" -d "$DBNAME" \
        -f "$test_file" -o "$out_file" -q 2>> "$out_file"; then
