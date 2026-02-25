@@ -69,6 +69,13 @@ namespace Capability {
     constexpr uint32_t CAN_HANDLE_EXPIRED_PW   = 0x00400000;
     constexpr uint32_t SESSION_TRACK           = 0x00800000;
     constexpr uint32_t DEPRECATE_EOF           = 0x01000000;
+    constexpr uint32_t OPTIONAL_RESULTSET_METADATA = 0x02000000;
+    constexpr uint32_t ZSTD_COMPRESSION_ALGORITHM = 0x04000000;
+    constexpr uint32_t QUERY_ATTRIBUTES        = 0x08000000;
+    constexpr uint32_t MULTI_FACTOR_AUTHENTICATION = 0x10000000;
+    constexpr uint32_t CAPABILITY_EXTENSION    = 0x20000000;
+    constexpr uint32_t SSL_VERIFY_SERVER_CERT  = 0x40000000;
+    constexpr uint32_t REMEMBER_OPTIONS        = 0x80000000u;
 }
 
 // Server status flags
@@ -185,6 +192,7 @@ namespace Charset {
     constexpr uint8_t UTF8_GENERAL_CI   = 33;
     constexpr uint8_t UTF8MB4_GENERAL_CI = 45;
     constexpr uint8_t UTF8MB4_UNICODE_CI = 224;
+    constexpr uint8_t UTF8MB4_0900_AI_CI = 255;
     constexpr uint8_t BINARY            = 63;
 }
 
@@ -273,7 +281,10 @@ public:
         MYSQL_8_0,
         MARIADB_10_5
     };
-    void setEmulationTarget(EmulationTarget target) { emulation_target_ = target; }
+    void setEmulationTarget(EmulationTarget target) {
+        emulation_target_ = target;
+        updateServerCapabilities();
+    }
     EmulationTarget getEmulationTarget() const { return emulation_target_; }
 
     // C3: TLS configuration
@@ -416,6 +427,9 @@ protected:
                               const std::string& auth_response,
                               const uint8_t* scramble,
                               const std::string& password);
+    void setClientCapabilitiesForTest(uint32_t capabilities) {
+        client_capabilities_ = capabilities;
+    }
 
 private:
     void updateTransactionStatus(const std::string& sql, bool has_error);
@@ -443,8 +457,9 @@ private:
     std::vector<uint8_t> current_packet_;
 
     // C3: Server info with emulation target
-    std::string server_version_ = "8.0.35-ScratchBird";
+    std::string server_version_ = "8.4.8";
     EmulationTarget emulation_target_ = EmulationTarget::MYSQL_8_0;
+    uint8_t server_charset_ = mysql::Charset::UTF8MB4_0900_AI_CI;
     uint32_t connection_id_ = 0;
     uint8_t auth_scramble_[20] = {0};  // 20-byte scramble for auth
     std::string auth_plugin_name_ = "caching_sha2_password";  // C3: Default to caching_sha2_password
@@ -457,18 +472,7 @@ private:
     std::string remote_password_;
 
     // Server capabilities
-    uint32_t server_capabilities_ =
-        mysql::Capability::LONG_PASSWORD |
-        mysql::Capability::FOUND_ROWS |
-        mysql::Capability::LONG_FLAG |
-        mysql::Capability::CONNECT_WITH_DB |
-        mysql::Capability::PROTOCOL_41 |
-        mysql::Capability::TRANSACTIONS |
-        mysql::Capability::SECURE_CONNECTION |
-        mysql::Capability::MULTI_STATEMENTS |
-        mysql::Capability::MULTI_RESULTS |
-        mysql::Capability::PLUGIN_AUTH |
-        mysql::Capability::DEPRECATE_EOF;
+    uint32_t server_capabilities_ = 0;
 
     // Server status
     uint16_t server_status_ = mysql::ServerStatus::AUTOCOMMIT;

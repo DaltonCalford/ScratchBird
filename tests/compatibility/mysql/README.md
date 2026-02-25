@@ -75,11 +75,11 @@ for test in converted/innodb/*.sql; do
 done
 ```
 
-CTest wrapper (opt-in):
+CTest wrapper:
 
 ```bash
 # Uses config/ctest_list.txt and writes to results/ctest/<timestamp>
-SCRATCHBIRD_MY_COMPAT_RUN=1 ctest -R CompatibilityMySQL --test-dir build
+ctest -R CompatibilityMySQL --test-dir build
 ```
 
 If `sb_my_isql` is unavailable, set `SCRATCHBIRD_MY_ISQL` to a valid `sb_my_isql` path after building FDW CLI wrappers; generic `sb_isql` fallback is intentionally blocked.

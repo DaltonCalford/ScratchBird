@@ -2203,3 +2203,61 @@ endif()
 # Note: Schema Introspection, COPY Flow Control, and Unix Socket tests 
 # have API mismatches that need to be fixed. They are excluded from the build.
 # These tests can be re-enabled after updating them to match the current API.
+
+# ============================================================================
+# Compatibility/Emulation Suite Contracts
+# ============================================================================
+
+set(SCRATCHBIRD_COMPAT_ROOT "${CMAKE_SOURCE_DIR}/tests/compatibility")
+set(SCRATCHBIRD_COMPAT_FIREBIRD_RUNNER "${SCRATCHBIRD_COMPAT_ROOT}/firebird/scripts/run_firebird_ctest.sh")
+set(SCRATCHBIRD_COMPAT_MYSQL_RUNNER "${SCRATCHBIRD_COMPAT_ROOT}/mysql/scripts/run_mysql_ctest.sh")
+set(SCRATCHBIRD_COMPAT_POSTGRESQL_RUNNER "${SCRATCHBIRD_COMPAT_ROOT}/postgresql/scripts/run_postgresql_ctest.sh")
+set(SCRATCHBIRD_COMPAT_VERIFY_RUNNER "${SCRATCHBIRD_COMPAT_ROOT}/scripts/verify_required_emulation_tests.sh")
+
+if(EXISTS "${SCRATCHBIRD_COMPAT_FIREBIRD_RUNNER}")
+    add_test(
+        NAME CompatibilityFirebird
+        COMMAND bash "${SCRATCHBIRD_COMPAT_FIREBIRD_RUNNER}"
+    )
+    set_tests_properties(CompatibilityFirebird PROPERTIES
+        LABELS "integration;compatibility;emulation;firebird;linux_only"
+        TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_INTEGRATION}
+        SKIP_RETURN_CODE 77
+    )
+endif()
+
+if(EXISTS "${SCRATCHBIRD_COMPAT_MYSQL_RUNNER}")
+    add_test(
+        NAME CompatibilityMySQL
+        COMMAND bash "${SCRATCHBIRD_COMPAT_MYSQL_RUNNER}"
+    )
+    set_tests_properties(CompatibilityMySQL PROPERTIES
+        LABELS "integration;compatibility;emulation;mysql;linux_only"
+        TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_INTEGRATION}
+        SKIP_RETURN_CODE 77
+    )
+endif()
+
+if(EXISTS "${SCRATCHBIRD_COMPAT_POSTGRESQL_RUNNER}")
+    add_test(
+        NAME CompatibilityPostgreSQL
+        COMMAND bash "${SCRATCHBIRD_COMPAT_POSTGRESQL_RUNNER}"
+    )
+    set_tests_properties(CompatibilityPostgreSQL PROPERTIES
+        LABELS "integration;compatibility;emulation;postgresql;linux_only"
+        TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_INTEGRATION}
+        SKIP_RETURN_CODE 77
+    )
+endif()
+
+if(EXISTS "${SCRATCHBIRD_COMPAT_VERIFY_RUNNER}")
+    add_test(
+        NAME CompatibilityEmulationEvidence
+        COMMAND bash "${SCRATCHBIRD_COMPAT_VERIFY_RUNNER}"
+    )
+    set_tests_properties(CompatibilityEmulationEvidence PROPERTIES
+        LABELS "integration;compatibility;emulation;evidence;linux_only"
+        TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_INTEGRATION}
+        ENVIRONMENT "GATE_COMMAND_TIMEOUT_SEC=1200"
+    )
+endif()

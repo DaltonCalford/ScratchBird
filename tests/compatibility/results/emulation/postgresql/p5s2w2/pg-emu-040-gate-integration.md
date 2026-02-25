@@ -7,7 +7,7 @@ Last updated: 2026-02-24
 ## Prerequisites
 - `tests/compatibility/postgresql/repos/postgres/src/test/regress/GNUmakefile`: `present`
 - `tests/compatibility/postgresql/repos/postgres/src/test/regress/sql`: `present`
-- `full upstream pg build cwd configured via PG_UPSTREAM_BUILD_DIR`: `missing`
+- `full upstream pg build cwd configured via PG_UPSTREAM_BUILD_DIR`: `present`
 
 ## Command templates
 ```bash

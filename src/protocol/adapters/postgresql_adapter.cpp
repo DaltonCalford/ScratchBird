@@ -583,6 +583,7 @@ core::Status PostgresqlAdapter::handleStartupMessage(network::Connection* conn) 
 
     // Parse startup parameters (null-terminated key-value pairs)
     size_t offset = 8;
+    bool database_parameter_supplied = false;
     while (offset < current_msg_data_.size() - 1) {
         std::string key = readString(current_msg_data_.data() + offset, current_msg_data_.size() - offset);
         if (key.empty()) break;
@@ -598,6 +599,7 @@ core::Status PostgresqlAdapter::handleStartupMessage(network::Connection* conn) 
         if (key == "user") {
             username_ = value;
         } else if (key == "database") {
+            database_parameter_supplied = true;
             database_name_ = value;
         }
     }
@@ -631,9 +633,16 @@ core::Status PostgresqlAdapter::handleStartupMessage(network::Connection* conn) 
         }
     }
 
-    // Default database to username if not specified by client input
+    // In manager-bound sessions, a missing database token should resolve to the
+    // bound default database, not to the username.
     if (database_name_.empty()) {
-        database_name_ = username_;
+        if (!database_parameter_supplied &&
+            config_.enforce_bound_database &&
+            !config_.default_database.empty()) {
+            database_name_ = config_.default_database;
+        } else {
+            database_name_ = username_;
+        }
     }
 
     std::string selected_database;
@@ -1604,7 +1613,6 @@ void PostgresqlAdapter::sendAuthenticationSASL(network::Connection* conn,
     writeInt32(payload, pg::AuthType::SASL);
     for (const auto& mech : mechanisms) {
         writeString(payload, mech);
-        writeByte(payload, 0);
     }
     writeByte(payload, 0);
     sendMessage(conn, pg::BackendMsg::AUTHENTICATION, payload);

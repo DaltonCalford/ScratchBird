@@ -11,6 +11,7 @@ Modes:
 from __future__ import annotations
 
 import argparse
+import re
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
@@ -113,10 +114,11 @@ def capture_mysql_handshake(endpoint: str, timeout_sec: float) -> bytes:
         return header + payload
 
 
-def build_pg_startup_message(user: str, database: str) -> bytes:
+def build_pg_startup_message(user: str, database: Optional[str]) -> bytes:
     params = bytearray()
     params += b"user\x00" + user.encode("utf-8") + b"\x00"
-    params += b"database\x00" + database.encode("utf-8") + b"\x00"
+    if database is not None and database != "":
+        params += b"database\x00" + database.encode("utf-8") + b"\x00"
     params += b"\x00"
     protocol_version = 196608  # 3.0
     total_len = 4 + 4 + len(params)
@@ -125,13 +127,38 @@ def build_pg_startup_message(user: str, database: str) -> bytes:
 
 def capture_postgresql_startup(endpoint: str, timeout_sec: float) -> bytes:
     host, port = parse_endpoint(endpoint)
-    startup = build_pg_startup_message("scratchbird", "postgres")
-    with socket.create_connection((host, port), timeout=timeout_sec) as sock:
-        sock.sendall(startup)
-        data = read_until_idle(sock, total_timeout_sec=timeout_sec, idle_timeout_sec=0.30)
-        if not data:
-            raise RuntimeError("No PostgreSQL startup response bytes received")
-        return data
+    startup_user = os.environ.get("PG_CAPTURE_USER", "scratchbird")
+    configured_db = os.environ.get("PG_CAPTURE_DATABASE", "").strip()
+    candidate_dbs: list[Optional[str]] = [None]
+    if configured_db:
+        candidate_dbs.append(configured_db)
+    for fallback in ("live_capture", "default", "postgres", "scratchbird"):
+        if fallback not in candidate_dbs:
+            candidate_dbs.append(fallback)
+
+    last_response = b""
+    last_error = ""
+    for database in candidate_dbs:
+        startup = build_pg_startup_message(startup_user, database)
+        try:
+            with socket.create_connection((host, port), timeout=timeout_sec) as sock:
+                sock.sendall(startup)
+                data = read_until_idle(sock, total_timeout_sec=timeout_sec, idle_timeout_sec=0.30)
+                if not data:
+                    continue
+                last_response = data
+                # Prefer capturing authentication challenge/ok responses.
+                if data[:1] in (b"R", b"S", b"K", b"Z"):
+                    return data
+        except Exception as exc:
+            last_error = str(exc)
+
+    if last_response:
+        return last_response
+    raise RuntimeError(
+        "No PostgreSQL startup response bytes received"
+        + (f" ({last_error})" if last_error else "")
+    )
 
 
 def be32(value: int) -> bytes:
@@ -253,6 +280,234 @@ def compare_bytes(native: bytes, emulated: bytes) -> Dict[str, object]:
         "native_len": len(native),
         "emulated_len": len(emulated),
     }
+
+
+def extract_mysql_server_version(packet: bytes) -> str:
+    if len(packet) < 5:
+        return ""
+    payload_len = packet[0] | (packet[1] << 8) | (packet[2] << 16)
+    payload = packet[4 : 4 + payload_len]
+    if not payload or payload[0] != 10:
+        return ""
+    terminator = payload.find(b"\x00", 1)
+    if terminator <= 1:
+        return ""
+    return payload[1:terminator].decode("utf-8", errors="replace")
+
+
+def extract_mysql_version_series(version: str) -> str:
+    if not version:
+        return ""
+    match = re.match(r"^\s*(\d+)\.(\d+)", version)
+    if not match:
+        return ""
+    return f"{match.group(1)}.{match.group(2)}"
+
+
+def parse_mysql_handshake(packet: bytes) -> Dict[str, object]:
+    parsed: Dict[str, object] = {
+        "valid": False,
+        "error": "",
+    }
+    if len(packet) < 4:
+        parsed["error"] = "packet too short"
+        return parsed
+
+    payload_len = packet[0] | (packet[1] << 8) | (packet[2] << 16)
+    sequence = packet[3]
+    if len(packet) < 4 + payload_len:
+        parsed["error"] = "payload truncated"
+        return parsed
+
+    payload = packet[4 : 4 + payload_len]
+    if not payload:
+        parsed["error"] = "empty payload"
+        return parsed
+    if payload[0] != 10:
+        parsed["error"] = f"unsupported protocol version byte: {payload[0]}"
+        return parsed
+
+    offset = 1
+    term = payload.find(b"\x00", offset)
+    if term <= offset:
+        parsed["error"] = "missing server_version terminator"
+        return parsed
+    server_version = payload[offset:term].decode("utf-8", errors="replace")
+    offset = term + 1
+
+    if offset + 4 + 8 + 1 + 2 + 1 + 2 + 2 + 1 + 10 > len(payload):
+        parsed["error"] = "payload shorter than handshake fixed fields"
+        return parsed
+
+    connection_id = int.from_bytes(payload[offset : offset + 4], "little")
+    offset += 4
+    auth_part1 = payload[offset : offset + 8]
+    offset += 8
+    filler = payload[offset]
+    offset += 1
+    cap_low = int.from_bytes(payload[offset : offset + 2], "little")
+    offset += 2
+    charset = payload[offset]
+    offset += 1
+    status_flags = int.from_bytes(payload[offset : offset + 2], "little")
+    offset += 2
+    cap_high = int.from_bytes(payload[offset : offset + 2], "little")
+    offset += 2
+    capabilities = cap_low | (cap_high << 16)
+    auth_plugin_data_len = payload[offset]
+    offset += 1
+    reserved = payload[offset : offset + 10]
+    offset += 10
+
+    auth_part2_len = max(13, auth_plugin_data_len - 8)
+    auth_part2 = payload[offset : min(len(payload), offset + auth_part2_len)]
+    offset += len(auth_part2)
+
+    auth_plugin_name = ""
+    if offset < len(payload):
+        term = payload.find(b"\x00", offset)
+        if term == -1:
+            term = len(payload)
+        auth_plugin_name = payload[offset:term].decode("utf-8", errors="replace")
+
+    parsed.update(
+        {
+            "valid": True,
+            "sequence": sequence,
+            "payload_len": payload_len,
+            "protocol_version": payload[0],
+            "server_version": server_version,
+            "server_version_series": extract_mysql_version_series(server_version),
+            "connection_id": connection_id,
+            "auth_plugin_data_part1_hex": auth_part1.hex(),
+            "filler": filler,
+            "capabilities": capabilities,
+            "charset": charset,
+            "status_flags": status_flags,
+            "auth_plugin_data_len": auth_plugin_data_len,
+            "reserved_hex": reserved.hex(),
+            "auth_plugin_data_part2_hex": auth_part2.hex(),
+            "auth_plugin_name": auth_plugin_name,
+        }
+    )
+    return parsed
+
+
+MYSQL_CAPABILITY_NAMES: Dict[int, str] = {
+    0x00000001: "LONG_PASSWORD",
+    0x00000002: "FOUND_ROWS",
+    0x00000004: "LONG_FLAG",
+    0x00000008: "CONNECT_WITH_DB",
+    0x00000010: "NO_SCHEMA",
+    0x00000020: "COMPRESS",
+    0x00000040: "ODBC",
+    0x00000080: "LOCAL_FILES",
+    0x00000100: "IGNORE_SPACE",
+    0x00000200: "PROTOCOL_41",
+    0x00000400: "INTERACTIVE",
+    0x00000800: "SSL",
+    0x00001000: "IGNORE_SIGPIPE",
+    0x00002000: "TRANSACTIONS",
+    0x00004000: "RESERVED",
+    0x00008000: "SECURE_CONNECTION",
+    0x00010000: "MULTI_STATEMENTS",
+    0x00020000: "MULTI_RESULTS",
+    0x00040000: "PS_MULTI_RESULTS",
+    0x00080000: "PLUGIN_AUTH",
+    0x00100000: "CONNECT_ATTRS",
+    0x00200000: "PLUGIN_AUTH_LENENC_DATA",
+    0x00400000: "CAN_HANDLE_EXPIRED_PW",
+    0x00800000: "SESSION_TRACK",
+    0x01000000: "DEPRECATE_EOF",
+    0x02000000: "OPTIONAL_RESULTSET_METADATA",
+    0x04000000: "ZSTD_COMPRESSION_ALGORITHM",
+    0x08000000: "QUERY_ATTRIBUTES",
+    0x10000000: "MULTI_FACTOR_AUTHENTICATION",
+    0x20000000: "CAPABILITY_EXTENSION",
+    0x40000000: "SSL_VERIFY_SERVER_CERT",
+    0x80000000: "REMEMBER_OPTIONS",
+}
+
+MYSQL_OPTIONAL_CAPABILITY_DRIFT_MASK = (
+    0x00000800 |  # SSL
+    0x04000000 |  # ZSTD_COMPRESSION_ALGORITHM
+    0x40000000    # SSL_VERIFY_SERVER_CERT
+)
+
+
+def capability_names(mask: int) -> list[str]:
+    names: list[str] = []
+    for bit, name in MYSQL_CAPABILITY_NAMES.items():
+        if mask & bit:
+            names.append(name)
+    unknown = mask & ~sum(MYSQL_CAPABILITY_NAMES.keys())
+    if unknown:
+        names.append(f"UNKNOWN(0x{unknown:08x})")
+    return names
+
+
+def compare_mysql_handshake_semantics(
+    native_packet: bytes,
+    emulated_packet: bytes,
+    baseline_series: str = "8.4",
+) -> Dict[str, object]:
+    native = parse_mysql_handshake(native_packet)
+    emulated = parse_mysql_handshake(emulated_packet)
+
+    result: Dict[str, object] = {
+        "available": False,
+        "equal": False,
+        "baseline_series": baseline_series,
+        "native": native,
+        "emulated": emulated,
+        "differences": [],
+    }
+
+    if not native.get("valid") or not emulated.get("valid"):
+        result["parse_error"] = {
+            "native_error": native.get("error", ""),
+            "emulated_error": emulated.get("error", ""),
+        }
+        return result
+
+    result["available"] = True
+    diffs: list[str] = []
+
+    # Deterministic fields that should match for the selected emulation family.
+    for key in ("protocol_version", "charset", "status_flags", "auth_plugin_data_len", "auth_plugin_name"):
+        if native.get(key) != emulated.get(key):
+            diffs.append(f"{key}: native={native.get(key)!r} emulated={emulated.get(key)!r}")
+
+    native_caps = int(native.get("capabilities", 0))
+    emulated_caps = int(emulated.get("capabilities", 0))
+    missing_caps = native_caps & ~emulated_caps
+    extra_caps = emulated_caps & ~native_caps
+    non_optional_cap_diff = (missing_caps | extra_caps) & ~MYSQL_OPTIONAL_CAPABILITY_DRIFT_MASK
+    if non_optional_cap_diff:
+        diffs.append(
+            "capabilities(non-optional): "
+            f"missing=0x{missing_caps:08x} extra=0x{extra_caps:08x}"
+        )
+
+    native_version = str(native.get("server_version", ""))
+    emulated_version = str(emulated.get("server_version", ""))
+    native_series = str(native.get("server_version_series", ""))
+    emulated_series = str(emulated.get("server_version_series", ""))
+    baseline_skew = bool(native_series and baseline_series and native_series != baseline_series)
+    if not baseline_skew and native_version != emulated_version:
+        diffs.append(f"server_version: native={native_version!r} emulated={emulated_version!r}")
+
+    result["differences"] = diffs
+    result["equal"] = len(diffs) == 0
+    result["baseline_skew"] = baseline_skew
+    result["native_series"] = native_series
+    result["emulated_series"] = emulated_series
+    result["missing_capabilities_mask"] = f"0x{missing_caps:08x}"
+    result["extra_capabilities_mask"] = f"0x{extra_caps:08x}"
+    result["missing_capabilities"] = capability_names(missing_caps)
+    result["extra_capabilities"] = capability_names(extra_caps)
+    result["optional_capability_only_drift"] = non_optional_cap_diff == 0 and (missing_caps | extra_caps) != 0
+    return result
 
 
 @dataclass
@@ -607,8 +862,16 @@ def emit_engine_artifacts(root: Path, result: CaptureResult) -> Dict[str, object
         emu_rel = f"artifacts/emulation/{capture_dir.relative_to(root)}/{emu_file}"
 
     comparison = None
+    mysql_semantic_comparison = None
     if result.native_bytes is not None and result.emulated_bytes is not None:
         comparison = compare_bytes(result.native_bytes, result.emulated_bytes)
+        if result.engine == "mysql":
+            baseline_series = os.environ.get("MYSQL_EMU_BASELINE_SERIES", "8.4").strip() or "8.4"
+            mysql_semantic_comparison = compare_mysql_handshake_semantics(
+                result.native_bytes,
+                result.emulated_bytes,
+                baseline_series=baseline_series,
+            )
 
     lines = [
         f"Last updated: {TODAY}",
@@ -621,6 +884,25 @@ def emit_engine_artifacts(root: Path, result: CaptureResult) -> Dict[str, object
         f"- Native capture: `{'ok' if result.native_bytes is not None else 'unavailable'}`",
         f"- Emulated capture: `{'ok' if result.emulated_bytes is not None else 'unavailable'}`",
     ]
+    if result.engine == "mysql":
+        if result.native_bytes is not None:
+            native_version = extract_mysql_server_version(result.native_bytes)
+            if native_version:
+                lines.append(f"- Native server_version: `{native_version}`")
+        if result.emulated_bytes is not None:
+            emulated_version = extract_mysql_server_version(result.emulated_bytes)
+            if emulated_version:
+                lines.append(f"- Emulated server_version: `{emulated_version}`")
+        if mysql_semantic_comparison is not None:
+            lines.append(
+                f"- Baseline series target: `{mysql_semantic_comparison.get('baseline_series', '8.4')}`"
+            )
+            native_series = mysql_semantic_comparison.get("native_series")
+            emulated_series = mysql_semantic_comparison.get("emulated_series")
+            if native_series:
+                lines.append(f"- Native version series: `{native_series}`")
+            if emulated_series:
+                lines.append(f"- Emulated version series: `{emulated_series}`")
     if result.native_error:
         lines.append(f"- Native issue: `{result.native_error}`")
     if result.emulated_error:
@@ -636,6 +918,38 @@ def emit_engine_artifacts(root: Path, result: CaptureResult) -> Dict[str, object
         lines.append(
             f"- First mismatch offset: `{comparison['first_mismatch'] if comparison['first_mismatch'] is not None else 'none'}`"
         )
+        if mysql_semantic_comparison is not None and mysql_semantic_comparison.get("available"):
+            lines.append(
+                f"- Semantic parity (normalized): `{str(mysql_semantic_comparison.get('equal', False)).lower()}`"
+            )
+            if mysql_semantic_comparison.get("baseline_skew"):
+                lines.append(
+                    "- Native endpoint series is outside baseline target; "
+                    "server-version mismatch treated as expected track drift."
+                )
+            lines.append(
+                f"- Missing capabilities (emulated): `{mysql_semantic_comparison.get('missing_capabilities_mask', '0x00000000')}`"
+            )
+            missing_caps = mysql_semantic_comparison.get("missing_capabilities", [])
+            if missing_caps:
+                lines.append(
+                    f"- Missing capability names: `{', '.join(missing_caps)}`"
+                )
+            extra_caps = mysql_semantic_comparison.get("extra_capabilities", [])
+            lines.append(
+                f"- Extra capabilities (emulated): `{mysql_semantic_comparison.get('extra_capabilities_mask', '0x00000000')}`"
+            )
+            if extra_caps:
+                lines.append(
+                    f"- Extra capability names: `{', '.join(extra_caps)}`"
+                )
+            if mysql_semantic_comparison.get("optional_capability_only_drift"):
+                lines.append("- Capability drift is currently optional-only.")
+            differences = mysql_semantic_comparison.get("differences", [])
+            if differences:
+                lines.append("- Normalized differences:")
+                for diff in differences:
+                    lines.append(f"  - `{diff}`")
 
     lines.extend(["", "## Capture Artifacts"])
     lines.append(f"- Native capture: `{native_rel if native_rel else 'not generated'}`")
@@ -648,6 +962,7 @@ def emit_engine_artifacts(root: Path, result: CaptureResult) -> Dict[str, object
         "native_ok": result.native_bytes is not None,
         "emulated_ok": result.emulated_bytes is not None,
         "comparison": comparison,
+        "mysql_semantic_comparison": mysql_semantic_comparison,
         "native_issue": result.native_error,
         "emulated_issue": result.emulated_error,
     }

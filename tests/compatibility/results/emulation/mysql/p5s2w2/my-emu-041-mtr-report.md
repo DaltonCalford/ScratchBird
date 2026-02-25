@@ -4,12 +4,12 @@ Last updated: 2026-02-24
 
 - Mode: `execute`
 - Overall result: `pass`
-- Command timeout: `300s`
+- Command timeout: `1200s`
 
 ## Command Results
 
 ### Command 1
-- `cwd`: `/home/dcalford/CliWork/ScratchBird/tests/compatibility/mysql/repos/mysql-server/mysql-test`
+- `cwd`: `<outside-tree-path>`
 - `cmd`: `perl -c mysql-test-run.pl`
 - `exit_code`: `0`
 - `timed_out`: `false`
@@ -19,13 +19,50 @@ mysql-test-run.pl syntax OK
 ```
 
 ### Command 2
-- `cwd`: `/home/dcalford/CliWork/ScratchBird/tests/compatibility/mysql/repos/mysql-server/mysql-test`
-- `cmd`: `perl mysql-test-run.pl --suite=main --do-test=select --retry=0 --parallel=1 --force`
+- `cwd`: `<outside-tree-path>`
+- `cmd`: `perl mysql-test-run.pl --suite=main --do-test=select --retry=0 --parallel=1 --force --client-bindir=<outside-tree-path>`
 - `exit_code`: `0`
 - `timed_out`: `false`
 
 ```text
-Skipped full MTR smoke: mysql runtime binaries missing at /home/dcalford/CliWork/ScratchBird/tests/compatibility/mysql/repos/mysql-server/runtime_output_directory (mysqld/mysqltest).
+Logging: mysql-test-run.pl  --suite=main --do-test=select --retry=0 --parallel=1 --force --client-bindir=<outside-tree-path>
+MySQL Version 9.6.0
+Checking supported features
+Using suite(s): main
+Collecting tests
+Checking leftover processes
+Removing old var directory
+Creating var directory '<outside-tree-path>'
+Installing system database
+Using parallel: 1
+ports_per_thread:30
+
+==============================================================================
+                  TEST NAME                       RESULT  TIME (ms) COMMENT
+------------------------------------------------------------------------------
+[  6%] main.select_distinct_debug                [ skipped ]  Test needs debug binaries.
+[ 13%] main.select_count                         [ pass ]   1031
+[ 20%] main.select_for_update                    [ pass ]   7900
+[ 26%] main.select_all                           [ pass ]  45688
+[ 33%] main.select_all_bka                       [ pass ]  43419
+[ 40%] main.select_all_bka_nobnl                 [ pass ]  44130
+[ 46%] main.select_found                         [ pass ]   3991
+[ 53%] main.select_icp_mrr                       [ pass ]  43749
+[ 60%] main.select_icp_mrr_bka                   [ pass ]  44523
+[ 66%] main.select_icp_mrr_bka_nobnl             [ pass ]  43861
+[ 73%] main.select_none                          [ pass ]  43675
+[ 80%] main.select_none_bka                      [ pass ]  43838
+[ 86%] main.select_none_bka_nobnl                [ pass ]  43669
+[ 93%] main.select_safe                          [ pass ]   1128
+[100%] shutdown_report                           [ pass ]       
+------------------------------------------------------------------------------
+The servers were restarted 2 times
+The servers were reinitialized 0 times
+Spent 410.602 of 438 seconds executing testcases
+
+Completed: All 14 tests were successful.
+
+1 tests were skipped, 0 by the test itself.
 ```
 
 ## Notes

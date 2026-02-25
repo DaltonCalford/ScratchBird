@@ -6,11 +6,6 @@ MY_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 DRIVER_DIR="${ROOT_DIR}-driver"
 
-if [[ "${SCRATCHBIRD_MY_COMPAT_RUN:-0}" != "1" ]]; then
-  echo "MySQL compatibility tests skipped (set SCRATCHBIRD_MY_COMPAT_RUN=1 to run)."
-  exit 0
-fi
-
 DEFAULT_ISQL="${ROOT_DIR}/build/src/sb_my_isql"
 ISQL_FLAVOR="mysql"
 if [[ ! -x "$DEFAULT_ISQL" ]]; then
@@ -39,17 +34,17 @@ LIST_FILE="${SCRATCHBIRD_MY_CTEST_LIST:-$MY_DIR/config/ctest_list.txt}"
 CONVERTED_DIR="${MY_DIR}/converted"
 
 if [[ ! -x "$ISQL_BIN" ]]; then
-  echo "Error: sb_my_isql/sb_isql not found or not executable: $ISQL_BIN" >&2
-  exit 1
+  echo "SKIP: sb_my_isql not found or not executable: $ISQL_BIN" >&2
+  exit 77
 fi
 
 if [[ "$ISQL_FLAVOR" == "generic" ]]; then
   cat >&2 <<'EOF'
-Error: generic sb_isql fallback is not valid for MySQL emulation compare runs.
+SKIP: generic sb_isql fallback is not valid for MySQL emulation compare runs.
 The generic client speaks native protocol only and cannot execute MySQL wire-protocol parity.
 Provide sb_my_isql via SCRATCHBIRD_MY_ISQL, or build FDW CLI wrappers in ScratchBird-driver.
 EOF
-  exit 2
+  exit 77
 fi
 
 if [[ ! -f "$LIST_FILE" ]]; then

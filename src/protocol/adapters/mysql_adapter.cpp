@@ -407,44 +407,69 @@ MySqlAdapter::MySqlAdapter(const ProtocolAdapterConfig& config)
 
 // C3: Update server capabilities based on emulation target
 void MySqlAdapter::updateServerCapabilities() {
-    // Base capabilities
-    server_capabilities_ = 
+    // Start from a broad MySQL 8.x compatible capability profile.
+    server_capabilities_ =
         mysql::Capability::LONG_PASSWORD |
         mysql::Capability::FOUND_ROWS |
         mysql::Capability::LONG_FLAG |
         mysql::Capability::CONNECT_WITH_DB |
+        mysql::Capability::NO_SCHEMA |
+        mysql::Capability::ODBC |
+        mysql::Capability::LOCAL_FILES |
+        mysql::Capability::IGNORE_SPACE |
         mysql::Capability::PROTOCOL_41 |
+        mysql::Capability::INTERACTIVE |
+        mysql::Capability::IGNORE_SIGPIPE |
         mysql::Capability::TRANSACTIONS |
+        mysql::Capability::RESERVED |
         mysql::Capability::SECURE_CONNECTION |
         mysql::Capability::MULTI_STATEMENTS |
         mysql::Capability::MULTI_RESULTS |
-        mysql::Capability::PLUGIN_AUTH;
+        mysql::Capability::PS_MULTI_RESULTS |
+        mysql::Capability::PLUGIN_AUTH |
+        mysql::Capability::CONNECT_ATTRS |
+        mysql::Capability::PLUGIN_AUTH_LENENC_DATA |
+        mysql::Capability::CAN_HANDLE_EXPIRED_PW |
+        mysql::Capability::SESSION_TRACK |
+        mysql::Capability::DEPRECATE_EOF |
+        mysql::Capability::OPTIONAL_RESULTSET_METADATA |
+        mysql::Capability::ZSTD_COMPRESSION_ALGORITHM |
+        mysql::Capability::QUERY_ATTRIBUTES |
+        mysql::Capability::MULTI_FACTOR_AUTHENTICATION |
+        mysql::Capability::REMEMBER_OPTIONS;
+
+    if (config_.enable_compression) {
+        server_capabilities_ |= mysql::Capability::COMPRESS;
+    }
 
     switch (emulation_target_) {
         case EmulationTarget::MYSQL_5_7:
             server_version_ = "5.7.44";
             auth_plugin_name_ = "mysql_native_password";
-            // MySQL 5.7 doesn't support DEPRECATE_EOF by default
+            server_charset_ = mysql::Charset::UTF8_GENERAL_CI;
+            server_capabilities_ &=
+                ~(mysql::Capability::OPTIONAL_RESULTSET_METADATA |
+                  mysql::Capability::QUERY_ATTRIBUTES |
+                  mysql::Capability::MULTI_FACTOR_AUTHENTICATION);
             break;
             
         case EmulationTarget::MYSQL_8_0:
-            server_version_ = "8.0.35";
+            server_version_ = "8.4.8";
             auth_plugin_name_ = "caching_sha2_password";
-            // MySQL 8.0 supports DEPRECATE_EOF
-            server_capabilities_ |= mysql::Capability::DEPRECATE_EOF;
+            server_charset_ = mysql::Charset::UTF8MB4_0900_AI_CI;
             break;
             
         case EmulationTarget::MARIADB_10_5:
             server_version_ = "10.5.23-MariaDB";
             auth_plugin_name_ = "mysql_native_password";
-            // MariaDB supports DEPRECATE_EOF
-            server_capabilities_ |= mysql::Capability::DEPRECATE_EOF;
+            server_charset_ = mysql::Charset::UTF8MB4_GENERAL_CI;
             break;
     }
     
     // Add SSL capability if TLS is enabled
     if (tls_enabled_) {
         server_capabilities_ |= mysql::Capability::SSL;
+        server_capabilities_ |= mysql::Capability::SSL_VERIFY_SERVER_CERT;
     }
 }
 
@@ -1068,7 +1093,7 @@ void MySqlAdapter::sendHandshakePacket(network::Connection* conn) {
     writeInt2(payload, static_cast<uint16_t>(server_capabilities_ & 0xFFFF));
 
     // Character set
-    writeInt1(payload, mysql::Charset::UTF8MB4_GENERAL_CI);
+    writeInt1(payload, server_charset_);
 
     // Status flags
     writeInt2(payload, server_status_);
@@ -1267,8 +1292,7 @@ void MySqlAdapter::setTLSConfig(const security::TLSConfig& config) {
     if (ctx) {
         tls_context_ = std::move(ctx);
         tls_enabled_ = true;
-        // Enable SSL capability when TLS is configured
-        server_capabilities_ |= mysql::Capability::SSL;
+        updateServerCapabilities();
     }
 }
 
@@ -2587,11 +2611,32 @@ void MySqlAdapter::mapStatusToMySqlError(uint32_t status,
             error_code = mysql::ErrorCode::SYNTAX_ERROR;
             sqlstate = "42000";
             break;
+        case core::Status::UNDEFINED_TABLE:
         case core::Status::NOT_FOUND:
+        case core::Status::FILE_NOT_FOUND:
             error_code = mysql::ErrorCode::NO_SUCH_TABLE;
             sqlstate = "42S02";
             break;
+        case core::Status::UNDEFINED_COLUMN:
+            error_code = mysql::ErrorCode::BAD_FIELD_ERROR;
+            sqlstate = "42S22";
+            break;
+        case core::Status::UNDEFINED_FUNCTION:
+            error_code = 1305;  // ER_SP_DOES_NOT_EXIST (closest generic undefined routine/object)
+            sqlstate = "42000";
+            break;
+        case core::Status::DUPLICATE_COLUMN:
+            error_code = 1060;  // ER_DUP_FIELDNAME
+            sqlstate = "42S21";
+            break;
+        case core::Status::DUPLICATE_OBJECT:
+            error_code = 1061;  // ER_DUP_KEYNAME (closest duplicate-object class)
+            sqlstate = "42000";
+            break;
+        case core::Status::INSUFFICIENT_PRIVILEGE:
         case core::Status::PERMISSION_DENIED:
+        case core::Status::INVALID_AUTHORIZATION:
+        case core::Status::INVALID_PASSWORD:
             error_code = mysql::ErrorCode::ACCESS_DENIED;
             sqlstate = "28000";
             break;
@@ -2616,8 +2661,19 @@ void MySqlAdapter::mapStatusToMySqlError(uint32_t status,
             break;
         case core::Status::LOCK_TIMEOUT:
         case core::Status::LOCK_NOT_AVAILABLE:
+        case core::Status::LOCK_CONFLICT:
             error_code = 1205;  // ER_LOCK_WAIT_TIMEOUT
             sqlstate = "HY000";
+            break;
+        case core::Status::SERIALIZATION_FAILURE:
+        case core::Status::DEADLOCK:
+            error_code = 1213;  // ER_LOCK_DEADLOCK
+            sqlstate = "40001";
+            break;
+        case core::Status::QUERY_CANCELED:
+        case core::Status::CANCELLED:
+            error_code = 1317;  // ER_QUERY_INTERRUPTED
+            sqlstate = "70100";
             break;
         case core::Status::DATETIME_FIELD_OVERFLOW:
             error_code = mysql::ErrorCode::UNKNOWN_ERROR;
@@ -2631,15 +2687,32 @@ void MySqlAdapter::mapStatusToMySqlError(uint32_t status,
             error_code = mysql::ErrorCode::UNKNOWN_ERROR;
             sqlstate = "42804";
             break;
-        case core::Status::DEADLOCK:
-            error_code = 1213;  // ER_LOCK_DEADLOCK
-            sqlstate = "40001";
+        case core::Status::DIVISION_BY_ZERO:
+            error_code = 1365;  // ER_DIVISION_BY_ZERO
+            sqlstate = "22012";
+            break;
+        case core::Status::OUT_OF_RANGE:
+        case core::Status::NUMERIC_VALUE_OUT_OF_RANGE:
+            error_code = 1264;  // ER_WARN_DATA_OUT_OF_RANGE / ER_DATA_OUT_OF_RANGE class
+            sqlstate = "22003";
+            break;
+        case core::Status::STRING_DATA_RIGHT_TRUNCATION:
+            error_code = 1406;  // ER_DATA_TOO_LONG
+            sqlstate = "22001";
             break;
         case core::Status::TOO_MANY_CONNECTIONS:
             error_code = 1040;  // ER_CON_COUNT_ERROR
             sqlstate = "08004";
             break;
+        case core::Status::CONNECTION_FAILURE:
+        case core::Status::CONNECTION_DOES_NOT_EXIST:
+        case core::Status::CONNECTION_CLOSED:
+        case core::Status::PROTOCOL_VIOLATION:
+            error_code = 2013;  // Lost connection or protocol failure
+            sqlstate = "HY000";
+            break;
         case core::Status::NOT_IMPLEMENTED:
+        case core::Status::NOT_SUPPORTED:
             error_code = 1235;  // ER_NOT_SUPPORTED_YET
             sqlstate = "0A000";
             break;

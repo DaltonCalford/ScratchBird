@@ -9,10 +9,10 @@ Last updated: 2026-02-24
 - Emulated capture: `ok`
 
 ## Comparison
-- Byte-equivalent: `false`
+- Byte-equivalent: `true`
 - Native length: `24`
-- Emulated length: `107`
-- First mismatch offset: `0`
+- Emulated length: `24`
+- First mismatch offset: `none`
 
 ## Capture Artifacts
 - Native capture: `artifacts/emulation/postgresql/p5s1w2/pg-emu-010-wire-captures/pg-native-live-startup-auth.hex`

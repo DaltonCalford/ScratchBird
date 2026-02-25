@@ -70,6 +70,8 @@ The vendored `repos/firebird-qa/` harness is exercised by:
 
 ```bash
 ../scripts/verify_required_emulation_tests.sh
+# or via CTest:
+ctest -R CompatibilityEmulationEvidence --test-dir build
 ```
 
 This produces `tests/compatibility/results/emulation/firebird/p5s2w2/fb-emu-041-firebird-qa-report.md`.

@@ -67,11 +67,11 @@ for test in converted/core/*.sql; do
 done
 ```
 
-CTest wrapper (opt-in):
+CTest wrapper:
 
 ```bash
 # Uses config/ctest_list.txt and writes to results/ctest/<timestamp>
-SCRATCHBIRD_PG_COMPAT_RUN=1 ctest -R CompatibilityPostgreSQL --test-dir build
+ctest -R CompatibilityPostgreSQL --test-dir build
 ```
 
 If `sb_pg_isql` is unavailable, set `SCRATCHBIRD_PG_ISQL` to a valid `sb_pg_isql` path after building FDW CLI wrappers; generic `sb_isql` fallback is intentionally blocked.

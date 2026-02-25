@@ -7,15 +7,19 @@ Last updated: 2026-02-24
 ## Prerequisites
 - `tests/compatibility/mysql/repos/mysql-server/mysql-test/mysql-test-run.pl`: `present`
 - `tests/compatibility/mysql/repos/mysql-server/mysql-test`: `present`
+- `full upstream mysql source/runtime auto-detected`: `present`
 
 ## Command templates
 ```bash
 cd tests/compatibility/mysql/repos/mysql-server/mysql-test
-perl mysql-test-run.pl --suite=main,auth,binlog,replication --retry=0 --force
+# Optional full-run mode:
+# export MYSQL_UPSTREAM_SOURCE_DIR=<path to mysql source root>
+# export MYSQL_UPSTREAM_BUILD_DIR=<path to mysql build root>
+perl mysql-test-run.pl --suite=main --do-test=select --retry=0 --parallel=1 --force
 ```
 
 ## Notes
 - Dry-run initializes in-tree MTR gate command wiring and prerequisites.
-- Execute mode runs full smoke only when mysql runtime binaries are available.
+- Execute mode runs full smoke only when mysql source tree and runtime binaries are available.
 - Full suite execution and failure closure are tracked in MY-EMU-041/042.
 - Evidence file path matches tracker row MY-EMU-040.

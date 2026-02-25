@@ -6,11 +6,6 @@ PG_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../../../.." && pwd)"
 DRIVER_DIR="${ROOT_DIR}-driver"
 
-if [[ "${SCRATCHBIRD_PG_COMPAT_RUN:-0}" != "1" ]]; then
-  echo "PostgreSQL compatibility tests skipped (set SCRATCHBIRD_PG_COMPAT_RUN=1 to run)."
-  exit 0
-fi
-
 DEFAULT_ISQL="${ROOT_DIR}/build/src/sb_pg_isql"
 ISQL_FLAVOR="postgresql"
 if [[ ! -x "$DEFAULT_ISQL" ]]; then
@@ -39,17 +34,17 @@ LIST_FILE="${SCRATCHBIRD_PG_CTEST_LIST:-$PG_DIR/config/ctest_list.txt}"
 CONVERTED_DIR="${PG_DIR}/converted"
 
 if [[ ! -x "$ISQL_BIN" ]]; then
-  echo "Error: sb_pg_isql/sb_isql not found or not executable: $ISQL_BIN" >&2
-  exit 1
+  echo "SKIP: sb_pg_isql not found or not executable: $ISQL_BIN" >&2
+  exit 77
 fi
 
 if [[ "$ISQL_FLAVOR" == "generic" ]]; then
   cat >&2 <<'EOF'
-Error: generic sb_isql fallback is not valid for PostgreSQL emulation compare runs.
+SKIP: generic sb_isql fallback is not valid for PostgreSQL emulation compare runs.
 The generic client speaks native protocol only and cannot execute PostgreSQL wire-protocol parity.
 Provide sb_pg_isql via SCRATCHBIRD_PG_ISQL, or build FDW CLI wrappers in ScratchBird-driver.
 EOF
-  exit 2
+  exit 77
 fi
 
 if [[ ! -f "$LIST_FILE" ]]; then

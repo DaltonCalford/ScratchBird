@@ -114,11 +114,14 @@ Once the dedicated ISQL clients are built (see [Plan 06](/docs/planning/PLAN_06_
 # Firebird compatibility subset (CTest)
 ctest -R CompatibilityFirebird --test-dir build
 
-# PostgreSQL compatibility subset (CTest, opt-in)
-SCRATCHBIRD_PG_COMPAT_RUN=1 ctest -R CompatibilityPostgreSQL --test-dir build
+# PostgreSQL compatibility subset (CTest)
+ctest -R CompatibilityPostgreSQL --test-dir build
 
-# MySQL compatibility subset (CTest, opt-in)
-SCRATCHBIRD_MY_COMPAT_RUN=1 ctest -R CompatibilityMySQL --test-dir build
+# MySQL compatibility subset (CTest)
+ctest -R CompatibilityMySQL --test-dir build
+
+# Upstream emulation evidence bundle (gate + wire capture)
+ctest -R CompatibilityEmulationEvidence --test-dir build
 ```
 
 ### 5. Run Full Emulation Verification Bundle
@@ -171,7 +174,8 @@ Tests are executed using CLI clients built from the `ScratchBird-driver` reposit
 - **sb_pg_isql** - PostgreSQL protocol client (port 5432)
 - **sb_isql** - ScratchBird native client (port 3092)
 
-When wrapper clients are not built, compatibility scripts fall back to `sb_isql`.
+Compatibility lanes require the dedicated protocol clients (`sb_fb_isql`, `sb_my_isql`, `sb_pg_isql`).
+Generic `sb_isql` is intentionally rejected for emulated protocol parity runs.
 
 ## Test Manifests
 

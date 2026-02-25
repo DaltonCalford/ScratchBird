@@ -34,17 +34,17 @@ LIST_FILE="${SCRATCHBIRD_FB_CTEST_LIST:-$FB_DIR/config/ctest_list.txt}"
 CONVERTED_DIR="${FB_DIR}/converted"
 
 if [[ ! -x "$ISQL_BIN" ]]; then
-  echo "Error: sb_fb_isql/sb_isql not found or not executable: $ISQL_BIN" >&2
-  exit 1
+  echo "SKIP: sb_fb_isql not found or not executable: $ISQL_BIN" >&2
+  exit 77
 fi
 
 if [[ "$ISQL_FLAVOR" == "generic" ]]; then
   cat >&2 <<'EOF'
-Error: generic sb_isql fallback is not valid for Firebird emulation compare runs.
+SKIP: generic sb_isql fallback is not valid for Firebird emulation compare runs.
 The generic client speaks native protocol only and cannot execute Firebird wire-protocol parity.
 Provide sb_fb_isql via SCRATCHBIRD_FB_ISQL, or build FDW CLI wrappers in ScratchBird-driver.
 EOF
-  exit 2
+  exit 77
 fi
 
 if [[ ! -f "$LIST_FILE" ]]; then

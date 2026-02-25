@@ -95,6 +95,17 @@ public:
     core::Status sendGreetingForTest(network::Connection* conn) {
         return T::sendGreeting(conn);
     }
+
+    core::Status sendProtocolErrorForTest(network::Connection* conn,
+                                          uint32_t error_code,
+                                          const std::string& sqlstate,
+                                          const std::string& message) {
+        return T::sendProtocolError(conn, error_code, sqlstate, message);
+    }
+
+    void setClientCapabilitiesForTest(uint32_t capabilities) {
+        T::setClientCapabilitiesForTest(capabilities);
+    }
 };
 
 void cleanupDb(const std::string& name) {
@@ -126,6 +137,115 @@ std::vector<uint8_t> extractMySqlPayload(const std::vector<uint8_t>& wire_packet
         return {};
     }
     return std::vector<uint8_t>(wire_packet.begin() + 4, wire_packet.begin() + 4 + payload_size);
+}
+
+uint16_t readMySqlErrorCode(const std::vector<uint8_t>& payload) {
+    if (payload.size() < 3) {
+        return 0;
+    }
+    return static_cast<uint16_t>(payload[1]) |
+           (static_cast<uint16_t>(payload[2]) << 8);
+}
+
+std::string readMySqlSqlState(const std::vector<uint8_t>& payload) {
+    if (payload.size() < 9 || payload[3] != '#') {
+        return std::string{};
+    }
+    return std::string(reinterpret_cast<const char*>(payload.data() + 4), 5);
+}
+
+void writePgInt16(std::vector<uint8_t>& payload, uint16_t value) {
+    payload.push_back(static_cast<uint8_t>((value >> 8) & 0xFF));
+    payload.push_back(static_cast<uint8_t>(value & 0xFF));
+}
+
+void writePgInt32(std::vector<uint8_t>& payload, uint32_t value) {
+    payload.push_back(static_cast<uint8_t>((value >> 24) & 0xFF));
+    payload.push_back(static_cast<uint8_t>((value >> 16) & 0xFF));
+    payload.push_back(static_cast<uint8_t>((value >> 8) & 0xFF));
+    payload.push_back(static_cast<uint8_t>(value & 0xFF));
+}
+
+void writePgCString(std::vector<uint8_t>& payload, const std::string& value) {
+    payload.insert(payload.end(), value.begin(), value.end());
+    payload.push_back('\0');
+}
+
+std::vector<uint8_t> buildPgFrontendMessage(uint8_t type, const std::vector<uint8_t>& payload) {
+    std::vector<uint8_t> packet;
+    packet.reserve(1 + 4 + payload.size());
+    packet.push_back(type);
+    writePgInt32(packet, static_cast<uint32_t>(4 + payload.size()));
+    packet.insert(packet.end(), payload.begin(), payload.end());
+    return packet;
+}
+
+std::vector<char> extractPgBackendMessageTypes(const std::vector<uint8_t>& stream) {
+    std::vector<char> types;
+    size_t offset = 0;
+    while (offset + 5 <= stream.size()) {
+        char msg_type = static_cast<char>(stream[offset]);
+        uint32_t msg_len =
+            (static_cast<uint32_t>(stream[offset + 1]) << 24) |
+            (static_cast<uint32_t>(stream[offset + 2]) << 16) |
+            (static_cast<uint32_t>(stream[offset + 3]) << 8) |
+            static_cast<uint32_t>(stream[offset + 4]);
+        if (msg_len < 4) {
+            break;
+        }
+        const size_t frame_len = 1 + static_cast<size_t>(msg_len);
+        if (offset + frame_len > stream.size()) {
+            break;
+        }
+        types.push_back(msg_type);
+        offset += frame_len;
+    }
+    return types;
+}
+
+bool pgContainsMessageType(const std::vector<char>& types, char expected) {
+    return std::find(types.begin(), types.end(), expected) != types.end();
+}
+
+core::Status sendPgFrontendPacket(AdapterHarness<PostgresqlAdapter>& adapter,
+                                  network::Connection* conn,
+                                  uint8_t type,
+                                  const std::vector<uint8_t>& payload) {
+    auto packet = buildPgFrontendMessage(type, payload);
+    auto& read_buffer = conn->getReadBuffer();
+    read_buffer.insert(read_buffer.end(), packet.begin(), packet.end());
+    auto parse_status = adapter.parseIncomingPacket(conn);
+    if (parse_status != core::Status::OK) {
+        return parse_status;
+    }
+    return adapter.processIncomingPacket(conn);
+}
+
+std::vector<uint8_t> buildPgParsePayload(const std::string& statement_name,
+                                         const std::string& query) {
+    std::vector<uint8_t> payload;
+    writePgCString(payload, statement_name);
+    writePgCString(payload, query);
+    writePgInt16(payload, 0);  // num_params
+    return payload;
+}
+
+std::vector<uint8_t> buildPgBindPayload(const std::string& portal_name,
+                                        const std::string& statement_name) {
+    std::vector<uint8_t> payload;
+    writePgCString(payload, portal_name);
+    writePgCString(payload, statement_name);
+    writePgInt16(payload, 0);  // num_format_codes
+    writePgInt16(payload, 0);  // num_params
+    writePgInt16(payload, 0);  // num_result_formats
+    return payload;
+}
+
+std::vector<uint8_t> buildPgExecutePayload(const std::string& portal_name, uint32_t max_rows) {
+    std::vector<uint8_t> payload;
+    writePgCString(payload, portal_name);
+    writePgInt32(payload, max_rows);
+    return payload;
 }
 } // namespace
 
@@ -388,6 +508,123 @@ TEST(ProtocolAdapterDialectsC1, PostgreSQLServerParameterCustom) {
     EXPECT_EQ(params.at("custom_param"), "custom_value");
 }
 
+TEST(ProtocolAdapterDialectsC1, PostgreSQLExtendedParseBindSyncFlow) {
+    cleanupDb("test_pg_extended_parse_bind_sync.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_pg_extended_parse_bind_sync.sbdb").string();
+
+    AdapterHarness<PostgresqlAdapter> adapter(cfg);
+    network::Connection conn(nullptr, 108);
+    ASSERT_EQ(adapter.forceAuthSuccess(&conn), core::Status::OK);
+    conn.clearWriteBuffer();
+
+    ASSERT_EQ(sendPgFrontendPacket(
+                  adapter,
+                  &conn,
+                  static_cast<uint8_t>(pg::FrontendMsg::PARSE),
+                  buildPgParsePayload("stmt_sync", "SELECT 1")),
+              core::Status::OK);
+    ASSERT_EQ(sendPgFrontendPacket(
+                  adapter,
+                  &conn,
+                  static_cast<uint8_t>(pg::FrontendMsg::BIND),
+                  buildPgBindPayload("portal_sync", "stmt_sync")),
+              core::Status::OK);
+    ASSERT_EQ(sendPgFrontendPacket(
+                  adapter,
+                  &conn,
+                  static_cast<uint8_t>(pg::FrontendMsg::SYNC),
+                  {}),
+              core::Status::OK);
+
+    const auto message_types = extractPgBackendMessageTypes(conn.getWriteBuffer());
+    ASSERT_EQ(message_types.size(), 3u);
+    EXPECT_EQ(message_types[0], pg::BackendMsg::PARSE_COMPLETE);
+    EXPECT_EQ(message_types[1], pg::BackendMsg::BIND_COMPLETE);
+    EXPECT_EQ(message_types[2], pg::BackendMsg::READY_FOR_QUERY);
+}
+
+TEST(ProtocolAdapterDialectsC1, PostgreSQLExtendedExecuteMissingPortalReportsErrorOnSync) {
+    cleanupDb("test_pg_extended_missing_portal.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_pg_extended_missing_portal.sbdb").string();
+
+    AdapterHarness<PostgresqlAdapter> adapter(cfg);
+    network::Connection conn(nullptr, 109);
+    ASSERT_EQ(adapter.forceAuthSuccess(&conn), core::Status::OK);
+    conn.clearWriteBuffer();
+
+    EXPECT_EQ(sendPgFrontendPacket(
+                  adapter,
+                  &conn,
+                  static_cast<uint8_t>(pg::FrontendMsg::EXECUTE),
+                  buildPgExecutePayload("missing_portal", 0)),
+              core::Status::NOT_FOUND);
+    auto pre_sync_types = extractPgBackendMessageTypes(conn.getWriteBuffer());
+    ASSERT_EQ(pre_sync_types.size(), 1u);
+    EXPECT_EQ(pre_sync_types[0], pg::BackendMsg::ERROR_RESPONSE);
+
+    ASSERT_EQ(sendPgFrontendPacket(
+                  adapter,
+                  &conn,
+                  static_cast<uint8_t>(pg::FrontendMsg::SYNC),
+                  {}),
+              core::Status::OK);
+
+    const auto message_types = extractPgBackendMessageTypes(conn.getWriteBuffer());
+    ASSERT_EQ(message_types.size(), 2u);
+    EXPECT_EQ(message_types[0], pg::BackendMsg::ERROR_RESPONSE);
+    EXPECT_EQ(message_types[1], pg::BackendMsg::READY_FOR_QUERY);
+}
+
+TEST(ProtocolAdapterDialectsC1, PostgreSQLExtendedExecutePathEmitsErrorAndReady) {
+    cleanupDb("test_pg_extended_execute_path.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_pg_extended_execute_path.sbdb").string();
+
+    AdapterHarness<PostgresqlAdapter> adapter(cfg);
+    network::Connection conn(nullptr, 110);
+    ASSERT_EQ(adapter.forceAuthSuccess(&conn), core::Status::OK);
+    conn.clearWriteBuffer();
+
+    ASSERT_EQ(sendPgFrontendPacket(
+                  adapter,
+                  &conn,
+                  static_cast<uint8_t>(pg::FrontendMsg::PARSE),
+                  buildPgParsePayload("stmt_exec", "SELECT 1")),
+              core::Status::OK);
+    ASSERT_EQ(sendPgFrontendPacket(
+                  adapter,
+                  &conn,
+                  static_cast<uint8_t>(pg::FrontendMsg::BIND),
+                  buildPgBindPayload("portal_exec", "stmt_exec")),
+              core::Status::OK);
+    ASSERT_EQ(sendPgFrontendPacket(
+                  adapter,
+                  &conn,
+                  static_cast<uint8_t>(pg::FrontendMsg::EXECUTE),
+                  buildPgExecutePayload("portal_exec", 0)),
+              core::Status::OK);
+
+    // Execute queues response data; sync flushes ERROR/Ready in one frame.
+    ASSERT_EQ(sendPgFrontendPacket(
+                  adapter,
+                  &conn,
+                  static_cast<uint8_t>(pg::FrontendMsg::SYNC),
+                  {}),
+              core::Status::OK);
+
+    const auto message_types = extractPgBackendMessageTypes(conn.getWriteBuffer());
+    EXPECT_GE(message_types.size(), 4u);
+    EXPECT_EQ(message_types[0], pg::BackendMsg::PARSE_COMPLETE);
+    EXPECT_EQ(message_types[1], pg::BackendMsg::BIND_COMPLETE);
+    EXPECT_TRUE(pgContainsMessageType(message_types, pg::BackendMsg::ERROR_RESPONSE));
+    EXPECT_EQ(message_types.back(), pg::BackendMsg::READY_FOR_QUERY);
+}
+
 // ============================================================================
 // C3: MySQL Protocol Adapter Parity Tests
 // ============================================================================
@@ -401,8 +638,8 @@ TEST(ProtocolAdapterDialectsC3, MySQLServerVersionFormat) {
 
     MySqlAdapter adapter(cfg);
     
-    // Default should be MySQL 8.0 native version format
-    EXPECT_TRUE(adapter.getServerVersion().find("8.0") != std::string::npos);
+    // Default should track the MySQL 8.4 LTS baseline string format.
+    EXPECT_TRUE(adapter.getServerVersion().find("8.4") != std::string::npos);
     EXPECT_FALSE(adapter.getServerVersion().empty());
 }
 
@@ -607,6 +844,76 @@ TEST(ProtocolAdapterDialectsC3, MySQLComChangeUserRejectsBoundDatabaseSwitch) {
     EXPECT_NE(message.find("Database switch denied"), std::string::npos);
 }
 
+TEST(ProtocolAdapterDialectsC3, MySQLComStmtPrepareReturnsPrepareOkPacket) {
+    cleanupDb("test_mysql_stmt_prepare_ok.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_mysql_stmt_prepare_ok.sbdb").string();
+
+    AdapterHarness<MySqlAdapter> adapter(cfg);
+    network::Connection conn(nullptr, 111);
+
+    ASSERT_EQ(adapter.forceAuthSuccess(&conn), core::Status::OK);
+    conn.clearWriteBuffer();
+
+    std::vector<uint8_t> payload;
+    payload.push_back(mysql::Command::COM_STMT_PREPARE);
+    const std::string sql = "SELECT 1";
+    payload.insert(payload.end(), sql.begin(), sql.end());
+
+    const auto packet = buildMySqlWirePacket(payload, 0);
+    auto& read_buffer = conn.getReadBuffer();
+    read_buffer.insert(read_buffer.end(), packet.begin(), packet.end());
+
+    ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+    ASSERT_EQ(adapter.processIncomingPacket(&conn), core::Status::OK);
+
+    const auto response_payload = extractMySqlPayload(conn.getWriteBuffer());
+    ASSERT_GE(response_payload.size(), 12u);
+    EXPECT_EQ(response_payload[0], mysql::OK_PACKET);
+
+    const uint32_t stmt_id =
+        static_cast<uint32_t>(response_payload[1]) |
+        (static_cast<uint32_t>(response_payload[2]) << 8) |
+        (static_cast<uint32_t>(response_payload[3]) << 16) |
+        (static_cast<uint32_t>(response_payload[4]) << 24);
+    EXPECT_GT(stmt_id, 0u);
+}
+
+TEST(ProtocolAdapterDialectsC3, MySQLComStmtExecuteUnknownStatementReturnsError) {
+    cleanupDb("test_mysql_stmt_execute_unknown.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_mysql_stmt_execute_unknown.sbdb").string();
+
+    AdapterHarness<MySqlAdapter> adapter(cfg);
+    adapter.setClientCapabilitiesForTest(mysql::Capability::PROTOCOL_41);
+    network::Connection conn(nullptr, 112);
+
+    ASSERT_EQ(adapter.forceAuthSuccess(&conn), core::Status::OK);
+    conn.clearWriteBuffer();
+
+    std::vector<uint8_t> payload;
+    payload.push_back(mysql::Command::COM_STMT_EXECUTE);
+    payload.push_back(0xEF);
+    payload.push_back(0xBE);
+    payload.push_back(0xAD);
+    payload.push_back(0xDE);
+
+    const auto packet = buildMySqlWirePacket(payload, 0);
+    auto& read_buffer = conn.getReadBuffer();
+    read_buffer.insert(read_buffer.end(), packet.begin(), packet.end());
+
+    ASSERT_EQ(adapter.parseIncomingPacket(&conn), core::Status::OK);
+    ASSERT_EQ(adapter.processIncomingPacket(&conn), core::Status::OK);
+
+    const auto response_payload = extractMySqlPayload(conn.getWriteBuffer());
+    ASSERT_GE(response_payload.size(), 9u);
+    EXPECT_EQ(response_payload[0], mysql::ERR_PACKET);
+    EXPECT_EQ(readMySqlErrorCode(response_payload), mysql::ErrorCode::UNKNOWN_ERROR);
+    EXPECT_EQ(readMySqlSqlState(response_payload), "HY000");
+}
+
 TEST(ProtocolAdapterDialectsC3, MySQLGreetingPacketHeaderHasValidPayloadLength) {
     cleanupDb("test_mysql_greeting_packet_header.sbdb");
 
@@ -626,4 +933,100 @@ TEST(ProtocolAdapterDialectsC3, MySQLGreetingPacketHeaderHasValidPayloadLength) 
         (static_cast<size_t>(wire_packet[2]) << 16);
     EXPECT_GT(payload_size, 0u);
     EXPECT_EQ(wire_packet.size(), payload_size + 4u);
+}
+
+TEST(ProtocolAdapterDialectsC3, MySQLErrorMappingUndefinedColumnUses42S22) {
+    cleanupDb("test_mysql_error_mapping_undefined_column.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_mysql_error_mapping_undefined_column.sbdb").string();
+
+    AdapterHarness<MySqlAdapter> adapter(cfg);
+    adapter.setClientCapabilitiesForTest(mysql::Capability::PROTOCOL_41);
+    network::Connection conn(nullptr, 104);
+
+    ASSERT_EQ(adapter.sendProtocolErrorForTest(
+                  &conn,
+                  static_cast<uint32_t>(core::Status::UNDEFINED_COLUMN),
+                  "",
+                  "Unknown column"),
+              core::Status::OK);
+
+    const auto payload = extractMySqlPayload(conn.getWriteBuffer());
+    ASSERT_GE(payload.size(), 9u);
+    EXPECT_EQ(payload[0], mysql::ERR_PACKET);
+    EXPECT_EQ(readMySqlErrorCode(payload), mysql::ErrorCode::BAD_FIELD_ERROR);
+    EXPECT_EQ(readMySqlSqlState(payload), "42S22");
+}
+
+TEST(ProtocolAdapterDialectsC3, MySQLErrorMappingInvalidAuthorizationUses28000) {
+    cleanupDb("test_mysql_error_mapping_invalid_auth.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_mysql_error_mapping_invalid_auth.sbdb").string();
+
+    AdapterHarness<MySqlAdapter> adapter(cfg);
+    adapter.setClientCapabilitiesForTest(mysql::Capability::PROTOCOL_41);
+    network::Connection conn(nullptr, 105);
+
+    ASSERT_EQ(adapter.sendProtocolErrorForTest(
+                  &conn,
+                  static_cast<uint32_t>(core::Status::INVALID_AUTHORIZATION),
+                  "",
+                  "Access denied"),
+              core::Status::OK);
+
+    const auto payload = extractMySqlPayload(conn.getWriteBuffer());
+    ASSERT_GE(payload.size(), 9u);
+    EXPECT_EQ(payload[0], mysql::ERR_PACKET);
+    EXPECT_EQ(readMySqlErrorCode(payload), mysql::ErrorCode::ACCESS_DENIED);
+    EXPECT_EQ(readMySqlSqlState(payload), "28000");
+}
+
+TEST(ProtocolAdapterDialectsC3, MySQLErrorMappingQueryCanceledUses70100) {
+    cleanupDb("test_mysql_error_mapping_query_canceled.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_mysql_error_mapping_query_canceled.sbdb").string();
+
+    AdapterHarness<MySqlAdapter> adapter(cfg);
+    adapter.setClientCapabilitiesForTest(mysql::Capability::PROTOCOL_41);
+    network::Connection conn(nullptr, 106);
+
+    ASSERT_EQ(adapter.sendProtocolErrorForTest(
+                  &conn,
+                  static_cast<uint32_t>(core::Status::QUERY_CANCELED),
+                  "",
+                  "Query execution was interrupted"),
+              core::Status::OK);
+
+    const auto payload = extractMySqlPayload(conn.getWriteBuffer());
+    ASSERT_GE(payload.size(), 9u);
+    EXPECT_EQ(payload[0], mysql::ERR_PACKET);
+    EXPECT_EQ(readMySqlErrorCode(payload), 1317);
+    EXPECT_EQ(readMySqlSqlState(payload), "70100");
+}
+
+TEST(ProtocolAdapterDialectsC3, MySQLErrorMappingOutOfRangeUses22003) {
+    cleanupDb("test_mysql_error_mapping_out_of_range.sbdb");
+
+    ProtocolAdapterConfig cfg;
+    cfg.database_path = dbPath("test_mysql_error_mapping_out_of_range.sbdb").string();
+
+    AdapterHarness<MySqlAdapter> adapter(cfg);
+    adapter.setClientCapabilitiesForTest(mysql::Capability::PROTOCOL_41);
+    network::Connection conn(nullptr, 107);
+
+    ASSERT_EQ(adapter.sendProtocolErrorForTest(
+                  &conn,
+                  static_cast<uint32_t>(core::Status::OUT_OF_RANGE),
+                  "",
+                  "Out of range value"),
+              core::Status::OK);
+
+    const auto payload = extractMySqlPayload(conn.getWriteBuffer());
+    ASSERT_GE(payload.size(), 9u);
+    EXPECT_EQ(payload[0], mysql::ERR_PACKET);
+    EXPECT_EQ(readMySqlErrorCode(payload), 1264);
+    EXPECT_EQ(readMySqlSqlState(payload), "22003");
 }

@@ -4,7 +4,7 @@ Last updated: 2026-02-24
 
 - Mode: `execute`
 - Overall result: `pass`
-- Command timeout: `300s`
+- Command timeout: `1200s`
 
 ## Command Results
 
