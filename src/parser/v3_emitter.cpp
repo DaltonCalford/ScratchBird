@@ -210,10 +210,10 @@ uint8_t mapJoinType(parser::JoinType type) {
         case parser::JoinType::RIGHT: return 3;
         case parser::JoinType::FULL: return 4;
         case parser::JoinType::CROSS: return 5;
-        case parser::JoinType::NATURAL: return 1;
-        case parser::JoinType::NATURAL_LEFT: return 2;
-        case parser::JoinType::NATURAL_RIGHT: return 3;
-        case parser::JoinType::NATURAL_FULL: return 4;
+        case parser::JoinType::NATURAL: return 6;
+        case parser::JoinType::NATURAL_LEFT: return 7;
+        case parser::JoinType::NATURAL_RIGHT: return 8;
+        case parser::JoinType::NATURAL_FULL: return 9;
     }
     return 1;
 }

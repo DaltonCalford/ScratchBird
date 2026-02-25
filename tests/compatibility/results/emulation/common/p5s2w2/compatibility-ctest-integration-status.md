@@ -16,7 +16,7 @@ Last updated: 2026-02-25
 
 ## Current Execution Result
 - `ctest --test-dir build -R '^Compatibility(Firebird|MySQL|PostgreSQL)$' --output-on-failure`
-  - `CompatibilityFirebird`: passed (`5.18 sec`)
+  - `CompatibilityFirebird`: passed (`~6.5 sec`)
   - `CompatibilityMySQL`: skipped (`SKIP_RETURN_CODE=77`, endpoint/auth precheck)
   - `CompatibilityPostgreSQL`: skipped (`SKIP_RETURN_CODE=77`, endpoint/auth precheck)
 - `ctest --test-dir build -R '^CompatibilityEmulationEvidence$' --output-on-failure`
@@ -35,10 +35,9 @@ Last updated: 2026-02-25
   - `sb_my_isql`: buildable
   - `sb_pg_isql`: buildable
   - `sb_fb_isql`: buildable after engine/static-link closure in driver CMake
-  - Forcing `sb_fb_isql` in curated Firebird compatibility currently exposes parser gap:
-    - `functional/dml/join_02.sql` -> `Error: V3 SELECT join missing ON/USING condition`
+  - Curated Firebird compatibility passes with `sb_fb_isql` (including `functional/dml/join_02.sql` NATURAL JOIN case).
 
 ## Status
 - CTest integration is implemented and discoverable in full test enumeration.
-- Firebird lane is executable via Firebird-protocol clients; runner currently prefers native `isql-fb` for stable upstream parity unless `SCRATCHBIRD_FB_ISQL` is explicitly set.
+- Firebird lane is executable via Firebird-protocol clients; runner now prefers `sb_fb_isql` and falls back to native `isql-fb` when needed.
 - Full MySQL/PostgreSQL lane closure requires endpoint/auth profiles that match the wrappers' supported auth negotiation paths.

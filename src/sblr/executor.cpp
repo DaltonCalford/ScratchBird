@@ -40257,6 +40257,83 @@ namespace scratchbird
                 return false;
             };
 
+            auto decodeJoinType = [&](const scratchbird::sblr::v3::Value::Object& obj,
+                                      parser::JoinType& out) -> bool {
+                uint64_t encoded_type = 1;
+                getU64(obj, "type", encoded_type);
+                uint64_t type_encoding = 1;  // default to legacy one-based payload encoding
+                getU64(obj, "type_encoding", type_encoding);
+
+                auto decodeLegacyJoinType = [](uint64_t raw, parser::JoinType& decoded) -> bool {
+                    switch (raw)
+                    {
+                        case 1: decoded = parser::JoinType::INNER; return true;
+                        case 2: decoded = parser::JoinType::LEFT; return true;
+                        case 3: decoded = parser::JoinType::RIGHT; return true;
+                        case 4: decoded = parser::JoinType::FULL; return true;
+                        case 5: decoded = parser::JoinType::CROSS; return true;
+                        case 6: decoded = parser::JoinType::NATURAL; return true;
+                        case 7: decoded = parser::JoinType::NATURAL_LEFT; return true;
+                        case 8: decoded = parser::JoinType::NATURAL_RIGHT; return true;
+                        case 9: decoded = parser::JoinType::NATURAL_FULL; return true;
+                        default: return false;
+                    }
+                };
+
+                auto decodeCanonicalJoinType = [](uint64_t raw, parser::JoinType& decoded) -> bool {
+                    if (raw > static_cast<uint64_t>(parser::JoinType::NATURAL_FULL))
+                    {
+                        return false;
+                    }
+                    decoded = static_cast<parser::JoinType>(raw);
+                    return true;
+                };
+
+                bool decoded = false;
+                if (type_encoding == 0)
+                {
+                    decoded = decodeCanonicalJoinType(encoded_type, out);
+                }
+                else if (type_encoding == 1)
+                {
+                    decoded = decodeLegacyJoinType(encoded_type, out);
+                }
+                else
+                {
+                    return false;
+                }
+
+                if (!decoded)
+                {
+                    return false;
+                }
+
+                bool natural_hint = false;
+                getBool(obj, "natural", natural_hint);
+                if (natural_hint)
+                {
+                    switch (out)
+                    {
+                        case parser::JoinType::INNER:
+                            out = parser::JoinType::NATURAL;
+                            break;
+                        case parser::JoinType::LEFT:
+                            out = parser::JoinType::NATURAL_LEFT;
+                            break;
+                        case parser::JoinType::RIGHT:
+                            out = parser::JoinType::NATURAL_RIGHT;
+                            break;
+                        case parser::JoinType::FULL:
+                            out = parser::JoinType::NATURAL_FULL;
+                            break;
+                        default:
+                            return false;
+                    }
+                }
+
+                return true;
+            };
+
             auto getString = [&](const scratchbird::sblr::v3::Value::Object& obj,
                                  const std::string& key,
                                  std::string& out) -> bool {
@@ -52771,9 +52848,11 @@ namespace scratchbird
                                 {
                                     return ExecutionResult("V3 SELECT join entry invalid");
                                 }
-                                uint64_t type_val = 1;
-                                getU64(*obj, "type", type_val);
-                                parser::JoinType join_type = static_cast<parser::JoinType>(type_val);
+                                parser::JoinType join_type = parser::JoinType::INNER;
+                                if (!decodeJoinType(*obj, join_type))
+                                {
+                                    return ExecutionResult("V3 SELECT join type invalid");
+                                }
                                 bool natural_join = false;
                                 if (join_type == parser::JoinType::NATURAL)
                                 {
@@ -56223,9 +56302,11 @@ namespace scratchbird
                                     {
                                         return ExecutionResult("V3 UPDATE join entry invalid");
                                     }
-                                    uint64_t type_val = 1;
-                                    getU64(*obj, "type", type_val);
-                                    parser::JoinType join_type = static_cast<parser::JoinType>(type_val);
+                                    parser::JoinType join_type = parser::JoinType::INNER;
+                                    if (!decodeJoinType(*obj, join_type))
+                                    {
+                                        return ExecutionResult("V3 UPDATE join type invalid");
+                                    }
                                     bool natural_join = false;
                                     if (join_type == parser::JoinType::NATURAL)
                                     {
@@ -57278,9 +57359,11 @@ namespace scratchbird
                                     {
                                         return ExecutionResult("V3 DELETE join entry invalid");
                                     }
-                                    uint64_t type_val = 1;
-                                    getU64(*obj, "type", type_val);
-                                    parser::JoinType join_type = static_cast<parser::JoinType>(type_val);
+                                    parser::JoinType join_type = parser::JoinType::INNER;
+                                    if (!decodeJoinType(*obj, join_type))
+                                    {
+                                        return ExecutionResult("V3 DELETE join type invalid");
+                                    }
                                     bool natural_join = false;
                                     if (join_type == parser::JoinType::NATURAL)
                                     {
