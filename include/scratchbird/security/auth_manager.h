@@ -36,6 +36,7 @@
 #include "scratchbird/core/status.h"
 #include "scratchbird/core/error_context.h"
 #include "scratchbird/security/auth_method.h"
+#include "scratchbird/security/auth_plugin_manager.h"
 
 namespace scratchbird {
 namespace security {
@@ -436,6 +437,13 @@ struct AuthManagerConfig {
     // Default authentication
     AuthType default_auth_type = AuthType::SCRAM_SHA_256;
 
+    // Plugin registry (primary auth dispatch path)
+    bool auth_plugin_registry_enabled = true;
+    bool allow_legacy_auth_fallback = true;
+    std::string auth_plugin_truststore_path = AuthPluginManager::defaultTrustStorePath();
+    std::string auth_plugin_policy_path = AuthPluginManager::defaultPolicyPath();
+    std::string auth_plugin_root;
+
     // Allow superuser remote login
     bool allow_superuser_remote = false;
 };
@@ -568,6 +576,7 @@ public:
      * Get configuration
      */
     const AuthManagerConfig& config() const { return config_; }
+    const AuthPluginManager* authPluginManager() const { return auth_plugin_manager_.get(); }
 
     // ========================================================================
     // Statistics
@@ -597,6 +606,7 @@ private:
     std::unique_ptr<RateLimiter> rate_limiter_;
     std::shared_ptr<CredentialStore> credential_store_;
     std::shared_ptr<AuditLogger> audit_logger_;
+    std::unique_ptr<AuthPluginManager> auth_plugin_manager_;
 
     // Auth methods by type
     std::map<AuthType, std::unique_ptr<AuthMethod>> auth_methods_;

@@ -354,7 +354,7 @@ endif()
 
 # Thread support for auth state management
 find_package(Threads REQUIRED)
-target_link_libraries(scratchbird_security PUBLIC Threads::Threads)
+target_link_libraries(scratchbird_security PUBLIC Threads::Threads nlohmann_json::nlohmann_json)
 if(WIN32)
     target_link_libraries(scratchbird_security PUBLIC ws2_32)
 endif()

@@ -811,6 +811,42 @@ core::Status AuthManager::initialize(const AuthManagerConfig& config,
         audit_logger_ = std::make_shared<FileAuditLogger>(config_.audit_log_file);
     }
 
+    // Plugin registry is the primary path. Legacy fallback remains explicit
+    // until full plugin execution parity is complete.
+    if (config_.auth_plugin_registry_enabled) {
+        auth_plugin_manager_ = std::make_unique<AuthPluginManager>();
+        AuthPluginManagerConfig plugin_config = AuthPluginManagerConfig::defaults();
+        plugin_config.truststore_path = config_.auth_plugin_truststore_path;
+        plugin_config.policy_path = config_.auth_plugin_policy_path;
+        plugin_config.plugin_root = config_.auth_plugin_root;
+        plugin_config.fail_on_unlisted_plugins = true;
+
+        auto plugin_status = auth_plugin_manager_->initialize(plugin_config, ctx);
+        if (plugin_status != core::Status::OK) {
+            if (ctx && ctx->message.empty()) {
+                ctx->message = "AuthPluginManager initialization failed";
+            }
+            return plugin_status;
+        }
+
+        const auto& missing_required = auth_plugin_manager_->missingRequiredPlugins();
+        if (!missing_required.empty()) {
+            // required plugin gate (AUTH_PLUGIN startup fatal)
+            if (ctx) {
+                std::ostringstream oss;
+                oss << "AuthManager startup rejected: required plugin set missing: ";
+                for (std::size_t i = 0; i < missing_required.size(); ++i) {
+                    if (i > 0) {
+                        oss << ", ";
+                    }
+                    oss << missing_required[i];
+                }
+                ctx->message = oss.str();
+            }
+            return core::Status::NOT_FOUND;
+        }
+    }
+
     // Create default auth methods
     auth_methods_[AuthType::TRUST] = std::make_unique<TrustAuthMethod>();
     auth_methods_[AuthType::REJECT] = std::make_unique<RejectAuthMethod>();
@@ -849,6 +885,10 @@ void AuthManager::shutdown() {
     std::lock_guard<std::mutex> lock(active_auths_mutex_);
     active_auths_.clear();
     auth_methods_.clear();
+    if (auth_plugin_manager_) {
+        auth_plugin_manager_->shutdown();
+        auth_plugin_manager_.reset();
+    }
 }
 
 void AuthManager::setCredentialStore(std::shared_ptr<CredentialStore> store) {
@@ -915,14 +955,46 @@ AuthResult AuthManager::startAuthentication(AuthContext& ctx) {
     AuthType auth_type = rule ? rule->auth_type : config_.default_auth_type;
     ctx.setAuthType(auth_type);
 
-    // Get auth method
-    auto it = auth_methods_.find(auth_type);
-    if (it == auth_methods_.end()) {
-        return AuthResult::failure(AuthFailReason::INTERNAL_ERROR,
-                                   "Authentication method not implemented");
+    AuthMethod* method = nullptr;
+    bool using_legacy_fallback = false;
+
+    // Plugin registry dispatch is primary; legacy fallback is explicit.
+    if (config_.auth_plugin_registry_enabled && auth_plugin_manager_) {
+        std::string method_id;
+        if (auth_plugin_manager_->resolveMethodIdForAuthType(auth_type, method_id) &&
+            auth_plugin_manager_->isMethodAvailable(method_id)) {
+            auto it = auth_methods_.find(auth_type);
+            if (it != auth_methods_.end()) {
+                method = it->second.get();
+            } else {
+                return AuthResult::failure(AuthFailReason::INTERNAL_ERROR,
+                                           "AUTH_PLUGIN_LOAD_FAILED: plugin method dispatch backend missing");
+            }
+            ctx.setSessionProperty("auth.plugin_registry", "enabled");
+            ctx.setSessionProperty("auth.plugin_method_id", method_id);
+        } else if (config_.allow_legacy_auth_fallback) {
+            using_legacy_fallback = true;
+            ctx.setSessionProperty("auth.plugin_registry", "legacy_fallback");
+        } else {
+            return AuthResult::failure(
+                AuthFailReason::NOT_ALLOWED,
+                "AUTH_PLUGIN_POLICY_DENIED: requested method is unavailable in plugin registry");
+        }
+    } else {
+        using_legacy_fallback = true;
     }
 
-    AuthMethod* method = it->second.get();
+    if (!method) {
+        auto it = auth_methods_.find(auth_type);
+        if (it == auth_methods_.end()) {
+            return AuthResult::failure(AuthFailReason::INTERNAL_ERROR,
+                                       "Authentication method not implemented");
+        }
+        method = it->second.get();
+    }
+    if (using_legacy_fallback) {
+        ctx.setSessionProperty("auth.legacy_fallback", "true");
+    }
 
     // Check if method is suitable for this connection
     if (!method->isSuitable(conn)) {
@@ -958,6 +1030,17 @@ AuthResult AuthManager::startAuthentication(AuthContext& ctx) {
 AuthResult AuthManager::continueAuthentication(AuthContext& ctx,
                                                 const std::vector<uint8_t>& data)
 {
+    if (config_.auth_plugin_registry_enabled && auth_plugin_manager_ &&
+        !config_.allow_legacy_auth_fallback) {
+        std::string method_id;
+        if (auth_plugin_manager_->resolveMethodIdForAuthType(ctx.authType(), method_id) &&
+            !auth_plugin_manager_->isMethodAvailable(method_id)) {
+            return AuthResult::failure(
+                AuthFailReason::NOT_ALLOWED,
+                "AUTH_PLUGIN_POLICY_DENIED: auth method unavailable during continuation");
+        }
+    }
+
     auto it = auth_methods_.find(ctx.authType());
     if (it == auth_methods_.end()) {
         return AuthResult::failure(AuthFailReason::INTERNAL_ERROR,

@@ -41,24 +41,24 @@ ports_per_thread:30
                   TEST NAME                       RESULT  TIME (ms) COMMENT
 ------------------------------------------------------------------------------
 [  6%] main.select_distinct_debug                [ skipped ]  Test needs debug binaries.
-[ 13%] main.select_count                         [ pass ]   1248
-[ 20%] main.select_for_update                    [ pass ]   3843
-[ 26%] main.select_all                           [ pass ]  52512
-[ 33%] main.select_all_bka                       [ pass ]  65003
-[ 40%] main.select_all_bka_nobnl                 [ pass ]  65072
-[ 46%] main.select_found                         [ pass ]   3701
-[ 53%] main.select_icp_mrr                       [ pass ]  47195
-[ 60%] main.select_icp_mrr_bka                   [ pass ]  44321
-[ 66%] main.select_icp_mrr_bka_nobnl             [ pass ]  43780
-[ 73%] main.select_none                          [ pass ]  43486
-[ 80%] main.select_none_bka                      [ pass ]  31050
-[ 86%] main.select_none_bka_nobnl                [ pass ]  43752
-[ 93%] main.select_safe                          [ pass ]   1148
+[ 13%] main.select_count                         [ pass ]   1433
+[ 20%] main.select_for_update                    [ pass ]  10853
+[ 26%] main.select_all                           [ pass ]  66920
+[ 33%] main.select_all_bka                       [ pass ]  69028
+[ 40%] main.select_all_bka_nobnl                 [ pass ]  54291
+[ 46%] main.select_found                         [ pass ]   3542
+[ 53%] main.select_icp_mrr                       [ pass ]  46892
+[ 60%] main.select_icp_mrr_bka                   [ pass ]  43280
+[ 66%] main.select_icp_mrr_bka_nobnl             [ pass ]  43314
+[ 73%] main.select_none                          [ pass ]  43490
+[ 80%] main.select_none_bka                      [ pass ]  43208
+[ 86%] main.select_none_bka_nobnl                [ pass ]  43721
+[ 93%] main.select_safe                          [ pass ]   1066
 [100%] shutdown_report                           [ pass ]       
 ------------------------------------------------------------------------------
 The servers were restarted 2 times
 The servers were reinitialized 0 times
-Spent 446.111 of 473 seconds executing testcases
+Spent 471.038 of 503 seconds executing testcases
 
 Completed: All 14 tests were successful.
 

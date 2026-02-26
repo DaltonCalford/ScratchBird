@@ -1,0 +1,22 @@
+{
+  "keys": [
+    {
+      "kid": "sb-release-kid-2026",
+      "kty": "OKP",
+      "crv": "Ed25519",
+      "use": "sig",
+      "alg": "EdDSA",
+      "x": "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      "active": true
+    },
+    {
+      "kid": "sb-security-kid-2026",
+      "kty": "OKP",
+      "crv": "Ed25519",
+      "use": "sig",
+      "alg": "EdDSA",
+      "x": "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+      "active": true
+    }
+  ]
+}
