@@ -18,6 +18,7 @@
 
 namespace scratchbird::core
 {
+    class TimeSource;
 
     struct UuidV7Bytes
     {
@@ -55,7 +56,8 @@ namespace scratchbird::core
     };
 
     // Generate RFC 9562 UUID v7 bytes (time-ordered). Implementation in core.
-    auto generateUuidV7() -> UuidV7Bytes;
+    // If time_source is null, the platform time source is used.
+    auto generateUuidV7(const TimeSource* time_source = nullptr) -> UuidV7Bytes;
 
 } // namespace scratchbird::core
 

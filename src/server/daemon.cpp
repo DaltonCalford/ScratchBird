@@ -14,6 +14,7 @@
  */
 
 #include "scratchbird/server/daemon.h"
+#include "scratchbird/core/storage_lock_provider.h"
 
 #include <fstream>
 #include <sstream>
@@ -34,7 +35,6 @@
 #include "scratchbird/core/posix_compat.h"
 #include <sys/types.h>
 #include <sys/stat.h>
-#include <sys/file.h>
 #include <sys/wait.h>
 #include <signal.h>
 #include <fcntl.h>
@@ -159,8 +159,11 @@ core::Status PIDFile::create(const std::string& path, bool create_dir,
     }
 
     // Try to acquire exclusive lock
-    if (flock(fd_, LOCK_EX | LOCK_NB) < 0) {
-        if (errno == EWOULDBLOCK) {
+    int lock_errno = 0;
+    const core::StorageLockResult lock_result =
+        core::getStorageLockProvider().tryLockExclusive(fd_, &lock_errno);
+    if (lock_result != core::StorageLockResult::LOCKED) {
+        if (lock_result == core::StorageLockResult::LOCK_CONFLICT) {
             // Already locked - read existing PID
             char buf[32];
             ssize_t n = ::read(fd_, buf, sizeof(buf) - 1);
@@ -181,7 +184,8 @@ core::Status PIDFile::create(const std::string& path, bool create_dir,
         }
 
         if (ctx) {
-            std::string msg = "Failed to lock PID file: " + std::string(strerror(errno));
+            std::string msg = "Failed to lock PID file: " +
+                              std::string(strerror(lock_errno != 0 ? lock_errno : errno));
             SET_ERROR_CONTEXT(ctx, core::Status::IO_ERROR, msg.c_str());
         }
         close(fd_);
@@ -219,7 +223,8 @@ core::Status PIDFile::create(const std::string& path, bool create_dir,
 void PIDFile::remove() {
 #ifndef _WIN32
     if (fd_ >= 0) {
-        flock(fd_, LOCK_UN);
+        int lock_errno = 0;
+        (void)core::getStorageLockProvider().unlock(fd_, &lock_errno);
         close(fd_);
         fd_ = -1;
     }

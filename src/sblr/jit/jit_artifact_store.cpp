@@ -118,59 +118,129 @@ namespace scratchbird::sblr::jit
             return out;
         }
 
-        JitReasonCode last_reason = JitReasonCode::ARTIFACT_NOT_FOUND;
-        std::string last_detail = "artifact not found";
-
+        std::vector<const core::CatalogManager::SblrArtifactCatalogInfo*> candidates;
+        candidates.reserve(rows.size());
         for (const auto& row : rows)
         {
-            if (row.object_uuid != key.object_uuid)
+            if (row.object_uuid == key.object_uuid)
             {
-                continue;
+                candidates.push_back(&row);
             }
+        }
+        std::sort(candidates.begin(),
+                  candidates.end(),
+                  [](const auto* lhs, const auto* rhs) {
+                      if (lhs->created_at != rhs->created_at)
+                      {
+                          return lhs->created_at > rhs->created_at;
+                      }
+                      if (lhs->created_txid != rhs->created_txid)
+                      {
+                          return lhs->created_txid > rhs->created_txid;
+                      }
+                      return lhs->artifact_id.toString() > rhs->artifact_id.toString();
+                  });
+
+        JitReasonCode last_reason = JitReasonCode::ARTIFACT_NOT_FOUND;
+        std::string last_detail = "artifact not found";
+        bool reason_set = false;
+
+        auto remember_first_reason = [&](JitReasonCode reason, std::string detail) {
+            if (!reason_set)
+            {
+                last_reason = reason;
+                last_detail = std::move(detail);
+                reason_set = true;
+            }
+        };
+
+        for (const auto* row_ptr : candidates)
+        {
+            const auto& row = *row_ptr;
 
             if (row.artifact_state == core::CatalogManager::SblrArtifactState::RETIRED)
             {
-                last_reason = JitReasonCode::ARTIFACT_RETIRED;
-                last_detail = "artifact retired";
+                remember_first_reason(JitReasonCode::ARTIFACT_RETIRED, "artifact retired");
+                continue;
+            }
+
+            if (row.artifact_state != core::CatalogManager::SblrArtifactState::READY)
+            {
+                remember_first_reason(JitReasonCode::ARTIFACT_STATE_NOT_READY,
+                                      "artifact state is not READY");
                 continue;
             }
 
             if (core::IdentifierUtils::toUpper(row.target_triple) !=
                 core::IdentifierUtils::toUpper(key.target_triple))
             {
-                last_reason = JitReasonCode::ARTIFACT_KEY_MISMATCH_TARGET_TRIPLE;
-                last_detail = "target_triple mismatch";
+                remember_first_reason(JitReasonCode::ARTIFACT_KEY_MISMATCH_TARGET_TRIPLE,
+                                      "target_triple mismatch");
+                continue;
+            }
+
+            if (core::IdentifierUtils::toUpper(row.cpu_feature_profile) !=
+                core::IdentifierUtils::toUpper(key.cpu_feature_profile))
+            {
+                remember_first_reason(JitReasonCode::ARTIFACT_KEY_MISMATCH_CPU_PROFILE,
+                                      "cpu_feature_profile mismatch");
                 continue;
             }
 
             if (core::IdentifierUtils::toUpper(row.native_abi_version) !=
                 core::IdentifierUtils::toUpper(key.native_abi_version))
             {
-                last_reason = JitReasonCode::ARTIFACT_KEY_MISMATCH_NATIVE_ABI;
-                last_detail = "native_abi_version mismatch";
+                remember_first_reason(JitReasonCode::ARTIFACT_KEY_MISMATCH_NATIVE_ABI,
+                                      "native_abi_version mismatch");
+                continue;
+            }
+
+            if (core::IdentifierUtils::toUpper(row.compiler_identity) !=
+                core::IdentifierUtils::toUpper(key.compiler_identity))
+            {
+                remember_first_reason(JitReasonCode::ARTIFACT_KEY_MISMATCH_COMPILER_IDENTITY,
+                                      "compiler_identity mismatch");
+                continue;
+            }
+
+            if (core::IdentifierUtils::toUpper(row.compiler_version) !=
+                core::IdentifierUtils::toUpper(key.compiler_version))
+            {
+                remember_first_reason(JitReasonCode::ARTIFACT_KEY_MISMATCH_COMPILER_VERSION,
+                                      "compiler_version mismatch");
+                continue;
+            }
+
+            if (core::IdentifierUtils::toUpper(row.optimization_profile) !=
+                core::IdentifierUtils::toUpper(key.optimization_profile))
+            {
+                remember_first_reason(
+                    JitReasonCode::ARTIFACT_KEY_MISMATCH_OPTIMIZATION_PROFILE,
+                    "optimization_profile mismatch");
                 continue;
             }
 
             if (core::IdentifierUtils::toUpper(row.canonical_sblr_hash) !=
                 core::IdentifierUtils::toUpper(key.canonical_sblr_hash))
             {
-                last_reason = JitReasonCode::ARTIFACT_KEY_MISMATCH_SBLR_HASH;
-                last_detail = "canonical_sblr_hash mismatch";
+                remember_first_reason(JitReasonCode::ARTIFACT_KEY_MISMATCH_SBLR_HASH,
+                                      "canonical_sblr_hash mismatch");
                 continue;
             }
 
             if (row.security_policy_version != key.security_policy_version)
             {
-                last_reason = JitReasonCode::ARTIFACT_KEY_MISMATCH_SECURITY_POLICY;
-                last_detail = "security_policy_version mismatch";
+                remember_first_reason(
+                    JitReasonCode::ARTIFACT_KEY_MISMATCH_SECURITY_POLICY,
+                    "security_policy_version mismatch");
                 continue;
             }
 
             const std::string hash_upper = core::IdentifierUtils::toUpper(row.hash_sha256);
             if (hash_upper.size() != 64U)
             {
-                last_reason = JitReasonCode::ARTIFACT_HASH_INVALID;
-                last_detail = "artifact hash is not SHA-256 hex";
+                remember_first_reason(JitReasonCode::ARTIFACT_HASH_INVALID,
+                                      "artifact hash is not SHA-256 hex");
                 continue;
             }
             const bool hex_ok = std::all_of(
@@ -181,15 +251,15 @@ namespace scratchbird::sblr::jit
                 });
             if (!hex_ok)
             {
-                last_reason = JitReasonCode::ARTIFACT_HASH_INVALID;
-                last_detail = "artifact hash contains non-hex characters";
+                remember_first_reason(JitReasonCode::ARTIFACT_HASH_INVALID,
+                                      "artifact hash contains non-hex characters");
                 continue;
             }
 
             if (require_signature && !row.has_signature_blob_id)
             {
-                last_reason = JitReasonCode::ARTIFACT_SIGNATURE_INVALID;
-                last_detail = "artifact signature required but not present";
+                remember_first_reason(JitReasonCode::ARTIFACT_SIGNATURE_INVALID,
+                                      "artifact signature required but not present");
                 continue;
             }
 

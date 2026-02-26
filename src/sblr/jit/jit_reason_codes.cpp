@@ -19,6 +19,8 @@ namespace scratchbird::sblr::jit
                 return "NONE";
             case JitReasonCode::POLICY_INTERPRETED_ONLY:
                 return "POLICY_INTERPRETED_ONLY";
+            case JitReasonCode::NATIVE_SCOPE_NOT_ELIGIBLE:
+                return "NATIVE_SCOPE_NOT_ELIGIBLE";
             case JitReasonCode::HINT_DISABLE_EXECUTE:
                 return "HINT_DISABLE_EXECUTE";
             case JitReasonCode::HINT_PREFER_VM:
@@ -35,8 +37,16 @@ namespace scratchbird::sblr::jit
                 return "ARTIFACT_NOT_FOUND";
             case JitReasonCode::ARTIFACT_KEY_MISMATCH_TARGET_TRIPLE:
                 return "ARTIFACT_KEY_MISMATCH_TARGET_TRIPLE";
+            case JitReasonCode::ARTIFACT_KEY_MISMATCH_CPU_PROFILE:
+                return "ARTIFACT_KEY_MISMATCH_CPU_PROFILE";
             case JitReasonCode::ARTIFACT_KEY_MISMATCH_NATIVE_ABI:
                 return "ARTIFACT_KEY_MISMATCH_NATIVE_ABI";
+            case JitReasonCode::ARTIFACT_KEY_MISMATCH_COMPILER_IDENTITY:
+                return "ARTIFACT_KEY_MISMATCH_COMPILER_IDENTITY";
+            case JitReasonCode::ARTIFACT_KEY_MISMATCH_COMPILER_VERSION:
+                return "ARTIFACT_KEY_MISMATCH_COMPILER_VERSION";
+            case JitReasonCode::ARTIFACT_KEY_MISMATCH_OPTIMIZATION_PROFILE:
+                return "ARTIFACT_KEY_MISMATCH_OPTIMIZATION_PROFILE";
             case JitReasonCode::ARTIFACT_KEY_MISMATCH_SECURITY_POLICY:
                 return "ARTIFACT_KEY_MISMATCH_SECURITY_POLICY";
             case JitReasonCode::ARTIFACT_KEY_MISMATCH_SBLR_HASH:
@@ -47,6 +57,8 @@ namespace scratchbird::sblr::jit
                 return "ARTIFACT_SIGNATURE_INVALID";
             case JitReasonCode::ARTIFACT_RETIRED:
                 return "ARTIFACT_RETIRED";
+            case JitReasonCode::ARTIFACT_STATE_NOT_READY:
+                return "ARTIFACT_STATE_NOT_READY";
             case JitReasonCode::DEOPT_POLICY_VERSION_MISMATCH:
                 return "DEOPT_POLICY_VERSION_MISMATCH";
             case JitReasonCode::DEOPT_DEPENDENCY_SIGNATURE_MISMATCH:
@@ -65,4 +77,3 @@ namespace scratchbird::sblr::jit
         return "UNKNOWN";
     }
 }
-

@@ -5532,6 +5532,9 @@ bool hasTriggerNameConflictInTable(
         uint64_t login_time;
         uint64_t last_activity_time;
         ID current_schema_id;
+        uint64_t cluster_config_epoch;
+        uint64_t schema_epoch;
+        uint64_t security_epoch;
         uint64_t policy_epoch_global;
         uint64_t policy_epoch_table;
         uint8_t is_expired;
@@ -22389,6 +22392,9 @@ bool hasTriggerNameConflictInTable(
             info.last_activity_time = rec.last_activity_time;
             info.authkey_id = rec.authkey_id;
             info.emulation_mode = normalizeEmulationModeLocal(rec.emulation_mode);
+            info.cluster_config_epoch = rec.cluster_config_epoch;
+            info.schema_epoch = rec.schema_epoch;
+            info.security_epoch = rec.security_epoch;
             info.policy_epoch_global = rec.policy_epoch_global;
             info.policy_epoch_table = rec.policy_epoch_table;
             info.is_expired = rec.is_expired != 0;
@@ -45377,8 +45383,11 @@ auto CatalogManager::createSession(const ID& user_id, const ID& authkey_id,
     session_out.last_activity_time = session_out.login_time;
     session_out.authkey_id = authkey_id;
     session_out.emulation_mode = normalizeEmulationModeLocal(emulation_mode);
-    session_out.policy_epoch_global = security_policy_epoch_;
-    session_out.policy_epoch_table = 0;
+    session_out.cluster_config_epoch = db_ ? db_->cluster_config_epoch() : 0;
+    session_out.schema_epoch = 0;
+    session_out.security_epoch = security_policy_epoch_;
+    session_out.policy_epoch_global = session_out.security_epoch;
+    session_out.policy_epoch_table = session_out.schema_epoch;
     session_out.home_schema_id = ID{};
     session_out.current_schema_id = ID{};
     session_out.search_path_profile_id = ID{};
@@ -45423,6 +45432,9 @@ auto CatalogManager::createSession(const ID& user_id, const ID& authkey_id,
     session_rec.login_time = session_out.login_time;
     session_rec.last_activity_time = session_out.last_activity_time;
     session_rec.current_schema_id = session_out.current_schema_id;
+    session_rec.cluster_config_epoch = session_out.cluster_config_epoch;
+    session_rec.schema_epoch = session_out.schema_epoch;
+    session_rec.security_epoch = session_out.security_epoch;
     session_rec.policy_epoch_global = session_out.policy_epoch_global;
     session_rec.policy_epoch_table = session_out.policy_epoch_table;
     session_rec.is_expired = 0;
@@ -45515,6 +45527,9 @@ auto CatalogManager::getSession(const ID& session_id, SessionInfo& session_out,
     session_out.last_activity_time = static_cast<uint64_t>(std::time(nullptr));
     session_out.authkey_id = record.authkey_id;
     session_out.emulation_mode = normalizeEmulationModeLocal(record.emulation_mode);
+    session_out.cluster_config_epoch = record.cluster_config_epoch;
+    session_out.schema_epoch = record.schema_epoch;
+    session_out.security_epoch = record.security_epoch;
     session_out.policy_epoch_global = record.policy_epoch_global;
     session_out.policy_epoch_table = record.policy_epoch_table;
     session_out.is_expired = record.is_expired != 0;
@@ -45568,6 +45583,103 @@ auto CatalogManager::listSessions(std::vector<SessionInfo>& sessions_out,
     {
         sessions_out.push_back(pair.second);
     }
+    return Status::OK;
+}
+
+auto CatalogManager::setSessionEpochPins(const ID& session_id,
+                                         uint64_t cluster_config_epoch,
+                                         uint64_t schema_epoch,
+                                         uint64_t security_epoch,
+                                         ErrorContext* ctx) -> Status
+{
+    {
+        std::lock_guard<std::mutex> cache_lock(session_cache_mutex_);
+        auto it = session_cache_.find(session_id);
+        if (it != session_cache_.end())
+        {
+            it->second.cluster_config_epoch = cluster_config_epoch;
+            it->second.schema_epoch = schema_epoch;
+            it->second.security_epoch = security_epoch;
+            it->second.policy_epoch_global = security_epoch;
+            it->second.policy_epoch_table = schema_epoch;
+        }
+    }
+
+    std::lock_guard<CatalogMutex> lock(mutex_);
+    if (sessions_table_page_ == 0)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Session not found");
+        return Status::NOT_FOUND;
+    }
+
+    auto predicate = [&session_id](const SessionRecord& rec) {
+        return rec.is_valid && rec.session_id == session_id;
+    };
+    auto result = findRecordInHeapPage<SessionRecord>(sessions_table_page_, predicate, ctx);
+    if (result.status != Status::OK)
+    {
+        SET_ERROR_CONTEXT(ctx, Status::NOT_FOUND, "Session not found");
+        return Status::NOT_FOUND;
+    }
+
+    SessionRecord updated = result.record;
+    updated.cluster_config_epoch = cluster_config_epoch;
+    updated.schema_epoch = schema_epoch;
+    updated.security_epoch = security_epoch;
+    updated.policy_epoch_global = security_epoch;
+    updated.policy_epoch_table = schema_epoch;
+    return updateRecordInHeapPage(sessions_table_page_, result.slot_index, updated, ctx);
+}
+
+auto CatalogManager::validateSessionEpochPins(const ID& session_id,
+                                              uint64_t cluster_config_epoch,
+                                              uint64_t schema_epoch,
+                                              uint64_t security_epoch,
+                                              bool reject_on_mismatch,
+                                              SessionEpochValidation& validation_out,
+                                              ErrorContext* ctx) -> Status
+{
+    validation_out = SessionEpochValidation{};
+
+    SessionInfo session;
+    Status status = getSession(session_id, session, ctx);
+    if (status != Status::OK)
+    {
+        return status;
+    }
+
+    validation_out.pinned_cluster_config_epoch = session.cluster_config_epoch;
+    validation_out.pinned_schema_epoch = session.schema_epoch;
+    validation_out.pinned_security_epoch = session.security_epoch;
+
+    auto fail = [&](const char* reason_code) -> Status {
+        validation_out.valid = false;
+        validation_out.reason_code = reason_code;
+        validation_out.requires_replan = !reject_on_mismatch;
+        if (reject_on_mismatch)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_TRANSACTION_STATE, reason_code);
+            return Status::INVALID_TRANSACTION_STATE;
+        }
+        return Status::OK;
+    };
+
+    if (session.cluster_config_epoch != cluster_config_epoch)
+    {
+        return fail("cluster_config_epoch_mismatch");
+    }
+    if (session.schema_epoch != schema_epoch)
+    {
+        return fail("schema_epoch_mismatch");
+    }
+    if (session.security_epoch != security_epoch)
+    {
+        return fail("security_epoch_mismatch");
+    }
+
+    validation_out.valid = true;
+    validation_out.requires_replan = false;
+    validation_out.reason_code.clear();
     return Status::OK;
 }
 

@@ -7,22 +7,20 @@
  * You may obtain a copy of the License at:
  * https://www.firebirdsql.org/en/initial-developer-s-public-license-version-1-0/
  */
-#include <chrono>
 #include <random>
 #include <array>
 #include <cstdint>
 #include "scratchbird/core/uuidv7.h"
+#include "scratchbird/core/time_source.h"
 
 namespace scratchbird::core
 {
 
-    auto generateUuidV7() -> UuidV7Bytes
+    auto generateUuidV7(const TimeSource* time_source) -> UuidV7Bytes
     {
         UuidV7Bytes out{};
-        // Timestamp in milliseconds since Unix epoch
-        auto now = std::chrono::time_point_cast<std::chrono::milliseconds>(
-            std::chrono::system_clock::now());
-        uint64_t ts_ms = static_cast<uint64_t>(now.time_since_epoch().count());
+        const TimeSource& source = (time_source != nullptr) ? *time_source : defaultTimeSource();
+        const uint64_t ts_ms = source.nowMs();
 
         // Fill bytes with timestamp (per RFC 9562 layout semantics)
         // We construct as big-endian fields then store into bytes array.

@@ -295,6 +295,10 @@ namespace scratchbird
             void setJitPolicy(jit::JitCompileMode compile_mode,
                               jit::JitExecutionPolicy execution_policy)
             {
+                jit_policy_.database_compile_mode = compile_mode;
+                jit_policy_.database_execution_policy = execution_policy;
+                jit_policy_.session_compile_mode = compile_mode;
+                jit_policy_.session_execution_policy = execution_policy;
                 jit_policy_.object_compile_mode = compile_mode;
                 jit_policy_.object_execution_policy = execution_policy;
             }

@@ -33,6 +33,8 @@
 #include "scratchbird/core/permission_cache.h" // Security Phase 3.2.3
 #include "scratchbird/core/password_hash.h"
 #include "scratchbird/core/portable_file_io.h"
+#include "scratchbird/core/storage_lock_provider.h"
+#include "scratchbird/core/time_source.h"
 #include "scratchbird/core/debug.h"
 #include "scratchbird/core/logger.h"
 #include "scratchbird/catalog/virtual_catalog.h"
@@ -42,13 +44,9 @@
 #include <openssl/md5.h>
 #include <fcntl.h>
 #include <sys/stat.h>
-#if !defined(_WIN32)
-    #include <sys/file.h>
-#endif
 #include <cstring>
 #include <cctype>
 #include <algorithm>
-#include <chrono>
 #include <iostream>
 #include <fstream>
 #include <filesystem>
@@ -60,15 +58,6 @@
 #include <climits>
 #if defined(_WIN32)
     #include <io.h>
-    #include <sys/locking.h>
-#endif
-
-#ifdef _WIN32
-namespace {
-constexpr int LOCK_EX = 0x2;
-constexpr int LOCK_NB = 0x4;
-inline int flock(int, int) { return 0; }
-} // namespace
 #endif
 
 namespace scratchbird::core
@@ -82,39 +71,6 @@ namespace scratchbird::core
                 ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
             }
             return value;
-        }
-
-        bool lockFileExclusiveNonBlocking(int fd, int* lock_errno = nullptr)
-        {
-#if defined(_WIN32)
-            if (_lseeki64(fd, 0, SEEK_SET) < 0)
-            {
-                if (lock_errno != nullptr)
-                {
-                    *lock_errno = errno;
-                }
-                return false;
-            }
-            if (_locking(fd, _LK_NBLCK, LONG_MAX) != 0)
-            {
-                if (lock_errno != nullptr)
-                {
-                    *lock_errno = errno;
-                }
-                return false;
-            }
-            return true;
-#else
-            if (flock(fd, LOCK_EX | LOCK_NB) != 0)
-            {
-                if (lock_errno != nullptr)
-                {
-                    *lock_errno = errno;
-                }
-                return false;
-            }
-            return true;
-#endif
         }
 
         bool preadFully(int fd, void* buffer, size_t size, off_t offset,
@@ -1512,6 +1468,9 @@ namespace scratchbird::core
         // Generate and set database UUID
         ID db_uuid = generateUuidV7();
         header->database_uuid = db_uuid;
+        header->cluster_id = ID{};
+        header->node_id = ID{};
+        header->cluster_config_epoch = 0;
         setDatabaseUuid(header->page_header, db_uuid);
         setObjectUuid(header->page_header, ID{});
 
@@ -1542,9 +1501,7 @@ namespace scratchbird::core
         header->db_compat_version = DB_COMPAT_VERSION_ALPHA_1_0_1;
 
         // Get current time in microseconds
-        uint64_t micros = std::chrono::duration_cast<std::chrono::microseconds>(
-                              std::chrono::system_clock::now().time_since_epoch())
-                              .count();
+        uint64_t micros = defaultTimeSource().nowMicros();
         header->creation_time = micros;
         header->last_checkpoint = 0;
 
@@ -1635,16 +1592,20 @@ namespace scratchbird::core
 
         // Lock file for exclusive access
         int lock_errno = 0;
-        if (!lockFileExclusiveNonBlocking(fd, &lock_errno))
+        const StorageLockResult lock_result =
+            getStorageLockProvider().tryLockExclusive(fd, &lock_errno);
+        if (lock_result != StorageLockResult::LOCKED)
         {
             ::close(fd);
-            if (lock_errno == EWOULDBLOCK || lock_errno == EAGAIN || lock_errno == EACCES) {
+            if (lock_result == StorageLockResult::LOCK_CONFLICT) {
                 SET_ERROR_CONTEXT(ctx, Status::LOCK_CONFLICT,
                     "Database file is already in use by another process");
             } else {
                 SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to lock database file");
             }
-            return Status::LOCK_CONFLICT;
+            return (lock_result == StorageLockResult::LOCK_CONFLICT)
+                ? Status::LOCK_CONFLICT
+                : Status::IO_ERROR;
         }
 
         // Allocate buffer for header page with OOM check
@@ -1786,17 +1747,21 @@ namespace scratchbird::core
 
         // Lock file for exclusive access
         int lock_errno = 0;
-        if (!lockFileExclusiveNonBlocking(fd_, &lock_errno))
+        const StorageLockResult lock_result =
+            getStorageLockProvider().tryLockExclusive(fd_, &lock_errno);
+        if (lock_result != StorageLockResult::LOCKED)
         {
             ::close(fd_);
             fd_ = -1;
-            if (lock_errno == EWOULDBLOCK || lock_errno == EAGAIN || lock_errno == EACCES) {
+            if (lock_result == StorageLockResult::LOCK_CONFLICT) {
                 SET_ERROR_CONTEXT(ctx, Status::LOCK_CONFLICT,
                     "Database file is already in use by another process");
             } else {
                 SET_ERROR_CONTEXT(ctx, Status::IO_ERROR, "Failed to lock database file");
             }
-            return Status::LOCK_CONFLICT;
+            return (lock_result == StorageLockResult::LOCK_CONFLICT)
+                ? Status::LOCK_CONFLICT
+                : Status::IO_ERROR;
         }
 
         // Read header to determine page size
@@ -2926,6 +2891,52 @@ namespace scratchbird::core
         }
 
         return Status::OK;
+    }
+
+    auto Database::set_cluster_identity(const ID &cluster_id,
+                                        const ID &node_id,
+                                        uint64_t cluster_config_epoch,
+                                        ErrorContext *ctx) -> Status
+    {
+        if (fd_ < 0 || !is_open())
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Database not open");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        if (header_ == nullptr)
+        {
+            SET_ERROR_CONTEXT(ctx, Status::INVALID_ARGUMENT, "Database header not loaded");
+            return Status::INVALID_ARGUMENT;
+        }
+
+        header_->cluster_id = cluster_id;
+        header_->node_id = node_id;
+        header_->cluster_config_epoch = cluster_config_epoch;
+        header_->page_header.flags |= PAGE_FLAG_CHECKSUM_VALID;
+        header_->page_header.checksum =
+            calculatePageChecksum(reinterpret_cast<uint8_t *>(header_), page_size_);
+
+        if (buffer_pool_ != nullptr)
+        {
+            void *header_buffer = nullptr;
+            const Status status = buffer_pool_->pinPage(0, &header_buffer, ctx);
+            if (status != Status::OK)
+            {
+                return status;
+            }
+
+            auto *db_header = static_cast<DatabaseHeader *>(header_buffer);
+            db_header->cluster_id = cluster_id;
+            db_header->node_id = node_id;
+            db_header->cluster_config_epoch = cluster_config_epoch;
+            db_header->page_header.flags |= PAGE_FLAG_CHECKSUM_VALID;
+            db_header->page_header.checksum =
+                calculatePageChecksum(reinterpret_cast<uint8_t *>(db_header), page_size_);
+            buffer_pool_->unpinPage(0, true, ctx);
+        }
+
+        return sync(ctx);
     }
 
     auto Database::initializeProcArray(uint32_t max_backends, ErrorContext *ctx) -> Status

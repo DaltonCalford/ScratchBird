@@ -15,6 +15,36 @@
 
 namespace scratchbird::sblr::jit
 {
+    namespace
+    {
+        auto isZeroUuid(const core::ID& id) -> bool
+        {
+            for (uint8_t byte : id.bytes)
+            {
+                if (byte != 0)
+                {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        auto isNativeEligibleSurface(RoutineSurfaceKind surface) -> bool
+        {
+            switch (surface)
+            {
+                case RoutineSurfaceKind::FUNCTION:
+                case RoutineSurfaceKind::TRIGGER:
+                case RoutineSurfaceKind::PROCEDURE:
+                case RoutineSurfaceKind::PACKAGE_MEMBER:
+                    return true;
+                case RoutineSurfaceKind::UNKNOWN:
+                default:
+                    return false;
+            }
+        }
+    }
+
     JitRuntime::JitRuntime(core::CatalogManager* catalog)
         : catalog_(catalog),
           artifact_store_(catalog),
@@ -64,6 +94,14 @@ namespace scratchbird::sblr::jit
                                 core::ErrorContext* ctx) -> JitDispatchOutcome
     {
         JitDispatchOutcome out;
+        if (!isNativeEligibleSurface(request.surface))
+        {
+            out.path = JitDispatchOutcome::Path::VM;
+            out.reason = JitReasonCode::NATIVE_SCOPE_NOT_ELIGIBLE;
+            out.detail = "native execution is limited to routine/member surfaces";
+            return out;
+        }
+
         const JitEffectivePolicy effective = resolvePolicy(request.policy);
 
         if (effective.execution_policy == JitExecutionPolicy::INTERPRETED_ONLY)
@@ -169,6 +207,30 @@ namespace scratchbird::sblr::jit
     auto JitRuntime::compileExplicit(const JitRuntimeRequest& request,
                                      core::ErrorContext* ctx) -> core::Status
     {
+        if (!isNativeEligibleSurface(request.surface))
+        {
+            return core::Status::INVALID_ARGUMENT;
+        }
+        if (request.canonical_sblr.empty())
+        {
+            return core::Status::INVALID_ARGUMENT;
+        }
+        if (isZeroUuid(request.object_uuid) || isZeroUuid(request.module_id) ||
+            isZeroUuid(request.plan_id))
+        {
+            return core::Status::INVALID_ARGUMENT;
+        }
+        if (request.compatibility.object_uuid != request.object_uuid ||
+            request.compatibility.canonical_sblr_hash.empty() ||
+            request.compatibility.target_triple.empty() ||
+            request.compatibility.native_abi_version.empty() ||
+            request.compatibility.compiler_identity.empty() ||
+            request.compatibility.compiler_version.empty() ||
+            request.compatibility.optimization_profile.empty())
+        {
+            return core::Status::INVALID_ARGUMENT;
+        }
+
         JitCompileRequest compile_request{};
         compile_request.key = request.compatibility;
         compile_request.canonical_sblr = request.canonical_sblr;

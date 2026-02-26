@@ -2973,6 +2973,9 @@ public:
             std::vector<std::string> search_path;   // Ordered search-path schema paths
             ID authkey_id;                   // Bound AuthKey UUID (Plan 03)
             std::string emulation_mode;      // Dialect tag or emulation mode (Plan 03)
+            uint64_t cluster_config_epoch = 0;
+            uint64_t schema_epoch = 0;
+            uint64_t security_epoch = 0;
             uint64_t policy_epoch_global = 0;
             uint64_t policy_epoch_table = 0;
 
@@ -10534,6 +10537,30 @@ public:
                          ErrorContext* ctx = nullptr) -> Status;
 
         auto closeSession(const ID& session_id, ErrorContext* ctx = nullptr) -> Status;
+
+        struct SessionEpochValidation
+        {
+            bool valid = true;
+            bool requires_replan = false;
+            std::string reason_code;
+            uint64_t pinned_cluster_config_epoch = 0;
+            uint64_t pinned_schema_epoch = 0;
+            uint64_t pinned_security_epoch = 0;
+        };
+
+        auto setSessionEpochPins(const ID& session_id,
+                                 uint64_t cluster_config_epoch,
+                                 uint64_t schema_epoch,
+                                 uint64_t security_epoch,
+                                 ErrorContext* ctx = nullptr) -> Status;
+
+        auto validateSessionEpochPins(const ID& session_id,
+                                      uint64_t cluster_config_epoch,
+                                      uint64_t schema_epoch,
+                                      uint64_t security_epoch,
+                                      bool reject_on_mismatch,
+                                      SessionEpochValidation& validation_out,
+                                      ErrorContext* ctx = nullptr) -> Status;
 
         // Runtime monitoring
         struct TransactionHistoryEntry

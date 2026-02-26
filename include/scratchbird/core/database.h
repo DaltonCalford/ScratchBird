@@ -80,9 +80,12 @@ namespace scratchbird
         {
             PageHeader page_header; // Standard 80-byte header
 
-            // Database identification (80 bytes)
+            // Database identification and cluster identity
             char db_name[32];           // Database name (null-terminated)
             UuidV7Bytes database_uuid;  // Database UUID v7
+            UuidV7Bytes cluster_id;     // Cluster UUID (all-zero for standalone)
+            UuidV7Bytes node_id;        // Node UUID (all-zero until assigned)
+            uint64_t cluster_config_epoch; // Cluster configuration epoch
             uint32_t db_version;        // ScratchBird version that created DB
             uint32_t db_compat_version; // Minimum version that can read DB
             uint64_t creation_time;     // Unix timestamp (microseconds)
@@ -223,6 +226,20 @@ namespace scratchbird
             const ID &uuid() const
             {
                 return db_uuid_;
+            }
+            const ID &cluster_id() const
+            {
+                static const ID k_zero_id{};
+                return header_ ? header_->cluster_id : k_zero_id;
+            }
+            const ID &node_id() const
+            {
+                static const ID k_zero_id{};
+                return header_ ? header_->node_id : k_zero_id;
+            }
+            uint64_t cluster_config_epoch() const
+            {
+                return header_ ? header_->cluster_config_epoch : 0;
             }
             uint64_t total_pages() const
             {
@@ -511,6 +528,12 @@ namespace scratchbird
 
             // Update header next transaction id (for internal use by TransactionManager)
             Status update_header_next_xid(uint64_t next_xid, ErrorContext *ctx = nullptr);
+
+            // Persist cluster identity in page-0 header metadata.
+            Status set_cluster_identity(const ID &cluster_id,
+                                        const ID &node_id,
+                                        uint64_t cluster_config_epoch,
+                                        ErrorContext *ctx = nullptr);
 
             // === LEGACY API: tablespace 0 only ===
             // Allocate a new page ID (for internal use by BufferPool/PageManager)

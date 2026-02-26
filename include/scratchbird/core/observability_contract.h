@@ -1,0 +1,238 @@
+/*
+ * ScratchBird
+ * Copyright (c) 2025-2026 Dalton Calford
+ *
+ * Licensed under the Initial Developer's Public License Version 1.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at:
+ * https://www.firebirdsql.org/en/initial-developer-s-public-license-version-1-0/
+ */
+#pragma once
+
+#include <cstdint>
+#include <mutex>
+#include <string>
+#include <string_view>
+#include <utility>
+#include <vector>
+
+#include "scratchbird/core/error_context.h"
+#include "scratchbird/core/status.h"
+#include "scratchbird/core/telemetry.h"
+
+namespace scratchbird::core
+{
+
+    struct MetricPolicyViolation
+    {
+        std::string metric_name;
+        std::string reason;
+    };
+
+    class MetricContractPolicy
+    {
+    public:
+        static auto isCanonicalMetricName(std::string_view metric_name) -> bool;
+        static auto isAllowedLabelName(std::string_view label_name) -> bool;
+        static auto isForbiddenLabelName(std::string_view label_name) -> bool;
+
+        static auto validateSample(const MetricSampleRow& sample,
+                                   std::vector<std::string>& reasons_out) -> bool;
+
+        static auto auditRegistry(const MetricsRegistry& registry,
+                                  std::vector<MetricPolicyViolation>& violations_out) -> Status;
+
+        static auto registerSbObsBaselineMetrics(MetricsRegistry& registry) -> Status;
+
+        static auto buildLegacyNameMapping(
+            std::vector<std::pair<std::string, std::string>>& mapping_out) -> Status;
+    };
+
+    enum class HealthComponentStatus : uint8_t
+    {
+        OK = 0,
+        WARN = 1,
+        FAIL = 2,
+    };
+
+    auto toString(HealthComponentStatus status) -> const char*;
+
+    struct HealthComponentRow
+    {
+        std::string component;
+        HealthComponentStatus status = HealthComponentStatus::FAIL;
+        std::string message;
+        uint64_t updated_at = 0;
+    };
+
+    struct SqlRuntimeMetricRow
+    {
+        std::string metric_name;
+        std::string metric_type;
+        double value = 0.0;
+        std::string labels_json;
+        uint64_t updated_at = 0;
+    };
+
+    struct ClusterShardObservabilityInput
+    {
+        std::string db_uuid;
+        std::string shard_id;
+        std::string leader_node_id;
+        uint64_t leader_term = 0;
+        uint64_t lease_expires_at = 0;
+        uint64_t cwm_txn = 0;
+        uint64_t ost_txn = 0;
+        uint64_t rwm_txn = 0;
+        uint64_t gc_safe_txn = 0;
+        uint64_t replication_lag_txn = 0;
+        double replication_lag_seconds = 0.0;
+    };
+
+    struct SqlClusterShardMetricRow
+    {
+        std::string db_uuid;
+        std::string shard_id;
+        std::string leader_node_id;
+        uint64_t leader_term = 0;
+        uint64_t lease_expires_at = 0;
+        uint64_t cwm_txn = 0;
+        uint64_t ost_txn = 0;
+        uint64_t rwm_txn = 0;
+        uint64_t gc_safe_txn = 0;
+        uint64_t replication_lag_txn = 0;
+        double replication_lag_seconds = 0.0;
+    };
+
+    struct ClusterSnapshotObservabilityInput
+    {
+        std::string session_id;
+        std::string db_uuid;
+        std::string shard_id;
+        uint64_t snapshot_boundary = 0;
+        uint64_t start_time = 0;
+        uint64_t last_heartbeat = 0;
+    };
+
+    struct SqlClusterSnapshotMetricRow
+    {
+        std::string session_id;
+        std::string db_uuid;
+        std::string shard_id;
+        uint64_t snapshot_boundary = 0;
+        uint64_t start_time = 0;
+        uint64_t last_heartbeat = 0;
+    };
+
+    class SqlObservabilityViewBuilder
+    {
+    public:
+        static auto buildRuntimeRows(const MetricsRegistry& registry,
+                                     uint64_t updated_at_ms,
+                                     std::vector<SqlRuntimeMetricRow>& rows_out) -> Status;
+
+        static auto buildHealthRows(const std::vector<HealthComponentRow>& health_components,
+                                    std::vector<HealthComponentRow>& rows_out) -> Status;
+
+        static auto buildClusterShardRows(
+            const std::vector<ClusterShardObservabilityInput>& shards,
+            std::vector<SqlClusterShardMetricRow>& rows_out) -> Status;
+
+        static auto buildClusterSnapshotRows(
+            const std::vector<ClusterSnapshotObservabilityInput>& snapshots,
+            std::vector<SqlClusterSnapshotMetricRow>& rows_out) -> Status;
+    };
+
+    class HealthReadinessContract
+    {
+    public:
+        auto setLivenessState(bool process_running, bool event_loop_responding) -> void;
+        auto setReadinessState(bool database_open,
+                               bool catalog_available,
+                               bool cluster_epoch_loaded,
+                               bool listener_pool_available,
+                               bool control_plane_reachable,
+                               bool leader_leases_valid,
+                               bool shard_map_loaded) -> void;
+
+        auto isLive() const -> bool;
+        auto isReady() const -> bool;
+
+        auto healthzJson(uint64_t now_ms) const -> std::string;
+        auto readyzJson(uint64_t now_ms) const -> std::string;
+        auto healthComponentRows(uint64_t now_ms, std::vector<HealthComponentRow>& rows_out) const -> Status;
+
+    private:
+        mutable std::mutex mutex_;
+        bool process_running_ = true;
+        bool event_loop_responding_ = true;
+        bool database_open_ = false;
+        bool catalog_available_ = false;
+        bool cluster_epoch_loaded_ = false;
+        bool listener_pool_available_ = false;
+        bool control_plane_reachable_ = false;
+        bool leader_leases_valid_ = false;
+        bool shard_map_loaded_ = false;
+    };
+
+    enum class StructuredEventSeverity : uint8_t
+    {
+        INFO = 0,
+        WARN = 1,
+        ERROR = 2,
+    };
+
+    auto toString(StructuredEventSeverity severity) -> const char*;
+
+    struct StructuredEpochContext
+    {
+        uint64_t cluster_config_epoch = 0;
+        uint64_t schema_epoch = 0;
+        uint64_t security_epoch = 0;
+    };
+
+    struct StructuredEventRecord
+    {
+        std::string event_type;
+        StructuredEventSeverity severity = StructuredEventSeverity::INFO;
+        uint64_t occurred_at_ms = 0;
+        StructuredEpochContext epoch{};
+        std::string db_uuid;
+        std::string node_id;
+        std::string shard_id;
+        std::string message;
+        std::string payload_json = "{}";
+    };
+
+    class StructuredEventStream
+    {
+    public:
+        auto setMaxInMemory(size_t max_events) -> void;
+
+        auto emit(const StructuredEventRecord& event,
+                  std::string* event_id_out = nullptr,
+                  ErrorContext* ctx = nullptr) -> Status;
+
+        auto exportJsonLines(std::vector<std::string>& lines_out) const -> Status;
+        auto schemaRegistry(std::vector<std::string>& event_types_out) const -> Status;
+
+        static auto validate(const StructuredEventRecord& event, ErrorContext* ctx = nullptr) -> Status;
+
+    private:
+        struct StoredEvent
+        {
+            std::string event_id;
+            StructuredEventRecord event;
+            std::string serialized_json;
+        };
+
+        static auto serialize(const std::string& event_id, const StructuredEventRecord& event) -> std::string;
+
+        mutable std::mutex mutex_;
+        std::vector<StoredEvent> events_;
+        std::vector<std::string> schema_event_types_;
+        uint64_t next_sequence_ = 1;
+        size_t max_events_ = 1024;
+    };
+
+} // namespace scratchbird::core

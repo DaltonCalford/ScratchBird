@@ -220,12 +220,12 @@ namespace scratchbird::sblr::jit::test
             request.plan_id = binding.plan_id;
             request.canonical_sblr = canonical_sblr;
             request.compatibility = makeCompatibilityKey(binding.object_uuid, canonical_sblr);
-            request.policy.database_compile_mode = jit::JitCompileMode::EXPLICIT_ONLY;
-            request.policy.database_execution_policy = jit::JitExecutionPolicy::INTERPRETED_ONLY;
-            request.policy.session_compile_mode = jit::JitCompileMode::EXPLICIT_ONLY;
-            request.policy.session_execution_policy = jit::JitExecutionPolicy::INTERPRETED_ONLY;
-            request.policy.object_compile_mode = jit::JitCompileMode::EXPLICIT_ONLY;
-            request.policy.object_execution_policy = jit::JitExecutionPolicy::INTERPRETED_ONLY;
+            request.policy.database_compile_mode = jit::JitCompileMode::JIT_ALLOWED;
+            request.policy.database_execution_policy = jit::JitExecutionPolicy::PREFER_NATIVE;
+            request.policy.session_compile_mode = jit::JitCompileMode::JIT_ALLOWED;
+            request.policy.session_execution_policy = jit::JitExecutionPolicy::PREFER_NATIVE;
+            request.policy.object_compile_mode = jit::JitCompileMode::JIT_ALLOWED;
+            request.policy.object_execution_policy = jit::JitExecutionPolicy::PREFER_NATIVE;
             return request;
         }
 

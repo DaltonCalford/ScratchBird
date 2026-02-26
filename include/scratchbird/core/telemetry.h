@@ -388,6 +388,16 @@ public:
     static std::string handleRequest(const std::string& path,
                                      const std::string& accept_header);
 
+    // Configure health/readiness endpoint state.
+    static void setLivenessState(bool process_running, bool event_loop_responding);
+    static void setReadinessState(bool database_open,
+                                  bool catalog_available,
+                                  bool cluster_epoch_loaded,
+                                  bool listener_pool_available,
+                                  bool control_plane_reachable,
+                                  bool leader_leases_valid,
+                                  bool shard_map_loaded);
+
     // Get content type for response
     static std::string getContentType(bool openmetrics);
 };

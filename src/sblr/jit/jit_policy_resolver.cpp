@@ -11,6 +11,36 @@
 
 namespace scratchbird::sblr::jit
 {
+    namespace
+    {
+        auto restrictCompileMode(JitCompileMode lhs, JitCompileMode rhs)
+            -> JitCompileMode
+        {
+            if (lhs == JitCompileMode::EXPLICIT_ONLY ||
+                rhs == JitCompileMode::EXPLICIT_ONLY)
+            {
+                return JitCompileMode::EXPLICIT_ONLY;
+            }
+            return JitCompileMode::JIT_ALLOWED;
+        }
+
+        auto mergeExecutionPolicy(JitExecutionPolicy lhs, JitExecutionPolicy rhs)
+            -> JitExecutionPolicy
+        {
+            if (lhs == JitExecutionPolicy::INTERPRETED_ONLY ||
+                rhs == JitExecutionPolicy::INTERPRETED_ONLY)
+            {
+                return JitExecutionPolicy::INTERPRETED_ONLY;
+            }
+            if (lhs == JitExecutionPolicy::REQUIRE_NATIVE ||
+                rhs == JitExecutionPolicy::REQUIRE_NATIVE)
+            {
+                return JitExecutionPolicy::REQUIRE_NATIVE;
+            }
+            return JitExecutionPolicy::PREFER_NATIVE;
+        }
+    }
+
     auto JitRuntime::resolvePolicy(const JitPolicyEnvelope& policy) const
         -> JitEffectivePolicy
     {
@@ -18,13 +48,16 @@ namespace scratchbird::sblr::jit
         out.compile_mode = policy.database_compile_mode;
         out.execution_policy = policy.database_execution_policy;
 
-        out.compile_mode = policy.session_compile_mode;
-        out.execution_policy = policy.session_execution_policy;
+        out.compile_mode =
+            restrictCompileMode(out.compile_mode, policy.session_compile_mode);
+        out.execution_policy =
+            mergeExecutionPolicy(out.execution_policy, policy.session_execution_policy);
 
-        out.compile_mode = policy.object_compile_mode;
-        out.execution_policy = policy.object_execution_policy;
+        out.compile_mode =
+            restrictCompileMode(out.compile_mode, policy.object_compile_mode);
+        out.execution_policy =
+            mergeExecutionPolicy(out.execution_policy, policy.object_execution_policy);
         out.hints = policy.hints;
         return out;
     }
 }
-

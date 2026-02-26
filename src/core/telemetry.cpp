@@ -17,6 +17,7 @@
 // November 25, 2025
 
 #include "scratchbird/core/telemetry.h"
+#include "scratchbird/core/observability_contract.h"
 #include <openssl/sha.h>
 #include <nlohmann/json.hpp>
 #include <sstream>
@@ -98,6 +99,19 @@ auto statusToString(SloBaselineStatus status) -> const char*
         default:
             return "NO_DATA";
     }
+}
+
+auto defaultHealthContract() -> HealthReadinessContract&
+{
+    static HealthReadinessContract contract;
+    return contract;
+}
+
+auto currentTimeMs() -> uint64_t
+{
+    using namespace std::chrono;
+    return static_cast<uint64_t>(
+        duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count());
 }
 } // namespace
 
@@ -1156,6 +1170,10 @@ void ScratchBirdMetrics::initialize() {
         "scratchbird_translation_cache_evictions_total",
         "Total translation cache evictions");
 
+    // Register canonical SB-OBS namespace metrics in parallel with legacy
+    // scratchbird_* metrics while migration remains in progress.
+    (void)MetricContractPolicy::registerSbObsBaselineMetrics(reg);
+
     initialized_ = true;
 }
 
@@ -1165,6 +1183,13 @@ void ScratchBirdMetrics::initialize() {
 
 std::string MetricsEndpoint::handleRequest(const std::string& path,
                                             const std::string& accept_header) {
+    if (path == "/healthz") {
+        return defaultHealthContract().healthzJson(currentTimeMs());
+    }
+    if (path == "/readyz") {
+        return defaultHealthContract().readyzJson(currentTimeMs());
+    }
+
     // Check if OpenMetrics format is requested
     bool openmetrics = accept_header.find("application/openmetrics-text") != std::string::npos;
 
@@ -1173,6 +1198,26 @@ std::string MetricsEndpoint::handleRequest(const std::string& path,
     } else {
         return MetricsRegistry::getInstance().exportPrometheus();
     }
+}
+
+void MetricsEndpoint::setLivenessState(bool process_running, bool event_loop_responding) {
+    defaultHealthContract().setLivenessState(process_running, event_loop_responding);
+}
+
+void MetricsEndpoint::setReadinessState(bool database_open,
+                                        bool catalog_available,
+                                        bool cluster_epoch_loaded,
+                                        bool listener_pool_available,
+                                        bool control_plane_reachable,
+                                        bool leader_leases_valid,
+                                        bool shard_map_loaded) {
+    defaultHealthContract().setReadinessState(database_open,
+                                              catalog_available,
+                                              cluster_epoch_loaded,
+                                              listener_pool_available,
+                                              control_plane_reachable,
+                                              leader_leases_valid,
+                                              shard_map_loaded);
 }
 
 std::string MetricsEndpoint::getContentType(bool openmetrics) {
