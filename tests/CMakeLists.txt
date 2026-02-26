@@ -818,6 +818,54 @@ set_tests_properties(AuthRateLimitStress PROPERTIES
     TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_DEFAULT}
 )
 
+add_executable(auth_plugin_payload_fuzz fuzz/test_auth_plugin_payload_fuzz.cpp)
+target_link_libraries(auth_plugin_payload_fuzz
+    scratchbird_core
+    GTest::gtest
+    GTest::gtest_main
+)
+add_test(NAME AuthPluginPayloadFuzz COMMAND auth_plugin_payload_fuzz)
+set_tests_properties(AuthPluginPayloadFuzz PROPERTIES
+    LABELS "fuzz;security;auth_plugin"
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_STRESS}
+)
+
+add_executable(auth_provider_fail_closed_stress stress/test_auth_provider_fail_closed_stress.cpp)
+target_link_libraries(auth_provider_fail_closed_stress
+    scratchbird_core
+    GTest::gtest
+    GTest::gtest_main
+)
+add_test(NAME AuthProviderFailClosedStress COMMAND auth_provider_fail_closed_stress)
+set_tests_properties(AuthProviderFailClosedStress PROPERTIES
+    LABELS "stress;security;auth_plugin"
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_STRESS}
+)
+
+add_executable(auth_plugin_enterprise_perf benchmark/test_auth_plugin_enterprise_perf.cpp)
+target_link_libraries(auth_plugin_enterprise_perf
+    scratchbird_core
+    GTest::gtest
+    GTest::gtest_main
+)
+add_test(NAME AuthPluginEnterprisePerf COMMAND auth_plugin_enterprise_perf)
+set_tests_properties(AuthPluginEnterprisePerf PROPERTIES
+    LABELS "performance;security;auth_plugin"
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_PERFORMANCE}
+)
+
+add_executable(auth_plugin_enterprise_soak stress/test_auth_plugin_enterprise_soak.cpp)
+target_link_libraries(auth_plugin_enterprise_soak
+    scratchbird_core
+    GTest::gtest
+    GTest::gtest_main
+)
+add_test(NAME AuthPluginEnterpriseSoak COMMAND auth_plugin_enterprise_soak)
+set_tests_properties(AuthPluginEnterpriseSoak PROPERTIES
+    LABELS "soak;stress;security;auth_plugin"
+    TIMEOUT ${SCRATCHBIRD_TEST_TIMEOUT_STRESS}
+)
+
 # Wave 1 Tests (Phase 2 Parallel Development)
 # NOTE: Temporarily disabled - test files need API updates for spatial types
 # TODO: Fix test_spatial_types.cpp, test_multi_geometry.cpp TypedValue::makePoint API

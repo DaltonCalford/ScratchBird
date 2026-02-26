@@ -68,6 +68,21 @@ TEST(AuthProviderDefaultsTest, RadiusRequiresSharedSecretRef) {
               scratchbird::security::providers::RadiusProviderResult::AUTH_RADIUS_SHARED_SECRET_INVALID);
 }
 
+TEST(AuthProviderDefaultsTest, RadiusTimeoutFailsClosed) {
+    auto provider = scratchbird::security::providers::createDefaultRadiusProvider();
+    scratchbird::security::providers::RadiusAuthRequest req;
+    req.username = "alice";
+    req.password = "secret";
+    req.shared_secret_ref = "vault://radius/shared";
+    req.radius_servers = {"radius-a.local"};
+    req.allowed_radius_endpoints = {"radius-a.local"};
+    req.request_timeout_ms = 0;
+
+    auto response = provider->authenticate(req);
+    EXPECT_EQ(response.result,
+              scratchbird::security::providers::RadiusProviderResult::AUTH_RADIUS_TIMEOUT);
+}
+
 TEST(AuthProviderDefaultsTest, PamRejectsServiceOutsideAllowlist) {
     auto provider = scratchbird::security::providers::createDefaultPamProvider();
     scratchbird::security::providers::PamAuthRequest req;
